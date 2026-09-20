@@ -84,8 +84,7 @@ class GaugeCovariantShiftPlan(StrictModule, NonTrainableState):
             or orientations.shape != expected
         ):
             raise ValueError(
-                "forward_sites, forward_edges, and forward_orientations must all "
-                f"have shape {expected}."
+                f"forward_sites, forward_edges, and forward_orientations must all have shape {expected}."
             )
         if np.any(sites < 0) or np.any(sites >= site_count):
             raise ValueError("Forward-site routes lie outside the lattice.")
@@ -266,7 +265,7 @@ class GaugeStaplePlan(StrictModule, NonTrainableState):
             raise ValueError("maximum_staples_per_link must lie in [1, 1024].")
         path_edges = np.asarray(paths.edge_indices, dtype=np.int32)
         path_orientations = np.asarray(paths.orientations, dtype=np.int32)
-        path_valid = np.asarray(paths.valid, dtype=bool)
+        path_valid = np.asarray(paths.valid, dtype=np.bool_)
         routes: list[list[tuple[int, int, list[int], list[int]]]] = [
             [] for _ in range(link_space.num_edges)
         ]
@@ -291,9 +290,9 @@ class GaugeStaplePlan(StrictModule, NonTrainableState):
             (link_space.num_edges, capacity, complement_length), dtype=np.int32
         )
         complement_orientations = np.ones_like(complement_edges)
-        complement_valid = np.zeros_like(complement_edges, dtype=bool)
+        complement_valid = np.zeros_like(complement_edges, dtype=np.bool_)
         selected_orientations = np.ones((link_space.num_edges, capacity), dtype=np.int32)
-        route_valid = np.zeros((link_space.num_edges, capacity), dtype=bool)
+        route_valid = np.zeros((link_space.num_edges, capacity), dtype=np.bool_)
         for edge, edge_routes in enumerate(routes):
             for slot, (_, selected_sign, edges_, signs_) in enumerate(edge_routes):
                 length = len(edges_)

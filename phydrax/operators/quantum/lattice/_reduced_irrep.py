@@ -33,8 +33,7 @@ class SU2SectorResourcePolicy(StrictModule):
         maximum_matrix_elements: int,
     ):
         values = tuple(
-            int(value)
-            for value in (
+            (
                 maximum_product_dimension,
                 maximum_sector_dimension,
                 maximum_matrix_elements,
@@ -77,7 +76,7 @@ class SU2CouplingTreePlan(StrictModule):
         /,
     ):
         labels = tuple(str(value) for value in site_labels)
-        spins = tuple(int(value) for value in local_twice_spins)
+        spins = tuple(local_twice_spins)
         total = int(total_twice_spin)
         if not labels or len(labels) != len(spins) or len(set(labels)) != len(labels):
             raise ValueError("SU2 site labels and local spins must align uniquely.")

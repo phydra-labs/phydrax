@@ -109,7 +109,7 @@ def _induced(response, value, *, weights=None, source=None):
     )
 
 
-def _normalised_weights(flow: EmpiricalMeanField):
+def _normalized_weights(flow: EmpiricalMeanField):
     weights = flow.weights.reshape((flow.num_particles, flow.times.size))
     return weights / jnp.sum(weights, axis=0, keepdims=True)
 
@@ -129,8 +129,8 @@ def _law_mixture(current, induced, damping, iteration, args):
     )
     weights = jnp.concatenate(
         (
-            (1.0 - damping) * _normalised_weights(current),
-            damping * _normalised_weights(induced),
+            (1.0 - damping) * _normalized_weights(current),
+            damping * _normalized_weights(induced),
         )
     )
     valid = jnp.concatenate(

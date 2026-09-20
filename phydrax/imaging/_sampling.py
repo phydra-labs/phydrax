@@ -24,7 +24,7 @@ class ImageSample2D(StrictModule):
 
     def __init__(self, values: ArrayLike, valid: ArrayLike, /):
         values_ = jnp.asarray(values)
-        valid_ = jnp.asarray(valid, dtype=bool)
+        valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         if values_.shape[: valid_.ndim] != valid_.shape:
             raise ValueError("valid must match the leading sampled value shape.")
         self.values = values_
@@ -36,12 +36,12 @@ def image_coordinates(support_or_shape: ImagePlaneSupport | Sequence[int], /) ->
     if isinstance(support_or_shape, ImagePlaneSupport):
         shape = support_or_shape.image_shape
     else:
-        shape = tuple(int(item) for item in support_or_shape)
+        shape = tuple(support_or_shape)
         if len(shape) != 2 or any(item < 1 for item in shape):
             raise ValueError("Image shape must contain two positive dimensions.")
     rows, columns = jnp.meshgrid(
-        jnp.arange(shape[0], dtype=float),
-        jnp.arange(shape[1], dtype=float),
+        jnp.arange(shape[0], dtype=jnp.float64),
+        jnp.arange(shape[1], dtype=jnp.float64),
         indexing="ij",
     )
     return jnp.stack((rows, columns), axis=-1)
@@ -57,15 +57,15 @@ def bilinear_sample(
 ) -> ImageSample2D:
     """Bilinearly sample through the strict nonperiodic rectilinear map."""
     values = jnp.asarray(image)
-    coordinates = jnp.asarray(coordinates_rc, dtype=float)
+    coordinates = jnp.asarray(coordinates_rc, dtype=jnp.float64)
     if values.ndim < 2:
         raise ValueError("image must have at least two dimensions.")
     if coordinates.ndim < 1 or coordinates.shape[-1] != 2:
         raise ValueError("coordinates_rc must have shape (..., 2).")
     source_mask = (
-        jnp.ones(values.shape[:2], dtype=bool)
+        jnp.ones(values.shape[:2], dtype=jnp.bool_)
         if valid_mask is None
-        else jnp.asarray(valid_mask, dtype=bool)
+        else jnp.asarray(valid_mask, dtype=jnp.bool_)
     )
     if source_mask.shape != values.shape[:2]:
         raise ValueError("valid_mask must match the first two image dimensions.")
@@ -129,7 +129,7 @@ def backward_warp(
     fill_value: ArrayLike | float = 0.0,
 ) -> ImageSample2D:
     """Backward warp so output[r,c] samples input[r-dr,c-dc]."""
-    displacement = jnp.asarray(displacement_rc, dtype=float)
+    displacement = jnp.asarray(displacement_rc, dtype=jnp.float64)
     if displacement.ndim != 3 or displacement.shape[-1] != 2:
         raise ValueError("displacement_rc must have shape (rows, columns, 2).")
     if tuple(displacement.shape[:2]) != tuple(jnp.shape(image)[:2]):

@@ -316,10 +316,9 @@ class ConeVariationalInequalityProblem(StrictModule):
 
     def validate_state(self, state: Any, /) -> Array:
         value = jnp.asarray(state)
-        if value.ndim != 1 or int(value.shape[0]) != self.cone.dimension:
+        if value.ndim != 1 or value.shape[0] != self.cone.dimension:
             raise ValueError(
-                "Cone VI state must have shape "
-                f"({self.cone.dimension},); got {value.shape}."
+                f"Cone VI state must have shape ({self.cone.dimension},); got {value.shape}."
             )
         if not jnp.issubdtype(value.dtype, jnp.floating):
             raise TypeError("Cone VI state must be a real floating-point array.")

@@ -14,7 +14,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._dem_cohesion import (
     AbstractDEMCohesionPlan,
@@ -141,7 +141,7 @@ class DEMContactResponse(StrictModule):
 
 
 class AbstractDEMNormalContactPlan(StrictModule, NonTrainableState):
-    normal_law_id: AbstractAttribute[str]
+    normal_law_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def evaluate(
@@ -582,7 +582,7 @@ class ThorntonLinearPlasticNormalPlan(AbstractDEMNormalContactPlan):
 
 
 class AbstractDEMTangentialContactPlan(StrictModule, NonTrainableState):
-    tangential_law_id: AbstractAttribute[str]
+    tangential_law_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def evaluate(
@@ -716,7 +716,7 @@ class MindlinTangentialContactPlan(AbstractDEMTangentialContactPlan):
 
 
 class AbstractDEMRotationalContactPlan(StrictModule, NonTrainableState):
-    rotational_law_id: AbstractAttribute[str]
+    rotational_law_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def evaluate(
@@ -920,7 +920,7 @@ class DEMContactModelPlan(StrictModule, NonTrainableState):
     ) -> np.ndarray:
         from ._dem_smooth import SmoothPenaltyNormalPlan
 
-        radius = np.asarray(radii, dtype=float)
+        radius = np.asarray(radii, dtype=np.float64)
         normal_range = (
             self.normal.maximum_range
             if isinstance(self.normal, SmoothPenaltyNormalPlan)
@@ -1037,7 +1037,7 @@ class PreparedDEMContactModel(StrictModule, NonTrainableState):
                 dtype=batch.normal.dtype,
             )
             scalar = jnp.zeros((0,), dtype=batch.normal.dtype)
-            mask = jnp.zeros((0,), dtype=bool)
+            mask = jnp.zeros((0,), dtype=jnp.bool_)
             return DEMContactResponse(
                 pair_force=vector,
                 left_torque=angular,

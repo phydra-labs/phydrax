@@ -81,7 +81,7 @@ class FixedPartitionHybridState(StrictModule):
             raise TypeError("finite_volume must be FiniteVolumeRuntimeState.")
         if not isinstance(kinetic, SmoothCompressibleKineticState):
             raise TypeError("kinetic must be SmoothCompressibleKineticState.")
-        eligible = jnp.asarray(checkpoint_eligible, dtype=bool)
+        eligible = jnp.asarray(checkpoint_eligible, dtype=jnp.bool_)
         if eligible.shape != ():
             raise ValueError("checkpoint_eligible must be scalar.")
         self.finite_volume = finite_volume
@@ -220,7 +220,8 @@ class _FixedHybridStageFluxCallback(StrictModule, NonTrainableState):
             for layout in discretization.face_layouts
         )
         masks = tuple(
-            jnp.zeros(layout.shape, dtype=bool) for layout in discretization.face_layouts
+            jnp.zeros(layout.shape, dtype=jnp.bool_)
+            for layout in discretization.face_layouts
         )
         replacement_values = list(replacements)
         mask_values = list(masks)
@@ -335,16 +336,10 @@ class PreparedFixedPartitionHybridRuntime(StrictModule, NonTrainableState):
                 "learned_energy must be PreparedLearnedEnergyEquilibriumBinding."
             )
         interfaces_ = tuple(interfaces)
-        axes = tuple(int(value) for value in finite_volume_face_axes)
-        face_indices = tuple(
-            tuple(int(item) for item in value) for value in finite_volume_face_indices
-        )
-        fv_cells = tuple(
-            tuple(int(item) for item in value) for value in finite_volume_cell_indices
-        )
-        kinetic_cells = tuple(
-            tuple(int(item) for item in value) for value in kinetic_cell_indices
-        )
+        axes = tuple(finite_volume_face_axes)
+        face_indices = tuple(tuple(value) for value in finite_volume_face_indices)
+        fv_cells = tuple(tuple(value) for value in finite_volume_cell_indices)
+        kinetic_cells = tuple(tuple(value) for value in kinetic_cell_indices)
         count = len(interfaces_)
         if (
             count == 0
@@ -442,7 +437,7 @@ class PreparedFixedPartitionHybridRuntime(StrictModule, NonTrainableState):
                 )
             else:
                 raise ValueError("Fixed hybrid FV routes must select boundary faces.")
-            expected_normal = np.zeros((dimension,), dtype=float)
+            expected_normal = np.zeros((dimension,), dtype=np.float64)
             expected_normal[axis] = sign
             if fv_cell != expected_cell or not np.allclose(
                 np.asarray(interface.normal), expected_normal, rtol=0.0, atol=1.0e-12
@@ -1034,7 +1029,7 @@ class DynamicHybridOwnershipState(StrictModule):
         accepted_step: ArrayLike,
         /,
     ):
-        owned = jnp.asarray(finite_volume_owned, dtype=bool)
+        owned = jnp.asarray(finite_volume_owned, dtype=jnp.bool_)
         dwell = jnp.asarray(dwell_steps, dtype=jnp.int32)
         last_change = jnp.asarray(last_change_step, dtype=jnp.int32)
         transitions = jnp.asarray(transition_count, dtype=jnp.int32)
@@ -1085,7 +1080,7 @@ class DynamicHybridCompositeState(StrictModule):
             raise TypeError("kinetic must be SmoothCompressibleKineticState.")
         if not isinstance(ownership, DynamicHybridOwnershipState):
             raise TypeError("ownership must be DynamicHybridOwnershipState.")
-        eligible = jnp.asarray(checkpoint_eligible, dtype=bool)
+        eligible = jnp.asarray(checkpoint_eligible, dtype=jnp.bool_)
         if eligible.shape != ():
             raise ValueError("checkpoint_eligible must be scalar.")
         if (
@@ -1169,9 +1164,9 @@ class DynamicHybridOwnershipPlan(StrictModule, NonTrainableState):
             raise TypeError(
                 "learned_energy must be PreparedLearnedEnergyEquilibriumBinding."
             )
-        shape = tuple(int(value) for value in spatial_shape)
-        stencil = tuple(int(value) for value in finite_volume_stencil_radius)
-        reach = tuple(int(value) for value in kinetic_reach)
+        shape = tuple(spatial_shape)
+        stencil = tuple(finite_volume_stencil_radius)
+        reach = tuple(kinetic_reach)
         enter = float(enter_threshold)
         exit_ = float(exit_threshold)
         dwell = int(minimum_dwell_steps)
@@ -1242,7 +1237,7 @@ class DynamicHybridOwnershipPlan(StrictModule, NonTrainableState):
         *,
         accepted_step: ArrayLike = 0,
     ) -> DynamicHybridOwnershipState:
-        owned = jnp.asarray(finite_volume_owned, dtype=bool)
+        owned = jnp.asarray(finite_volume_owned, dtype=jnp.bool_)
         if owned.shape != self.spatial_shape:
             raise ValueError("Initial ownership must match spatial_shape.")
         step = jnp.asarray(accepted_step, dtype=jnp.int32).reshape(())
@@ -1277,7 +1272,7 @@ class DynamicHybridOwnershipPlan(StrictModule, NonTrainableState):
         if state.finite_volume_owned.shape != self.spatial_shape:
             raise ValueError("Ownership state does not match this plan.")
         scores = jax.lax.stop_gradient(jnp.asarray(score))
-        shocks = jax.lax.stop_gradient(jnp.asarray(shock_mask, dtype=bool))
+        shocks = jax.lax.stop_gradient(jnp.asarray(shock_mask, dtype=jnp.bool_))
         if scores.shape != self.spatial_shape or shocks.shape != self.spatial_shape:
             raise ValueError("Ownership score and shock mask must match spatial_shape.")
         eligible = state.dwell_steps >= self.minimum_dwell_steps
@@ -1321,7 +1316,7 @@ class DynamicHybridOwnershipPlan(StrictModule, NonTrainableState):
             raise ValueError("Dynamic composite state does not match this plan.")
         if decision.finite_volume_owned.shape != self.spatial_shape:
             raise ValueError("Dynamic ownership decision does not match this plan.")
-        boundary = jnp.asarray(accepted_boundary, dtype=bool).reshape(())
+        boundary = jnp.asarray(accepted_boundary, dtype=jnp.bool_).reshape(())
         decision_aligned = decision.decision_step == (
             state.ownership.accepted_step + jnp.asarray(1, dtype=jnp.int32)
         )

@@ -173,8 +173,7 @@ class SampleLayout(StrictModule):
         ]
         if remaining:
             raise ValueError(
-                "SampleLayout does not cover all non-fixed labels; missing "
-                f"{tuple(remaining)!r}."
+                f"SampleLayout does not cover all non-fixed labels; missing {tuple(remaining)!r}."
             )
 
         if self.axis_names is None:
@@ -219,7 +218,7 @@ class PointSampling(StrictModule):
         layout: SampleLayout | None = None,
         design: DesignLike = "latin_hypercube",
     ):
-        counts = (int(count),) if isinstance(count, int) else tuple(int(n) for n in count)
+        counts = (int(count),) if isinstance(count, int) else tuple(count)
         if any(n < 0 for n in counts):
             raise ValueError("PointSampling counts must be non-negative.")
         if layout is not None and not isinstance(layout, SampleLayout):
@@ -395,8 +394,7 @@ class GridBatch(StrictModule, Mapping[str, PyTree[cx.AxisArray]]):  # ty: ignore
                 )
             if len(x) != len(axes):
                 raise ValueError(
-                    f"GridBatch points[{lbl!r}] has {len(x)} axis arrays "
-                    f"but coord_axes_by_label declares {len(axes)}."
+                    f"GridBatch points[{lbl!r}] has {len(x)} axis arrays but coord_axes_by_label declares {len(axes)}."
                 )
             for field, ax_name in zip(x, axes, strict=True):
                 if not isinstance(field, cx.AxisArray):
@@ -405,8 +403,7 @@ class GridBatch(StrictModule, Mapping[str, PyTree[cx.AxisArray]]):  # ty: ignore
                     )
                 if field.dims != (ax_name,):
                     raise ValueError(
-                        f"GridBatch expects points[{lbl!r}] axis to have dims "
-                        f"({ax_name!r},), got {field.dims}."
+                        f"GridBatch expects points[{lbl!r}] axis to have dims ({ax_name!r},), got {field.dims}."
                     )
 
             mask = mask_by_label[lbl]
@@ -426,15 +423,14 @@ class GridBatch(StrictModule, Mapping[str, PyTree[cx.AxisArray]]):  # ty: ignore
                     )
                 if geometry_weight.dims != axes:
                     raise ValueError(
-                        f"GridBatch geometry weight for {lbl!r} must "
-                        f"have dims {axes}, got {geometry_weight.dims}."
+                        f"GridBatch geometry weight for {lbl!r} must have dims {axes}, got {geometry_weight.dims}."
                     )
                 if geometry_weight.data.shape != mask.data.shape:
                     raise ValueError(
                         f"GridBatch geometry weight for {lbl!r} must "
                         f"have shape {mask.data.shape}, got {geometry_weight.data.shape}."
                     )
-                weight_data = jnp.asarray(geometry_weight.data, dtype=float)
+                weight_data = jnp.asarray(geometry_weight.data, dtype=jnp.float64)
                 if bool(jnp.any(~jnp.isfinite(weight_data))) or bool(
                     jnp.any(weight_data < 0.0)
                 ):

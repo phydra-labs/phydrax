@@ -38,7 +38,6 @@ class NeighborScalingCase:
 
 @dataclass(frozen=True)
 class NeighborScalingReport:
-    schema_version: int
     cases: tuple[NeighborScalingCase, ...]
     finite: bool
 
@@ -52,7 +51,7 @@ class NeighborScalingReport:
 def _relation_bytes(state):
     relation = state.pair_relation
     return sum(
-        int(value.nbytes)
+        value.nbytes
         for value in (
             relation.relation.source_indices,
             relation.relation.target_indices,
@@ -70,11 +69,12 @@ def _relation_bytes(state):
 
 def _case(dimension, resolution):
     axes = [
-        (jnp.arange(resolution, dtype=float) + 0.5) / resolution for _ in range(dimension)
+        (jnp.arange(resolution, dtype="float64") + 0.5) / resolution
+        for _ in range(dimension)
     ]
     grids = jnp.meshgrid(*axes, indexing="ij")
     position = jnp.stack(tuple(grid.reshape(-1) for grid in grids), axis=-1)
-    count = int(position.shape[0])
+    count = position.shape[0]
     spacing = 1.0 / resolution
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(count),
@@ -182,7 +182,6 @@ def run_scaling_sweep(*, smoke=False):
         )
     )
     return NeighborScalingReport(
-        schema_version=1,
         cases=cases,
         finite=bool(jnp.all(jnp.isfinite(values))),
     )

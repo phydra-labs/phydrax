@@ -79,7 +79,7 @@ class GINO(AbstractOperatorModel):
         assume_uniform_measure: bool = False,
         key: Key[Array, ""] = DOC_KEY0,
     ):
-        shape = tuple(int(size) for size in latent_shape)
+        shape = tuple(latent_shape)
         if len(shape) != int(coord_dim):
             raise ValueError("latent_shape rank must match coord_dim.")
         if int(latent_channels) <= 0:
@@ -112,7 +112,7 @@ class GINO(AbstractOperatorModel):
         active_modes = (
             tuple(max(1, min(8, size // 2)) for size in shape)
             if modes is None
-            else tuple(int(value) for value in modes)
+            else tuple(modes)
         )
         if len(active_modes) != len(shape) or any(value <= 0 for value in active_modes):
             raise ValueError("modes must give one positive count per latent dimension.")

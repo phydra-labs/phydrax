@@ -30,7 +30,7 @@ from phydrax.particle_physics._hadronization import (
     DarkStringFragmentationPlan,
     fragment_dark_string_chain,
 )
-from phydrax.particle_physics._identity import ParticleCatalogueReference, ParticleRole
+from phydrax.particle_physics._identity import ParticleCatalogReference, ParticleRole
 from phydrax.particle_physics._species import ParticleSpeciesTable
 from phydrax.particle_physics._weights import EventWeightSet, WeightVariationKind
 from phydrax.solver._dark_sector_epoch_runtime import DarkSectorEpochPlan
@@ -92,7 +92,7 @@ def _workflow():
         species_revision_id="9" * 64,
         topology_revision_id="a" * 64,
     )
-    catalogue = ParticleCatalogueReference(
+    catalog = ParticleCatalogReference(
         source_id="workflow-species",
         provider_release="test",
         checksum="checksum",
@@ -102,7 +102,7 @@ def _workflow():
         jnp.asarray((100, -100, 101, 200, -200)),
         jnp.asarray((0.0, 0.0, 0.0, 1.0, 1.0)),
         jnp.asarray((1.0, -1.0, 0.0, 1.0, -1.0)),
-        catalogue=catalogue,
+        catalog=catalog,
         energy_unit=units.energy_unit,
         charge_unit=COULOMB,
     )
@@ -148,7 +148,7 @@ def _workflow():
         production_evidence_ids=("workflow-control",),
     )
     event_plan = ParticleEventPlan(
-        catalogue=catalogue,
+        catalog=catalog,
         momentum_unit=units.energy_unit,
         length_unit=units.scale.dimensional_scale.length_unit,
         time_unit=units.scale.dimensional_scale.time_unit,
@@ -195,7 +195,7 @@ def _workflow():
         end_vertex_indices=jnp.full((1, 7), -1),
         color_flow=color,
         production_vertices=jnp.zeros((1, 3, 4)),
-        vertex_active=jnp.zeros((1, 3), dtype=bool),
+        vertex_active=jnp.zeros((1, 3), dtype="bool"),
         weights=weights,
         source_id="hard-dark-pair",
     )

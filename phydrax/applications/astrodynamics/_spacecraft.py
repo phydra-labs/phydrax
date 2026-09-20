@@ -73,7 +73,7 @@ class SpacecraftDynamicsPlan(StrictModule, NonTrainableState):
         identifier = str(load_id).strip()
         if not identifier:
             raise ValueError("load_id must be non-empty.")
-        times_host = np.asarray(times, dtype=float)
+        times_host = np.asarray(times, dtype=np.float64)
         if (
             times_host.ndim != 1
             or times_host.size < 2
@@ -91,7 +91,7 @@ class SpacecraftDynamicsPlan(StrictModule, NonTrainableState):
                 "bodies": bodies.prepared_id,
                 "context": context.context_id,
                 "load_id": identifier,
-                "num_times": int(times_host.size),
+                "num_times": times_host.size,
             }
         )
 
@@ -205,8 +205,8 @@ class FiniteBurnPlan(StrictModule, NonTrainableState):
         standard_gravity: ArrayLike = 9.80665,
         burn_id: str,
     ):
-        direction = np.asarray(direction_body, dtype=float)
-        lever = np.asarray(lever_arm_body, dtype=float)
+        direction = np.asarray(direction_body, dtype=np.float64)
+        lever = np.asarray(lever_arm_body, dtype=np.float64)
         if direction.shape != (3,) or lever.shape != (3,):
             raise ValueError("Burn direction and lever arm must have shape (3,).")
         norm = float(np.sqrt(np.sum(direction * direction)))
@@ -314,10 +314,10 @@ class ReactionWheelSet(StrictModule, NonTrainableState):
         *,
         wheel_id: str,
     ):
-        axes = np.asarray(axes_body, dtype=float)
-        inertias_ = np.asarray(inertias, dtype=float)
-        torque = np.asarray(maximum_torque, dtype=float)
-        momentum = np.asarray(maximum_momentum, dtype=float)
+        axes = np.asarray(axes_body, dtype=np.float64)
+        inertias_ = np.asarray(inertias, dtype=np.float64)
+        torque = np.asarray(maximum_torque, dtype=np.float64)
+        momentum = np.asarray(maximum_momentum, dtype=np.float64)
         if axes.ndim != 2 or axes.shape[1] != 3:
             raise ValueError("Reaction-wheel axes must have shape (W,3).")
         count = axes.shape[0]

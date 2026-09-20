@@ -307,9 +307,8 @@ def extract_compartment_surfaces(
         value.interface_id: [] for value in complex.interfaces
     }
     lower_counts = {value.interface_id: 0 for value in complex.interfaces}
-    data = np.asarray(labels.asset.values)
+    np.asarray(labels.asset.values)
     valid = np.asarray(labels.asset.valid_mask)
-    shape = data.shape
     # Doubled voxel-index coordinates make half-index boundary vertices integral.
     axes = ((1, 2), (2, 0), (0, 1))
     reflected_world_frame = (
@@ -331,13 +330,13 @@ def extract_compartment_surfaces(
             & (lower != upper)
         )
         for index_array in np.argwhere(supported):
-            index = tuple(int(value) for value in index_array)
+            index = tuple(index_array)
             first = compartment_ids[int(lower[index])]
             second = compartment_ids[int(upper[index])]
             definition = interfaces.get(tuple(sorted((first, second))))
             if definition is None:
                 continue
-            center = np.asarray(index, dtype=int) * 2
+            center = np.asarray(index, dtype=np.int64) * 2
             center[axis] += 1
             corner_offsets = []
             for first_sign, second_sign in (
@@ -346,7 +345,7 @@ def extract_compartment_surfaces(
                 (1, 1),
                 (-1, 1),
             ):
-                offset = np.zeros(3, dtype=int)
+                offset = np.zeros(3, dtype=np.int64)
                 offset[first_axis] = first_sign
                 offset[second_axis] = second_sign
                 corner_offsets.append(tuple((center + offset).tolist()))
@@ -368,7 +367,7 @@ def extract_compartment_surfaces(
             continue
         keys = sorted({point for loop in face_loops for point in loop})
         key_to_index = {key: index for index, key in enumerate(keys)}
-        index_coordinates = np.asarray(keys, dtype=float) / 2.0
+        index_coordinates = np.asarray(keys, dtype=np.float64) / 2.0
         coordinates = labels.asset.spatial_affine.index_to_world(index_coordinates)
         triangles = []
         for loop in face_loops:

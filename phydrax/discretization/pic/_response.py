@@ -65,7 +65,7 @@ class PICParticleResponsePlan(StrictModule, NonTrainableState):
         velocity_ = jnp.asarray(velocity, dtype=gathered.values.dtype)
         charge = jnp.asarray(macrocharge, dtype=velocity_.dtype)
         masses = jnp.asarray(mass, dtype=velocity_.dtype)
-        active = jnp.asarray(active_mask, dtype=bool)
+        active = jnp.asarray(active_mask, dtype=jnp.bool_)
         dt = jnp.asarray(step_size, dtype=velocity_.dtype).reshape(())
         beta = jnp.where(active, charge * dt / (2.0 * jnp.maximum(masses, 1.0e-30)), 0.0)
         magnetic = gathered.values

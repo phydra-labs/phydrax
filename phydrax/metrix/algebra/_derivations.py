@@ -59,7 +59,7 @@ class AlgebraSymmetryBudget(StrictModule, NonTrainableState):
             setattr(self, name, value)
         self.budget_id = canonical_fingerprint(
             {
-                "kind": "algebra-symmetry-budget-v1",
+                "kind": "algebra-symmetry-budget",
                 **dict(zip(names, values, strict=True)),
             }
         )
@@ -136,7 +136,7 @@ class AlgebraSymmetryResourceEvidence(StrictModule, NonTrainableState):
         self.budget_id = budget.budget_id
         self.evidence_id = canonical_fingerprint(
             {
-                "kind": "algebra-symmetry-resources-v1",
+                "kind": "algebra-symmetry-resources",
                 "equations": values[0],
                 "variables": values[1],
                 "nonzeros": values[2],
@@ -226,7 +226,7 @@ class AlgebraDerivationConstraint(StrictModule, NonTrainableState):
         self.resources = resources
         self.constraint_id = canonical_fingerprint(
             {
-                "kind": "algebra-derivation-constraint-v1",
+                "kind": "algebra-derivation-constraint",
                 "algebra": algebra.algebra_id,
                 "rows": self.row_indices,
                 "columns": self.column_indices,

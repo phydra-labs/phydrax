@@ -18,7 +18,7 @@ Framing replaces the sample axis by adjacent frame and within-frame axes:
 import jax.numpy as jnp
 import phydrax as phx
 
-values = jnp.arange(2 * 32 * 3, dtype=float).reshape((2, 32, 3))
+values = jnp.arange(2 * 32 * 3, dtype="float64").reshape((2, 32, 3))
 frames = phx.signal.frame(values, 8, 4, axis=1)
 assert frames.shape == (2, 7, 8, 3)
 ```

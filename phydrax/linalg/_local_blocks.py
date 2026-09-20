@@ -43,8 +43,8 @@ class LocalBlockFactorization(StrictModule):
         self.metric_sqrt = metric_sqrt
         self.failed_blocks = failed_blocks
         self.kind = kind
-        self.num_blocks = int(factors.shape[0])
-        self.block_size = int(factors.shape[1])
+        self.num_blocks = factors.shape[0]
+        self.block_size = factors.shape[1]
 
 
 def prepare_local_block_factorization(
@@ -58,10 +58,10 @@ def prepare_local_block_factorization(
     matrices = jnp.asarray(blocks)
     if matrices.ndim != 3 or matrices.shape[1] != matrices.shape[2]:
         raise ValueError("Local block factorization requires square blocks.")
-    if any(int(size) < 1 for size in matrices.shape):
+    if any(size < 1 for size in matrices.shape):
         raise ValueError("Local block dimensions must be positive.")
     if not jnp.issubdtype(matrices.dtype, jnp.inexact):
-        matrices = matrices.astype(float)
+        matrices = matrices.astype("float64")
     num_blocks, block_size, _ = matrices.shape
     real_dtype = jnp.empty((), dtype=matrices.dtype).real.dtype
     epsilon = jnp.finfo(real_dtype).eps

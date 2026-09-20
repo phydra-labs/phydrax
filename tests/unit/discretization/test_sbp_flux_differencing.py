@@ -12,9 +12,7 @@ def _grid(count=24, dimension=1):
     names = tuple("xyz"[:dimension])
     grid = phx.discretization.TensorGridPlan(
         tuple(
-            phx.discretization.UniformAxisSpec(
-                count, periodic=True, endpoint=False
-            )
+            phx.discretization.UniformAxisSpec(count, periodic=True, endpoint=False)
             for _ in range(dimension)
         ),
         axis_names=names,
@@ -71,9 +69,7 @@ def test_sbp_flux_differencing_preserves_constant_state_and_conserved_totals():
         phx.discretization.EntropyConservativeEulerFluxPlan()
     )
     problem = phx.equations.ConservationProblemIR("euler", "state", system, None)
-    compiled = phx.equations.compile_conservation_problem(
-        problem, discretization, method
-    )
+    compiled = phx.equations.compile_conservation_problem(problem, discretization, method)
     constant = system.primitive_to_conserved(
         jnp.broadcast_to(jnp.asarray((1.0, 0.2, 1.0)), discretization.state_shape)
     )
@@ -97,7 +93,10 @@ def test_sbp_flux_differencing_preserves_constant_state_and_conserved_totals():
     np.testing.assert_allclose(constant_rate, 0.0, atol=2e-12)
     np.testing.assert_allclose(conservation_rate, 0.0, atol=2e-12)
     assert compiled.dynamics.report.sparse
-    assert compiled.dynamics.report.pair_counts[0] < compiled.dynamics.report.dense_pair_count
+    assert (
+        compiled.dynamics.report.pair_counts[0]
+        < compiled.dynamics.report.dense_pair_count
+    )
     assert jnp.isfinite(compiled.stable_step(smooth))
 
 
@@ -133,7 +132,10 @@ def test_sbp_entropy_diagnostics_and_linearization_are_finite():
     residual, diagnostics = compiled.residual_with_diagnostics(0.0, state)
     balance_terms = np.asarray(discretization.quadrature_weights[..., None] * residual)
     expected_rate = np.asarray(
-        [math.fsum(balance_terms[:, index].tolist()) for index in range(balance_terms.shape[1])]
+        [
+            math.fsum(balance_terms[:, index].tolist())
+            for index in range(balance_terms.shape[1])
+        ]
     )
     np.testing.assert_array_equal(diagnostics.conservation_rate, expected_rate)
     _, pushforward, pullback = compiled.linearize(0.0, state)

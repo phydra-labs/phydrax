@@ -135,7 +135,7 @@ def test_factorized_assembly_rejects_coupled_masks():
         [[0.0, 1.0], [1.0, 1.0]],
         [[1.0, 0.0], [1.0, 1.0]],
     )
-    mask = cx.AxisArray(jnp.ones((2, 2), dtype=bool), dims=("x", "y"))
+    mask = cx.AxisArray(jnp.ones((2, 2), dtype="bool"), dims=("x", "y"))
 
     with pytest.raises(ValueError, match="separable weights"):
         phx.integration.factorized_inner_product(field, field, _batch(mask=mask))

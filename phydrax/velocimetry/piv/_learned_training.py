@@ -83,23 +83,23 @@ class LearnedPIVDataset(StrictModule, NonTrainableState):
         ):
             raise TypeError("Learned PIV images must be real-valued.")
         if not jnp.issubdtype(first.dtype, jnp.inexact):
-            first = first.astype(float)
+            first = first.astype("float64")
         if not jnp.issubdtype(second.dtype, jnp.inexact):
-            second = second.astype(float)
+            second = second.astype("float64")
         dtype = jnp.result_type(first.dtype, second.dtype)
         first = first.astype(dtype)
         second = second.astype(dtype)
         batch_size, rows, columns, _ = first.shape
         mask_shape = (batch_size, rows, columns)
         first_mask = (
-            jnp.ones(mask_shape, dtype=bool)
+            jnp.ones(mask_shape, dtype=jnp.bool_)
             if first_valid is None
-            else jnp.asarray(first_valid, dtype=bool)
+            else jnp.asarray(first_valid, dtype=jnp.bool_)
         )
         second_mask = (
-            jnp.ones(mask_shape, dtype=bool)
+            jnp.ones(mask_shape, dtype=jnp.bool_)
             if second_valid is None
-            else jnp.asarray(second_valid, dtype=bool)
+            else jnp.asarray(second_valid, dtype=jnp.bool_)
         )
         if first_mask.shape != mask_shape or second_mask.shape != mask_shape:
             raise ValueError(
@@ -136,9 +136,9 @@ class LearnedPIVDataset(StrictModule, NonTrainableState):
             target_mask = None
         else:
             target_mask = (
-                jnp.ones(mask_shape, dtype=bool)
+                jnp.ones(mask_shape, dtype=jnp.bool_)
                 if target_valid is None
-                else jnp.asarray(target_valid, dtype=bool)
+                else jnp.asarray(target_valid, dtype=jnp.bool_)
             )
             if target_mask.shape != mask_shape:
                 raise ValueError("target_valid must have shape (batch, rows, columns).")
@@ -219,15 +219,15 @@ class LearnedPIVDataset(StrictModule, NonTrainableState):
 
     @property
     def case_count(self) -> int:
-        return int(self.first_images.shape[0])
+        return self.first_images.shape[0]
 
     @property
     def image_shape(self) -> tuple[int, int]:
-        return (int(self.first_images.shape[1]), int(self.first_images.shape[2]))
+        return (self.first_images.shape[1], self.first_images.shape[2])
 
     @property
     def channel_count(self) -> int:
-        return int(self.first_images.shape[3])
+        return self.first_images.shape[3]
 
 
 class LearnedPIVTrainingConfig(StrictModule, NonTrainableState):
@@ -498,14 +498,13 @@ def fit_learned_piv(
         axis=(1, 2),
     )
     target_support = (
-        np.zeros((dataset.case_count,), dtype=bool)
+        np.zeros((dataset.case_count,), dtype=np.bool_)
         if dataset.target_valid is None
         else np.any(np.asarray(dataset.target_valid), axis=(1, 2))
     )
     if not np.all(image_support | target_support):
         raise ValueError(
-            "Every learned-PIV training case must contain supported image or target "
-            "evidence."
+            "Every learned-PIV training case must contain supported image or target evidence."
         )
 
     transformation = (
@@ -588,7 +587,7 @@ def fit_learned_piv(
     final_loss = total_history[-1] if total_history else jnp.asarray(jnp.nan, dtype=dtype)
     control.emit(TrainingIterationKind.RUN_TERMINAL, metrics={"final_loss": final_loss})
 
-    key_words = tuple(int(word) for word in np.asarray(jr.key_data(key)).reshape(-1))
+    key_words = tuple(np.asarray(jr.key_data(key)).reshape(-1))
     training_id = canonical_fingerprint(
         {
             "kind": "learned-piv-training-evidence",

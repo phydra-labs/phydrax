@@ -48,11 +48,11 @@ class VascularDeviceNetwork:
         device_quadratic_loss_pa_s2_m6: ArrayLike,
         /,
     ) -> VascularDeviceNetwork:
-        graph = np.asarray(incidence, dtype=float)
-        compliance = np.asarray(node_compliance_m3_pa, dtype=float)
-        inertance = np.asarray(edge_inertance_pa_s2_m3, dtype=float)
-        resistance = np.asarray(edge_resistance_pa_s_m3, dtype=float)
-        quadratic = np.asarray(device_quadratic_loss_pa_s2_m6, dtype=float)
+        graph = np.asarray(incidence, dtype=np.float64)
+        compliance = np.asarray(node_compliance_m3_pa, dtype=np.float64)
+        inertance = np.asarray(edge_inertance_pa_s2_m3, dtype=np.float64)
+        resistance = np.asarray(edge_resistance_pa_s_m3, dtype=np.float64)
+        quadratic = np.asarray(device_quadratic_loss_pa_s2_m6, dtype=np.float64)
         if graph.ndim != 2 or graph.shape[0] == 0 or graph.shape[1] == 0:
             raise ValueError("Vascular incidence must have node-by-edge shape.")
         if not np.all(np.isin(graph, (-1.0, 0.0, 1.0))) or np.any(

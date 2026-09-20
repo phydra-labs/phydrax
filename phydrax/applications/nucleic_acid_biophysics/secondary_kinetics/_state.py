@@ -12,7 +12,7 @@ from .._construct import NucleicAcidConstruct, NucleotideKey
 
 @dataclass(frozen=True, slots=True)
 class StrandComplexPartition:
-    """Canonical partition of physically labelled strand copies.
+    """Canonical partition of physically labeled strand copies.
 
     Permuting input blocks or members does not change identity. Identical
     sequences on distinct strand IDs remain distinct physical copies.
@@ -53,7 +53,7 @@ class StrandComplexPartition:
 
     def fingerprint(self) -> str:
         return canonical_fingerprint(
-            ("labelled-strand-partition", self.strand_ids, self.complexes)
+            ("labeled-strand-partition", self.strand_ids, self.complexes)
         )
 
 

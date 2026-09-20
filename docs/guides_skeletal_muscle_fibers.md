@@ -116,7 +116,7 @@ from phydrax.applications.skeletal_muscle.fibers import (
 positions = jnp.zeros((1, 5, 3)).at[0, :, 0].set(jnp.linspace(0.0, 10.0, 5))
 stimulus = PrescribedFiberStimulusSchedule(
     jnp.asarray([0.0]), jnp.asarray([0.05]), jnp.asarray([150.0]),
-    jnp.zeros((1, 1, 5), dtype=bool).at[0, 0, 0].set(True),
+    jnp.zeros((1, 1, 5), dtype="bool").at[0, 0, 0].set(True),
 )
 runtime = StructuredFiberResponsePlan(
     ("fiber-a",), positions, stimulus, jnp.asarray([0.0, 0.5, 1.0]),

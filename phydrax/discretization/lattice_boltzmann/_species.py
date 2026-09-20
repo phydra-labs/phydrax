@@ -52,8 +52,8 @@ class SpeciesBoundaryCondition(StrictModule, NonTrainableState):
         if not isinstance(kind, SpeciesBoundaryKind):
             raise TypeError("kind must be a SpeciesBoundaryKind.")
         mask = np.asarray(node_mask)
-        normal = np.asarray(outward_normal, dtype=float)
-        prescribed = np.asarray(value, dtype=float)
+        normal = np.asarray(outward_normal, dtype=np.float64)
+        prescribed = np.asarray(value, dtype=np.float64)
         if (
             mask.ndim == 0
             or normal.ndim != mask.ndim + 1
@@ -63,7 +63,7 @@ class SpeciesBoundaryCondition(StrictModule, NonTrainableState):
             raise ValueError("Boundary mask and outward-normal shapes are invalid.")
         if np.any(~np.isfinite(normal)):
             raise ValueError("Boundary normals must be finite.")
-        selected_norm = np.linalg.norm(normal[mask.astype(bool)], axis=-1)
+        selected_norm = np.linalg.norm(normal[mask.astype("bool")], axis=-1)
         if selected_norm.size and np.any(selected_norm <= 0.0):
             raise ValueError("Every selected boundary node must have a nonzero normal.")
         if prescribed.ndim == 0 or np.any(~np.isfinite(prescribed)):
@@ -74,13 +74,13 @@ class SpeciesBoundaryCondition(StrictModule, NonTrainableState):
             {
                 "kind": "species-lattice-boundary",
                 "boundary_kind": kind.value,
-                "mask": array_tree_fingerprint(mask.astype(bool)),
+                "mask": array_tree_fingerprint(mask.astype("bool")),
                 "normal": array_tree_fingerprint(normal),
                 "value": array_tree_fingerprint(prescribed),
             }
         )
         self.kind = kind
-        self.node_mask = jnp.asarray(mask, dtype=bool)
+        self.node_mask = jnp.asarray(mask, dtype=jnp.bool_)
         self.outward_normal = jnp.asarray(normal)
         self.value = jnp.asarray(prescribed)
         self.boundary_id = generated if boundary_id is None else str(boundary_id)
@@ -96,7 +96,7 @@ class SpeciesLatticeBoltzmannPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, diffusivity: ArrayLike, /, *, plan_id: str | None = None):
-        coefficients = np.asarray(diffusivity, dtype=float)
+        coefficients = np.asarray(diffusivity, dtype=np.float64)
         if (
             coefficients.ndim != 1
             or coefficients.size == 0

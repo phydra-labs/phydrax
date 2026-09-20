@@ -36,7 +36,7 @@ def canonical_row_route_ids(
     width = int(route_width)
     if width <= 0:
         raise ValueError("route_width must be positive.")
-    row_count = int(order.shape[0])
+    row_count = order.shape[0]
     inverse = (
         jnp.zeros((row_count,), dtype=jnp.int32)
         .at[order]
@@ -165,8 +165,7 @@ class RelationExecutionState(NonTrainableState, StrictModule):
         for value in arrays:
             if value.ndim == 0 or value.shape[0] != self.route_capacity:
                 raise ValueError(
-                    "Every route value leaf must begin with route capacity "
-                    f"{self.route_capacity}; got {value.shape}."
+                    f"Every route value leaf must begin with route capacity {self.route_capacity}; got {value.shape}."
                 )
         reduced = [
             self._reduce_leaf(

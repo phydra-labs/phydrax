@@ -65,7 +65,7 @@ def _evaluate_target_expression(
             else coordinate_index - 1
         )
         reshape = [1] * len(target_shape)
-        reshape[target_axis] = int(coordinate.size)
+        reshape[target_axis] = coordinate.size
         return jnp.broadcast_to(coordinate.reshape(reshape), target_shape)
     if op == "field":
         if (

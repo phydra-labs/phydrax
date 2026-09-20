@@ -160,7 +160,7 @@ def chern_character_form(
             "curvature": array_tree_fingerprint(values),
             "order": k,
             "coordinate_dimension": dimension,
-            "bundle_rank": int(values.shape[-1]),
+            "bundle_rank": values.shape[-1],
             "source_id": source,
             "convention": convention,
         }
@@ -170,7 +170,7 @@ def chern_character_form(
         order=k,
         degree=2 * k,
         coordinate_dimension=dimension,
-        bundle_rank=int(values.shape[-1]),
+        bundle_rank=values.shape[-1],
         source_id=source,
         convention=convention,
         reality_residual=reality,

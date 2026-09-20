@@ -99,7 +99,7 @@ def project_isotropic_coulomb_impulse(
     normal = jnp.asarray(trial_normal, dtype=tangent.dtype)
     if tangent.ndim < 1 or normal.shape != tangent.shape[:-1]:
         raise ValueError("trial_normal must match trial_tangent batch dimensions.")
-    tangent_dimension = int(tangent.shape[-1])
+    tangent_dimension = tangent.shape[-1]
     if tangent_dimension not in (1, 2):
         raise ValueError("Coulomb tangent coordinates must have dimension one or two.")
     coefficient = _broadcast_contact_parameter(
@@ -243,7 +243,7 @@ def project_friction_ball(
     sticking = norm <= radius
     sliding = ~sticking
     direction = tangent / safe_norm[..., None]
-    tangent_dimension = int(tangent.shape[-1])
+    tangent_dimension = tangent.shape[-1]
     identity = jnp.broadcast_to(
         jnp.eye(tangent_dimension, dtype=tangent.dtype),
         tangent.shape[:-1] + (tangent_dimension, tangent_dimension),
@@ -341,9 +341,9 @@ class HardContactRoutePlan(StrictModule, NonTrainableState):
         ):
             raise TypeError("route_keys must be an integer array with contact capacity.")
         valid_ = (
-            np.ones(left.shape, dtype=bool)
+            np.ones(left.shape, dtype=np.bool_)
             if valid is None
-            else np.asarray(valid, dtype=bool)
+            else np.asarray(valid, dtype=np.bool_)
         )
         if valid_.shape != left.shape:
             raise ValueError("valid must have contact-capacity shape.")
@@ -440,7 +440,7 @@ class HardContactRoutePlan(StrictModule, NonTrainableState):
 
     @property
     def capacity(self) -> int:
-        return int(self.left_body.shape[0])
+        return self.left_body.shape[0]
 
     def prepare(self, bodies: PreparedRigidBodySet, /) -> PreparedHardContact:
         return PreparedHardContact(self, bodies)
@@ -562,7 +562,7 @@ class PreparedHardContact(StrictModule, NonTrainableState):
             right_present & (right >= capacity)
         ):
             raise ValueError("Hard-contact body route exceeds rigid-body capacity.")
-        active_bodies = np.asarray(bodies.particles.active_mask, dtype=bool)
+        active_bodies = np.asarray(bodies.particles.active_mask, dtype=np.bool_)
         safe_left = np.where(left_present, left, 0)
         safe_right = np.where(right_present, right, 0)
         endpoints_active = (~left_present | active_bodies[safe_left]) & (
@@ -570,7 +570,7 @@ class PreparedHardContact(StrictModule, NonTrainableState):
         )
         if np.any(valid & ~endpoints_active):
             raise ValueError("Valid hard-contact routes must reference active bodies.")
-        mobile = active_bodies & ~np.asarray(bodies.fixed_mask, dtype=bool)
+        mobile = active_bodies & ~np.asarray(bodies.fixed_mask, dtype=np.bool_)
         responds = (left_present & mobile[safe_left]) | (
             right_present & mobile[safe_right]
         )
@@ -606,8 +606,8 @@ class PreparedHardContact(StrictModule, NonTrainableState):
         return HardContactState(
             jnp.zeros((self.capacity,), dtype=dtype),
             jnp.zeros((self.capacity, self.ambient_dimension), dtype=dtype),
-            jnp.zeros((self.capacity,), dtype=bool),
-            jnp.zeros((self.capacity,), dtype=bool),
+            jnp.zeros((self.capacity,), dtype=jnp.bool_),
+            jnp.zeros((self.capacity,), dtype=jnp.bool_),
             jnp.asarray(0, dtype=jnp.int32),
         )
 
@@ -706,7 +706,7 @@ class PreparedHardContact(StrictModule, NonTrainableState):
             & routes_match
         )
         geometry_successful = (
-            jnp.asarray(geometry.successful, dtype=bool)
+            jnp.asarray(geometry.successful, dtype=jnp.bool_)
             & routes_match
             & jnp.all(
                 jnp.where(
@@ -1272,8 +1272,8 @@ def hard_contact_candidate(
         raise TypeError("state must be HardContactState.")
     normal = jnp.asarray(normal_impulse, dtype=state.normal_impulse.dtype)
     tangent = jnp.asarray(tangent_impulse, dtype=state.tangent_impulse.dtype)
-    active_ = jnp.asarray(active, dtype=bool)
-    impacting_ = jnp.asarray(impacting, dtype=bool)
+    active_ = jnp.asarray(active, dtype=jnp.bool_)
+    impacting_ = jnp.asarray(impacting, dtype=jnp.bool_)
     if (
         normal.shape != state.normal_impulse.shape
         or tangent.shape != state.tangent_impulse.shape
@@ -1302,7 +1302,7 @@ def accept_hard_contact_candidate(
         candidate, HardContactState
     ):
         raise TypeError("current and candidate must be HardContactState values.")
-    predicate = jnp.asarray(accepted, dtype=bool)
+    predicate = jnp.asarray(accepted, dtype=jnp.bool_)
     if predicate.ndim != 0:
         raise ValueError("accepted must be scalar.")
     return tree_where(predicate, candidate, current)

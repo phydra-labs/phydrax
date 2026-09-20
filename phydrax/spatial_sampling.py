@@ -56,7 +56,7 @@ def _identifier(value: str, name: str, /) -> str:
 
 
 def _shape(value: Sequence[int], name: str, /) -> tuple[int, ...]:
-    result = tuple(int(size) for size in value)
+    result = tuple(value)
     if not result or any(size <= 0 for size in result):
         raise ValueError(f"{name} must contain positive dimensions.")
     return result
@@ -151,24 +151,24 @@ class ObservationSamplingPlan(StrictModule, NonTrainableState):
         indices_ = indices_.astype(jnp.int32)
         weights_ = jax.lax.stop_gradient(jnp.asarray(weights))
         if not jnp.issubdtype(weights_.dtype, jnp.inexact):
-            weights_ = weights_.astype(float)
+            weights_ = weights_.astype("float64")
         if indices_.ndim < 1 or indices_.shape != weights_.shape:
             raise ValueError(
                 "indices and weights must have one identical route-width shape."
             )
-        if int(indices_.shape[-1]) < 1:
+        if indices_.shape[-1] < 1:
             raise ValueError("Observation route width must be positive.")
         valid_ = (
-            jnp.ones(indices_.shape, dtype=bool)
+            jnp.ones(indices_.shape, dtype=jnp.bool_)
             if valid is None
-            else jnp.asarray(valid, dtype=bool)
+            else jnp.asarray(valid, dtype=jnp.bool_)
         )
         if valid_.shape != indices_.shape:
             raise ValueError("valid must match indices shape.")
         support_ = (
             jnp.any(valid_, axis=-1)
             if support is None
-            else jnp.asarray(support, dtype=bool)
+            else jnp.asarray(support, dtype=jnp.bool_)
         )
         if support_.shape != indices_.shape[:-1]:
             raise ValueError("support must match the observation query shape.")
@@ -289,14 +289,14 @@ class PreparedObservationOperator(StrictModule, NonTrainableState):
                 f"{name} must begin with source shape {self.source_shape}; got {array.shape}."
             )
         if not jnp.issubdtype(array.dtype, jnp.inexact):
-            array = array.astype(float)
+            array = array.astype("float64")
         payload_shape = tuple(array.shape[len(self.source_shape) :])
         return array.reshape((self.source_size,) + payload_shape)
 
     def _flatten_mask(self, source_mask: ArrayLike | None, /) -> Array | None:
         if source_mask is None:
             return None
-        mask = jnp.asarray(source_mask, dtype=bool)
+        mask = jnp.asarray(source_mask, dtype=jnp.bool_)
         if mask.shape != self.source_shape:
             raise ValueError(
                 f"source_mask must have shape {self.source_shape}; got {mask.shape}."
@@ -373,7 +373,7 @@ class PreparedObservationOperator(StrictModule, NonTrainableState):
     ) -> Array:
         messages = jnp.asarray(cotangent)
         if not jnp.issubdtype(messages.dtype, jnp.inexact):
-            messages = messages.astype(float)
+            messages = messages.astype("float64")
         query_shape = self.query_shape
         if (
             messages.ndim < len(query_shape)
@@ -540,7 +540,7 @@ class DG0ObservationPlan:
             raise ValueError("containment_tolerance must be finite and non-negative.")
         flat = points.reshape((-1, 3))
         indices = np.zeros((len(flat), 1), dtype=np.int32)
-        support = np.zeros((len(flat),), dtype=bool)
+        support = np.zeros((len(flat),), dtype=np.bool_)
         for query_index, point in enumerate(flat):
             for cell_index, cell in enumerate(cells):
                 barycentric = _tetrahedron_weights(nodes[cell], point)
@@ -554,7 +554,7 @@ class DG0ObservationPlan:
         support = support.reshape(query_shape)
         return ObservationSamplingPlan(
             indices.reshape(query_shape + (1,)),
-            np.ones(query_shape + (1,), dtype=float),
+            np.ones(query_shape + (1,), dtype=np.float64),
             (len(cells),),
             operator_kind="tetrahedral-dg0",
             source_geometry_id=str(self.mesh_id),
@@ -632,8 +632,8 @@ class P1ObservationPlan:
         points = self.query_points_mm.reshape((-1, 3))
         supplied = None if self.cell_indices is None else self.cell_indices.reshape((-1,))
         indices = np.zeros((points.shape[0], 4), dtype=np.int32)
-        weights = np.zeros((points.shape[0], 4), dtype=float)
-        support = np.zeros((points.shape[0],), dtype=bool)
+        weights = np.zeros((points.shape[0], 4), dtype=np.float64)
+        support = np.zeros((points.shape[0],), dtype=np.bool_)
         for query_index, point in enumerate(points):
             candidate_cells = (
                 range(self.tetrahedra.shape[0])
@@ -703,9 +703,9 @@ class ElectrodeObservationPlan:
         if not isinstance(self.require_complete_coverage, bool):
             raise TypeError("require_complete_coverage must be boolean.")
         valid = (
-            np.ones(indices.shape, dtype=bool)
+            np.ones(indices.shape, dtype=np.bool_)
             if self.valid is None
-            else np.array(self.valid, dtype=bool, copy=True)
+            else np.array(self.valid, dtype=np.bool_, copy=True)
         )
         if valid.shape != indices.shape:
             raise ValueError("valid must match source_indices shape.")
@@ -845,8 +845,8 @@ class SurfaceObservationPlan:
         points = self.query_points_mm.reshape((-1, 3))
         supplied = None if self.face_indices is None else self.face_indices.reshape((-1,))
         indices = np.zeros((points.shape[0], 3), dtype=np.int32)
-        weights = np.zeros((points.shape[0], 3), dtype=float)
-        support = np.zeros((points.shape[0],), dtype=bool)
+        weights = np.zeros((points.shape[0], 3), dtype=np.float64)
+        support = np.zeros((points.shape[0],), dtype=np.bool_)
         for query_index, point in enumerate(points):
             candidates = (
                 range(self.triangles.shape[0])
@@ -927,7 +927,7 @@ class TimeObservationPlan:
         support = (query >= source[0] - tolerance) & (query <= source[-1] + tolerance)
         if source.size == 1:
             indices = np.zeros((query.size, 1), dtype=np.int32)
-            weights = np.ones((query.size, 1), dtype=float)
+            weights = np.ones((query.size, 1), dtype=np.float64)
             support &= np.abs(query - source[0]) <= tolerance
         else:
             upper = np.searchsorted(source, query, side="right")

@@ -249,7 +249,7 @@ explicit:
 ```python
 conductivity = log_conductivity.transform(
     jnp.exp,
-    transform_id="exp-lognormal-v1",
+    transform_id="exp-lognormal",
 )
 positive_sample = conductivity.sample(realization)
 ```
@@ -432,7 +432,7 @@ factorization:
 ```python
 observation_times = jnp.linspace(0.0, 1.0, 16)
 prediction_times = jnp.linspace(-0.1, 1.1, 24)
-observation_available = jnp.ones(observation_times.shape, dtype=bool)
+observation_available = jnp.ones(observation_times.shape, dtype="bool")
 observation_values = jnp.sin(2.0 * jnp.pi * observation_times)
 
 plan = phx.uq.compile_state_space_kernel(
@@ -1350,7 +1350,7 @@ truncate the requested problem. `multiobjective_bayesian_optimize` records
 invalid attempts, keys, acquisition Monte Carlo errors, work identities, and
 resource bounds. Its returned Pareto mask/front and hypervolume describe only
 the finite feasible noisy observations. They are not the latent GP front, an
-independently reanalysed physical front, or a global optimum, and budget
+independently reanalyzed physical front, or a global optimum, and budget
 exhaustion is only a termination reason. See
 [Bayesian inference and ensembles](api/uq/inference.md#correlated-constrained-noisy-qhvi)
 for constructor and result details.
@@ -2266,7 +2266,7 @@ inside the same kernel and GP contracts:
 
 ```python
 graph = phx.graph.GraphIR(
-    nodes=jnp.arange(3, dtype=float)[:, None],
+    nodes=jnp.arange(3, dtype="float64")[:, None],
     edges={"conductance": jnp.asarray([1.0, 1.0, 2.0, 2.0])},
     senders=jnp.asarray([0, 1, 1, 2], dtype=jnp.int32),
     receivers=jnp.asarray([1, 0, 2, 1], dtype=jnp.int32),
@@ -2451,7 +2451,7 @@ return coherent cross-output draws:
 
 ```python
 output_names = ("velocity", "pressure")
-observation_mask = jnp.ones((sensor_x.size, 2), dtype=bool)
+observation_mask = jnp.ones((sensor_x.size, 2), dtype="bool")
 observation_mask = observation_mask.at[::3, 1].set(False)
 vector_physical_mean = jnp.stack((4.0 * basis, -2.0 * basis), axis=1)
 vector_observations = vector_physical_mean + jnp.stack(
@@ -2881,7 +2881,7 @@ sensitivity design.
 Physical-equilibrium support additionally requires
 `PhysicalEquilibriumSupportProvenance`: a rights-checked reference manifest,
 condition/state support, sampling method, and accepted convergence evidence.
-Relabelling proposal or empirical samples cannot create equilibrium evidence.
+Relabeling proposal or empirical samples cannot create equilibrium evidence.
 `EnsembleObservablePlan` receives already evaluated per-conformation observables,
 their measured aggregate, covariance, immutable case/source ancestry, and usage
 `calibration`, `model-selection`, or `held-out`; nonlinear observables must never

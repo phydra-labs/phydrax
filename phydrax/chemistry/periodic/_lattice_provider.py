@@ -102,7 +102,7 @@ class LatticeDynamicsRequest(StrictModule, NonTrainableState):
         relativity_id: str,
         input_artifact_ids: tuple[str, ...],
     ):
-        orders = tuple(int(value) for value in requested_orders)
+        orders = tuple(requested_orders)
         if (
             not orders
             or len(set(orders)) != len(orders)
@@ -292,7 +292,7 @@ class LatticeDynamicsArtifactSet(StrictModule, NonTrainableState):
                 )
         if self.third_order is not None and (
             not capabilities.third_order_force_constants
-            or int(self.third_order.atom_triplets.shape[0]) > request.maximum_ifc3_routes
+            or self.third_order.atom_triplets.shape[0] > request.maximum_ifc3_routes
             or self.third_order.system_id != request.system_id
         ):
             raise ValueError(

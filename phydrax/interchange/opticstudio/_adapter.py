@@ -204,8 +204,7 @@ class OpticStudioBackend(AbstractExternalBackend, NonTrainableState):
                 connection.disconnect()
             except BaseException as cleanup_error:
                 connection_error.add_note(
-                    "OpticStudio cleanup also failed: "
-                    f"{type(cleanup_error).__name__}: {cleanup_error}"
+                    f"OpticStudio cleanup also failed: {type(cleanup_error).__name__}: {cleanup_error}"
                 )
             raise
 
@@ -313,15 +312,15 @@ class OpticStudioSession:
         self.__require_open()
         settings = dict(request.settings)
         if request.analysis == "cardinal-points":
-            vendor_result = self.__zospy.analyses.reports.CardinalPoints(**settings).run(
+            vendor_result = self.__zospy.analyzes.reports.CardinalPoints(**settings).run(
                 self.__system, oncomplete="Close"
             )
         elif request.analysis == "surface-data":
-            vendor_result = self.__zospy.analyses.reports.SurfaceData(**settings).run(
+            vendor_result = self.__zospy.analyzes.reports.SurfaceData(**settings).run(
                 self.__system, oncomplete="Close"
             )
         else:
-            vendor_result = self.__zospy.analyses.reports.SystemData().run(
+            vendor_result = self.__zospy.analyzes.reports.SystemData().run(
                 self.__system, oncomplete="Close"
             )
         return _canonical_result_json(vendor_result.to_json())
@@ -471,7 +470,7 @@ def export_sequential_to_opticstudio(
     session: OpticStudioSession,
     /,
     *,
-    length_unit_in_metres: float,
+    length_unit_in_meters: float,
 ) -> AdapterReport:
     """Replace the session system with a strict supported sequential-plan export."""
 
@@ -480,10 +479,10 @@ def export_sequential_to_opticstudio(
     if session.closed:
         raise RuntimeError("OpticStudio session is closed.")
     _reject_traced_values(plan, "plan")
-    _reject_traced_values(length_unit_in_metres, "length_unit_in_metres")
-    length_scale = float(length_unit_in_metres)
+    _reject_traced_values(length_unit_in_meters, "length_unit_in_meters")
+    length_scale = float(length_unit_in_meters)
     if not math.isfinite(length_scale) or length_scale <= 0.0:
-        raise ValueError("length_unit_in_metres must be finite and positive.")
+        raise ValueError("length_unit_in_meters must be finite and positive.")
     preflight = _preflight_sequential_export(plan, length_scale)
     if preflight.export is None:
         raise _OpticStudioUnsupportedFeatureError(
@@ -585,7 +584,7 @@ def _preflight_sequential_export(
                 rationale=f"The plan contains {interaction} interactions.",
             )
         )
-    aperture_active = np.asarray(plan.aperture_active, dtype=bool)
+    aperture_active = np.asarray(plan.aperture_active, dtype=np.bool_)
     if bool(np.any(aperture_active)):
         requirements.append(
             AdapterRequirement(
@@ -632,20 +631,20 @@ def _preflight_sequential_export(
         {
             "kind": "opticstudio-sequential-export",
             "source": source_id,
-            "length_unit_in_metres": length_scale,
+            "length_unit_in_meters": length_scale,
             "profile": "plane-sphere-conic-isotropic-circular-aperture",
         }
     )
     source_profile = AdapterFormatProfile(
         "phydrax-sequential-optics-plan",
         qualifiers={
-            "source_length_unit_in_metres": format(length_scale, ".17g"),
+            "source_length_unit_in_meters": format(length_scale, ".17g"),
         },
     )
     target_profile = AdapterFormatProfile(
         "opticstudio-sequential-system",
         qualifiers={
-            "lens_unit": "metre",
+            "lens_unit": "meter",
             "material_model": "isotropic-index",
             "surface_subset": "plane-sphere-conic",
         },
@@ -673,10 +672,10 @@ def _preflight_sequential_export(
         )
         return _SequentialPreflight(None, report, tuple(sorted(unsupported)))
 
-    curvatures = np.asarray(plan.curvatures, dtype=float)
-    conics = np.asarray(plan.conic_constants, dtype=float)
-    semi_diameters = np.asarray(plan.clear_semi_diameters, dtype=float)
-    refractive_indices = np.asarray(plan.refractive_indices, dtype=float)
+    curvatures = np.asarray(plan.curvatures, dtype=np.float64)
+    conics = np.asarray(plan.conic_constants, dtype=np.float64)
+    semi_diameters = np.asarray(plan.clear_semi_diameters, dtype=np.float64)
+    refractive_indices = np.asarray(plan.refractive_indices, dtype=np.float64)
     surfaces = []
     for index, surface_kind in enumerate(surface_kinds):
         curvature = float(curvatures[index])
@@ -738,12 +737,14 @@ def _preflight_sequential_export(
 def _coaxial_positions(
     frames: Sequence[Any], length_scale: float, /
 ) -> tuple[np.ndarray, tuple[AdapterLoss, ...], tuple[str, ...]]:
-    rotations = tuple(np.asarray(frame.rotation, dtype=float) for frame in frames)
-    translations = tuple(np.asarray(frame.translation, dtype=float) for frame in frames)
+    rotations = tuple(np.asarray(frame.rotation, dtype=np.float64) for frame in frames)
+    translations = tuple(
+        np.asarray(frame.translation, dtype=np.float64) for frame in frames
+    )
     losses: list[AdapterLoss] = []
     features: list[str] = []
     if not rotations:
-        return np.empty((0,), dtype=float), (), ()
+        return np.empty((0,), dtype=np.float64), (), ()
     reference_rotation = rotations[0]
     reference_translation = translations[0]
     axis = reference_rotation[:, -1]
@@ -777,7 +778,7 @@ def _coaxial_positions(
                 )
             )
         axial_positions.append(axial * length_scale)
-    positions = np.asarray(axial_positions, dtype=float)
+    positions = np.asarray(axial_positions, dtype=np.float64)
     for index, distance in enumerate(np.diff(positions)):
         if distance < 0.0:
             features.append(f"frames[{index + 1}].translation=reverse-ordered")
@@ -892,8 +893,7 @@ def _normalize_setting_value(value: object, name: str, /) -> _SettingValue:
         normalized = value
     else:
         raise TypeError(
-            f"OpticStudio setting {name!r} must be a JSON scalar, not "
-            f"{type(value).__name__}."
+            f"OpticStudio setting {name!r} must be a JSON scalar, not {type(value).__name__}."
         )
     if isinstance(normalized, str):
         normalized = normalized.strip()
@@ -916,8 +916,7 @@ def _reject_traced_values(value: object, owner: str, /) -> None:
     for leaf in jax.tree_util.tree_leaves(value):
         if isinstance(leaf, jax.core.Tracer):
             raise _OpticStudioBoundaryError(
-                f"{owner} contains a traced value at the host-only, "
-                "non-differentiable OpticStudio boundary."
+                f"{owner} contains a traced value at the host-only, non-differentiable OpticStudio boundary."
             )
 
 

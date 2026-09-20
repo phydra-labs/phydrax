@@ -46,7 +46,7 @@ def _measure(operation: Callable[[], Any], /, *, repeats: int):
         result = operation()
         _synchronize(result)
         samples.append((time.perf_counter_ns() - started) * 1.0e-6)
-    values = np.asarray(samples, dtype=float)
+    values = np.asarray(samples, dtype="float64")
     return result, {
         "maximum_ms": round(float(np.max(values)), 6),
         "median_ms": round(float(np.median(values)), 6),
@@ -63,7 +63,7 @@ def _storage_bytes(value: Any, /) -> int:
             leaf = jax.random.key_data(leaf)
         if isinstance(leaf, (jax.Array, np.ndarray, np.generic)):
             array = np.asarray(leaf)
-            total += int(array.size * array.dtype.itemsize)
+            total += array.size * array.dtype.itemsize
     return total
 
 

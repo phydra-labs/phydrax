@@ -20,17 +20,17 @@ from ..metrix._adm_exchange import (
 )
 from ..metrix._spacetime_conventions import RelativityConvention
 from ._relativistic_radiation import (
-    GRGreyM1ClosureEvaluation,
-    GRGreyM1RadiationSystem,
+    GRGrayM1ClosureEvaluation,
+    GRGrayM1RadiationSystem,
 )
 from ._relativistic_radiation_interaction import (
-    GRGreyRadiationInteractionPlan,
+    GRGrayRadiationInteractionPlan,
     GRRadiationMatterExchange,
 )
 
 
 class GRMultigroupM1ClosureEvaluation(StrictModule):
-    groups: tuple[GRGreyM1ClosureEvaluation, ...]
+    groups: tuple[GRGrayM1ClosureEvaluation, ...]
     finite: Array
     physically_valid: Array
     qualified: Array
@@ -44,7 +44,7 @@ class GRMultigroupM1RadiationSystem(StrictModule, NonTrainableState):
     scale: RelativityScaleContract
     convention: RelativityConvention
     frequency_edges: Array
-    groups: tuple[GRGreyM1RadiationSystem, ...]
+    groups: tuple[GRGrayM1RadiationSystem, ...]
     group_count: int = eqx.field(static=True)
     component_names: tuple[str, ...] = eqx.field(static=True)
     system_id: str = eqx.field(static=True)
@@ -64,7 +64,7 @@ class GRMultigroupM1RadiationSystem(StrictModule, NonTrainableState):
             raise TypeError("scale must be RelativityScaleContract.")
         if not isinstance(convention, RelativityConvention):
             raise TypeError("convention must be RelativityConvention.")
-        edges = np.asarray(frequency_edges, dtype=float)
+        edges = np.asarray(frequency_edges, dtype=np.float64)
         if (
             edges.ndim != 1
             or edges.size < 2
@@ -73,9 +73,9 @@ class GRMultigroupM1RadiationSystem(StrictModule, NonTrainableState):
             or np.any(np.diff(edges) <= 0.0)
         ):
             raise ValueError("GR multigroup frequency edges are invalid.")
-        count = int(edges.size - 1)
+        count = edges.size - 1
         groups = tuple(
-            GRGreyM1RadiationSystem(
+            GRGrayM1RadiationSystem(
                 scale,
                 convention,
                 reduced_light_speed=reduced_light_speed,
@@ -213,23 +213,23 @@ class GRMultigroupRadiationMatterExchange(StrictModule):
 
 class GRMultigroupRadiationInteractionPlan(StrictModule, NonTrainableState):
     radiation: GRMultigroupM1RadiationSystem
-    group_interactions: tuple[GRGreyRadiationInteractionPlan, ...]
+    group_interactions: tuple[GRGrayRadiationInteractionPlan, ...]
     plan_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         radiation: GRMultigroupM1RadiationSystem,
-        group_interactions: tuple[GRGreyRadiationInteractionPlan, ...],
+        group_interactions: tuple[GRGrayRadiationInteractionPlan, ...],
         /,
     ) -> None:
         if not isinstance(radiation, GRMultigroupM1RadiationSystem):
             raise TypeError("radiation must be GRMultigroupM1RadiationSystem.")
         interactions = tuple(group_interactions)
         if len(interactions) != radiation.group_count or any(
-            not isinstance(value, GRGreyRadiationInteractionPlan)
+            not isinstance(value, GRGrayRadiationInteractionPlan)
             for value in interactions
         ):
-            raise TypeError("One grey interaction is required per radiation group.")
+            raise TypeError("One gray interaction is required per radiation group.")
         for system, interaction in zip(radiation.groups, interactions, strict=True):
             if interaction.radiation.system_id != system.system_id:
                 raise ValueError("Multigroup interaction radiation systems differ.")

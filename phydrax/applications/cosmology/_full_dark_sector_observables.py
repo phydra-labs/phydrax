@@ -45,12 +45,12 @@ def _real_array(value: ArrayLike, name: str, /, *, dtype=None) -> Array:
     if jnp.issubdtype(result.dtype, jnp.complexfloating):
         raise TypeError(f"{name} must be real.")
     if not eqx.is_inexact_array(result):
-        result = result.astype(float)
+        result = result.astype("float64")
     return result
 
 
 def _scalar_flag(value: ArrayLike, name: str, /) -> Array:
-    result = jnp.asarray(value, dtype=bool)
+    result = jnp.asarray(value, dtype=jnp.bool_)
     if result.shape != ():
         raise ValueError(f"{name} must be scalar.")
     return result
@@ -228,7 +228,7 @@ class EventShowerHadronizationObservables(StrictModule):
             jnp.asarray(decay_species_ids, dtype=jnp.int32).reshape((-1,))
         )
         active = jax.lax.stop_gradient(
-            jnp.asarray(active_bins, dtype=bool).reshape((-1,))
+            jnp.asarray(active_bins, dtype=jnp.bool_).reshape((-1,))
         )
         unitarity = _scalar(unitarity_defect, "unitarity_defect", dtype=counts.dtype)
         if (
@@ -293,7 +293,7 @@ class EventShowerHadronizationObservables(StrictModule):
                 "kind": "full-dark-sector-event-shower-hadronization-observables",
                 "identities": list(identities),
                 "sources": list(sources),
-                "shower_bins": int(shower.size),
+                "shower_bins": shower.size,
                 "hadron_species": array_tree_fingerprint(hadron_ids),
                 "decay_species": array_tree_fingerprint(decay_ids),
             }
@@ -673,7 +673,7 @@ class FullDarkSectorLedgerObservables(StrictModule):
                 (global_unitarity, "global_unitarity"),
             )
         )
-        evidence = jnp.asarray(evidence_valid, dtype=bool).reshape((-1,))
+        evidence = jnp.asarray(evidence_valid, dtype=jnp.bool_).reshape((-1,))
         if evidence.shape != expected:
             raise ValueError("evidence_valid must match component_names.")
         finite = jnp.all(

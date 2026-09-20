@@ -40,7 +40,7 @@ def _partition_bounds(size: int, count: int) -> tuple[tuple[int, ...], tuple[int
 def _deterministic_sum(value: Array, axis: int = -1) -> Array:
     """Fixed binary-tree sum independent of backend reduction scheduling."""
     moved = jnp.moveaxis(value, axis, -1)
-    size = int(moved.shape[-1])
+    size = moved.shape[-1]
     padded_size = 1 << max(0, (size - 1).bit_length())
     if padded_size != size:
         moved = jnp.pad(moved, [(0, 0)] * (moved.ndim - 1) + [(0, padded_size - size)])
@@ -59,7 +59,7 @@ def _tridiagonal_action(
     lower: Array, diagonal: Array, upper: Array, value: Array
 ) -> Array:
     result = diagonal * value
-    if int(value.shape[-1]) > 1:
+    if value.shape[-1] > 1:
         result = result.at[..., 1:].add(lower * value[..., :-1])
         result = result.at[..., :-1].add(upper * value[..., 1:])
     return result
@@ -68,7 +68,7 @@ def _tridiagonal_action(
 def _factor_tridiagonal(
     lower: Array, diagonal: Array, upper: Array
 ) -> tuple[Array, Array]:
-    size = int(diagonal.size)
+    size = diagonal.size
     pivots = jnp.zeros_like(diagonal).at[0].set(diagonal[0])
     multipliers = jnp.zeros((max(size - 1, 0),), dtype=diagonal.dtype)
     tiny = jnp.finfo(jnp.real(diagonal).dtype).tiny
@@ -83,7 +83,7 @@ def _factor_tridiagonal(
 
 def _solve_factored(pivots: Array, multipliers: Array, upper: Array, rhs: Array) -> Array:
     """Solve one factored line; the final axis is the physical line."""
-    size = int(pivots.size)
+    size = pivots.size
     result = rhs
     for index in range(1, size):
         result = result.at[..., index].add(
@@ -236,11 +236,7 @@ class StructuredLineNullspacePolicy(StrictModule, NonTrainableState):
             )
         left = weights / normalization
         pin = int(pin_row)
-        if (
-            pin < 0
-            or pin >= int(weights.size)
-            or float(np.abs(np.asarray(right[pin]))) == 0.0
-        ):
+        if pin < 0 or pin >= weights.size or float(np.abs(np.asarray(right[pin]))) == 0.0:
             raise ValueError("pin_row must select a nonzero right-null entry.")
         identifier = policy_id or canonical_fingerprint(
             {
@@ -832,7 +828,7 @@ def _minimum_reduced_determinant(
     tolerance: float,
 ) -> Array:
     """Minimum elimination determinant for the selected reduced-interface path."""
-    count = int(diagonal.shape[0])
+    count = diagonal.shape[0]
     minimum = jnp.asarray(jnp.inf, dtype=jnp.real(diagonal).dtype)
     if algorithm == "partitioned-thomas":
         modified = diagonal
@@ -908,7 +904,7 @@ def _minimum_reduced_determinant(
 def _block_thomas(
     lower: Array, diagonal: Array, upper: Array, rhs: Array, tolerance: float
 ) -> Array:
-    count = int(diagonal.shape[0])
+    count = diagonal.shape[0]
     modified_diagonal = diagonal
     modified_rhs = rhs
     for index in range(1, count):
@@ -935,7 +931,7 @@ def _block_thomas(
 
 
 def _dense_elimination(matrix: Array, rhs: Array, tolerance: float) -> Array:
-    size = int(matrix.shape[0])
+    size = matrix.shape[0]
     transformed = matrix
     value = rhs
     for pivot in range(size):
@@ -968,7 +964,7 @@ def _dense_elimination(matrix: Array, rhs: Array, tolerance: float) -> Array:
 def _spike_reduced_solve(
     lower: Array, diagonal: Array, upper: Array, rhs: Array, tolerance: float
 ) -> Array:
-    count = int(diagonal.shape[0])
+    count = diagonal.shape[0]
     matrix = jnp.zeros((2 * count, 2 * count), dtype=diagonal.dtype)
     for part in range(count):
         location = slice(2 * part, 2 * part + 2)
@@ -986,7 +982,7 @@ def _spike_reduced_solve(
 def _block_pcr(
     lower: Array, diagonal: Array, upper: Array, rhs: Array, tolerance: float
 ) -> Array:
-    count = int(diagonal.shape[0])
+    count = diagonal.shape[0]
     stride = 1
     current_lower, current_diagonal, current_upper, current_rhs = (
         lower,
@@ -1377,7 +1373,7 @@ class PreparedMultiblockExtrudedReduction(StrictModule, NonTrainableState):
         rhs = jnp.asarray(right_hand_side, dtype=self.plan.local_diagonal.dtype)
         if rhs.shape != self.plan.local_diagonal.shape:
             raise ValueError("right_hand_side must match (blocks, line_size).")
-        interface_count = int(self.plan.interface_operator.shape[0])
+        interface_count = self.plan.interface_operator.shape[0]
         mortar_rhs = (
             jnp.zeros((interface_count,), dtype=rhs.dtype)
             if mortar_right_hand_side is None
@@ -1396,7 +1392,7 @@ class PreparedMultiblockExtrudedReduction(StrictModule, NonTrainableState):
             self.plan.tolerance,
         )
         combined_residual = self._apply_global(combined_candidate) - combined_rhs
-        primal_size = int(rhs.size)
+        primal_size = rhs.size
         candidate = combined_candidate[:primal_size].reshape(rhs.shape)
         mortar_value = combined_candidate[primal_size:]
         residual = combined_residual[:primal_size].reshape(rhs.shape)
@@ -1423,7 +1419,7 @@ class PreparedMultiblockExtrudedReduction(StrictModule, NonTrainableState):
         )
 
     def _apply_global(self, value: Array) -> Array:
-        primal_size = int(self.plan.local_diagonal.size)
+        primal_size = self.plan.local_diagonal.size
         primal = value[:primal_size].reshape(self.plan.local_diagonal.shape)
         mortar = value[primal_size:]
         local = jax.vmap(_tridiagonal_action)(
@@ -1441,10 +1437,10 @@ class PreparedMultiblockExtrudedReduction(StrictModule, NonTrainableState):
         return jnp.concatenate((primal_action.reshape((-1,)), mortar_action))
 
     def _apply_block_preconditioner(self, value: Array) -> Array:
-        primal_size = int(self.plan.local_diagonal.size)
+        primal_size = self.plan.local_diagonal.size
         primal = value[:primal_size].reshape(self.plan.local_diagonal.shape)
         solved = []
-        for block in range(int(primal.shape[0])):
+        for block in range(primal.shape[0]):
             solved.append(
                 _solve_factored(
                     self.pivots[block],

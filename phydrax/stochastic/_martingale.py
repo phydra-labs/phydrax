@@ -46,8 +46,7 @@ def jump_generator_observable(
     state_array = jnp.asarray(state)
     if state_array.shape != process.state_shape:
         raise ValueError(
-            f"state must have process state shape {process.state_shape}; "
-            f"got {state_array.shape}."
+            f"state must have process state shape {process.state_shape}; got {state_array.shape}."
         )
     t = jnp.asarray(time)
     if t.shape != ():
@@ -55,8 +54,7 @@ def jump_generator_observable(
     rates = jnp.asarray(process.intensities(t, state_array, args))
     if rates.shape != (process.num_channels,):
         raise ValueError(
-            "Jump intensities must have shape "
-            f"{(process.num_channels,)}; got {rates.shape}."
+            f"Jump intensities must have shape {(process.num_channels,)}; got {rates.shape}."
         )
     rates = eqx.error_if(
         rates,
@@ -86,7 +84,7 @@ MartingaleReduction: TypeAlias = Literal["mean", "sum", "none"]
 
 
 def _shape(value: Sequence[int], /, *, owner: str) -> tuple[int, ...]:
-    resolved = tuple(int(size) for size in value)
+    resolved = tuple(value)
     if any(size <= 0 for size in resolved):
         raise ValueError(f"{owner} dimensions must be positive.")
     return resolved
@@ -179,8 +177,7 @@ def _evaluate_state_time(
     )
     if values.shape[1:] != output_shape:
         raise ValueError(
-            f"{owner} must return observable shape {output_shape}; "
-            f"got {values.shape[1:]}."
+            f"{owner} must return observable shape {output_shape}; got {values.shape[1:]}."
         )
     return values.reshape(times.shape + output_shape)
 
@@ -238,8 +235,7 @@ def martingale_increments(
         compensator = jnp.asarray(compensator_increments)
         if compensator.shape != expected:
             raise ValueError(
-                f"compensator_increments must have shape {expected}; "
-                f"got {compensator.shape}."
+                f"compensator_increments must have shape {expected}; got {compensator.shape}."
             )
     elif quadrature == "left":
         compensator = (
@@ -351,7 +347,7 @@ def first_stopping_indices(
     flat_states = trajectory.states.reshape((-1,) + state_shape)
     flat_times = trajectory.times.reshape((-1,))
     values = jax.vmap(
-        lambda state, time: jnp.asarray(condition(state, time), dtype=bool)
+        lambda state, time: jnp.asarray(condition(state, time), dtype=jnp.bool_)
     )(flat_states, flat_times)
     if values.shape != flat_times.shape:
         raise ValueError("A stopping condition must return one scalar boolean.")

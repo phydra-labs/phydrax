@@ -42,7 +42,7 @@ class GeophysicalCapabilityEvidence(StrictModule, NonTrainableState):
     ):
         values = (
             str(model).strip(),
-            tuple(int(value) for value in dimensions),
+            tuple(dimensions),
             tuple(str(value).strip() for value in field_equations),
             tuple(str(value).strip() for value in source_models),
             tuple(str(value).strip() for value in receiver_models),
@@ -111,8 +111,7 @@ class GeophysicalResourceEstimate(StrictModule, NonTrainableState):
         maximum_bytes: int | None = None,
     ):
         components = tuple(
-            int(value)
-            for value in (
+            (
                 retained_bytes,
                 workspace_bytes,
                 checkpoint_bytes,
@@ -150,8 +149,7 @@ class GeophysicalResourceEstimate(StrictModule, NonTrainableState):
     def require_budget(self) -> None:
         if not self.within_budget:
             raise MemoryError(
-                f"Estimated geophysical allocation {self.total_bytes} exceeds "
-                f"the declared budget {self.maximum_bytes}."
+                f"Estimated geophysical allocation {self.total_bytes} exceeds the declared budget {self.maximum_bytes}."
             )
 
 

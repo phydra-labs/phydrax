@@ -90,8 +90,7 @@ class SineLayer(_AbstractBaseModel):
                 or value.shape[-len(self._in_value_shape) :] != self._in_value_shape
             ):
                 raise ValueError(
-                    "`x` must have trailing shape "
-                    f"{self._in_value_shape}, got {value.shape}."
+                    f"`x` must have trailing shape {self._in_value_shape}, got {value.shape}."
                 )
             leading_shape = value.shape[: -len(self._in_value_shape)]
             flat = value.reshape(leading_shape + (_get_size(self._in_value_shape),))
@@ -108,10 +107,9 @@ class SineLayer(_AbstractBaseModel):
         if self._out_value_shape:
             output = affine.reshape(leading_shape + self._out_value_shape)
         else:
-            if int(affine.shape[-1]) != 1:
+            if affine.shape[-1] != 1:
                 raise ValueError(
-                    "Scalar out_size requires a single output feature, got shape "
-                    f"{affine.shape}."
+                    f"Scalar out_size requires a single output feature, got shape {affine.shape}."
                 )
             output = jnp.squeeze(affine, axis=-1)
         return jnp.sin(self.omega * output)

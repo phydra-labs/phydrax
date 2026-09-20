@@ -136,7 +136,7 @@ class CmbSpectrumTable(StrictModule):
         nonlinear_source_id: str = "none",
         temperature_unit: str = "dimensionless-thermodynamic",
     ):
-        ell_host = np.asarray(multipoles, dtype=int).reshape((-1,))
+        ell_host = np.asarray(multipoles, dtype=np.int64).reshape((-1,))
         modes_ = tuple(str(mode).strip() for mode in modes)
         lensing = str(lensing_state).strip()
         nonlinear = str(nonlinear_source_id).strip()
@@ -212,7 +212,7 @@ class CmbSpectrumTransformPlan(StrictModule, NonTrainableState):
         *,
         use_d_ell: bool = False,
     ):
-        modes = tuple(int(index) for index in mode_indices)
+        modes = tuple(mode_indices)
         pairs = tuple((int(left), int(right)) for left, right in field_pairs)
         if not modes or any(index < 0 for index in modes):
             raise ValueError("CMB mode selection is invalid.")
@@ -282,9 +282,9 @@ class CmbBandpowerResponsePlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(transform, CmbSpectrumTransformPlan):
             raise TypeError("transform must be a CmbSpectrumTransformPlan.")
-        windows_host = np.asarray(windows, dtype=float)
-        observed_host = np.asarray(observed_bandpowers, dtype=float)
-        cholesky_host = np.asarray(covariance_cholesky, dtype=float)
+        windows_host = np.asarray(windows, dtype=np.float64)
+        observed_host = np.asarray(observed_bandpowers, dtype=np.float64)
+        cholesky_host = np.asarray(covariance_cholesky, dtype=np.float64)
         bands = windows_host.shape[0] if windows_host.ndim == 3 else 0
         if (
             windows_host.ndim != 3
@@ -314,7 +314,7 @@ class CmbBandpowerResponsePlan(StrictModule, NonTrainableState):
             windows_host.reshape((bands, -1)), source, target
         )
         self.covariance = CholeskyCovarianceAction(cholesky_host, target)
-        self.window_shape = tuple(int(value) for value in windows_host.shape)
+        self.window_shape = tuple(windows_host.shape)
         self.observed_bandpowers = jnp.asarray(observed_host)
         self.expected_temperature_unit = unit
         self.plan_id = canonical_fingerprint(

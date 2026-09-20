@@ -36,7 +36,7 @@ def _real_vector(value: ArrayLike, size: int | None, owner: str, /) -> Array:
         raise ValueError(f"{owner} must have shape {(size,)}; got {array.shape}.")
     if jnp.issubdtype(array.dtype, jnp.complexfloating):
         raise TypeError(f"{owner} must be real-valued.")
-    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype(float)
+    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype("float64")
 
 
 def _maximum(values: Array, /) -> Array:
@@ -61,7 +61,7 @@ _STRUCTURED_WORK_FIELDS = (
     "jacobian_evaluations",
     "hessian_evaluations",
     "kkt_assemblies",
-    "symbolic_analyses",
+    "symbolic_analyzes",
     "factorizations",
     "numeric_refactorizations",
     "right_hand_side_solves",
@@ -91,7 +91,7 @@ class StructuredOptimizationWork(StrictModule):
     jacobian_evaluations: Array
     hessian_evaluations: Array
     kkt_assemblies: Array
-    symbolic_analyses: Array
+    symbolic_analyzes: Array
     factorizations: Array
     numeric_refactorizations: Array
     right_hand_side_solves: Array
@@ -113,7 +113,7 @@ class StructuredOptimizationWork(StrictModule):
         jacobian_evaluations: Any = 0,
         hessian_evaluations: Any = 0,
         kkt_assemblies: Any = 0,
-        symbolic_analyses: Any = 0,
+        symbolic_analyzes: Any = 0,
         factorizations: Any = 0,
         numeric_refactorizations: Any = 0,
         right_hand_side_solves: Any = 0,
@@ -129,7 +129,7 @@ class StructuredOptimizationWork(StrictModule):
         values = locals()
         for name in _STRUCTURED_WORK_FIELDS:
             setattr(self, name, _work_count(values[name], name))
-        complete_ = jnp.asarray(complete, dtype=bool)
+        complete_ = jnp.asarray(complete, dtype=jnp.bool_)
         if complete_.shape != ():
             raise ValueError("complete must be scalar.")
         self.complete = complete_
@@ -185,10 +185,10 @@ class StructuredNonlinearWarmStart(StrictModule):
             constraint_multipliers, None, "warm-start constraint multipliers"
         )
         lower = _real_vector(
-            lower_bound_multipliers, int(primal_.size), "warm-start lower multipliers"
+            lower_bound_multipliers, primal_.size, "warm-start lower multipliers"
         )
         upper = _real_vector(
-            upper_bound_multipliers, int(primal_.size), "warm-start upper multipliers"
+            upper_bound_multipliers, primal_.size, "warm-start upper multipliers"
         )
         primal_ = eqx.error_if(
             primal_,
@@ -253,8 +253,8 @@ class StructuredNonlinearWarmStart(StrictModule):
                     "source_result": self.source_result_id,
                     "source_program": self.source_program_id,
                     "source_backend": self.source_backend,
-                    "primal_size": int(primal_.size),
-                    "constraint_size": int(constraints.size),
+                    "primal_size": primal_.size,
+                    "constraint_size": constraints.size,
                     "values": _numeric_fingerprint((primal_, constraints, lower, upper)),
                 }
             )
@@ -619,7 +619,7 @@ def _argument_signature(args: Any, /) -> str:
             records.append(
                 {
                     "kind": "array",
-                    "shape": tuple(int(size) for size in leaf.shape),
+                    "shape": tuple(leaf.shape),
                     "dtype": str(leaf.dtype),
                 }
             )
@@ -709,7 +709,7 @@ class StructuredNonlinearTemplate(StrictModule):
             equality,
             constraint_lower,
             constraint_upper,
-        ) = (jnp.asarray(role, dtype=bool) for role in roles)
+        ) = (jnp.asarray(role, dtype=jnp.bool_) for role in roles)
         self.variable_lower_finite = variable_lower
         self.variable_upper_finite = variable_upper
         self.fixed_variable_mask = fixed

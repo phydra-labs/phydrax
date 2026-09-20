@@ -979,9 +979,7 @@ def test_diagonal_wiener_ensemble_preserves_distinct_initial_states():
 def test_geometric_structured_wiener_accepts_only_explicit_full_isometric_coordinates():
     from phydrax.atomistic._spin_dynamics import ProductSphereStateGeometry
 
-    initial = jnp.asarray(
-        [[0.0, 0.0, 1.0], [1.0, 0.0, 0.0]], dtype=jnp.float64
-    )
+    initial = jnp.asarray([[0.0, 0.0, 1.0], [1.0, 0.0, 0.0]], dtype=jnp.float64)
     geometry = ProductSphereStateGeometry(2)
     problem = phx.solver.DifferentialProblem(
         lambda time, state, args: jnp.zeros_like(state),

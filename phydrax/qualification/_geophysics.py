@@ -333,7 +333,9 @@ class GeophysicalReferenceRecipe(StrictModule, NonTrainableState):
                 "Prediction/reference shape or declared sample bound is invalid."
             )
         mask = (
-            np.ones(predicted.shape, dtype=bool) if valid is None else np.asarray(valid)
+            np.ones(predicted.shape, dtype=np.bool_)
+            if valid is None
+            else np.asarray(valid)
         )
         if mask.dtype != np.bool_ or mask.shape != predicted.shape:
             raise ValueError(
@@ -344,10 +346,10 @@ class GeophysicalReferenceRecipe(StrictModule, NonTrainableState):
             raise ValueError("Reference comparison contains no valid samples.")
         if np.any(~np.isfinite(predicted[mask])) or np.any(~np.isfinite(expected[mask])):
             raise ValueError("Prediction and reference must be finite where valid.")
-        error = np.abs(predicted[mask] - expected[mask]).astype(float)
-        expected_magnitude = np.abs(expected[mask]).astype(float)
+        error = np.abs(predicted[mask] - expected[mask]).astype("float64")
+        expected_magnitude = np.abs(expected[mask]).astype("float64")
         envelope = self.absolute_tolerance + self.relative_tolerance * expected_magnitude
-        tiny = np.finfo(float).tiny
+        tiny = np.finfo(np.float64).tiny
         maximum_absolute = float(np.max(error))
         maximum_normalized = float(np.max(error / np.maximum(envelope, tiny)))
         denominator = max(

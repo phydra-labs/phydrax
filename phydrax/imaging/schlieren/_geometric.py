@@ -14,6 +14,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+import phydrax.ein as ein
 from phydrax.ein import contract
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -197,21 +198,21 @@ class SchlierenDeflectionPlan(StrictModule, NonTrainableState):
                 "Gradient, path length, and optional Gladstone-Dale coefficient must close dimensionlessly."
             )
         dimensional_factor = float(conversion_factor(closure_unit, ONE))
-        lengths = np.asarray(segment_lengths, dtype=float)
+        lengths = np.asarray(segment_lengths, dtype=np.float64)
         if lengths.ndim != 2 or lengths.shape[0] != rays.sample_shape[0]:
             raise ValueError(
                 "segment_lengths must have shape (ray_count, segment_capacity)."
             )
         if not np.all(np.isfinite(lengths)) or np.any(lengths < 0.0):
             raise ValueError("segment_lengths must be finite and non-negative.")
-        basis = np.asarray(transverse_basis, dtype=float)
+        basis = np.asarray(transverse_basis, dtype=np.float64)
         if basis.shape == (2, 3):
             basis = np.broadcast_to(basis, (rays.sample_shape[0], 2, 3)).copy()
         if basis.shape != (rays.sample_shape[0], 2, 3) or not np.all(np.isfinite(basis)):
             raise ValueError(
                 "transverse_basis must have shape (ray_count, 2, 3) or (2, 3)."
             )
-        gram = np.einsum("rij,rkj->rik", basis, basis)
+        gram = ein.contract("rij,rkj->rik", basis, basis)
         tolerance = 128.0 * np.finfo(basis.dtype).eps
         if not np.allclose(gram, np.eye(2)[None], atol=tolerance, rtol=0.0):
             raise ValueError("Every transverse basis must be orthonormal.")
@@ -348,7 +349,7 @@ class KnifeEdgeSchlierenPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(reference, ImageAsset):
             raise TypeError("reference must be ImageAsset.")
-        direction = np.asarray(cutoff_direction_rc, dtype=float)
+        direction = np.asarray(cutoff_direction_rc, dtype=np.float64)
         if direction.shape != (2,) or not np.all(np.isfinite(direction)):
             raise ValueError("cutoff_direction_rc must be a finite two-vector.")
         norm = float(np.linalg.norm(direction))
@@ -439,7 +440,7 @@ class BackgroundOrientedSchlierenPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(background, ImageAsset):
             raise TypeError("background must be ImageAsset.")
-        scale = np.asarray(displacement_pixels_per_radian, dtype=float)
+        scale = np.asarray(displacement_pixels_per_radian, dtype=np.float64)
         if scale.shape not in {(), (2,)} or not np.all(np.isfinite(scale)):
             raise ValueError(
                 "displacement_pixels_per_radian must be finite scalar or two-vector."

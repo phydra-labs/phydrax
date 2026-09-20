@@ -181,7 +181,7 @@ def test_chunked_markov_prefix_and_partial_mask_are_explicit():
         plan=MarkovChunkPlan(5, 3),
     )
     assert result.samples.shape == (3, 6, 1)
-    assert jnp.array_equal(result.active, jnp.array([1, 1, 1, 1, 1, 0], dtype=bool))
+    assert jnp.array_equal(result.active, jnp.array([1, 1, 1, 1, 1, 0], dtype="bool"))
     assert bool(result.replay_exact)
 
 

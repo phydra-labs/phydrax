@@ -5,7 +5,7 @@
 """Fail-closed cardiovascular qualification and commercial release records.
 
 The records in this module describe technical release readiness.  They neither
-issue a software licence nor make a medical, clinical, or regulated-device
+issue a software license nor make a medical, clinical, or regulated-device
 claim.  Payload storage, execution lifecycle, and release-signing primitives
 remain owned by :mod:`phydrax.artifacts`, :mod:`phydrax.lifecycle`, and
 :mod:`phydrax.qualification`, respectively.
@@ -918,8 +918,7 @@ class CardiovascularCommercialSupportProfile:
             for coordinate, expected in _REQUIRED_SUPPORT_COORDINATES.items()
         ):
             raise ValueError(
-                "Commercial support is limited to the exact local, non-PHI, "
-                "non-regulated SupportTuple coordinates."
+                "Commercial support is limited to the exact local, non-PHI, non-regulated SupportTuple coordinates."
             )
         decision = self.claims_matrix.decision_for(self.support_tuple)
         if decision.status != CardiovascularClaimStatus.TECHNICAL_SUPPORT_CANDIDATE:
@@ -1703,7 +1702,7 @@ def assess_cardiovascular_release(
     signature_verifiers: Mapping[str, CardiovascularSignatureVerifier],
     /,
 ) -> CardiovascularReleaseAssessment:
-    """Apply the independent decision without treating it as a licence grant."""
+    """Apply the independent decision without treating it as a license grant."""
     if not isinstance(candidate, CardiovascularReleaseCandidate):
         raise TypeError("candidate must be CardiovascularReleaseCandidate.")
     if not isinstance(decision, CardiovascularReleaseDecision):

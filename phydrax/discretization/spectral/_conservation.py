@@ -287,10 +287,10 @@ def _prepare_split_form(
                 )
             )
         )
-        pair_count += int(pair_row.size) * transverse_line_count
+        pair_count += pair_row.size * transverse_line_count
         maximum_workspace = max(
             maximum_workspace,
-            min(plan.pair_chunk_size, int(pair_row.size))
+            min(plan.pair_chunk_size, pair_row.size)
             * transverse_line_count
             * components
             * 3
@@ -431,8 +431,7 @@ class PreparedSpectralConservationDynamics(StrictModule):
         value = jnp.asarray(state)
         if value.shape != self.state_shape:
             raise ValueError(
-                f"Spectral conservation state must have shape {self.state_shape}; "
-                f"got {value.shape}."
+                f"Spectral conservation state must have shape {self.state_shape}; got {value.shape}."
             )
         return value
 
@@ -493,7 +492,7 @@ class PreparedSpectralConservationDynamics(StrictModule):
         ):
             lines = jnp.moveaxis(physical, axis, 0)
             line_residual = jnp.zeros_like(lines)
-            pair_count = int(pair_rows.size)
+            pair_count = pair_rows.size
             for start in range(0, pair_count, split.plan.pair_chunk_size):
                 stop = min(start + split.plan.pair_chunk_size, pair_count)
                 rows = pair_rows[start:stop]

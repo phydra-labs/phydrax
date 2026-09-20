@@ -17,7 +17,7 @@ from jaxtyping import Array, Key, PyTree
 
 from ..._fingerprint import canonical_fingerprint
 from ..._sampling import AbstractChainSampleResult, derive_key, SampleAddress
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
 
@@ -131,7 +131,7 @@ class ConditionalInteractionGroup(StrictModule):
 class AbstractConditionalKernel(StrictModule):
     """Stateful exact or approximate conditional update over one interaction group."""
 
-    kernel_id: AbstractAttribute[str]
+    kernel_id: eqx.AbstractVar[str]
 
     @abstractmethod
     def initialize(self, state_spec: PyTree[jax.ShapeDtypeStruct], /) -> Any:
@@ -241,7 +241,7 @@ class ConditionalUpdateStage(StrictModule):
     stage_id: str = eqx.field(static=True)
 
     def __init__(self, update_indices: Sequence[int], /, *, stage_id: str):
-        indices = tuple(int(value) for value in update_indices)
+        indices = tuple(update_indices)
         if not indices or len(set(indices)) != len(indices) or min(indices) < 0:
             raise ValueError("Stage update indices must be unique and non-negative.")
         if not isinstance(stage_id, str) or not stage_id:
@@ -383,7 +383,7 @@ def initialize_conditional_program(
         specifications = jax.tree_util.tree_leaves(group.state_spec)
         if any(leaf.ndim < 2 for leaf in leaves):
             raise ValueError("Conditional states require leading chain and node axes.")
-        if any(int(leaf.shape[1]) != group.count for leaf in leaves):
+        if any(leaf.shape[1] != group.count for leaf in leaves):
             raise ValueError("Conditional state node axis does not match group count.")
         if any(
             leaf.shape[2:] != specification.shape or leaf.dtype != specification.dtype
@@ -392,8 +392,8 @@ def initialize_conditional_program(
             raise ValueError(
                 "Conditional state event shapes and dtypes must match state_spec."
             )
-        current = int(leaves[0].shape[0])
-        if any(int(leaf.shape[0]) != current for leaf in leaves):
+        current = leaves[0].shape[0]
+        if any(leaf.shape[0] != current for leaf in leaves):
             raise ValueError("Every conditional state leaf must share one chain axis.")
         if chain_count is None:
             chain_count = current
@@ -530,7 +530,7 @@ def sample_conditional_program(
         root_key=key,
         program_id=program.program_id,
         draws=draws,
-        chains=int(first_leaf.shape[0]),
+        chains=first_leaf.shape[0],
     )
 
 

@@ -68,9 +68,9 @@ class BipartiteAssignmentSpace(AbstractBoundableCombinatorialSpace):
         if rows <= 0 or columns <= 0:
             raise ValueError("assignment dimensions must be positive.")
         if valid is None:
-            validity = jnp.ones((rows, columns), dtype=bool)
+            validity = jnp.ones((rows, columns), dtype=jnp.bool_)
         else:
-            validity = jnp.asarray(valid, dtype=bool)
+            validity = jnp.asarray(valid, dtype=jnp.bool_)
             if validity.shape != (rows, columns):
                 raise ValueError(
                     f"valid must have shape {(rows, columns)}; got {validity.shape}."
@@ -112,7 +112,7 @@ class BipartiteAssignmentSpace(AbstractBoundableCombinatorialSpace):
     def integral_feature_mask(self, /) -> Array:
         return jnp.ones(
             (self.num_rows, self.num_columns),
-            dtype=bool,
+            dtype=jnp.bool_,
         )
 
     def canonicalize(self, decision: AssignmentDecision, /) -> AssignmentDecision:
@@ -121,8 +121,7 @@ class BipartiteAssignmentSpace(AbstractBoundableCombinatorialSpace):
         columns = jnp.asarray(decision.columns, dtype=jnp.int32)
         if columns.shape[-1:] != (self.num_rows,):
             raise ValueError(
-                f"assignment columns must end with shape {(self.num_rows,)}; "
-                f"got {columns.shape}."
+                f"assignment columns must end with shape {(self.num_rows,)}; got {columns.shape}."
             )
         in_range = (columns >= 0) & (columns < self.num_columns)
         safe = jnp.clip(columns, 0, self.num_columns - 1)
@@ -136,7 +135,7 @@ class BipartiteAssignmentSpace(AbstractBoundableCombinatorialSpace):
         return jax.nn.one_hot(
             columns,
             self.num_columns,
-            dtype=float,
+            dtype=jnp.float64,
             axis=-1,
         )
 
@@ -156,7 +155,7 @@ class BipartiteAssignmentSpace(AbstractBoundableCombinatorialSpace):
         residual = missing_count + duplicate_count
         return CombinatorialFeasibility(
             residual == 0,
-            residual.astype(float),
+            residual.astype("float64"),
         )
 
 
@@ -210,8 +209,7 @@ class HungarianAssignment(AbstractBoundableLinearCombinatorialMethod):
         columns = problem.space.num_columns
         if max(rows, columns) > self.maximum_dimension:
             raise ValueError(
-                f"assignment dimension {max(rows, columns)} exceeds "
-                f"maximum_dimension {self.maximum_dimension}."
+                f"assignment dimension {max(rows, columns)} exceeds maximum_dimension {self.maximum_dimension}."
             )
         return make_combinatorial_plan(
             problem,
@@ -362,7 +360,7 @@ class HungarianAssignment(AbstractBoundableLinearCombinatorialMethod):
             tie_margin=jnp.full(batch_shape, jnp.nan, dtype=raw_costs.dtype),
             dual_available=solved.reshape(batch_shape),
             gap_available=solved.reshape(batch_shape),
-            tie_available=jnp.zeros(batch_shape, dtype=bool),
+            tie_available=jnp.zeros(batch_shape, dtype=jnp.bool_),
         )
         provenance = CombinatorialProvenance(
             problem_id=problem.problem_id,

@@ -42,7 +42,7 @@ class AdaptiveActivation(StrictModule):
         """
         shape = shape or ()
         self.fn = fn
-        self.alpha = jnp.ones(shape, dtype=float)
+        self.alpha = jnp.ones(shape, dtype=jnp.float64)
 
     def __call__(self, x: Array, /) -> Array:
         r"""Apply the adaptive activation to `x`.

@@ -58,7 +58,7 @@ def run(*, output: str | Path = ".tmp/gravitational-wave-example.phxresult"):
     )
     zero_data = gw.DetectorStrainData(
         "D1",
-        jnp.zeros_like(frequency, dtype=complex),
+        jnp.zeros_like(frequency, dtype="complex128"),
         psd,
         provenance,
         start_time_gps=0.0,

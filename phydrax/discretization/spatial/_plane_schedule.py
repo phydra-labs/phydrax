@@ -81,7 +81,7 @@ def _common_prefix(
 ) -> tuple[jax.Array, jax.Array]:
     xor = jnp.asarray(first, dtype=jnp.uint64) ^ jnp.asarray(last, dtype=jnp.uint64)
     shifts = jnp.arange(total_bits - 1, -1, -1, dtype=jnp.uint64)
-    differs = ((xor[:, None] >> shifts[None, :]) & jnp.uint64(1)).astype(bool)
+    differs = ((xor[:, None] >> shifts[None, :]) & jnp.uint64(1)).astype("bool")
     has_difference = jnp.any(differs, axis=1)
     first_difference = jnp.argmax(differs, axis=1).astype(jnp.int32)
     bit_levels = jnp.where(has_difference, first_difference, total_bits)
@@ -100,11 +100,11 @@ def _group_bounds(
     group_count: int,
     group_size: int,
 ) -> tuple[jax.Array, jax.Array]:
-    padding = group_count * group_size - int(coordinates.shape[0])
+    padding = group_count * group_size - coordinates.shape[0]
     padded_coordinates = jnp.pad(coordinates, ((0, padding), (0, 0)))
     padded_valid = jnp.pad(valid, (0, padding))
     grouped_coordinates = padded_coordinates.reshape(
-        (group_count, group_size, int(coordinates.shape[1]))
+        (group_count, group_size, coordinates.shape[1])
     )
     grouped_valid = padded_valid.reshape((group_count, group_size))
     positive = jnp.asarray(jnp.inf, dtype=coordinates.dtype)
@@ -165,8 +165,7 @@ class MortonPlaneSchedulePlan(StrictModule):
         nodes = rectangular if node_capacity is None else int(node_capacity)
         if nodes < 1 or nodes > rectangular:
             raise ValueError(
-                "node_capacity must be positive and no larger than the compact "
-                "plane capacity."
+                "node_capacity must be positive and no larger than the compact plane capacity."
             )
 
         object.__setattr__(self, "address_plan", address_plan)

@@ -93,7 +93,7 @@ def test_explicit_oracle_reports_infeasible_and_nonfinite_instances():
     method = phx.combinatorial.ExhaustiveLinearOracle(batch_size=4)
     infeasible = phx.combinatorial.solve_combinatorial(
         phx.combinatorial.LinearCombinatorialProblem(
-            _space(valid=jnp.zeros((3,), dtype=bool)),
+            _space(valid=jnp.zeros((3,), dtype="bool")),
             {"linear": jnp.asarray([1.0, 2.0]), "offset": jnp.asarray(0.0)},
         ),
         method,

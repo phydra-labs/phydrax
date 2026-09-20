@@ -47,7 +47,7 @@ from phydrax.nn.operator.encoded import AbstractEncodedOperatorModel
 
 def _feature_norm(norm: eqx.nn.RMSNorm, values: Array, /) -> Array:
     array = jnp.asarray(values)
-    flattened = array.reshape((-1, int(array.shape[-1])))
+    flattened = array.reshape((-1, array.shape[-1]))
     return jax.vmap(norm)(flattened).reshape(array.shape)
 
 
@@ -64,23 +64,21 @@ def _flatten_function_values(
     count = prod(sample_shape)
     array = samples.values
     scalar_shape = case_shape + sample_shape
-    if tuple(int(size) for size in array.shape) == scalar_shape:
+    if tuple(array.shape) == scalar_shape:
         values = array.reshape(case_shape + (count, 1))
     elif (
         array.ndim == len(case_shape) + sample_ndim + 1
-        and tuple(int(size) for size in array.shape[: len(case_shape)]) == case_shape
-        and tuple(int(size) for size in array.shape[len(case_shape) : -1]) == sample_shape
+        and tuple(array.shape[: len(case_shape)]) == case_shape
+        and tuple(array.shape[len(case_shape) : -1]) == sample_shape
     ):
-        values = array.reshape(case_shape + (count, int(array.shape[-1])))
+        values = array.reshape(case_shape + (count, array.shape[-1]))
     else:
         raise ValueError(
-            "Operator source values must have case/sample axes and at most one "
-            f"channel axis; got {array.shape}."
+            f"Operator source values must have case/sample axes and at most one channel axis; got {array.shape}."
         )
-    if int(values.shape[-1]) != int(channels):
+    if values.shape[-1] != int(channels):
         raise ValueError(
-            f"Expected {channels} source channels across value leaves; "
-            f"got {values.shape[-1]}."
+            f"Expected {channels} source channels across value leaves; got {values.shape[-1]}."
         )
     return values
 
@@ -183,12 +181,12 @@ class LatentTokenBlock(StrictModule):
         /,
     ) -> Array:
         array = jnp.asarray(values)
-        case_shape = tuple(int(size) for size in array.shape[:-2])
+        case_shape = tuple(array.shape[:-2])
         cases = prod(case_shape) if case_shape else 1
-        tokens = int(array.shape[-2])
+        tokens = array.shape[-2]
         flattened = array.reshape((cases, tokens, self.width))
         flattened_weights = jnp.asarray(weights).reshape((cases, tokens))
-        flattened_mask = jnp.asarray(mask, dtype=bool).reshape((cases, tokens))
+        flattened_mask = jnp.asarray(mask, dtype=jnp.bool_).reshape((cases, tokens))
         normalized = _feature_norm(self.attention_norm, flattened)
         attended = self.attention(
             normalized,
@@ -435,21 +433,20 @@ class UPT(AbstractEncodedOperatorModel):
         source = self._source(batch)
         values = _flatten_function_values(source, batch.case_shape, self.in_channels)
         coordinates, weights, source_mask = _flatten_geometry(source, batch.case_shape)
-        if int(coordinates.shape[-1]) != self.coord_dim:
+        if coordinates.shape[-1] != self.coord_dim:
             raise ValueError(
-                f"UPT expected coordinate dimension {self.coord_dim}; "
-                f"got {coordinates.shape[-1]}."
+                f"UPT expected coordinate dimension {self.coord_dim}; got {coordinates.shape[-1]}."
             )
         source_features = self.source_lift(
             jnp.concatenate((values, coordinates), axis=-1)
         )
         cases = prod(batch.case_shape) if batch.case_shape else 1
-        source_count = int(source_features.shape[-2])
+        source_count = source_features.shape[-2]
         flattened_source = source_features.reshape((cases, source_count, self.width))
         tokens = jnp.broadcast_to(
             self.latent_tokens, (cases, self.num_tokens, self.width)
         )
-        token_mask = jnp.ones((cases, self.num_tokens), dtype=bool)
+        token_mask = jnp.ones((cases, self.num_tokens), dtype=jnp.bool_)
         encoded = tokens + self.encoder_attention(
             flattened_source,
             tokens,
@@ -489,10 +486,9 @@ class UPT(AbstractEncodedOperatorModel):
     ) -> Array:
         del key
         coordinates = query.coordinates_array(case_shape=state.case_shape, flatten=True)
-        if int(coordinates.shape[-1]) != self.coord_dim:
+        if coordinates.shape[-1] != self.coord_dim:
             raise ValueError(
-                f"UPT expected query coordinate dimension {self.coord_dim}; "
-                f"got {coordinates.shape[-1]}."
+                f"UPT expected query coordinate dimension {self.coord_dim}; got {coordinates.shape[-1]}."
             )
         cases = prod(state.case_shape) if state.case_shape else 1
         query_count = prod(query.sample_shape)
@@ -785,7 +781,7 @@ class ABUPT(AbstractEncodedOperatorModel):
             source, batch.case_shape, self.input_channels[name]
         )
         coordinates, weights, mask = _flatten_geometry(source, batch.case_shape)
-        if int(coordinates.shape[-1]) != self.coord_dims[name]:
+        if coordinates.shape[-1] != self.coord_dims[name]:
             raise ValueError(
                 f"ABUPT branch {name!r} expected coordinate dimension "
                 f"{self.coord_dims[name]}; got {coordinates.shape[-1]}."
@@ -793,7 +789,7 @@ class ABUPT(AbstractEncodedOperatorModel):
         features = self.source_lifts[index](
             jnp.concatenate((values, coordinates), axis=-1)
         )
-        count = int(features.shape[-2])
+        count = features.shape[-2]
         anchors = self.anchor_counts[name]
         if anchors > count:
             raise ValueError(
@@ -855,13 +851,12 @@ class ABUPT(AbstractEncodedOperatorModel):
     ) -> Array:
         if branch_name not in self.prediction_names:
             raise KeyError(
-                f"Unknown ABUPT prediction branch {branch_name!r}; "
-                f"expected {self.prediction_names}."
+                f"Unknown ABUPT prediction branch {branch_name!r}; expected {self.prediction_names}."
             )
         index = self.prediction_names.index(branch_name)
         branch = state.branch(branch_name)
         coordinates = query.coordinates_array(case_shape=state.case_shape, flatten=True)
-        if int(coordinates.shape[-1]) != self.coord_dims[branch_name]:
+        if coordinates.shape[-1] != self.coord_dims[branch_name]:
             raise ValueError(
                 f"ABUPT branch {branch_name!r} expected query coordinate dimension "
                 f"{self.coord_dims[branch_name]}; got {coordinates.shape[-1]}."

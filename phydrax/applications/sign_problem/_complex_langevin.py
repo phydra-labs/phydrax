@@ -118,7 +118,7 @@ def prepare_gauge_cooling(
         callable(item) for item in (gauge_gradient, gauge_retract, unitarity_norm)
     ):
         raise TypeError("Gauge cooling operations must be callable.")
-    shape = tuple(int(size) for size in configuration_shape)
+    shape = tuple(configuration_shape)
     if not shape or any(size <= 0 for size in shape):
         raise ValueError("configuration_shape must contain positive dimensions.")
     if prod(shape) > plan.maximum_state_size:
@@ -281,7 +281,7 @@ def prepare_complex_langevin(
         raise TypeError("plan must be ComplexLangevinPlan.")
     if not callable(action):
         raise TypeError("action must be callable.")
-    shape = tuple(int(size) for size in configuration_shape)
+    shape = tuple(configuration_shape)
     if not shape or any(size <= 0 for size in shape):
         raise ValueError("configuration_shape must contain positive dimensions.")
     if prod(shape) > plan.maximum_state_size:
@@ -500,7 +500,9 @@ def sample_complex_langevin(
     samples = state_history[runtime.plan.burn_in :: runtime.plan.thinning]
     actions = action_history[runtime.plan.burn_in :: runtime.plan.thinning]
     tail = drift_history[-runtime.plan.tail_window :]
-    tail_probability = jnp.mean((tail > runtime.plan.drift_tail_threshold).astype(float))
+    tail_probability = jnp.mean(
+        (tail > runtime.plan.drift_tail_threshold).astype("float64")
+    )
     tail_mean = jnp.mean(tail)
     maximum_drift = jnp.max(drift_history)
     cooling_failed = ~jnp.all(cooling_valid_history)

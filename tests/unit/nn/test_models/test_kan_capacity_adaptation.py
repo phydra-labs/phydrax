@@ -31,7 +31,7 @@ def _model(*, scan=False, per_input=False):
 
 def _trainable_count(model):
     trainable, _ = partition_trainable(model)
-    return sum(int(leaf.size) for leaf in jax.tree.leaves(trainable))
+    return sum(leaf.size for leaf in jax.tree.leaves(trainable))
 
 
 def test_refinement_is_exact_pure_and_allocates_only_selected_edges():

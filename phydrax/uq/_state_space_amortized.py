@@ -117,11 +117,11 @@ class AmortizedGaussianMarkovEncoder(StrictModule):
         context_valid: Array | None = None,
     ) -> GaussianMarkovVariationalFamily:
         feature_values = jax.lax.stop_gradient(jnp.asarray(features))
-        valid = jax.lax.stop_gradient(jnp.asarray(step_valid, dtype=bool))
+        valid = jax.lax.stop_gradient(jnp.asarray(step_valid, dtype=jnp.bool_))
         context = (
             valid
             if context_valid is None
-            else jax.lax.stop_gradient(jnp.asarray(context_valid, dtype=bool))
+            else jax.lax.stop_gradient(jnp.asarray(context_valid, dtype=jnp.bool_))
         )
         if context.shape != valid.shape:
             raise ValueError("context_valid must match step_valid.")
@@ -214,7 +214,7 @@ class AmortizedGaussianMarkovFamily(AbstractVariationalFamily):
         context = (
             problem.observations.step_valid
             if context_mask is None
-            else jnp.asarray(context_mask, dtype=bool)
+            else jnp.asarray(context_mask, dtype=jnp.bool_)
         )
         if context.shape != problem.observations.step_valid.shape:
             raise ValueError("context_mask must match the observation step mask.")
@@ -237,7 +237,7 @@ class AmortizedGaussianMarkovFamily(AbstractVariationalFamily):
         features = _sequence_features(problem)
         state_size = prod(problem.model.state_shape) if problem.model.state_shape else 1
         encoder = AmortizedGaussianMarkovEncoder(
-            int(features.shape[-1]),
+            features.shape[-1],
             hidden_size,
             state_size,
             key=key,
@@ -337,7 +337,7 @@ class AmortizedStateSpaceVariationalResult(StrictModule):
 
     @property
     def num_draws(self) -> int:
-        return int(self.log_model.shape[0])
+        return self.log_model.shape[0]
 
 
 def fit_amortized_state_space_variational(

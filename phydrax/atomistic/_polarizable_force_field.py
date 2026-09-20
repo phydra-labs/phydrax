@@ -46,7 +46,7 @@ def _positive(value, name, /) -> float:
 
 
 def _site_vector(value, name, /, *, nonnegative=False, positive=False):
-    result = np.asarray(value, dtype=float)
+    result = np.asarray(value, dtype=np.float64)
     if result.ndim != 1 or result.size == 0 or np.any(~np.isfinite(result)):
         raise ValueError(f"{name} must be a finite non-empty rank-one array.")
     if nonnegative and np.any(result < 0.0):
@@ -58,9 +58,9 @@ def _site_vector(value, name, /, *, nonnegative=False, positive=False):
 
 def _pair_scale(value, capacity, /):
     if value is None:
-        result = np.ones((capacity, capacity), dtype=float) - np.eye(capacity)
+        result = np.ones((capacity, capacity), dtype=np.float64) - np.eye(capacity)
     else:
-        result = np.asarray(value, dtype=float)
+        result = np.asarray(value, dtype=np.float64)
     if (
         result.shape != (capacity, capacity)
         or np.any(~np.isfinite(result))
@@ -490,11 +490,11 @@ class ChargeFluxPotential(StrictModule, NonTrainableState):
         charges = _site_vector(reference_charges, "reference_charges")
         capacity = charges.size
         bonds = _routes(bond_routes, 2, capacity, "bond_routes")
-        bond_coefficient = np.asarray(bond_coefficients, dtype=float)
-        bond_length = np.asarray(equilibrium_lengths, dtype=float)
+        bond_coefficient = np.asarray(bond_coefficients, dtype=np.float64)
+        bond_length = np.asarray(equilibrium_lengths, dtype=np.float64)
         angles = _routes(angle_routes, 3, capacity, "angle_routes")
-        angle_coefficient = np.asarray(angle_coefficients, dtype=float)
-        angle_equilibrium = np.asarray(equilibrium_angles, dtype=float)
+        angle_coefficient = np.asarray(angle_coefficients, dtype=np.float64)
+        angle_equilibrium = np.asarray(equilibrium_angles, dtype=np.float64)
         if (
             bond_coefficient.shape != (bonds.shape[0],)
             or bond_length.shape != (bonds.shape[0],)
@@ -632,9 +632,9 @@ class StretchBendPotential(StrictModule, NonTrainableState):
         if capacity <= 0:
             raise ValueError("site_capacity must be positive.")
         route = _routes(routes, 3, capacity, "routes")
-        stiffness_ = np.asarray(stiffness, dtype=float)
-        lengths = np.asarray(equilibrium_lengths, dtype=float)
-        angles = np.asarray(equilibrium_angles, dtype=float)
+        stiffness_ = np.asarray(stiffness, dtype=np.float64)
+        lengths = np.asarray(equilibrium_lengths, dtype=np.float64)
+        angles = np.asarray(equilibrium_angles, dtype=np.float64)
         if (
             route.shape[0] == 0
             or stiffness_.shape != (route.shape[0], 2)
@@ -720,8 +720,8 @@ class AngleAnglePotential(StrictModule, NonTrainableState):
         if capacity <= 0:
             raise ValueError("site_capacity must be positive.")
         route = _routes(routes, 4, capacity, "routes")
-        stiffness_ = np.asarray(stiffness, dtype=float)
-        angles = np.asarray(equilibrium_angles, dtype=float)
+        stiffness_ = np.asarray(stiffness, dtype=np.float64)
+        angles = np.asarray(equilibrium_angles, dtype=np.float64)
         if (
             route.shape[0] == 0
             or stiffness_.shape != (route.shape[0],)
@@ -793,11 +793,11 @@ class OutOfPlaneBendPotential(StrictModule, NonTrainableState):
         if capacity <= 0:
             raise ValueError("site_capacity must be positive.")
         route = _routes(routes, 4, capacity, "routes")
-        stiffness_ = np.asarray(stiffness, dtype=float)
+        stiffness_ = np.asarray(stiffness, dtype=np.float64)
         targets = (
-            np.zeros((route.shape[0],), dtype=float)
+            np.zeros((route.shape[0],), dtype=np.float64)
             if target_angles is None
-            else np.asarray(target_angles, dtype=float)
+            else np.asarray(target_angles, dtype=np.float64)
         )
         if (
             route.shape[0] == 0
@@ -955,8 +955,7 @@ class PolarizableForceFieldPlan(StrictModule, NonTrainableState):
         else:
             if not isinstance(multipoles, PermanentMultipoleSiteData):
                 raise TypeError(
-                    "multipoles must be PermanentMultipoleSiteData when "
-                    "polarization is enabled."
+                    "multipoles must be PermanentMultipoleSiteData when polarization is enabled."
                 )
             if self.site_capacity >= 0 and multipoles.site_capacity != self.site_capacity:
                 raise ValueError("Term and multipole capacities differ.")

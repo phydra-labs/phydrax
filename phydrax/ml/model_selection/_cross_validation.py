@@ -105,7 +105,9 @@ def _score_leaf(value: Any, raw: Any, /) -> ScoreRecord:
         array,
         valid=valid,
         status=jnp.where(valid, ML_SUCCESS, ML_NONFINITE).astype(jnp.int32),
-        effective_weight=jnp.ones_like(array, dtype=jnp.result_type(array.real, float)),
+        effective_weight=jnp.ones_like(
+            array, dtype=jnp.result_type(array.real, jnp.float64)
+        ),
         raw=raw,
     )
 
@@ -113,12 +115,12 @@ def _score_leaf(value: Any, raw: Any, /) -> ScoreRecord:
 def _normalize_score(result: Any, /) -> ScoreRecord:
     if isinstance(result, _ScoreResult):
         value = jnp.asarray(result.value)
-        valid = _broadcast_score_field(result.valid, value, dtype=bool)
+        valid = _broadcast_score_field(result.valid, value, dtype=jnp.bool_)
         status = _broadcast_score_field(result.status, value, dtype=jnp.int32)
         weight = (
             result.effective_weight
             if isinstance(result, _WeightedScoreResult)
-            else jnp.ones_like(value, dtype=float)
+            else jnp.ones_like(value, dtype=jnp.float64)
         )
         effective_weight = _broadcast_score_field(
             weight,
@@ -261,7 +263,7 @@ def _aggregate_scores(folds: tuple[FoldEvaluation, ...], /) -> ScoreRecord:
 
     def aggregate(value, valid_, weight):
         weight_ = jnp.asarray(weight)
-        valid_ = jnp.asarray(valid_, dtype=bool)
+        valid_ = jnp.asarray(valid_, dtype=jnp.bool_)
         usable = valid_ & jnp.isfinite(value) & jnp.isfinite(weight_) & (weight_ >= 0)
         selected_weight = jnp.where(usable, weight_, 0)
         denominator = jnp.sum(selected_weight, axis=0)
@@ -272,7 +274,7 @@ def _aggregate_scores(folds: tuple[FoldEvaluation, ...], /) -> ScoreRecord:
     mean = jax.tree_util.tree_map(aggregate, values, valid, effective_weight)
     aggregate_valid = jax.tree_util.tree_map(
         lambda mean_, valid_: (
-            jnp.isfinite(mean_) & jnp.all(jnp.asarray(valid_, dtype=bool), axis=0)
+            jnp.isfinite(mean_) & jnp.all(jnp.asarray(valid_, dtype=jnp.bool_), axis=0)
         ),
         mean,
         valid,
@@ -289,7 +291,7 @@ def _aggregate_scores(folds: tuple[FoldEvaluation, ...], /) -> ScoreRecord:
     total_weight = jax.tree_util.tree_map(
         lambda valid_, weight: jnp.sum(
             jnp.where(
-                jnp.asarray(valid_, dtype=bool),
+                jnp.asarray(valid_, dtype=jnp.bool_),
                 weight,
                 0,
             ),
@@ -495,9 +497,9 @@ class OutOfFoldPredictionResult(StrictModule):
         /,
     ):
         self.predictions = jnp.asarray(predictions)
-        self.sample_mask = jnp.asarray(sample_mask, dtype=bool)
+        self.sample_mask = jnp.asarray(sample_mask, dtype=jnp.bool_)
         self.fold_ids = jnp.asarray(fold_ids, dtype=jnp.int32)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
 
 
@@ -533,12 +535,11 @@ def _validate_oof_folds(
         validation_counts = validation_counts.at[fold.validation_indices].add(1)
         fold_ids = fold_ids.at[fold.validation_indices].set(fold.fold_id)
 
-    selected = jnp.zeros((sample_count,), dtype=bool)
+    selected = jnp.zeros((sample_count,), dtype=jnp.bool_)
     selected = selected.at[split_result.sample_indices].set(True)
     if not bool(jnp.array_equal(validation_counts, selected.astype(jnp.int32))):
         raise ValueError(
-            "OOF validation folds must cover every selected sample exactly once "
-            "and no others."
+            "OOF validation folds must cover every selected sample exactly once and no others."
         )
     return selected, fold_ids
 
@@ -559,7 +560,7 @@ def _validate_oof_groups(
 
     for group in selected_groups:
         group_folds = jnp.unique(fold_ids[groups == group])
-        if int(group_folds.size) != 1:
+        if group_folds.size != 1:
             raise ValueError(
                 "Every selected group must belong wholly to one validation fold."
             )
@@ -595,22 +596,18 @@ def assemble_out_of_fold_predictions(
         prediction = jnp.asarray(retained)
         if prediction.ndim < sample_axis + 1:
             raise ValueError(
-                "Each fold prediction must have the batch case prefix and a "
-                "validation sample dimension."
+                "Each fold prediction must have the batch case prefix and a validation sample dimension."
             )
-        if (
-            tuple(int(size) for size in prediction.shape[:sample_axis])
-            != batch.case_shape
-        ):
+        if tuple(prediction.shape[:sample_axis]) != batch.case_shape:
             raise ValueError(
                 "Fold prediction case dimensions must match batch.case_shape."
             )
-        validation_size = int(evaluation.fold.validation_indices.size)
-        if int(prediction.shape[sample_axis]) != validation_size:
+        validation_size = evaluation.fold.validation_indices.size
+        if prediction.shape[sample_axis] != validation_size:
             raise ValueError(
                 "A fold prediction's sample dimension must match its validation fold."
             )
-        trailing_shape = tuple(int(size) for size in prediction.shape[sample_axis + 1 :])
+        trailing_shape = tuple(prediction.shape[sample_axis + 1 :])
         if prediction_trailing_shape is None:
             prediction_trailing_shape = trailing_shape
             prediction_dtype = prediction.dtype

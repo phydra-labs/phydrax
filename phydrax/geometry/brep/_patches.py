@@ -34,9 +34,9 @@ class PlanePatch(AbstractSurfacePatch):
     second_axis: Array
 
     def __init__(self, origin: Array, first_axis: Array, second_axis: Array):
-        self.origin = jnp.asarray(origin, dtype=float).reshape((3,))
-        self.first_axis = jnp.asarray(first_axis, dtype=float).reshape((3,))
-        self.second_axis = jnp.asarray(second_axis, dtype=float).reshape((3,))
+        self.origin = jnp.asarray(origin, dtype=jnp.float64).reshape((3,))
+        self.first_axis = jnp.asarray(first_axis, dtype=jnp.float64).reshape((3,))
+        self.second_axis = jnp.asarray(second_axis, dtype=jnp.float64).reshape((3,))
 
     def evaluate(self, parameters: Array, /) -> Array:
         parameters_ = jnp.asarray(parameters, dtype=self.origin.dtype)
@@ -55,11 +55,11 @@ class CylinderPatch(AbstractSurfacePatch):
     radius: Array
 
     def __init__(self, origin, first_axis, second_axis, axis, radius):
-        self.origin = jnp.asarray(origin, dtype=float).reshape((3,))
-        self.first_axis = jnp.asarray(first_axis, dtype=float).reshape((3,))
-        self.second_axis = jnp.asarray(second_axis, dtype=float).reshape((3,))
-        self.axis = jnp.asarray(axis, dtype=float).reshape((3,))
-        self.radius = jnp.asarray(radius, dtype=float).reshape(())
+        self.origin = jnp.asarray(origin, dtype=jnp.float64).reshape((3,))
+        self.first_axis = jnp.asarray(first_axis, dtype=jnp.float64).reshape((3,))
+        self.second_axis = jnp.asarray(second_axis, dtype=jnp.float64).reshape((3,))
+        self.axis = jnp.asarray(axis, dtype=jnp.float64).reshape((3,))
+        self.radius = jnp.asarray(radius, dtype=jnp.float64).reshape(())
 
     def evaluate(self, parameters: Array, /) -> Array:
         parameters_ = jnp.asarray(parameters, dtype=self.origin.dtype)
@@ -89,12 +89,14 @@ class ConePatch(AbstractSurfacePatch):
         reference_radius,
         semi_angle,
     ):
-        self.origin = jnp.asarray(origin, dtype=float).reshape((3,))
-        self.first_axis = jnp.asarray(first_axis, dtype=float).reshape((3,))
-        self.second_axis = jnp.asarray(second_axis, dtype=float).reshape((3,))
-        self.axis = jnp.asarray(axis, dtype=float).reshape((3,))
-        self.reference_radius = jnp.asarray(reference_radius, dtype=float).reshape(())
-        self.semi_angle = jnp.asarray(semi_angle, dtype=float).reshape(())
+        self.origin = jnp.asarray(origin, dtype=jnp.float64).reshape((3,))
+        self.first_axis = jnp.asarray(first_axis, dtype=jnp.float64).reshape((3,))
+        self.second_axis = jnp.asarray(second_axis, dtype=jnp.float64).reshape((3,))
+        self.axis = jnp.asarray(axis, dtype=jnp.float64).reshape((3,))
+        self.reference_radius = jnp.asarray(reference_radius, dtype=jnp.float64).reshape(
+            ()
+        )
+        self.semi_angle = jnp.asarray(semi_angle, dtype=jnp.float64).reshape(())
 
     def evaluate(self, parameters: Array, /) -> Array:
         parameters_ = jnp.asarray(parameters, dtype=self.origin.dtype)
@@ -116,11 +118,11 @@ class SpherePatch(AbstractSurfacePatch):
     radius: Array
 
     def __init__(self, center, first_axis, second_axis, axis, radius):
-        self.center = jnp.asarray(center, dtype=float).reshape((3,))
-        self.first_axis = jnp.asarray(first_axis, dtype=float).reshape((3,))
-        self.second_axis = jnp.asarray(second_axis, dtype=float).reshape((3,))
-        self.axis = jnp.asarray(axis, dtype=float).reshape((3,))
-        self.radius = jnp.asarray(radius, dtype=float).reshape(())
+        self.center = jnp.asarray(center, dtype=jnp.float64).reshape((3,))
+        self.first_axis = jnp.asarray(first_axis, dtype=jnp.float64).reshape((3,))
+        self.second_axis = jnp.asarray(second_axis, dtype=jnp.float64).reshape((3,))
+        self.axis = jnp.asarray(axis, dtype=jnp.float64).reshape((3,))
+        self.radius = jnp.asarray(radius, dtype=jnp.float64).reshape(())
 
     def evaluate(self, parameters: Array, /) -> Array:
         parameters_ = jnp.asarray(parameters, dtype=self.center.dtype)
@@ -154,12 +156,12 @@ class TorusPatch(AbstractSurfacePatch):
         major_radius,
         minor_radius,
     ):
-        self.center = jnp.asarray(center, dtype=float).reshape((3,))
-        self.first_axis = jnp.asarray(first_axis, dtype=float).reshape((3,))
-        self.second_axis = jnp.asarray(second_axis, dtype=float).reshape((3,))
-        self.axis = jnp.asarray(axis, dtype=float).reshape((3,))
-        self.major_radius = jnp.asarray(major_radius, dtype=float).reshape(())
-        self.minor_radius = jnp.asarray(minor_radius, dtype=float).reshape(())
+        self.center = jnp.asarray(center, dtype=jnp.float64).reshape((3,))
+        self.first_axis = jnp.asarray(first_axis, dtype=jnp.float64).reshape((3,))
+        self.second_axis = jnp.asarray(second_axis, dtype=jnp.float64).reshape((3,))
+        self.axis = jnp.asarray(axis, dtype=jnp.float64).reshape((3,))
+        self.major_radius = jnp.asarray(major_radius, dtype=jnp.float64).reshape(())
+        self.minor_radius = jnp.asarray(minor_radius, dtype=jnp.float64).reshape(())
 
     def evaluate(self, parameters: Array, /) -> Array:
         parameters_ = jnp.asarray(parameters, dtype=self.center.dtype)
@@ -196,10 +198,10 @@ class BSplineSurfacePatch(AbstractSurfacePatch):
         u_degree: int,
         v_degree: int,
     ):
-        control_points_ = jnp.asarray(control_points, dtype=float)
-        weights_ = jnp.asarray(weights, dtype=float)
-        u_knots_ = jnp.asarray(u_knots, dtype=float).reshape((-1,))
-        v_knots_ = jnp.asarray(v_knots, dtype=float).reshape((-1,))
+        control_points_ = jnp.asarray(control_points, dtype=jnp.float64)
+        weights_ = jnp.asarray(weights, dtype=jnp.float64)
+        u_knots_ = jnp.asarray(u_knots, dtype=jnp.float64).reshape((-1,))
+        v_knots_ = jnp.asarray(v_knots, dtype=jnp.float64).reshape((-1,))
         if control_points_.ndim != 3 or control_points_.shape[-1] != 3:
             raise ValueError("control_points must have shape (num_u, num_v, 3).")
         if weights_.shape != control_points_.shape[:2]:
@@ -261,9 +263,9 @@ class BSplineCurve(StrictModule):
     degree: int = eqx.field(static=True)
 
     def __init__(self, control_points, weights, knots, degree):
-        control_points_ = jnp.asarray(control_points, dtype=float)
-        weights_ = jnp.asarray(weights, dtype=float).reshape((-1,))
-        knots_ = jnp.asarray(knots, dtype=float).reshape((-1,))
+        control_points_ = jnp.asarray(control_points, dtype=jnp.float64)
+        weights_ = jnp.asarray(weights, dtype=jnp.float64).reshape((-1,))
+        knots_ = jnp.asarray(knots, dtype=jnp.float64).reshape((-1,))
         if control_points_.ndim != 2 or control_points_.shape[0] != weights_.shape[0]:
             raise ValueError("Curve control points and weights are inconsistent.")
         if int(degree) < 1:
@@ -307,7 +309,7 @@ SurfacePatch: TypeAlias = (
 
 
 def surface_differential(patch: AbstractSurfacePatch, parameters: Array, /) -> Array:
-    parameters_ = jnp.asarray(parameters, dtype=float)
+    parameters_ = jnp.asarray(parameters, dtype=jnp.float64)
     leading = parameters_.shape[:-1]
     values = jax.vmap(jax.jacfwd(lambda uv: patch.evaluate(uv)))(
         parameters_.reshape((-1, 2))

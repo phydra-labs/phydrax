@@ -47,7 +47,7 @@ def _case_matmul(matrix: Array, factor: Array, case_shape: tuple[int, ...]) -> A
         return matrix @ factor
     cases = _size(case_shape)
     query_shape = matrix.shape[len(case_shape) : -1]
-    q = _size(tuple(int(s) for s in query_shape)) if query_shape else 1
+    q = _size(tuple(query_shape)) if query_shape else 1
     output = jax.vmap(jnp.matmul)(
         matrix.reshape((cases, q, matrix.shape[-1])),
         factor.reshape((cases, factor.shape[-2], factor.shape[-1])),
@@ -91,7 +91,7 @@ class KernelPCAModel(AbstractArrayModel):
         self.kernel = kernel
         self.feature_count = int(feature_count)
         self.component_count = int(component_count)
-        self.case_shape = tuple(int(size) for size in case_shape)
+        self.case_shape = tuple(case_shape)
         self.in_size = self.feature_count
         self.out_size = self.component_count
 
@@ -138,7 +138,7 @@ class KernelPCARecipe(AbstractRecipe):
         if int(n_components) <= 0:
             raise ValueError("n_components must be positive.")
         self.n_components = int(n_components)
-        self.eigenvalue_floor = jnp.asarray(eigenvalue_floor, dtype=float)
+        self.eigenvalue_floor = jnp.asarray(eigenvalue_floor, dtype=jnp.float64)
         if self.eigenvalue_floor.ndim != 0 or bool(self.eigenvalue_floor < 0):
             raise ValueError("eigenvalue_floor must be a nonnegative scalar.")
         self.weight_policy = weight_policy
@@ -244,7 +244,7 @@ class NystromModel(AbstractArrayModel):
         self.kernel = kernel
         self.feature_count = int(feature_count)
         self.component_count = int(component_count)
-        self.case_shape = tuple(int(size) for size in case_shape)
+        self.case_shape = tuple(case_shape)
         self.in_size = self.feature_count
         self.out_size = self.component_count
 
@@ -301,7 +301,7 @@ class NystromRecipe(AbstractRecipe):
             raise ValueError("selection must be 'even' or 'random'.")
         self.n_components = int(n_components)
         self.selection = selection
-        self.eigenvalue_floor = jnp.asarray(eigenvalue_floor, dtype=float)
+        self.eigenvalue_floor = jnp.asarray(eigenvalue_floor, dtype=jnp.float64)
         if self.eigenvalue_floor.ndim != 0 or bool(self.eigenvalue_floor <= 0):
             raise ValueError("eigenvalue_floor must be positive.")
         self.weight_policy = weight_policy
@@ -315,7 +315,7 @@ class NystromRecipe(AbstractRecipe):
         weight = validated_weights(batch.effective_weight(self.weight_policy))
         active = batch.sample_mask & feature_valid & (weight > 0)
         base_score = jnp.broadcast_to(
-            jnp.arange(batch.sample_count, dtype=float) / batch.sample_count,
+            jnp.arange(batch.sample_count, dtype=jnp.float64) / batch.sample_count,
             batch.case_shape + (batch.sample_count,),
         )
         if self.selection == "random":
@@ -486,7 +486,7 @@ class RandomFourierFeaturesRecipe(AbstractRecipe):
             feature_count=batch.feature_count,
             component_count=self.n_components,
         )
-        valid = jnp.ones(batch.case_shape or (), dtype=bool)
+        valid = jnp.ones(batch.case_shape or (), dtype=jnp.bool_)
         status = jnp.zeros(batch.case_shape or (), dtype=jnp.int32)
         diagnostics = FitDiagnostics(
             valid=valid,

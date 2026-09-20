@@ -41,7 +41,7 @@ def _rigid_case(body_count=8):
         fixed_mask=jnp.arange(body_count) == 0,
     ).prepare(particles)
     positions = jnp.stack(
-        (jnp.arange(body_count, dtype=float), jnp.zeros((body_count,))), axis=-1
+        (jnp.arange(body_count, dtype="float64"), jnp.zeros((body_count,))), axis=-1
     )
     reference = bodies.kinematics(
         positions,
@@ -56,7 +56,7 @@ def _rigid_case(body_count=8):
             body_ids[:-1],
             body_ids[1:],
             jnp.stack(
-                (edges.astype(float) + 0.5, jnp.zeros_like(edges, dtype=float)),
+                (edges.astype("float64") + 0.5, jnp.zeros_like(edges, dtype="float64")),
                 axis=-1,
             ),
         )
@@ -75,7 +75,7 @@ def _rigid_case(body_count=8):
 
 def _rod_case(node_count=17):
     positions = jnp.stack(
-        (jnp.arange(node_count, dtype=float), jnp.zeros((node_count,))), axis=-1
+        (jnp.arange(node_count, dtype="float64"), jnp.zeros((node_count,))), axis=-1
     )
     segments = jnp.stack((jnp.arange(node_count - 1), jnp.arange(1, node_count)), axis=-1)
     rod = phx.applications.solid_mechanics.prepare_rod(

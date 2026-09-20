@@ -174,8 +174,8 @@ def _selection_arrays(
     if samples.geometry_case_shape:
         raise ValueError("Sampling metadata must describe one unbatched case.")
     coordinates = np.asarray(samples.coordinates_array(flatten=True))
-    weights = np.asarray(samples.quadrature()).reshape((-1,)).astype(float)
-    mask = np.asarray(samples.mask_array()).reshape((-1,)).astype(bool)
+    weights = np.asarray(samples.quadrature()).reshape((-1,)).astype("float64")
+    mask = np.asarray(samples.mask_array()).reshape((-1,)).astype("bool")
     if coordinates.shape[0] != weights.size:
         raise ValueError("Sample coordinates and quadrature do not align.")
     valid = mask & np.isfinite(weights) & (weights > 0.0)
@@ -207,7 +207,7 @@ def select_function_samples(
             raise ValueError("Uniform sampling without replacement exceeds valid points.")
         chosen = rng.choice(valid_indices, size=requested, replace=False)
         inclusion = float(requested) / float(valid_indices.size)
-        probabilities = np.full(requested, inclusion, dtype=float)
+        probabilities = np.full(requested, inclusion, dtype=np.float64)
         corrected = weights[chosen] / inclusion
     elif strategy == "measure_random":
         distribution = weights[valid_indices] / total
@@ -217,51 +217,51 @@ def select_function_samples(
             replace=True,
             p=distribution,
         )
-        lookup = np.zeros(weights.size, dtype=float)
+        lookup = np.zeros(weights.size, dtype=np.float64)
         lookup[valid_indices] = distribution
         probabilities = lookup[chosen]
         corrected = weights[chosen] / (float(requested) * probabilities)
     elif strategy == "stratified_measure":
-        distribution = np.zeros(weights.size, dtype=float)
+        distribution = np.zeros(weights.size, dtype=np.float64)
         distribution[valid_indices] = weights[valid_indices] / total
         cumulative = np.cumsum(distribution)
         positions = (np.arange(requested) + rng.random(requested)) / requested
         chosen = np.searchsorted(cumulative, positions, side="right")
         chosen = np.minimum(chosen, weights.size - 1)
         probabilities = distribution[chosen]
-        corrected = np.full(requested, total / float(requested), dtype=float)
+        corrected = np.full(requested, total / float(requested), dtype=np.float64)
     elif strategy == "farthest_point":
         if requested > valid_indices.size:
             raise ValueError("Farthest-point sampling exceeds valid points.")
         chosen_list = [int(rng.choice(valid_indices))]
-        minimum_distance = np.full(weights.size, np.inf, dtype=float)
+        minimum_distance = np.full(weights.size, np.inf, dtype=np.float64)
         for _ in range(1, requested):
             latest = coordinates[chosen_list[-1]]
             distance = np.sum((coordinates - latest) ** 2, axis=-1)
             minimum_distance = np.minimum(minimum_distance, distance)
             minimum_distance[~valid] = -np.inf
-            minimum_distance[np.asarray(chosen_list, dtype=int)] = -np.inf
+            minimum_distance[np.asarray(chosen_list, dtype=np.int64)] = -np.inf
             chosen_list.append(int(np.argmax(minimum_distance)))
-        chosen = np.asarray(chosen_list, dtype=int)
-        probabilities = np.ones(requested, dtype=float)
+        chosen = np.asarray(chosen_list, dtype=np.int64)
+        probabilities = np.ones(requested, dtype=np.float64)
         selected_mass = float(np.sum(weights[chosen]))
         corrected = weights[chosen] * (total / selected_mass)
     elif strategy == "fixed_indices":
-        chosen = np.asarray(tuple(int(value) for value in fixed_indices), dtype=int)
+        chosen = np.asarray(tuple(fixed_indices), dtype=np.int64)
         if chosen.size != requested:
             raise ValueError("fixed_indices length must equal the requested count.")
         if np.unique(chosen).size != chosen.size:
             raise ValueError("fixed_indices must be unique.")
         if np.any(chosen < 0) or np.any(chosen >= weights.size) or np.any(~valid[chosen]):
             raise ValueError("fixed_indices contain an invalid sample.")
-        probabilities = np.ones(requested, dtype=float)
+        probabilities = np.ones(requested, dtype=np.float64)
         selected_mass = float(np.sum(weights[chosen]))
         corrected = weights[chosen] * (total / selected_mass)
     else:
         raise ValueError(f"Unknown sampling strategy {strategy!r}.")
 
     return SampleSelection(
-        indices=tuple(int(value) for value in chosen),
+        indices=tuple(chosen),
         probabilities=tuple(float(value) for value in probabilities),
         importance_weights=tuple(float(value) for value in corrected),
         strategy=strategy,
@@ -290,7 +290,7 @@ def take_function_samples(
         values=values,
         coordinates=jnp.take(coordinates, indices, axis=0),
         quadrature_weights=jnp.asarray(selection.importance_weights),
-        mask=jnp.ones((len(selection.indices),), dtype=bool),
+        mask=jnp.ones((len(selection.indices),), dtype=jnp.bool_),
         topology=(
             None
             if samples.topology is None
@@ -305,7 +305,7 @@ def take_query_targets(
     selection: SampleSelection,
     /,
 ) -> Array:
-    sample = tuple(int(size) for size in sample_shape)
+    sample = tuple(sample_shape)
     array = jnp.asarray(targets)
     trailing = array.shape[len(sample) :]
     flattened = array.reshape((prod(sample),) + trailing)
@@ -339,12 +339,10 @@ class AnchorQuerySamplingPolicy:
         if any(not name or count <= 0 for name, count in counts + targets):
             raise ValueError("Anchor and query counts must have names and be positive.")
         fixed = tuple(
-            (str(name), tuple(int(value) for value in values))
-            for name, values in fixed_anchor_indices.items()
+            (str(name), tuple(values)) for name, values in fixed_anchor_indices.items()
         )
         fixed_targets = tuple(
-            (str(name), tuple(int(value) for value in values))
-            for name, values in fixed_query_indices.items()
+            (str(name), tuple(values)) for name, values in fixed_query_indices.items()
         )
         if {name for name, _ in fixed} - {name for name, _ in counts}:
             raise ValueError("Fixed anchor indices refer to an unknown anchor branch.")
@@ -423,7 +421,7 @@ class AnchorQuerySamplingPolicy:
 class InMemoryOperatorCaseSource(OperatorCaseSource):
     """Compatibility source for an eager ``OperatorDataset``."""
 
-    fingerprint_type_id = "phydrax.operator.case-source:in-memory@1"
+    fingerprint_type_id = "phydrax.operator.case-source:in-memory"
 
     def __init__(self, dataset: OperatorDataset, /):
         self.dataset = dataset
@@ -521,7 +519,7 @@ class InMemoryOperatorCaseSource(OperatorCaseSource):
 class CallbackOperatorCaseSource(OperatorCaseSource):
     """Lazy source backed by user-provided metadata and selective readers."""
 
-    fingerprint_type_id = "phydrax.operator.case-source:callback@1"
+    fingerprint_type_id = "phydrax.operator.case-source:callback"
 
     def __init__(
         self,

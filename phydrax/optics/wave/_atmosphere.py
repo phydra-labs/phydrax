@@ -50,9 +50,9 @@ class VonKarmanPhaseScreenPlan(StrictModule, NonTrainableState):
             raise TypeError("space must be a PlaneFieldSpace.")
         if space.topology != "periodic-cell":
             raise ValueError("Phase screens require a periodic-cell field space.")
-        fried = jnp.asarray(fried_parameter, dtype=float)
-        outer = jnp.asarray(outer_scale, dtype=float)
-        inner = jnp.asarray(inner_scale, dtype=float)
+        fried = jnp.asarray(fried_parameter, dtype=jnp.float64)
+        outer = jnp.asarray(outer_scale, dtype=jnp.float64)
+        inner = jnp.asarray(inner_scale, dtype=jnp.float64)
         if fried.shape != () or outer.shape != () or inner.shape != ():
             raise ValueError("Atmospheric length scales must be scalar.")
         fried = eqx.error_if(
@@ -105,7 +105,7 @@ class VonKarmanPhaseScreenPlan(StrictModule, NonTrainableState):
             * (radial_squared + outer_frequency**2) ** (-11.0 / 6.0)
             * jnp.exp(-radial_squared / inner_frequency**2)
         )
-        supported = jnp.ones(self.space.shape, dtype=bool)
+        supported = jnp.ones(self.space.shape, dtype=jnp.bool_)
         for axis, count in enumerate(self.space.shape):
             if count % 2 == 0:
                 axis_indices = jnp.arange(count)
@@ -199,9 +199,9 @@ class AtmosphericLayer(StrictModule, NonTrainableState):
     ):
         if not isinstance(screen, VonKarmanPhaseScreenPlan):
             raise TypeError("screen must be a VonKarmanPhaseScreenPlan.")
-        altitude_ = jnp.asarray(altitude, dtype=float)
-        velocity_ = jnp.asarray(velocity, dtype=float)
-        strength = jnp.asarray(strength_fraction, dtype=float)
+        altitude_ = jnp.asarray(altitude, dtype=jnp.float64)
+        velocity_ = jnp.asarray(velocity, dtype=jnp.float64)
+        strength = jnp.asarray(strength_fraction, dtype=jnp.float64)
         if altitude_.shape != () or velocity_.shape != (2,) or strength.shape != ():
             raise ValueError(
                 "Layer altitude/strength are scalar and velocity has shape (2,)."
@@ -245,7 +245,7 @@ class LayeredAtmosphere(StrictModule, NonTrainableState):
             raise ValueError("All atmospheric layers must share one periodic support.")
         strengths = np.asarray(
             [layer.strength_fraction for layer in layers_],
-            dtype=float,
+            dtype=np.float64,
         )
         if not np.isclose(np.sum(strengths), 1.0, rtol=1e-10, atol=1e-12):
             raise ValueError("Atmospheric strength fractions must sum to one.")

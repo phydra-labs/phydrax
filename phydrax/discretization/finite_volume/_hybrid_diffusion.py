@@ -90,7 +90,7 @@ class HybridMimeticDiffusion(StrictModule):
         if not np.isfinite(stabilization) or stabilization <= 0:
             raise ValueError("stabilization must be finite and strictly positive.")
         owner = np.asarray(discretization.owner_cells)
-        neighbour = np.asarray(discretization.neighbour_cells)
+        neighbor = np.asarray(discretization.neighbor_cells)
         centers = np.asarray(discretization.cell_centers)
         volumes = np.asarray(discretization.cell_volumes)
         face_centers = np.asarray(discretization.face_centers)
@@ -100,7 +100,7 @@ class HybridMimeticDiffusion(StrictModule):
         lists = [[] for _ in range(count)]
         signs = [[] for _ in range(count)]
         slots = np.zeros(owner.size, dtype=np.int32)
-        for face, (left, right) in enumerate(zip(owner, neighbour, strict=True)):
+        for face, (left, right) in enumerate(zip(owner, neighbor, strict=True)):
             slots[face] = len(lists[left])
             lists[left].append(face)
             signs[left].append(1)
@@ -135,7 +135,7 @@ class HybridMimeticDiffusion(StrictModule):
         )
         # Connectivity components are also the nullspace components of the energy.
         labels = np.arange(count)
-        for left, right in zip(owner, neighbour, strict=True):
+        for left, right in zip(owner, neighbor, strict=True):
             if right >= 0:
                 labels[labels == labels[right]] = labels[left]
         _, labels = np.unique(labels, return_inverse=True)
@@ -211,11 +211,11 @@ class HybridMimeticDiffusion(StrictModule):
     def cell_divergence(self, face_rates) -> Array:
         """Net outward integrated owner rates, without division by cell volume."""
         owner = self.discretization.owner_cells
-        neighbour = self.discretization.neighbour_cells
+        neighbor = self.discretization.neighbor_cells
         rates = jnp.asarray(face_rates)
         result = jnp.zeros(self.cell_count, dtype=rates.dtype).at[owner].add(rates)
-        return result.at[jnp.maximum(neighbour, 0)].add(
-            jnp.where(neighbour >= 0, -rates, 0.0)
+        return result.at[jnp.maximum(neighbor, 0)].add(
+            jnp.where(neighbor >= 0, -rates, 0.0)
         )
 
     def anchored_components(self, boundary) -> Array:

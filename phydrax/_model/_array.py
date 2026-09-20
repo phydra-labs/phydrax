@@ -7,9 +7,10 @@ from __future__ import annotations
 from abc import abstractmethod
 from typing import Any, ClassVar, Literal
 
+import equinox as eqx
 from jaxtyping import Array
 
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from ._binding import ModelBinding
 from ._protocols import ModelEvaluator
 
@@ -22,8 +23,8 @@ class AbstractArrayModel(StrictModule, ModelEvaluator):
     # Phydrax models are immutable and their leaves remain explicit PyTree state.
     __hash__ = object.__hash__
 
-    in_size: AbstractAttribute[int | tuple[int, ...] | Literal["scalar"]]
-    out_size: AbstractAttribute[int | tuple[int, ...] | Literal["scalar"]]
+    in_size: eqx.AbstractVar[int | tuple[int, ...] | Literal["scalar"]]
+    out_size: eqx.AbstractVar[int | tuple[int, ...] | Literal["scalar"]]
 
     _input_binding: ClassVar[ModelBinding] = ModelBinding.pointwise()
 

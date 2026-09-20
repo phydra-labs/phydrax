@@ -58,8 +58,8 @@ class NonanalyticPhononCorrection(StrictModule, NonTrainableState):
         charge_neutrality_tolerance: float = 1.0e-8,
         dielectric_symmetry_tolerance: float = 1.0e-10,
     ):
-        born = np.asarray(born_effective_charges, dtype=float)
-        dielectric = np.asarray(dielectric_tensor, dtype=float)
+        born = np.asarray(born_effective_charges, dtype=np.float64)
+        dielectric = np.asarray(dielectric_tensor, dtype=np.float64)
         if born.ndim != 3 or born.shape[1:] != (3, 3) or dielectric.shape != (3, 3):
             raise ValueError(
                 "Born charges and dielectric must have shapes (N,3,3) and (3,3)."
@@ -147,8 +147,8 @@ class PhononDispersionResult(StrictModule, NonTrainableState):
         )
         self.eigenvectors = jnp.asarray(eigenvectors)
         self.dynamical_matrices = jnp.asarray(matrices)
-        self.imaginary_mask = jnp.asarray(imaginary, dtype=bool)
-        self.acoustic_mask = jnp.asarray(acoustic, dtype=bool)
+        self.imaginary_mask = jnp.asarray(imaginary, dtype=jnp.bool_)
+        self.acoustic_mask = jnp.asarray(acoustic, dtype=jnp.bool_)
         self.eigen_residuals = jnp.asarray(
             eigen_residuals, dtype=self.fractional_qpoints.dtype
         )
@@ -161,7 +161,7 @@ class PhononDispersionResult(StrictModule, NonTrainableState):
         self.acoustic_residual = jnp.asarray(
             acoustic_residual, dtype=self.fractional_qpoints.dtype
         ).reshape(())
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.ifc_id = str(ifc_id)
         self.unit_system_id = str(unit_system_id)
         self.result_id = canonical_fingerprint(
@@ -192,7 +192,7 @@ class PhononGroupVelocityResult(StrictModule, NonTrainableState):
         self.velocities = jnp.asarray(velocities)
         self.projected_velocity_matrices = jnp.asarray(projected)
         self.cluster_ids = jnp.asarray(cluster_ids, dtype=jnp.int32)
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.result_id = canonical_fingerprint(
             {
                 "kind": "phonon-group-velocity-result",
@@ -237,7 +237,7 @@ class HarmonicPhononPlan(StrictModule, NonTrainableState):
         )
         if ifc2.unit.unit_id != expected_unit.unit_id:
             raise ValueError("IFC2 unit differs from the atomistic unit system.")
-        mass = np.asarray(masses, dtype=float)
+        mass = np.asarray(masses, dtype=np.float64)
         atoms = ifc2.relation.source_size
         if mass.shape != (atoms,) or np.any(~np.isfinite(mass)) or np.any(mass <= 0.0):
             raise ValueError("Masses must be finite positive values in IFC atom order.")
@@ -315,7 +315,7 @@ class PreparedHarmonicPhonons(StrictModule, NonTrainableState):
         branches = 3 * self.plan.masses.size
         if (
             q.shape[0] > self.plan.maximum_qpoints
-            or int(q.shape[0]) * int(branches) ** 3 > self.plan.maximum_dense_eigen_work
+            or q.shape[0] * int(branches) ** 3 > self.plan.maximum_dense_eigen_work
         ):
             raise ValueError(
                 "Harmonic q/eigensolve resource capacity exceeded before allocation."

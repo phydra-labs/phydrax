@@ -64,7 +64,7 @@ def _problem(configuration: BenchmarkConfiguration):
     zero = tuple(
         gw.DetectorStrainData(
             geometry.detector_id,
-            jnp.zeros_like(frequency, dtype=complex),
+            jnp.zeros_like(frequency, dtype="complex128"),
             psd,
             provenance,
             start_time_gps=0.0,
@@ -178,7 +178,7 @@ def gravitational_wave_exact_likelihood(
         metadata={
             "profile": configuration.profile,
             "detectors": len(likelihood.network.detector_ids),
-            "frequency_bins": int(likelihood.network.frequency.size),
+            "frequency_bins": likelihood.network.frequency.size,
         },
     )
 
@@ -353,8 +353,8 @@ def gravitational_wave_reduced_order_quadrature(
         },
         metadata={
             "profile": configuration.profile,
-            "linear_nodes": int(linear.node_indices.size),
-            "quadratic_nodes": int(quadratic.node_indices.size),
+            "linear_nodes": linear.node_indices.size,
+            "quadratic_nodes": quadratic.node_indices.size,
             "qualification_id": prepared.qualification.report_id,
         },
     )

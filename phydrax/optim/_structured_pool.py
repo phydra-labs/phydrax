@@ -81,8 +81,7 @@ def solve_pooled_structured_nonlinear(
         or method.mode != "sparse-augmented"
     ):
         raise TypeError(
-            "Pooled structured execution requires "
-            "PrimalDualInteriorPoint(mode='sparse-augmented')."
+            "Pooled structured execution requires PrimalDualInteriorPoint(mode='sparse-augmented')."
         )
     termination_ = OptimizationTermination() if termination is None else termination
     if not isinstance(termination_, OptimizationTermination):
@@ -92,7 +91,7 @@ def solve_pooled_structured_nonlinear(
         raise ValueError(
             "initial_coordinates must have shape (tasks, program.num_variables)."
         )
-    task_count = int(initial.shape[0])
+    task_count = initial.shape[0]
     lanes = min(int(lane_count), task_count)
     if task_count < 1 or lanes < 1:
         raise ValueError("Structured pool task and lane counts must be positive.")

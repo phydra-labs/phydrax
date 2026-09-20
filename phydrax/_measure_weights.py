@@ -20,21 +20,21 @@ def normalized_weights(
     """Normalize a masked finite log-weight vector without changing its shape."""
 
     if log_weights is None:
-        values = jnp.zeros((count,), dtype=float)
+        values = jnp.zeros((count,), dtype=jnp.float64)
     else:
-        values = jnp.asarray(log_weights, dtype=float)
+        values = jnp.asarray(log_weights, dtype=jnp.float64)
         if values.shape != (count,):
             raise ValueError(f"log_weights must have shape ({count},).")
     if mask is None:
-        included = jnp.ones((count,), dtype=bool)
+        included = jnp.ones((count,), dtype=jnp.bool_)
     else:
-        included = jnp.asarray(mask, dtype=bool)
+        included = jnp.asarray(mask, dtype=jnp.bool_)
         if included.shape != (count,):
             raise ValueError(f"mask must have shape ({count},).")
     if rows_valid is None:
-        finite_rows = jnp.ones((count,), dtype=bool)
+        finite_rows = jnp.ones((count,), dtype=jnp.bool_)
     else:
-        finite_rows = jnp.asarray(rows_valid, dtype=bool)
+        finite_rows = jnp.asarray(rows_valid, dtype=jnp.bool_)
         if finite_rows.shape != (count,):
             raise ValueError(f"rows_valid must have shape ({count},).")
     admissible = jnp.isfinite(values) | jnp.isneginf(values)
@@ -50,8 +50,8 @@ def normalized_weights(
 def log_weights_from_normalized(weights: Array, mask: Array, /) -> Array:
     """Represent normalized nonnegative weights with inactive negative infinities."""
 
-    values = jnp.asarray(weights, dtype=float)
-    included = jnp.asarray(mask, dtype=bool)
+    values = jnp.asarray(weights, dtype=jnp.float64)
+    included = jnp.asarray(mask, dtype=jnp.bool_)
     safe = jnp.where(included, values, 1.0)
     return jnp.where(included, jnp.log(safe), -jnp.inf)
 

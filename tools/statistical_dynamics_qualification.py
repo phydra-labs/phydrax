@@ -310,8 +310,7 @@ def build_statistical_dynamics_candidate(
     }
     if categorized_ids != {value.evidence_id for value in evidence_}:
         raise ValueError(
-            "Statistical candidate evidence must use scientific/reference, "
-            "performance, operational, or security kinds."
+            "Statistical candidate evidence must use scientific/reference, performance, operational, or security kinds."
         )
     model_id = _model_id(model)
     subject_failures = {

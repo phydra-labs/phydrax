@@ -100,14 +100,14 @@ def test_separable_scan_matches_loop_for_point_and_separable_tuple():
     assert scan_model._scan_enabled_regular
     assert all(scan_model._scan_enabled_clone_groups)
 
-    x_point = jnp.array([0.2, -0.1], dtype=float)
+    x_point = jnp.array([0.2, -0.1], dtype="float64")
     y_point_loop = loop_model(x_point)
     y_point_scan = scan_model(x_point)
     assert y_point_scan.shape == y_point_loop.shape
     assert jnp.allclose(y_point_scan, y_point_loop)
 
-    x1 = jnp.array([0.1, 0.2, 0.4], dtype=float)
-    x2 = jnp.array([-0.3, 0.0], dtype=float)
+    x1 = jnp.array([0.1, 0.2, 0.4], dtype="float64")
+    x2 = jnp.array([-0.3, 0.0], dtype="float64")
     y_sep_loop = loop_model((x1, x2))
     y_sep_scan = scan_model((x1, x2))
     assert y_sep_scan.shape == y_sep_loop.shape

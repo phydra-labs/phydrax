@@ -8,8 +8,8 @@ import phydrax.axes as cx
 
 def _target(points, probabilities, provenance):
     return phx.integration.discrete(
-        jnp.asarray(points, dtype=float),
-        cx.AxisArray(jnp.asarray(probabilities, dtype=float), dims=("atom",)),
+        jnp.asarray(points, dtype="float64"),
+        cx.AxisArray(jnp.asarray(probabilities, dtype="float64"), dims=("atom",)),
         axes="atom",
         normalized=True,
         provenance=provenance,
@@ -73,11 +73,11 @@ def test_marginals_alone_cannot_hide_a_martingale_defect_or_relabel_classical_ot
 
 
 def _matrix_kernel(matrix):
-    probabilities = jnp.asarray(matrix, dtype=float)
+    probabilities = jnp.asarray(matrix, dtype="float64")
 
     def sample(key, state, _t0, _t1, _context):
         row = jnp.asarray(state, dtype=jnp.int32)
-        return jr.categorical(key, jnp.log(probabilities[row])).astype(float)
+        return jr.categorical(key, jnp.log(probabilities[row])).astype("float64")
 
     def log_prob(next_state, state, _t0, _t1, _context):
         row = jnp.asarray(state, dtype=jnp.int32)

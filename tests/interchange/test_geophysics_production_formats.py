@@ -127,8 +127,7 @@ def test_explicit_proj_pipeline_and_variable_length_segy_rev2_are_qualified():
     transform = CoordinateTransformPlan(
         source,
         target,
-        "+proj=pipeline +step +proj=unitconvert +xy_in=deg +xy_out=rad "
-        "+step +proj=cart +ellps=WGS84",
+        "+proj=pipeline +step +proj=unitconvert +xy_in=deg +xy_out=rad +step +proj=cart +ellps=WGS84",
         expected_pyproj_version=pyproj.__version__,
         expected_proj_version=pyproj.proj_version_str,
         expected_resource_sha256={"proj.db": proj_database_sha256},
@@ -142,8 +141,7 @@ def test_explicit_proj_pipeline_and_variable_length_segy_rev2_are_qualified():
         CoordinateTransformPlan(
             source,
             target,
-            "+proj=pipeline +step +proj=unitconvert +xy_in=deg +xy_out=rad "
-            "+step +proj=cart +ellps=WGS84",
+            "+proj=pipeline +step +proj=unitconvert +xy_in=deg +xy_out=rad +step +proj=cart +ellps=WGS84",
             expected_pyproj_version=pyproj.__version__,
             expected_proj_version=pyproj.proj_version_str,
             expected_resource_sha256={"proj.db": "0" * 64},
@@ -208,8 +206,7 @@ def test_electrical_mt_gravity_and_geodetic_text_profiles(tmp_path):
         "<EM_TF><Site><Location><Latitude>45</Latitude><Longitude>-120</Longitude>"
         "<Elevation>100</Elevation></Location></Site><Data><Period value='1'>"
         + "".join(
-            f"<Z output='{out}' input='{inp}'><Real>1</Real><Imaginary>-1</Imaginary>"
-            f"<Error>0.1</Error></Z>"
+            f"<Z output='{out}' input='{inp}'><Real>1</Real><Imaginary>-1</Imaginary><Error>0.1</Error></Z>"
             for out, inp in (("Ex", "Hx"), ("Ex", "Hy"), ("Ey", "Hx"), ("Ey", "Hy"))
         )
         + "</Period></Data></EM_TF>"
@@ -270,7 +267,7 @@ def test_geotiff_netcdf_sac_stationxml_and_las_profiles_execute(tmp_path):
         crs="EPSG:32610",
         transform=from_origin(0, 2, 1, 1),
     ) as dataset:
-        dataset.write(np.asarray([[1, 2, 3], [4, 5, 6]], dtype=float), 1)
+        dataset.write(np.asarray([[1, 2, 3], [4, 5, 6]], dtype="float64"), 1)
     projected = GeospatialContract(
         local.spatial,
         horizontal_crs="EPSG:32610",

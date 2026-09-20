@@ -42,7 +42,7 @@ class ProcessLocalBatch:
 
     @property
     def mask(self) -> np.ndarray:
-        return np.asarray(self.valid, dtype=bool)
+        return np.asarray(self.valid, dtype=np.bool_)
 
 
 @dataclass(frozen=True, slots=True)

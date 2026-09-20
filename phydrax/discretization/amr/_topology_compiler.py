@@ -80,11 +80,11 @@ class BlockTopologyCompileEvidence(StrictModule, NonTrainableState):
         overflow_level: int | None,
         /,
     ):
-        requested = tuple(int(value) for value in requested_blocks)
-        realized = tuple(int(value) for value in realized_blocks)
-        capacities_ = tuple(int(value) for value in capacities)
-        tagged = tuple(int(value) for value in buffered_tagged_cells)
-        rejected = tuple(int(value) for value in proper_nesting_rejections)
+        requested = tuple(requested_blocks)
+        realized = tuple(realized_blocks)
+        capacities_ = tuple(capacities)
+        tagged = tuple(buffered_tagged_cells)
+        rejected = tuple(proper_nesting_rejections)
         if not (
             len(requested) == len(realized) == len(capacities_)
             and len(tagged) == len(rejected) == max(0, len(requested) - 1)
@@ -199,7 +199,7 @@ def _active_tagged_cells(
     level_plan = topology.plan.levels[level]
     logical = np.asarray(metadata.logical_indices, dtype=np.int32)
     result: set[tuple[int, ...]] = set()
-    for slot in np.flatnonzero(np.asarray(metadata.active, dtype=bool)):
+    for slot in np.flatnonzero(np.asarray(metadata.active, dtype=np.bool_)):
         origin = tuple(
             int(index) * size
             for index, size in zip(logical[slot], level_plan.block_shape, strict=True)
@@ -299,13 +299,13 @@ def _metadata_from_logical(
     level_plan = plan.levels[level]
     capacity = level_plan.maximum_blocks
     logical = sorted(
-        (tuple(int(value) for value in row) for row in logical_indices),
+        (tuple(row) for row in logical_indices),
         key=lambda row: plan.block_id(level, row),
     )
     if len(logical) > capacity:
         raise ValueError("Internal topology metadata construction exceeded capacity.")
     count = len(logical)
-    active = np.zeros((capacity,), dtype=bool)
+    active = np.zeros((capacity,), dtype=np.bool_)
     active[:count] = True
     block_ids = np.full((capacity,), -1, dtype=np.int32)
     block_ids[:count] = [plan.block_id(level, row) for row in logical]
@@ -489,7 +489,7 @@ class BlockTopologyCompiler(StrictModule, NonTrainableState):
                 "Topology compiler source does not match its hierarchy plan."
             )
         tags = tuple(np.asarray(value) for value in block_tags)
-        if any(value.dtype != np.dtype(bool) for value in tags):
+        if any(value.dtype != np.dtype(np.bool_) for value in tags):
             raise TypeError("Block refinement tags must have exact Boolean dtype.")
         if len(tags) != len(self.plan.levels) - 1:
             raise ValueError(
@@ -503,7 +503,7 @@ class BlockTopologyCompiler(StrictModule, NonTrainableState):
                 raise ValueError(
                     f"Level {level} tags must have fixed-capacity block shape {expected}."
                 )
-            active = np.asarray(source.levels[level].active, dtype=bool)
+            active = np.asarray(source.levels[level].active, dtype=np.bool_)
             inactive_shape = (active.size,) + (1,) * len(
                 self.plan.levels[level].block_shape
             )

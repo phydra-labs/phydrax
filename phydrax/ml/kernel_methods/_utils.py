@@ -80,7 +80,7 @@ def query_kernel_matrix(
             matrix = matrix.reshape(case_shape + query_shape + (support.shape[-2],))
         else:
             matrix = matrix[..., 0, :]
-        return matrix, tuple(int(s) for s in query_shape)
+        return matrix, tuple(query_shape)
     query_shape = x.shape[:-1]
     flat = x.reshape((-1, x.shape[-1]))
     matrix = kernel_matrix(kernel, flat, support)
@@ -88,14 +88,14 @@ def query_kernel_matrix(
         matrix = matrix.reshape(query_shape + (support.shape[-2],))
     else:
         matrix = matrix[0]
-    return matrix, tuple(int(s) for s in query_shape)
+    return matrix, tuple(query_shape)
 
 
 def flatten_targets(
     target: Array, sample_shape: tuple[int, ...]
 ) -> tuple[Array, tuple[int, ...]]:
     output_shape = target.shape[len(sample_shape) :]
-    return target.reshape(sample_shape + (-1,)), tuple(int(s) for s in output_shape)
+    return target.reshape(sample_shape + (-1,)), tuple(output_shape)
 
 
 def finite_array(value: Array) -> Array:
@@ -103,7 +103,7 @@ def finite_array(value: Array) -> Array:
 
 
 def validated_weights(value: Array) -> Array:
-    weights = jnp.asarray(value, dtype=float)
+    weights = jnp.asarray(value, dtype=jnp.float64)
     return eqx.error_if(
         weights,
         jnp.any(~jnp.isfinite(weights)) | jnp.any(weights < 0.0),

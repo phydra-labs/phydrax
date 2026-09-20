@@ -112,7 +112,7 @@ Declared finite tables, reductive generator matrices, and diagonal weight
 actions can produce verified invariant or equivariant coefficient subspaces.
 Relation residuals, ambiguity bands, metric weights, and candidate isotypic
 blocks are explicit. A supplied reductive action remains caller-declared, and a
-Casimir block is not labelled irreducible without separate proof. Verified
+Casimir block is not labeled irreducible without separate proof. Verified
 bases lower to the existing enforcement representation contracts.
 
 ## Symmetric tensor decomposition

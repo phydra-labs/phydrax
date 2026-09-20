@@ -361,8 +361,8 @@ def _analysis(leg, value, variance, identity, *, mapping_id=None):
     states = (leg.source, leg.destination)
     dataset = ReducedWorkDataset(
         jnp.zeros((2,)),
-        jnp.ones((2,), dtype=bool),
-        jnp.ones((2,), dtype=bool),
+        jnp.ones((2,), dtype="bool"),
+        jnp.ones((2,), dtype="bool"),
         jnp.asarray([0, 1]),
         jnp.asarray([1, 0]),
         jnp.asarray([0, 1]),
@@ -389,7 +389,7 @@ def _analysis(leg, value, variance, identity, *, mapping_id=None):
         jnp.asarray([0.0, value]),
         covariance,
         jnp.ones((2, 2)),
-        jnp.ones((2, 2), dtype=bool),
+        jnp.ones((2, 2), dtype="bool"),
         jnp.asarray([10.0, 10.0]),
         jnp.asarray([10.0, 10.0]),
         jnp.asarray([[0.0], [jnp.sqrt(variance)]]),

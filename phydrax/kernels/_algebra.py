@@ -141,7 +141,7 @@ class ScaleKernel(AbstractPositiveDefiniteKernel):
     ):
         if not isinstance(kernel, AbstractPositiveDefiniteKernel):
             raise TypeError("kernel must be a positive-definite kernel.")
-        value = jnp.asarray(scale, dtype=float)
+        value = jnp.asarray(scale, dtype=jnp.float64)
         if value.ndim != 0:
             raise ValueError("Kernel scale must be scalar.")
         self.kernel = kernel
@@ -191,7 +191,7 @@ class AmplitudeKernel(AbstractPositiveDefiniteKernel):
     ):
         if not isinstance(kernel, AbstractPositiveDefiniteKernel):
             raise TypeError("kernel must be a positive-definite kernel.")
-        value = jnp.asarray(amplitude, dtype=float)
+        value = jnp.asarray(amplitude, dtype=jnp.float64)
         if value.ndim != 0:
             raise ValueError("Kernel amplitude must be scalar.")
         self.kernel = kernel

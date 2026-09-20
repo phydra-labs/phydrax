@@ -11,8 +11,10 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from phydrax._strict import StrictModule
 
-class SinusoidalTimeEmbedding(eqx.Module):
+
+class SinusoidalTimeEmbedding(StrictModule):
     """Fixed log-spaced sine/cosine embedding for scalar diffusion time."""
 
     frequencies: Array
@@ -38,7 +40,7 @@ class SinusoidalTimeEmbedding(eqx.Module):
         return jnp.concatenate((jnp.sin(phase), jnp.cos(phase)), axis=-1)
 
 
-class TimeConditionedVectorModel(eqx.Module):
+class TimeConditionedVectorModel(StrictModule):
     """Adapt a vector model to a state/time score callable by feature concatenation."""
 
     model: Any
@@ -63,7 +65,9 @@ class TimeConditionedVectorModel(eqx.Module):
         features = jnp.concatenate((value, embedding), axis=-1)
         result = jnp.asarray(self.model(features, key=key))
         if result.shape != value.shape:
-            raise ValueError("Conditioned score model must return the complete state shape.")
+            raise ValueError(
+                "Conditioned score model must return the complete state shape."
+            )
         return result
 
 

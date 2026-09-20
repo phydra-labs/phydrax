@@ -137,7 +137,7 @@ class CIStateRepresentation(StrictModule, NonTrainableState):
 
     def __init__(self, coefficients: ArrayLike, determinant_ids: tuple[int, ...], /):
         values = jnp.asarray(coefficients)
-        determinants = tuple(int(value) for value in determinant_ids)
+        determinants = tuple(determinant_ids)
         if values.ndim != 2 or values.shape[0] != len(determinants):
             raise ValueError("CI coefficients must align with determinant identities.")
         residual = jnp.max(

@@ -103,10 +103,10 @@ def trajectory_score_diagnostics(
         case_axis=case_axis,
         horizon_axis=time_axis,
     )
-    if int(sample_values.shape[0]) < 2:
+    if sample_values.shape[0] < 2:
         raise ValueError("Trajectory scores require at least two forecast realizations.")
-    time_count = int(target_values.shape[1])
-    event_size = int(target_values.shape[2])
+    time_count = target_values.shape[1]
+    event_size = target_values.shape[2]
     flattened_size = time_count * event_size
     if flattened_size < 2:
         raise ValueError("Variogram scores require at least two trajectory coordinates.")
@@ -117,17 +117,17 @@ def trajectory_score_diagnostics(
         name="mask",
         case_axis=case_axis,
         horizon_axis=time_axis,
-        dtype=bool,
+        dtype=jnp.bool_,
     )
     if declared_mask is None:
-        declared_mask = jnp.ones_like(target_values, dtype=bool)
+        declared_mask = jnp.ones_like(target_values, dtype=jnp.bool_)
     declared_weights = _canonical_target_value(
         weights,
         target_shape,
         name="weights",
         case_axis=case_axis,
         horizon_axis=time_axis,
-        dtype=float,
+        dtype=jnp.float64,
     )
     if declared_weights is None:
         declared_weights = jnp.ones_like(target_values)
@@ -170,7 +170,7 @@ def trajectory_score_diagnostics(
     energy_values: list[Array] = []
     variogram_values: list[Array] = []
     variogram_valid_values: list[Array] = []
-    for case_index in range(int(target_flat.shape[0])):
+    for case_index in range(target_flat.shape[0]):
         active_weight = jnp.where(mask_flat[case_index], weight_flat[case_index], 0.0)
         normalized_weight = active_weight / jnp.maximum(jnp.sum(active_weight), 1e-12)
         energy = energy_score(
@@ -216,7 +216,7 @@ def trajectory_score_diagnostics(
         variogram_by_case=variogram_by_case,
         valid_energy_cases=jnp.sum(energy_valid),
         valid_variogram_cases=jnp.sum(variogram_valid),
-        num_samples=int(sample_values.shape[0]),
+        num_samples=sample_values.shape[0],
         event_shape=(time_count,) + event_shape,
         variogram_power=power,
         max_lag=lag,
@@ -279,8 +279,8 @@ def _jump_event_summary(
     if channels_count <= 0:
         raise ValueError("num_channels must be positive.")
 
-    valid = jnp.asarray(events.valid, dtype=bool)
-    times = jnp.asarray(events.times, dtype=float)
+    valid = jnp.asarray(events.valid, dtype=jnp.bool_)
+    times = jnp.asarray(events.times, dtype=jnp.float64)
     channels = jnp.asarray(events.channels, dtype=jnp.int32)
     invalid_seen = jnp.cumsum(~valid, axis=-1) > 0
     if bool(jnp.any(valid & invalid_seen)):
@@ -298,19 +298,19 @@ def _jump_event_summary(
     if bool(jnp.any(valid & ((channels < 0) | (channels >= channels_count)))):
         raise ValueError("Active event channels lie outside num_channels.")
 
-    successful = jnp.asarray(events.status == JUMP_SUCCESS, dtype=bool)
+    successful = jnp.asarray(events.status == JUMP_SUCCESS, dtype=jnp.bool_)
     usable = valid & successful[..., None]
     path_counts = jnp.sum(valid, axis=-1, dtype=jnp.int32)
     successful_count = int(jnp.sum(successful))
     path_count = int(prod(events.batch_shape)) if events.batch_shape else 1
     if successful_count == 0:
         raise ValueError("Event diagnostics require at least one successful path.")
-    success_weight = successful.astype(float)
+    success_weight = successful.astype("float64")
     count_mean = jnp.sum(path_counts * success_weight) / successful_count
     centered_count = path_counts - count_mean
     count_variance = jnp.sum(centered_count**2 * success_weight) / successful_count
     count_histogram = jnp.sum(
-        jax.nn.one_hot(path_counts, events.max_events + 1, dtype=float)
+        jax.nn.one_hot(path_counts, events.max_events + 1, dtype=jnp.float64)
         * successful[..., None],
         axis=tuple(range(successful.ndim)),
     )
@@ -322,7 +322,7 @@ def _jump_event_summary(
         jnp.where(usable, (gaps - interarrival_mean) ** 2, 0.0)
     ) / jnp.maximum(gap_count, 1)
 
-    channel_one_hot = jax.nn.one_hot(channels, channels_count, dtype=float)
+    channel_one_hot = jax.nn.one_hot(channels, channels_count, dtype=jnp.float64)
     channel_counts = jnp.sum(
         channel_one_hot * usable[..., None],
         axis=tuple(range(usable.ndim)),
@@ -335,7 +335,9 @@ def _jump_event_summary(
     )
 
     mark_size = prod(events.mark_shape) if events.mark_shape else 1
-    marks = jnp.asarray(events.marks, dtype=float).reshape(valid.shape + (mark_size,))
+    marks = jnp.asarray(events.marks, dtype=jnp.float64).reshape(
+        valid.shape + (mark_size,)
+    )
     if bool(jnp.any(usable[..., None] & ~jnp.isfinite(marks))):
         raise ValueError("Active event marks must be finite.")
     mark_weight = channel_one_hot * usable[..., None]
@@ -440,16 +442,16 @@ def jump_event_diagnostics(
     if candidate.mark_shape != reference_summary.mark_shape:
         raise ValueError("Candidate and reference event marks must have equal shape.")
     histogram_size = max(
-        int(candidate.count_probabilities.shape[0]),
-        int(reference_summary.count_probabilities.shape[0]),
+        candidate.count_probabilities.shape[0],
+        reference_summary.count_probabilities.shape[0],
     )
     candidate_probabilities = jnp.pad(
         candidate.count_probabilities,
-        (0, histogram_size - int(candidate.count_probabilities.shape[0])),
+        (0, histogram_size - candidate.count_probabilities.shape[0]),
     )
     reference_probabilities = jnp.pad(
         reference_summary.count_probabilities,
-        (0, histogram_size - int(reference_summary.count_probabilities.shape[0])),
+        (0, histogram_size - reference_summary.count_probabilities.shape[0]),
     )
     count_wasserstein = jnp.sum(
         jnp.abs(jnp.cumsum(candidate_probabilities) - jnp.cumsum(reference_probabilities))
@@ -515,9 +517,9 @@ def first_passage_diagnostics(
 ) -> FirstPassageDiagnostics:
     """Check a common-horizon hitting-time sample without censoring fabrication."""
 
-    hits = jnp.asarray(hitting_times, dtype=float).reshape((-1,))
-    observed_values = jnp.asarray(observed, dtype=bool).reshape((-1,))
-    if hits.shape != observed_values.shape or int(hits.shape[0]) == 0:
+    hits = jnp.asarray(hitting_times, dtype=jnp.float64).reshape((-1,))
+    observed_values = jnp.asarray(observed, dtype=jnp.bool_).reshape((-1,))
+    if hits.shape != observed_values.shape or hits.shape[0] == 0:
         raise ValueError("hitting_times and observed must be equal non-empty vectors.")
     terminal = float(horizon)
     if not np.isfinite(terminal):
@@ -526,8 +528,8 @@ def first_passage_diagnostics(
         raise ValueError(
             "Observed hitting times must be finite and no later than horizon."
         )
-    times = jnp.asarray(evaluation_times, dtype=float)
-    if times.ndim != 1 or int(times.shape[0]) == 0:
+    times = jnp.asarray(evaluation_times, dtype=jnp.float64)
+    if times.ndim != 1 or times.shape[0] == 0:
         raise ValueError("evaluation_times must be a non-empty vector.")
     if bool(jnp.any(~jnp.isfinite(times))) or bool(jnp.any(jnp.diff(times) <= 0.0)):
         raise ValueError("evaluation_times must be finite and strictly increasing.")
@@ -535,9 +537,9 @@ def first_passage_diagnostics(
         raise ValueError("evaluation_times must not exceed horizon.")
     if callable(reference_cdf):
         reference_fn = cast(Callable[[Array], Array], reference_cdf)
-        reference = jnp.asarray(reference_fn(times), dtype=float)
+        reference = jnp.asarray(reference_fn(times), dtype=jnp.float64)
     else:
-        reference = jnp.asarray(reference_cdf, dtype=float)
+        reference = jnp.asarray(reference_cdf, dtype=jnp.float64)
     if reference.shape != times.shape or bool(
         jnp.any(~jnp.isfinite(reference) | (reference < 0.0) | (reference > 1.0))
     ):
@@ -557,7 +559,7 @@ def first_passage_diagnostics(
         max_cdf_deviation=jnp.max(deviation),
         simultaneous_bound=bound,
         observed_fraction=jnp.mean(observed_values),
-        num_paths=int(hits.shape[0]),
+        num_paths=hits.shape[0],
         horizon=terminal,
         confidence=level,
     )
@@ -599,8 +601,7 @@ class ProcessValidationSplit(StrictModule):
         )
         if int(count) != expected:
             raise ValueError(
-                f"{partition} data contain {int(count)} cases, but the split declares "
-                f"{expected}."
+                f"{partition} data contain {int(count)} cases, but the split declares {expected}."
             )
 
 
@@ -620,12 +621,12 @@ def _case_count(values: ArrayLike | cx.AxisArray, case_axis: int | str, /) -> in
                 raise ValueError(f"Unknown case dimension {case_axis!r}.")
             return int(values.named_shape[case_axis])
         position = _axis(case_axis, values.data.ndim, name="case_axis")
-        return int(values.data.shape[position])
+        return values.data.shape[position]
     if isinstance(case_axis, str):
         raise TypeError("A string case_axis requires a phydrax.axes.AxisArray.")
     array = jnp.asarray(values)
     position = _axis(case_axis, array.ndim, name="case_axis")
-    return int(array.shape[position])
+    return array.shape[position]
 
 
 class HorizonScaleCalibrator(StrictModule):
@@ -651,9 +652,9 @@ class HorizonScaleCalibrator(StrictModule):
     ) -> HorizonScaleCalibrator:
         if not isinstance(split, ProcessValidationSplit):
             raise TypeError("split must be a ProcessValidationSplit.")
-        location_values = jnp.asarray(location, dtype=float)
-        scale_values = jnp.asarray(scale, dtype=float)
-        target_values = jnp.asarray(target, dtype=float)
+        location_values = jnp.asarray(location, dtype=jnp.float64)
+        scale_values = jnp.asarray(scale, dtype=jnp.float64)
+        target_values = jnp.asarray(target, dtype=jnp.float64)
         if (
             location_values.shape != target_values.shape
             or scale_values.shape != target_values.shape
@@ -667,7 +668,7 @@ class HorizonScaleCalibrator(StrictModule):
         if case_position == horizon_position:
             raise ValueError("case_axis and horizon_axis must be distinct.")
         split.require_case_count(
-            int(target_values.shape[case_position]), partition="calibration"
+            target_values.shape[case_position], partition="calibration"
         )
         permutation = (case_position, horizon_position) + tuple(
             index
@@ -677,10 +678,10 @@ class HorizonScaleCalibrator(StrictModule):
         location_values = jnp.transpose(location_values, permutation)
         scale_values = jnp.transpose(scale_values, permutation)
         target_values = jnp.transpose(target_values, permutation)
-        active = jnp.ones_like(target_values, dtype=bool)
+        active = jnp.ones_like(target_values, dtype=jnp.bool_)
         if mask is not None:
             active = jnp.transpose(
-                jnp.broadcast_to(jnp.asarray(mask, dtype=bool), jnp.shape(target)),
+                jnp.broadcast_to(jnp.asarray(mask, dtype=jnp.bool_), jnp.shape(target)),
                 permutation,
             )
         if bool(
@@ -710,7 +711,7 @@ class HorizonScaleCalibrator(StrictModule):
         )
         if bool(jnp.any(~jnp.isfinite(multiplier) | (multiplier <= 0.0))):
             raise ValueError("Calibration data imply invalid horizon scale multipliers.")
-        horizon_values = jnp.asarray(horizons, dtype=float)
+        horizon_values = jnp.asarray(horizons, dtype=jnp.float64)
         if horizon_values.ndim != 1 or horizon_values.shape != multiplier.shape:
             raise ValueError("horizons must align with horizon_axis.")
         if bool(jnp.any(~jnp.isfinite(horizon_values))) or bool(
@@ -725,8 +726,8 @@ class HorizonScaleCalibrator(StrictModule):
         horizons: ArrayLike,
         split: ProcessValidationSplit,
     ):
-        multiplier = jnp.asarray(scale_multiplier, dtype=float)
-        horizon_values = jnp.asarray(horizons, dtype=float)
+        multiplier = jnp.asarray(scale_multiplier, dtype=jnp.float64)
+        horizon_values = jnp.asarray(horizons, dtype=jnp.float64)
         if multiplier.ndim != 1 or multiplier.shape != horizon_values.shape:
             raise ValueError("scale_multiplier and horizons must be equal vectors.")
         if bool(jnp.any(~jnp.isfinite(multiplier) | (multiplier <= 0.0))):
@@ -738,12 +739,12 @@ class HorizonScaleCalibrator(StrictModule):
         self.split = split
 
     def transform(self, scale: ArrayLike, /, *, horizon_axis: int = 1) -> Array:
-        values = jnp.asarray(scale, dtype=float)
+        values = jnp.asarray(scale, dtype=jnp.float64)
         position = _axis(horizon_axis, values.ndim, name="horizon_axis")
-        if int(values.shape[position]) != int(self.scale_multiplier.shape[0]):
+        if values.shape[position] != self.scale_multiplier.shape[0]:
             raise ValueError("scale horizon axis does not match fitted horizons.")
         shape = [1] * values.ndim
-        shape[position] = int(self.scale_multiplier.shape[0])
+        shape[position] = self.scale_multiplier.shape[0]
         return values * self.scale_multiplier.reshape(tuple(shape))
 
 
@@ -974,9 +975,9 @@ def process_conformal_diagnostics(
         position = target.dims.index(case_axis)
     else:
         position = _axis(case_axis, target_values.ndim, name="case_axis")
-    active = jnp.ones_like(target_values, dtype=bool)
+    active = jnp.ones_like(target_values, dtype=jnp.bool_)
     if mask is not None:
-        active = jnp.broadcast_to(jnp.asarray(mask, dtype=bool), target_values.shape)
+        active = jnp.broadcast_to(jnp.asarray(mask, dtype=jnp.bool_), target_values.shape)
     finite = (
         jnp.isfinite(target_values)
         & jnp.isfinite(lower_values)
@@ -1055,9 +1056,7 @@ def process_calibration_report(
             raise ValueError("case_axis=None requires exactly one declared test case.")
     else:
         case_position = _axis(case_axis, target_values.ndim, name="case_axis")
-        split.require_case_count(
-            int(target_values.shape[case_position]), partition="test"
-        )
+        split.require_case_count(target_values.shape[case_position], partition="test")
     if jnp.shape(raw_samples) != jnp.shape(calibrated_samples):
         raise ValueError("Raw and calibrated sample arrays must have equal shapes.")
     raw_horizon = horizon_score_diagnostics(
@@ -1185,7 +1184,7 @@ def process_shift_evaluation_matrix(
 
     names = tuple(str(name) for name in scenario_names)
     kinds = tuple(str(kind) for kind in shift_kinds)
-    seed_values = tuple(int(seed) for seed in seeds)
+    seed_values = tuple(seeds)
     if not names or any(not name for name in names) or len(set(names)) != len(names):
         raise ValueError("scenario_names must be non-empty and unique.")
     valid_kinds = (
@@ -1215,10 +1214,10 @@ def process_shift_evaluation_matrix(
         raise ValueError("nominal_coverage must lie strictly between zero and one.")
 
     shape = (len(seed_values), len(names))
-    raw_score_values = jnp.asarray(raw_scores, dtype=float)
-    calibrated_score_values = jnp.asarray(calibrated_scores, dtype=float)
-    raw_coverage_values = jnp.asarray(raw_coverages, dtype=float)
-    calibrated_coverage_values = jnp.asarray(calibrated_coverages, dtype=float)
+    raw_score_values = jnp.asarray(raw_scores, dtype=jnp.float64)
+    calibrated_score_values = jnp.asarray(calibrated_scores, dtype=jnp.float64)
+    raw_coverage_values = jnp.asarray(raw_coverages, dtype=jnp.float64)
+    calibrated_coverage_values = jnp.asarray(calibrated_coverages, dtype=jnp.float64)
     arrays = (
         raw_score_values,
         calibrated_score_values,
@@ -1255,7 +1254,7 @@ def process_shift_evaluation_matrix(
     ) / jnp.maximum(jnp.abs(calibrated_baseline), 1e-12)
     paired_excess = None
     if paired_reference_scores is not None:
-        reference = jnp.asarray(paired_reference_scores, dtype=float)
+        reference = jnp.asarray(paired_reference_scores, dtype=jnp.float64)
         if reference.shape != shape or bool(jnp.any(~jnp.isfinite(reference))):
             raise ValueError(
                 "paired_reference_scores must be a finite shift metric matrix."

@@ -69,7 +69,7 @@ def test_mixed_prism_tetra_p1_uses_polyhedral_topology_and_shared_vertex_dofs():
     np.testing.assert_array_equal(tetrahedron_routes[[1, 3, 2]], (3, 4, 5))
 
     connectivity = mesh.connectivity
-    shared_face = int(np.flatnonzero(np.asarray(connectivity.face_neighbour) >= 0)[0])
+    shared_face = int(np.flatnonzero(np.asarray(connectivity.face_neighbor) >= 0)[0])
     start, stop = np.asarray(connectivity.face_vertex_offsets)[
         shared_face : shared_face + 2
     ]

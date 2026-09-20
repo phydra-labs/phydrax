@@ -14,7 +14,7 @@ import jax.numpy as jnp
 
 from phydrax.domain import DomainFunction
 
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from ._base import _same_support, _validate_support, ConditionSupport
 
 
@@ -86,7 +86,7 @@ class ArrayCodomain(StrictModule):
         axis_names: Sequence[str] | None = None,
         dtype: Any | None = None,
     ) -> ArrayCodomain:
-        shape_ = tuple(int(size) for size in shape)
+        shape_ = tuple(shape)
         if any(size <= 0 for size in shape_):
             raise ValueError("ArrayCodomain dimensions must be positive.")
         names = (
@@ -334,7 +334,7 @@ class OperatorCapabilities(StrictModule):
 class AbstractConditionOperator(StrictModule):
     """Typed action contract for a condition declaration."""
 
-    capabilities: AbstractAttribute[OperatorCapabilities]
+    capabilities: eqx.AbstractVar[OperatorCapabilities]
 
     @abstractmethod
     def apply(

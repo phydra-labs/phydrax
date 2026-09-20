@@ -264,7 +264,7 @@ class PreparedFLIPParticleTransfer(StrictModule, NonTrainableState):
             else geometry.cell_fluid_measure.astype(values.dtype)
         )
         cell_active = (
-            jnp.ones_like(cell_volume, dtype=bool)
+            jnp.ones_like(cell_volume, dtype=jnp.bool_)
             if geometry is None
             else geometry.cell_active
         )

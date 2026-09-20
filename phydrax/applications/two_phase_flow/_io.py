@@ -121,10 +121,7 @@ def two_phase_inspection_frame(
     )
     if geometry_epoch != expected_geometry_epoch:
         raise ValueError("VOF state geometry epoch does not match the prepared geometry.")
-    provenance_id = (
-        f"{identifier}:diagnostic-view:{view.two_phase_id}:"
-        f"geometry={view.geometry_id!r}:epoch={geometry_epoch}"
-    )
+    provenance_id = f"{identifier}:diagnostic-view:{view.two_phase_id}:geometry={view.geometry_id!r}:epoch={geometry_epoch}"
     cell_valid = view.successful
     fields = [
         HostInspectionField(
@@ -289,7 +286,7 @@ def two_phase_inspection_frames(
     source_step = index(step)
     if source_step < 0:
         raise ValueError("step must be nonnegative.")
-    successful_array = np.asarray(result.successful, dtype=bool)
+    successful_array = np.asarray(result.successful, dtype=np.bool_)
     if successful_array.shape != ():
         raise ValueError("Fixed-step result successful must be scalar.")
     successful = bool(successful_array)

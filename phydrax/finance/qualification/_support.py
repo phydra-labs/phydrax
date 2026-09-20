@@ -107,8 +107,7 @@ def valuation_support(
     route_ = _text(route, "route")
     if route_ not in _VALUATION_ROUTES:
         raise ValueError(
-            "valuation route must be analytic, fourier, pde, simulation, "
-            "exercise, or bsde."
+            "valuation route must be analytic, fourier, pde, simulation, exercise, or bsde."
         )
     return _common(
         "finance.valuation",
@@ -235,8 +234,7 @@ def advanced_finance_support(
     route_ = _text(route, "route")
     if route_ not in _ADVANCED_ROUTES:
         raise ValueError(
-            "advanced route must be martingale-transport, rough, deep, "
-            "operator, or tensor."
+            "advanced route must be martingale-transport, rough, deep, operator, or tensor."
         )
     ceiling = _text(candidate_ceiling, "candidate_ceiling")
     if ceiling != "candidate":

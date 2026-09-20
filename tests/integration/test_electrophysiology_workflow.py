@@ -133,7 +133,7 @@ def test_branched_multicell_ion_channel_plasticity_workflow_is_jittable():
             injected,
             synapse_candidate.evidence.conductance_uS.reshape(2, 4),
             synapse_candidate.evidence.current_offset_nA.reshape(2, 4),
-            jnp.zeros((2, 4), dtype=bool),
+            jnp.zeros((2, 4), dtype="bool"),
             zeros,
         )
         cable_results = jax.vmap(

@@ -29,8 +29,7 @@ def test_live_opticstudio_session_and_system_data_analysis():
         session = OpticStudioBackend().open_session()
     except Exception as error:
         pytest.skip(
-            "OpticStudio package is present but a licensed live session is unavailable: "
-            f"{type(error).__name__}"
+            f"OpticStudio package is present but a licensed live session is unavailable: {type(error).__name__}"
         )
     with session:
         result = run_opticstudio_analysis(

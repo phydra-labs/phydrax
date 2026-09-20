@@ -58,8 +58,8 @@ def spatial_integral(
     """
     _, var_dim = _factor_and_dim(u, var)
 
-    y = jnp.asarray(quad["points"], dtype=float)
-    w = jnp.asarray(quad["weights"], dtype=float)
+    y = jnp.asarray(quad["points"], dtype=jnp.float64)
+    w = jnp.asarray(quad["weights"], dtype=jnp.float64)
     if y.ndim != 2 or y.shape[1] != int(var_dim):
         raise ValueError(
             f"quad['points'] must have shape (Ny, {int(var_dim)}), got {y.shape}."
@@ -101,11 +101,10 @@ def spatial_integral(
         x = args[x_pos]
         if isinstance(x, tuple):
             raise ValueError("spatial_integral does not support coord-separable inputs.")
-        x = jnp.asarray(x, dtype=float)
+        x = jnp.asarray(x, dtype=jnp.float64)
 
-        t = None
         if t_pos is not None:
-            t = jnp.asarray(args[t_pos], dtype=float).reshape(())
+            jnp.asarray(args[t_pos], dtype=jnp.float64).reshape(())
 
         u_args = [args[i] for i in u_pos]
 
@@ -118,7 +117,7 @@ def spatial_integral(
         uy = _eval_g(jax.vmap(per_y)(y))
 
         if kernel is None:
-            K = jnp.ones((y.shape[0],), dtype=float)
+            K = jnp.ones((y.shape[0],), dtype=jnp.float64)
         else:
             z = jnp.concatenate([jnp.broadcast_to(x[None, :], y.shape), y], axis=1)
             K = jax.vmap(kernel)(z)
@@ -180,8 +179,8 @@ def nonlocal_integral(
     """
     _, var_dim = _factor_and_dim(u, var)
 
-    y_space = jnp.asarray(quad["points"], dtype=float)
-    w = jnp.asarray(quad["weights"], dtype=float)
+    y_space = jnp.asarray(quad["points"], dtype=jnp.float64)
+    w = jnp.asarray(quad["weights"], dtype=jnp.float64)
     if y_space.ndim != 2 or y_space.shape[1] != int(var_dim):
         raise ValueError(
             f"quad['points'] must have shape (Ny, {int(var_dim)}), got {y_space.shape}."
@@ -222,11 +221,11 @@ def nonlocal_integral(
         x_sp = args[x_pos]
         if isinstance(x_sp, tuple):
             raise ValueError("nonlocal_integral does not support coord-separable inputs.")
-        x_sp = jnp.asarray(x_sp, dtype=float)
+        x_sp = jnp.asarray(x_sp, dtype=jnp.float64)
 
         t = None
         if t_pos is not None:
-            t = jnp.asarray(args[t_pos], dtype=float).reshape(())
+            t = jnp.asarray(args[t_pos], dtype=jnp.float64).reshape(())
 
         u_args = [args[i] for i in u_pos]
         ux = u.func(*u_args, key=key, **kwargs)

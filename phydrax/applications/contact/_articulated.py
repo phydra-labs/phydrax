@@ -113,7 +113,7 @@ def _contact_layout(kinematics: ContactKinematicsEpoch, /) -> tuple[int, int]:
         raise TypeError("kinematics must be ContactKinematicsEpoch.")
     if not kinematics.batches:
         raise ValueError("Articulated contact requires positive fixed-route capacity.")
-    tangent_dimension = int(kinematics.batches[0].tangential_velocity.shape[-1])
+    tangent_dimension = kinematics.batches[0].tangential_velocity.shape[-1]
     if any(
         batch.tangential_velocity.shape[-1] != tangent_dimension
         for batch in kinematics.batches

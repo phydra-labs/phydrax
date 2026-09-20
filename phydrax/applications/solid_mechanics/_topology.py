@@ -87,8 +87,7 @@ class TopologyMechanicsProblem(StrictModule, NonTrainableState):
             state_solver, (FiniteElementStateSolver, NeuralVariationalStateSolver)
         ):
             raise TypeError(
-                "state_solver must end in FiniteElementStateSolver, directly or through "
-                "NeuralVariationalStateSolver."
+                "state_solver must end in FiniteElementStateSolver, directly or through NeuralVariationalStateSolver."
             )
         aggregation_ = Aggregation() if aggregation is None else aggregation
         acceptance = (

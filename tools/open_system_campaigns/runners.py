@@ -160,9 +160,7 @@ def gaussian_campaign():
     gamma = 0.4
     hbar = 2.0
     occupation = 1.0
-    initial = BosonicGaussianState(
-        jnp.zeros(2), 0.5 * hbar * jnp.eye(2), hbar=hbar
-    )
+    initial = BosonicGaussianState(jnp.zeros(2), 0.5 * hbar * jnp.eye(2), hbar=hbar)
     problem = GaussianLindbladProblem(
         -0.5 * gamma * jnp.eye(2),
         gamma * (occupation + 0.5) * hbar * jnp.eye(2),
@@ -174,9 +172,9 @@ def gaussian_campaign():
     fine = solve_gaussian_lindblad(problem, step_size=0.02, steps=20)
     stationary = problem.stationary_state()
     final_time = 0.4
-    analytic_covariance = stationary.covariance + jnp.exp(
-        -gamma * final_time
-    ) * (initial.covariance - stationary.covariance)
+    analytic_covariance = stationary.covariance + jnp.exp(-gamma * final_time) * (
+        initial.covariance - stationary.covariance
+    )
     error = jnp.linalg.norm(fine.covariances[-1] - analytic_covariance)
     precision = _precision(
         fine.covariances.dtype,
@@ -190,7 +188,7 @@ def gaussian_campaign():
         precision_evidence=precision.evidence,
     )
     return _record(
-        "gaussian-affine-v1",
+        "gaussian-affine",
         "bosonic-gaussian",
         (
             ApproximationAxis("time-step", 0.02, units="time"),
@@ -229,19 +227,18 @@ def gaussian_campaign():
         unsupported=("arbitrary-non-gaussian-dynamics",),
     )
 
+
 def dense_trajectory_campaign():
-    lowering = jnp.asarray([[0, 1], [0, 0]], dtype=complex)
+    lowering = jnp.asarray([[0, 1], [0, 0]], dtype="complex128")
     raising = jnp.conj(lowering.T)
-    down = StateVectorOperator.from_matrix(
-        lowering, operator_id="thermal-down"
-    )
+    down = StateVectorOperator.from_matrix(lowering, operator_id="thermal-down")
     up = StateVectorOperator.from_matrix(
         jnp.sqrt(0.3) * raising, operator_id="thermal-up"
     )
     initial_state = jnp.asarray([1.0 + 0.0j, 0.0j])
     problem = QuantumJumpProblem(
         StateVectorOperator.from_matrix(
-            jnp.zeros((2, 2), dtype=complex), operator_id="zero-hamiltonian"
+            jnp.zeros((2, 2), dtype="complex128"), operator_id="zero-hamiltonian"
         ),
         (down, up),
         initial_state,
@@ -277,16 +274,14 @@ def dense_trajectory_campaign():
         final = solution.states[:, -1, :]
         state = final[:, :2] + 1j * final[:, 2:]
         return jnp.mean(
-            jax.vmap(
-                lambda value: value[:, None] * jnp.conj(value[None, :])
-            )(state),
+            jax.vmap(lambda value: value[:, None] * jnp.conj(value[None, :]))(state),
             axis=0,
         )
 
     coarse_density = empirical(coarse)
     fine_density = empirical(fine)
     dense_problem = LindbladProblem(
-        jnp.zeros((2, 2), dtype=complex),
+        jnp.zeros((2, 2), dtype="complex128"),
         jnp.stack((lowering, jnp.sqrt(0.3) * raising)),
         jnp.outer(initial_state, jnp.conj(initial_state)),
         problem_id="thermal-two-channel-dense-reference",
@@ -298,9 +293,7 @@ def dense_trajectory_campaign():
     execution_valid = jnp.all(fine.valid) & dense.valid
     precision = _precision(fine.states.dtype, "trajectory-campaign")
     trace_residual = jnp.abs(jnp.trace(fine_density) - 1.0)
-    hermiticity_residual = jnp.max(
-        jnp.abs(fine_density - jnp.conj(fine_density.T))
-    )
+    hermiticity_residual = jnp.max(jnp.abs(fine_density - jnp.conj(fine_density.T)))
     positivity_margin = jnp.min(jnp.linalg.eigvalsh(fine_density))
     physicality = OpenSystemPhysicalityEvidence(
         trace_residual=trace_residual,
@@ -310,7 +303,7 @@ def dense_trajectory_campaign():
         precision_evidence=precision.evidence,
     )
     return _record(
-        "dense-trajectories-v1",
+        "dense-trajectories",
         "generic-event-vector-trajectories",
         (
             ApproximationAxis("relative-tolerance", 1e-7),
@@ -365,15 +358,13 @@ def dense_trajectory_campaign():
 
 
 def mps_campaign():
-    state = product_mps(
-        jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=complex)
-    )
+    state = product_mps(jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype="complex128"))
     hamiltonian = NearestNeighborHamiltonian(
-        (jnp.zeros((4, 4), dtype=complex),),
+        (jnp.zeros((4, 4), dtype="complex128"),),
         (2, 2),
         hamiltonian_id="campaign-zero",
     )
-    lowering = jnp.asarray([[0, 1], [0, 0]], dtype=complex)
+    lowering = jnp.asarray([[0, 1], [0, 0]], dtype="complex128")
     problem = MPSQuantumJumpProblem(
         hamiltonian,
         (LocalMPSJump(0, lowering, jump_id="loss"),),
@@ -403,9 +394,7 @@ def mps_campaign():
         jnp.abs(result.jump_times[0] - exact_event_time),
         jnp.asarray(jnp.inf),
     )
-    root_residual = jnp.max(
-        jnp.where(result.active_events, result.root_residuals, 0.0)
-    )
+    root_residual = jnp.max(jnp.where(result.active_events, result.root_residuals, 0.0))
     execution = result.valid & jnp.any(result.active_events)
     precision = _precision(
         result.final_state.tensors[0].dtype,
@@ -424,7 +413,7 @@ def mps_campaign():
         precision_evidence=precision.evidence,
     )
     return _record(
-        "mps-trajectories-v1",
+        "mps-trajectories",
         "mps-trajectories",
         (
             ApproximationAxis("time-step", 0.1, units="time"),
@@ -489,12 +478,8 @@ def mps_campaign():
 
 
 def lpdo_campaign():
-    coarse_problem = boundary_driven_xxz_problem(
-        2, half_step=0.01, boundary_rate=0.2
-    )
-    fine_problem = boundary_driven_xxz_problem(
-        2, half_step=0.005, boundary_rate=0.2
-    )
+    coarse_problem = boundary_driven_xxz_problem(2, half_step=0.01, boundary_rate=0.2)
+    fine_problem = boundary_driven_xxz_problem(2, half_step=0.005, boundary_rate=0.2)
     coarse = solve_purified_strang(
         coarse_problem,
         step_size=0.02,
@@ -524,9 +509,7 @@ def lpdo_campaign():
         "lpdo-campaign",
         children={"solver": result.final_state.precision_evidence},
     )
-    closure = jnp.max(
-        jnp.stack((bond_discarded, kraus_discarded, canonical_residual))
-    )
+    closure = jnp.max(jnp.stack((bond_discarded, kraus_discarded, canonical_residual)))
     physicality = OpenSystemPhysicalityEvidence(
         trace_residual=trace_error,
         positivity_margin=positivity_margin,
@@ -536,7 +519,7 @@ def lpdo_campaign():
     )
     truncation_saturated = (bond_discarded > 1e-6) | (kraus_discarded > 1e-6)
     return _record(
-        "lpdo-xxz-v1",
+        "lpdo-xxz",
         "locally-purified-density",
         (
             ApproximationAxis("time-step", 0.01, parent_value=0.02, units="time"),
@@ -628,8 +611,8 @@ def heom_campaign():
     from phydrax.solver._heom_production import solve_heom_continuation_grid
 
     base = HEOMProblem(
-        jnp.zeros((2, 2), dtype=complex),
-        jnp.asarray([[1, 0], [0, -1]], dtype=complex),
+        jnp.zeros((2, 2), dtype="complex128"),
+        jnp.asarray([[1, 0], [0, -1]], dtype="complex128"),
         expansion1,
         HEOMHierarchy(expansion1.rank, 1),
         density,
@@ -685,9 +668,7 @@ def heom_campaign():
         ),
         axis=0,
     )
-    trace_residual = jnp.max(
-        jnp.abs(jnp.trace(root_states, axis1=-2, axis2=-1) - 1.0)
-    )
+    trace_residual = jnp.max(jnp.abs(jnp.trace(root_states, axis1=-2, axis2=-1) - 1.0))
     hermiticity_residual = jnp.max(
         jnp.abs(root_states - jnp.swapaxes(jnp.conj(root_states), -1, -2))
     )
@@ -711,7 +692,7 @@ def heom_campaign():
     )
     hierarchy_saturated = top_tier_norm > 0.1
     return _record(
-        "heom-spin-boson-v1",
+        "heom-spin-boson",
         "adaptive-heom",
         (
             ApproximationAxis("hierarchy-depth", 2, parent_value=1),
@@ -836,12 +817,10 @@ def memory_campaign():
         precision_evidence=precision.evidence,
     )
     return _record(
-        "constructive-memory-v1",
+        "constructive-memory",
         "direct-memory-map",
         (
-            ApproximationAxis(
-                "memory-step", 0.001, parent_value=0.002, units="time"
-            ),
+            ApproximationAxis("memory-step", 0.001, parent_value=0.002, units="time"),
             ApproximationAxis("memory-horizon", fine_problem.kernel.memory_horizon),
         ),
         (
@@ -880,9 +859,7 @@ def memory_campaign():
             "superoperators": certification.superoperators,
             "choi-matrices": certification.choi_matrices,
             "cp-margins": certification.cp_margins,
-            "trace-preservation-residuals": (
-                certification.trace_preservation_residuals
-            ),
+            "trace-preservation-residuals": (certification.trace_preservation_residuals),
         },
         work={"coarse-steps": 10, "fine-steps": 20, "basis-solves": 4},
         capacity_evidence=(
@@ -911,7 +888,7 @@ def process_recovery_campaign():
             (jnp.cos(angle), -jnp.sin(angle)),
             (jnp.sin(angle), jnp.cos(angle)),
         ),
-        dtype=complex,
+        dtype="complex128",
     )
     source_model = SequentialStinespringProcess(
         spec,
@@ -922,8 +899,8 @@ def process_recovery_campaign():
     )
     model = SequentialStinespringProcess(
         spec,
-        jnp.eye(2, dtype=complex),
-        (jnp.eye(2, dtype=complex),),
+        jnp.eye(2, dtype="complex128"),
+        (jnp.eye(2, dtype="complex128"),),
         (1,),
         process_id="nontrivial-process-campaign",
     )
@@ -961,17 +938,11 @@ def process_recovery_campaign():
     fitted_probabilities = jnp.stack(
         [experiment.probability(fitted) for experiment in held_out]
     )
-    initial_error = jnp.max(
-        jnp.abs(initial_probabilities - observed_probabilities)
-    )
-    held_out_error = jnp.max(
-        jnp.abs(fitted_probabilities - observed_probabilities)
-    )
+    initial_error = jnp.max(jnp.abs(initial_probabilities - observed_probabilities))
+    held_out_error = jnp.max(jnp.abs(fitted_probabilities - observed_probabilities))
     improvement_ratio = held_out_error / jnp.maximum(initial_error, 1e-12)
     recovery_execution = (
-        result.valid
-        & (initial_error > 1e-8)
-        & (held_out_error < initial_error)
+        result.valid & (initial_error > 1e-8) & (held_out_error < initial_error)
     )
     precision = _precision(source_isometry.dtype, "process-campaign")
     fitted_trace_residual = jnp.abs(jnp.trace(fitted.initial_state) - 1.0)
@@ -991,7 +962,7 @@ def process_recovery_campaign():
         precision_evidence=precision.evidence,
     )
     return _record(
-        "process-recovery-v1",
+        "process-recovery",
         "sequential-stinespring",
         (
             ApproximationAxis("memory-dimension", 1),
@@ -1065,7 +1036,7 @@ def process_recovery_campaign():
 def distillation_campaign():
     def swap_with_first_memory(memory_dimension):
         matrix = jnp.zeros(
-            (2 * memory_dimension, 2 * memory_dimension), dtype=complex
+            (2 * memory_dimension, 2 * memory_dimension), dtype="complex128"
         )
         spectator_dimension = memory_dimension // 2
         for system in range(2):
@@ -1091,12 +1062,12 @@ def distillation_campaign():
             for memory in range(2):
                 for _ in range(spectator_dimension):
                     diagonal.append(-1.0 if system == memory == 1 else 1.0)
-        return jnp.diag(jnp.asarray(diagonal, dtype=complex))
+        return jnp.diag(jnp.asarray(diagonal, dtype="complex128"))
 
     source_spec = CombLegSpec(2, 4, 2)
-    source_memory = jnp.zeros((4, 4), dtype=complex).at[0, 0].set(1.0)
+    source_memory = jnp.zeros((4, 4), dtype="complex128").at[0, 0].set(1.0)
     source_density = jnp.kron(
-        jnp.diag(jnp.asarray([0.65, 0.35], dtype=complex)),
+        jnp.diag(jnp.asarray([0.65, 0.35], dtype="complex128")),
         source_memory,
     )
     source = CausalProcessTensor(
@@ -1111,7 +1082,7 @@ def distillation_campaign():
     target = SequentialStinespringProcess(
         CombLegSpec(2, 2, 2),
         jnp.diag(
-            jnp.asarray([jnp.sqrt(0.6), 1e-3, jnp.sqrt(0.4), 1e-3], dtype=complex)
+            jnp.asarray([jnp.sqrt(0.6), 1e-3, jnp.sqrt(0.4), 1e-3], dtype="complex128")
         ),
         (swap_with_first_memory(2), controlled_phase(2)),
         (1, 1),
@@ -1142,9 +1113,7 @@ def distillation_campaign():
     )
     precision = _precision(source.initial_state.dtype, "distillation-campaign")
     trace_residual = jnp.abs(jnp.trace(result.process.initial_state) - 1.0)
-    positivity_margin = jnp.min(
-        jnp.linalg.eigvalsh(result.process.initial_state)
-    )
+    positivity_margin = jnp.min(jnp.linalg.eigvalsh(result.process.initial_state))
     tp_residual = jnp.max(result.process.channel_completeness_residuals)
     physicality = OpenSystemPhysicalityEvidence(
         trace_residual=trace_residual,
@@ -1160,12 +1129,10 @@ def distillation_campaign():
         precision_evidence=precision.evidence,
     )
     return _record(
-        "causal-distillation-v1",
+        "causal-distillation",
         "causal-memory-refit",
         (
-            ApproximationAxis(
-                "memory-dimension", 2, parent_value=4
-            ),
+            ApproximationAxis("memory-dimension", 2, parent_value=4),
             ApproximationAxis("slot-count", 2),
         ),
         (
@@ -1199,33 +1166,17 @@ def distillation_campaign():
             "refitted-channel-completeness": (
                 result.process.channel_completeness_residuals
             ),
-            "training-observed-probabilities": (
-                result.training_observed_probabilities
-            ),
-            "training-refitted-probabilities": (
-                result.training_fitted_probabilities
-            ),
-            "held-out-observed-probabilities": (
-                result.held_out_observed_probabilities
-            ),
-            "held-out-initial-probabilities": (
-                result.held_out_initial_probabilities
-            ),
-            "held-out-refitted-probabilities": (
-                result.held_out_fitted_probabilities
-            ),
+            "training-observed-probabilities": (result.training_observed_probabilities),
+            "training-refitted-probabilities": (result.training_fitted_probabilities),
+            "held-out-observed-probabilities": (result.held_out_observed_probabilities),
+            "held-out-initial-probabilities": (result.held_out_initial_probabilities),
+            "held-out-refitted-probabilities": (result.held_out_fitted_probabilities),
             "pre-fit-probability-error": (
                 result.maximum_held_out_initial_probability_error
             ),
-            "post-fit-probability-error": (
-                result.maximum_held_out_probability_error
-            ),
-            "post-fit-to-pre-fit-error-ratio": (
-                result.post_fit_to_pre_fit_error_ratio
-            ),
-            "identifiability-singular-values": (
-                result.tomography.singular_values
-            ),
+            "post-fit-probability-error": (result.maximum_held_out_probability_error),
+            "post-fit-to-pre-fit-error-ratio": (result.post_fit_to_pre_fit_error_ratio),
+            "identifiability-singular-values": (result.tomography.singular_values),
         },
         work={
             "optimization-iterations": 8,
@@ -1269,25 +1220,20 @@ def neural_campaign():
         )
 
     no_jump = CallableDiscreteQuantumOperator(
-        lambda configurations: (
-            -0.5j * gamma * (configurations[..., 0] > 0)
-        ),
+        lambda configurations: -0.5j * gamma * (configurations[..., 0] > 0),
         lambda configurations: connected(
             configurations,
-            jnp.zeros(configurations.shape[:-1], dtype=complex),
-            jnp.zeros(configurations.shape[:-1], dtype=bool),
+            jnp.zeros(configurations.shape[:-1], dtype="complex128"),
+            jnp.zeros(configurations.shape[:-1], dtype="bool"),
         ),
         configuration_shape=(1,),
         operator_id="amplitude-damping-no-jump",
     )
     collapse = CallableDiscreteQuantumOperator(
-        lambda configurations: jnp.zeros(
-            configurations.shape[:-1], dtype=complex
-        ),
+        lambda configurations: jnp.zeros(configurations.shape[:-1], dtype="complex128"),
         lambda configurations: connected(
             configurations,
-            jnp.sqrt(gamma)
-            * jnp.ones(configurations.shape[:-1], dtype=complex),
+            jnp.sqrt(gamma) * jnp.ones(configurations.shape[:-1], dtype="complex128"),
             configurations[..., 0] < 0,
         ),
         configuration_shape=(1,),
@@ -1300,7 +1246,7 @@ def neural_campaign():
     )
     initial_populations = jnp.asarray([0.2, 0.8])
     model = _CampaignTableAmplitude(
-        jnp.log(jnp.sqrt(initial_populations)).astype(complex)
+        jnp.log(jnp.sqrt(initial_populations)).astype("complex128")
     )
     vmc = VariationalMonteCarloProblem(
         model,
@@ -1313,9 +1259,7 @@ def neural_campaign():
 
     def project_jump(channel, current_model, coordinates):
         del channel, current_model
-        return jnp.asarray(
-            [0.0, -20.0, 0.0, 0.0], dtype=coordinates.dtype
-        )
+        return jnp.asarray([0.0, -20.0, 0.0, 0.0], dtype=coordinates.dtype)
 
     def projection_residual(channel, source_model, projected_model):
         del channel, source_model
@@ -1343,13 +1287,9 @@ def neural_campaign():
         projection_residual_tolerance=1e-12,
         require_projected_jump=True,
     )
-    result = solve_connected_vmc_neural_trajectory(
-        problem, policy, jr.key(0)
-    )
+    result = solve_connected_vmc_neural_trajectory(problem, policy, jr.key(0))
     rate_error = jnp.max(result.rate_standard_error_history, initial=0.0)
-    rate_bias = jnp.abs(
-        result.rate_history[0, 0] - gamma * initial_populations[1]
-    )
+    rate_bias = jnp.abs(result.rate_history[0, 0] - gamma * initial_populations[1])
     projection_error = audit.residual
     precision = _precision(
         result.final_state.parameter_coordinates.dtype, "neural-campaign"
@@ -1361,7 +1301,7 @@ def neural_campaign():
         precision_evidence=precision.evidence,
     )
     return _record(
-        "enumerable-neural-v1",
+        "enumerable-neural",
         "connected-vmc-neural-trajectory",
         (
             ApproximationAxis("sample-count", 256),

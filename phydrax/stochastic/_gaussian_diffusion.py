@@ -32,11 +32,16 @@ def _identifier(value: str, /, *, owner: str) -> str:
 
 def _inexact_state(value: ArrayLike, state_shape: tuple[int, ...], /) -> Array:
     state = jnp.asarray(value)
-    if state.ndim < len(state_shape) or tuple(state.shape[-len(state_shape) :]) != state_shape:
+    if (
+        state.ndim < len(state_shape)
+        or tuple(state.shape[-len(state_shape) :]) != state_shape
+    ):
         raise ValueError(f"state must end in shape {state_shape}; got {state.shape}.")
     if jnp.iscomplexobj(state):
-        raise TypeError("Gaussian score diffusion initially requires real state coordinates.")
-    return state if jnp.issubdtype(state.dtype, jnp.inexact) else state.astype(float)
+        raise TypeError(
+            "Gaussian score diffusion initially requires real state coordinates."
+        )
+    return state if jnp.issubdtype(state.dtype, jnp.inexact) else state.astype("float64")
 
 
 class DiffusionTerminalReference(StrictModule):
@@ -66,7 +71,7 @@ class DiffusionTerminalReference(StrictModule):
             raise ValueError("A Gaussian diffusion terminal reference must be Lebesgue.")
         if relationship not in ("exact", "asymptotic", "external"):
             raise ValueError("Unknown terminal-reference relationship.")
-        residual = jnp.asarray(residual_signal_scale, dtype=float).reshape(())
+        residual = jnp.asarray(residual_signal_scale, dtype=jnp.float64).reshape(())
         if bool(~jnp.isfinite(residual)) or float(residual) < 0.0:
             raise ValueError("residual_signal_scale must be finite and nonnegative.")
         self.law = law
@@ -97,7 +102,7 @@ class AbstractGaussianDiffusion(AbstractMarginalTransitionLaw):
         self.process_id = _identifier(process_id, owner="process_id")
 
     def _time(self, value: ArrayLike, /) -> Array:
-        time = jnp.asarray(value, dtype=float)
+        time = jnp.asarray(value, dtype=jnp.float64)
         if time.shape != ():
             raise ValueError("Diffusion times must be scalar.")
         return eqx.error_if(
@@ -298,7 +303,9 @@ class VarianceExplodingDiffusion(AbstractGaussianDiffusion):
 
     def reference_scale(self, time: ArrayLike, /) -> Array:
         value = self._time(time)
-        return self.initial_scale * jnp.exp(self.log_scale_ratio * value / self.terminal_time)
+        return self.initial_scale * jnp.exp(
+            self.log_scale_ratio * value / self.terminal_time
+        )
 
     def transition_variance(self, t0: ArrayLike, t1: ArrayLike, /) -> Array:
         start, end = self._interval(t0, t1)

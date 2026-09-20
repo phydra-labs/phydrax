@@ -186,7 +186,7 @@ def _trajectory(runtime, binding, trajectory_id, *, perturbation=0.0):
         f,
         g,
         U,
-        jnp.ones((26,), dtype=bool),
+        jnp.ones((26,), dtype="bool"),
         schema,
         case_id=f"case-{trajectory_id}",
         trajectory_id=trajectory_id,

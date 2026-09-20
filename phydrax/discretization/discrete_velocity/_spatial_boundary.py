@@ -17,7 +17,7 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._quadrature import CertifiedDiscreteVelocityQuadrature
 from ._smooth_compressible import SmoothCompressibleKineticState
@@ -114,7 +114,7 @@ class CompiledD2V17BoundaryTopology(StrictModule, NonTrainableState):
             raise TypeError("physical_owner must be SmoothCompressibleD2VLinkOwner.")
         if physical_owner is SmoothCompressibleD2VLinkOwner.LOCAL:
             raise ValueError("physical_owner cannot be LOCAL.")
-        shape = tuple(int(value) for value in spatial_shape)
+        shape = tuple(spatial_shape)
         spacing = tuple(float(value) for value in cell_spacing)
         step = float(time_step)
         periodic = tuple(bool(value) for value in periodic_axes)
@@ -129,7 +129,7 @@ class CompiledD2V17BoundaryTopology(StrictModule, NonTrainableState):
         if len(periodic) != 2:
             raise ValueError("periodic_axes must contain exactly two booleans.")
 
-        velocities = np.asarray(quadrature.velocities, dtype=float)
+        velocities = np.asarray(quadrature.velocities, dtype=np.float64)
         scaled = velocities * step / np.asarray(spacing)[None, :]
         rounded = np.rint(scaled)
         tolerance = (
@@ -137,10 +137,9 @@ class CompiledD2V17BoundaryTopology(StrictModule, NonTrainableState):
         )
         if float(np.max(np.abs(scaled - rounded))) > tolerance:
             raise ValueError(
-                "D2V17 boundary routing requires velocity*time_step/cell_spacing "
-                "to be integer."
+                "D2V17 boundary routing requires velocity*time_step/cell_spacing to be integer."
             )
-        offsets = tuple(tuple(int(value) for value in row) for row in rounded)
+        offsets = tuple(tuple(row) for row in rounded)
         reach = tuple(max(abs(row[axis]) for row in offsets) for axis in range(2))
         if any(shape[axis] <= 2 * reach[axis] for axis in range(2)):
             raise ValueError(
@@ -161,7 +160,7 @@ class CompiledD2V17BoundaryTopology(StrictModule, NonTrainableState):
         source_x = np.empty(population_shape, dtype=np.int32)
         source_y = np.empty(population_shape, dtype=np.int32)
         source_direction = np.empty(population_shape, dtype=np.int32)
-        physical_axis_mask = np.zeros(population_shape + (2,), dtype=bool)
+        physical_axis_mask = np.zeros(population_shape + (2,), dtype=np.bool_)
         physical_side_sign = np.zeros(population_shape + (2,), dtype=np.int8)
         primary_face_index = np.full(population_shape, -1, dtype=np.int8)
         secondary_face_index = np.full(population_shape, -1, dtype=np.int8)
@@ -256,7 +255,7 @@ class CompiledD2V17BoundaryTopology(StrictModule, NonTrainableState):
         self.source_x = jnp.asarray(source_x, dtype=jnp.int32)
         self.source_y = jnp.asarray(source_y, dtype=jnp.int32)
         self.source_direction = jnp.asarray(source_direction, dtype=jnp.int32)
-        self.physical_axis_mask = jnp.asarray(physical_axis_mask, dtype=bool)
+        self.physical_axis_mask = jnp.asarray(physical_axis_mask, dtype=jnp.bool_)
         self.physical_side_sign = jnp.asarray(physical_side_sign, dtype=jnp.int8)
         self.primary_face_index = jnp.asarray(primary_face_index, dtype=jnp.int8)
         self.secondary_face_index = jnp.asarray(secondary_face_index, dtype=jnp.int8)
@@ -343,7 +342,7 @@ class SmoothCompressibleD2VReservoirParameters(StrictModule):
                 )
             corner_particles = jnp.zeros((4, 17), dtype=particles.dtype)
             corner_energy = jnp.zeros((4, 17), dtype=energy.dtype)
-            present = jnp.zeros((4,), dtype=bool)
+            present = jnp.zeros((4,), dtype=jnp.bool_)
         else:
             corner_particles = jnp.asarray(corner_particle_populations)
             corner_energy = jnp.asarray(corner_total_energy_populations)
@@ -363,10 +362,10 @@ class SmoothCompressibleD2VReservoirParameters(StrictModule):
                     "Reservoir face and corner populations must use one dtype."
                 )
             present = jnp.asarray(
-                jnp.ones((4,), dtype=bool)
+                jnp.ones((4,), dtype=jnp.bool_)
                 if corner_data_present is None
                 else corner_data_present,
-                dtype=bool,
+                dtype=jnp.bool_,
             )
             if present.shape != (4,):
                 raise ValueError("corner_data_present must have shape (4,).")
@@ -404,9 +403,9 @@ class SmoothCompressibleD2VBoundaryResult(StrictModule):
 class AbstractSmoothCompressibleD2VBoundaryPlan(StrictModule, NonTrainableState):
     """Typed contract for one compiled, coupled D2V17 boundary router."""
 
-    topology: AbstractAttribute[CompiledD2V17BoundaryTopology]
-    retain_history: AbstractAttribute[bool]
-    plan_id: AbstractAttribute[str]
+    topology: eqx.AbstractVar[CompiledD2V17BoundaryTopology]
+    retain_history: eqx.AbstractVar[bool]
+    plan_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def route(
@@ -541,7 +540,9 @@ def _route_gathered(
     input_valid = _state_is_valid(state)
     candidate_valid = _state_is_valid(candidate)
     backflow_mask = (
-        jnp.zeros(topology.population_shape, dtype=bool) if backflow is None else backflow
+        jnp.zeros(topology.population_shape, dtype=jnp.bool_)
+        if backflow is None
+        else backflow
     )
     backflow_free = ~jnp.any(backflow_mask)
     successful = input_valid & candidate_valid & backflow_free
@@ -900,7 +901,7 @@ class EquilibriumReservoirD2VBoundaryPlan(AbstractSmoothCompressibleD2VBoundaryP
             self.retain_history,
             gathered_particles,
             gathered_energy,
-            jnp.zeros(self.topology.population_shape, dtype=bool),
+            jnp.zeros(self.topology.population_shape, dtype=jnp.bool_),
         )
 
 
@@ -1068,7 +1069,7 @@ class MaxwellThermalD2VBoundaryPlan(AbstractSmoothCompressibleD2VBoundaryPlan):
                 "Each Maxwell diffuse particle distribution must have unit density."
             )
 
-        accommodation_values = np.asarray(accommodation, dtype=float)
+        accommodation_values = np.asarray(accommodation, dtype=np.float64)
         if accommodation_values.ndim == 0:
             accommodation_values = np.full((4,), float(accommodation_values))
         if accommodation_values.shape != (4,) or np.any(
@@ -1163,7 +1164,7 @@ class MaxwellThermalD2VBoundaryPlan(AbstractSmoothCompressibleD2VBoundaryPlan):
             )
         incoming_half_range_flux = jnp.stack(incoming_half_range_fluxes)
         outgoing_half_range_flux = jnp.stack(outgoing_half_range_fluxes)
-        active_face = jnp.asarray(active_faces, dtype=bool)
+        active_face = jnp.asarray(active_faces, dtype=jnp.bool_)
         safe_half_range_flux = jnp.where(
             incoming_half_range_flux > 0.0,
             incoming_half_range_flux,
@@ -1268,7 +1269,7 @@ class MaxwellThermalD2VBoundaryPlan(AbstractSmoothCompressibleD2VBoundaryPlan):
             self.retain_history,
             gathered_particles,
             gathered_energy,
-            jnp.zeros(self.topology.population_shape, dtype=bool),
+            jnp.zeros(self.topology.population_shape, dtype=jnp.bool_),
             mechanical_wall_work=mechanical_wall_work,
         )
 

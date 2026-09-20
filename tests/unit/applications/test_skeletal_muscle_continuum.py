@@ -33,7 +33,7 @@ def _material(activation=0.0, *, material_id="test-gasam"):
 
 
 def _isochoric_fiber_stretch(stretch):
-    transverse = stretch ** -0.5
+    transverse = stretch**-0.5
     return jnp.diag(jnp.asarray((stretch, transverse, transverse)))
 
 
@@ -56,12 +56,8 @@ def test_uniform_architecture_normalizes_and_is_sign_indifferent():
     negative = plan.prepare(jnp.asarray((-4.0, 0.0, 0.0)))
 
     assert bool(positive.evidence.valid)
-    np.testing.assert_allclose(
-        positive.reference_direction, (1.0, 0.0, 0.0)
-    )
-    np.testing.assert_allclose(
-        positive.structural_tensor, negative.structural_tensor
-    )
+    np.testing.assert_allclose(positive.reference_direction, (1.0, 0.0, 0.0))
+    np.testing.assert_allclose(positive.structural_tensor, negative.structural_tensor)
 
 
 def test_passive_reference_and_source_force_length_limits():
@@ -73,12 +69,8 @@ def test_passive_reference_and_source_force_length_limits():
         _isochoric_fiber_stretch(passive.parameters.optimal_active_stretch)
     )
 
-    np.testing.assert_allclose(
-        response.reference_energy_density, 0.0, atol=2.0e-3
-    )
-    np.testing.assert_allclose(
-        response.first_piola, jnp.zeros((3, 3)), atol=2.0e-2
-    )
+    np.testing.assert_allclose(response.reference_energy_density, 0.0, atol=2.0e-3)
+    np.testing.assert_allclose(response.first_piola, jnp.zeros((3, 3)), atol=2.0e-2)
     np.testing.assert_allclose(terms_below[3], 0.0, atol=0.0)
     np.testing.assert_allclose(terms_below[4], 0.0, atol=0.0)
     np.testing.assert_allclose(terms_below[5], 0.0, atol=0.0)
@@ -101,22 +93,14 @@ def test_active_energy_derivative_recovers_source_nominal_force_length():
         lambda value: active_energy(value) - passive_energy(value)
     )(stretch)
     force_length = active.source_terms(_isochoric_fiber_stretch(stretch))[3]
-    expected = (
-        active.parameters.peak_active_nominal_stress_pa * activation * force_length
-    )
-    np.testing.assert_allclose(
-        active_increment, expected, rtol=5.0e-5, atol=5.0e-2
-    )
+    expected = active.parameters.peak_active_nominal_stress_pa * activation * force_length
+    np.testing.assert_allclose(active_increment, expected, rtol=5.0e-5, atol=5.0e-2)
 
 
 def test_complete_active_potential_is_objective_and_has_consistent_tangent():
     material = _material(0.8)
-    deformation = jnp.asarray(
-        ((1.08, 0.06, 0.0), (0.01, 0.97, 0.03), (0.0, 0.02, 0.96))
-    )
-    direction = jnp.asarray(
-        ((0.02, -0.01, 0.0), (0.01, 0.0, 0.015), (0.0, -0.01, -0.02))
-    )
+    deformation = jnp.asarray(((1.08, 0.06, 0.0), (0.01, 0.97, 0.03), (0.0, 0.02, 0.96)))
+    direction = jnp.asarray(((0.02, -0.01, 0.0), (0.01, 0.0, 0.015), (0.0, -0.01, -0.02)))
     angle = 0.31
     rotation = jnp.asarray(
         (
@@ -127,9 +111,7 @@ def test_complete_active_potential_is_objective_and_has_consistent_tangent():
     )
     response = material.evaluate(deformation, 1200.0)
     rotated = material.evaluate(rotation @ deformation, 1200.0)
-    tangent = material.block_tangent(
-        deformation, 1200.0
-    ).deformation_deformation
+    tangent = material.block_tangent(deformation, 1200.0).deformation_deformation
     stress_jvp = jax.jvp(
         lambda value: material.evaluate(value, 1200.0).first_piola,
         (deformation,),
@@ -149,9 +131,7 @@ def test_complete_active_potential_is_objective_and_has_consistent_tangent():
         rtol=5.0e-5,
         atol=3.0e-2,
     )
-    np.testing.assert_allclose(
-        stress_jvp, tangent_jvp, rtol=5.0e-5, atol=5.0e-2
-    )
+    np.testing.assert_allclose(stress_jvp, tangent_jvp, rtol=5.0e-5, atol=5.0e-2)
 
 
 def test_invalid_activation_candidate_rolls_back_whole_material_state():
@@ -162,16 +142,12 @@ def test_invalid_activation_candidate_rolls_back_whole_material_state():
 
     assert not commit.committed
     assert commit.rollback_applied
-    np.testing.assert_array_equal(
-        selected.state.activation, material.state.activation
-    )
+    np.testing.assert_array_equal(selected.state.activation, material.state.activation)
     compiled = eqx.filter_jit(
         lambda activation: material.propose_activation(activation).commit()
     )(jnp.asarray(1.25))
     assert not bool(compiled.committed)
-    np.testing.assert_array_equal(
-        compiled.state.activation, material.state.activation
-    )
+    np.testing.assert_array_equal(compiled.state.activation, material.state.activation)
     assert selected.state.state_id == material.state.state_id
 
 
@@ -224,9 +200,7 @@ def test_material_commit_rejects_a_source_mismatched_sibling_state():
 def test_qualification_reports_local_not_global_active_stability():
     material = _material(0.65)
     deformation = _isochoric_fiber_stretch(1.0)
-    rate = jnp.asarray(
-        ((0.01, 0.002, 0.0), (0.0, -0.005, 0.0), (0.0, 0.0, -0.005))
-    )
+    rate = jnp.asarray(((0.01, 0.002, 0.0), (0.0, -0.005, 0.0), (0.0, 0.0, -0.005)))
     evidence = GasamQualificationPlan().evaluate(material, deformation, rate)
 
     assert bool(evidence.valid)

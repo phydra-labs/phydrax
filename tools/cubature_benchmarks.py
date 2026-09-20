@@ -48,7 +48,7 @@ def _disk_records():
             "case": "unit-disk-legacy-mask",
             "value": legacy_value,
             "absolute_error": abs(legacy_value - math.pi),
-            "evaluations": int(legacy.batch.total_weight().data.size),
+            "evaluations": legacy.batch.total_weight().data.size,
             "first_ms": legacy_first,
             "steady_ms": legacy_steady,
         },
@@ -98,7 +98,7 @@ def _sphere_records():
             "moments": [float(value) for value in legacy_moments],
             "maximum_error": float(jnp.max(jnp.abs(legacy_moments - expected))),
             "anisotropy": float(jnp.max(legacy_moments) - jnp.min(legacy_moments)),
-            "evaluations": int(legacy.batch.weights.data.size),
+            "evaluations": legacy.batch.weights.data.size,
         },
         {
             "case": "unit-sphere-native",

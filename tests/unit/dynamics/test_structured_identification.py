@@ -13,7 +13,7 @@ def test_implicit_sindy_recovers_rational_dynamics_as_sparse_equation():
     derivative = -state / (1.0 + state)
     layout = phx.dynamics.StateLayout((1,), component_names=("x",))
     data = phx.dynamics.TrajectoryData(
-        jnp.arange(state.shape[0], dtype=float),
+        jnp.arange(state.shape[0], dtype="float64"),
         state,
         state_layout=layout,
         derivatives=derivative,
@@ -102,7 +102,7 @@ def test_structured_regression_enforces_groups_forbidden_terms_and_constraint():
     layout = phx.dynamics.StateLayout((2,), component_names=("a", "b"))
     problem = phx.dynamics.identification.SINDyProblem(
         data=phx.dynamics.TrajectoryData(
-            jnp.arange(states.shape[0], dtype=float),
+            jnp.arange(states.shape[0], dtype="float64"),
             states,
             state_layout=layout,
             derivatives=derivatives,
@@ -124,7 +124,7 @@ def test_structured_regression_enforces_groups_forbidden_terms_and_constraint():
         constraint_id="pairwise-conservation",
     )
     allowed = (
-        jnp.ones((design.output_size, design.num_features), dtype=bool)
+        jnp.ones((design.output_size, design.num_features), dtype="bool")
         .at[:, design.feature_names.index("1")]
         .set(False)
     )

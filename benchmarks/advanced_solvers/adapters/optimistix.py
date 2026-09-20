@@ -93,7 +93,7 @@ class OptimistixAdapter(BenchmarkAdapter):
                 spec=spec,
                 initial=jnp.asarray(problem.initial),
                 target=None,
-                host_to_device_bytes=int(problem.initial.nbytes),
+                host_to_device_bytes=problem.initial.nbytes,
             )
         if not isinstance(problem, NonlinearProblem) or problem.variant != "root":
             raise TypeError(
@@ -104,7 +104,7 @@ class OptimistixAdapter(BenchmarkAdapter):
             spec=spec,
             initial=jnp.asarray(problem.initial),
             target=jnp.asarray(problem.target),
-            host_to_device_bytes=int(problem.initial.nbytes + problem.target.nbytes),
+            host_to_device_bytes=problem.initial.nbytes + problem.target.nbytes,
         )
 
     def compilation_applicable(self, setup_state: _OptimistixState, /) -> bool:
@@ -122,7 +122,7 @@ class OptimistixAdapter(BenchmarkAdapter):
             )
 
             def solve_minimum(initial: Any) -> tuple[Any, Any, Any]:
-                solution = optx.minimise(
+                solution = optx.minimize(
                     lambda value, args: jnp.sum(
                         100.0 * (value[1:] - value[:-1] ** 2) ** 2
                         + (1.0 - value[:-1]) ** 2
@@ -250,9 +250,9 @@ class OptimistixAdapter(BenchmarkAdapter):
         /,
     ) -> dict[str, Any]:
         del result
-        input_bytes = int(prepared_state.initial.nbytes)
+        input_bytes = prepared_state.initial.nbytes
         if prepared_state.target is not None:
-            input_bytes += int(prepared_state.target.nbytes)
+            input_bytes += prepared_state.target.nbytes
         return {
             "matrix_bytes": input_bytes,
             "setup_bytes": 0,
@@ -296,10 +296,10 @@ def _root_solver(state: _OptimistixState, optx, lx):
     if state.spec.solver_mode == "dense":
         linear_solver = lx.LU()
     else:
-        restart = min(16, int(state.initial.size))
+        restart = min(16, state.initial.size)
         linear_max_steps = tolerance.max_steps
         if state.spec.solver_mode == "sparse":
-            linear_max_steps = max(linear_max_steps, int(state.initial.size))
+            linear_max_steps = max(linear_max_steps, state.initial.size)
         linear_solver = lx.GMRES(
             rtol=tolerance.relative,
             atol=tolerance.absolute,

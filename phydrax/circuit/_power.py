@@ -280,15 +280,13 @@ def evaluate_mna_power_ledger(
         ):
             unsupported_ids.append(instance.instance_id)
             reasons.append(
-                f"{instance.instance_id}: independent sources have no explicit "
-                "MNA phasor forcing law"
+                f"{instance.instance_id}: independent sources have no explicit MNA phasor forcing law"
             )
             continue
         if not isinstance(frequency_law, (Resistor, Capacitor, Inductor)):
             unsupported_ids.append(instance.instance_id)
             reasons.append(
-                f"{instance.instance_id}: {type(frequency_law).__name__} has no "
-                "supported element power law"
+                f"{instance.instance_id}: {type(frequency_law).__name__} has no supported element power law"
             )
             continue
         voltages = _mna_node_values(prepared, result, instance.nodes)
@@ -318,8 +316,8 @@ def evaluate_mna_power_ledger(
         jnp.zeros(batch_rhs_shape),
         jnp.asarray(False),
         jnp.asarray(False),
-        jnp.zeros(batch_rhs_shape, dtype=bool),
-        jnp.zeros(batch_rhs_shape, dtype=bool),
+        jnp.zeros(batch_rhs_shape, dtype=jnp.bool_),
+        jnp.zeros(batch_rhs_shape, dtype=jnp.bool_),
         tuple(port.port_id for port in prepared.circuit.ports),
         (),
         tuple(element_ids),
@@ -459,7 +457,7 @@ def evaluate_circuit_energy_ledger(
     if not isinstance(prepared, PreparedCircuitDAE):
         raise TypeError("prepared must be PreparedCircuitDAE.")
     _validate_input_policy(prepared, input_policy)
-    time_values = jnp.asarray(times, dtype=float)
+    time_values = jnp.asarray(times, dtype=jnp.float64)
     state_values = jnp.asarray(states)
     rate_values = jnp.asarray(state_rates)
     expected = (time_values.size, prepared.plan.layout.size)

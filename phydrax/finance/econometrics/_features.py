@@ -45,7 +45,7 @@ class FeatureDefinition(StrictModule):
         series = int(series_index)
         if series < 0:
             raise ValueError("series_index must be nonnegative.")
-        lags_ = tuple(int(lag) for lag in lags)
+        lags_ = tuple(lags)
         if not lags_ or any(lag < 1 for lag in lags_):
             raise ValueError(
                 "feature lags must be a nonempty sequence of positive integers."
@@ -257,7 +257,7 @@ def prepare_feature_labels(
         (contract.row_capacity, len(contract.features)), dtype=returns.values.dtype
     )
     labels = jnp.zeros((contract.row_capacity,), dtype=returns.values.dtype)
-    row_valid = jnp.zeros((contract.row_capacity,), dtype=bool)
+    row_valid = jnp.zeros((contract.row_capacity,), dtype=jnp.bool_)
     times = [jnp.zeros((contract.row_capacity,), dtype=jnp.int64) for _ in range(6)]
     asset_indices = jnp.full(
         (contract.row_capacity,), contract.label.series_index, dtype=jnp.int32

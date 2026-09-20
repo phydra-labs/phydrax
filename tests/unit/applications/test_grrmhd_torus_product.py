@@ -15,10 +15,10 @@ from phydrax.applications.compact_objects._grrmhd_product import (
 from phydrax.discretization.finite_volume._structured import FiniteVolumePlan
 from phydrax.equations._relativistic_eos import GammaLawEOS
 from phydrax.equations._relativistic_mhd import IdealValenciaGRMHDSystem
-from phydrax.equations._relativistic_radiation import GRGreyM1RadiationSystem
+from phydrax.equations._relativistic_radiation import GRGrayM1RadiationSystem
 from phydrax.equations._relativistic_radiation_interaction import (
-    ConstantGRGreyOpacityPlan,
-    GRGreyRadiationInteractionPlan,
+    ConstantGRGrayOpacityPlan,
+    GRGrayRadiationInteractionPlan,
 )
 from phydrax.metrix._spacetime_conventions import RelativityConvention
 from phydrax.solver._gr_m1_finite_volume import (
@@ -93,7 +93,7 @@ def test_kerr_torus_initialization_evolves_and_exports_fast_light_snapshot():
         boundaries=material_boundaries,
         cfl=0.1,
     )
-    radiation_system = GRGreyM1RadiationSystem(scale, convention)
+    radiation_system = GRGrayM1RadiationSystem(scale, convention)
     discretization = FiniteVolumePlan(
         grid, component_names=radiation_system.component_names
     ).prepare()
@@ -114,8 +114,8 @@ def test_kerr_torus_initialization_evolves_and_exports_fast_light_snapshot():
         boundaries=radiation_boundaries,
         cfl=0.1,
     )
-    interaction = GRGreyRadiationInteractionPlan(
-        radiation_system, ConstantGRGreyOpacityPlan()
+    interaction = GRGrayRadiationInteractionPlan(
+        radiation_system, ConstantGRGrayOpacityPlan()
     )
     source = GRRMHDImplicitSourcePlan(
         material_system, interaction, caloric_temperature_scale=1.0

@@ -318,7 +318,7 @@ def _result(
         )
     else:
         precision = _hermitian(jnp.asarray(precision_override))
-        eye = jnp.eye(precision.shape[-1], dtype=precision.dtype)
+        jnp.eye(precision.shape[-1], dtype=precision.dtype)
         covariance_ = dense_inverse(precision, positive_definite=True)
         precision_values = _stable_eigvalsh(precision)
         floor = jnp.finfo(_real_dtype(precision.dtype)).eps * jnp.maximum(

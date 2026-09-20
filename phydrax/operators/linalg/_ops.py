@@ -28,8 +28,7 @@ class _PointwiseTransformCallable(StrictModule):
         if self.operation == "adjoint":
             if value.ndim < 2:
                 raise ValueError(
-                    "adjoint requires values with at least two matrix axes; "
-                    f"got shape {value.shape}."
+                    f"adjoint requires values with at least two matrix axes; got shape {value.shape}."
                 )
             return jnp.swapaxes(jnp.conj(value), -1, -2)
         if self.operation == "real":

@@ -43,7 +43,7 @@ def main() -> None:
     prepared = phx.discretization.FDAMRHierarchyPlan(hierarchy).prepare()
 
     initial = prepared.initial_topology()
-    tags = jnp.zeros((2, 4), dtype=bool).at[0, 1].set(True)
+    tags = jnp.zeros((2, 4), dtype="bool").at[0, 1].set(True)
     compiled = prepared.compile_topology(initial, (tags,))
     if not compiled.status.successful:
         raise RuntimeError(compiled.status.message)

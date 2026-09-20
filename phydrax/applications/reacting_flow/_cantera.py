@@ -268,7 +268,7 @@ class CanteraYAMLAdapter(StrictModule, NonTrainableState):
         )
         composition = np.zeros((len(elements), len(names)), dtype=np.int32)
         element_index = {name: index for index, name in enumerate(elements)}
-        masses = np.zeros(len(names), dtype=float)
+        masses = np.zeros(len(names), dtype=np.float64)
         charges = np.zeros(len(names), dtype=np.int32)
         for species_index, species in enumerate(selected):
             for element, count_value in _mapping(species, "composition").items():
@@ -379,9 +379,9 @@ class CanteraReferenceAdapter(StrictModule, NonTrainableState):
         _refuse_device_value(temperature, "temperature")
         _refuse_device_value(pressure, "pressure")
         _refuse_device_value(mass_fractions, "mass_fractions")
-        temperature_ = np.asarray(temperature, dtype=float)
-        pressure_ = np.asarray(pressure, dtype=float)
-        mass = np.asarray(mass_fractions, dtype=float)
+        temperature_ = np.asarray(temperature, dtype=np.float64)
+        pressure_ = np.asarray(pressure, dtype=np.float64)
+        mass = np.asarray(mass_fractions, dtype=np.float64)
         if temperature_.shape != () or pressure_.shape != () or mass.ndim != 1:
             raise CanteraAdapterError(
                 "Cantera reference evaluation accepts one host scalar state at a time."
@@ -397,8 +397,8 @@ class CanteraReferenceAdapter(StrictModule, NonTrainableState):
         ):
             raise CanteraAdapterError("Cantera reference state is invalid.")
         self.solution.TPY = (float(temperature_), float(pressure_), mass)
-        mole = np.asarray(self.solution.X, dtype=float)
-        production = np.asarray(self.solution.net_production_rates, dtype=float)
+        mole = np.asarray(self.solution.X, dtype=np.float64)
+        production = np.asarray(self.solution.net_production_rates, dtype=np.float64)
         values = (
             float(self.solution.density),
             float(self.solution.mean_molecular_weight) * 1.0e-3,
@@ -510,10 +510,10 @@ def _cantera_thermodynamics(
     kind = NASAPolynomialKind.NASA7 if model == "NASA7" else NASAPolynomialKind.NASA9
     coefficient_count = 7 if kind is NASAPolynomialKind.NASA7 else 9
     ranges = [
-        np.asarray(value.get("temperature-ranges"), dtype=float)
+        np.asarray(value.get("temperature-ranges"), dtype=np.float64)
         for value in thermo_entries
     ]
-    data = [np.asarray(value.get("data"), dtype=float) for value in thermo_entries]
+    data = [np.asarray(value.get("data"), dtype=np.float64) for value in thermo_entries]
     interval_count = len(ranges[0]) - 1
     if (
         interval_count < 1
@@ -554,7 +554,7 @@ def _cantera_reaction(
     reactants = _equation_side(left, species_names)
     products = _equation_side(right, species_names)
     kind = str(payload.get("type", "elementary"))
-    efficiencies = np.ones(len(species_names), dtype=float)
+    efficiencies = np.ones(len(species_names), dtype=np.float64)
     species_index = {name: index for index, name in enumerate(species_names)}
     for name, value in _mapping_or_empty(payload, "efficiencies").items():
         if str(name) not in species_index:
@@ -609,7 +609,7 @@ def _cantera_reaction(
                 "Chebyshev temperature/pressure ranges are invalid."
             )
         rate = ChebyshevRatePlan(
-            np.asarray(payload.get("data"), dtype=float),
+            np.asarray(payload.get("data"), dtype=np.float64),
             _temperature(temperature_range[0]),
             _temperature(temperature_range[1]),
             _pressure(pressure_range[0]),

@@ -115,8 +115,7 @@ class PreparedFunctionalNTK(StrictModule):
             output_space=ArraySpace(output.shape, dtype=output.dtype),
             linearization=self.ntk.linearization.policy,
             ntk_id=(
-                f"{self.ntk.ntk_id}:term={reference.term_index}:"
-                f"block={reference.block_name or '*'}"
+                f"{self.ntk.ntk_id}:term={reference.term_index}:block={reference.block_name or '*'}"
             ),
         )
 
@@ -144,8 +143,7 @@ def prepare_functional_ntk(
         raise ValueError("A surrogate NTK requires its exact PreparedFunctionalUpdate.")
     if prepared_update is not None and parameter_subspace is not None:
         raise ValueError(
-            "An already prepared update owns its exact parameter partition; "
-            "parameter_subspace must be None."
+            "An already prepared update owns its exact parameter partition; parameter_subspace must be None."
         )
     if parameter_subspace is None:
         parameters, non_trainable = partition_trainable(solver.functions)
@@ -161,7 +159,7 @@ def prepare_functional_ntk(
         indices = (
             tuple(range(len(solver.terms)))
             if term_indices is None
-            else tuple(int(index) for index in term_indices)
+            else tuple(term_indices)
         )
         physical = solver.objective.prepare_training(
             indices,
@@ -197,8 +195,7 @@ def prepare_functional_ntk(
         output_space=ArraySpace(initial_roots.shape, dtype=initial_roots.dtype),
         linearization=linearization,
         ntk_id=(
-            f"functional:{solver.discretization_bundle.bundle_id}:{view}:"
-            f"step={step}"
+            f"functional:{solver.discretization_bundle.bundle_id}:{view}:step={step}"
         ),
     )
     return PreparedFunctionalNTK(

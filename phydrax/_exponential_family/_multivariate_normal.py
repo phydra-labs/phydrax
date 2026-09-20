@@ -14,8 +14,10 @@ import phydrax.ein as ein
 
 from .._symmetric_coordinates import smat, svec, symmetric_packed_dimension
 from ..linalg import (
+    DenseLinearOperator,
     DensePropertyVerificationPolicy,
     FactorizationPolicy,
+    factorize,
     inverse,
     verify_dense_properties,
 )
@@ -36,6 +38,25 @@ def _error_if(value: Array, predicate: Array, message: str, /) -> Array:
     if bool(predicate):
         raise eqx.EquinoxRuntimeError(message)
     return value
+
+
+def _positive_definite_factorization(matrix: Array, /):
+    evidence = verify_dense_properties(
+        matrix,
+        policy=DensePropertyVerificationPolicy(
+            require_positive_definite=True,
+        ),
+    )
+    prepared = factorize(
+        DenseLinearOperator(
+            evidence.matrix,
+            properties=evidence.properties,
+        ),
+        FactorizationPolicy("cholesky"),
+    )
+    state = prepared.prepared_solve.state
+    successful = evidence.successful & ~state.invalid
+    return prepared, state.factor, successful
 
 
 def _positive_definite_inverse(matrix: Array, /) -> Array:
@@ -95,7 +116,7 @@ class MultivariateNormalFamily(_AbstractAnalyticExponentialFamily):
             covariance_array.dtype, jnp.complexfloating
         ):
             raise TypeError("Multivariate Normal parameters must be real-valued.")
-        if location_array.ndim == 0 or int(location_array.shape[-1]) != self.event_size:
+        if location_array.ndim == 0 or location_array.shape[-1] != self.event_size:
             raise ValueError(
                 f"location must end in event_size={self.event_size}; got {location_array.shape}."
             )
@@ -211,10 +232,9 @@ class MultivariateNormalFamily(_AbstractAnalyticExponentialFamily):
         raw = jnp.asarray(value)
         if jnp.issubdtype(raw.dtype, jnp.complexfloating):
             raise TypeError("Multivariate Normal observations must be real-valued.")
-        if raw.ndim == 0 or int(raw.shape[-1]) != self.event_size:
+        if raw.ndim == 0 or raw.shape[-1] != self.event_size:
             raise ValueError(
-                "Multivariate Normal observations must end in event dimension "
-                f"{self.event_size}; got {raw.shape}."
+                f"Multivariate Normal observations must end in event dimension {self.event_size}; got {raw.shape}."
             )
         observation = raw.astype(jnp.result_type(raw, 0.0))
         valid = jnp.all(jnp.isfinite(observation), axis=-1)
@@ -228,7 +248,7 @@ class MultivariateNormalFamily(_AbstractAnalyticExponentialFamily):
 
     def _log_base_density(self, value: ArrayLike, /) -> Array:
         values = jnp.asarray(value)
-        if values.ndim == 0 or int(values.shape[-1]) != self.event_size:
+        if values.ndim == 0 or values.shape[-1] != self.event_size:
             raise ValueError(
                 "Multivariate Normal observations have an incompatible event shape."
             )
@@ -237,14 +257,18 @@ class MultivariateNormalFamily(_AbstractAnalyticExponentialFamily):
     def _log_normalizer(self, natural_values: Array, /) -> Array:
         linear, _ = self._split(natural_values)
         precision = self._precision(natural_values)
-        location = jnp.linalg.solve(precision, linear[..., None])[..., 0]
-        _, log_determinant = jnp.linalg.slogdet(precision)
+        factorization, factor, factor_valid = _positive_definite_factorization(precision)
+        solved = factorization.solve(linear)
+        location = solved.value
+        diagonal = jnp.real(jnp.diagonal(factor, axis1=-2, axis2=-1))
+        log_determinant = 2.0 * jnp.sum(jnp.log(diagonal), axis=-1)
         quadratic = jnp.sum(linear * location, axis=-1)
-        return (
+        result = (
             0.5 * quadratic
             - 0.5 * log_determinant
             + 0.5 * self.event_size * jnp.log(2.0 * jnp.pi)
         )
+        return jnp.where(factor_valid & solved.successful, result, jnp.nan)
 
     def _mean_values(self, natural_values: Array, /) -> Array:
         location, covariance = self._location_covariance(natural_values)
@@ -267,7 +291,8 @@ class MultivariateNormalFamily(_AbstractAnalyticExponentialFamily):
         /,
     ) -> Array:
         location, covariance = self._location_covariance(natural_values)
-        factor = jnp.linalg.cholesky(covariance)
+        _, factor, valid = _positive_definite_factorization(covariance)
+        factor = jnp.where(valid[..., None, None], factor, jnp.nan)
         noise = jr.normal(
             key,
             shape=sample_shape + location.shape,

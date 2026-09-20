@@ -162,7 +162,7 @@ def _initialize_cayley_dickson(
         (1,) + (0,) * (dimension - 1),
         conjugation,
         convention={
-            "kind": "cayley-dickson-left-v1",
+            "kind": "cayley-dickson-left",
             "level": level_,
             "pair_product": "(ac-conj(d)b,da+bconj(c))",
         },

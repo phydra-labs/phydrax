@@ -36,7 +36,7 @@ class _QuadraticModel(AbstractArrayModel):
     def __init__(self, coefficients, curvature):
         self.coefficients = jnp.asarray(coefficients)
         self.curvature = jnp.asarray(curvature)
-        self.in_size = int(self.coefficients.shape[0])
+        self.in_size = self.coefficients.shape[0]
         self.out_size = "scalar"
 
     def __call__(self, x, /, *, key=None):
@@ -56,7 +56,7 @@ class _LinearModel(AbstractArrayModel):
     def __init__(self, coefficients, intercept=0.0):
         self.coefficients = jnp.asarray(coefficients)
         self.intercept = jnp.asarray(intercept)
-        self.in_size = int(self.coefficients.shape[0])
+        self.in_size = self.coefficients.shape[0]
         self.out_size = "scalar"
 
     def __call__(self, x, /, *, key=None):
@@ -108,7 +108,7 @@ def _batch(case=False):
         y,
         sample_mask=jnp.array([True, True, True, True, False]),
         sample_weight=jnp.array([1.0, 2.0, 1.0, 3.0, 10.0]),
-        feature_mask=jnp.ones_like(x, dtype=bool).at[..., 4, 1].set(False),
+        feature_mask=jnp.ones_like(x, dtype="bool").at[..., 4, 1].set(False),
     )
 
 

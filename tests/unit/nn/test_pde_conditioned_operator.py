@@ -30,7 +30,7 @@ def _batch(*, cases: int = 2, identical: bool = False):
     if cases:
         values = jnp.broadcast_to(source, (cases, source.size))
         if not identical:
-            values = values + jnp.arange(cases, dtype=float)[:, None]
+            values = values + jnp.arange(cases, dtype="float64")[:, None]
         case_axes = ("case",)
     else:
         values = source

@@ -62,12 +62,12 @@ class CanonicalPatchBucket(StrictModule, NonTrainableState):
         lane_shape = (lane_count,)
         metadata_shape = (lane_count, dimension)
         storage_shape = lane_shape + plan.signature.envelope_shape
-        active_ = np.asarray(active, dtype=bool)
+        active_ = np.asarray(active, dtype=np.bool_)
         lower_ = np.asarray(lower)
         extent_ = np.asarray(extent)
         routes_ = np.asarray(route_indices)
-        cell_active_ = np.asarray(cell_active, dtype=bool)
-        leaf_active_ = np.asarray(leaf_active, dtype=bool)
+        cell_active_ = np.asarray(cell_active, dtype=np.bool_)
+        leaf_active_ = np.asarray(leaf_active, dtype=np.bool_)
         boxes_ = tuple(boxes)
         if (
             active_.shape != lane_shape
@@ -99,10 +99,7 @@ class CanonicalPatchBucket(StrictModule, NonTrainableState):
                         "Inactive canonical lanes require zero/sentinel data."
                     )
                 continue
-            if (
-                tuple(int(value) for value in lower_[lane]) != box.lower
-                or tuple(int(value) for value in extent_[lane]) != box.extent
-            ):
+            if tuple(lower_[lane]) != box.lower or tuple(extent_[lane]) != box.extent:
                 raise ValueError(
                     "Canonical lane metadata does not match its logical box."
                 )
@@ -148,7 +145,7 @@ class CanonicalPatchLevel(StrictModule, NonTrainableState):
     ):
         level_ = int(level)
         ratio = int(refinement_ratio)
-        shape = tuple(int(value) for value in global_cell_shape)
+        shape = tuple(global_cell_shape)
         spacing_ = tuple(float(value) for value in spacing)
         buckets_ = tuple(buckets)
         if (
@@ -374,8 +371,7 @@ class BlockAMRResourcePlan(StrictModule, NonTrainableState):
         device_byte_limit: int | None = None,
     ):
         capacities = tuple(
-            int(value)
-            for value in (
+            (
                 maximum_components_per_cell,
                 maximum_apertures_per_face,
                 maximum_embedded_faces_per_cell,
@@ -429,7 +425,7 @@ class BlockAMRResourcePlan(StrictModule, NonTrainableState):
         components = int(physical_component_count)
         if components <= 0:
             raise ValueError("physical_component_count must be positive.")
-        scalar_bytes = int(np.dtype(dtype).itemsize)
+        scalar_bytes = np.dtype(dtype).itemsize
         patch_slots = sum(
             bucket.plan.lane_capacity
             for level in hierarchy.levels
@@ -497,9 +493,9 @@ def _rectangular_cell_mask(
     extents: np.ndarray,
     envelope: tuple[int, ...],
 ) -> np.ndarray:
-    mask = np.zeros((active.size,) + envelope, dtype=bool)
+    mask = np.zeros((active.size,) + envelope, dtype=np.bool_)
     for lane in np.flatnonzero(active):
-        extent = tuple(int(value) for value in extents[lane])
+        extent = tuple(extents[lane])
         mask[(int(lane),) + tuple(slice(0, value) for value in extent)] = True
     return mask
 
@@ -565,7 +561,7 @@ def canonicalize_patch_hierarchy(
                 halo_width=level_plan.halo_width,
             )
             bucket_plan = PatchBucketPlan(signature, level_plan.maximum_blocks)
-            active = np.asarray(metadata.active, dtype=bool)
+            active = np.asarray(metadata.active, dtype=np.bool_)
             lower = np.zeros(
                 (level_plan.maximum_blocks, len(level_plan.block_shape)), dtype=np.int32
             )
@@ -626,7 +622,7 @@ def canonicalize_patch_hierarchy(
         )
         buckets = []
         for bucket_index, bucket_plan in enumerate(level_plan.buckets):
-            active = np.asarray(metadata.active[bucket_index], dtype=bool)
+            active = np.asarray(metadata.active[bucket_index], dtype=np.bool_)
             lower = np.asarray(metadata.lower[bucket_index], dtype=np.int32)
             extent = np.asarray(metadata.extent[bucket_index], dtype=np.int32)
             routes = np.asarray(metadata.route_indices[bucket_index], dtype=np.int32)

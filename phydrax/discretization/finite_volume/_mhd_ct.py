@@ -181,7 +181,7 @@ class UpwindConstrainedTransportPlan(StrictModule, NonTrainableState):
         self.reconstruction = reconstruction_
         self.electromotive_plan = electromotive_
         self.boundary_set = boundary_set
-        self.cell_shape = tuple(int(value) for value in bridge.grid.shape)
+        self.cell_shape = tuple(bridge.grid.shape)
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "upwind-constrained-transport",

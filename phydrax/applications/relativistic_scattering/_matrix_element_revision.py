@@ -103,8 +103,7 @@ class MatrixElementRevision:
         evidence = _optional_digest(held_out_evidence_id, "held_out_evidence_id")
         if len({parent is None, boundary is None, evidence is None}) != 1:
             raise ValueError(
-                "Adapted revisions require parent, committed boundary, and "
-                "held-out evidence together."
+                "Adapted revisions require parent, committed boundary, and held-out evidence together."
             )
         content: dict[str, object] = {
             "kind": "matrix-element-revision",

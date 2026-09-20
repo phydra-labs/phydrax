@@ -150,7 +150,7 @@ class AtomisticSAMSPlan(StrictModule, NonTrainableState):
         initial_gain: float = 1.0,
         realization_id: int = 0,
     ):
-        target = np.asarray(target_probabilities, dtype=float).reshape((-1,))
+        target = np.asarray(target_probabilities, dtype=np.float64).reshape((-1,))
         interval = int(move_interval)
         steps = int(adaptation_steps)
         exponent = float(gain_exponent)
@@ -299,7 +299,7 @@ class AtomisticMultistatePlan(StrictModule, NonTrainableState):
                 "Canonical-sampling qualification belongs to another dynamics/table target."
             )
         replicas = np.asarray(replica_ids, dtype=np.int64).reshape((-1,))
-        replica_count = int(replicas.size)
+        replica_count = replicas.size
         if replica_count <= 0 or len(set(replicas.tolist())) != replica_count:
             raise ValueError("Replica IDs must be a nonempty unique vector.")
         if exchange is not None and not isinstance(
@@ -539,7 +539,9 @@ class PreparedAtomisticMultistate(StrictModule):
             dynamics=dynamics,
             state_at_replica=label_array,
             reduced_potential_cache=jnp.zeros((state_count, replica_count), dtype=dtype),
-            reduced_potential_valid=jnp.zeros((state_count, replica_count), dtype=bool),
+            reduced_potential_valid=jnp.zeros(
+                (state_count, replica_count), dtype=jnp.bool_
+            ),
             cache_iteration=jnp.asarray(-1, dtype=jnp.int64),
             iteration_index=jnp.zeros((), dtype=jnp.int64),
             draw_index=jnp.zeros((replica_count,), dtype=jnp.int64),
@@ -642,7 +644,7 @@ class PreparedAtomisticMultistate(StrictModule):
         accepted = jax.lax.cond(
             scheduled,
             propose,
-            lambda _: jnp.zeros((pair_count,), dtype=bool),
+            lambda _: jnp.zeros((pair_count,), dtype=jnp.bool_),
             operand=None,
         )
         next_labels = labels
@@ -684,13 +686,13 @@ class PreparedAtomisticMultistate(StrictModule):
         if sams_plan is None:
             return (
                 state.state_at_replica,
-                jnp.zeros((replica_count,), dtype=bool),
-                jnp.zeros((replica_count,), dtype=bool),
+                jnp.zeros((replica_count,), dtype=jnp.bool_),
+                jnp.zeros((replica_count,), dtype=jnp.bool_),
                 state.sams_action_counter,
                 state.sams,
                 jnp.asarray(True),
             )
-        attempted = jnp.full((replica_count,), scheduled, dtype=bool)
+        attempted = jnp.full((replica_count,), scheduled, dtype=jnp.bool_)
         logits = (
             jnp.log(sams_plan.target_probabilities)[:, None]
             + state.sams.log_weights[:, None]
@@ -756,14 +758,14 @@ class PreparedAtomisticMultistate(StrictModule):
         barostat_plan = self.plan.barostat
         if barostat_plan is None:
             barostat_scheduled = jnp.asarray(False)
-            barostat_attempted = jnp.zeros((self.plan.replica_count,), dtype=bool)
+            barostat_attempted = jnp.zeros((self.plan.replica_count,), dtype=jnp.bool_)
             barostat_accepted = jnp.zeros_like(barostat_attempted)
             barostat_valid = jnp.asarray(True)
             barostat_counter = state.barostat_action_counter
         else:
             barostat_scheduled = next_iteration % self.plan.barostat_interval == 0
             barostat_attempted = jnp.full(
-                (self.plan.replica_count,), barostat_scheduled, dtype=bool
+                (self.plan.replica_count,), barostat_scheduled, dtype=jnp.bool_
             )
 
             def apply_moves(_):
@@ -785,7 +787,7 @@ class PreparedAtomisticMultistate(StrictModule):
             def skip_moves(_):
                 return (
                     dynamics_state,
-                    jnp.zeros((self.plan.replica_count,), dtype=bool),
+                    jnp.zeros((self.plan.replica_count,), dtype=jnp.bool_),
                     jnp.asarray(True),
                 )
 
@@ -980,7 +982,7 @@ class AtomisticMultistateSegmentPlan(StrictModule, NonTrainableState):
         )
         retained = valid & iterations.equilibrium_sample
         sample_active = retained[:, None] & jnp.ones(
-            (self.capacity, self.runtime.plan.replica_count), dtype=bool
+            (self.capacity, self.runtime.plan.replica_count), dtype=jnp.bool_
         )
         reduced = jnp.where(retained[:, None, None], iterations.reduced_potentials, 0.0)
         coverage = retained[:, None, None] & iterations.coverage
@@ -1043,7 +1045,7 @@ class AtomisticMultistateSegmentPlan(StrictModule, NonTrainableState):
             sams_changed=valid[:, None] & iterations.sams_changed,
             sams_adapting=valid[:, None]
             & iterations.sams_adapting[:, None]
-            & jnp.ones((1, self.runtime.plan.replica_count), dtype=bool),
+            & jnp.ones((1, self.runtime.plan.replica_count), dtype=jnp.bool_),
             dynamics_accepted=valid[:, None] & iterations.dynamics_accepted,
             barostat_attempted=valid[:, None] & iterations.barostat_attempted,
             barostat_accepted=valid[:, None] & iterations.barostat_accepted,

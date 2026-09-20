@@ -68,7 +68,7 @@ class OperatorDomainLayout(StrictModule, NonTrainableState):
         name = str(query_name)
         if not name:
             raise ValueError("Operator domain query names must be non-empty.")
-        shape = tuple(int(size) for size in leading_shape)
+        shape = tuple(leading_shape)
         if any(size <= 0 for size in shape):
             raise ValueError("Operator domain layout dimensions must be positive.")
         dimensions = tuple(dims)
@@ -82,8 +82,7 @@ class OperatorDomainLayout(StrictModule, NonTrainableState):
         expected_dims = indices.ndim if indices is not None else len(shape)
         if len(dimensions) != expected_dims:
             raise ValueError(
-                f"Operator domain layout requires {expected_dims} output dim(s); "
-                f"got {dimensions}."
+                f"Operator domain layout requires {expected_dims} output dim(s); got {dimensions}."
             )
         if indices is not None:
             total = prod(shape)
@@ -103,10 +102,9 @@ class OperatorDomainLayout(StrictModule, NonTrainableState):
             or tuple(array.shape[:leading_rank]) != self.leading_shape
         ):
             raise ValueError(
-                f"Operator output must start with shape {self.leading_shape}; "
-                f"got {array.shape}."
+                f"Operator output must start with shape {self.leading_shape}; got {array.shape}."
             )
-        trailing_shape = tuple(int(size) for size in array.shape[leading_rank:])
+        trailing_shape = tuple(array.shape[leading_rank:])
         if self.gather_indices is not None:
             array = array.reshape((prod(self.leading_shape),) + trailing_shape)
             array = array[self.gather_indices]
@@ -157,8 +155,7 @@ class OperatorDomainView(StrictModule, NonTrainableState):
             expected = batch.case_shape + batch.query(name).sample_shape
             if layout.leading_shape != expected:
                 raise ValueError(
-                    f"Layout {name!r} leading shape {layout.leading_shape} does not match "
-                    f"operator geometry {expected}."
+                    f"Layout {name!r} leading shape {layout.leading_shape} does not match operator geometry {expected}."
                 )
         self.batch = batch
         self.layouts = frozen
@@ -176,8 +173,7 @@ class OperatorDomainView(StrictModule, NonTrainableState):
         field = prediction.field(field_name)
         if field.query_name not in self.layouts:
             raise KeyError(
-                f"Prediction field {field_name!r} targets unknown query "
-                f"{field.query_name!r}."
+                f"Prediction field {field_name!r} targets unknown query {field.query_name!r}."
             )
         return self.layouts[field.query_name].restore(field.values)
 
@@ -247,23 +243,21 @@ def _point_geometry(
         + (named_positions[sample_axis],)
         + unnamed_positions
     )
-    array = jnp.asarray(field.data, dtype=float)
+    array = jnp.asarray(field.data, dtype=jnp.float64)
     if permutation != tuple(range(array.ndim)):
         array = jnp.transpose(array, permutation)
     present_cases = tuple(
-        int(field.data.shape[named_positions[axis]])
+        field.data.shape[named_positions[axis]]
         for axis in case_axes
         if axis in named_positions
     )
-    target_cases = (
-        present_cases if case_shape is None else tuple(int(size) for size in case_shape)
-    )
+    target_cases = present_cases if case_shape is None else tuple(case_shape)
     expanded_cases = tuple(
-        int(field.data.shape[named_positions[axis]]) if axis in named_positions else 1
+        field.data.shape[named_positions[axis]] if axis in named_positions else 1
         for axis in case_axes
     )
-    sample_size = int(field.data.shape[named_positions[sample_axis]])
-    coordinate_dimension = 1 if not unnamed_positions else int(array.shape[-1])
+    sample_size = field.data.shape[named_positions[sample_axis]]
+    coordinate_dimension = 1 if not unnamed_positions else array.shape[-1]
     if coordinate_dimension <= 0:
         raise ValueError("Point coordinates require a positive coordinate dimension.")
     coordinates = array.reshape(expanded_cases + (sample_size, coordinate_dimension))
@@ -376,7 +370,7 @@ def _axis_from_coord_batch(batch: Any, name: str, /) -> OperatorAxis:
             continue
         for field in value:
             if isinstance(field, cx.AxisArray) and field.dims == (name,):
-                return OperatorAxis(name, jnp.asarray(field.data, dtype=float))
+                return OperatorAxis(name, jnp.asarray(field.data, dtype=jnp.float64))
     raise KeyError(f"Cannot locate coordinate values for axis {name!r}.")
 
 
@@ -390,10 +384,10 @@ def _coord_query(batch: Any, labels: Sequence[str], /) -> FunctionSamples:
         label_axes.append(names)
         axes.extend(_axis_from_coord_batch(batch, name) for name in names)
     shape = tuple(axis.size for axis in axes)
-    mask = jnp.ones(shape, dtype=bool)
+    mask = jnp.ones(shape, dtype=jnp.bool_)
     weights = tensor_product(
         tuple(
-            jnp.ones_like(axis.nodes, dtype=float)
+            jnp.ones_like(axis.nodes, dtype=jnp.float64)
             if axis.quadrature_weights is None
             else axis.quadrature_weights
             for axis in axes
@@ -405,11 +399,11 @@ def _coord_query(batch: Any, labels: Sequence[str], /) -> FunctionSamples:
         local_shape = shape[offset : offset + count]
         prefix = (1,) * offset
         suffix = (1,) * (len(shape) - offset - count)
-        local_mask = jnp.asarray(batch.coord_mask_by_label[label].data, dtype=bool)
+        local_mask = jnp.asarray(batch.coord_mask_by_label[label].data, dtype=jnp.bool_)
         mask = mask & local_mask.reshape(prefix + local_shape + suffix)
         correction = batch.coord_geometry_weight_by_label.get(label)
         if correction is not None:
-            weights = weights * jnp.asarray(correction.data, dtype=float).reshape(
+            weights = weights * jnp.asarray(correction.data, dtype=jnp.float64).reshape(
                 prefix + local_shape + suffix
             )
         offset += count
@@ -446,7 +440,7 @@ def operator_domain_view_from_grid(
             name,
             case_axes + sample.axis_names,
             tuple(
-                int(_field(batch, next(iter(inputs.values()))).data.shape[index])
+                _field(batch, next(iter(inputs.values()))).data.shape[index]
                 for index in range(len(case_axes))
             )
             + sample.sample_shape,
@@ -463,8 +457,7 @@ def operator_domain_view_from_grid(
             candidate_name, candidate = next(iter(query_samples.items()))
             sample_rank = len(candidate.sample_shape)
             value_sample_shape = tuple(
-                int(size)
-                for size in values.shape[len(case_shape) : len(case_shape) + sample_rank]
+                values.shape[len(case_shape) : len(case_shape) + sample_rank]
             )
             if value_sample_shape == candidate.sample_shape:
                 query_name = candidate_name
@@ -523,7 +516,7 @@ def _payload_feature_array(
         array = jnp.asarray(field.data)
         if array.ndim < rank:
             raise ValueError(f"{name} leaves require at least {rank} leading dimensions.")
-        current = tuple(int(size) for size in array.shape[:rank])
+        current = tuple(array.shape[:rank])
         if leading_shape is None:
             leading_shape = current
         elif current != leading_shape:
@@ -544,10 +537,10 @@ def _graph_payload_array(value: Any, entity_axis: str, /) -> Array:
             )
         array = jnp.asarray(field.data)
         if entity_size is None:
-            entity_size = int(array.shape[0])
-        elif int(array.shape[0]) != entity_size:
+            entity_size = array.shape[0]
+        elif array.shape[0] != entity_size:
             raise ValueError("Graph payload leaves must share one entity-axis size.")
-        parts.append(array.reshape((int(array.shape[0]), -1)))
+        parts.append(array.reshape((array.shape[0], -1)))
     return jnp.concatenate(tuple(parts), axis=-1)
 
 
@@ -556,7 +549,7 @@ def _axis_size_from_points(points: Mapping[str, Any], axis: str, /) -> int:
     for value in points.values():
         for field in _field_leaves(value):
             if axis in field.dims:
-                sizes.add(int(field.data.shape[field.dims.index(axis)]))
+                sizes.add(field.data.shape[field.dims.index(axis)])
     if len(sizes) != 1:
         raise ValueError(f"Cannot infer one size for domain axis {axis!r}.")
     return next(iter(sizes))
@@ -587,11 +580,9 @@ def _case_value_array(
         array = jnp.asarray(field.data)
         if permutation != tuple(range(array.ndim)):
             array = jnp.transpose(array, permutation)
-        present_shape = {
-            axis: int(field.data.shape[named_positions[axis]]) for axis in named
-        }
+        present_shape = {axis: field.data.shape[named_positions[axis]] for axis in named}
         trailing_shape = tuple(
-            int(array.shape[index]) for index in range(len(named), array.ndim)
+            array.shape[index] for index in range(len(named), array.ndim)
         )
         expanded_shape = (
             tuple(present_shape.get(axis, 1) for axis in case_axes) + trailing_shape
@@ -609,13 +600,13 @@ def _case_function_samples(
     /,
 ) -> FunctionSamples:
     channels = _case_value_array(value, case_axes, case_shape)
-    values: Array = channels[..., 0] if int(channels.shape[-1]) == 1 else channels
+    values: Array = channels[..., 0] if channels.shape[-1] == 1 else channels
     values = jnp.expand_dims(values, axis=len(case_shape))
     return FunctionSamples(
         values=values,
-        coordinates=jnp.zeros(case_shape + (1, 1), dtype=float),
-        quadrature_weights=jnp.ones(case_shape + (1,), dtype=float),
-        mask=jnp.ones(case_shape + (1,), dtype=bool),
+        coordinates=jnp.zeros(case_shape + (1, 1), dtype=jnp.float64),
+        quadrature_weights=jnp.ones(case_shape + (1,), dtype=jnp.float64),
+        mask=jnp.ones(case_shape + (1,), dtype=jnp.bool_),
     )
 
 
@@ -652,7 +643,7 @@ def operator_domain_view_from_ragged_series(
         2,
         name="Ragged-series values",
     )
-    case_count, width = (int(series.shape[0]), int(series.shape[1]))
+    case_count, width = (series.shape[0], series.shape[1])
     if "static" in payload:
         static = _payload_feature_array(
             payload["static"],
@@ -661,7 +652,7 @@ def operator_domain_view_from_ragged_series(
         )
         static = jnp.broadcast_to(
             static[:, None, :],
-            (case_count, width, int(static.shape[-1])),
+            (case_count, width, static.shape[-1]),
         )
         series = jnp.concatenate((series, static), axis=-1)
     time_field = payload["time"]
@@ -672,24 +663,24 @@ def operator_domain_view_from_ragged_series(
         raise TypeError(
             "Ragged-series time and mask values must be phydrax.axes.AxisArray."
         )
-    times = jnp.asarray(time_field.data, dtype=float)
-    mask = jnp.asarray(mask_field.data, dtype=bool)
+    times = jnp.asarray(time_field.data, dtype=jnp.float64)
+    mask = jnp.asarray(mask_field.data, dtype=jnp.bool_)
     if times.shape != (case_count, width) or mask.shape != times.shape:
         raise ValueError("Ragged-series time and mask shapes must match series cases.")
-    weights = jnp.ones((case_count, width), dtype=float)
+    weights = jnp.ones((case_count, width), dtype=jnp.float64)
     if "sample_scale" in payload:
         scale_field = payload["sample_scale"]
         if not isinstance(scale_field, cx.AxisArray):
             raise TypeError(
                 "Ragged-series sample_scale must be a phydrax.axes.AxisArray."
             )
-        scale = jnp.asarray(scale_field.data, dtype=float)
+        scale = jnp.asarray(scale_field.data, dtype=jnp.float64)
         if scale.shape != (case_count,):
             raise ValueError("Ragged-series sample_scale must have one value per case.")
         weights = jnp.broadcast_to(scale[:, None], (case_count, width))
 
     coordinates = times[..., None]
-    values: Array = series[..., 0] if int(series.shape[-1]) == 1 else series
+    values: Array = series[..., 0] if series.shape[-1] == 1 else series
     source = FunctionSamples(
         values=values,
         coordinates=coordinates,
@@ -751,13 +742,13 @@ def operator_domain_view_from_trajectory(
         jax.device_get(_field(batch.points, TRAJECTORY_CASE_INDEX_KEY).data),
         dtype=np.int64,
     )
-    times = jnp.asarray(_field(batch.points, time_label).data, dtype=float)
+    times = jnp.asarray(_field(batch.points, time_label).data, dtype=jnp.float64)
     if case_ids.ndim != 1 or times.shape != case_ids.shape:
         raise ValueError("Trajectory case indices and times must be aligned vectors.")
     if case_ids.size == 0:
         raise ValueError("Trajectory operator views require observations.")
     unique_cases, inverse = np.unique(case_ids, return_inverse=True)
-    case_count = int(unique_cases.size)
+    case_count = unique_cases.size
     selected_counts = np.bincount(inverse, minlength=case_count)
     width = int(selected_counts.max(initial=0))
     positions = np.full((case_count, width), -1, dtype=np.int64)
@@ -765,7 +756,7 @@ def operator_domain_view_from_trajectory(
     first_positions = np.empty((case_count,), dtype=np.int64)
     for case_index in range(case_count):
         selected_positions = np.flatnonzero(inverse == case_index)
-        count = int(selected_positions.size)
+        count = selected_positions.size
         first_positions[case_index] = selected_positions[0]
         positions[case_index, :count] = selected_positions
         restore_slots[selected_positions] = case_index * width + np.arange(
@@ -802,7 +793,7 @@ def operator_domain_view_from_trajectory(
             name=f"Trajectory input {label_name!r}",
         )
         case_values = observations[jnp.asarray(first_positions, dtype=jnp.int32)]
-        if int(case_values.shape[-1]) == 1:
+        if case_values.shape[-1] == 1:
             case_values = case_values[..., 0]
         if case_count == 1:
             case_values = case_values[0]
@@ -940,16 +931,16 @@ def operator_domain_view_from_graph(
     mapping = np.full((graph_count, width), -1, dtype=np.int32)
     restore_slots = np.empty(entity_indices.shape, dtype=np.int32)
 
-    active = np.ones(entity_indices.shape, dtype=bool)
+    active = np.ones(entity_indices.shape, dtype=np.bool_)
     if entity_mask_array is not None:
-        entity_mask = np.asarray(jax.device_get(entity_mask_array), dtype=bool)
+        entity_mask = np.asarray(jax.device_get(entity_mask_array), dtype=np.bool_)
         active &= entity_mask[entity_indices]
     if batch.graph.graph_mask is not None:
-        graph_mask = np.asarray(jax.device_get(batch.graph.graph_mask), dtype=bool)
+        graph_mask = np.asarray(jax.device_get(batch.graph.graph_mask), dtype=np.bool_)
         active &= graph_mask[graph_ids]
     for graph_index in range(graph_count):
         selected_positions = np.flatnonzero(graph_ids == graph_index)
-        count = int(selected_positions.size)
+        count = selected_positions.size
         positions[graph_index, :count] = selected_positions
         mapping[graph_index, :count] = np.where(
             active[selected_positions],
@@ -994,7 +985,7 @@ def operator_domain_view_from_graph(
     base_payload = grouped_payload if graph_count > 1 else grouped_payload[0]
     base_coordinates = grouped_coordinates if graph_count > 1 else grouped_coordinates[0]
     base_mask = grouped_mask if graph_count > 1 else grouped_mask[0]
-    coordinate_dimension = int(base_coordinates.shape[-1])
+    coordinate_dimension = base_coordinates.shape[-1]
     coordinates = jnp.broadcast_to(
         base_coordinates,
         case_shape + (width, coordinate_dimension),
@@ -1002,7 +993,7 @@ def operator_domain_view_from_graph(
     mask = jnp.broadcast_to(base_mask, case_shape + (width,))
     valid_count = jnp.maximum(jnp.sum(mask, axis=-1, keepdims=True), 1)
     quadrature_weights = jnp.where(mask, 1.0 / valid_count, 0.0)
-    source_dimension = int(base_payload.shape[-1])
+    source_dimension = base_payload.shape[-1]
     source_values = jnp.broadcast_to(
         base_payload,
         case_shape + (width, source_dimension),
@@ -1045,7 +1036,7 @@ def operator_domain_view_from_graph(
                     0,
                 )
                 base_values = grouped_values if graph_count > 1 else grouped_values[0]
-                value_dimension = int(base_values.shape[-1])
+                value_dimension = base_values.shape[-1]
                 values = jnp.broadcast_to(
                     base_values,
                     case_shape + (width, value_dimension),

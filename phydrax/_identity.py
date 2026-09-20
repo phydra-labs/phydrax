@@ -68,8 +68,7 @@ def _static_payload(value: Any, path: str, /) -> Any:
         return _static_payload(value.item(), path)
     if isinstance(value, _ARRAY_TYPES):
         raise TypeError(
-            f"Static identity field {path} cannot contain a numeric array; "
-            "array values belong to a numeric revision."
+            f"Static identity field {path} cannot contain a numeric array; array values belong to a numeric revision."
         )
     if value is None or isinstance(value, (str, bool, int)):
         return value
@@ -403,7 +402,7 @@ def _shape_records(value: RecordInput, /) -> tuple[tuple[str, tuple[int, ...]], 
             for size in shape_values
         ):
             raise TypeError("Executable shape dimensions must be integers.")
-        shape = tuple(int(size) for size in shape_values)
+        shape = tuple(shape_values)
         if any(size < 0 for size in shape):
             raise ValueError("Executable shape dimensions must be nonnegative.")
         records.append((name, shape))

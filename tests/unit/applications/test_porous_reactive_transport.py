@@ -62,11 +62,11 @@ def _dimer():
 
 def test_water_volume_change_and_upstream_transport_preserve_component_moles():
     d = _geometry()
-    face = int(np.flatnonzero(np.asarray(d.neighbour_cells) >= 0)[0])
-    owner, neighbour = int(d.owner_cells[face]), int(d.neighbour_cells[face])
+    face = int(np.flatnonzero(np.asarray(d.neighbor_cells) >= 0)[0])
+    owner, neighbor = int(d.owner_cells[face]), int(d.neighbor_cells[face])
     q = jnp.zeros(d.owner_cells.size).at[face].set(0.01)
     previous = jnp.full((2, 1), 0.1).at[owner, 0].set(0.3)
-    volumes = jnp.full((2,), 0.1).at[owner].add(-0.02).at[neighbour].add(0.02)
+    volumes = jnp.full((2,), 0.1).at[owner].add(-0.02).at[neighbor].add(0.02)
     result = ComponentTransport(d, ("A",)).step(
         previous,
         volumes,
@@ -77,7 +77,7 @@ def test_water_volume_change_and_upstream_transport_preserve_component_moles():
         termination=_termination(),
     )
     np.testing.assert_allclose(result.concentrations[owner], [3.0], atol=1e-10)
-    np.testing.assert_allclose(result.concentrations[neighbour], [4.0 / 3.0], atol=1e-10)
+    np.testing.assert_allclose(result.concentrations[neighbor], [4.0 / 3.0], atol=1e-10)
     np.testing.assert_allclose(result.face_component_rates[face], [0.03], atol=1e-11)
     np.testing.assert_allclose(result.component_balance, 0.0, atol=1e-11)
 
@@ -85,7 +85,7 @@ def test_water_volume_change_and_upstream_transport_preserve_component_moles():
 def test_boundary_injection_zero_initial_inventory_and_outflow_use_correct_states():
     d = _geometry()
     faces = np.flatnonzero(
-        (np.asarray(d.neighbour_cells) < 0) & (np.asarray(d.owner_cells) == 0)
+        (np.asarray(d.neighbor_cells) < 0) & (np.asarray(d.owner_cells) == 0)
     )
     inflow, outflow = int(faces[0]), int(faces[1])
     q = jnp.zeros(d.owner_cells.size).at[inflow].set(-0.01).at[outflow].set(0.01)
@@ -132,7 +132,7 @@ def test_rotated_spd_hybrid_dispersion_preserves_affine_field_and_physical_flux(
         d, ("A",), dispersion=HybridMimeticDiffusion(d), dispersion_tensor=tensor
     )
     boundary = TransportBoundary(
-        d, 1, dirichlet_mask=d.neighbour_cells < 0, dispersion_concentration=f[:, None]
+        d, 1, dirichlet_mask=d.neighbor_cells < 0, dispersion_concentration=f[:, None]
     )
     volumes = 0.3 * d.cell_volumes
     result = plan.step(

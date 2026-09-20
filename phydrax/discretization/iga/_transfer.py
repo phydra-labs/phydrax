@@ -307,7 +307,7 @@ class TransferPlan(StrictModule, NonTrainableState):
             values.shape[: len(source_shape)]
         ) != (*source_shape,):
             raise ValueError("Payload coefficients do not begin with the source shape.")
-        payload_shape = tuple(int(size) for size in values.shape[len(source_shape) :])
+        payload_shape = tuple(values.shape[len(source_shape) :])
         if not payload_shape:
             return jnp.asarray(self.apply(values))
         columns = values.reshape((source.size, prod(payload_shape)))
@@ -497,8 +497,7 @@ def _exact_axis_matrix(
         solve_condition = float(np.linalg.cond(target_collocation))
         if not isfinite(solve_condition) or solve_condition > maximum_condition:
             raise ValueError(
-                "Exact IGA degree elevation collocation is ill-conditioned: "
-                f"condition estimate {solve_condition:.6g}."
+                f"Exact IGA degree elevation collocation is ill-conditioned: condition estimate {solve_condition:.6g}."
             )
         matrix = np.linalg.solve(target_collocation, source_collocation)
     points = _verification_points(source, target)
@@ -633,7 +632,7 @@ def prepare_tensor_transfer(
     constant_residual = max(constant_residuals, default=0.0)
     preservation_tolerance = (
         256.0
-        * np.finfo(float).eps
+        * np.finfo(np.float64).eps
         * max(source_basis.control_shape + target_basis.control_shape)
     )
     exact_on = (
@@ -649,7 +648,7 @@ def prepare_tensor_transfer(
             f"pointwise_residual:{max(pointwise_residuals, default=0.0):.6e}",
         ),
         resource_counts={
-            "axis_factor_entries": sum(int(matrix.size) for matrix in factor_tuple),
+            "axis_factor_entries": sum(matrix.size for matrix in factor_tuple),
         },
     )
     field_transfer = FieldTransfer(
@@ -706,8 +705,7 @@ def prepare_tensor_transfer(
     condition_estimate = prod(conditions)
     if not isfinite(condition_estimate) or condition_estimate > limit:
         raise ValueError(
-            "IGA tensor transfer is ill-conditioned: "
-            f"condition estimate {condition_estimate:.6g}."
+            f"IGA tensor transfer is ill-conditioned: condition estimate {condition_estimate:.6g}."
         )
     operator_norm = prod(
         float(np.linalg.norm(np.asarray(matrix), ord=2)) for matrix in factor_tuple

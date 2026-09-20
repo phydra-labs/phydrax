@@ -153,7 +153,7 @@ def test_physical_boundary_callbacks_are_not_used_on_interblock_faces():
 def test_inactive_nonfinite_payload_is_inert_and_fine_interfaces_are_distinct():
     prepared = _prepared(periodic=False, levels=2)
     initial = prepared.initial_topology()
-    tags = jnp.zeros((3, 4), dtype=bool).at[0, 1].set(True)
+    tags = jnp.zeros((3, 4), dtype="bool").at[0, 1].set(True)
     topology = prepared.compile_topology(initial, (tags,)).topology
     coarse = jnp.full((3, 4, 1), jnp.nan, dtype=jnp.float64).at[:2].set(1.0)
     fine = jnp.full((8, 2, 1), jnp.nan, dtype=jnp.float64)
@@ -183,8 +183,8 @@ def test_inactive_nonfinite_payload_is_inert_and_fine_interfaces_are_distinct():
     routed = {block.block_id: block for block in result.ledger.blocks}
     assert routed[coarse_route].block_kind == "coarse-fine"
     assert routed[fine_route].block_kind == "coarse-fine"
-    assert np.all(np.asarray(routed[coarse_route].neighbour_cells) >= 0)
-    assert np.all(np.asarray(routed[fine_route].neighbour_cells) == -1)
+    assert np.all(np.asarray(routed[coarse_route].neighbor_cells) >= 0)
+    assert np.all(np.asarray(routed[fine_route].neighbor_cells) == -1)
     np.testing.assert_array_equal(result.residuals[0][2], np.zeros((4, 1)))
     np.testing.assert_array_equal(
         result.residuals[1][fine_count:], np.zeros((8 - fine_count, 2, 1))
@@ -195,7 +195,7 @@ def test_inactive_nonfinite_payload_is_inert_and_fine_interfaces_are_distinct():
 def test_covered_cell_restriction_is_volume_weighted_and_leaves_uncovered_cells():
     prepared = _prepared(periodic=False, levels=2)
     initial = prepared.initial_topology()
-    tags = jnp.zeros((3, 4), dtype=bool).at[0, 1].set(True)
+    tags = jnp.zeros((3, 4), dtype="bool").at[0, 1].set(True)
     topology = prepared.compile_topology(initial, (tags,)).topology
     synchronization = BlockAMRConservationPlan(prepared, topology)
     coarse = jnp.ones((3, 4, 1), dtype=jnp.float64)

@@ -39,12 +39,8 @@ def _space(degree=1):
 
 
 def _single_cell_space(factory):
-    coordinates = jnp.asarray(
-        ((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0))
-    )
-    mesh = phx.discretization.CellMesh.from_polygons(
-        coordinates, ((0, 1, 2, 3),)
-    )
+    coordinates = jnp.asarray(((0.0, 0.0), (1.0, 0.0), (1.0, 1.0), (0.0, 1.0)))
+    mesh = phx.discretization.CellMesh.from_polygons(coordinates, ((0, 1, 2, 3),))
     field = phx.discretization.VirtualElementFieldSpec("u", factory(1))
     return phx.discretization.VirtualElementPlan(mesh, field).prepare()
 
@@ -52,9 +48,7 @@ def _single_cell_space(factory):
 def _vector_polynomial_state(space, differential_kind):
     projection = space.default_runtime.projections[0]
     geometry = space.default_runtime.geometries[0]
-    exponents = [
-        tuple(int(value) for value in row) for row in projection.basis.exponents
-    ]
+    exponents = [tuple(row) for row in projection.basis.exponents]
     constant = exponents.index((0, 0))
     x_term = exponents.index((1, 0))
     y_term = exponents.index((0, 1))
@@ -82,9 +76,7 @@ def _vector_polynomial_state(space, differential_kind):
 def _l2_polynomial_state(space):
     projection = space.default_runtime.projections[0]
     geometry = space.default_runtime.geometries[0]
-    exponents = [
-        tuple(int(value) for value in row) for row in projection.basis.exponents
-    ]
+    exponents = [tuple(row) for row in projection.basis.exponents]
     coefficients = jnp.zeros((projection.basis.feature_count,))
     coefficients = coefficients.at[exponents.index((0, 0))].set(
         1.0 + geometry.centroids[0, 0]
@@ -176,7 +168,7 @@ def test_vem_robin_and_mass_are_symmetric():
     )
     compiled = phx.equations.compile_virtual_element_problem(form, space)
     operator = compiled.affine_operator()
-    value = jnp.arange(space.dof_map.global_dof_count, dtype=float)
+    value = jnp.arange(space.dof_map.global_dof_count, dtype="float64")
 
     assert jnp.allclose(operator.mv(value), operator.transpose_mv(value), atol=1.0e-11)
     assert jnp.all(jnp.isfinite(operator.mv(value)))
@@ -199,9 +191,7 @@ def test_vector_vem_assembles_differential_mass_source_and_trace_forms(
         "u",
         (phx.equations.DiffusionAction("u", 1.0),),
     )
-    matrix_free = phx.equations.compile_virtual_element_problem(
-        differential_form, space
-    )
+    matrix_free = phx.equations.compile_virtual_element_problem(differential_form, space)
     sparse = phx.equations.compile_virtual_element_problem(
         differential_form,
         space,
@@ -215,9 +205,7 @@ def test_vector_vem_assembles_differential_mass_source_and_trace_forms(
     np.testing.assert_allclose(
         matrix_free_action.mv(state), sparse_action.mv(state), atol=2.0e-9
     )
-    np.testing.assert_allclose(
-        state @ matrix_free_action.mv(state), 4.0, atol=2.0e-9
-    )
+    np.testing.assert_allclose(state @ matrix_free_action.mv(state), 4.0, atol=2.0e-9)
 
     source = jnp.asarray((1.0, 2.0))
     mass_and_load = phx.equations.VirtualElementForm(
@@ -247,15 +235,11 @@ def test_vector_vem_assembles_differential_mass_source_and_trace_forms(
     rhs = compiled.full_right_hand_side()
 
     np.testing.assert_allclose(state @ mass.mv(state), 2.0 / 3.0, atol=2.0e-9)
-    np.testing.assert_allclose(
-        state @ rhs, expected_rhs_pairing, atol=2.0e-9
-    )
+    np.testing.assert_allclose(state @ rhs, expected_rhs_pairing, atol=2.0e-9)
 
 
 def test_l2_vem_assembles_only_cell_mass_and_source_forms():
-    space = _single_cell_space(
-        phx.discretization.discontinuous_l2_virtual_element
-    )
+    space = _single_cell_space(phx.discretization.discontinuous_l2_virtual_element)
     state = _l2_polynomial_state(space)
     form = phx.equations.VirtualElementForm(
         "l2-cell-form",
@@ -270,15 +254,11 @@ def test_l2_vem_assembles_only_cell_mass_and_source_forms():
     np.testing.assert_allclose(
         state @ compiled.affine_operator().mv(state), 7.0 / 3.0, atol=2.0e-9
     )
-    np.testing.assert_allclose(
-        state @ compiled.full_right_hand_side(), 3.0, atol=2.0e-9
-    )
+    np.testing.assert_allclose(state @ compiled.full_right_hand_side(), 3.0, atol=2.0e-9)
 
 
 def test_l2_vem_rejects_undefined_operators_before_evaluation():
-    space = _single_cell_space(
-        phx.discretization.discontinuous_l2_virtual_element
-    )
+    space = _single_cell_space(phx.discretization.discontinuous_l2_virtual_element)
     diffusion = phx.equations.VirtualElementForm(
         "undefined-l2-diffusion",
         "u",

@@ -150,8 +150,7 @@ def _solid_harmonic_synthesis(
     coefficient_shape = (limit, 2 * limit - 1)
     if modal.ndim < 2 or tuple(modal.shape[:2]) != coefficient_shape:
         raise ValueError(
-            "Solid-harmonic coefficients must begin with shape "
-            f"{coefficient_shape}; got {modal.shape}."
+            f"Solid-harmonic coefficients must begin with shape {coefficient_shape}; got {modal.shape}."
         )
     points = _cartesian_vectors("solid_harmonic_synthesis", displacements)
     real_dtype = _synthesis_dtype(modal, points)
@@ -186,7 +185,7 @@ def _solid_harmonic_synthesis(
         radius_squared = x_ * x_ + y_ * y_ + z_ * z_
         log_radius = jnp.zeros((point_count,), dtype=real_dtype)
         inverse_radius = jnp.ones((point_count,), dtype=real_dtype)
-        valid_points = jnp.ones((point_count,), dtype=bool)
+        valid_points = jnp.ones((point_count,), dtype=jnp.bool_)
 
     x, y, z = geometry[:, 0], geometry[:, 1], geometry[:, 2]
     if real_output:

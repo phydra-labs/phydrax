@@ -146,7 +146,11 @@ def test_jacobian_refresh_policies_change_preparation_counts_without_losing_root
     assert {
         name: int(result.diagnostics.jacobian_preparations)
         for name, result in results.items()
-    } == {"every-step": 4, "stagnation": 3, "periodic": 2}
+    } == {
+        "every-step": 4,
+        "stagnation": 3,
+        "periodic": 2,
+    }
 
 
 def test_rejection_refresh_reprepares_after_rejected_trust_steps_and_converges():

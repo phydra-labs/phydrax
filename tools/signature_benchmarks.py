@@ -40,7 +40,7 @@ class BenchmarkResult:
 
 
 def _integers(value: str, /) -> tuple[int, ...]:
-    values = tuple(int(item) for item in value.split(","))
+    values = tuple(value.split(","))
     if not values or any(item <= 0 for item in values):
         raise argparse.ArgumentTypeError("Expected comma-separated positive integers.")
     return values
@@ -90,7 +90,7 @@ def _paths(
     /,
 ) -> jax.Array:
     increments = jax.random.normal(key, (batch_size, length - 1, dimension))
-    increments = increments / jnp.sqrt(jnp.asarray(max(length - 1, 1), dtype=float))
+    increments = increments / jnp.sqrt(jnp.asarray(max(length - 1, 1), dtype="float64"))
     origins = jnp.zeros((batch_size, 1, dimension), dtype=increments.dtype)
     return jnp.concatenate((origins, jnp.cumsum(increments, axis=1)), axis=1)
 
@@ -106,7 +106,7 @@ def _feature_benchmark(
     *,
     repeats: int,
 ) -> BenchmarkResult:
-    dimension = int(paths.shape[-1])
+    dimension = paths.shape[-1]
     features = phx.stochastic.SignatureFeatures(
         dimension,
         depth,
@@ -118,10 +118,10 @@ def _feature_benchmark(
     compile_reverse, reverse_seconds, _ = _measure(reverse, (paths,), repeats=repeats)
     return BenchmarkResult(
         method="tensor-features",
-        length=int(paths.shape[1]),
+        length=paths.shape[1],
         dimension=dimension,
         order=depth,
-        batch_size=int(paths.shape[0]),
+        batch_size=paths.shape[0],
         feature_size=features.output_size,
         compile_forward_seconds=compile_forward,
         forward_seconds=forward_seconds,
@@ -149,18 +149,18 @@ def _signax_benchmark(
     compile_reverse, reverse_seconds, _ = _measure(reverse, (paths,), repeats=repeats)
     exact = jax.vmap(
         phx.stochastic.SignatureFeatures(
-            int(paths.shape[-1]),
+            paths.shape[-1],
             depth,
             include_scalar=False,
         )
     )(paths)
     return BenchmarkResult(
         method="signax",
-        length=int(paths.shape[1]),
-        dimension=int(paths.shape[-1]),
+        length=paths.shape[1],
+        dimension=paths.shape[-1],
         order=depth,
-        batch_size=int(paths.shape[0]),
-        feature_size=int(exact.shape[-1]),
+        batch_size=paths.shape[0],
+        feature_size=exact.shape[-1],
         compile_forward_seconds=compile_forward,
         forward_seconds=forward_seconds,
         compile_reverse_seconds=compile_reverse,
@@ -186,7 +186,7 @@ def _iisignature_benchmark(
     exact = np.asarray(
         jax.vmap(
             phx.stochastic.SignatureFeatures(
-                int(paths.shape[-1]),
+                paths.shape[-1],
                 depth,
                 include_scalar=False,
             )
@@ -194,11 +194,11 @@ def _iisignature_benchmark(
     )
     return BenchmarkResult(
         method="iisignature",
-        length=int(paths.shape[1]),
-        dimension=int(paths.shape[-1]),
+        length=paths.shape[1],
+        dimension=paths.shape[-1],
         order=depth,
-        batch_size=int(paths.shape[0]),
-        feature_size=int(exact.shape[-1]),
+        batch_size=paths.shape[0],
+        feature_size=exact.shape[-1],
         compile_forward_seconds=None,
         forward_seconds=forward_seconds,
         compile_reverse_seconds=None,
@@ -216,7 +216,7 @@ def _pde_benchmark(
     repeats: int,
     max_feature_size: int,
 ) -> BenchmarkResult:
-    dimension = int(left.shape[-1])
+    dimension = left.shape[-1]
     kernel = phx.kernels.SignaturePDEKernel(
         phx.kernels.LinearKernel(),
         polynomial_order=order,
@@ -242,10 +242,10 @@ def _pde_benchmark(
         max_abs_error = float(jnp.max(jnp.abs(values - exact)))
     return BenchmarkResult(
         method="signature-pde",
-        length=int(left.shape[1]),
+        length=left.shape[1],
         dimension=dimension,
         order=order,
-        batch_size=int(left.shape[0]),
+        batch_size=left.shape[0],
         feature_size=feature_size,
         compile_forward_seconds=compile_forward,
         forward_seconds=forward_seconds,

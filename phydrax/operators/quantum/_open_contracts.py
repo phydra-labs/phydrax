@@ -138,7 +138,7 @@ class OpenSystemApproximationEvidence(StrictModule):
         identifier = str(representation_id)
         axes_ = tuple(axes)
         quantities_ = tuple(quantities)
-        execution = jnp.asarray(execution_valid, dtype=bool)
+        execution = jnp.asarray(execution_valid, dtype=jnp.bool_)
         if not identifier:
             raise ValueError("representation_id must be non-empty.")
         if not axes_ or not quantities_:

@@ -59,7 +59,7 @@ class MACEnthalpyPorosityProblem(StrictModule, NonTrainableState):
     ):
         if not isinstance(material, SolidLiquidEnthalpyPlan):
             raise TypeError("material must be SolidLiquidEnthalpyPlan.")
-        gravity_ = jnp.asarray(gravity, dtype=float)
+        gravity_ = jnp.asarray(gravity, dtype=jnp.float64)
         if (
             gravity_.shape not in ((2,), (3,))
             or jnp.iscomplexobj(gravity_)
@@ -186,8 +186,7 @@ class CompiledMACEnthalpyPorosityDynamics(StrictModule):
         dtype = self.momentum.operators.pressure_space.dtype
         if value.shape != self.state_shape:
             raise ValueError(
-                f"MAC enthalpy coordinates must have shape {self.state_shape}; "
-                f"got {value.shape}."
+                f"MAC enthalpy coordinates must have shape {self.state_shape}; got {value.shape}."
             )
         if value.dtype != dtype:
             raise TypeError(f"MAC enthalpy coordinates must have dtype {dtype}.")

@@ -258,13 +258,13 @@ def test_ssprk_ale_negative_trial_volume_returns_order_aware_retry_evidence():
     motion = phx.discretization.FixedConnectivityMotionPlan(
         plan,
         oscillatory_compression,
-        mapping_id="negative-v1-retry",
+        mapping_id="negative-retry",
         consistency_policy=policy,
     )
     step = motion.prepare_ssprk33_step(
         0.0,
         1.0,
-        "negative-v1-epoch",
+        "negative-epoch",
         0,
         0,
         0.8,

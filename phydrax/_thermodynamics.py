@@ -16,7 +16,7 @@ import phydrax.ein as ein
 
 from ._fingerprint import canonical_fingerprint
 from ._phase_field import AbstractBulkFreeEnergy, DoubleWellFreeEnergy
-from ._strict import AbstractAttribute, StrictModule
+from ._strict import StrictModule
 from ._trainable import NonTrainableState
 
 
@@ -76,7 +76,7 @@ class BinaryThermodynamicLocalFields(StrictModule):
 class AbstractKineticThermodynamicClosure(StrictModule, NonTrainableState):
     """Constitutive source for energy, variational derivative, and stress."""
 
-    closure_id: AbstractAttribute[str]
+    closure_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def evaluate_local(

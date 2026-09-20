@@ -14,7 +14,7 @@ import phydrax.ein as ein
 from phydrax.domain import AbstractGeometry, AbstractScalarDomain, DomainFunction
 
 from ..._doc import DOC_KEY0
-from ..._sampling import get_sampler
+from ..._sampling import materialize_design
 from ..integral._local_ops import _uniform_ball_rule
 from ._domain_ops import _factor_and_dim, _resolve_var, grad
 
@@ -94,18 +94,18 @@ def fractional_laplacian(
         )
 
     if radius is None:
-        bounds = jnp.asarray(factor.mesh_bounds, dtype=float)
+        bounds = jnp.asarray(factor.mesh_bounds, dtype=jnp.float64)
         mins = bounds[0]
         maxs = bounds[1]
         radius = float(jnp.linalg.norm(maxs - mins) + 1e-12)
     R = float(radius)
 
     bq = _uniform_ball_rule(R, int(var_dim), int(num_points))
-    offsets = jnp.asarray(bq["offsets"], dtype=float)  # (N, d)
-    w = jnp.asarray(bq["weights"], dtype=float)  # (N,)
+    offsets = jnp.asarray(bq["offsets"], dtype=jnp.float64)  # (N, d)
+    w = jnp.asarray(bq["weights"], dtype=jnp.float64)  # (N,)
     r_off = jnp.linalg.norm(offsets, axis=1)  # (N,)
     r_safe = jnp.maximum(r_off, 1e-12)
-    kern = jnp.power(r_safe, -(var_dim + a)) * (r_off > float(eps)).astype(float)
+    kern = jnp.power(r_safe, -(var_dim + a)) * (r_off > float(eps)).astype("float64")
 
     idx = u.deps.index(var)
     grad_u = grad(u, var=var, mode="forward") if desingularize and a > 1.0 else None
@@ -116,7 +116,7 @@ def fractional_laplacian(
             raise ValueError(
                 "fractional_laplacian does not support coord-separable inputs."
             )
-        x = jnp.asarray(x, dtype=float)
+        x = jnp.asarray(x, dtype=jnp.float64)
 
         ux = u.func(*args, key=key, **kwargs)
 
@@ -250,7 +250,6 @@ def fractional_derivative_gl_mc(
         use_time = False
 
     E = _gmc_cdf(a)
-    sampler_fn = get_sampler(sampler)
 
     def map_F_to_Y(F):
         F1 = jnp.squeeze(F, axis=-1)
@@ -268,12 +267,11 @@ def fractional_derivative_gl_mc(
             raise ValueError(
                 "fractional_derivative_gl_mc does not support coord-separable inputs."
             )
-        x = jnp.asarray(x, dtype=float)
+        x = jnp.asarray(x, dtype=jnp.float64)
 
-        t = None
         if use_time:
             assert idx_t is not None
-            t = jnp.asarray(args[idx_t], dtype=float).reshape(())
+            jnp.asarray(args[idx_t], dtype=jnp.float64).reshape(())
 
         xi = x[axis_i]
         if side == "right":
@@ -298,8 +296,13 @@ def fractional_derivative_gl_mc(
             call_args[idx_x] = x_h
             fxh = u.func(*call_args, key=key, **kwargs)
 
-            F = sampler_fn(total_samples, 1, key)
-            Y = map_F_to_Y(F).astype(float)
+            F = materialize_design(
+                sampler,
+                count=total_samples,
+                dimension=1,
+                key=key,
+            )
+            Y = map_F_to_Y(F).astype("float64")
 
             xs = jnp.repeat(x[None, :], total_samples, axis=0)
             xs = xs.at[:, axis_i].add(sgn * Y * h)

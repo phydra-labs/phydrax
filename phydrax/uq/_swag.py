@@ -97,7 +97,7 @@ class SWAGState(StrictModule):
             mean=jnp.zeros_like(value),
             m2=jnp.zeros_like(value),
             snapshots=jnp.zeros((capacity, value.size), dtype=value.dtype),
-            snapshot_mask=jnp.zeros((capacity,), dtype=bool),
+            snapshot_mask=jnp.zeros((capacity,), dtype=jnp.bool_),
             count=jnp.asarray(0, dtype=jnp.int32),
             cursor=jnp.asarray(0, dtype=jnp.int32),
             last_solver_step=jnp.asarray(0, dtype=jnp.int32),

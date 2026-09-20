@@ -528,8 +528,7 @@ def _precision_dtype(
     )
     if precision not in supported:
         raise ValueError(
-            f"{name} must name a supported real or complex floating dtype; "
-            f"got {precision!r}."
+            f"{name} must name a supported real or complex floating dtype; got {precision!r}."
         )
     return precision
 
@@ -596,8 +595,7 @@ class SolveResourcePolicy(StrictModule):
         recycling_state_bytes: int = 256 * 1024 * 1024,
     ):
         values = tuple(
-            int(value)
-            for value in (
+            (
                 factorization_bytes,
                 workspace_bytes,
                 krylov_basis_bytes,
@@ -802,6 +800,11 @@ class LinearSolvePolicy(StrictModule):
 
 
 __all__ = [
+    "FGMRES",
+    "GMRES",
+    "LSMR",
+    "MINRES",
+    "PCG",
     "AbstractLinearMethod",
     "AutoLinearMethod",
     "BiCGStab",
@@ -816,28 +819,23 @@ __all__ = [
     "DifferentiationPolicy",
     "FailureMode",
     "FailurePolicy",
-    "FGMRES",
     "GeneralizedLSMR",
-    "GMRES",
-    "SparseCholesky",
-    "LinearSolveControl",
-    "LinearSolvePolicy",
     "LinearDerivativeSolvePolicy",
     "LinearSolveCheckPolicy",
-    "LSMR",
-    "MINRES",
-    "PCG",
+    "LinearSolveControl",
+    "LinearSolvePolicy",
     "MixedPrecisionPolicy",
     "PrecisionDType",
     "ProjectedPCG",
     "RankPolicy",
-    "SolveResourcePolicy",
-    "SparseLU",
-    "SparseLDLT",
-    "SparseQR",
-    "StructuredDirect",
-    "TolerancePolicy",
     "RecyclingExtraction",
     "RecyclingPolicy",
     "RecyclingRefresh",
+    "SolveResourcePolicy",
+    "SparseCholesky",
+    "SparseLDLT",
+    "SparseLU",
+    "SparseQR",
+    "StructuredDirect",
+    "TolerancePolicy",
 ]

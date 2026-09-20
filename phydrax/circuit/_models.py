@@ -38,7 +38,7 @@ class ScatteringResponse(StrictModule):
             raise TypeError("Scattering matrix must be numeric.")
         value = value.astype(jnp.result_type(value, jnp.complex128))
         refs = tuple(references)
-        if len(refs) != int(value.shape[-1]) or any(
+        if len(refs) != value.shape[-1] or any(
             not isinstance(ref, (ElectricalWaveReference, ModalWaveReference))
             for ref in refs
         ):
@@ -152,9 +152,9 @@ class ScatteringAudit(StrictModule):
         self.minimum_passivity_eigenvalue = jnp.asarray(minimum_passivity_eigenvalue)
         self.passivity_residual = jnp.asarray(passivity_residual)
         self.reciprocity_residual = jnp.asarray(reciprocity_residual)
-        self.finite = jnp.asarray(finite, dtype=bool)
-        self.passive = jnp.asarray(passive, dtype=bool)
-        self.reciprocal = jnp.asarray(reciprocal, dtype=bool)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
+        self.passive = jnp.asarray(passive, dtype=jnp.bool_)
+        self.reciprocal = jnp.asarray(reciprocal, dtype=jnp.bool_)
         self.passivity_eligible = bool(passivity_eligible)
         self.reciprocity_eligible = bool(reciprocity_eligible)
         self.complete_matrix = bool(complete_matrix)

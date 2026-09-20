@@ -13,7 +13,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ._strict import AbstractAttribute, StrictModule
+from ._strict import StrictModule
 from ._trainable import NonTrainableState
 
 
@@ -112,8 +112,8 @@ class BulkPotentialDomain(StrictModule, NonTrainableState):
 class AbstractBulkFreeEnergy(StrictModule, NonTrainableState):
     """Physical density plus an energy-compatible discrete evolution contract."""
 
-    free_energy_id: AbstractAttribute[str]
-    domain: AbstractAttribute[BulkPotentialDomain]
+    free_energy_id: eqx.AbstractVar[str]
+    domain: eqx.AbstractVar[BulkPotentialDomain]
 
     @abc.abstractmethod
     def density(self, value: ArrayLike, /) -> Array:
@@ -154,7 +154,7 @@ class PolynomialBulkFreeEnergy(AbstractBulkFreeEnergy):
     free_energy_id: str = eqx.field(static=True)
 
     def __init__(self, coefficients: Sequence[float] | ArrayLike, /):
-        values = np.asarray(coefficients, dtype=float)
+        values = np.asarray(coefficients, dtype=np.float64)
         if (
             values.ndim != 1
             or values.size < 2
@@ -162,8 +162,7 @@ class PolynomialBulkFreeEnergy(AbstractBulkFreeEnergy):
             or values[-1] <= 0.0
         ):
             raise ValueError(
-                "Polynomial bulk energy needs finite rank-1 coefficients and a "
-                "positive leading coefficient."
+                "Polynomial bulk energy needs finite rank-1 coefficients and a positive leading coefficient."
             )
         self.coefficients = jnp.asarray(values)
         self.domain = BulkPotentialDomain()

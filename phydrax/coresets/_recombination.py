@@ -134,7 +134,7 @@ def _eliminate_to_rank(
 
 
 def _standardized_augmented(features: Array, weights: Array, /) -> Array:
-    feature_count = int(features.shape[1])
+    feature_count = features.shape[1]
     if feature_count == 0:
         return jnp.ones((features.shape[0], 1), dtype=features.dtype)
     mean = weights @ features
@@ -162,7 +162,7 @@ def moment_recombine(
     config = MomentRecombination() if method is None else method
     if not isinstance(config, MomentRecombination):
         raise TypeError("method must be a MomentRecombination.")
-    feature_values = jnp.asarray(features, dtype=float)
+    feature_values = jnp.asarray(features, dtype=jnp.float64)
     if feature_values.ndim != 2:
         raise ValueError("features must have shape (source_points, feature_count).")
     source_points, supplied_feature_count = feature_values.shape

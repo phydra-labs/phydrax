@@ -38,16 +38,15 @@ def _sample_values(
     has_channel_axis = (
         array.ndim > ndim
         and tuple(array.shape[-ndim - 1 : -1]) == shape
-        and int(array.shape[-1]) == channels
+        and array.shape[-1] == channels
     )
     if not has_channel_axis:
         if tuple(array.shape[-ndim:]) != shape or channels != 1:
             raise ValueError(
-                f"Attention values do not contain sample shape {shape} with "
-                f"{channels} channels; got {array.shape}."
+                f"Attention values do not contain sample shape {shape} with {channels} channels; got {array.shape}."
             )
         array = array[..., None]
-    case_shape = tuple(int(size) for size in array.shape[: -ndim - 1])
+    case_shape = tuple(array.shape[: -ndim - 1])
     return array.reshape(
         (prod(case_shape) if case_shape else 1, prod(shape), channels)
     ), case_shape
@@ -199,7 +198,7 @@ class SliceAttention(StrictModule):
         tokens = self.attention(
             tokens,
             tokens,
-            jnp.ones((flattened.shape[0], self.num_slices), dtype=float),
+            jnp.ones((flattened.shape[0], self.num_slices), dtype=jnp.float64),
         )
         slice_to_point = jnn.softmax(logits, axis=-1)
         decoded = ein.contract("bns,bsc->bnc", slice_to_point, tokens)
@@ -239,17 +238,17 @@ class CodomainAttention(StrictModule):
 
     def __call__(self, values: Array, field_mask: Array | None = None, /) -> Array:
         array = jnp.asarray(values)
-        if array.ndim < 2 or int(array.shape[-1]) != self.channels:
+        if array.ndim < 2 or array.shape[-1] != self.channels:
             raise ValueError("CodomainAttention expects (..., fields, channels).")
-        field_count = int(array.shape[-2])
-        leading = tuple(int(size) for size in array.shape[:-2])
+        field_count = array.shape[-2]
+        leading = tuple(array.shape[:-2])
         flattened = array.reshape(
             (prod(leading) if leading else 1, field_count, self.channels)
         )
         if field_mask is None:
-            flattened_mask = jnp.ones(flattened.shape[:2], dtype=bool)
+            flattened_mask = jnp.ones(flattened.shape[:2], dtype=jnp.bool_)
         else:
-            mask = jnp.asarray(field_mask, dtype=bool)
+            mask = jnp.asarray(field_mask, dtype=jnp.bool_)
             if mask.shape == (field_count,):
                 flattened_mask = jnp.broadcast_to(mask, flattened.shape[:2])
             elif mask.shape == leading + (field_count,):
@@ -297,12 +296,10 @@ class AxialOperatorAttention(StrictModule):
         ndim = len(axes)
         if ndim == 0 or output.ndim < ndim + 1:
             raise ValueError("Axial attention requires tensor-product spatial axes.")
-        if int(output.shape[-1]) != self.channels:
+        if output.shape[-1] != self.channels:
             raise ValueError(f"Expected {self.channels} channels.")
         spatial_start = output.ndim - ndim - 1
-        if tuple(int(size) for size in output.shape[spatial_start:-1]) != tuple(
-            axis.size for axis in axes
-        ):
+        if tuple(output.shape[spatial_start:-1]) != tuple(axis.size for axis in axes):
             raise ValueError("Axial attention values do not match OperatorAxis sizes.")
 
         for index, axis in enumerate(axes):
@@ -311,7 +308,7 @@ class AxialOperatorAttention(StrictModule):
             leading = moved.shape[:-2]
             flattened = moved.reshape((-1, axis.size, self.channels))
             weights = (
-                jnp.ones((axis.size,), dtype=float)
+                jnp.ones((axis.size,), dtype=jnp.float64)
                 if axis.quadrature_weights is None
                 else axis.quadrature_weights
             )

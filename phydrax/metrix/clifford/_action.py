@@ -66,7 +66,7 @@ class CliffordOutermorphismPlan(StrictModule, NonTrainableState):
         self.representation = jnp.asarray(representation)
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "clifford-outermorphism-plan-v1",
+                "kind": "clifford-outermorphism-plan",
                 "action": action.action_id,
                 "layout": layout.layout_id,
                 "representation": representation.tolist(),
@@ -109,7 +109,7 @@ class CliffordActionAuditReport(StrictModule, NonTrainableState):
         action_id: str,
         layout_id: str,
     ):
-        finite_ = jnp.asarray(finite, dtype=bool)
+        finite_ = jnp.asarray(finite, dtype=jnp.bool_)
         metric = jnp.asarray(metric_defect)
         automorphism = jnp.asarray(automorphism_defect)
         tolerance_ = jnp.asarray(tolerance)
@@ -129,7 +129,7 @@ class CliffordActionAuditReport(StrictModule, NonTrainableState):
         self.layout_id = str(layout_id)
         self.report_id = canonical_fingerprint(
             {
-                "kind": "clifford-action-audit-v1",
+                "kind": "clifford-action-audit",
                 "action": self.action_id,
                 "layout": self.layout_id,
                 "metric_defect": float(metric),

@@ -100,7 +100,7 @@ class CTMRGResult(StrictModule):
 
 
 def _double_tensor(tensor: Array, /) -> Array:
-    shape = tuple(int(value * value) for value in tensor.shape[:4])
+    shape = tuple(value * value for value in tensor.shape[:4])
     return ein.contract(
         "urdlp,URDLp->uUrRdDlL",
         jnp.conj(tensor),
@@ -142,8 +142,7 @@ def contract_peps_ctmrg(state: PEPS, policy: CTMRGPolicy, /) -> CTMRGResult:
     if not isinstance(state, PEPS) or not isinstance(policy, CTMRGPolicy):
         raise TypeError("state and policy have invalid types.")
     doubled_shapes = tuple(
-        tuple(int(value * value) for value in tensor.shape[:4])
-        for tensor in state.tensors
+        tuple(value * value for value in tensor.shape[:4]) for tensor in state.tensors
     )
     dimension = max(max(shape) for shape in doubled_shapes)
     transfer_elements = sum(prod(shape) for shape in doubled_shapes)

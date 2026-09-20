@@ -73,8 +73,7 @@ def _tolerances(
         or rejection < verification
     ):
         raise ValueError(
-            "Action tolerances must be finite and satisfy "
-            "0 <= verification_tolerance <= rejection_tolerance."
+            "Action tolerances must be finite and satisfy 0 <= verification_tolerance <= rejection_tolerance."
         )
     return verification, rejection
 
@@ -161,7 +160,7 @@ class PolynomialActionEvidence(StrictModule, NonTrainableState):
         if reductivity not in ("not-applicable", "declared"):
             raise ValueError("Unknown reductivity evidence scope.")
         verification, rejection = _tolerances(verification_tolerance, rejection_tolerance)
-        residuals_host = np.asarray(relation_residuals, dtype=float).reshape((-1,))
+        residuals_host = np.asarray(relation_residuals, dtype=np.float64).reshape((-1,))
         if not np.all(np.isfinite(residuals_host)):
             raise ValueError("Action relation residuals must be finite.")
         status = _relation_status(residuals_host, verification, rejection)
@@ -178,7 +177,7 @@ class PolynomialActionEvidence(StrictModule, NonTrainableState):
         self.reductivity = reductivity
         self.evidence_id = canonical_fingerprint(
             {
-                "kind": "polynomial-action-evidence-v1",
+                "kind": "polynomial-action-evidence",
                 "action_kind": kind,
                 "support": support_id_,
                 "residuals": array_tree_fingerprint(residuals),
@@ -228,7 +227,7 @@ class FinitePolynomialAction(StrictModule, NonTrainableState):
         if not isinstance(support, SparsePolynomialSupport):
             raise TypeError("support must be a SparsePolynomialSupport.")
         variable_input = _numeric_array(variable_actions, "variable_actions", ndim=3)
-        count = int(variable_input.shape[0])
+        count = variable_input.shape[0]
         if variable_input.shape[1:] != (support.variable_count, support.variable_count):
             raise ValueError("variable_actions have incompatible variable dimensions.")
         if count < 1:
@@ -328,7 +327,7 @@ class FinitePolynomialAction(StrictModule, NonTrainableState):
         self.evidence = evidence
         self.action_id = canonical_fingerprint(
             {
-                "kind": "finite-polynomial-action-v1",
+                "kind": "finite-polynomial-action",
                 "support": support.support_id,
                 "labels": labels,
                 "table": array_tree_fingerprint(table_array),
@@ -373,7 +372,7 @@ class DeclaredReductivePolynomialAction(StrictModule, NonTrainableState):
         variable_input = _numeric_array(
             variable_generators, "variable_generators", ndim=3
         )
-        count = int(variable_input.shape[0])
+        count = variable_input.shape[0]
         if count < 1 or variable_input.shape[1:] != (
             support.variable_count,
             support.variable_count,
@@ -475,7 +474,7 @@ class DeclaredReductivePolynomialAction(StrictModule, NonTrainableState):
         self.evidence = evidence
         self.action_id = canonical_fingerprint(
             {
-                "kind": "declared-reductive-polynomial-action-v1",
+                "kind": "declared-reductive-polynomial-action",
                 "support": support.support_id,
                 "labels": labels,
                 "variable_generators": array_tree_fingerprint(variable_array),
@@ -518,7 +517,7 @@ class PolynomialScalingAction(StrictModule, NonTrainableState):
         evidence = PolynomialActionEvidence(
             "scaling",
             support.support_id,
-            np.zeros((1,), dtype=float),
+            np.zeros((1,), dtype=np.float64),
             verification_tolerance=0.0,
             rejection_tolerance=0.0,
             exact_relations=False,
@@ -533,7 +532,7 @@ class PolynomialScalingAction(StrictModule, NonTrainableState):
         self.evidence = evidence
         self.action_id = canonical_fingerprint(
             {
-                "kind": "polynomial-scaling-action-v1",
+                "kind": "polynomial-scaling-action",
                 "support": support.support_id,
                 "variable": array_tree_fingerprint(variable_array),
                 "equation": array_tree_fingerprint(equation_array),
@@ -573,7 +572,7 @@ def weighted_polynomial_action(
     return DeclaredReductivePolynomialAction(
         support,
         np.diag(variable)[None, ...],
-        np.zeros((1, 1, 1), dtype=int),
+        np.zeros((1, 1, 1), dtype=np.int64),
         equation_generators=np.diag(equation)[None, ...],
         generator_labels=(_identifier(label, "label"),),
         verification_tolerance=verification_tolerance,
@@ -629,11 +628,11 @@ def _finite_columns(
     equation: np.ndarray,
     /,
 ) -> list[dict[tuple[int, tuple[int, ...]], complex | float]]:
-    equation_indices = np.asarray(support.equation_indices, dtype=int)
-    exponents = np.asarray(support.exponents, dtype=int)
+    equation_indices = np.asarray(support.equation_indices, dtype=np.int64)
+    exponents = np.asarray(support.exponents, dtype=np.int64)
     columns: list[dict[tuple[int, tuple[int, ...]], complex | float]] = []
     for source_equation, exponent_array in zip(equation_indices, exponents, strict=True):
-        exponent = tuple(int(value) for value in exponent_array)
+        exponent = tuple(exponent_array)
         column: dict[tuple[int, tuple[int, ...]], complex | float] = {}
         for transformed_exponent, coefficient in _expanded_monomial(
             exponent, variable
@@ -656,11 +655,11 @@ def _infinitesimal_columns(
     equation: np.ndarray,
     /,
 ) -> list[dict[tuple[int, tuple[int, ...]], complex | float]]:
-    equation_indices = np.asarray(support.equation_indices, dtype=int)
-    exponents = np.asarray(support.exponents, dtype=int)
+    equation_indices = np.asarray(support.equation_indices, dtype=np.int64)
+    exponents = np.asarray(support.exponents, dtype=np.int64)
     columns: list[dict[tuple[int, tuple[int, ...]], complex | float]] = []
     for source_equation, exponent_array in zip(equation_indices, exponents, strict=True):
-        exponent = tuple(int(value) for value in exponent_array)
+        exponent = tuple(exponent_array)
         column: dict[tuple[int, tuple[int, ...]], complex | float] = {}
         for source_variable, power in enumerate(exponent):
             if power == 0:
@@ -717,7 +716,7 @@ class PolynomialActionConstraints(StrictModule, NonTrainableState):
         source_weights = jnp.asarray(source_metric_weights)
         ambient_weights = jnp.asarray(ambient_metric_weights)
         count = int(action_count)
-        ambient_count = int(equations.shape[0])
+        ambient_count = equations.shape[0]
         if matrix_.ndim != 2 or matrix_.shape[0] != count * ambient_count:
             raise ValueError(
                 "Constraint matrix rows do not match the ambient action layout."
@@ -739,7 +738,7 @@ class PolynomialActionConstraints(StrictModule, NonTrainableState):
         self.exact = bool(exact)
         self.constraints_id = canonical_fingerprint(
             {
-                "kind": "polynomial-action-constraints-v1",
+                "kind": "polynomial-action-constraints",
                 "action": self.action_id,
                 "support": self.support_id,
                 "matrix": array_tree_fingerprint(matrix_),
@@ -787,10 +786,10 @@ def polynomial_action_constraints(
         variables = np.asarray(action.variable_action)[None, ...]
         equations = np.asarray(action.equation_action)[None, ...]
         columns_by_action = [_finite_columns(support, variables[0], equations[0])]
-    support_equations = np.asarray(support.equation_indices, dtype=int)
-    support_exponents = np.asarray(support.exponents, dtype=int)
+    support_equations = np.asarray(support.equation_indices, dtype=np.int64)
+    support_exponents = np.asarray(support.exponents, dtype=np.int64)
     ambient = {
-        (int(equation), tuple(int(value) for value in exponent))
+        (int(equation), tuple(exponent))
         for equation, exponent in zip(support_equations, support_exponents, strict=True)
     }
     for action_columns in columns_by_action:
@@ -810,14 +809,11 @@ def polynomial_action_constraints(
     ambient_equations = np.asarray([term[0] for term in ambient_terms], dtype=np.int32)
     ambient_exponents = np.asarray([term[1] for term in ambient_terms], dtype=np.int32)
     source_weights = np.asarray(
-        [
-            _monomial_metric(tuple(int(value) for value in exponent))
-            for exponent in support_exponents
-        ],
-        dtype=float,
+        [_monomial_metric(tuple(exponent)) for exponent in support_exponents],
+        dtype=np.float64,
     )
     ambient_weights = np.asarray(
-        [_monomial_metric(term[1]) for term in ambient_terms], dtype=float
+        [_monomial_metric(term[1]) for term in ambient_terms], dtype=np.float64
     )
     return PolynomialActionConstraints(
         action_id=action.action_id,
@@ -902,7 +898,7 @@ class PolynomialSubspaceEvidence(StrictModule, NonTrainableState):
         self.irreducibility_proven = False
         self.evidence_id = canonical_fingerprint(
             {
-                "kind": "polynomial-subspace-evidence-v1",
+                "kind": "polynomial-subspace-evidence",
                 "action_evidence": self.action_evidence_id,
                 "source": self.source_id,
                 "subspace_kind": kind,
@@ -961,7 +957,7 @@ class PolynomialSubspaceBasis(StrictModule, NonTrainableState):
         self.evidence = evidence
         self.basis_id = canonical_fingerprint(
             {
-                "kind": "polynomial-subspace-basis-v1",
+                "kind": "polynomial-subspace-basis",
                 "support": support.support_id,
                 "basis": array_tree_fingerprint(basis_),
                 "metric": array_tree_fingerprint(weights),
@@ -971,7 +967,7 @@ class PolynomialSubspaceBasis(StrictModule, NonTrainableState):
 
     @property
     def dimension(self) -> int:
-        return int(self.basis.shape[1])
+        return self.basis.shape[1]
 
     def coordinates(self, coefficients: ArrayLike, /) -> Array:
         value = jnp.asarray(coefficients)
@@ -1000,7 +996,7 @@ def _subspace_tolerances(
     /,
 ) -> tuple[float, float]:
     verification = (
-        max(action.evidence.verification_tolerance, 64.0 * np.finfo(float).eps)
+        max(action.evidence.verification_tolerance, 64.0 * np.finfo(np.float64).eps)
         if verification_tolerance is None
         else float(verification_tolerance)
     )
@@ -1027,10 +1023,10 @@ def _extract_subspace(
     )
     matrix = constraints.matrix
     term_count = action.support.term_count
-    row_count = int(matrix.shape[0])
+    row_count = matrix.shape[0]
     if row_count < term_count:
         matrix = jnp.pad(matrix, ((0, term_count - row_count), (0, 0)))
-    padded_rows = int(matrix.shape[0])
+    padded_rows = matrix.shape[0]
     row_weights = jnp.tile(constraints.ambient_metric_weights, constraints.action_count)
     if padded_rows > row_count:
         row_weights = jnp.pad(
@@ -1056,7 +1052,7 @@ def _extract_subspace(
         target=target,
         operator_id=canonical_fingerprint(
             {
-                "kind": "polynomial-action-constraint-operator-v1",
+                "kind": "polynomial-action-constraint-operator",
                 "constraints": constraints.constraints_id,
                 "padded_rows": padded_rows,
             }
@@ -1179,7 +1175,7 @@ def _coefficient_generator_matrices(
         sorted(
             (
                 int(equation),
-                tuple(int(value) for value in exponent),
+                tuple(exponent),
             )
             for equation, exponent in zip(
                 np.asarray(action.support.equation_indices),
@@ -1191,7 +1187,7 @@ def _coefficient_generator_matrices(
     ambient_terms = tuple(
         (
             int(equation),
-            tuple(int(value) for value in exponent),
+            tuple(exponent),
         )
         for equation, exponent in zip(
             np.asarray(constraints.ambient_equation_indices),
@@ -1232,7 +1228,7 @@ def casimir_isotypic_blocks(
     )
     generators, metric_weights = _coefficient_generator_matrices(action)
     generators_host = np.asarray(generators)
-    count = int(generators_host.shape[0])
+    count = generators_host.shape[0]
     generator_metric_host = (
         np.eye(count, dtype=generators_host.dtype)
         if generator_metric is None
@@ -1297,7 +1293,7 @@ def casimir_isotypic_blocks(
         ),
         operator_id=canonical_fingerprint(
             {
-                "kind": "polynomial-casimir-v1",
+                "kind": "polynomial-casimir",
                 "action": action.action_id,
                 "generator_metric": array_tree_fingerprint(generator_metric_host),
             }
@@ -1419,8 +1415,7 @@ def lower_polynomial_enforcement_operator(
         basis.support.term_count,
     ):
         raise ValueError(
-            "Polynomial lowering requires a flat enforcement-operator source "
-            "matching term_count."
+            "Polynomial lowering requires a flat enforcement-operator source matching term_count."
         )
     if operator.source.dtype != np.dtype(basis.basis.dtype):
         raise TypeError("Enforcement operator source and polynomial basis dtypes differ.")
@@ -1431,7 +1426,7 @@ def lower_polynomial_enforcement_operator(
         target=operator.source,
         operator_id=canonical_fingerprint(
             {
-                "kind": "polynomial-subspace-embedding-v1",
+                "kind": "polynomial-subspace-embedding",
                 "basis": basis.basis_id,
                 "target": operator.source.space_id,
             }
@@ -1466,21 +1461,21 @@ def lower_polynomial_linear_representation(
         coefficient_space_id=reduced_space.space_id,
         extraction_id=canonical_fingerprint(
             {
-                "kind": "polynomial-subspace-extraction-v1",
+                "kind": "polynomial-subspace-extraction",
                 "base": representation.certificate.extraction_id,
                 "basis": basis.basis_id,
             }
         ),
         replacement_id=canonical_fingerprint(
             {
-                "kind": "polynomial-subspace-replacement-v1",
+                "kind": "polynomial-subspace-replacement",
                 "base": representation.certificate.replacement_id,
                 "basis": basis.basis_id,
             }
         ),
         synthesis_id=canonical_fingerprint(
             {
-                "kind": "polynomial-subspace-synthesis-v1",
+                "kind": "polynomial-subspace-synthesis",
                 "base": representation.certificate.synthesis_id,
                 "basis": basis.basis_id,
             }
@@ -1512,7 +1507,7 @@ def lower_polynomial_linear_representation(
     )
     prepared_id = canonical_fingerprint(
         {
-            "kind": "polynomial-subspace-linear-representation-v1",
+            "kind": "polynomial-subspace-linear-representation",
             "base": representation.prepared_id,
             "basis": basis.basis_id,
             "certificate": certificate.representation_id,
@@ -1545,7 +1540,7 @@ def lower_polynomial_linear_representation(
             row_dtype=full_evidence.row_dtype,
             support_id=canonical_fingerprint(
                 {
-                    "kind": "polynomial-subspace-assembly-support-v1",
+                    "kind": "polynomial-subspace-assembly-support",
                     "base": full_evidence.support_id,
                     "polynomial": basis.support.support_id,
                 }
@@ -1555,7 +1550,7 @@ def lower_polynomial_linear_representation(
             exactness="numerical",
             numeric_fingerprint=canonical_fingerprint(
                 {
-                    "kind": "polynomial-subspace-assembly-numerics-v1",
+                    "kind": "polynomial-subspace-assembly-numerics",
                     "base": full_evidence.numeric_fingerprint,
                     "basis": basis.basis_id,
                 }

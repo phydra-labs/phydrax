@@ -175,7 +175,7 @@ def test_qft_finite_spatial_modes_use_weighted_normalization_and_gauss_evidence(
         charge=0.3,
         mass=0.5,
     )
-    modes = jnp.broadcast_to(jnp.asarray((0.0, 1.0), dtype=complex), (1, 3, 2))
+    modes = jnp.broadcast_to(jnp.asarray((0.0, 1.0), dtype="complex128"), (1, 3, 2))
     prepared = plan.prepare(
         modes,
         t0=0.0,

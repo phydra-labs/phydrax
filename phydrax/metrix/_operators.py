@@ -123,8 +123,7 @@ def _connection_divergence_point(
     dimension = connection.chart.dimension
     if values.shape != (dimension,):
         raise ValueError(
-            f"Divergence requires a pointwise vector shape {(dimension,)}; "
-            f"got {values.shape}."
+            f"Divergence requires a pointwise vector shape {(dimension,)}; got {values.shape}."
         )
     derivative = jax.jacfwd(field)(coordinates)
     coefficients = connection.coefficients(coordinates)
@@ -171,8 +170,7 @@ def _affine_covariant_derivative_point(
     expected = (dimension,) * tensor_type.rank
     if values.shape != expected:
         raise ValueError(
-            f"Tensor field of rank {tensor_type.rank} must have pointwise shape "
-            f"{expected}; got {values.shape}."
+            f"Tensor field of rank {tensor_type.rank} must have pointwise shape {expected}; got {values.shape}."
         )
     derivative = jax.jacfwd(field)(coordinates)
     coefficients = connection.coefficients(coordinates)

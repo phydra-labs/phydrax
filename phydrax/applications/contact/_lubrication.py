@@ -148,7 +148,7 @@ class ReynoldsPressureBoundaryConditions(StrictModule, NonTrainableState):
 
     def __init__(self, node_indices: ArrayLike, pressure: ArrayLike, /):
         indices = np.asarray(node_indices)
-        values = np.asarray(pressure, dtype=float)
+        values = np.asarray(pressure, dtype=np.float64)
         if (
             indices.ndim != 1
             or not np.issubdtype(indices.dtype, np.integer)
@@ -300,8 +300,8 @@ class ReynoldsFilmPlan(StrictModule, NonTrainableState):
             ),
             axis=0,
         )
-        gradients = np.zeros((cells.shape[0], 3, coordinates.shape[1]), dtype=float)
-        areas = np.zeros((cells.shape[0],), dtype=float)
+        gradients = np.zeros((cells.shape[0], 3, coordinates.shape[1]), dtype=np.float64)
+        areas = np.zeros((cells.shape[0],), dtype=np.float64)
         for cell_index, cell in enumerate(cells):
             vertices = coordinates[cell]
             first = vertices[1] - vertices[0]
@@ -330,7 +330,7 @@ class ReynoldsFilmPlan(StrictModule, NonTrainableState):
                 {
                     "kind": "prepared-reynolds-film",
                     "plan": self.plan_id,
-                    "cells": int(cells.shape[0]),
+                    "cells": cells.shape[0],
                 }
             ),
         )
@@ -343,7 +343,7 @@ class PreparedReynoldsFilm(StrictModule, NonTrainableState):
     cell_area: Array
     prepared_id: str = eqx.field(static=True)
 
-    def initialize(self, dtype=float, /) -> ReynoldsFilmState:
+    def initialize(self, dtype=jnp.float64, /) -> ReynoldsFilmState:
         pressure = jnp.full(
             (self.plan.film_mesh.coordinates.shape[0],),
             self.plan.cavitation_pressure,
@@ -371,7 +371,7 @@ class PreparedReynoldsFilm(StrictModule, NonTrainableState):
         thickness = jnp.asarray(film_thickness)
         squeeze = jnp.asarray(squeeze_rate, dtype=thickness.dtype)
         velocity = jnp.asarray(tangential_velocity, dtype=thickness.dtype)
-        node_count = int(self.plan.film_mesh.coordinates.shape[0])
+        node_count = self.plan.film_mesh.coordinates.shape[0]
         dimension = self.plan.film_mesh.ambient_dimension
         if (
             thickness.shape != (node_count,)
@@ -410,7 +410,7 @@ class PreparedReynoldsFilm(StrictModule, NonTrainableState):
             local_squeeze + local_advection
         )
         boundary_mask = (
-            jnp.zeros((node_count,), dtype=bool)
+            jnp.zeros((node_count,), dtype=jnp.bool_)
             .at[self.plan.boundary_conditions.node_indices]
             .set(True)
         )
@@ -548,7 +548,7 @@ def _require_reynolds_component_references(
         tuple(np.asarray(block.vertices, dtype=np.int32) for block in mesh.blocks),
         axis=0,
     )
-    node_count = int(mesh.coordinates.shape[0])
+    node_count = mesh.coordinates.shape[0]
     adjacency = [set() for _ in range(node_count)]
     for cell in cells:
         for node in cell:

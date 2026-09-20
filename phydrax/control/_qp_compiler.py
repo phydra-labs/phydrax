@@ -77,7 +77,7 @@ def _exact_array_shape(
     if dtype is not None:
         return array.astype(dtype)
     if not jnp.issubdtype(array.dtype, jnp.inexact):
-        array = array.astype(float)
+        array = array.astype("float64")
     return array
 
 
@@ -210,26 +210,24 @@ class LinearQuadraticControlProblem(StrictModule):
         a = jnp.asarray(dynamics_matrices)
         if a.ndim < 3 or a.shape[-1] != a.shape[-2]:
             raise ValueError(
-                "dynamics_matrices must have shape "
-                "case_shape + (horizon, state_size, state_size)."
+                "dynamics_matrices must have shape case_shape + (horizon, state_size, state_size)."
             )
-        case_shape = tuple(int(size) for size in a.shape[:-3])
-        horizon = int(a.shape[-3])
-        state_size = int(a.shape[-1])
+        case_shape = tuple(a.shape[:-3])
+        horizon = a.shape[-3]
+        state_size = a.shape[-1]
         if horizon < 1 or state_size < 1:
             raise ValueError("horizon and state_size must be positive.")
         b = jnp.asarray(control_matrices)
         if (
             b.ndim < 3
             or tuple(b.shape[:-3]) != case_shape
-            or int(b.shape[-3]) != horizon
-            or int(b.shape[-2]) != state_size
+            or b.shape[-3] != horizon
+            or b.shape[-2] != state_size
         ):
             raise ValueError(
-                "control_matrices must have shape "
-                "case_shape + (horizon, state_size, control_size)."
+                "control_matrices must have shape case_shape + (horizon, state_size, control_size)."
             )
-        control_size = int(b.shape[-1])
+        control_size = b.shape[-1]
         if control_size < 1:
             raise ValueError("control_size must be positive.")
 
@@ -505,7 +503,7 @@ class LinearQuadraticControlProblem(StrictModule):
             raise ValueError(f"{name}_rhs must have shape case_shape + (horizon, rows).")
         if tuple(rhs_value.shape[:-2]) != case_shape or rhs_value.shape[-2] != horizon:
             raise ValueError(f"{name}_rhs must have shape case_shape + (horizon, rows).")
-        rows = int(rhs_value.shape[-1])
+        rows = rhs_value.shape[-1]
         if rows < 1:
             raise ValueError(f"{name} must contain at least one row per stage.")
         rhs_value = _exact_array_shape(
@@ -561,7 +559,7 @@ class LinearQuadraticControlProblem(StrictModule):
             raise ValueError(
                 f"{name}_matrix must have shape case_shape + (rows, state_size)."
             )
-        rows = int(matrix_value.shape[-2])
+        rows = matrix_value.shape[-2]
         expected_matrix = case_shape + (rows, state_size)
         expected_rhs = case_shape + (rows,)
         if rows < 1:
@@ -635,7 +633,7 @@ class LinearControlDecisionLayout(StrictModule):
 
     def decode(self, primal: ArrayLike, /) -> tuple[Array, Array]:
         value = jnp.asarray(primal)
-        if value.ndim < 1 or int(value.shape[-1]) != self.num_variables:
+        if value.ndim < 1 or value.shape[-1] != self.num_variables:
             raise ValueError(
                 f"primal must end in shape ({self.num_variables},); got {value.shape}."
             )
@@ -660,8 +658,7 @@ class LinearControlDecisionLayout(StrictModule):
             or state_value.shape[:-2] != control_value.shape[:-2]
         ):
             raise ValueError(
-                "controls must share the state batch and end in shape "
-                f"{expected_control_tail}."
+                f"controls must share the state batch and end in shape {expected_control_tail}."
             )
         return jnp.concatenate(
             (
@@ -1564,7 +1561,7 @@ def decode_linear_control_solution(
     program = compilation.program
     if result.batch_shape != program.batch_shape:
         raise ValueError("QP result batch shape does not match the compilation.")
-    if int(result.primal.shape[-1]) != program.num_variables:
+    if result.primal.shape[-1] != program.num_variables:
         raise ValueError("QP result primal dimension does not match the compilation.")
     specification = compilation.specification
     states, controls = compilation.decode(result.primal)

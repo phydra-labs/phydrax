@@ -496,11 +496,11 @@ def test_checkpoint_payload_padding_is_mesh_divisible_and_schema_unpadded():
         distributed.checkpoint_payload_bytes - distributed.checkpoint_unpadded_bytes
     )
 
-    assert int(payload.size) == distributed.checkpoint_unpadded_bytes + expected_padding
-    assert int(payload.size) % 3 == 0
+    assert payload.size == distributed.checkpoint_unpadded_bytes + expected_padding
+    assert payload.size % 3 == 0
     assert expected_padding > 0
     assert distributed.checkpoint_payload_alignment == 6
-    assert int(payload.size) % distributed.checkpoint_payload_alignment == 0
+    assert payload.size % distributed.checkpoint_payload_alignment == 0
     np.testing.assert_array_equal(
         payload[distributed.checkpoint_unpadded_bytes :],
         jnp.zeros((expected_padding,), dtype=jnp.uint8),

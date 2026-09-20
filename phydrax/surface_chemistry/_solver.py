@@ -50,12 +50,12 @@ class SegmentedCatalyticReactor:
         *,
         tolerance: float = 1e-10,
     ) -> SegmentedCatalyticReactor:
-        area = np.asarray(catalyst_area_m2, dtype=float)
-        stoichiometry_ = np.asarray(stoichiometry, dtype=float)
-        orders = np.asarray(reaction_orders, dtype=float)
-        constants = np.asarray(rate_constants_mol_m2_s, dtype=float)
-        enthalpy = np.asarray(reaction_enthalpy_j_mol, dtype=float)
-        conservation = np.asarray(conservation_matrix, dtype=float)
+        area = np.asarray(catalyst_area_m2, dtype=np.float64)
+        stoichiometry_ = np.asarray(stoichiometry, dtype=np.float64)
+        orders = np.asarray(reaction_orders, dtype=np.float64)
+        constants = np.asarray(rate_constants_mol_m2_s, dtype=np.float64)
+        enthalpy = np.asarray(reaction_enthalpy_j_mol, dtype=np.float64)
+        conservation = np.asarray(conservation_matrix, dtype=np.float64)
         if area.ndim != 1 or area.size == 0 or np.any(area <= 0):
             raise ValueError("Catalyst segment areas must be a positive vector.")
         if stoichiometry_.ndim != 2 or stoichiometry_.shape[0] == 0:

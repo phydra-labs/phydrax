@@ -24,7 +24,7 @@ def _vector(value: ArrayLike, name: str, /) -> Array:
     if result.ndim != 1 or result.shape[0] == 0:
         raise ValueError(f"{name} must be one nonempty muscle vector.")
     if not jnp.issubdtype(result.dtype, jnp.inexact):
-        result = result.astype(float)
+        result = result.astype("float64")
     return result
 
 

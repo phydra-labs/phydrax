@@ -26,18 +26,11 @@ def main():
     deformation = jnp.diag(jnp.asarray((stretch, stretch**-0.5, stretch**-0.5)))
     response = active.evaluate(deformation, 0.0)
     fiber_nominal_stress = (
-        fibers.reference_direction
-        @ response.first_piola
-        @ fibers.reference_direction
+        fibers.reference_direction @ response.first_piola @ fibers.reference_direction
     )
     print(f"fiber stretch: {float(response.evidence.fiber_stretch):.4f}")
-    print(
-        "activation weight omega_a: "
-        f"{float(response.evidence.activation_weight):.6f}"
-    )
-    print(
-        f"fiber nominal stress: {float(fiber_nominal_stress) / 1000.0:.3f} kPa"
-    )
+    print(f"activation weight omega_a: {float(response.evidence.activation_weight):.6f}")
+    print(f"fiber nominal stress: {float(fiber_nominal_stress) / 1000.0:.3f} kPa")
 
     mesh = CellMesh.from_tetrahedra(
         jnp.asarray(
@@ -56,10 +49,7 @@ def main():
     manufactured = continuum.solve_manufactured_rest(qualified).commit()
     print(f"mixed pair: {qualified.qualification.pair_names[0]}")
     print(f"manufactured rest committed: {manufactured.committed}")
-    print(
-        "final residual norm: "
-        f"{float(manufactured.evidence.final_residual_norm):.3e}"
-    )
+    print(f"final residual norm: {float(manufactured.evidence.final_residual_norm):.3e}")
 
 
 if __name__ == "__main__":

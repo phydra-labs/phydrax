@@ -35,7 +35,7 @@ def _case(size: int, particle_count: int, repetitions: int):
         closure_relative_tolerance=1e-8,
     )
     coordinates = jnp.meshgrid(
-        *(jnp.arange(size, dtype=float) / size for _ in range(3)),
+        *(jnp.arange(size, dtype="float64") / size for _ in range(3)),
         indexing="ij",
     )
     base = (
@@ -60,7 +60,7 @@ def _case(size: int, particle_count: int, repetitions: int):
     jax.block_until_ready(result.direct_total_power)
     spectrum_seconds = (time.perf_counter() - started) / repetitions
 
-    index = jnp.arange(particle_count, dtype=float)
+    index = jnp.arange(particle_count, dtype="float64")
     values = jnp.stack(
         (
             jnp.sin(index * 0.31),
@@ -70,7 +70,7 @@ def _case(size: int, particle_count: int, repetitions: int):
         axis=-1,
     )
     weights = 0.5 + jnp.mod(index, 7.0) / 7.0
-    active = jnp.ones((particle_count,), dtype=bool)
+    active = jnp.ones((particle_count,), dtype="bool")
     statistics = jax.jit(weighted_particle_statistics)
     first_statistics = statistics(values, weights, active)
     jax.block_until_ready(first_statistics.covariance)

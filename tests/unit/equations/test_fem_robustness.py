@@ -41,7 +41,7 @@ def _ledger(block, *, high=None, low=None):
     return ConservationStageLedger(
         (block,),
         jnp.zeros((2, 1)),
-        jnp.ones((2,), dtype=bool),
+        jnp.ones((2,), dtype="bool"),
         geometry_family_id="geometry-family",
         geometry_layout_id="geometry-layout",
         geometry_version=0,

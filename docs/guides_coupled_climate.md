@@ -159,7 +159,7 @@ From the worktree, using its configured Python environment:
 python examples/coupled_slab_ocean.py
 ```
 
-The scenario connects one four-square-metre slab cell to four one-square-metre
+The scenario connects one four-square-meter slab cell to four one-square-meter
 ocean surface cells with explicit conservative, positive, constant-preserving
 forward and reverse `FieldTransfer` operators. A source-first Gauss–Seidel sweep
 ensures that the ocean consumes exactly the proposed heat and water integrals.

@@ -46,8 +46,8 @@ class PinocchioCatalogSidecar(StrictModule, NonTrainableState):
     ):
         initial = jax.lax.stop_gradient(jnp.asarray(initial_positions))
         counts = jax.lax.stop_gradient(jnp.asarray(particle_counts, dtype=jnp.int64))
-        known = jax.lax.stop_gradient(jnp.asarray(particle_count_known, dtype=bool))
-        active = jax.lax.stop_gradient(jnp.asarray(active_mask, dtype=bool))
+        known = jax.lax.stop_gradient(jnp.asarray(particle_count_known, dtype=jnp.bool_))
+        active = jax.lax.stop_gradient(jnp.asarray(active_mask, dtype=jnp.bool_))
         if (
             initial.ndim != 2
             or initial.shape[1] != 3
@@ -55,7 +55,7 @@ class PinocchioCatalogSidecar(StrictModule, NonTrainableState):
             or known.shape != counts.shape
             or active.shape != counts.shape
         ):
-            raise ValueError("PINOCCHIO catalogue sidecar capacities are inconsistent.")
+            raise ValueError("PINOCCHIO catalog sidecar capacities are inconsistent.")
         self.initial_positions = initial
         self.particle_counts = counts
         self.particle_count_known = known
@@ -109,8 +109,8 @@ class PinocchioLightConeProduct(StrictModule, NonTrainableState):
         phi = jax.lax.stop_gradient(jnp.asarray(phi_degrees))
         radial = jax.lax.stop_gradient(jnp.asarray(radial_velocities))
         observed = jax.lax.stop_gradient(jnp.asarray(observed_redshifts))
-        known = jax.lax.stop_gradient(jnp.asarray(phase_space_known, dtype=bool))
-        active = jax.lax.stop_gradient(jnp.asarray(active_mask, dtype=bool))
+        known = jax.lax.stop_gradient(jnp.asarray(phase_space_known, dtype=jnp.bool_))
+        active = jax.lax.stop_gradient(jnp.asarray(active_mask, dtype=jnp.bool_))
         if (
             ids.ndim != 1
             or redshift.shape != ids.shape
@@ -189,10 +189,10 @@ class PinocchioCatalogImport(StrictModule, NonTrainableState):
     ):
         if (catalog is None) == (light_cone is None):
             raise ValueError(
-                "Exactly one PINOCCHIO native catalogue projection is required."
+                "Exactly one PINOCCHIO native catalog projection is required."
             )
         if product_kind == "catalog" and (catalog is None or sidecar is None):
-            raise ValueError("PINOCCHIO catalogues require HaloCatalog and its sidecar.")
+            raise ValueError("PINOCCHIO catalogs require HaloCatalog and its sidecar.")
         if product_kind == "light_cone" and light_cone is None:
             raise ValueError(
                 "PINOCCHIO light-cone import requires its native projection."
@@ -368,7 +368,7 @@ def read_pinocchio_catalog(
     redistribution: bool = False,
     export: bool = False,
 ) -> PinocchioCatalogImport:
-    """Read documented PINOCCHIO ASCII catalogue or past-light-cone rows."""
+    """Read documented PINOCCHIO ASCII catalog or past-light-cone rows."""
 
     if isinstance(maximum_halos, bool) or int(maximum_halos) <= 0:
         raise ValueError("maximum_halos must be a positive integer.")
@@ -417,7 +417,7 @@ def read_pinocchio_catalog(
             "PINOCCHIO groups are an LPT/fragmentation approximation, not resolved N-body haloes.",
         )
     ]
-    active = np.zeros(capacity, dtype=bool)
+    active = np.zeros(capacity, dtype=np.bool_)
     active[:count] = True
     if product_kind == "catalog":
         if data.shape[1] not in (11, 12):
@@ -437,17 +437,17 @@ def read_pinocchio_catalog(
         if len(box) != 3 or any(not np.isfinite(value) or value <= 0.0 for value in box):
             raise ValueError("box_size must contain three finite positive lengths.")
         padded_ids = np.full(capacity, -1, dtype=np.int64)
-        masses = np.zeros(capacity, dtype=float)
-        initial = np.zeros((capacity, 3), dtype=float)
-        positions = np.zeros((capacity, 3), dtype=float)
-        velocities = np.zeros((capacity, 3), dtype=float)
+        masses = np.zeros(capacity, dtype=np.float64)
+        initial = np.zeros((capacity, 3), dtype=np.float64)
+        positions = np.zeros((capacity, 3), dtype=np.float64)
+        velocities = np.zeros((capacity, 3), dtype=np.float64)
         padded_ids[:count] = ids
         masses[:count] = data[:, 1] * mass_factor
         initial[:count] = data[:, 2:5] * position_factor
         positions[:count] = data[:, 5:8] * position_factor
         velocities[:count] = data[:, 8:11] * velocity_factor
         particle_counts = np.zeros(capacity, dtype=np.int64)
-        particle_known = np.zeros(capacity, dtype=bool)
+        particle_known = np.zeros(capacity, dtype=np.bool_)
         if data.shape[1] == 12:
             counts = data[:, 11].astype(np.int64)
             if np.any(counts < 0) or np.any(counts != data[:, 11]):
@@ -518,7 +518,7 @@ def read_pinocchio_catalog(
         phi = np.zeros(capacity)
         radial = np.zeros(capacity)
         observed = np.zeros(capacity)
-        phase_space_known = np.zeros(capacity, dtype=bool)
+        phase_space_known = np.zeros(capacity, dtype=np.bool_)
         halo_ids[:count] = ids
         true_redshift[:count] = data[:, 1]
         if data.shape[1] == 13:
@@ -621,7 +621,7 @@ def _history_rows(path: Path, /) -> tuple[int, int, np.ndarray]:
         )
     declared_trees, declared_branches = (int(value) for value in counts)
     rows = np.asarray(
-        [[float(value) for value in line.split()] for line in lines[1:]], dtype=float
+        [[float(value) for value in line.split()] for line in lines[1:]], dtype=np.float64
     )
     if rows.ndim != 2 or rows.shape[1] != 9 or np.any(~np.isfinite(rows)):
         raise ValueError(
@@ -694,7 +694,7 @@ def read_pinocchio_lineage(
             if int(target_index) not in mapping:
                 raise ValueError("PINOCCHIO merged-with index is absent from its tree.")
             sink_ids[row] = mapping[int(target_index)]
-    active = np.zeros(capacity, dtype=bool)
+    active = np.zeros(capacity, dtype=np.bool_)
     active[:declared_branches] = True
 
     def pad(values: np.ndarray, fill: float | int = 0) -> np.ndarray:

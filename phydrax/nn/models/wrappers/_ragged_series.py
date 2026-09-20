@@ -47,14 +47,14 @@ class RaggedSeriesBatchInput(StrictModule):
     ):
         self.static = static
         self.series = series
-        self.time = jnp.asarray(time, dtype=float)
-        self.mask = jnp.asarray(mask, dtype=bool)
+        self.time = jnp.asarray(time, dtype=jnp.float64)
+        self.mask = jnp.asarray(mask, dtype=jnp.bool_)
         self.length = jnp.asarray(length, dtype=jnp.int32)
         self.sample_index = (
             None if sample_index is None else jnp.asarray(sample_index, dtype=jnp.int32)
         )
         self.sample_scale = (
-            None if sample_scale is None else jnp.asarray(sample_scale, dtype=float)
+            None if sample_scale is None else jnp.asarray(sample_scale, dtype=jnp.float64)
         )
 
 
@@ -68,18 +68,16 @@ def _tree_to_feature_array(tree: Any, /, *, axis_rank: int, name: str) -> Array:
     first = flat[0]
     if first.ndim < int(axis_rank):
         raise ValueError(
-            f"{name} leaves must have at least {axis_rank} leading axes; "
-            f"got {first.shape}."
+            f"{name} leaves must have at least {axis_rank} leading axes; got {first.shape}."
         )
-    leading_shape = tuple(int(n) for n in first.shape[:axis_rank])
+    leading_shape = tuple(first.shape[:axis_rank])
     parts: list[Array] = []
     for arr in flat:
         if arr.ndim < int(axis_rank):
             raise ValueError(
-                f"{name} leaves must have at least {axis_rank} leading axes; "
-                f"got {arr.shape}."
+                f"{name} leaves must have at least {axis_rank} leading axes; got {arr.shape}."
             )
-        if tuple(int(n) for n in arr.shape[:axis_rank]) != leading_shape:
+        if tuple(arr.shape[:axis_rank]) != leading_shape:
             raise ValueError(f"{name} leaves must share leading axes.")
         feature_size = 1
         for dim in arr.shape[axis_rank:]:
@@ -181,10 +179,10 @@ class RaggedSeriesModel(StrictModule, BatchEvaluator):
             )
 
         payload = _extract_payload(batch, self.label)
-        y = jnp.asarray(self.model(payload, key=key, **kwargs), dtype=float)
+        y = jnp.asarray(self.model(payload, key=key, **kwargs), dtype=jnp.float64)
         if y.ndim == 0:
             raise ValueError("RaggedSeriesModel output must retain a leading case axis.")
-        if int(y.shape[0]) != int(payload.length.shape[0]):
+        if y.shape[0] != payload.length.shape[0]:
             raise ValueError(
                 "RaggedSeriesModel output leading axis must match sampled case count."
             )
@@ -241,7 +239,7 @@ class MaskedSeriesPoolingModel(StrictModule):
         )
         parts = [series_features]
         if self.include_time:
-            parts.append(jnp.asarray(x.time, dtype=float)[..., None])
+            parts.append(jnp.asarray(x.time, dtype=jnp.float64)[..., None])
 
         static_features: Array | None = None
         if x.static is not None:
@@ -255,18 +253,18 @@ class MaskedSeriesPoolingModel(StrictModule):
                 raise ValueError("include_static_in_steps=True requires static data.")
             repeated_static = jnp.broadcast_to(
                 static_features[:, None, :],
-                series_features.shape[:2] + (int(static_features.shape[-1]),),
+                series_features.shape[:2] + (static_features.shape[-1],),
             )
             parts.append(repeated_static)
 
         step_input = jnp.concatenate(parts, axis=-1)
-        mask = jnp.asarray(x.mask, dtype=bool)
+        mask = jnp.asarray(x.mask, dtype=jnp.bool_)
         if mask.shape != step_input.shape[:2]:
             raise ValueError("mask must have shape (N, Lmax).")
 
         key_step, key_readout = split_eval_key(key, 2)
         feature_spec = jax.ShapeDtypeStruct(
-            (int(step_input.shape[-1]),),
+            (step_input.shape[-1],),
             step_input.dtype,
         )
         output_spec = jax.eval_shape(
@@ -275,9 +273,9 @@ class MaskedSeriesPoolingModel(StrictModule):
         )
         if not isinstance(output_spec, jax.ShapeDtypeStruct):
             raise TypeError("step_model must return one array latent value.")
-        latent_size = int(output_spec.size)
+        latent_size = output_spec.size
         zero_latent = jnp.zeros((latent_size,), dtype=output_spec.dtype)
-        max_length = int(step_input.shape[1])
+        max_length = step_input.shape[1]
 
         def pool_case(case_data):
             case_index, features, case_mask = case_data

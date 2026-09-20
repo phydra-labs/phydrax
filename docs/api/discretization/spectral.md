@@ -122,7 +122,7 @@ requested outside solver trainable partitioning.
 
 `SphericalSpectralDiscretization.evaluate_angles(
 coefficients, theta, phi, /, *, frame_angle=0)` broadcasts the three real
-numerical angle arguments and evaluates in the longitude-labelled
+numerical angle arguments and evaluates in the longitude-labeled
 `(east=e_phi, north=-e_theta)` frame. The frame is oriented by
 `east × north = radial`. A frame rotation by `chi` transforms spin-$s$ values
 by `exp(-1j*s*chi)`. At the poles, `phi` continues to label the limiting frame.
@@ -216,7 +216,7 @@ not dense derivative matrices or coordinate derivatives divided by a polar sine.
 The physical frame is east = `e_phi`, north = `-e_theta` (theta is colatitude).
 Positive curl is radially outward. A tangent vector is encoded as the spin-one
 field `north - 1j * east`. The returned components at sampled poles are the
-longitude-labelled limiting tangent frame: they may depend on longitude even
+longitude-labeled limiting tangent frame: they may depend on longitude even
 when the corresponding Cartesian vector is single valued.
 
 | Method | Input | Output |

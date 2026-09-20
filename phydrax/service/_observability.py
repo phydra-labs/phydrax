@@ -52,6 +52,7 @@ def _telemetry_record(value: TelemetryDatum, /) -> dict[str, JSONValue]:
         "value": value.value,
     }
 
+
 @dataclass(frozen=True, slots=True)
 class HostTelemetrySnapshot:
     observations: tuple[TelemetryDatum, ...]
@@ -312,8 +313,6 @@ def _physical_memory_bytes() -> int | None:
     ):
         return None
     return pages * page_size
-
-
 
 
 @dataclass(frozen=True, slots=True)

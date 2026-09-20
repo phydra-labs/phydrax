@@ -50,7 +50,7 @@ class PreparedDistributedCutCellComplex(StrictModule, NonTrainableState):
     component_owners: Array
     component_local_slots: Array
     face_owner_parts: Array
-    face_neighbour_parts: Array
+    face_neighbor_parts: Array
     cross_part_faces: Array
     evidence: DistributedCutCellEvidence
     partition_id: str = eqx.field(static=True)
@@ -76,9 +76,9 @@ class PreparedDistributedCutCellComplex(StrictModule, NonTrainableState):
         if capacity <= 0 or part_count <= 0 or capacity * part_count < cell_count:
             raise ValueError("Distributed cut-cell local capacity is insufficient.")
         cost = (
-            np.ones((cell_count,), dtype=float)
+            np.ones((cell_count,), dtype=np.float64)
             if costs is None
-            else np.asarray(costs, dtype=float)
+            else np.asarray(costs, dtype=np.float64)
         )
         if cost.shape != (cell_count,) or np.any(~np.isfinite(cost) | (cost <= 0.0)):
             raise ValueError("Distributed cut-cell costs must be positive per component.")
@@ -91,14 +91,14 @@ class PreparedDistributedCutCellComplex(StrictModule, NonTrainableState):
             range(cell_count),
             key=lambda index: (
                 int(levels[index]),
-                tuple(int(value) for value in coordinates[index]),
+                tuple(coordinates[index]),
                 int(slots[index]),
             ),
         )
         owners = np.full((complex_.component_capacity,), -1, dtype=np.int32)
         local_slots = np.full((complex_.component_capacity,), -1, dtype=np.int32)
         used = np.zeros((part_count,), dtype=np.int32)
-        accumulated = np.zeros((part_count,), dtype=float)
+        accumulated = np.zeros((part_count,), dtype=np.float64)
         for component in stable_order:
             candidates = tuple(
                 part for part in range(part_count) if used[part] < capacity
@@ -110,15 +110,15 @@ class PreparedDistributedCutCellComplex(StrictModule, NonTrainableState):
             local_slots[component] = used[owner]
             used[owner] += 1
             accumulated[owner] += cost[component]
-        active_faces = np.asarray(complex_.face_active, dtype=bool)
+        active_faces = np.asarray(complex_.face_active, dtype=np.bool_)
         face_owner = np.asarray(complex_.face_owner_components, dtype=np.int32)
-        face_neighbour = np.asarray(complex_.face_neighbour_components, dtype=np.int32)
+        face_neighbor = np.asarray(complex_.face_neighbor_components, dtype=np.int32)
         face_owner_parts = np.full((complex_.face_capacity,), -1, dtype=np.int32)
-        face_neighbour_parts = np.full((complex_.face_capacity,), -1, dtype=np.int32)
+        face_neighbor_parts = np.full((complex_.face_capacity,), -1, dtype=np.int32)
         face_owner_parts[active_faces] = owners[face_owner[active_faces]]
-        internal = active_faces & (face_neighbour >= 0)
-        face_neighbour_parts[internal] = owners[face_neighbour[internal]]
-        cross = internal & (face_owner_parts != face_neighbour_parts)
+        internal = active_faces & (face_neighbor >= 0)
+        face_neighbor_parts[internal] = owners[face_neighbor[internal]]
+        cross = internal & (face_owner_parts != face_neighbor_parts)
         positive_costs = accumulated[accumulated > 0.0]
         imbalance = (
             0.0
@@ -138,7 +138,7 @@ class PreparedDistributedCutCellComplex(StrictModule, NonTrainableState):
         )
         evidence = DistributedCutCellEvidence(
             part_costs=tuple(float(value) for value in accumulated),
-            part_counts=tuple(int(value) for value in used),
+            part_counts=tuple(used),
             maximum_imbalance=imbalance,
             cross_part_face_count=int(np.count_nonzero(cross)),
             evidence_id=evidence_id,
@@ -149,7 +149,7 @@ class PreparedDistributedCutCellComplex(StrictModule, NonTrainableState):
         self.component_owners = jnp.asarray(owners)
         self.component_local_slots = jnp.asarray(local_slots)
         self.face_owner_parts = jnp.asarray(face_owner_parts)
-        self.face_neighbour_parts = jnp.asarray(face_neighbour_parts)
+        self.face_neighbor_parts = jnp.asarray(face_neighbor_parts)
         self.cross_part_faces = jnp.asarray(cross)
         self.evidence = evidence
         self.partition_id = canonical_fingerprint(
@@ -210,7 +210,7 @@ class PreparedDistributedCutCellComplex(StrictModule, NonTrainableState):
 
         from ..._data_plane import make_global_array_from_process_local_data
 
-        indices = tuple(int(value) for value in component_indices)
+        indices = tuple(component_indices)
         expected = self.local_component_indices()
         if indices != expected:
             raise ValueError(
@@ -299,15 +299,15 @@ class PreparedDistributedCutCellComplex(StrictModule, NonTrainableState):
         state: DistributedCutCellState,
         /,
     ) -> tuple[Array, Array, Array]:
-        """Gather owner/neighbour states; XLA inserts required cross-host collectives."""
+        """Gather owner/neighbor states; XLA inserts required cross-host collectives."""
 
         canonical = self.unpack(state)
         active = self.complex.face_active
         owner = self.complex.face_owner_components
-        neighbour = self.complex.face_neighbour_components
-        safe_neighbour = jnp.maximum(neighbour, 0)
+        neighbor = self.complex.face_neighbor_components
+        safe_neighbor = jnp.maximum(neighbor, 0)
         left = canonical[owner]
-        right = canonical[safe_neighbour]
+        right = canonical[safe_neighbor]
         trailing = (1,) * len(state.component_shape)
         return (
             jnp.where(
@@ -316,7 +316,7 @@ class PreparedDistributedCutCellComplex(StrictModule, NonTrainableState):
                 jnp.zeros((), dtype=left.dtype),
             ),
             jnp.where(
-                (active & (neighbour >= 0)).reshape(active.shape + trailing),
+                (active & (neighbor >= 0)).reshape(active.shape + trailing),
                 right,
                 left,
             ),
@@ -327,7 +327,7 @@ class PreparedDistributedCutCellComplex(StrictModule, NonTrainableState):
     def collective_accept(local_accept: ArrayLike, /) -> bool:
         """Process-global acceptance; every host observes the same decision."""
 
-        local = np.asarray(local_accept, dtype=bool)
+        local = np.asarray(local_accept, dtype=np.bool_)
         if local.shape != ():
             raise ValueError("Collective acceptance input must be scalar Boolean.")
         gathered = np.asarray(multihost_utils.process_allgather(local))

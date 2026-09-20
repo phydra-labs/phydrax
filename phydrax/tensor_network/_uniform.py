@@ -51,7 +51,7 @@ class UniformMatrixProductState(StrictModule):
         values = tuple(precision_.storage(jnp.asarray(value)) for value in tensors)
         if not values or any(value.ndim != 3 for value in values):
             raise ValueError("Uniform MPS tensors require (left, physical, right).")
-        bond = int(values[0].shape[0])
+        bond = values[0].shape[0]
         if bond < 1 or any(
             value.shape[0] != bond or value.shape[-1] != bond for value in values
         ):
@@ -62,14 +62,12 @@ class UniformMatrixProductState(StrictModule):
         self.tensors = values
         self.precision = precision_
         self.unit_cell_size = len(values)
-        self.physical_dimensions = tuple(int(value.shape[1]) for value in values)
+        self.physical_dimensions = tuple(value.shape[1] for value in values)
         self.bond_dimension = bond
         self.structure_id = canonical_fingerprint(
             {
                 "kind": "uniform-matrix-product-state",
-                "shapes": tuple(
-                    tuple(int(size) for size in value.shape) for value in values
-                ),
+                "shapes": tuple(tuple(value.shape) for value in values),
                 "dtype": str(values[0].dtype),
                 "precision": precision_.policy_id,
             }
@@ -100,7 +98,7 @@ class UniformMatrixProductOperator(StrictModule):
         values = tuple(precision_.storage(jnp.asarray(value)) for value in tensors)
         if not values or any(value.ndim != 4 for value in values):
             raise ValueError("Uniform MPO tensors require (left, output, input, right).")
-        bond = int(values[0].shape[0])
+        bond = values[0].shape[0]
         if bond < 1 or any(
             value.shape[0] != bond or value.shape[-1] != bond for value in values
         ):
@@ -111,15 +109,13 @@ class UniformMatrixProductOperator(StrictModule):
         self.tensors = values
         self.precision = precision_
         self.unit_cell_size = len(values)
-        self.output_dimensions = tuple(int(value.shape[1]) for value in values)
-        self.input_dimensions = tuple(int(value.shape[2]) for value in values)
+        self.output_dimensions = tuple(value.shape[1] for value in values)
+        self.input_dimensions = tuple(value.shape[2] for value in values)
         self.bond_dimension = bond
         self.structure_id = canonical_fingerprint(
             {
                 "kind": "uniform-matrix-product-operator",
-                "shapes": tuple(
-                    tuple(int(size) for size in value.shape) for value in values
-                ),
+                "shapes": tuple(tuple(value.shape) for value in values),
                 "dtype": str(values[0].dtype),
                 "precision": precision_.policy_id,
             }
@@ -217,9 +213,9 @@ def uniform_transfer_fixed_points(
     if not isinstance(selected, UniformTransferPolicy):
         raise TypeError("policy must be UniformTransferPolicy or None.")
     transfer = uniform_cell_transfer_matrix(state)
-    if int(transfer.size) > selected.maximum_transfer_elements:
+    if transfer.size > selected.maximum_transfer_elements:
         raise MemoryError("Uniform transfer matrix exceeds maximum_transfer_elements.")
-    dimension = int(transfer.shape[0])
+    dimension = transfer.shape[0]
     count = min(selected.maximum_modes, dimension)
     eigen_policy = GeneralEigenSolvePolicy(
         DenseSchurQZ(),

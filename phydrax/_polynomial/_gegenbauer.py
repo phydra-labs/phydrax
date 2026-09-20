@@ -73,25 +73,29 @@ def _monic_recurrence_coefficient(index: int, alpha: float, /) -> float:
     )
 
 
-def _gegenbauer_standard_scales(alpha: float, degree: int, /, *, dtype=float) -> Array:
+def _gegenbauer_standard_scales(
+    alpha: float, degree: int, /, *, dtype=jnp.float64
+) -> Array:
     """Return standard-mode leading coefficients relative to monic modes."""
     alpha_ = _static_alpha(alpha, "alpha")
     degree_ = _nonnegative_integer(degree, "degree")
     dtype_ = _floating_dtype(dtype)
-    scales = np.ones((degree_ + 1,), dtype=float)
+    scales = np.ones((degree_ + 1,), dtype=np.float64)
     for index in range(1, degree_ + 1):
         scales[index] = scales[index - 1] * 2.0 * (alpha_ + index - 1.0) / index
     return jnp.asarray(scales, dtype=dtype_)
 
 
-def _gegenbauer_monic_scales(alpha: float, degree: int, /, *, dtype=float) -> Array:
+def _gegenbauer_monic_scales(alpha: float, degree: int, /, *, dtype=jnp.float64) -> Array:
     """Return the unit scales defining the monic Gegenbauer family."""
     _static_alpha(alpha, "alpha")
     degree_ = _nonnegative_integer(degree, "degree")
     return jnp.ones((degree_ + 1,), dtype=_floating_dtype(dtype))
 
 
-def _gegenbauer_orthonormal_scales(alpha: float, degree: int, /, *, dtype=float) -> Array:
+def _gegenbauer_orthonormal_scales(
+    alpha: float, degree: int, /, *, dtype=jnp.float64
+) -> Array:
     """Return positive orthonormal-mode leading coefficients over monic modes."""
     alpha_ = _static_alpha(alpha, "alpha")
     degree_ = _nonnegative_integer(degree, "degree")
@@ -141,7 +145,7 @@ def _monic_coefficient_matrix(alpha: float, degree: int, dtype, /) -> np.ndarray
 
 
 def gauss_gegenbauer_rule_data(
-    num_nodes: int, alpha: float, /, *, dtype=float
+    num_nodes: int, alpha: float, /, *, dtype=jnp.float64
 ) -> OrthogonalRuleData:
     """Return Gauss quadrature for ``(1 - x**2)**(alpha - 1/2)``."""
     count = _positive_integer(num_nodes, "num_nodes")
@@ -171,7 +175,7 @@ def gegenbauer_differentiation_matrix(
     order: int = 1,
     /,
     *,
-    dtype=float,
+    dtype=jnp.float64,
 ) -> Array:
     """Map standard ``alpha`` coefficients to standard ``alpha + order``.
 
@@ -228,7 +232,7 @@ def gegenbauer_connection_data(
     /,
     *,
     normalization: GegenbauerNormalization = "standard",
-    dtype=float,
+    dtype=jnp.float64,
     maximum_construction_bytes: int = _DEFAULT_CONSTRUCTION_BYTES,
 ) -> GegenbauerConnectionData:
     """Construct the fixed-capacity ``alpha``-to-``beta`` coefficient map."""

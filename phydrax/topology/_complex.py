@@ -51,8 +51,8 @@ class CompactCellLayout(StrictModule, NonTrainableState):
         for degree, (value, entities) in enumerate(
             zip(selected, topology.entity_sets, strict=True)
         ):
-            mask = np.asarray(value, dtype=bool)
-            active = np.asarray(entities.active_mask, dtype=bool)
+            mask = np.asarray(value, dtype=np.bool_)
+            active = np.asarray(entities.active_mask, dtype=np.bool_)
             if mask.shape != (entities.count,):
                 raise ValueError(
                     f"Degree-{degree} mask must have shape {(entities.count,)}."
@@ -66,7 +66,7 @@ class CompactCellLayout(StrictModule, NonTrainableState):
             ambient_to_compact.append(jnp.asarray(inverse))
             compact_to_ambient.append(jnp.asarray(compact))
             entity_ids.append(jnp.asarray(np.asarray(entities.entity_ids)[compact]))
-            counts.append(int(compact.size))
+            counts.append(compact.size)
         identifier = (
             canonical_fingerprint(
                 {
@@ -155,15 +155,14 @@ class CellSubcomplex(StrictModule, NonTrainableState):
         /,
     ) -> None:
         for incidence in topology.incidences:
-            valid = np.asarray(incidence.relation.valid, dtype=bool)
+            valid = np.asarray(incidence.relation.valid, dtype=np.bool_)
             lower = np.asarray(incidence.relation.source_indices)[valid]
             upper = np.asarray(incidence.relation.target_indices)[valid]
             lower_selected = np.asarray(layout.masks[incidence.degree - 1])[lower]
             upper_selected = np.asarray(layout.masks[incidence.degree])[upper]
             if np.any(upper_selected & ~lower_selected):
                 raise ValueError(
-                    "Selected cells do not form a subcomplex: a selected cell has "
-                    "an excluded boundary cell."
+                    "Selected cells do not form a subcomplex: a selected cell has an excluded boundary cell."
                 )
 
     @classmethod
@@ -218,8 +217,8 @@ class CellComplexPair(StrictModule, NonTrainableState):
         for ambient_mask, relative_mask in zip(
             ambient.masks, relative.masks, strict=True
         ):
-            ambient_host = np.asarray(ambient_mask, dtype=bool)
-            relative_host = np.asarray(relative_mask, dtype=bool)
+            ambient_host = np.asarray(ambient_mask, dtype=np.bool_)
+            relative_host = np.asarray(relative_mask, dtype=np.bool_)
             if np.any(relative_host & ~ambient_host):
                 raise ValueError("The relative subcomplex must be contained in ambient.")
             quotient_masks.append(ambient_host & ~relative_host)
@@ -320,7 +319,7 @@ class CompactBoundary(StrictModule, NonTrainableState):
 
     @property
     def nonzero_count(self) -> int:
-        return int(self.coefficients.shape[0])
+        return self.coefficients.shape[0]
 
 
 class CellVertexSupport(StrictModule, NonTrainableState):
@@ -355,13 +354,13 @@ class CellVertexSupport(StrictModule, NonTrainableState):
                 raise ValueError(
                     "Vertex-support relation sizes do not match the topology."
                 )
-            valid = np.asarray(relation.valid, dtype=bool)
+            valid = np.asarray(relation.valid, dtype=np.bool_)
             vertices = np.asarray(relation.source_indices)[valid]
             cells = np.asarray(relation.target_indices)[valid]
             degree_support = [set() for _ in range(entity_set.count)]
             for vertex, cell in zip(vertices, cells, strict=True):
                 degree_support[int(cell)].add(int(vertex))
-            active = np.asarray(entity_set.active_mask, dtype=bool)
+            active = np.asarray(entity_set.active_mask, dtype=np.bool_)
             if any(
                 active[index] and not support
                 for index, support in enumerate(degree_support)
@@ -374,7 +373,7 @@ class CellVertexSupport(StrictModule, NonTrainableState):
                 raise ValueError("Active vertices must support themselves exactly.")
             supports.append(degree_support)
         for incidence in topology.incidences:
-            valid = np.asarray(incidence.relation.valid, dtype=bool)
+            valid = np.asarray(incidence.relation.valid, dtype=np.bool_)
             lower = np.asarray(incidence.relation.source_indices)[valid]
             upper = np.asarray(incidence.relation.target_indices)[valid]
             for lower_index, upper_index in zip(lower, upper, strict=True):
@@ -382,8 +381,7 @@ class CellVertexSupport(StrictModule, NonTrainableState):
                     supports[incidence.degree][int(upper_index)]
                 ):
                     raise ValueError(
-                        "The vertex support of a boundary cell must be contained in "
-                        "the support of its coface."
+                        "The vertex support of a boundary cell must be contained in the support of its coface."
                     )
         self.topology_id = topology.topology_id
         self.relations = values
@@ -435,7 +433,7 @@ def compact_boundary(
             source_id=source_id,
         )
     incidence = complex_or_pair.topology.incidences[degree_ - 1]
-    valid = np.asarray(incidence.relation.valid, dtype=bool)
+    valid = np.asarray(incidence.relation.valid, dtype=np.bool_)
     ambient_rows = np.asarray(incidence.relation.source_indices)[valid]
     ambient_columns = np.asarray(incidence.relation.target_indices)[valid]
     values = np.asarray(incidence.signs)[valid]

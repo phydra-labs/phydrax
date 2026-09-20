@@ -61,8 +61,7 @@ def _component_dtype(value: str, /) -> str:
     dtype = str(value)
     if dtype not in _COMPONENT_DTYPES:
         raise ValueError(
-            "Complex interchange component dtype must be float16, bfloat16, "
-            "float32, or float64."
+            "Complex interchange component dtype must be float16, bfloat16, float32, or float64."
         )
     return dtype
 
@@ -320,8 +319,7 @@ def _cast_component(
     )
     if (narrowing or incomparable_low_precision) and not policy.allow_precision_loss:
         raise ValueError(
-            f"Importing {entry.name!r} from {source_dtype} into {target_dtype} "
-            "would lose precision."
+            f"Importing {entry.name!r} from {source_dtype} into {target_dtype} would lose precision."
         )
     result = jnp.asarray(component, dtype=target.dtype)
     if policy.preserve_sharding and isinstance(target, jax.Array):
@@ -549,8 +547,7 @@ def _frame_layout(frame: Any, /) -> tuple[int, int]:
     if isinstance(frame, MeromorphicLinearFrame):
         return frame.complex_output_size, frame.feature_count
     raise TypeError(
-        "Complex frame conversion supports HolomorphicPolynomialFrame and "
-        "MeromorphicLinearFrame."
+        "Complex frame conversion supports HolomorphicPolynomialFrame and MeromorphicLinearFrame."
     )
 
 
@@ -787,8 +784,7 @@ def export_complex_parameters(value: Any, /) -> ComplexInterchangeState:
             metadata={"orders": list(value.orders)},
         )
     raise TypeError(
-        "Complex parameter export does not support "
-        f"{type(value).__module__}.{type(value).__qualname__}."
+        f"Complex parameter export does not support {type(value).__module__}.{type(value).__qualname__}."
     )
 
 
@@ -948,8 +944,7 @@ def import_complex_parameters(
             (real, imaginary),
         )
     raise TypeError(
-        "Complex parameter import does not support "
-        f"{type(value).__module__}.{type(value).__qualname__}."
+        f"Complex parameter import does not support {type(value).__module__}.{type(value).__qualname__}."
     )
 
 

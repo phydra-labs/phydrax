@@ -102,9 +102,11 @@ def _calibration_statistics(
     key: Any,
     num_cases: int,
 ) -> dict[str, float]:
-    mean_array = jnp.asarray(mean, dtype=float)
-    scale_array = jnp.maximum(jnp.asarray(scale, dtype=float), jnp.finfo(float).eps)
-    truth_array = jnp.asarray(truth, dtype=float)
+    mean_array = jnp.asarray(mean, dtype="float64")
+    scale_array = jnp.maximum(
+        jnp.asarray(scale, dtype="float64"), jnp.finfo(jnp.float64).eps
+    )
+    truth_array = jnp.asarray(truth, dtype="float64")
     targets = truth_array + observation_scale * jr.normal(
         key,
         (int(num_cases), *truth_array.shape),
@@ -155,7 +157,7 @@ def _merge_chain_draws(samples: Any) -> Any:
 
 
 def _tree_nbytes(tree: Any) -> int:
-    return sum(int(jnp.asarray(leaf).nbytes) for leaf in jax.tree_util.tree_leaves(tree))
+    return sum(jnp.asarray(leaf).nbytes for leaf in jax.tree_util.tree_leaves(tree))
 
 
 def _elliptic_solution(parameters: Any, *, num_interior: int = 31):
@@ -316,8 +318,8 @@ def elliptic_coefficient_inverse(
             "profile": configuration.profile,
             "equation": "-d/dx(k(x) du/dx) = 1",
             "conductivity": "k(x)=exp(theta_0 + theta_1 x)",
-            "num_interior": int(true_solution.size),
-            "num_sensors": int(sensor_indices.size),
+            "num_interior": true_solution.size,
+            "num_sensors": sensor_indices.size,
             "calibration_cases": configuration.calibration_cases,
             "convergence_report_passed": convergence.passed,
         },
@@ -1156,7 +1158,7 @@ def misspecified_pde_discrepancy(
     joint_correlations = []
     sparse_exact_mean_delta = []
     sparse_exact_variance_delta = []
-    inducing_indices = jnp.round(jnp.linspace(0, int(observation_x.size) - 1, 9)).astype(
+    inducing_indices = jnp.round(jnp.linspace(0, observation_x.size - 1, 9)).astype(
         jnp.int32
     )
     inducing_x = observation_x[inducing_indices]
@@ -1512,7 +1514,7 @@ def misspecified_pde_discrepancy(
             "profile": configuration.profile,
             "equation": "-u'' = omitted source with u(0)=0 and u(1)=parameter",
             "gp_repeats": configuration.gp_repeats,
-            "num_observations": int(observation_x.size),
+            "num_observations": observation_x.size,
             "num_inducing": 9,
             "identifiability_failures": list(identifiability.failures),
         },
@@ -1533,7 +1535,7 @@ def correlated_vector_discrepancy(
     amplitude = 0.15
     length_scale = 0.25
     noise_scale = jnp.asarray([0.01, 0.015])
-    observation_mask = jnp.ones((observation_x.size, 2), dtype=bool)
+    observation_mask = jnp.ones((observation_x.size, 2), dtype="bool")
     observation_mask = observation_mask.at[1::3, 1].set(False).at[2::4, 0].set(False)
 
     def base(locations):
@@ -1805,8 +1807,8 @@ def operator_conditioned_inverse_pde(
             "profile": configuration.profile,
             "true_diffusion": true_diffusion,
             "selected_diffusion": float(selected_diffusion),
-            "num_value_observations": int(value_points.size),
-            "num_operator_observations": int(operator_points.size),
+            "num_value_observations": value_points.size,
+            "num_operator_observations": operator_points.size,
             "operator": "-diffusion * Laplacian",
         },
     )
@@ -1990,7 +1992,7 @@ def deep_kernel_likelihood_timing(
             "input_dimension": 2,
             "feature_dimension": 4,
             "feature_parameter_count": sum(
-                int(leaf.size) for leaf in jax.tree.leaves(feature_map)
+                leaf.size for leaf in jax.tree.leaves(feature_map)
             ),
             "factor_storage_elements": factor.factor_storage_elements,
         },
@@ -2354,11 +2356,11 @@ def stochastic_gradient_regression(
         ),
         "batch_memory_fraction": metric(
             sum(
-                int(jnp.asarray(leaf).nbytes)
+                jnp.asarray(leaf).nbytes
                 for leaf in jax.tree_util.tree_leaves(first_batch.data)
             )
             / sum(
-                int(jnp.asarray(leaf).nbytes)
+                jnp.asarray(leaf).nbytes
                 for leaf in jax.tree_util.tree_leaves(source.data)
             ),
             "performance",
@@ -2478,7 +2480,7 @@ def stochastic_gradient_regression(
     ordinary_variance = jnp.sum(jnp.var(ordinary_gradients, axis=0))
     controlled_variance = jnp.sum(jnp.var(controlled_gradients, axis=0))
     metrics["control_variate_gradient_variance_reduction"] = metric(
-        ordinary_variance / jnp.maximum(controlled_variance, jnp.finfo(float).eps),
+        ordinary_variance / jnp.maximum(controlled_variance, jnp.finfo(jnp.float64).eps),
         "diagnostic",
         minimum=10.0,
     )
@@ -2765,15 +2767,17 @@ def linearized_uncertainty_propagation(
         hutchinson.variance - expected_variance
     ) / jnp.maximum(
         jnp.linalg.norm(hutchinson.standard_error),
-        jnp.finfo(float).eps,
+        jnp.finfo(jnp.float64).eps,
     )
     cold, compile_seconds, execute = _jit_timings(
         lambda vector: operator_low_rank.covariance_vector_product(vector),
         output_probe,
         repetitions=configuration.jit_warm_repetitions,
     )
-    represented_memory = int(factors.nbytes)
-    dense_output_memory = output_dimension * output_dimension * jnp.dtype(float).itemsize
+    represented_memory = factors.nbytes
+    dense_output_memory = (
+        output_dimension * output_dimension * jnp.dtype(jnp.float64).itemsize
+    )
 
     metrics = {
         "affine_representation_relative_error": metric(
@@ -2956,7 +2960,7 @@ def dynamic_factor_stochastic_volatility(
     true_volatilities_array = jnp.stack(true_volatilities)
     observation_array = jnp.stack(observations)
     schedule = phx.stochastic.ObservationSequence(
-        jnp.arange(1, steps + 1, dtype=float),
+        jnp.arange(1, steps + 1, dtype="float64"),
         observation_array,
         case_ids=("dfsv",),
         sequence_id=f"dfsv-{configuration.profile}",
@@ -3156,7 +3160,7 @@ def dynamic_factor_stochastic_volatility(
     micro_mean = jnp.zeros(factors)
     micro_covariance = jnp.diag(stationary_factor_variance)
     micro_value = observation_array[0]
-    micro_mask = jnp.ones(assets, dtype=bool)
+    micro_mask = jnp.ones(assets, dtype="bool")
 
     def diagonal_condition(mean, covariance, value):
         return _condition_affine_gaussian_diagonal(
@@ -3211,13 +3215,13 @@ def dynamic_factor_stochastic_volatility(
 
     def array_bytes(value):
         return sum(
-            int(leaf.size * leaf.dtype.itemsize)
+            leaf.size * leaf.dtype.itemsize
             for leaf in jax.tree_util.tree_leaves(value)
             if eqx.is_array(leaf)
         )
 
     def status_counts(values):
-        codes = tuple(int(value) for value in jax.device_get(values).reshape(-1).tolist())
+        codes = tuple(jax.device_get(values).reshape(-1).tolist())
         return {str(code): codes.count(code) for code in sorted(set(codes))}
 
     metrics = {
@@ -3354,10 +3358,10 @@ def exponential_family_geometry(
     poisson_family = phx.uq.PoissonFamily()
     bernoulli_natural = 0.6 * jr.normal(keys[0], (sample_count,))
     bernoulli_targets = jr.bernoulli(keys[1], jax.nn.sigmoid(bernoulli_natural)).astype(
-        float
+        "float64"
     )
     poisson_natural = 0.3 + 0.4 * jr.normal(keys[2], (sample_count,))
-    poisson_targets = jr.poisson(keys[3], jnp.exp(poisson_natural)).astype(float)
+    poisson_targets = jr.poisson(keys[3], jnp.exp(poisson_natural)).astype("float64")
 
     def bernoulli_log_prob(natural, targets):
         return bernoulli_family.log_prob(
@@ -3489,7 +3493,7 @@ def exponential_family_geometry(
     structured_count = min(sample_count, 2_048)
     categorical_family = phx.uq.CategoricalFamily(5)
     categorical_logits = 0.7 * jr.normal(keys[8], (structured_count, 5))
-    categorical_targets = jr.categorical(keys[9], categorical_logits).astype(float)
+    categorical_targets = jr.categorical(keys[9], categorical_logits).astype("float64")
 
     def categorical_log_prob(logits, targets):
         return categorical_family.log_prob(
@@ -3669,7 +3673,7 @@ def exponential_family_geometry(
             maximum=2.0e-8,
         ),
         "gamma_inverse_valid_fraction": metric(
-            jnp.mean(gamma_conversion.valid.astype(float)),
+            jnp.mean(gamma_conversion.valid.astype("float64")),
             "convergence",
             minimum=1.0,
         ),
@@ -3707,7 +3711,7 @@ def exponential_family_geometry(
             maximum=3.0e-8,
         ),
         "dirichlet_inverse_valid_fraction": metric(
-            jnp.mean(dirichlet_conversion.valid.astype(float)),
+            jnp.mean(dirichlet_conversion.valid.astype("float64")),
             "convergence",
             minimum=1.0,
         ),
@@ -3740,8 +3744,8 @@ def exponential_family_geometry(
         "conjugate_update_valid_fraction": metric(
             0.5
             * (
-                gamma_poisson.valid.astype(float)
-                + dirichlet_categorical.valid.astype(float)
+                gamma_poisson.valid.astype("float64")
+                + dirichlet_categorical.valid.astype("float64")
             ),
             "convergence",
             minimum=1.0,
@@ -3769,7 +3773,7 @@ def exponential_family_geometry(
             maximum=2.0e-11,
         ),
         "projection_valid_fraction": metric(
-            0.5 * (one_shot.valid.astype(float) + merged.valid.astype(float)),
+            0.5 * (one_shot.valid.astype("float64") + merged.valid.astype("float64")),
             "convergence",
             minimum=1.0,
         ),
@@ -3827,7 +3831,7 @@ def exponential_family_geometry(
             parameter_execute, "performance", unit="s"
         ),
         "dense_parameter_fisher_reference_bytes": metric(
-            parameter_dimension * parameter_dimension * jnp.dtype(float).itemsize,
+            parameter_dimension * parameter_dimension * jnp.dtype(jnp.float64).itemsize,
             "performance",
             unit="byte",
         ),
@@ -3999,7 +4003,7 @@ def multifidelity_target_prediction(
         metrics=metrics,
         metadata={
             "profile": configuration.profile,
-            "low_observations": int(train_points.size),
+            "low_observations": train_points.size,
             "high_observations": len(high_indices),
             "selected_levels": list(acquisition.selected_level_ids),
             "path_id": path.path_id,

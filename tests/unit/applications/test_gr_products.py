@@ -60,7 +60,7 @@ def _image(
     screen = GRImageScreen(
         coordinates,
         solid_angle,
-        np.ones(shape, dtype=bool),
+        np.ones(shape, dtype="bool"),
         angular_unit=RADIAN,
         solid_angle_unit=STERADIAN,
     )
@@ -70,8 +70,8 @@ def _image(
         ObservationDataProvenance.native(source_id),
         frequency=FREQUENCY,
         redshift=np.ones(shape),
-        redshift_valid=np.ones(shape, dtype=bool),
-        lensing_masks=np.ones((1, *shape), dtype=bool),
+        redshift_valid=np.ones(shape, dtype="bool"),
+        lensing_masks=np.ones((1, *shape), dtype="bool"),
         lensing_labels=("direct",),
         intensity_unit=intensity_unit,
         flux_density_unit=flux_density_unit,
@@ -152,7 +152,7 @@ def _closure_fixture():
             11.0 * np.exp(-0.2j),
         ]
     )
-    values = np.zeros((4, 5), dtype=complex)
+    values = np.zeros((4, 5), dtype="complex128")
     values[0] = intensity
     data = StokesVisibilityData(
         values,
@@ -227,7 +227,7 @@ def test_zero_visibility_has_explicit_safe_failure_status():
 
 def test_polarization_products_use_physical_stokes_correlations_and_safe_ratios():
     sampling = _sampling([[0.0, 0.0]], [[0, 1]], ("A", "B"))
-    values = np.asarray([[2.0], [0.5], [0.25], [0.1]], dtype=complex)
+    values = np.asarray([[2.0], [0.5], [0.25], [0.1]], dtype="complex128")
     data = StokesVisibilityData(
         values,
         sampling,
@@ -251,7 +251,7 @@ def test_polarization_products_use_physical_stokes_correlations_and_safe_ratios(
         [2.5, 1.5, 0.25 + 0.1j, 0.25 - 0.1j],
     )
     zero = StokesVisibilityData(
-        np.zeros((4, 1), dtype=complex),
+        np.zeros((4, 1), dtype="complex128"),
         sampling,
         FLUX_DENSITY,
         data.provenance,
@@ -286,7 +286,7 @@ def test_content_identities_bind_units_provenance_and_fixed_topology():
     renamed = _sampling([[0.0, 0.0]], [[0, 1]], ("left", "right"))
     assert first.topology_id != moved.topology_id
     assert first.topology_id != renamed.topology_id
-    visibility_values = np.ones((4, 1), dtype=complex)
+    visibility_values = np.ones((4, 1), dtype="complex128")
     provenance = ObservationDataProvenance.native("visibility-source")
     visibility = StokesVisibilityData(visibility_values, first, FLUX_DENSITY, provenance)
     changed_unit = StokesVisibilityData(

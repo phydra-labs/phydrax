@@ -62,7 +62,7 @@ class ImageSpaceObservation(StrictModule):
         if not isinstance(operator, PreparedObservationOperator):
             raise TypeError("operator must be PreparedObservationOperator.")
         observed_ = jnp.asarray(observed)
-        valid_ = jnp.asarray(valid, dtype=bool)
+        valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         deviation = jnp.asarray(standard_deviation)
         if observed_.shape != operator.query_shape or valid_.shape != observed_.shape:
             raise ValueError(
@@ -152,9 +152,9 @@ class NeurofluidParameterSchema:
             or len(set(names)) != len(names)
         ):
             raise ValueError("Parameter names must be unique and non-empty.")
-        lower = np.asarray(self.lower, dtype=float)
-        upper = np.asarray(self.upper, dtype=float)
-        initial = np.asarray(self.initial, dtype=float)
+        lower = np.asarray(self.lower, dtype=np.float64)
+        upper = np.asarray(self.upper, dtype=np.float64)
+        initial = np.asarray(self.initial, dtype=np.float64)
         shape = (len(names),)
         if lower.shape != shape or upper.shape != shape or initial.shape != shape:
             raise ValueError("Parameter bounds and initial values must match names.")

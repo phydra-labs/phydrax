@@ -18,7 +18,7 @@ from jaxtyping import Array, ArrayLike, PyTree
 from .._array_tree import ArrayPyTreeSchema
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._identity import ExecutableSignature, NumericRevision, SemanticProvenance
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from ._system import DiscreteStepContext, DiscreteSystem
 
 
@@ -70,7 +70,7 @@ def _status_array(value: ArrayLike, case_shape: tuple[int, ...], owner: str, /) 
 
 def _mask_array(value: ArrayLike, case_shape: tuple[int, ...], owner: str, /) -> Array:
     array = jnp.asarray(value)
-    if np.dtype(array.dtype) != np.dtype(bool):
+    if np.dtype(array.dtype) != np.dtype(np.bool_):
         raise TypeError(f"{owner} must have boolean dtype.")
     if array.shape != case_shape:
         raise ValueError(f"{owner} must have shape {case_shape}; got {array.shape}.")
@@ -96,8 +96,7 @@ def _key_parts(
     if typed:
         if array.shape != case_shape:
             raise ValueError(
-                f"{owner} typed PRNG keys must have shape {case_shape}; "
-                f"got {array.shape}."
+                f"{owner} typed PRNG keys must have shape {case_shape}; got {array.shape}."
             )
         return array, jax.random.key_data(array), True
     if np.dtype(array.dtype) != np.dtype(jnp.uint32):
@@ -161,13 +160,11 @@ def _template_leaves(
         array = jnp.asarray(value)
         if array.shape != leaf.shape:
             raise ValueError(
-                f"{owner} leaf {leaf.path} must have intrinsic shape {leaf.shape}; "
-                f"got {array.shape}."
+                f"{owner} leaf {leaf.path} must have intrinsic shape {leaf.shape}; got {array.shape}."
             )
         if np.dtype(array.dtype) != leaf.dtype:
             raise TypeError(
-                f"{owner} leaf {leaf.path} dtype {array.dtype} does not match "
-                f"schema dtype {leaf.dtype}."
+                f"{owner} leaf {leaf.path} dtype {array.dtype} does not match schema dtype {leaf.dtype}."
             )
         arrays.append(array)
     return tuple(arrays)
@@ -283,8 +280,7 @@ class PlantStepContext(StrictModule):
         index = jnp.asarray(step_index, dtype=jnp.int32)
         if source.shape != target.shape or source.shape != index.shape:
             raise ValueError(
-                "PlantStepContext source_time, target_time, and step_index must "
-                "have one case shape."
+                "PlantStepContext source_time, target_time, and step_index must have one case shape."
             )
         if np.dtype(source.dtype).kind not in _NUMERIC_KINDS:
             raise TypeError("PlantStepContext times must be numeric arrays.")
@@ -459,7 +455,7 @@ def _validate_parameters(
     return (
         plant.parameter_schema.finite_mask(parameters.values)
         if plant.require_finite_parameters
-        else jnp.ones(parameter_case_shape, dtype=bool)
+        else jnp.ones(parameter_case_shape, dtype=jnp.bool_)
     )
 
 
@@ -481,7 +477,7 @@ def _validate_commands(
     return (
         plant.control_schema.finite_mask(commands)
         if plant.require_finite_controls
-        else jnp.ones(command_case_shape, dtype=bool)
+        else jnp.ones(command_case_shape, dtype=jnp.bool_)
     )
 
 
@@ -659,7 +655,7 @@ def _runtime_digest(state: PlantRuntimeState, /) -> str:
     )
     return canonical_fingerprint(
         {
-            "kind": "plant-runtime-state-v1",
+            "kind": "plant-runtime-state",
             "semantic_provenance_id": state.semantic_provenance_id,
             "numeric_revision_id": state.numeric_revision_id,
             "state_schema_id": state.state_schema_id,
@@ -672,16 +668,16 @@ def _runtime_digest(state: PlantRuntimeState, /) -> str:
 class AbstractDiscretePlant(StrictModule):
     """Domain-neutral final transaction wrappers around protected proposals."""
 
-    state_schema: AbstractAttribute[ArrayPyTreeSchema]
-    control_schema: AbstractAttribute[ArrayPyTreeSchema | None]
-    parameter_schema: AbstractAttribute[ArrayPyTreeSchema]
-    reset_fallback: AbstractAttribute[Any]
-    semantic_provenance: AbstractAttribute[SemanticProvenance]
-    numeric_revision: AbstractAttribute[NumericRevision]
-    execution_signature: AbstractAttribute[ExecutableSignature]
-    require_finite_state: AbstractAttribute[bool]
-    require_finite_controls: AbstractAttribute[bool]
-    require_finite_parameters: AbstractAttribute[bool]
+    state_schema: eqx.AbstractVar[ArrayPyTreeSchema]
+    control_schema: eqx.AbstractVar[ArrayPyTreeSchema | None]
+    parameter_schema: eqx.AbstractVar[ArrayPyTreeSchema]
+    reset_fallback: eqx.AbstractVar[Any]
+    semantic_provenance: eqx.AbstractVar[SemanticProvenance]
+    numeric_revision: eqx.AbstractVar[NumericRevision]
+    execution_signature: eqx.AbstractVar[ExecutableSignature]
+    require_finite_state: eqx.AbstractVar[bool]
+    require_finite_controls: eqx.AbstractVar[bool]
+    require_finite_parameters: eqx.AbstractVar[bool]
 
     @abstractmethod
     def propose_reset(
@@ -756,7 +752,7 @@ class AbstractDiscretePlant(StrictModule):
             self.state_schema.finite_mask(proposal.candidate_payload)
             & self.state_schema.finite_mask(proposal.accepted_payload)
             if self.require_finite_state
-            else jnp.ones(resolved_case_shape, dtype=bool)
+            else jnp.ones(resolved_case_shape, dtype=jnp.bool_)
         )
         input_finite = _broadcast_mask(
             parameter_finite, resolved_case_shape, "parameters"
@@ -853,7 +849,7 @@ class AbstractDiscretePlant(StrictModule):
             self.state_schema.finite_mask(proposal.candidate_payload)
             & self.state_schema.finite_mask(proposal.accepted_payload)
             if self.require_finite_state
-            else jnp.ones(case_shape, dtype=bool)
+            else jnp.ones(case_shape, dtype=jnp.bool_)
         )
         input_finite = _broadcast_mask(
             parameter_finite, case_shape, "parameters"
@@ -962,7 +958,7 @@ class AbstractDiscretePlant(StrictModule):
         case_shape, state = _validate_runtime_state(self, state)
         accepted_states: list[PlantRuntimeState] = [state]
         results: list[PlantStepResult] = []
-        successful = jnp.ones(case_shape, dtype=bool)
+        successful = jnp.ones(case_shape, dtype=jnp.bool_)
         first_failure_step = jnp.full(case_shape, -1, dtype=jnp.int32)
         first_failure_status = jnp.zeros(case_shape, dtype=jnp.int32)
         matched = True
@@ -1137,8 +1133,8 @@ class ArrayDiscreteSystemPlant(AbstractDiscretePlant):
         return PlantProposal(
             payload,
             payload,
-            jnp.ones(case_shape, dtype=bool),
-            jnp.ones(case_shape, dtype=bool),
+            jnp.ones(case_shape, dtype=jnp.bool_),
+            jnp.ones(case_shape, dtype=jnp.bool_),
             jnp.zeros(case_shape, dtype=jnp.int32),
             jnp.zeros(case_shape, dtype=jnp.int32),
             (),
@@ -1262,7 +1258,7 @@ class ArrayDiscreteSystemPlant(AbstractDiscretePlant):
         return PlantProposal(
             result.candidate_state,
             result.accepted_state,
-            jnp.ones(result.successful.shape, dtype=bool),
+            jnp.ones(result.successful.shape, dtype=jnp.bool_),
             result.successful,
             result.status,
             result.status,

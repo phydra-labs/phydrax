@@ -56,7 +56,7 @@ def _hash_parts(*parts: Any) -> str:
 
 
 def _canonicalize_mode_signs(modes: np.ndarray, /) -> np.ndarray:
-    out = np.array(modes, dtype=float, copy=True)
+    out = np.array(modes, dtype=np.float64, copy=True)
     for column in range(out.shape[1]):
         pivot = int(np.argmax(np.abs(out[:, column])))
         if out[pivot, column] < 0.0:
@@ -69,8 +69,8 @@ def _axis_data(
     basis: _TensorBasis,
     /,
 ) -> tuple[np.ndarray, np.ndarray, float]:
-    nodes = np.asarray(axis.nodes, dtype=float)
-    weights = np.asarray(axis.quad_weights, dtype=float)
+    nodes = np.asarray(axis.nodes, dtype=np.float64)
+    weights = np.asarray(axis.quad_weights, dtype=np.float64)
     spacing = np.diff(nodes)
     if not np.allclose(spacing, spacing[0], rtol=1e-10, atol=1e-12):
         raise ValueError("Exact tensor eigensystems require uniformly spaced axes.")
@@ -83,8 +83,7 @@ def _axis_data(
         expected = pattern * (np.sum(weights) / np.sum(pattern))
     if not np.allclose(weights, expected, rtol=1e-9, atol=1e-12):
         raise ValueError(
-            f"{basis} axis quadrature weights are incompatible with its exact "
-            "weighted eigensystem."
+            f"{basis} axis quadrature weights are incompatible with its exact weighted eigensystem."
         )
     return nodes, weights, float(spacing[0])
 
@@ -96,16 +95,16 @@ def _axis_eigenvalues(
 ) -> np.ndarray:
     """Return one exact axis spectrum in deterministic real-mode order."""
     nodes, _, spacing = _axis_data(axis, basis)
-    count = int(nodes.size)
+    count = nodes.size
     if basis == "fourier":
-        mode_indices = np.arange(count, dtype=int)
-        frequencies = ((mode_indices + 1) // 2).astype(float)
+        mode_indices = np.arange(count, dtype=np.int64)
+        frequencies = ((mode_indices + 1) // 2).astype("float64")
         frequencies[0] = 0.0
         return (2.0 * np.pi * frequencies / (float(count) * spacing)) ** 2
     if basis == "sine":
-        frequencies = np.arange(1, count + 1, dtype=float)
+        frequencies = np.arange(1, count + 1, dtype=np.float64)
         return (np.pi * frequencies / (float(count) * spacing)) ** 2
-    frequencies = np.arange(count, dtype=float)
+    frequencies = np.arange(count, dtype=np.float64)
     return (np.pi * frequencies / (float(count - 1) * spacing)) ** 2
 
 
@@ -117,13 +116,13 @@ def _axis_modes(
 ) -> np.ndarray:
     """Evaluate only selected real axis modes, using O(axis_size * rank) memory."""
     nodes, weights, _ = _axis_data(axis, basis)
-    count = int(nodes.size)
-    requested = np.asarray(mode_indices, dtype=int).reshape((-1,))
+    count = nodes.size
+    requested = np.asarray(mode_indices, dtype=np.int64).reshape((-1,))
     if np.any(requested < 0) or np.any(requested >= count):
         raise ValueError("Axis mode index lies outside the eigensystem.")
     unique, inverse = np.unique(requested, return_inverse=True)
-    node_indices = np.arange(count, dtype=float)
-    modes = np.empty((count, unique.size), dtype=float)
+    node_indices = np.arange(count, dtype=np.float64)
+    modes = np.empty((count, unique.size), dtype=np.float64)
     for column, mode_index in enumerate(unique):
         if basis == "fourier":
             if mode_index == 0:
@@ -191,8 +190,8 @@ def _dual_basis_first_derivative(
     basis: Literal["sine", "cosine"],
 ) -> Array:
     """Differentiate the parity-dual values produced by a primal gradient."""
-    coordinates = jnp.asarray(nodes, dtype=float).reshape((-1,))
-    count = int(coordinates.size)
+    coordinates = jnp.asarray(nodes, dtype=jnp.float64).reshape((-1,))
+    count = coordinates.size
     if count < 2:
         return jnp.zeros_like(state)
     spacing = coordinates[1] - coordinates[0]
@@ -222,7 +221,7 @@ def _normalize_spatial_axes(
 ) -> tuple[int, ...]:
     if axes is None:
         return tuple(range(rank))
-    values = (int(axes),) if isinstance(axes, int) else tuple(int(axis) for axis in axes)
+    values = (int(axes),) if isinstance(axes, int) else tuple(axes)
     if not values:
         raise ValueError("At least one spatial axis is required.")
     if len(set(values)) != len(values) or any(
@@ -392,7 +391,7 @@ class EigenbasisDiscretization(AbstractStrongFormDiscretization):
         field_names: Sequence[str] = ("state",),
         key: DiscretizationKey | None = None,
         numeric_version: str = "0",
-        dtype: Any = float,
+        dtype: Any = jnp.float64,
     ):
         if not isinstance(plan, SpectralDecomposition):
             raise TypeError("plan must be a SpectralDecomposition.")
@@ -470,7 +469,7 @@ class EigenbasisDiscretization(AbstractStrongFormDiscretization):
         if not version:
             raise ValueError("numeric_version must be non-empty.")
         prepared_identifier = _hash_parts(
-            "spectral-spatial-v2",
+            "spectral-spatial",
             plan.decomposition_id,
             plan.eigenvalues,
             plan.quadrature_weights,
@@ -506,10 +505,9 @@ class EigenbasisDiscretization(AbstractStrongFormDiscretization):
 
     def _validate_state(self, state: ArrayLike, /) -> Array:
         array = jnp.asarray(state)
-        if array.ndim < 1 or int(array.shape[0]) != self.plan.num_points:
+        if array.ndim < 1 or array.shape[0] != self.plan.num_points:
             raise ValueError(
-                "State must begin with spectral point count "
-                f"({self.plan.num_points},); got {array.shape}."
+                f"State must begin with spectral point count ({self.plan.num_points},); got {array.shape}."
             )
         return array
 

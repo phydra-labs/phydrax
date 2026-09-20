@@ -40,14 +40,14 @@ def _support_array(value: ArrayLike, /) -> Array:
         raise ValueError("Driving-path support must contain exactly two endpoints.")
     if jnp.issubdtype(support_raw.dtype, jnp.complexfloating):
         raise TypeError("Driving-path support must be real-valued.")
-    support_host = np.asarray(support_raw, dtype=float)
+    support_host = np.asarray(support_raw, dtype=np.float64)
     if not np.all(np.isfinite(support_host)) or not support_host[1] > support_host[0]:
         raise ValueError("Driving-path support must be finite and strictly increasing.")
-    return support_raw.astype(jnp.result_type(support_raw, float))
+    return support_raw.astype(jnp.result_type(support_raw, jnp.float64))
 
 
 def _value_shape(value: tuple[int, ...], /) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if any(size <= 0 for size in shape):
         raise ValueError("Driving-path value_shape dimensions must be positive.")
     return shape
@@ -69,18 +69,18 @@ def _breakpoint_schedule(
     /,
 ) -> tuple[Array, Array]:
     points_raw = jnp.asarray(breakpoints)
-    mask = jnp.asarray(breakpoint_mask, dtype=bool)
+    mask = jnp.asarray(breakpoint_mask, dtype=jnp.bool_)
     if points_raw.ndim != 1:
         raise ValueError("Driving-path breakpoints must be a rank-one array.")
     if mask.shape != points_raw.shape:
         raise ValueError("breakpoint_mask must have the same shape as breakpoints.")
     if jnp.issubdtype(points_raw.dtype, jnp.complexfloating):
         raise TypeError("Driving-path breakpoints must be real-valued.")
-    points = points_raw.astype(jnp.result_type(points_raw, support, float))
-    points_host = np.asarray(points, dtype=float)
-    mask_host = np.asarray(mask, dtype=bool)
+    points = points_raw.astype(jnp.result_type(points_raw, support, jnp.float64))
+    points_host = np.asarray(points, dtype=np.float64)
+    mask_host = np.asarray(mask, dtype=np.bool_)
     active = points_host[mask_host]
-    support_host = np.asarray(support, dtype=float)
+    support_host = np.asarray(support, dtype=np.float64)
     if not np.all(np.isfinite(active)):
         raise ValueError("Active driving-path breakpoints must be finite.")
     if np.any(active <= support_host[0]) or np.any(active >= support_host[1]):
@@ -91,21 +91,21 @@ def _breakpoint_schedule(
 
 
 def _sample_value_mask(values: Array, value_mask: ArrayLike, /) -> tuple[Array, Array]:
-    mask = jnp.asarray(value_mask, dtype=bool)
+    mask = jnp.asarray(value_mask, dtype=jnp.bool_)
     if mask.shape == values.shape[:1]:
         return mask, mask
     if mask.shape != values.shape:
         raise ValueError(
             "value_mask must have shape (sample_capacity,) or the complete values shape."
         )
-    flat_host = np.asarray(mask, dtype=bool).reshape((values.shape[0], -1))
+    flat_host = np.asarray(mask, dtype=np.bool_).reshape((values.shape[0], -1))
     row_all = np.all(flat_host, axis=1)
     row_any = np.any(flat_host, axis=1)
     if np.any(row_all != row_any):
         raise ValueError(
             "Every sampled path value must be either wholly valid or wholly invalid."
         )
-    return mask, jnp.asarray(row_all, dtype=bool)
+    return mask, jnp.asarray(row_all, dtype=jnp.bool_)
 
 
 def _validated_samples(
@@ -130,31 +130,31 @@ def _validated_samples(
         or jnp.issubdtype(values_raw.dtype, jnp.bool_)
     ):
         raise TypeError("Sampled driving-path values must be numeric.")
-    value_shape = _value_shape(tuple(int(size) for size in values_raw.shape[1:]))
-    capacity = int(times_raw.shape[0])
+    value_shape = _value_shape(tuple(values_raw.shape[1:]))
+    capacity = times_raw.shape[0]
     if capacity < minimum_samples:
         raise ValueError(
             f"Driving-path fitting requires capacity for at least {minimum_samples} samples."
         )
 
-    times_valid = jnp.asarray(time_mask, dtype=bool)
+    times_valid = jnp.asarray(time_mask, dtype=jnp.bool_)
     if times_valid.shape != times_raw.shape:
         raise ValueError("time_mask must have the same shape as times.")
     values_valid, value_sample_valid = _sample_value_mask(values_raw, value_mask)
-    time_host = np.asarray(times_valid, dtype=bool)
-    value_host = np.asarray(value_sample_valid, dtype=bool)
+    time_host = np.asarray(times_valid, dtype=np.bool_)
+    value_host = np.asarray(value_sample_valid, dtype=np.bool_)
     if np.any(np.diff(time_host.astype(np.int8)) > 0):
         raise ValueError("time_mask must be a prefix mask.")
     if np.any(np.diff(value_host.astype(np.int8)) > 0):
         raise ValueError("value_mask must define a prefix of complete values.")
 
     sample_mask = times_valid & value_sample_valid
-    sample_count = int(np.sum(np.asarray(sample_mask, dtype=bool)))
+    sample_count = int(np.sum(np.asarray(sample_mask, dtype=np.bool_)))
     if sample_count < minimum_samples:
         raise ValueError(
             f"Driving-path fitting requires at least {minimum_samples} valid samples."
         )
-    times_host = np.asarray(times_raw[:sample_count], dtype=float)
+    times_host = np.asarray(times_raw[:sample_count], dtype=np.float64)
     values_host = np.asarray(values_raw[:sample_count])
     if not np.all(np.isfinite(times_host)):
         raise ValueError("Valid sampled driving-path times must be finite.")
@@ -163,8 +163,8 @@ def _validated_samples(
     if not np.all(np.isfinite(values_host)):
         raise ValueError("Valid sampled driving-path values must be finite.")
 
-    times_ = times_raw.astype(jnp.result_type(times_raw, float))
-    values_ = values_raw.astype(jnp.result_type(values_raw, float))
+    times_ = times_raw.astype(jnp.result_type(times_raw, jnp.float64))
+    values_ = values_raw.astype(jnp.result_type(values_raw, jnp.float64))
     return (
         times_,
         values_,
@@ -457,7 +457,7 @@ class CausalBackwardHermiteDrivingPath(_AbstractSampledDrivingPath):
         self.num_samples = count
         self.slopes = slopes
         self.breakpoints = jnp.empty((0,), dtype=times_.dtype)
-        self.breakpoint_mask = jnp.empty((0,), dtype=bool)
+        self.breakpoint_mask = jnp.empty((0,), dtype=jnp.bool_)
         self.value_shape = shape
         self.path_id = _path_id(path_id)
 
@@ -556,7 +556,7 @@ class OfflineCubicDrivingPath(_AbstractSampledDrivingPath):
             jnp.any(~jnp.isfinite(widths)) | jnp.any(widths <= 0.0),
             "Natural-cubic fitting requires finite, nonsingular sample spacing.",
         )
-        payload_size = int(np.prod(shape, dtype=int)) if shape else 1
+        payload_size = int(np.prod(shape, dtype=np.int64)) if shape else 1
         flat_values = valid_values.reshape((count, payload_size))
         linear_dtype = jnp.result_type(times_, values_)
         lower_diagonal = jnp.zeros((count,), dtype=linear_dtype)
@@ -584,7 +584,7 @@ class OfflineCubicDrivingPath(_AbstractSampledDrivingPath):
         self.num_samples = count
         self.second_derivatives = second
         self.breakpoints = jnp.empty((0,), dtype=times_.dtype)
-        self.breakpoint_mask = jnp.empty((0,), dtype=bool)
+        self.breakpoint_mask = jnp.empty((0,), dtype=jnp.bool_)
         self.value_shape = shape
         self.path_id = _path_id(path_id)
 
@@ -691,8 +691,8 @@ class FixedBSplineDrivingPath(AbstractDifferentiableDrivingPath):
             or jnp.issubdtype(coefficients_.dtype, jnp.bool_)
         ):
             raise TypeError("B-spline path coefficients must be numeric.")
-        value_shape = _value_shape(tuple(int(size) for size in coefficients_.shape[1:]))
-        coefficients_ = coefficients_.astype(jnp.result_type(coefficients_, float))
+        value_shape = _value_shape(tuple(coefficients_.shape[1:]))
+        coefficients_ = coefficients_.astype(jnp.result_type(coefficients_, jnp.float64))
         coefficients_ = eqx.error_if(
             coefficients_,
             jnp.any(~jnp.isfinite(coefficients_)),
@@ -703,7 +703,7 @@ class FixedBSplineDrivingPath(AbstractDifferentiableDrivingPath):
         self._support = jnp.stack(grid.active_interval)
         self.breakpoints = grid.breakpoints[1:-1]
         self.breakpoint_mask = jnp.asarray(
-            tuple(order < 1 for order in grid.continuity_orders), dtype=bool
+            tuple(order < 1 for order in grid.continuity_orders), dtype=jnp.bool_
         )
         self.value_shape = value_shape
         self.path_id = _path_id(path_id)
@@ -777,7 +777,7 @@ def _fit_diagnostics(
         approximation_id=approximation_id,
         backend=backend,
         sample_count=path.num_samples,
-        sample_capacity=int(path.times.shape[0]),
+        sample_capacity=path.times.shape[0],
         minimum_spacing=jnp.min(widths),
         maximum_spacing=jnp.max(widths),
         value_shape=path.value_shape,

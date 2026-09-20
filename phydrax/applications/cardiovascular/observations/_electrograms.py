@@ -5,7 +5,7 @@
 
 Transmembrane-voltage timing, extracellular electrograms, torso potentials, and
 ECG leads are deliberately separate contracts.  In particular,
-:class:`ElectrogramPlan` accepts only an explicitly labelled extracellular source
+:class:`ElectrogramPlan` accepts only an explicitly labeled extracellular source
 density; sampled transmembrane voltage is never reinterpreted as an electrogram.
 """
 
@@ -233,13 +233,12 @@ class ActivationTimePlan(StrictModule, NonTrainableState):
             or record.unit != "mV"
         ):
             raise ValueError(
-                "Activation records must be transmembrane-voltage/"
-                "transmembrane_potential/mV."
+                "Activation records must be transmembrane-voltage/transmembrane_potential/mV."
             )
         if record.time_axis_id != self.timebase.time_axis_id:
             raise ValueError("Activation record and plan time bases differ.")
         values = _floating_array(record.values)
-        valid = jnp.asarray(record.valid_mask, dtype=bool)
+        valid = jnp.asarray(record.valid_mask, dtype=jnp.bool_)
         if valid.shape != values.shape:
             raise ValueError("Activation record validity mask must match its values.")
         return self.evaluate(jnp.where(valid, values, jnp.nan))
@@ -250,10 +249,10 @@ class ActivationTimePlan(StrictModule, NonTrainableState):
         """Normalize a foundation activation observation without aliasing its type."""
 
         activation_time = jnp.asarray(result.activation_times_ms)
-        occurred = jnp.asarray(result.activated, dtype=bool)
+        occurred = jnp.asarray(result.activated, dtype=jnp.bool_)
         node_ids = jnp.asarray(result.node_ids)
         status = jnp.asarray(result.status)
-        observation_successful = jnp.asarray(result.successful, dtype=bool)
+        observation_successful = jnp.asarray(result.successful, dtype=jnp.bool_)
         if (
             activation_time.shape != occurred.shape
             or node_ids.shape != occurred.shape
@@ -467,7 +466,7 @@ class ActionPotentialDurationPlan(StrictModule, NonTrainableState):
         if record.time_axis_id != self.timebase.time_axis_id:
             raise ValueError("APD record and plan time bases differ.")
         values = _floating_array(record.values)
-        valid = jnp.asarray(record.valid_mask, dtype=bool)
+        valid = jnp.asarray(record.valid_mask, dtype=jnp.bool_)
         if valid.shape != values.shape:
             raise ValueError("APD record validity mask must match its values.")
         return self.evaluate(jnp.where(valid, values, jnp.nan))
@@ -524,8 +523,7 @@ class ExtracellularSourceDensity(StrictModule):
             or record.unit != "uA/mm2"
         ):
             raise ValueError(
-                "EGM source records must be extracellular-source-density/"
-                "membrane_current_density/uA/mm2."
+                "EGM source records must be extracellular-source-density/membrane_current_density/uA/mm2."
             )
         if record.time_axis_id != timebase.time_axis_id:
             raise ValueError("EGM source record and time base differ.")
@@ -567,7 +565,7 @@ class ElectricalGaugePlan(StrictModule, NonTrainableState):
         reference_id: str,
     ):
         labels = _labels(electrode_labels, "electrode_labels")
-        weights_host = np.asarray(reference_weights, dtype=float)
+        weights_host = np.asarray(reference_weights, dtype=np.float64)
         if weights_host.shape != (len(labels),) or np.any(~np.isfinite(weights_host)):
             raise ValueError("Reference weights must be one finite value per electrode.")
         if abs(float(np.sum(weights_host)) - 1.0) > 1.0e-10:
@@ -637,7 +635,7 @@ class FIRFilterPlan(StrictModule, NonTrainableState):
         filter_id: str,
     ):
         _require_temporal_capacity(timebase)
-        host = np.asarray(coefficients, dtype=float)
+        host = np.asarray(coefficients, dtype=np.float64)
         if host.ndim != 1 or host.size < 1 or np.any(~np.isfinite(host)):
             raise ValueError("FIR coefficients must be a non-empty finite vector.")
         identifier = _identifier(filter_id, "filter_id")
@@ -728,7 +726,7 @@ class ElectrogramPlan(StrictModule, NonTrainableState):
 
     ``observe`` intentionally rejects bare arrays.  Its input type makes the
     extracellular source semantics explicit and prevents sampled ``Vm`` from
-    being relabelled as an EGM.
+    being relabeled as an EGM.
     """
 
     transfer: LinearObservationPlan
@@ -754,7 +752,7 @@ class ElectrogramPlan(StrictModule, NonTrainableState):
         sources = _labels(source_labels, "source_labels")
         if not _same_timebase(timebase, filter_plan.timebase):
             raise ValueError("Electrogram and filter time bases must match.")
-        matrix = np.asarray(transfer_matrix, dtype=float)
+        matrix = np.asarray(transfer_matrix, dtype=np.float64)
         if matrix.shape != (len(gauge.electrode_labels), len(sources)):
             raise ValueError(
                 "Electrogram transfer matrix shape does not match its layouts."
@@ -867,7 +865,7 @@ class TorsoObservationPlan(StrictModule, NonTrainableState):
         transfer_id: str,
     ):
         sources = _labels(source_labels, "source_labels")
-        matrix = np.asarray(transfer_matrix, dtype=float)
+        matrix = np.asarray(transfer_matrix, dtype=np.float64)
         if matrix.shape != (len(gauge.electrode_labels), len(sources)):
             raise ValueError("Torso transfer matrix shape does not match its layouts.")
         identifier = _identifier(transfer_id, "transfer_id")
@@ -976,7 +974,7 @@ class ECGLeadFieldPlan(StrictModule, NonTrainableState):
         reciprocity_tolerance: float = 1.0e-8,
     ):
         labels = _labels(lead_labels, "lead_labels")
-        matrix = np.asarray(lead_matrix, dtype=float)
+        matrix = np.asarray(lead_matrix, dtype=np.float64)
         if matrix.shape != (len(labels), len(torso.electrode_labels)):
             raise ValueError("Lead matrix shape does not match lead/electrode layouts.")
         if np.any(~np.isfinite(matrix)):
@@ -986,7 +984,7 @@ class ECGLeadFieldPlan(StrictModule, NonTrainableState):
             @ np.asarray(torso.gauge.response.matrix)
             @ np.asarray(torso.transfer.matrix)
         )
-        reciprocal = np.asarray(reciprocal_field, dtype=float)
+        reciprocal = np.asarray(reciprocal_field, dtype=np.float64)
         if reciprocal.shape != (len(torso.source_labels), len(labels)):
             raise ValueError("Reciprocal field must have shape (sources, leads).")
         if np.any(~np.isfinite(reciprocal)):

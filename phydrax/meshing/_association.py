@@ -73,7 +73,7 @@ class GeometryAssociation(StrictModule, NonTrainableState):
                 "Target geometry association IDs must be unique and non-negative."
             )
         sources = tuple(str(value).strip() for value in source_entity_ids)
-        distances = np.asarray(residuals, dtype=float)
+        distances = np.asarray(residuals, dtype=np.float64)
         if len(sources) != targets.size or any(not value for value in sources):
             raise ValueError(
                 "Source geometry IDs must match target entities and be non-empty."
@@ -87,14 +87,14 @@ class GeometryAssociation(StrictModule, NonTrainableState):
                 "Association residuals must be finite, non-negative, and aligned."
             )
         resolved_ = (
-            np.ones(targets.shape, dtype=bool)
+            np.ones(targets.shape, dtype=np.bool_)
             if resolved is None
-            else np.asarray(resolved, dtype=bool)
+            else np.asarray(resolved, dtype=np.bool_)
         )
         ambiguous_ = (
-            np.zeros(targets.shape, dtype=bool)
+            np.zeros(targets.shape, dtype=np.bool_)
             if ambiguous is None
-            else np.asarray(ambiguous, dtype=bool)
+            else np.asarray(ambiguous, dtype=np.bool_)
         )
         if resolved_.shape != targets.shape or ambiguous_.shape != targets.shape:
             raise ValueError("Association status masks must match target entities.")

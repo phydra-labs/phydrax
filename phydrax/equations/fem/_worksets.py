@@ -46,7 +46,7 @@ class WorksetSignature(StrictModule, NonTrainableState):
     operator_realization: str | None = eqx.field(static=True)
     reference_realization_id: str | None = eqx.field(static=True)
     local_widths: tuple[tuple[str, int], ...] = eqx.field(static=True)
-    neighbour_local_widths: tuple[tuple[str, int], ...] = eqx.field(static=True)
+    neighbor_local_widths: tuple[tuple[str, int], ...] = eqx.field(static=True)
     material_id: str | None = eqx.field(static=True)
     signature_id: str = eqx.field(static=True)
 
@@ -72,7 +72,7 @@ class WorksetSignature(StrictModule, NonTrainableState):
         execution_kind: str | None = None,
         operator_realization: str | None = None,
         reference_realization_id: str | None = None,
-        neighbour_local_widths: Mapping[str, int]
+        neighbor_local_widths: Mapping[str, int]
         | Sequence[tuple[str, int]]
         | None = None,
         material_id: str | None = None,
@@ -108,16 +108,16 @@ class WorksetSignature(StrictModule, NonTrainableState):
                 )
             )
         )
-        neighbour_widths = (
+        neighbor_widths = (
             widths
-            if neighbour_local_widths is None
+            if neighbor_local_widths is None
             else tuple(
                 sorted(
                     (str(name), int(width))
                     for name, width in (
-                        neighbour_local_widths.items()
-                        if isinstance(neighbour_local_widths, Mapping)
-                        else neighbour_local_widths
+                        neighbor_local_widths.items()
+                        if isinstance(neighbor_local_widths, Mapping)
+                        else neighbor_local_widths
                     )
                 )
             )
@@ -150,9 +150,8 @@ class WorksetSignature(StrictModule, NonTrainableState):
             or any(not value for value in layouts)
             or not widths
             or any(not name or width <= 0 for name, width in widths)
-            or set(name for name, _ in neighbour_widths)
-            != set(name for name, _ in widths)
-            or any(not name or width <= 0 for name, width in neighbour_widths)
+            or set(name for name, _ in neighbor_widths) != set(name for name, _ in widths)
+            or any(not name or width <= 0 for name, width in neighbor_widths)
             or (
                 any(value is None for value in selection_values)
                 and any(value is not None for value in selection_values)
@@ -178,7 +177,7 @@ class WorksetSignature(StrictModule, NonTrainableState):
         self.operator_realization = operator_realization_
         self.reference_realization_id = reference_realization
         self.local_widths = widths
-        self.neighbour_local_widths = neighbour_widths
+        self.neighbor_local_widths = neighbor_widths
         self.material_id = material
         self.signature_id = canonical_fingerprint(
             {
@@ -201,7 +200,7 @@ class WorksetSignature(StrictModule, NonTrainableState):
                 "operator_realization": operator_realization_,
                 "reference_realization": reference_realization,
                 "local_widths": [list(item) for item in widths],
-                "neighbour_local_widths": [list(item) for item in neighbour_widths],
+                "neighbor_local_widths": [list(item) for item in neighbor_widths],
                 "material": material,
             }
         )
@@ -211,7 +210,7 @@ class CompiledWorkset(StrictModule, NonTrainableState):
     signature: WorksetSignature
     local_region: PreparedLocalRegion | None
     reference: PreparedFiniteElementReference | None
-    neighbour_reference: PreparedFiniteElementReference | None
+    neighbor_reference: PreparedFiniteElementReference | None
     mortar: FiniteElementMortarPlan | None
     mortar_metric: FiniteElementMortarMetricData | None
     action_indices: Array
@@ -219,14 +218,14 @@ class CompiledWorkset(StrictModule, NonTrainableState):
     entity_index_values: tuple[int, ...] = eqx.field(static=True)
     entity_indices: Array
     owner_cells: Array
-    neighbour_cells: Array
+    neighbor_cells: Array
     owner_local_entities: Array
-    neighbour_local_entities: Array
+    neighbor_local_entities: Array
     owner_permutations: Array
-    neighbour_permutations: Array
-    neighbour_trace_permutations: Array
+    neighbor_permutations: Array
+    neighbor_trace_permutations: Array
     gathers: tuple[tuple[str, Array], ...]
-    neighbour_gathers: tuple[tuple[str, Array], ...]
+    neighbor_gathers: tuple[tuple[str, Array], ...]
     valid: Array
     workset_id: str = eqx.field(static=True)
 
@@ -236,23 +235,23 @@ class CompiledWorkset(StrictModule, NonTrainableState):
         action_indices: ArrayLike,
         entity_indices: ArrayLike,
         owner_cells: ArrayLike,
-        neighbour_cells: ArrayLike,
+        neighbor_cells: ArrayLike,
         gathers: Mapping[str, ArrayLike] | Sequence[tuple[str, ArrayLike]],
         /,
         *,
         local_region: PreparedLocalRegion | None = None,
         reference: PreparedFiniteElementReference | None = None,
-        neighbour_reference: PreparedFiniteElementReference | None = None,
+        neighbor_reference: PreparedFiniteElementReference | None = None,
         mortar: FiniteElementMortarPlan | None = None,
         mortar_metric: FiniteElementMortarMetricData | None = None,
-        neighbour_gathers: Mapping[str, ArrayLike]
+        neighbor_gathers: Mapping[str, ArrayLike]
         | Sequence[tuple[str, ArrayLike]]
         | None = None,
         owner_local_entities: ArrayLike | None = None,
-        neighbour_local_entities: ArrayLike | None = None,
+        neighbor_local_entities: ArrayLike | None = None,
         owner_permutations: ArrayLike | None = None,
-        neighbour_permutations: ArrayLike | None = None,
-        neighbour_trace_permutations: ArrayLike | None = None,
+        neighbor_permutations: ArrayLike | None = None,
+        neighbor_trace_permutations: ArrayLike | None = None,
         valid: ArrayLike | None = None,
     ):
         if not isinstance(signature, WorksetSignature):
@@ -260,11 +259,11 @@ class CompiledWorkset(StrictModule, NonTrainableState):
         actions = np.asarray(action_indices, dtype=np.int32)
         entities = np.asarray(entity_indices, dtype=np.int32)
         owners = np.asarray(owner_cells, dtype=np.int32)
-        neighbours = np.asarray(neighbour_cells, dtype=np.int32)
+        neighbors = np.asarray(neighbor_cells, dtype=np.int32)
         if actions.ndim != 1 or entities.ndim != 1:
             raise ValueError("Workset action/entity indices must be rank-1.")
-        if owners.shape != entities.shape or neighbours.shape != entities.shape:
-            raise ValueError("Workset owner/neighbour routes must match entities.")
+        if owners.shape != entities.shape or neighbors.shape != entities.shape:
+            raise ValueError("Workset owner/neighbor routes must match entities.")
         gather_items = tuple(
             sorted(
                 (str(name), np.asarray(route, dtype=np.int32))
@@ -282,12 +281,12 @@ class CompiledWorkset(StrictModule, NonTrainableState):
             width = dict(signature.local_widths)[name]
             if route.shape != (count, width):
                 raise ValueError("Workset gather shape does not match its signature.")
-        if neighbour_gathers is None:
-            neighbour_items = tuple(
+        if neighbor_gathers is None:
+            neighbor_items = tuple(
                 (
                     name,
                     np.full(
-                        (count, dict(signature.neighbour_local_widths)[name]),
+                        (count, dict(signature.neighbor_local_widths)[name]),
                         -1,
                         dtype=np.int32,
                     ),
@@ -295,23 +294,23 @@ class CompiledWorkset(StrictModule, NonTrainableState):
                 for name, _ in gather_items
             )
         else:
-            neighbour_items = tuple(
+            neighbor_items = tuple(
                 sorted(
                     (str(name), np.asarray(route, dtype=np.int32))
                     for name, route in (
-                        neighbour_gathers.items()
-                        if isinstance(neighbour_gathers, Mapping)
-                        else neighbour_gathers
+                        neighbor_gathers.items()
+                        if isinstance(neighbor_gathers, Mapping)
+                        else neighbor_gathers
                     )
                 )
             )
-        if tuple(name for name, _ in neighbour_items) != tuple(
+        if tuple(name for name, _ in neighbor_items) != tuple(
             name for name, _ in gather_items
         ) or any(
-            route.shape != (count, dict(signature.neighbour_local_widths)[name])
-            for name, route in neighbour_items
+            route.shape != (count, dict(signature.neighbor_local_widths)[name])
+            for name, route in neighbor_items
         ):
-            raise ValueError("Neighbour gathers must match neighbour signature layouts.")
+            raise ValueError("Neighbor gathers must match neighbor signature layouts.")
 
         def route(values, default, dtype):
             return (
@@ -333,30 +332,30 @@ class CompiledWorkset(StrictModule, NonTrainableState):
             return result
 
         owner_local = route(owner_local_entities, -1, np.int32)
-        neighbour_local = route(neighbour_local_entities, -1, np.int32)
+        neighbor_local = route(neighbor_local_entities, -1, np.int32)
         owner_permutation = permutation(owner_permutations)
-        neighbour_permutation = permutation(neighbour_permutations)
+        neighbor_permutation = permutation(neighbor_permutations)
         trace_permutations = (
             np.empty((count, 0), dtype=np.int32)
-            if neighbour_trace_permutations is None
-            else np.asarray(neighbour_trace_permutations, dtype=np.int32)
+            if neighbor_trace_permutations is None
+            else np.asarray(neighbor_trace_permutations, dtype=np.int32)
         )
         if trace_permutations.ndim != 2 or trace_permutations.shape[0] != count:
             raise ValueError(
-                "Neighbour trace permutations require one point route per entity."
+                "Neighbor trace permutations require one point route per entity."
             )
-        if owner_local.shape != (count,) or neighbour_local.shape != (count,):
+        if owner_local.shape != (count,) or neighbor_local.shape != (count,):
             raise ValueError("Workset local-entity routes are invalid.")
         if reference is not None and (
             not isinstance(reference, PreparedFiniteElementReference)
             or reference.prepared_id not in signature.reference_action_ids
         ):
             raise ValueError("Prepared reference does not match the workset signature.")
-        if neighbour_reference is not None and (
-            not isinstance(neighbour_reference, PreparedFiniteElementReference)
-            or neighbour_reference.prepared_id not in signature.reference_action_ids
+        if neighbor_reference is not None and (
+            not isinstance(neighbor_reference, PreparedFiniteElementReference)
+            or neighbor_reference.prepared_id not in signature.reference_action_ids
         ):
-            raise ValueError("Neighbour reference does not match the workset signature.")
+            raise ValueError("Neighbor reference does not match the workset signature.")
         if local_region is not None:
             if not isinstance(local_region, PreparedLocalRegion):
                 raise TypeError("local_region must be PreparedLocalRegion or None.")
@@ -366,8 +365,7 @@ class CompiledWorkset(StrictModule, NonTrainableState):
                     sorted(value.action_id for value in local_region.reference_actions)
                 )
                 != signature.reference_action_ids
-                or tuple(int(value) for value in local_region.entity_indices)
-                != tuple(int(value) for value in entities)
+                or tuple(local_region.entity_indices) != tuple(entities)
             ):
                 raise ValueError("Prepared local region does not match its workset.")
         if mortar is not None and not isinstance(mortar, FiniteElementMortarPlan):
@@ -383,32 +381,32 @@ class CompiledWorkset(StrictModule, NonTrainableState):
                 "Mortar reference and metric data must be supplied together."
             )
         valid_ = (
-            np.ones((count,), dtype=bool)
+            np.ones((count,), dtype=np.bool_)
             if valid is None
-            else np.asarray(valid, dtype=bool)
+            else np.asarray(valid, dtype=np.bool_)
         )
         if valid_.shape != (count,):
             raise ValueError("Workset validity must have one entry per entity.")
         self.signature = signature
         self.local_region = local_region
         self.reference = reference
-        self.neighbour_reference = neighbour_reference
+        self.neighbor_reference = neighbor_reference
         self.mortar = mortar
         self.mortar_metric = mortar_metric
         self.action_indices = jnp.asarray(actions)
-        self.action_index_values = tuple(int(value) for value in actions)
-        self.entity_index_values = tuple(int(value) for value in entities)
+        self.action_index_values = tuple(actions)
+        self.entity_index_values = tuple(entities)
         self.entity_indices = jnp.asarray(entities)
         self.owner_cells = jnp.asarray(owners)
-        self.neighbour_cells = jnp.asarray(neighbours)
+        self.neighbor_cells = jnp.asarray(neighbors)
         self.owner_local_entities = jnp.asarray(owner_local)
-        self.neighbour_local_entities = jnp.asarray(neighbour_local)
+        self.neighbor_local_entities = jnp.asarray(neighbor_local)
         self.owner_permutations = jnp.asarray(owner_permutation)
-        self.neighbour_permutations = jnp.asarray(neighbour_permutation)
-        self.neighbour_trace_permutations = jnp.asarray(trace_permutations)
+        self.neighbor_permutations = jnp.asarray(neighbor_permutation)
+        self.neighbor_trace_permutations = jnp.asarray(trace_permutations)
         self.gathers = tuple((name, jnp.asarray(route)) for name, route in gather_items)
-        self.neighbour_gathers = tuple(
-            (name, jnp.asarray(route)) for name, route in neighbour_items
+        self.neighbor_gathers = tuple(
+            (name, jnp.asarray(route)) for name, route in neighbor_items
         )
         self.valid = jnp.asarray(valid_)
         self.workset_id = canonical_fingerprint(
@@ -421,10 +419,8 @@ class CompiledWorkset(StrictModule, NonTrainableState):
                 "prepared_reference": (
                     None if reference is None else reference.prepared_id
                 ),
-                "neighbour_reference": (
-                    None
-                    if neighbour_reference is None
-                    else neighbour_reference.prepared_id
+                "neighbor_reference": (
+                    None if neighbor_reference is None else neighbor_reference.prepared_id
                 ),
                 "mortar": None if mortar is None else mortar.plan_id,
                 "mortar_metric": (
@@ -433,20 +429,18 @@ class CompiledWorkset(StrictModule, NonTrainableState):
                 "actions": array_tree_fingerprint(actions),
                 "entities": array_tree_fingerprint(entities),
                 "owners": array_tree_fingerprint(owners),
-                "neighbours": array_tree_fingerprint(neighbours),
+                "neighbors": array_tree_fingerprint(neighbors),
                 "owner_local_entities": array_tree_fingerprint(owner_local),
-                "neighbour_local_entities": array_tree_fingerprint(neighbour_local),
+                "neighbor_local_entities": array_tree_fingerprint(neighbor_local),
                 "owner_permutations": array_tree_fingerprint(owner_permutation),
-                "neighbour_permutations": array_tree_fingerprint(neighbour_permutation),
-                "neighbour_trace_permutations": array_tree_fingerprint(
-                    trace_permutations
-                ),
+                "neighbor_permutations": array_tree_fingerprint(neighbor_permutation),
+                "neighbor_trace_permutations": array_tree_fingerprint(trace_permutations),
                 "gathers": [
                     [name, array_tree_fingerprint(route)] for name, route in gather_items
                 ],
-                "neighbour_gathers": [
+                "neighbor_gathers": [
                     [name, array_tree_fingerprint(route)]
-                    for name, route in neighbour_items
+                    for name, route in neighbor_items
                 ],
                 "valid": array_tree_fingerprint(valid_),
             }
@@ -459,11 +453,11 @@ class CompiledWorkset(StrictModule, NonTrainableState):
             raise KeyError(f"Workset has no field gather {name!r}.")
         return jnp.asarray(values)[routes[name]]
 
-    def gather_neighbour(self, field_name: str, values: ArrayLike, /) -> Array:
+    def gather_neighbor(self, field_name: str, values: ArrayLike, /) -> Array:
         name = str(field_name)
-        routes = dict(self.neighbour_gathers)
+        routes = dict(self.neighbor_gathers)
         if name not in routes:
-            raise KeyError(f"Workset has no neighbour gather {name!r}.")
+            raise KeyError(f"Workset has no neighbor gather {name!r}.")
         safe = jnp.maximum(routes[name], 0)
         gathered = jnp.asarray(values)[safe]
         valid = routes[name] >= 0
@@ -494,19 +488,19 @@ class WorksetBucket(StrictModule, NonTrainableState):
                 (
                     value.entity_indices,
                     value.owner_cells,
-                    value.neighbour_cells,
+                    value.neighbor_cells,
                     value.owner_local_entities,
-                    value.neighbour_local_entities,
+                    value.neighbor_local_entities,
                     value.valid,
                 )
             )
             arrays.extend(route for _name, route in value.gathers)
-            arrays.extend(route for _name, route in value.neighbour_gathers)
+            arrays.extend(route for _name, route in value.neighbor_gathers)
         self.worksets = values
         self.signature_id = values[0].signature.signature_id
-        self.entity_count = sum(int(value.entity_indices.size) for value in values)
-        self.entity_capacity = max(int(value.entity_indices.size) for value in values)
-        self.resident_bytes = sum(int(np.asarray(value).nbytes) for value in arrays)
+        self.entity_count = sum(value.entity_indices.size for value in values)
+        self.entity_capacity = max(value.entity_indices.size for value in values)
+        self.resident_bytes = sum(np.asarray(value).nbytes for value in arrays)
         self.bucket_id = canonical_fingerprint(
             {
                 "kind": "compiled-workset-bucket",

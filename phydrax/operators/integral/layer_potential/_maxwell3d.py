@@ -91,7 +91,7 @@ class MaxwellEFIEPolicy3D(StrictModule, NonTrainableState):
         self.max_dense_bytes = int(max_dense_bytes)
         self.policy_id = canonical_fingerprint(
             {
-                "kind": "maxwell-efie-policy-3d-v1",
+                "kind": "maxwell-efie-policy-3d",
                 "orders": orders,
                 "near_ratio": self.near_ratio,
                 "tolerances": (self.absolute_tolerance, self.relative_tolerance),
@@ -337,7 +337,7 @@ def prepare_maxwell_efie_3d(
     )
     prepared_id = canonical_fingerprint(
         {
-            "kind": "prepared-maxwell-efie-3d-v1",
+            "kind": "prepared-maxwell-efie-3d",
             "space": current_space.space_id,
             "policy": selected.policy_id,
             "wavenumber": array_tree_fingerprint(k),
@@ -352,8 +352,7 @@ def prepare_maxwell_efie_3d(
         provider="Phydra Laplace DP0 singular Galerkin plus analytic smooth Helmholtz correction",
         precision=str(matrix.dtype),
         resource_evidence=(
-            f"dense {surface.edge_count}x{surface.edge_count} complex matrix; "
-            f"estimated {dense_bytes} resident bytes"
+            f"dense {surface.edge_count}x{surface.edge_count} complex matrix; estimated {dense_bytes} resident bytes"
         ),
         error_evidence=(
             "Laplace singular quadrature report retained; Helmholtz smooth correction "
@@ -384,7 +383,7 @@ def prepare_maxwell_efie_3d(
         discrete_accuracy_supported=jnp.asarray(True),
         continuum_discretization_error_estimated=False,
         report_id=canonical_fingerprint(
-            {"kind": "maxwell-efie-assembly-report-3d-v1", "prepared": prepared_id}
+            {"kind": "maxwell-efie-assembly-report-3d", "prepared": prepared_id}
         ),
     )
     prepared = PreparedMaxwellEFIE3D(
@@ -520,7 +519,7 @@ def prepare_maxwell_electric_field_action_3d(
     )
     action_id = canonical_fingerprint(
         {
-            "kind": "maxwell-electric-field-action-3d-v1",
+            "kind": "maxwell-electric-field-action-3d",
             "prepared": prepared.prepared_id,
             "targets": array_tree_fingerprint(points),
             "clearance_h": clearance,
@@ -535,12 +534,10 @@ def prepare_maxwell_electric_field_action_3d(
         provider="phydrax Maxwell dyadic direct dense action",
         precision=str(flat_matrix.dtype),
         resource_evidence=(
-            f"dense {(points.shape[0] * 3)}x{surface.edge_count} complex action; "
-            f"estimated {dense_bytes} bytes"
+            f"dense {(points.shape[0] * 3)}x{surface.edge_count} complex action; estimated {dense_bytes} bytes"
         ),
         error_evidence=(
-            "exact target-to-triangle clearance; centroid quadrature has no continuum "
-            "error certificate"
+            "exact target-to-triangle clearance; centroid quadrature has no continuum error certificate"
         ),
         non_goals=(
             "on-surface traces",
@@ -548,11 +545,11 @@ def prepare_maxwell_electric_field_action_3d(
             "near-singular quadrature",
             "far-field acceleration",
         ),
-        target_count=int(points.shape[0]),
+        target_count=points.shape[0],
         dense_bytes=dense_bytes,
         minimum_distance=minimum_distance,
         report_id=canonical_fingerprint(
-            {"kind": "maxwell-electric-field-report-3d-v1", "action": action_id}
+            {"kind": "maxwell-electric-field-report-3d", "action": action_id}
         ),
     )
     return MaxwellElectricFieldAction3D(

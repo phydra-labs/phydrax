@@ -82,8 +82,7 @@ class CSVReader(StrictModule):
         if _is_numeric_dtype(self._data):
             return jnp.asarray(self._data.to_numpy())
         raise TypeError(
-            "Cannot convert non-numeric CSV data to a JAX array. "
-            "Use `to_dict()` for mixed data."
+            "Cannot convert non-numeric CSV data to a JAX array. Use `to_dict()` for mixed data."
         )
 
     def to_dict(self) -> dict[str, CSVValue]:

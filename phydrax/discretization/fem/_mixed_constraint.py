@@ -81,7 +81,7 @@ class PressureGaugePolicy(StrictModule, NonTrainableState):
         if mode_ == "mean-zero":
             if pinned_dof is not None:
                 raise ValueError("Mean-zero pressure gauges do not accept pinned_dof.")
-            weights_ = None if weights is None else np.asarray(weights, dtype=float)
+            weights_ = None if weights is None else np.asarray(weights, dtype=np.float64)
             if weights_ is not None and (
                 weights_.ndim != 1
                 or np.any(~np.isfinite(weights_))
@@ -172,7 +172,7 @@ class PressureGaugePolicy(StrictModule, NonTrainableState):
         )
         return PressureGaugeEvidence(residual, scale, finite, valid, self.mode)
 
-    def diagnostic_vector(self, size: int, dtype=float, /) -> np.ndarray:
+    def diagnostic_vector(self, size: int, dtype=np.float64, /) -> np.ndarray:
         return np.asarray(self._weights(size, dtype))
 
 

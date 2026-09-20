@@ -13,7 +13,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._posterior import AbstractBijector
 
@@ -25,8 +25,8 @@ class ReducedPotentialEvaluation(StrictModule):
 
 
 class AbstractReducedPotential(StrictModule, NonTrainableState):
-    event_shape: AbstractAttribute[tuple[int, ...]]
-    potential_id: AbstractAttribute[str]
+    event_shape: eqx.AbstractVar[tuple[int, ...]]
+    potential_id: eqx.AbstractVar[str]
 
     @abstractmethod
     def evaluate(self, value: ArrayLike, /) -> ReducedPotentialEvaluation:
@@ -47,7 +47,7 @@ class CallableReducedPotential(AbstractReducedPotential):
     ):
         if not callable(function):
             raise TypeError("function must be callable.")
-        shape = tuple(int(size) for size in event_shape)
+        shape = tuple(event_shape)
         if not shape or any(size <= 0 for size in shape):
             raise ValueError("event_shape must contain positive dimensions.")
         identifier = str(potential_id).strip()
@@ -83,7 +83,7 @@ class TargetedMapPlan(StrictModule):
     ):
         if not isinstance(bijector, AbstractBijector):
             raise TypeError("bijector must implement AbstractBijector.")
-        shape = tuple(int(size) for size in event_shape)
+        shape = tuple(event_shape)
         if not shape or any(size <= 0 for size in shape):
             raise ValueError("event_shape must contain positive dimensions.")
         if (

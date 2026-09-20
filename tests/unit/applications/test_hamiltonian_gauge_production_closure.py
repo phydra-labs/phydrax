@@ -104,7 +104,7 @@ def test_compact_2d_dense_mpo_mps_and_gauss_evolution_agree():
     assert mpo.evidence.valid
     assert jnp.allclose(mpo.operator.to_dense(), dense)
 
-    local_zero_flux = jnp.asarray((0.0, 1.0, 0.0), dtype=complex)
+    local_zero_flux = jnp.asarray((0.0, 1.0, 0.0), dtype="complex128")
     mps = MatrixProductState(
         tuple(local_zero_flux[None, :, None] for _ in range(model.link_count))
     )
@@ -126,7 +126,7 @@ def test_compact_2d_dense_mpo_mps_and_gauss_evolution_agree():
         ),
     )
     initial = (
-        jnp.zeros((network.physical_dimension,), dtype=complex)
+        jnp.zeros((network.physical_dimension,), dtype="complex128")
         .at[int(sector.subspace.basis_indices[0])]
         .set(1.0)
     )

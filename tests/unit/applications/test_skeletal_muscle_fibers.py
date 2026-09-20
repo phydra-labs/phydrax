@@ -14,7 +14,7 @@ from phydrax.applications.skeletal_muscle.fibers._bundle import _FiberBundleDrif
 
 
 def _schedule():
-    mask = jnp.zeros((1, 2, 5), dtype=bool).at[0, 0, 0].set(True)
+    mask = jnp.zeros((1, 2, 5), dtype="bool").at[0, 0, 0].set(True)
     return PrescribedFiberStimulusSchedule(
         jnp.asarray([0.0]),
         jnp.asarray([0.05]),

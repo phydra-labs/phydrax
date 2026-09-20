@@ -306,7 +306,7 @@ def _weighted_covariances(
 def _covariance_inverse_root(
     covariance: Array, regularization: float, identity: str, /
 ) -> tuple[Array, Array, Array, Array]:
-    size = int(covariance.shape[0])
+    size = covariance.shape[0]
     properties = OperatorProperties(
         self_adjoint=True,
         positive_semidefinite=True,
@@ -496,7 +496,7 @@ def _fit_vac_features(
     state_shape: tuple[int, ...],
     method_name: str,
 ) -> VACResult:
-    features = int(source_values.shape[-1])
+    features = source_values.shape[-1]
     values0 = source_values.reshape((-1, features))
     values1 = target_values.reshape((-1, features))
     mask = pair_valid.reshape((-1,))

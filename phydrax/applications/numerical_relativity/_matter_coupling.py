@@ -594,7 +594,7 @@ class CoupledBudget(StrictModule, NonTrainableState):
         )
 
     @classmethod
-    def zeros(cls, *, dtype: Any = float) -> CoupledBudget:
+    def zeros(cls, *, dtype: Any = jnp.float64) -> CoupledBudget:
         zero = jnp.asarray(0.0, dtype=dtype)
         vector = jnp.zeros((3,), dtype=zero.dtype)
         count = jnp.asarray(0, dtype=jnp.int32)
@@ -724,14 +724,14 @@ class CoupledParticipantStatus(StrictModule):
         /,
     ):
         self.status = _scalar(status, "participant status", dtype=jnp.int32)
-        self.finite = _scalar(finite, "participant finite", dtype=bool)
-        self.converged = _scalar(converged, "participant converged", dtype=bool)
+        self.finite = _scalar(finite, "participant finite", dtype=jnp.bool_)
+        self.converged = _scalar(converged, "participant converged", dtype=jnp.bool_)
         self.physically_valid = _scalar(
-            physically_valid, "participant physically_valid", dtype=bool
+            physically_valid, "participant physically_valid", dtype=jnp.bool_
         )
-        self.qualified = _scalar(qualified, "participant qualified", dtype=bool)
+        self.qualified = _scalar(qualified, "participant qualified", dtype=jnp.bool_)
         self.derivative_valid = _scalar(
-            derivative_valid, "participant derivative_valid", dtype=bool
+            derivative_valid, "participant derivative_valid", dtype=jnp.bool_
         )
 
     @property

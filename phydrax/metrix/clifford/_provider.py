@@ -37,7 +37,7 @@ class CliffordFiniteAlgebraProvider(StrictModule, NonTrainableState):
         self.basis_ids = labels
         self.provider_id = canonical_fingerprint(
             {
-                "kind": "clifford-finite-algebra-provider-v1",
+                "kind": "clifford-finite-algebra-provider",
                 "algebra": algebra.algebra_id,
                 "layout": layout.layout_id,
                 "basis": list(labels),

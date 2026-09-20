@@ -202,7 +202,7 @@ def test_function_frame_artifact_round_trips_in_a_fresh_process(tmp_path):
     assert manifest.execution_model_architecture_id == (
         "phydrax.operator.architecture:FunctionFrameReconstructor"
     )
-    assert "phydrax.operator.function_frame:LearnedFunctionFrame@1" in recipe
+    assert "phydrax.operator.function_frame:LearnedFunctionFrame" in recipe
     assert "phydrax.nn.operator.architectures.conditioning" not in recipe
     assert jnp.allclose(
         restored.predict(dataset.batch).field("solution").values,

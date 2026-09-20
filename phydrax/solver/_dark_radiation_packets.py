@@ -265,8 +265,7 @@ class DarkRadiationPacketPlan(StrictModule, NonTrainableState):
             or epoch_plan.radiation_width < _EPOCH_RADIATION_WIDTH
         ):
             raise ValueError(
-                "Dark-sector epoch radiation/event capacity or radiation width "
-                "cannot contain the packet kernel."
+                "Dark-sector epoch radiation/event capacity or radiation width cannot contain the packet kernel."
             )
         edges = jnp.asarray(group_edges)
         lower = jnp.asarray(domain_minimum, dtype=edges.dtype)
@@ -347,7 +346,7 @@ class DarkRadiationPacketPlan(StrictModule, NonTrainableState):
             jnp.full(shape, -1, dtype=jnp.int32),
             jnp.full(shape, int(DarkRadiationPacketStatus.INACTIVE), dtype=jnp.int8),
             jnp.zeros(shape, dtype=dtype_),
-            jnp.zeros(shape, dtype=bool),
+            jnp.zeros(shape, dtype=jnp.bool_),
             jnp.asarray(frame.frame_token),
             jnp.asarray(frame.observer_coordinates, dtype=dtype_).reshape((4,)),
             jnp.asarray(frame.time).reshape(()).astype(dtype_),
@@ -485,7 +484,7 @@ class DarkRadiationPacketPlan(StrictModule, NonTrainableState):
         )
         owners = jnp.asarray(owner, dtype=jnp.int32)
         weights = jnp.asarray(weight, dtype=state.weight.dtype)
-        mask = jnp.asarray(admission_mask, dtype=bool)
+        mask = jnp.asarray(admission_mask, dtype=jnp.bool_)
         batch = identifiers.shape[0]
         expected = (batch,)
         if (
@@ -518,7 +517,7 @@ class DarkRadiationPacketPlan(StrictModule, NonTrainableState):
             (identifiers[:, None] == identifiers[None, :]) & mask[:, None] & mask[None, :]
         )
         identities_unique = ~jnp.any(
-            pair_duplicate & ~jnp.eye(batch, dtype=bool)
+            pair_duplicate & ~jnp.eye(batch, dtype=jnp.bool_)
         ) & ~jnp.any(mask & existing_duplicate)
         shell = self.units.mass_shell_admissible(momenta, 0.0)
         stokes_norm = jnp.sqrt(jnp.sum(polarization[:, 1:] ** 2, axis=-1))
@@ -955,7 +954,7 @@ class DarkRadiationPacketPlan(StrictModule, NonTrainableState):
             epoch_sequence=epoch_sequence,
             parent_epoch_manifest_id=parent_epoch_manifest_id,
         )
-        active = np.asarray(state.active_mask, dtype=bool)
+        active = np.asarray(state.active_mask, dtype=np.bool_)
         content_ids = tuple(
             canonical_fingerprint(
                 {
@@ -1061,8 +1060,7 @@ class DarkRadiationPacketPlan(StrictModule, NonTrainableState):
         for name, expected_shape in expected.items():
             if vars(state)[name].shape != expected_shape:
                 raise ValueError(
-                    f"Packet state {name} must have shape {expected_shape}; "
-                    f"got {vars(state)[name].shape}."
+                    f"Packet state {name} must have shape {expected_shape}; got {vars(state)[name].shape}."
                 )
 
 

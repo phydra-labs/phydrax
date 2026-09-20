@@ -387,8 +387,7 @@ class AbstractModelBasedTrustRegion(AbstractMinimizationMethod):
             implicit_differentiation=False,
             precision_policy_id=self.precision.policy_id,
             notes=(
-                f"poisedness-condition={float(model.condition_estimate):.6g};"
-                f"linear-plan={model.linear_plan_id}"
+                f"poisedness-condition={float(model.condition_estimate):.6g};linear-plan={model.linear_plan_id}"
             ),
         )
         precision_evidence = self.precision.evidence_for(

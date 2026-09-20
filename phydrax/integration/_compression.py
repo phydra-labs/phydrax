@@ -95,7 +95,7 @@ def compress(
         selection=selection.diagnostics,
         source_mass=measure.physical_mass,
         source_points=measure.count,
-        feature_count=int(feature_values.shape[1]),
+        feature_count=feature_values.shape[1],
         source_provenance=measure.source_provenance,
     )
     provenance = f"compressed:{selection.method}:{measure.source_provenance}"

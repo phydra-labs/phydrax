@@ -151,9 +151,7 @@ def test_report_composition_rejects_broken_identity_continuity():
 def test_report_composition_requires_exact_format_profile_continuity():
     source = AdapterFormatProfile("source")
     parsed_text = AdapterFormatProfile("parsed", qualifiers={"encoding": "text"})
-    parsed_binary = AdapterFormatProfile(
-        "parsed", qualifiers={"encoding": "binary"}
-    )
+    parsed_binary = AdapterFormatProfile("parsed", qualifiers={"encoding": "binary"})
     normalized = AdapterFormatProfile("normalized")
     parse = _stage("parse", source, parsed_text, "source-id", "parsed-id")
     normalize = _stage(

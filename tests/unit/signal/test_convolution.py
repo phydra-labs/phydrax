@@ -32,7 +32,7 @@ def test_direct_and_fft_convolution_match_declared_numpy_crops(mode, tap_count):
 
 
 def test_convolution_preserves_stream_axes_and_complex_dtype():
-    values = jnp.arange(2 * 7 * 3, dtype=float).reshape((2, 7, 3))
+    values = jnp.arange(2 * 7 * 3, dtype="float64").reshape((2, 7, 3))
     taps = jnp.asarray((1.0 + 0.5j, -0.25j))
 
     output = convolve(values, taps, axis=1, mode="same", method="fft")

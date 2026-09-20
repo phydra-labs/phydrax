@@ -89,7 +89,7 @@ surface. Required inputs include:
   from pH or coordinates.
 - A fully parameterized native `PreparedAtomisticForceField`, complete stable
   atom-ID map, and parameter rights. Coefficients must already use the exact
-  declared system energy unit; mismatches are refused rather than relabelled.
+  declared system energy unit; mismatches are refused rather than relabeled.
 
 Caps, disulfides, PTMs, covalent ligands, solvent, ions, virtual degrees of freedom,
 periodicity, and multichain all-atom binding are outside this profile. The binder
@@ -153,7 +153,7 @@ explicit offset conversion; Celsius is not a multiplicative unit conversion.
 
 `ThermodynamicConvention` distinguishes `basis="molar"` from
 `basis="single-system"`; use energy/amount units with R or ordinary energy units
-with kB respectively. This distinction is not removed by a unit relabelling.
+with kB respectively. This distinction is not removed by a unit relabeling.
 The default concentration unit is mol/m³, with standard concentration 1000
 mol/m³, not a numeric convention of mol/L. Every model and its condition rows
 must use the same convention.

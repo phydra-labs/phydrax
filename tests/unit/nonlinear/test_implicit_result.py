@@ -269,7 +269,7 @@ def test_state_dependent_derivative_setups_use_converged_native_coordinates():
         state_space=source,
         residual_space=target,
         trial_validity=lambda state, _: jnp.all(state > 0.0),
-        trial_validity_id="positive-square-domain-v1",
+        trial_validity_id="positive-square-domain",
         linear_setup=setup,
         tangent_linear_setup=setup,
         adjoint_linear_setup=transpose_setup,

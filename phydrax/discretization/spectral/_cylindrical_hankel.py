@@ -129,8 +129,8 @@ class CylindricalHankelPlan(StrictModule, NonTrainableState):
 
     def prepare(self, /) -> PreparedCylindricalHankel:
         roots_host = jn_zeros(self.order, self.radial_count + 1)
-        roots = jnp.asarray(roots_host[:-1], dtype=float)
-        boundary_root = jnp.asarray(roots_host[-1], dtype=float)
+        roots = jnp.asarray(roots_host[:-1], dtype=jnp.float64)
+        boundary_root = jnp.asarray(roots_host[-1], dtype=jnp.float64)
         radius = jnp.asarray(self.radius, dtype=roots.dtype)
         radial_coordinates = radius * roots / boundary_root
         transverse_angular_wavenumbers = roots / radius

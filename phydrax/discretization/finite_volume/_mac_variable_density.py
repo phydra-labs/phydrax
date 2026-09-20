@@ -156,8 +156,7 @@ class MACVariableDensityPlan(StrictModule, NonTrainableState):
         )
         if unsupported:
             raise ValueError(
-                "Variable-density MAC currently requires impermeable boundaries; "
-                f"got {unsupported!r}."
+                f"Variable-density MAC currently requires impermeable boundaries; got {unsupported!r}."
             )
         self.momentum = momentum
         self.plan_id = canonical_fingerprint(

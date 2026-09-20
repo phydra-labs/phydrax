@@ -75,9 +75,9 @@ class SchwingerChainModel(StrictModule, NonTrainableState):
         if coupling < 0.0:
             raise ValueError("gauge_coupling must be non-negative.")
         background = (
-            np.zeros((sites - 1,), dtype=float)
+            np.zeros((sites - 1,), dtype=np.float64)
             if external_flux is None
-            else np.asarray(external_flux, dtype=float)
+            else np.asarray(external_flux, dtype=np.float64)
         )
         if background.shape != (sites - 1,) or np.any(~np.isfinite(background)):
             raise ValueError("external_flux must be finite with shape (site_count - 1,).")
@@ -473,7 +473,7 @@ def schwinger_local_background_schedule(
     background = jnp.asarray(interval_external_flux)
     if times.ndim != 1 or times.shape[0] < 2:
         raise ValueError("time_grid must contain at least two knots.")
-    intervals = int(times.shape[0] - 1)
+    intervals = times.shape[0] - 1
     if background.shape != (intervals, model.site_count - 1):
         raise ValueError(
             "interval_external_flux must have shape (interval_count, site_count - 1)."

@@ -16,7 +16,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ...._strict import AbstractAttribute, StrictModule
+from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ._orbital import MolecularOrbitalIntegralStore
 
@@ -180,7 +180,7 @@ class CoupledClusterResult(StrictModule, NonTrainableState):
         self.amplitude_residual = jnp.asarray(amplitude_residual, dtype=dtype).reshape(())
         self.lambda_residual = jnp.asarray(lambda_residual, dtype=dtype).reshape(())
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32).reshape(())
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.provider_id = provider
         self.plan_id = str(plan_id)
         self.store_id = str(store_id)
@@ -269,7 +269,7 @@ class CoupledClusterPlan(StrictModule, NonTrainableState):
 
 
 class AbstractCoupledClusterProvider(StrictModule, NonTrainableState):
-    provider_id: AbstractAttribute[str]
+    provider_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def evaluate(
@@ -384,11 +384,11 @@ class MolecularCoupledClusterGradientResult(StrictModule, NonTrainableState):
         )
         self.gradient = gradient_
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32).reshape(())
-        self.scf_converged = jnp.asarray(scf_converged, dtype=bool).reshape(())
-        self.amplitudes_converged = jnp.asarray(amplitudes_converged, dtype=bool).reshape(
-            ()
-        )
-        self.lambda_converged = jnp.asarray(lambda_converged, dtype=bool).reshape(())
+        self.scf_converged = jnp.asarray(scf_converged, dtype=jnp.bool_).reshape(())
+        self.amplitudes_converged = jnp.asarray(
+            amplitudes_converged, dtype=jnp.bool_
+        ).reshape(())
+        self.lambda_converged = jnp.asarray(lambda_converged, dtype=jnp.bool_).reshape(())
         self.successful = (
             self.scf_converged
             & self.amplitudes_converged
@@ -419,8 +419,8 @@ class MolecularCoupledClusterGradientResult(StrictModule, NonTrainableState):
 
 
 class AbstractMolecularCoupledClusterGradientProvider(StrictModule, NonTrainableState):
-    provider_id: AbstractAttribute[str]
-    plan_id: AbstractAttribute[str]
+    provider_id: eqx.AbstractVar[str]
+    plan_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def evaluate(self, positions: ArrayLike, /) -> MolecularCoupledClusterGradientResult:

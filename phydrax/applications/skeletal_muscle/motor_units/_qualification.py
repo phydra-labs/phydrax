@@ -18,9 +18,7 @@ from ...._trainable import NonTrainableState
 from ._fuglevand_winter_patla_1993 import PreparedFuglevandWinterPatla1993
 
 
-class FuglevandWinterPatla1993QualificationEvidence(
-    StrictModule, NonTrainableState
-):
+class FuglevandWinterPatla1993QualificationEvidence(StrictModule, NonTrainableState):
     """Replay, renewal-distribution, twitch, and force-statistics evidence."""
 
     replay_exact: Array
@@ -43,9 +41,7 @@ class FuglevandWinterPatla1993QualificationEvidence(
     qualification_id: str = eqx.field(static=True)
 
 
-class FuglevandWinterPatla1993QualificationPlan(
-    StrictModule, NonTrainableState
-):
+class FuglevandWinterPatla1993QualificationPlan(StrictModule, NonTrainableState):
     """Finite-sample source qualification policy, not a universal force law."""
 
     normal_mean_tolerance: float = eqx.field(static=True)
@@ -100,7 +96,7 @@ class FuglevandWinterPatla1993QualificationPlan(
         if not isinstance(prepared, PreparedFuglevandWinterPatla1993):
             raise TypeError("prepared must be PreparedFuglevandWinterPatla1993.")
         scores = jnp.asarray(normal_scores)
-        mask = jnp.asarray(event_mask, dtype=bool)
+        mask = jnp.asarray(event_mask, dtype=jnp.bool_)
         force = jnp.asarray(force_samples_arbitrary)
         replay = jnp.asarray(replay_force_samples_arbitrary)
         if scores.shape != mask.shape or scores.ndim < 2:
@@ -110,7 +106,7 @@ class FuglevandWinterPatla1993QualificationPlan(
                 "force and replay samples must be equal-shaped vectors with at least two entries."
             )
         if not jnp.issubdtype(scores.dtype, jnp.inexact):
-            scores = scores.astype(float)
+            scores = scores.astype("float64")
         force = force.astype(scores.dtype)
         replay = replay.astype(scores.dtype)
         count = jnp.sum(mask).astype(jnp.int32)
@@ -129,8 +125,8 @@ class FuglevandWinterPatla1993QualificationPlan(
 
         contraction = prepared.contraction_time_ms
         peak = prepared.peak_twitch_force_arbitrary
-        twitch_at_peak = peak * (contraction / contraction) * jnp.exp(
-            1.0 - contraction / contraction
+        twitch_at_peak = (
+            peak * (contraction / contraction) * jnp.exp(1.0 - contraction / contraction)
         )
         twitch_error = jnp.max(
             jnp.abs(twitch_at_peak - peak) / jnp.maximum(jnp.abs(peak), 1.0)
@@ -149,10 +145,7 @@ class FuglevandWinterPatla1993QualificationPlan(
         )
         distribution = (
             (jnp.abs(score_mean) <= self.normal_mean_tolerance)
-            & (
-                jnp.abs(score_std - 1.0)
-                <= self.normal_standard_deviation_tolerance
-            )
+            & (jnp.abs(score_std - 1.0) <= self.normal_standard_deviation_tolerance)
             & (score_min >= -3.9)
             & (score_max <= 3.9)
         )

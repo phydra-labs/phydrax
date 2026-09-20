@@ -326,7 +326,7 @@ class SmallRootKernel(StrictModule):
         tasks = self.precision.state(jnp.asarray(initial_states))
         if tasks.ndim != 2:
             raise ValueError("initial_states must have shape (tasks, dimension).")
-        task_count, dimension = (int(size) for size in tasks.shape)
+        task_count, dimension = (size for size in tasks.shape)
         lanes = int(lane_count)
         if task_count < 1:
             raise ValueError("A root pool requires at least one task.")
@@ -343,8 +343,7 @@ class SmallRootKernel(StrictModule):
                 return None
             if leaf.shape[0] != task_count:
                 raise ValueError(
-                    "Every non-scalar root argument array must have one leading "
-                    "task axis."
+                    "Every non-scalar root argument array must have one leading task axis."
                 )
             return 0
 
@@ -731,7 +730,7 @@ class SmallRootKernel(StrictModule):
             jacobian_evaluations=run.output_jacobians,
             accepted_steps=run.output_accepted,
             residual_norm=run.output_norms,
-            jacobian_fallback=jnp.zeros_like(run.output_status, dtype=bool),
+            jacobian_fallback=jnp.zeros_like(run.output_status, dtype=jnp.bool_),
             precision_evidence=self.precision.evidence_for(
                 run.output_states,
                 run.output_residuals,

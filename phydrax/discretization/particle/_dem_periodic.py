@@ -16,6 +16,7 @@ from phydrax.ein import contract
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...linalg import inverse_small_linear, SmallLinearSolvePlan
 from .._periodic_cell import PeriodicCell
 from ._pairwise import particle_pair_geometry
 
@@ -55,7 +56,7 @@ class PeriodicNeighborhoodEnvelope(StrictModule, NonTrainableState):
         minimum_lattice_height: float,
         maximum_deformation_norm: float,
     ):
-        vectors = np.asarray(reference_vectors, dtype=float)
+        vectors = np.asarray(reference_vectors, dtype=np.float64)
         if (
             vectors.ndim != 2
             or vectors.shape[0] != vectors.shape[1]
@@ -103,7 +104,14 @@ class PeriodicNeighborhoodEnvelope(StrictModule, NonTrainableState):
         gram = contract("ik,jk->ij", vectors, vectors, backend="jax")
         eigenvalues = jnp.linalg.eigvalsh(gram)
         minimum_singular = jnp.sqrt(jnp.maximum(jnp.min(eigenvalues), 0.0))
-        inverse = jnp.linalg.inv(vectors)
+        inverse_result = inverse_small_linear(
+            SmallLinearSolvePlan(
+                vectors.shape[0],
+                maximum_condition=float(np.finfo(np.float64).max),
+            ),
+            vectors,
+        )
+        inverse = inverse_result.value
         lattice_height = jnp.min(1.0 / jnp.sqrt(jnp.sum(inverse * inverse, axis=0)))
         deformation = jnp.sqrt(
             jnp.sum((vectors - self.reference_vectors.astype(vectors.dtype)) ** 2)
@@ -111,8 +119,12 @@ class PeriodicNeighborhoodEnvelope(StrictModule, NonTrainableState):
         singular_margin = minimum_singular - self.minimum_singular_value
         height_margin = lattice_height - self.minimum_lattice_height
         deformation_margin = self.maximum_deformation_norm - deformation
-        finite = jnp.all(jnp.isfinite(vectors)) & jnp.all(
-            jnp.isfinite(jnp.asarray((minimum_singular, lattice_height, deformation)))
+        finite = (
+            inverse_result.successful
+            & jnp.all(jnp.isfinite(vectors))
+            & jnp.all(
+                jnp.isfinite(jnp.asarray((minimum_singular, lattice_height, deformation)))
+            )
         )
         complete = (
             finite
@@ -150,7 +162,7 @@ class DEMBulkStressPlan(StrictModule, NonTrainableState):
         include_body_force_moment: bool = False,
         frame: DEMBulkStressFrame = "cell_comoving",
     ):
-        origin_ = np.asarray(origin, dtype=float)
+        origin_ = np.asarray(origin, dtype=np.float64)
         if origin_.ndim != 1 or origin_.size not in (2, 3):
             raise ValueError("DEMBulkStressPlan origin must be a 2-D or 3-D vector.")
         if np.any(~np.isfinite(origin_)):
@@ -202,9 +214,9 @@ class DEMBulkStressPlan(StrictModule, NonTrainableState):
         displacement = jnp.asarray(contact_displacement, dtype=force.dtype)
         mass = jnp.asarray(particle_mass, dtype=force.dtype)
         velocity = jnp.asarray(particle_velocity, dtype=force.dtype)
-        active = jnp.asarray(particle_active, dtype=bool)
+        active = jnp.asarray(particle_active, dtype=jnp.bool_)
         volume_ = jnp.asarray(volume, dtype=force.dtype)
-        dimension = int(self.origin.size)
+        dimension = self.origin.size
         if (
             force.ndim != 2
             or force.shape[1] != dimension
@@ -329,7 +341,7 @@ class DEMPeriodicCellControlPlan(StrictModule, NonTrainableState):
         maximum_condition_number: float = 1.5,
         plan_id: str | None = None,
     ):
-        rate = np.asarray(prescribed_strain_rate, dtype=float)
+        rate = np.asarray(prescribed_strain_rate, dtype=np.float64)
         if (
             rate.ndim != 2
             or rate.shape[0] != rate.shape[1]
@@ -339,21 +351,21 @@ class DEMPeriodicCellControlPlan(StrictModule, NonTrainableState):
         if np.any(~np.isfinite(rate)):
             raise ValueError("prescribed_strain_rate must be finite.")
         rate_mask = (
-            np.ones(rate.shape, dtype=bool)
+            np.ones(rate.shape, dtype=np.bool_)
             if strain_rate_mask is None
-            else np.asarray(strain_rate_mask, dtype=bool)
+            else np.asarray(strain_rate_mask, dtype=np.bool_)
         )
         controlled_mask = (
-            np.zeros(rate.shape, dtype=bool)
+            np.zeros(rate.shape, dtype=np.bool_)
             if stress_mask is None
-            else np.asarray(stress_mask, dtype=bool)
+            else np.asarray(stress_mask, dtype=np.bool_)
         )
         target = (
             np.zeros(rate.shape)
             if target_stress is None
-            else np.asarray(target_stress, dtype=float)
+            else np.asarray(target_stress, dtype=np.float64)
         )
-        compliance = np.asarray(stress_compliance, dtype=float)
+        compliance = np.asarray(stress_compliance, dtype=np.float64)
         if compliance.ndim == 0:
             compliance = np.full(rate.shape, float(compliance))
         if (
@@ -410,7 +422,7 @@ class DEMPeriodicCellControlPlan(StrictModule, NonTrainableState):
 
     @property
     def ambient_dimension(self) -> int:
-        return int(self.prescribed_strain_rate.shape[0])
+        return self.prescribed_strain_rate.shape[0]
 
     def initialize(self, cell: PeriodicCell, dtype, /) -> DEMPeriodicCellState:
         if not isinstance(cell, PeriodicCell) or not cell.fully_periodic:

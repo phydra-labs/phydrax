@@ -231,7 +231,7 @@ class LatticeBoltzmannBoundaryStageState(StrictModule):
 
     def __init__(self, populations: ArrayLike, written: ArrayLike, /):
         values = jnp.asarray(populations)
-        marks = jnp.asarray(written, dtype=bool)
+        marks = jnp.asarray(written, dtype=jnp.bool_)
         if values.shape != marks.shape:
             raise ValueError("Boundary stage populations and written mask must match.")
         self.populations = values
@@ -283,7 +283,7 @@ class CompiledLatticeBoltzmannLinkTopology(StrictModule, NonTrainableState):
             value.shape != shape for value in (parameter, axes, signs, bodies, fractions)
         ):
             raise ValueError("All compiled link fields must have the population shape.")
-        fluid = np.asarray(fluid_mask, dtype=bool)
+        fluid = np.asarray(fluid_mask, dtype=np.bool_)
         if fluid.shape != shape[:-1]:
             raise ValueError(
                 "Topology fluid_mask must match the spatial population shape."
@@ -305,7 +305,7 @@ class CompiledLatticeBoltzmannLinkTopology(StrictModule, NonTrainableState):
         self.normal_sign = jnp.asarray(signs, dtype=jnp.int8)
         self.body_index = jnp.asarray(bodies, dtype=jnp.int32)
         self.link_fraction = jnp.asarray(fractions)
-        self.fluid_mask = jnp.asarray(fluid, dtype=bool)
+        self.fluid_mask = jnp.asarray(fluid, dtype=jnp.bool_)
         self.topology_id = identifier
         self.population_shape = shape
         self.owner_counts = tuple(
@@ -318,7 +318,7 @@ class CompiledLatticeBoltzmannLinkTopology(StrictModule, NonTrainableState):
         if values.shape != self.population_shape:
             raise ValueError("Boundary populations do not match the compiled topology.")
         return LatticeBoltzmannBoundaryStageState(
-            values, jnp.zeros(values.shape, dtype=bool)
+            values, jnp.zeros(values.shape, dtype=jnp.bool_)
         )
 
     def commit(
@@ -343,7 +343,7 @@ class CompiledLatticeBoltzmannLinkTopology(StrictModule, NonTrainableState):
         values = jnp.asarray(candidate, dtype=state.populations.dtype)
         if values.shape != self.population_shape:
             raise ValueError("Boundary candidate does not match the compiled topology.")
-        selected = jnp.zeros(self.population_shape, dtype=bool)
+        selected = jnp.zeros(self.population_shape, dtype=jnp.bool_)
         for owner in owner_tuple:
             selected = selected | (self.owner == int(owner))
         checked = eqx.error_if(

@@ -57,22 +57,22 @@ def read_lhef(
         event_number_start, event_number_start + event_capacity, dtype=np.int64
     )
     subevent_ids = np.zeros((event_capacity,), dtype=np.int32)
-    event_active = np.zeros((event_capacity,), dtype=bool)
+    event_active = np.zeros((event_capacity,), dtype=np.bool_)
     pdg_ids = np.zeros((event_capacity, particle_capacity), dtype=np.int32)
     roles = np.zeros_like(pdg_ids)
     provider_status = np.zeros_like(pdg_ids)
     momenta = np.zeros((event_capacity, particle_capacity, 4), dtype=np.float64)
     rest_energies = np.zeros((event_capacity, particle_capacity), dtype=np.float64)
-    particle_active = np.zeros((event_capacity, particle_capacity), dtype=bool)
+    particle_active = np.zeros((event_capacity, particle_capacity), dtype=np.bool_)
     mother_indices = np.full((event_capacity, particle_capacity, 2), -1, dtype=np.int32)
     color_flow = np.zeros((event_capacity, particle_capacity, 2), dtype=np.int32)
     vertices = np.zeros((event_capacity, vertex_capacity, 4), dtype=np.float64)
-    vertex_active = np.zeros((event_capacity, vertex_capacity), dtype=bool)
+    vertex_active = np.zeros((event_capacity, vertex_capacity), dtype=np.bool_)
     production_vertex_indices = np.full(
         (event_capacity, particle_capacity), -1, dtype=np.int32
     )
     end_vertex_indices = np.full((event_capacity, particle_capacity), -1, dtype=np.int32)
-    overflow = np.zeros((event_capacity,), dtype=bool)
+    overflow = np.zeros((event_capacity,), dtype=np.bool_)
     nominal_weights = np.zeros((event_capacity, 1), dtype=np.float64)
     dropped_alternates = False
     for event_index, node in enumerate(event_nodes[:event_capacity]):

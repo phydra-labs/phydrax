@@ -11,7 +11,7 @@ from phydrax.applications import geophysics as geo
 
 def _unit_tetra():
     return phx.discretization.CellMesh.from_tetrahedra(
-        np.asarray(((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)), dtype=float),
+        np.asarray(((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)), dtype="float64"),
         np.asarray(((0, 1, 2, 3),)),
     )
 
@@ -43,7 +43,7 @@ def _hcurl_mesh():
             (0, 0, 1),
             (0, 0, -1),
         ),
-        dtype=float,
+        dtype="float64",
     )
     faces = (
         (1, 3, 5),
@@ -85,7 +85,7 @@ def test_complete_and_point_electrode_models_are_finite_and_reciprocal():
 
 def test_line_two_point_five_d_and_ip_responses_are_physical():
     mesh = phx.discretization.CellMesh.from_triangles(
-        np.asarray(((0, 0), (1, 0), (1, 1), (0, 1)), dtype=float),
+        np.asarray(((0, 0), (1, 0), (1, 1), (0, 1)), dtype="float64"),
         np.asarray(((0, 1, 2), (0, 2, 3))),
     )
     positions = np.asarray(

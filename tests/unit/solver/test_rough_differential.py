@@ -73,9 +73,9 @@ def test_davie_step_uses_second_level_factor_jvp_and_improves_smooth_path_error(
     assert jnp.allclose(one_step.states[0, 0], expected_one_step, atol=1e-12)
     assert davie_error < 0.08 * euler_error
     assert euler.solver_name == "RoughEuler"
-    assert euler.solver_id == "rough-solver:rough-euler:v1"
+    assert euler.solver_id == "rough-solver:rough-euler"
     assert davie.solver_name == "Davie"
-    assert davie.solver_id == "rough-solver:davie:v1"
+    assert davie.solver_id == "rough-solver:davie"
     assert euler.solver_id != davie.solver_id
     assert euler.state_geometry_id == "state-geometry:euclidean"
 

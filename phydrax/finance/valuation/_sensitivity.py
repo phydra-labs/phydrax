@@ -53,7 +53,7 @@ class GreekRequest(StrictModule):
             raise ValueError(
                 "second_order_names must be a unique subset of parameter_names."
             )
-        bumps = None if bump_sizes is None else jnp.asarray(bump_sizes, dtype=float)
+        bumps = None if bump_sizes is None else jnp.asarray(bump_sizes, dtype=jnp.float64)
         if bumps is not None:
             if bumps.shape != (len(names),):
                 raise ValueError("bump_sizes must contain one value per parameter.")
@@ -141,7 +141,7 @@ def evaluate_aad_greeks(
         raise TypeError("request must be GreekRequest.")
     if not isinstance(valuation_id, str) or not valuation_id:
         raise ValueError("valuation_id must be a non-empty semantic identifier.")
-    parameter_array = jnp.asarray(parameters, dtype=float)
+    parameter_array = jnp.asarray(parameters, dtype=jnp.float64)
     if parameter_array.shape != (request.parameter_count,):
         raise ValueError("parameters must contain one value per requested parameter.")
     function = lambda candidate: _scalar_value(valuation(candidate))
@@ -180,10 +180,10 @@ def evaluate_implicit_greeks(
 
     if not isinstance(request, GreekRequest):
         raise TypeError("request must be GreekRequest.")
-    jacobian = jnp.asarray(state_jacobian, dtype=float)
-    residual_parameter = jnp.asarray(residual_parameter_jacobian, dtype=float)
-    value_state = jnp.asarray(value_state_gradient, dtype=float)
-    direct = jnp.asarray(direct_parameter_gradient, dtype=float)
+    jacobian = jnp.asarray(state_jacobian, dtype=jnp.float64)
+    residual_parameter = jnp.asarray(residual_parameter_jacobian, dtype=jnp.float64)
+    value_state = jnp.asarray(value_state_gradient, dtype=jnp.float64)
+    direct = jnp.asarray(direct_parameter_gradient, dtype=jnp.float64)
     if jacobian.ndim != 2 or jacobian.shape[0] != jacobian.shape[1]:
         raise ValueError("state_jacobian must be square.")
     state_count = jacobian.shape[0]
@@ -239,9 +239,9 @@ def evaluate_bump_greeks(
 
     if not isinstance(request, GreekRequest) or request.bump_sizes is None:
         raise ValueError("bump Greeks require GreekRequest.bump_sizes.")
-    base = jnp.asarray(base_value, dtype=float)
-    upward = jnp.asarray(upward_values, dtype=float)
-    downward = jnp.asarray(downward_values, dtype=float)
+    base = jnp.asarray(base_value, dtype=jnp.float64)
+    upward = jnp.asarray(upward_values, dtype=jnp.float64)
+    downward = jnp.asarray(downward_values, dtype=jnp.float64)
     if (
         base.shape != ()
         or upward.shape != (request.parameter_count,)

@@ -32,7 +32,7 @@ def _kernel_shape(value: int | Sequence[int], dimension: int, /) -> tuple[int, .
     if isinstance(value, int):
         result = (int(value),) * dimension
     else:
-        result = tuple(int(size) for size in value)
+        result = tuple(value)
     if len(result) != dimension or any(size <= 0 or size % 2 == 0 for size in result):
         raise ValueError("kernel_shape must contain one positive odd size per dimension.")
     return result
@@ -72,7 +72,7 @@ def _kernel_group_action_numpy(
         group.lattice_permutations[element],
         group.lattice_signs[element],
     )
-    return np.einsum(
+    return ein.contract(
         "oa,n...ab,bi->n...oi",
         output_actions[element],
         spatial,
@@ -155,17 +155,16 @@ class InvariantFilterBasis(StrictModule, NonTrainableState):
         estimated_bytes = 3 * construction_size * construction_size * 8
         if estimated_bytes > int(max_construction_bytes):
             raise ValueError(
-                "Invariant filter construction exceeds max_construction_bytes; "
-                f"estimated {estimated_bytes} bytes."
+                f"Invariant filter construction exceeds max_construction_bytes; estimated {estimated_bytes} bytes."
             )
 
         input_actions = np.asarray(
-            input_layout.channel_actions(group.matrices), dtype=float
+            input_layout.channel_actions(group.matrices), dtype=np.float64
         )
         output_actions = np.asarray(
-            output_layout.channel_actions(group.matrices), dtype=float
+            output_layout.channel_actions(group.matrices), dtype=np.float64
         )
-        candidates = np.eye(construction_size, dtype=float).reshape(
+        candidates = np.eye(construction_size, dtype=np.float64).reshape(
             (construction_size,)
             + shape
             + (output_layout.channel_count, input_layout.channel_count)
@@ -207,8 +206,7 @@ class InvariantFilterBasis(StrictModule, NonTrainableState):
                 defect = max(defect, float(np.max(np.abs(transformed - basis))))
         if defect > equivariance_tol:
             raise ValueError(
-                "Constructed invariant basis does not meet the equivariance tolerance: "
-                f"{defect} > {equivariance_tol}."
+                f"Constructed invariant basis does not meet the equivariance tolerance: {defect} > {equivariance_tol}."
             )
         digest = hashlib.sha256()
         digest.update(group.fingerprint.encode("ascii"))
@@ -230,7 +228,7 @@ class InvariantFilterBasis(StrictModule, NonTrainableState):
         self.output_layout = output_layout
         self.kernel_shape = shape
         self.basis = jnp.asarray(basis)
-        self.rank = int(basis.shape[0])
+        self.rank = basis.shape[0]
         self.construction_size = int(construction_size)
         self.equivariance_tolerance = equivariance_tol
         self.fingerprint = digest.hexdigest()
@@ -342,28 +340,23 @@ class LatticeEquivariantConvND(StrictModule):
         quadrature: ArrayLike | None = None,
     ) -> Array:
         inputs = jnp.asarray(values)
-        if (
-            inputs.ndim < self.spatial_ndim + 1
-            or int(inputs.shape[-1]) != self.in_channels
-        ):
+        if inputs.ndim < self.spatial_ndim + 1 or inputs.shape[-1] != self.in_channels:
             raise ValueError(
                 "values must have case axes followed by compatible spatial axes and channels."
             )
-        sample_shape = tuple(
-            int(size) for size in inputs.shape[-self.spatial_ndim - 1 : -1]
-        )
-        case_shape = tuple(int(size) for size in inputs.shape[: -self.spatial_ndim - 1])
+        sample_shape = tuple(inputs.shape[-self.spatial_ndim - 1 : -1])
+        case_shape = tuple(inputs.shape[: -self.spatial_ndim - 1])
         compute_dtype = jnp.result_type(inputs.dtype, self.coefficients.dtype)
         inputs = inputs.astype(compute_dtype)
         source_valid = (
-            jnp.ones(case_shape + sample_shape, dtype=bool)
+            jnp.ones(case_shape + sample_shape, dtype=jnp.bool_)
             if source_mask is None
             else _broadcast_sample_field(
                 source_mask,
                 case_shape,
                 sample_shape,
                 owner="source_mask",
-                dtype=bool,
+                dtype=jnp.bool_,
             )
         )
         measure = (
@@ -408,7 +401,7 @@ class LatticeEquivariantConvND(StrictModule):
                 case_shape,
                 sample_shape,
                 owner="target_mask",
-                dtype=bool,
+                dtype=jnp.bool_,
             )
             output = jnp.where(target_valid[..., None], output, jnp.zeros_like(output))
         return output
@@ -457,10 +450,7 @@ class TensorPointwiseLinear(StrictModule):
 
     def __call__(self, values: Array, /) -> Array:
         inputs = jnp.asarray(values)
-        if (
-            inputs.ndim < 1
-            or int(inputs.shape[-1]) != self.basis.input_layout.channel_count
-        ):
+        if inputs.ndim < 1 or inputs.shape[-1] != self.basis.input_layout.channel_count:
             raise ValueError("values have an incompatible tensor channel width.")
         matrix = self.basis.synthesize(self.coefficients)
         matrix = matrix.reshape(

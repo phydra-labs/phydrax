@@ -43,7 +43,7 @@ class ConformalEinsteinState(StrictModule):
         state_id: str,
     ):
         omega = jnp.asarray(conformal_factor)
-        shape = tuple(int(value) for value in omega.shape)
+        shape = tuple(omega.shape)
         metric_value = jnp.asarray(metric, dtype=omega.dtype)
         scalar = jnp.asarray(friedrich_scalar, dtype=omega.dtype)
         schouten_value = jnp.asarray(schouten, dtype=omega.dtype)
@@ -324,7 +324,7 @@ def exact_ads_conformal_reference(
     """Return constant-curvature AdS with Omega=1 as an exact local control."""
     if not isinstance(system, ConformalEinsteinSystem):
         raise TypeError("system must be ConformalEinsteinSystem.")
-    shape = tuple(int(value) for value in spatial_shape)
+    shape = tuple(spatial_shape)
     if any(value < 1 for value in shape):
         raise ValueError("spatial_shape must contain positive extents.")
     metric_matrix = np.diag((-1.0, 1.0, 1.0, 1.0))

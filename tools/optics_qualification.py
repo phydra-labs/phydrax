@@ -217,7 +217,7 @@ def _fraunhofer_case() -> dict[str, float | int | bool]:
     pupil_space = _finite_space(33, -0.5, 0.5, 0.0)
     image_space = _finite_space(51, -4.0, 4.0, 1.0)
     radius = jnp.sqrt(jnp.sum(pupil_space.transverse_coordinates**2, axis=-1))
-    field = ScalarPlaneField(pupil_space, (radius <= 0.5).astype(float), 1.0, 0.0)
+    field = ScalarPlaneField(pupil_space, (radius <= 0.5).astype("float64"), 1.0, 0.0)
     prepared = FraunhoferImagingPlan(
         pupil_space,
         image_space,

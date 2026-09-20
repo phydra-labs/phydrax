@@ -50,7 +50,7 @@ def chebyshev_lobatto_data(
     /,
     *,
     maximum_derivative_order: int = 1,
-    dtype=float,
+    dtype=jnp.float64,
     maximum_construction_bytes: int = _DEFAULT_CONSTRUCTION_BYTES,
 ) -> ChebyshevLobattoData:
     """Prepare reference nodes, interpolation weights, quadrature, and derivatives."""
@@ -82,9 +82,9 @@ def chebyshev_lobatto_data(
         )
 
     quadrature = clenshaw_curtis_data(count)
-    nodes_host = np.asarray(quadrature.nodes, dtype=float)
-    quadrature_host = np.asarray(quadrature.weights, dtype=float)
-    barycentric_host = (-1.0) ** np.arange(count, dtype=float)
+    nodes_host = np.asarray(quadrature.nodes, dtype=np.float64)
+    quadrature_host = np.asarray(quadrature.weights, dtype=np.float64)
+    barycentric_host = (-1.0) ** np.arange(count, dtype=np.float64)
     barycentric_host[[0, -1]] *= 0.5
 
     differences = nodes_host[:, None] - nodes_host[None, :]
@@ -109,7 +109,7 @@ def chebyshev_lobatto_data(
     )
     data_id = canonical_fingerprint(
         {
-            "kind": "chebyshev-lobatto-data-v1",
+            "kind": "chebyshev-lobatto-data",
             "num_nodes": count,
             "degree": count - 1,
             "maximum_derivative_order": derivative_order,

@@ -16,7 +16,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._alchemical import AlchemicalControlKind, PreparedControlledHamiltonian
 from .._thermodynamic import PreparedThermodynamicStateTable
@@ -94,9 +94,7 @@ class FreeEnergyStatePlan(StrictModule, NonTrainableState):
         neutral_flags = hamiltonian.partition.preparation.neutral_electrostatic_regions
         neutral = all(
             neutral_flags[control_index]
-            for control_index, kind in enumerate(
-                hamiltonian.plan.schedule.control_kinds
-            )
+            for control_index, kind in enumerate(hamiltonian.plan.schedule.control_kinds)
             if kind is AlchemicalControlKind.ELECTROSTATICS
         )
         charge_evidence = canonical_fingerprint(
@@ -247,14 +245,17 @@ def _authenticated_metadata(result: Any, dataset: Any, /):
     if not isinstance(result, FreeEnergyResult):
         raise TypeError("result must be an authenticated UQ FreeEnergyResult.")
     if not isinstance(dataset, (ReducedPotentialDataset, ReducedWorkDataset)):
-        raise TypeError("dataset must be an authenticated reduced-potential or work dataset.")
+        raise TypeError(
+            "dataset must be an authenticated reduced-potential or work dataset."
+        )
     if result.dataset_id != dataset.dataset_id:
         raise ValueError("Free-energy result and dataset identities differ.")
-    if (
-        int(np.asarray(result.numerical_status)) != int(FreeEnergyStatus.SUCCESS)
-        or int(np.asarray(result.statistical_status)) != int(FreeEnergyStatus.SUCCESS)
-    ):
-        raise ValueError("Free-energy result is not numerically and statistically successful.")
+    if int(np.asarray(result.numerical_status)) != int(FreeEnergyStatus.SUCCESS) or int(
+        np.asarray(result.statistical_status)
+    ) != int(FreeEnergyStatus.SUCCESS):
+        raise ValueError(
+            "Free-energy result is not numerically and statistically successful."
+        )
     if tuple(result.state_ids) != tuple(dataset.state_ids):
         raise ValueError("Free-energy result and dataset state identities differ.")
     if isinstance(dataset, ReducedPotentialDataset):
@@ -323,13 +324,20 @@ class FreeEnergyProtocolLegPlan(StrictModule, NonTrainableState):
         ):
             raise TypeError("Protocol legs require bound source and destination states.")
         if source.state_id == destination.state_id:
-            raise ValueError("Protocol leg endpoints must have distinct state identities.")
+            raise ValueError(
+                "Protocol leg endpoints must have distinct state identities."
+            )
         if source.system_id != destination.system_id:
             raise ValueError("Protocol leg endpoints must share one atomistic system.")
         if source.unit_system_id != destination.unit_system_id:
             raise ValueError("Protocol leg endpoints must share one exact unit system.")
-        if not source.neutral_control_evidence or not destination.neutral_control_evidence:
-            raise ValueError("Protocol leg endpoints require neutral charge-change evidence.")
+        if (
+            not source.neutral_control_evidence
+            or not destination.neutral_control_evidence
+        ):
+            raise ValueError(
+                "Protocol leg endpoints require neutral charge-change evidence."
+            )
         environment = _identity(environment_id, "environment_id")
         self.source = source
         self.destination = destination
@@ -436,10 +444,10 @@ class FreeEnergyCorrectionPlan(StrictModule, NonTrainableState):
     """Abstract explicit signed correction in dimensionless free-energy units."""
 
     __strict_abstract__ = True
-    correction_kind: AbstractAttribute[FreeEnergyCorrectionKind]
-    correction_name: AbstractAttribute[str]
-    convention: AbstractAttribute[str]
-    plan_id: AbstractAttribute[str]
+    correction_kind: eqx.AbstractVar[FreeEnergyCorrectionKind]
+    correction_name: eqx.AbstractVar[str]
+    convention: eqx.AbstractVar[str]
+    plan_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def result(

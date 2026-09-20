@@ -4,6 +4,8 @@
 
 """Lazy optional solver backends with explicit capability and transfer evidence."""
 
+from importlib import import_module
+
 from ._availability import distribution_versions, import_backend_module, probe_backend
 from ._types import (
     AbstractExternalBackend,
@@ -67,14 +69,10 @@ from .distributed import (
     vendor_execution_profiles,
     VendorExecutionProfile,
 )
-from .iree import import_iree, iree_availability, IREE_CAPABILITIES, IREEBackend
-from .homotopy_continuation import *  # noqa: F403
 from .homotopy_continuation import __all__ as _homotopy_continuation_all
-from .homotopy_geometry import *  # noqa: F403
 from .homotopy_geometry import __all__ as _homotopy_geometry_all
-from .lattice import *  # noqa: F403
+from .iree import import_iree, iree_availability, IREE_CAPABILITIES, IREEBackend
 from .lattice import __all__ as _lattice_all
-from .macaulay2 import *  # noqa: F403
 from .macaulay2 import __all__ as _macaulay2_all
 from .mpax import (
     mpax_availability,
@@ -151,6 +149,28 @@ from .spineax import (
     SPINEAX_CAPABILITIES,
     SpineaxBackend,
 )
+
+
+_FACADE_EXPORT_MODULES = (
+    ".homotopy_continuation",
+    ".homotopy_geometry",
+    ".lattice",
+    ".macaulay2",
+)
+
+
+def __getattr__(name: str):
+    for module_name in reversed(_FACADE_EXPORT_MODULES):
+        module = import_module(module_name, __package__)
+        if name in module.__all__:
+            value = getattr(module, name)
+            globals()[name] = value
+            return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
 
 
 __all__ = [

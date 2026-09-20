@@ -159,9 +159,9 @@ def _prepare_structure(
     )
     module = prepared.module
     cones = cones + (
-        (() if fixed.size == 0 else (module.ZeroConeT(int(fixed.size)),))
-        + (() if lower.size == 0 else (module.NonnegativeConeT(int(lower.size)),))
-        + (() if upper.size == 0 else (module.NonnegativeConeT(int(upper.size)),))
+        (() if fixed.size == 0 else (module.ZeroConeT(fixed.size),))
+        + (() if lower.size == 0 else (module.NonnegativeConeT(lower.size),))
+        + (() if upper.size == 0 else (module.NonnegativeConeT(upper.size),))
     )
     return _PreparedClarabelProgram(
         prepared,
@@ -665,7 +665,7 @@ def solve_clarabel_program(
         dual,
         lower_dual,
         upper_dual,
-        jnp.asarray(solved_values, dtype=bool).reshape(shape),
+        jnp.asarray(solved_values, dtype=jnp.bool_).reshape(shape),
         jnp.asarray(iteration_values, dtype=jnp.int32).reshape(shape),
         policy,
         prepared.backend_version,

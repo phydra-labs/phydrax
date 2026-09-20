@@ -69,7 +69,7 @@ class _MixedPlant(AbstractDiscretePlant):
         self.require_finite_state = True
         self.require_finite_controls = True
         self.require_finite_parameters = True
-        self.reset_successful = jnp.asarray(reset_successful, dtype=bool)
+        self.reset_successful = jnp.asarray(reset_successful, dtype="bool")
 
     def propose_reset(
         self,
@@ -94,7 +94,7 @@ class _MixedPlant(AbstractDiscretePlant):
         return PlantProposal(
             {"active": (count % 2) == 0, "count": count, "q": q},
             {"active": (count % 2) == 0, "count": count, "q": q},
-            jnp.ones(case_shape, dtype=bool),
+            jnp.ones(case_shape, dtype="bool"),
             self.reset_successful,
             status,
             status,
@@ -118,7 +118,7 @@ class _MixedPlant(AbstractDiscretePlant):
         return PlantProposal(
             candidate,
             candidate,
-            jnp.ones(successful.shape, dtype=bool),
+            jnp.ones(successful.shape, dtype="bool"),
             successful,
             status,
             status,
@@ -159,7 +159,7 @@ def test_mixed_pytree_reset_and_step_roll_back_every_failed_case_atomically():
 
     assert reset.accepted_state.payload["q"].dtype == jnp.dtype(jnp.float32)
     assert reset.accepted_state.payload["count"].dtype == jnp.dtype(jnp.int32)
-    assert reset.accepted_state.payload["active"].dtype == jnp.dtype(bool)
+    assert reset.accepted_state.payload["active"].dtype == jnp.dtype(jnp.bool_)
     np.testing.assert_array_equal(reset.successful, [True, False, True])
     np.testing.assert_array_equal(
         reset.accepted_state.payload["q"][1], plant.reset_fallback["q"]
@@ -204,7 +204,7 @@ def test_mixed_pytree_reset_and_step_roll_back_every_failed_case_atomically():
 
 
 def test_state_parameter_and_executable_identity_mismatches_are_rejected():
-    plant = _MixedPlant(jnp.ones((3,), dtype=bool))
+    plant = _MixedPlant(jnp.ones((3,), dtype="bool"))
     parameters = _parameters(plant)
     state = plant.reset(_keys(), parameters, case_shape=(3,)).accepted_state
     context = PlantStepContext(state.time, state.time + 1.0, state.step_index)
@@ -272,7 +272,7 @@ def test_state_parameter_and_executable_identity_mismatches_are_rejected():
 
 
 def test_nonfinite_control_is_casewise_failure_and_schema_mismatch_is_rejected():
-    plant = _MixedPlant(jnp.ones((3,), dtype=bool))
+    plant = _MixedPlant(jnp.ones((3,), dtype="bool"))
     parameters = _parameters(plant)
     state = plant.reset(_keys(), parameters, case_shape=(3,)).accepted_state
     context = PlantStepContext(state.time, state.time + 1.0, state.step_index)
@@ -359,7 +359,7 @@ def test_array_discrete_system_adapter_has_legacy_transition_parity():
 
 
 def test_checkpoint_restore_and_first_replay_digest_mismatch_are_exact():
-    plant = _MixedPlant(jnp.ones((3,), dtype=bool))
+    plant = _MixedPlant(jnp.ones((3,), dtype="bool"))
     parameters = _parameters(plant)
     initial = plant.reset(_keys(), parameters, case_shape=(3,)).accepted_state
     checkpoint = plant.checkpoint(initial)

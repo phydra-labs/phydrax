@@ -24,7 +24,7 @@ from phydrax.ein import contract
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._sampling import AbstractProposal
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...integration import discrete, integrate
 from ._amplitude import amplitude_ratio, LogAmplitude
@@ -49,25 +49,25 @@ class VariableParticleConfiguration(StrictModule):
         /,
     ):
         coordinate = jnp.asarray(coordinates)
-        active = jnp.asarray(active_mask, dtype=bool)
+        active = jnp.asarray(active_mask, dtype=jnp.bool_)
         labels = jnp.asarray(species, dtype=jnp.int32)
         if coordinate.ndim != 2 or coordinate.shape[0] < 1 or coordinate.shape[1] < 1:
             raise ValueError("coordinates must have shape (capacity, dimension).")
         if active.shape != (coordinate.shape[0],) or labels.shape != active.shape:
             raise ValueError("active_mask/species must have shape (capacity,).")
         if not jnp.issubdtype(coordinate.dtype, jnp.inexact):
-            coordinate = coordinate.astype(float)
+            coordinate = coordinate.astype("float64")
         self.coordinates = jnp.where(active[:, None], coordinate, 0.0)
         self.active_mask = active
         self.species = jnp.where(active, labels, 0)
 
     @property
     def capacity(self) -> int:
-        return int(self.coordinates.shape[0])
+        return self.coordinates.shape[0]
 
     @property
     def dimension(self) -> int:
-        return int(self.coordinates.shape[1])
+        return self.coordinates.shape[1]
 
     @property
     def particle_count(self) -> Array:
@@ -179,10 +179,10 @@ class VariableSectorSpace(StrictModule, NonTrainableState):
         self.species_count = species_
         self.space_id = identifier
 
-    def empty(self, *, dtype: Any = float) -> VariableParticleConfiguration:
+    def empty(self, *, dtype: Any = jnp.float64) -> VariableParticleConfiguration:
         return VariableParticleConfiguration(
             jnp.zeros((self.capacity, self.dimension), dtype=dtype),
-            jnp.zeros((self.capacity,), dtype=bool),
+            jnp.zeros((self.capacity,), dtype=jnp.bool_),
             jnp.zeros((self.capacity,), dtype=jnp.int32),
         )
 
@@ -235,7 +235,7 @@ class VariableSectorMeasure(StrictModule, NonTrainableState):
     def log_sector_factor(self, configuration: VariableParticleConfiguration, /) -> Array:
         counts = configuration.sector_counts(self.space.species_count)
         valid = self.space.valid(configuration)
-        value = -jnp.sum(jsp.special.gammaln(counts.astype(float) + 1.0))
+        value = -jnp.sum(jsp.special.gammaln(counts.astype("float64") + 1.0))
         return jnp.where(valid, value, -jnp.inf)
 
     def sector_factor(self, configuration: VariableParticleConfiguration, /) -> Array:
@@ -348,7 +348,7 @@ class VariableSectorProposal(AbstractProposal):
     ):
         if not isinstance(space, VariableSectorSpace):
             raise TypeError("space must be VariableSectorSpace.")
-        weights = np.asarray(tuple(move_weights), dtype=float)
+        weights = np.asarray(tuple(move_weights), dtype=np.float64)
         if weights.shape != (6,) or np.any(~np.isfinite(weights)) or np.any(weights < 0):
             raise ValueError("move_weights must contain six finite nonnegative values.")
         if not np.any(weights > 0):
@@ -356,7 +356,7 @@ class VariableSectorProposal(AbstractProposal):
         species_probability = (
             np.full((space.species_count,), 1.0 / space.species_count)
             if birth_species_probabilities is None
-            else np.asarray(birth_species_probabilities, dtype=float)
+            else np.asarray(birth_species_probabilities, dtype=np.float64)
         )
         if (
             species_probability.shape != (space.species_count,)
@@ -390,7 +390,7 @@ class VariableSectorProposal(AbstractProposal):
         pair_probability = (
             np.full((pair_labels.shape[0],), 1.0 / pair_labels.shape[0])
             if pair_probabilities is None
-            else np.asarray(pair_probabilities, dtype=float)
+            else np.asarray(pair_probabilities, dtype=np.float64)
         )
         if (
             pair_probability.shape != (pair_labels.shape[0],)
@@ -400,18 +400,18 @@ class VariableSectorProposal(AbstractProposal):
             raise ValueError("pair probabilities must be finite and positive.")
         pair_probability = pair_probability / np.sum(pair_probability)
         center = (
-            np.zeros((space.species_count, space.dimension), dtype=float)
+            np.zeros((space.species_count, space.dimension), dtype=np.float64)
             if location is None
-            else np.asarray(location, dtype=float)
+            else np.asarray(location, dtype=np.float64)
         )
         if center.shape != (space.species_count, space.dimension) or np.any(
             ~np.isfinite(center)
         ):
             raise ValueError("location must have shape (species_count, dimension).")
-        scale = np.asarray(birth_scale, dtype=float)
+        scale = np.asarray(birth_scale, dtype=np.float64)
         scale = np.broadcast_to(scale, (space.species_count, space.dimension)).copy()
         scalar_values = np.asarray(
-            (displacement_scale, pair_center_scale, pair_relative_scale), dtype=float
+            (displacement_scale, pair_center_scale, pair_relative_scale), dtype=np.float64
         )
         if (
             np.any(~np.isfinite(scale))
@@ -457,7 +457,7 @@ class VariableSectorProposal(AbstractProposal):
     def _pair_candidate_mask(self, configuration: VariableParticleConfiguration) -> Array:
         labels = configuration.species
         ordered = jnp.triu(
-            jnp.ones((self.space.capacity, self.space.capacity), dtype=bool), k=1
+            jnp.ones((self.space.capacity, self.space.capacity), dtype=jnp.bool_), k=1
         )
         active = configuration.active_mask[:, None] & configuration.active_mask[None, :]
         direct = (labels[:, None, None] == self.pair_species[None, None, :, 0]) & (
@@ -475,7 +475,7 @@ class VariableSectorProposal(AbstractProposal):
         labels = configuration.species
         return (
             jnp.triu(
-                jnp.ones((self.space.capacity, self.space.capacity), dtype=bool), k=1
+                jnp.ones((self.space.capacity, self.space.capacity), dtype=jnp.bool_), k=1
             )
             & configuration.active_mask[:, None]
             & configuration.active_mask[None, :]
@@ -493,7 +493,7 @@ class VariableSectorProposal(AbstractProposal):
                 count <= self.space.capacity - 2,
                 jnp.any(self._pair_candidate_mask(configuration)),
             ),
-            dtype=bool,
+            dtype=jnp.bool_,
         )
 
     def _kind_log_probabilities(
@@ -636,7 +636,7 @@ class VariableSectorProposal(AbstractProposal):
         death_paths = jnp.sum(death_matches & source.active_mask)
         death_log = jnp.where(
             (target_count == source_count - 1) & (death_paths > 0),
-            kind_log[1] + jnp.log(death_paths) - jnp.log(source_count.astype(float)),
+            kind_log[1] + jnp.log(death_paths) - jnp.log(source_count.astype("float64")),
             -jnp.inf,
         )
 
@@ -664,7 +664,7 @@ class VariableSectorProposal(AbstractProposal):
         )(coordinate_difference)
         displacement_path_logs = jnp.where(
             displacement_matches,
-            displacement_logs - jnp.log(source_count.astype(float)),
+            displacement_logs - jnp.log(source_count.astype("float64")),
             -jnp.inf,
         )
         displacement_log = kind_log[2] + jsp.special.logsumexp(displacement_path_logs)
@@ -823,8 +823,8 @@ class VariableSectorLocalEstimate(StrictModule):
 
 
 class AbstractVariableSectorLocalOperator(StrictModule):
-    space: AbstractAttribute[VariableSectorSpace]
-    operator_id: AbstractAttribute[str]
+    space: eqx.AbstractVar[VariableSectorSpace]
+    operator_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def local_value(
@@ -865,7 +865,7 @@ def _estimate(
         valid=final_valid,
         status=jnp.asarray(final_status, dtype=jnp.int32),
         work_count=jnp.asarray(work_count, dtype=jnp.int32),
-        cutoff_saturated=jnp.asarray(saturated, dtype=bool),
+        cutoff_saturated=jnp.asarray(saturated, dtype=jnp.bool_),
         operator_id=operator_id,
         method_id=method_id,
     )
@@ -922,7 +922,7 @@ class ContinuumKineticOperator(AbstractVariableSectorLocalOperator):
     ):
         if not isinstance(space, VariableSectorSpace):
             raise TypeError("space must be VariableSectorSpace.")
-        mass = np.asarray(masses, dtype=float)
+        mass = np.asarray(masses, dtype=np.float64)
         if (
             mass.shape != (space.species_count,)
             or np.any(~np.isfinite(mass))
@@ -1102,7 +1102,7 @@ class QuadraticExternalPotential(AbstractVariableSectorLocalOperator):
     ):
         if not isinstance(space, VariableSectorSpace):
             raise TypeError("space must be VariableSectorSpace.")
-        matrix = np.asarray(stiffness, dtype=float)
+        matrix = np.asarray(stiffness, dtype=np.float64)
         if matrix.shape == (space.species_count,):
             matrix = np.asarray([np.eye(space.dimension) * value for value in matrix])
         if matrix.shape != (space.species_count, space.dimension, space.dimension):
@@ -1111,12 +1111,12 @@ class QuadraticExternalPotential(AbstractVariableSectorLocalOperator):
         center = (
             np.zeros((space.species_count, space.dimension))
             if centers is None
-            else np.asarray(centers, dtype=float)
+            else np.asarray(centers, dtype=np.float64)
         )
         offset = (
             np.zeros((space.species_count,))
             if offsets is None
-            else np.asarray(offsets, dtype=float)
+            else np.asarray(offsets, dtype=np.float64)
         )
         if (
             center.shape != (space.species_count, space.dimension)
@@ -1187,7 +1187,7 @@ class PairPotentialOperator(AbstractVariableSectorLocalOperator):
     ):
         if not isinstance(space, VariableSectorSpace):
             raise TypeError("space must be VariableSectorSpace.")
-        matrix = np.asarray(coupling, dtype=float)
+        matrix = np.asarray(coupling, dtype=np.float64)
         if matrix.shape != (space.species_count, space.species_count):
             raise ValueError("coupling must have shape (species_count, species_count).")
         matrix = 0.5 * (matrix + matrix.T)
@@ -1227,7 +1227,7 @@ class PairPotentialOperator(AbstractVariableSectorLocalOperator):
             configuration.active_mask[:, None]
             & configuration.active_mask[None, :]
             & jnp.triu(
-                jnp.ones((self.space.capacity, self.space.capacity), dtype=bool), k=1
+                jnp.ones((self.space.capacity, self.space.capacity), dtype=jnp.bool_), k=1
             )
         )
         delta = (
@@ -1276,7 +1276,7 @@ class ContactInteractionOperator(AbstractVariableSectorLocalOperator):
     ):
         if not isinstance(space, VariableSectorSpace):
             raise TypeError("space must be VariableSectorSpace.")
-        matrix = np.asarray(coupling, dtype=float)
+        matrix = np.asarray(coupling, dtype=np.float64)
         width_ = float(width)
         if matrix.shape != (space.species_count, space.species_count):
             raise ValueError("coupling must have shape (species_count, species_count).")
@@ -1308,7 +1308,7 @@ class ContactInteractionOperator(AbstractVariableSectorLocalOperator):
             configuration.active_mask[:, None]
             & configuration.active_mask[None, :]
             & jnp.triu(
-                jnp.ones((self.space.capacity, self.space.capacity), dtype=bool), k=1
+                jnp.ones((self.space.capacity, self.space.capacity), dtype=jnp.bool_), k=1
             )
         )
         delta = (
@@ -1373,8 +1373,8 @@ class ParticleChangingLocalOperator(AbstractVariableSectorLocalOperator):
     ):
         if not isinstance(space, VariableSectorSpace):
             raise TypeError("space must be VariableSectorSpace.")
-        nodes = np.asarray(quadrature_nodes, dtype=float)
-        weights = np.asarray(quadrature_weights, dtype=float)
+        nodes = np.asarray(quadrature_nodes, dtype=np.float64)
+        weights = np.asarray(quadrature_weights, dtype=np.float64)
         coupling = np.asarray(source_coupling)
         if (
             nodes.ndim != 3
@@ -1554,7 +1554,9 @@ class VariableSectorHamiltonian(AbstractVariableSectorLocalOperator):
         valid = jnp.all(jnp.stack(tuple(value.valid for value in estimates)))
         status = jnp.max(jnp.stack(tuple(value.status for value in estimates)))
         return _estimate(
-            sum((value.value for value in estimates), jnp.zeros((), dtype=complex)),
+            sum(
+                (value.value for value in estimates), jnp.zeros((), dtype=jnp.complex128)
+            ),
             valid,
             status,
             sum(

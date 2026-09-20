@@ -53,9 +53,9 @@ def build_response_matrix(
     ):
         raise ValueError("Response inputs must be aligned vectors.")
     matched_ = (
-        jnp.ones(truth.shape, dtype=bool)
+        jnp.ones(truth.shape, dtype=jnp.bool_)
         if matched is None
-        else jnp.asarray(matched, dtype=bool)
+        else jnp.asarray(matched, dtype=jnp.bool_)
     )
     if matched_.shape != truth.shape:
         raise ValueError("matched must align with response inputs.")

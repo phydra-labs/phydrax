@@ -288,9 +288,9 @@ def test_multiple_surfaces_accumulate_geometric_and_optical_path_only_on_success
         np.zeros((2,)),
         np.zeros((2,)),
         np.zeros((2, 0)),
-        np.zeros((2, 0), dtype=bool),
+        np.zeros((2, 0), dtype="bool"),
         np.zeros((2,)),
-        np.zeros((2,), dtype=bool),
+        np.zeros((2,), dtype="bool"),
         np.asarray((2.0, 3.0)),
         np.asarray((1.0, 1.5, 1.0)),
     )

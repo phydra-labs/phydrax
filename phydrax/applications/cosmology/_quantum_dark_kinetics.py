@@ -160,8 +160,7 @@ class QuantumKineticState(StrictModule):
             for item in species_
         ):
             raise ValueError(
-                "Quantum kinetic species must use the exact relativistic mass "
-                "and energy unit IDs."
+                "Quantum kinetic species must use the exact relativistic mass and energy unit IDs."
             )
         value = np.asarray(occupancy)
         marks = np.asarray(statistics)
@@ -260,7 +259,7 @@ class QuantumKineticState(StrictModule):
         self.frame = frame
         self.time = jnp.asarray(time_)
         self.frame_token = jax.lax.stop_gradient(jnp.asarray(frame.frame_token))
-        self.statistics_marks = tuple(int(value) for value in marks)
+        self.statistics_marks = tuple(marks)
         self.species_plan_ids = ids
         self.unit_contract_id = units.contract_id
         self.frame_id = frame.frame_id
@@ -425,8 +424,7 @@ class QuantumDarkKineticsPlan(StrictModule, NonTrainableState):
             for item in species_
         ):
             raise ValueError(
-                "Quantum kinetic species must declare the exact relativistic mass "
-                "and energy unit IDs."
+                "Quantum kinetic species must declare the exact relativistic mass and energy unit IDs."
             )
         charge_names = species_[0].charge_names
         if any(item.charge_names != charge_names for item in species_):
@@ -482,9 +480,7 @@ class QuantumDarkKineticsPlan(StrictModule, NonTrainableState):
         self.collision = collision
         self.condensate_coupling = condensate_coupling
         self.condensation_threshold = threshold
-        self.statistics_marks = tuple(
-            int(value) for value in np.asarray(collision.statistics)
-        )
+        self.statistics_marks = tuple(np.asarray(collision.statistics))
         self.species_plan_ids = ids
         self.charge_names = charge_names
         self.frame_realization_id = frame_realization_id

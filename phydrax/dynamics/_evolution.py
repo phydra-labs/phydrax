@@ -12,7 +12,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from ..linalg import ArraySpace, prepare_linearization, PreparedLinearization
 from ._grid import EvolutionGrid, IterationGrid, TimeGrid
 from ._layout import StateLayout
@@ -105,12 +105,12 @@ class EvolutionTrajectory(StrictModule):
 class AbstractEvolution(StrictModule):
     """Pathwise segment evolution independent of analysis algorithms."""
 
-    system: AbstractAttribute[System]
-    evolution_id: AbstractAttribute[str]
-    method_id: AbstractAttribute[str]
-    backend_id: AbstractAttribute[str]
-    discretization_id: AbstractAttribute[str]
-    approximation_id: AbstractAttribute[str]
+    system: eqx.AbstractVar[System]
+    evolution_id: eqx.AbstractVar[str]
+    method_id: eqx.AbstractVar[str]
+    backend_id: eqx.AbstractVar[str]
+    discretization_id: eqx.AbstractVar[str]
+    approximation_id: eqx.AbstractVar[str]
 
     @property
     def state_layout(self) -> StateLayout:
@@ -131,9 +131,9 @@ class AbstractEvolution(StrictModule):
 class AbstractDifferentiableEvolution(AbstractEvolution):
     """Pathwise evolution with an explicit local tangent action."""
 
-    tangent_method_id: AbstractAttribute[str]
-    eventful: AbstractAttribute[bool]
-    stochastic: AbstractAttribute[bool]
+    tangent_method_id: eqx.AbstractVar[str]
+    eventful: eqx.AbstractVar[bool]
+    stochastic: eqx.AbstractVar[bool]
 
     @abc.abstractmethod
     def tangent_action(
@@ -264,7 +264,7 @@ class DiscreteEvolution(AbstractDifferentiableEvolution):
         final_state = transition.accepted_state
         finite = jnp.all(jnp.isfinite(final_state))
         membership = jnp.asarray(
-            self.state_layout.geometry.contains(final_state), dtype=bool
+            self.state_layout.geometry.contains(final_state), dtype=jnp.bool_
         )
         if membership.shape != ():
             raise ValueError("State geometry contains() must return one scalar boolean.")
@@ -432,8 +432,7 @@ class DiscreteEvolution(AbstractDifferentiableEvolution):
         leaves = jax.tree.leaves(args)
         if not leaves or any(not eqx.is_inexact_array(leaf) for leaf in leaves):
             raise TypeError(
-                "Evolution argument linearization requires a nonempty PyTree "
-                "of inexact arrays."
+                "Evolution argument linearization requires a nonempty PyTree of inexact arrays."
             )
         source = jnp.asarray(source_coordinate)
         target = jnp.asarray(target_coordinate)
@@ -445,8 +444,7 @@ class DiscreteEvolution(AbstractDifferentiableEvolution):
             args,
             target=ArraySpace(self.state_layout.shape, dtype=state_array.dtype),
             linearization_id=(
-                f"{self.evolution_id}:argument-linearization:"
-                f"{self.state_layout.layout_id}"
+                f"{self.evolution_id}:argument-linearization:{self.state_layout.layout_id}"
             ),
         )
 
@@ -471,7 +469,7 @@ def evolve(
         )
     initial_finite = jnp.all(jnp.isfinite(initial))
     initial_member = jnp.asarray(
-        evolution.state_layout.geometry.contains(initial), dtype=bool
+        evolution.state_layout.geometry.contains(initial), dtype=jnp.bool_
     )
     if initial_member.shape != ():
         raise ValueError("State geometry contains() must return one scalar boolean.")

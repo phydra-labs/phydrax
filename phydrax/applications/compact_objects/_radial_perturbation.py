@@ -150,8 +150,7 @@ class SchwarzschildRadialPlan(StrictModule, NonTrainableState):
             or not 0.0 < fraction < 1.0
         ):
             raise ValueError(
-                "Schwarzschild radial bounds must be finite, exterior, increasing, "
-                "and have an interior match fraction."
+                "Schwarzschild radial bounds must be finite, exterior, increasing, and have an interior match fraction."
             )
         tolerances = _radial_tolerances(
             residual_tolerance,
@@ -380,8 +379,7 @@ class KerrTeukolskyRadialPlan(StrictModule, NonTrainableState):
             or not 0.0 < fraction < 1.0
         ):
             raise ValueError(
-                "Kerr radial bounds must be finite, exterior, increasing, and have "
-                "an interior match fraction."
+                "Kerr radial bounds must be finite, exterior, increasing, and have an interior match fraction."
             )
         tolerances = _radial_tolerances(
             residual_tolerance,
@@ -705,9 +703,7 @@ def _schwarzschild_tortoise_radius(
     radius: Array,
     /,
 ) -> Array:
-    return radius + 2.0 * plan.mass * jnp.log(
-        radius / plan.horizon_radius - 1.0
-    )
+    return radius + 2.0 * plan.mass * jnp.log(radius / plan.horizon_radius - 1.0)
 
 
 def _schwarzschild_horizon_series(
@@ -728,21 +724,13 @@ def _schwarzschild_horizon_series(
         plan.horizon_radius,
     )
     coefficient = (
-        2.0
-        * plan.mass
-        * potential_factor
-        / (1.0 + 4.0j * wave_sign * plan.mass * omega)
+        2.0 * plan.mass * potential_factor / (1.0 + 4.0j * wave_sign * plan.mass * omega)
     )
     series = 1.0 + coefficient * (inner_radius - plan.horizon_radius)
-    logarithmic_derivative = (
-        wave_sign * 1.0j * omega + inner_f * coefficient / series
-    )
+    logarithmic_derivative = wave_sign * 1.0j * omega + inner_f * coefficient / series
     value = (
         jnp.exp(
-            wave_sign
-            * 1.0j
-            * omega
-            * _schwarzschild_tortoise_radius(plan, inner_radius)
+            wave_sign * 1.0j * omega * _schwarzschild_tortoise_radius(plan, inner_radius)
         )
         * series
     )
@@ -778,9 +766,7 @@ def _schwarzschild_infinity_series(
             - 2.0 * plan.mass * (order * order - 1) * previous
             - potential_sum
         )
-        following = numerator / (
-            2.0j * wave_sign * omega * (order + 1)
-        )
+        following = numerator / (2.0j * wave_sign * omega * (order + 1))
         coefficients.append(following)
         previous, current = current, following
     series_coefficients = jnp.stack(coefficients)
@@ -803,10 +789,7 @@ def _schwarzschild_infinity_series(
     )
     value = (
         jnp.exp(
-            wave_sign
-            * 1.0j
-            * omega
-            * _schwarzschild_tortoise_radius(plan, outer_radius)
+            wave_sign * 1.0j * omega * _schwarzschild_tortoise_radius(plan, outer_radius)
         )
         * series
     )
@@ -1470,7 +1453,7 @@ def _radial_residual_evidence(
     )
     finite = (
         asymptotic.finite
-        & jnp.asarray(profile_finite, dtype=bool)
+        & jnp.asarray(profile_finite, dtype=jnp.bool_)
         & jnp.isfinite(jnp.real(matching_residual))
         & jnp.isfinite(jnp.imag(matching_residual))
         & jnp.all(jnp.isfinite(jnp.real(differential_residual)))
@@ -1479,7 +1462,7 @@ def _radial_residual_evidence(
     )
     physically_valid = asymptotic.physically_valid & jnp.asarray(
         domain_valid,
-        dtype=bool,
+        dtype=jnp.bool_,
     )
     converged = jnp.abs(matching_residual) <= matching_tolerance
     residual_valid = relative_residual <= residual_tolerance
@@ -1539,7 +1522,7 @@ def _positive_scalar_host(value: ArrayLike, name: str, /) -> float:
 
 
 def _finite_scalar_host(value: ArrayLike, name: str, /) -> float:
-    array = np.asarray(value, dtype=float)
+    array = np.asarray(value, dtype=np.float64)
     if array.shape != () or not np.isfinite(array):
         raise ValueError(f"{name} must be a finite scalar.")
     return float(array)
@@ -1575,8 +1558,7 @@ def _schwarzschild_integration_capacity(
         or not isinstance(infinity_asymptotic_order, Integral)
     ):
         raise TypeError(
-            "Schwarzschild integration_substeps and infinity_asymptotic_order "
-            "must be integers."
+            "Schwarzschild integration_substeps and infinity_asymptotic_order must be integers."
         )
     substeps = int(integration_substeps)
     order = int(infinity_asymptotic_order)
@@ -1625,8 +1607,7 @@ def _validate_schwarzschild_sector(mode: SeparatedMode, /) -> None:
         )
     if mode.sector == "electromagnetic" and abs(mode.spin_weight) != 1:
         raise ValueError(
-            "The Schwarzschild electromagnetic master equation requires "
-            "abs(spin_weight)=1."
+            "The Schwarzschild electromagnetic master equation requires abs(spin_weight)=1."
         )
     if (
         mode.sector in ("axial", "regge-wheeler", "polar", "zerilli")

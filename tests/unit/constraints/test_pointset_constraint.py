@@ -13,7 +13,7 @@ from phydrax.terms import ResidualPenalty
 
 
 def _fixed_source(component, values):
-    batch = component.points({"x": jnp.asarray(values, dtype=float).reshape((-1, 1))})
+    batch = component.points({"x": jnp.asarray(values, dtype="float64").reshape((-1, 1))})
     realization = phx.integration.from_samples(
         phx.integration.mean_over(component),
         batch,
@@ -76,13 +76,13 @@ def test_pointset_domainfunction_weight_must_be_scalar_per_point():
 
 
 def _x_values(x):
-    x_arr = jnp.asarray(x, dtype=float)
+    x_arr = jnp.asarray(x, dtype="float64")
     if x_arr.ndim == 0:
         return x_arr.reshape(())
     if x_arr.ndim == 1:
-        if int(x_arr.shape[0]) == 1:
+        if x_arr.shape[0] == 1:
             return x_arr[0]
         return x_arr
-    if x_arr.ndim == 2 and int(x_arr.shape[1]) == 1:
+    if x_arr.ndim == 2 and x_arr.shape[1] == 1:
         return x_arr[:, 0]
     raise ValueError(f"Unsupported x shape {x_arr.shape}.")

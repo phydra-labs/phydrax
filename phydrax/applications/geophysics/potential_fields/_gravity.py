@@ -46,8 +46,8 @@ class GravityQuadratureSource(StrictModule, NonTrainableState):
         cell_count: int,
         /,
     ):
-        points = np.asarray(points_m, dtype=float)
-        weights = np.asarray(volume_weights_m3, dtype=float)
+        points = np.asarray(points_m, dtype=np.float64)
+        weights = np.asarray(volume_weights_m3, dtype=np.float64)
         indices = np.asarray(cell_indices)
         count = int(cell_count)
         if (
@@ -90,7 +90,7 @@ class GravityQuadratureSource(StrictModule, NonTrainableState):
         cells = np.concatenate(
             [np.asarray(block.vertices, dtype=np.int32) for block in mesh.blocks]
         )
-        coordinates = np.asarray(mesh.coordinates, dtype=float)
+        coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
         tetrahedra = coordinates[cells]
         determinant = np.linalg.det(
             np.stack(
@@ -103,7 +103,7 @@ class GravityQuadratureSource(StrictModule, NonTrainableState):
             )
         )
         volumes = np.abs(determinant) / 6.0
-        points = np.einsum("qv,cvi->cqi", _TETRA_BARYCENTRIC, tetrahedra)
+        points = ein.contract("qv,cvi->cqi", _TETRA_BARYCENTRIC, tetrahedra)
         weights = np.repeat((volumes / 4.0)[:, None], 4, axis=1)
         indices = np.repeat(np.arange(cells.shape[0])[:, None], 4, axis=1)
         return cls(
@@ -146,7 +146,7 @@ class FreeSpaceGravityPlan(StrictModule, NonTrainableState):
         if not isinstance(coordinates, GeospatialContract):
             raise TypeError("Gravity observations require GeospatialContract.")
         coordinates.require_cartesian(dimensions=3)
-        observations = np.asarray(observations_m, dtype=float)
+        observations = np.asarray(observations_m, dtype=np.float64)
         separation, block = float(minimum_separation_m), int(block_size)
         if (
             observations.ndim != 2

@@ -5,4 +5,4 @@
 import jax.numpy as jnp
 
 
-_EPSILON = jnp.finfo(float).eps
+_EPSILON = jnp.finfo(jnp.float64).eps

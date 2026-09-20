@@ -242,7 +242,7 @@ class PreparedTensorGrid(StrictModule, NonTrainableState):
     ) -> "PreparedTensorGrid":
         if not isinstance(plan, TensorGridPlan):
             raise TypeError("plan must be a TensorGridPlan.")
-        limits = jnp.asarray(bounds, dtype=float)
+        limits = jnp.asarray(bounds, dtype=jnp.float64)
         if limits.shape != (2, len(plan.axes)):
             raise ValueError(
                 f"bounds must have shape {(2, len(plan.axes))}; got {limits.shape}."
@@ -329,7 +329,7 @@ class PreparedTensorGrid(StrictModule, NonTrainableState):
         location: GridLocation | None = None,
         entity_layout: TensorEntityLayout | None = None,
         component_shape: Sequence[int] = (),
-        dtype: DTypeLike = float,
+        dtype: DTypeLike = jnp.float64,
         representation: str = "point_value",
         conformity: str = "unrestricted",
     ) -> DiscreteFieldSpace:
@@ -354,7 +354,7 @@ class PreparedTensorGrid(StrictModule, NonTrainableState):
             layout_.offsets,
             location_id=layout_.location_id,
         )
-        components = tuple(int(size) for size in component_shape)
+        components = tuple(component_shape)
         if any(size <= 0 for size in components):
             raise ValueError("component_shape dimensions must be positive.")
         value_shape = layout_.shape + components

@@ -54,7 +54,7 @@ def _face_measure(grid: PreparedTensorGrid, axis: int, /) -> Array:
         else:
             weights = structured_axis.interval_widths
         shape = [1] * len(layout.shape)
-        shape[other_axis] = int(weights.size)
+        shape[other_axis] = weights.size
         measure = measure * weights.reshape(tuple(shape))
     return measure
 
@@ -172,7 +172,7 @@ class FiniteVolumeDiscretization(AbstractPreparedDiscretization):
         cell_volumes = jnp.ones(cell_layout.shape)
         for axis_index, axis in enumerate(grid.structured_axes):
             shape = [1] * len(cell_layout.shape)
-            shape[axis_index] = int(axis.interval_widths.size)
+            shape[axis_index] = axis.interval_widths.size
             cell_volumes = cell_volumes * axis.interval_widths.reshape(tuple(shape))
         face_measures = tuple(
             _face_measure(grid, axis) for axis in range(len(grid.shape))

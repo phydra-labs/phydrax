@@ -65,7 +65,7 @@ def indexed_field(
     array = jnp.asarray(values)
     if array.ndim == 0:
         raise ValueError(f"{owner} values must have a leading row axis.")
-    if int(array.shape[0]) != int(size):
+    if array.shape[0] != int(size):
         raise ValueError(
             f"{owner} values require leading size {size}, got {array.shape[0]}."
         )

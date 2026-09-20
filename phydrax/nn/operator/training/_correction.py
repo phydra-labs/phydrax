@@ -38,7 +38,7 @@ def _require_finite_active_inputs(case: OperatorCase, /) -> None:
         if samples.values is None:
             raise ValueError(f"Residual corpus source {name!r} requires values.")
         values = np.asarray(samples.values)
-        mask = np.asarray(samples.mask_array(), dtype=bool)
+        mask = np.asarray(samples.mask_array(), dtype=np.bool_)
         trailing = (1,) * (values.ndim - mask.ndim)
         active = np.broadcast_to(mask.reshape(mask.shape + trailing), values.shape)
         if not np.all(np.isfinite(values[active])):
@@ -142,8 +142,7 @@ def prepare_operator_residual_corpus(
         missing = tuple(key for key in keys if key not in case.provenance.identities)
         if missing:
             raise ValueError(
-                f"Residual corpus case {case.provenance.case_id!r} is missing "
-                f"provenance identities {missing}."
+                f"Residual corpus case {case.provenance.case_id!r} is missing provenance identities {missing}."
             )
         _require_finite_active_inputs(case)
         stopped_cases.append(

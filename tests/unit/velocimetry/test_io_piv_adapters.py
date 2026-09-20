@@ -101,11 +101,7 @@ def test_openpiv_pixel_round_trip_preserves_orientation_zero_and_invalidity(tmp_
 def test_openpiv_physical_velocity_targets_right_handed_physical_result(tmp_path):
     path = tmp_path / "physical.txt"
     path.write_text(
-        "# x y u v flags mask\n"
-        "10 2 1 -3 0 0\n"
-        "12 2 0 0 0 0\n"
-        "10 4 2 5 1 0\n"
-        "12 4 -1 1 0 0\n",
+        "# x y u v flags mask\n10 2 1 -3 0 0\n12 2 0 0 0 0\n10 4 2 5 1 0\n12 4 -1 1 0 0\n",
         encoding="utf-8",
     )
 

@@ -38,7 +38,7 @@ def _identifier(value: str, owner: str, /) -> str:
 
 
 def _shape(value: Sequence[int], owner: str, /) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if any(size <= 0 for size in shape):
         raise ValueError(f"{owner} dimensions must be positive.")
     return shape
@@ -51,7 +51,7 @@ def _finite_real(value: ArrayLike, owner: str, /) -> Array:
         and not jnp.issubdtype(array.dtype, jnp.complexfloating)
     ):
         raise TypeError(f"{owner} must be a real numeric array.")
-    array = array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype(float)
+    array = array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype("float64")
     if not bool(jnp.all(jnp.isfinite(array))):
         raise ValueError(f"{owner} must be finite.")
     return array
@@ -88,8 +88,7 @@ class ControlledJumpProblem(StrictModule):
         state = _finite_real(initial_state, "initial_state")
         if tuple(state.shape) != process.state_shape:
             raise ValueError(
-                "initial_state must have the process state_shape "
-                f"{process.state_shape}; got {state.shape}."
+                f"initial_state must have the process state_shape {process.state_shape}; got {state.shape}."
             )
         self.process = process
         self.initial_state = state
@@ -122,10 +121,7 @@ class ControlledJumpPlan(StrictModule):
             raise ValueError("intensity_tolerance must be finite and nonnegative.")
         self.time_grid = time_grid
         self.intensity_tolerance = tolerance
-        self.same_time_order = (
-            "event-time-then-channel-then-channel-event-index;"
-            "boundary-events-before-next-control"
-        )
+        self.same_time_order = "event-time-then-channel-then-channel-event-index;boundary-events-before-next-control"
         self.plan_id = _identifier(plan_id, "plan_id")
 
 
@@ -182,7 +178,7 @@ def _callback_action(
         )
     if np.issubdtype(value.dtype, np.complexfloating):
         raise TypeError("policy must return real actions.")
-    return np.asarray(value, dtype=float)
+    return np.asarray(value, dtype=np.float64)
 
 
 def rollout_controlled_jumps_reference(
@@ -227,33 +223,33 @@ def rollout_controlled_jumps_reference(
     state_shape = problem.state_shape
     mark_shape = problem.process.mark_shape
     steps = plan.time_grid.num_steps
-    times = np.asarray(plan.time_grid.times, dtype=float)
-    thresholds = np.asarray(realization.thresholds, dtype=float).reshape(
+    times = np.asarray(plan.time_grid.times, dtype=np.float64)
+    thresholds = np.asarray(realization.thresholds, dtype=np.float64).reshape(
         (path_count, channels, per_channel_capacity)
     )
     mark_keys = realization.mark_keys.reshape(
         (path_count, channels, per_channel_capacity) + tuple(realization.root_key.shape)
     )
 
-    states = np.zeros((path_count, steps + 1) + state_shape, dtype=float)
-    actions = np.zeros((path_count, steps) + problem.action_shape, dtype=float)
-    event_times = np.zeros((path_count, event_capacity), dtype=float)
+    states = np.zeros((path_count, steps + 1) + state_shape, dtype=np.float64)
+    actions = np.zeros((path_count, steps) + problem.action_shape, dtype=np.float64)
+    event_times = np.zeros((path_count, event_capacity), dtype=np.float64)
     event_channels = np.zeros((path_count, event_capacity), dtype=np.int32)
-    event_marks = np.zeros((path_count, event_capacity) + mark_shape, dtype=float)
-    event_valid = np.zeros((path_count, event_capacity), dtype=bool)
-    pre_states = np.zeros((path_count, event_capacity) + state_shape, dtype=float)
-    post_states = np.zeros((path_count, event_capacity) + state_shape, dtype=float)
+    event_marks = np.zeros((path_count, event_capacity) + mark_shape, dtype=np.float64)
+    event_valid = np.zeros((path_count, event_capacity), dtype=np.bool_)
+    pre_states = np.zeros((path_count, event_capacity) + state_shape, dtype=np.float64)
+    post_states = np.zeros((path_count, event_capacity) + state_shape, dtype=np.float64)
     statuses = np.full((path_count,), JUMP_SUCCESS, dtype=np.int32)
-    minimum_intensity = np.full((path_count,), np.inf, dtype=float)
-    maximum_intensity = np.zeros((path_count,), dtype=float)
-    finite = np.ones((path_count,), dtype=bool)
+    minimum_intensity = np.full((path_count,), np.inf, dtype=np.float64)
+    maximum_intensity = np.zeros((path_count,), dtype=np.float64)
+    finite = np.ones((path_count,), dtype=np.bool_)
 
-    initial = np.asarray(problem.initial_state, dtype=float)
+    initial = np.asarray(problem.initial_state, dtype=np.float64)
     tolerance = plan.intensity_tolerance
     for path_index in range(path_count):
         state = initial.copy()
         states[path_index, 0] = state
-        integrated = np.zeros((channels,), dtype=float)
+        integrated = np.zeros((channels,), dtype=np.float64)
         threshold_index = np.zeros((channels,), dtype=np.int32)
         event_index = 0
         failed = False
@@ -285,11 +281,10 @@ def rollout_controlled_jumps_reference(
                     finite[path_index] = False
                     failed = True
                     break
-                rates = np.asarray(raw_rates, dtype=float)
+                rates = np.asarray(raw_rates, dtype=np.float64)
                 if rates.shape != (channels,):
                     raise ValueError(
-                        "process intensities must return exactly one channel vector "
-                        "for an unbatched controlled state."
+                        "process intensities must return exactly one channel vector for an unbatched controlled state."
                     )
                 if not np.all(np.isfinite(rates)) or np.any(rates < -tolerance):
                     statuses[path_index] = JUMP_INVALID_INTENSITY
@@ -303,7 +298,7 @@ def rollout_controlled_jumps_reference(
                 maximum_intensity[path_index] = max(
                     maximum_intensity[path_index], float(np.max(rates))
                 )
-                candidates = np.full((channels,), np.inf, dtype=float)
+                candidates = np.full((channels,), np.inf, dtype=np.float64)
                 for channel in range(channels):
                     index = int(threshold_index[channel])
                     if index < per_channel_capacity and rates[channel] > 0.0:
@@ -366,7 +361,7 @@ def rollout_controlled_jumps_reference(
                     finite[path_index] = False
                     failed = True
                     break
-                post = np.asarray(raw_post, dtype=float)
+                post = np.asarray(raw_post, dtype=np.float64)
                 if post.shape != state_shape or not np.all(np.isfinite(post)):
                     statuses[path_index] = JUMP_SOLVER_FAILURE
                     finite[path_index] = False

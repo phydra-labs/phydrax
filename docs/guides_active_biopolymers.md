@@ -60,8 +60,8 @@ import jax.random as jr
 import numpy as np
 from phydrax.applications.cellular_mechanics import ChromatinDynamicsPlan
 
-sites = np.arange(64, dtype=float)[:, None]
-roadblocks = np.zeros(64, dtype=bool)
+sites = np.arange(64, dtype="float64")[:, None]
+roadblocks = np.zeros(64, dtype="bool")
 roadblocks[[12, 47]] = True
 chromatin = ChromatinDynamicsPlan(
     64,

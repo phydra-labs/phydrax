@@ -34,7 +34,7 @@ def validate_metric(metric: Any) -> Any:
 
 def masked_softmax(logits: Array, mask: Array) -> Array:
     """Normalize masked logits without NaNs for completely inactive rows."""
-    active = jnp.asarray(mask, dtype=bool)
+    active = jnp.asarray(mask, dtype=jnp.bool_)
     any_active = jnp.any(active, axis=-1, keepdims=True)
     safe_logits = jnp.where(active, jnp.asarray(logits), -jnp.inf)
     safe_logits = jnp.where(any_active, safe_logits, 0.0)
@@ -52,7 +52,7 @@ def case_distances(
     if case_shape:
         if x.shape[: len(case_shape)] != case_shape:
             raise ValueError(f"Query must begin with fitted case shape {case_shape}.")
-        query_shape = tuple(int(s) for s in x.shape[len(case_shape) : -1])
+        query_shape = tuple(x.shape[len(case_shape) : -1])
         q = size(query_shape) if query_shape else 1
         cases = size(case_shape)
         query_cases = x.reshape((cases, q, x.shape[-1]))
@@ -63,7 +63,7 @@ def case_distances(
         return distance.reshape(
             case_shape + query_shape + (support.shape[-2],)
         ), query_shape
-    query_shape = tuple(int(s) for s in x.shape[:-1])
+    query_shape = tuple(x.shape[:-1])
     distance = pairwise_distances(x.reshape((-1, x.shape[-1])), support, metric=metric)
     return distance.reshape(query_shape + (support.shape[-2],)), query_shape
 
@@ -78,7 +78,7 @@ def gather_support(values: Array, indices: Array, case_shape: tuple[int, ...]) -
     """Gather support-axis values for case/query/k indices."""
     cases = size(case_shape)
     query_shape = indices.shape[len(case_shape) : -1]
-    q = size(tuple(int(s) for s in query_shape)) if query_shape else 1
+    q = size(tuple(query_shape)) if query_shape else 1
     k = indices.shape[-1]
     trailing = values.shape[len(case_shape) + 1 :]
     value_cases = values.reshape((cases, values.shape[len(case_shape)], -1))
@@ -114,7 +114,7 @@ def chunked_call(model: Any, points: Array, chunk_size: int) -> Array:
 
 
 def validated_weights(value: Array) -> Array:
-    weights = jnp.asarray(value, dtype=float)
+    weights = jnp.asarray(value, dtype=jnp.float64)
     return eqx.error_if(
         weights,
         jnp.any(~jnp.isfinite(weights)) | jnp.any(weights < 0.0),

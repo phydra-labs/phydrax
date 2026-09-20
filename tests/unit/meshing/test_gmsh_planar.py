@@ -157,7 +157,7 @@ def test_real_gmsh_planar_hole_has_complete_main_mesh_boundary_patch(tmp_path):
 
     result = provider.plan(source, _semantic_spec(provider, source, "triangle")).execute()
 
-    boundary_edges = np.asarray(result.mesh.connectivity.boundary_edges, dtype=bool)
+    boundary_edges = np.asarray(result.mesh.connectivity.boundary_edges, dtype="bool")
     assert np.count_nonzero(boundary_edges) > len(source.model.edge_ids)
     assert len(result.patches) == 1
     assert (

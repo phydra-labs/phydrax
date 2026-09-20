@@ -31,7 +31,7 @@ work = phx.uq.evaluate_targeted_work(
     target_samples=samples,
 )
 count = samples.shape[0]
-active = jnp.ones((2 * count,), dtype=bool)
+active = jnp.ones((2 * count,), dtype="bool")
 dataset = phx.uq.ReducedWorkDataset(
     jnp.concatenate((work.forward_work, work.reverse_work)),
     active,

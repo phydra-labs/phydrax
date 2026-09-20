@@ -430,8 +430,7 @@ class PayloadBinding:
             )
             if any(required for _, required in rights):
                 raise PermissionError(
-                    "ArtifactManifest does not declare requested-use grants; "
-                    "all required rights must be false."
+                    "ArtifactManifest does not declare requested-use grants; all required rights must be false."
                 )
             if manifest.source_uri != path:
                 raise ValueError(

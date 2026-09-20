@@ -368,7 +368,7 @@ class _NewmarkValidity(StrictModule, NonTrainableState):
                         acceleration,
                         arguments.user_args,
                     ),
-                    dtype=bool,
+                    dtype=jnp.bool_,
                 )
             )
         return finite & jacobian_valid & custom_valid
@@ -763,7 +763,7 @@ def _admissibility(
                     acceleration,
                     arguments.user_args,
                 ),
-                dtype=bool,
+                dtype=jnp.bool_,
             )
         )
     finite = (

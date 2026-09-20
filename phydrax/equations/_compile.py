@@ -29,8 +29,7 @@ _DIFFERENTIAL_BACKENDS = ("ad", "jet", "fd", "basis")
 def _validate_differential_backend(backend: str, /) -> DifferentialBackend:
     if backend not in _DIFFERENTIAL_BACKENDS:
         raise ValueError(
-            f"Unknown differential backend {backend!r}; expected one of "
-            f"{_DIFFERENTIAL_BACKENDS}."
+            f"Unknown differential backend {backend!r}; expected one of {_DIFFERENTIAL_BACKENDS}."
         )
     return backend
 

@@ -43,9 +43,9 @@ class LayeredLoveWavePlan(StrictModule, NonTrainableState):
         mode_count: int = 4,
         scan_count: int = 512,
     ):
-        thickness = np.asarray(thickness_m, dtype=float)
-        density = np.asarray(density_kg_m3, dtype=float)
-        velocity = np.asarray(shear_velocity_m_s, dtype=float)
+        thickness = np.asarray(thickness_m, dtype=np.float64)
+        density = np.asarray(density_kg_m3, dtype=np.float64)
+        velocity = np.asarray(shear_velocity_m_s, dtype=np.float64)
         modes, scans = int(mode_count), int(scan_count)
         if (
             thickness.ndim != 1
@@ -105,7 +105,7 @@ class LayeredLoveWavePlan(StrictModule, NonTrainableState):
         return float(value.real)
 
     def solve(self, frequencies_Hz: ArrayLike, /) -> SurfaceWaveModes:
-        frequencies = np.asarray(frequencies_Hz, dtype=float)
+        frequencies = np.asarray(frequencies_Hz, dtype=np.float64)
         if (
             frequencies.ndim != 1
             or frequencies.size == 0
@@ -117,7 +117,7 @@ class LayeredLoveWavePlan(StrictModule, NonTrainableState):
         upper = float(self.shear_velocity_m_s[-1]) * (1 - 1e-8)
         roots = np.full((frequencies.size, self.mode_count), np.nan)
         margins = np.zeros_like(roots)
-        valid = np.zeros_like(roots, dtype=bool)
+        valid = np.zeros_like(roots, dtype=np.bool_)
         for frequency_index, frequency in enumerate(frequencies):
             candidates = np.linspace(lower, upper, self.scan_count)
             residuals = np.asarray(

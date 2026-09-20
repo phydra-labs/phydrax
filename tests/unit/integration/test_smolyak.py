@@ -255,7 +255,7 @@ def test_adaptive_sparse_grid_accepts_an_exactly_in_cap_refinement(monkeypatch):
 
     def instrumented(target, plan, level, /, *, index_set=None):
         batch = original(target, plan, level, index_set=index_set)
-        materialized_node_counts.append(int(batch.weights.data.size))
+        materialized_node_counts.append(batch.weights.data.size)
         return batch
 
     monkeypatch.setattr(sparse_grid_module, "_materialize_level", instrumented)

@@ -5,7 +5,7 @@
 
 """Audit on-disk prerequisites for cardiovascular release qualification.
 
-This is a preflight auditor, not a licence issuer or release approver.  It
+This is a preflight auditor, not a license issuer or release approver.  It
 returns a nonzero status while any required record is absent or malformed and
 keeps the independent release decision outside the G0-G7 evidence result.
 """
@@ -732,13 +732,11 @@ def build_cardiovascular_release_artifacts(
             vulnerabilities = vulnerability_entry.get("vulnerabilities")
             if not isinstance(vulnerabilities, list):
                 blockers.append(
-                    f"external-vulnerability-report-record:"
-                    f"package-vulnerabilities-invalid:{identity}"
+                    f"external-vulnerability-report-record:package-vulnerabilities-invalid:{identity}"
                 )
             elif vulnerabilities:
                 blockers.append(
-                    f"external-vulnerability-report-record:"
-                    f"package-vulnerabilities-present:{identity}"
+                    f"external-vulnerability-report-record:package-vulnerabilities-present:{identity}"
                 )
 
         download = item["download"]
@@ -842,15 +840,13 @@ def build_cardiovascular_release_artifacts(
             table = record.get(table_name, {})
             if not isinstance(table, Mapping):
                 blockers.append(
-                    f"dependency-graph:{item['name']}@{item['version']}:"
-                    f"{table_name}-invalid"
+                    f"dependency-graph:{item['name']}@{item['version']}:{table_name}-invalid"
                 )
                 continue
             for group, group_dependencies in table.items():
                 if not isinstance(group_dependencies, list):
                     blockers.append(
-                        f"dependency-graph:{item['name']}@{item['version']}:"
-                        f"{table_name}-{group}-invalid"
+                        f"dependency-graph:{item['name']}@{item['version']}:{table_name}-{group}-invalid"
                     )
                     continue
                 dependencies.extend(
@@ -861,8 +857,7 @@ def build_cardiovascular_release_artifacts(
         for dependency_group, dependency in dependencies:
             if not isinstance(dependency, Mapping):
                 blockers.append(
-                    f"dependency-graph:{item['name']}@{item['version']}:"
-                    "dependency-record-invalid"
+                    f"dependency-graph:{item['name']}@{item['version']}:dependency-record-invalid"
                 )
                 continue
             dependency_name = (
@@ -870,8 +865,7 @@ def build_cardiovascular_release_artifacts(
             )
             if not dependency_name:
                 blockers.append(
-                    f"dependency-graph:{item['name']}@{item['version']}:"
-                    "dependency-name-missing"
+                    f"dependency-graph:{item['name']}@{item['version']}:dependency-name-missing"
                 )
                 continue
             candidates = list(packages_by_name.get(dependency_name, ()))
@@ -895,8 +889,7 @@ def build_cardiovascular_release_artifacts(
                     f"@{dependency_version}" if dependency_version is not None else ""
                 )
                 blockers.append(
-                    f"dependency-graph:{item['name']}@{item['version']}:"
-                    f"unresolved:{dependency_name}{version_suffix}"
+                    f"dependency-graph:{item['name']}@{item['version']}:unresolved:{dependency_name}{version_suffix}"
                 )
                 continue
             for candidate in candidates:
@@ -1285,7 +1278,7 @@ def _distribution_artifact(value: str, /) -> tuple[str, Path]:
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Audit cardiovascular release prerequisites without issuing a licence, "
+            "Audit cardiovascular release prerequisites without issuing a license, "
             "regulated claim, or release approval."
         )
     )
@@ -1323,8 +1316,7 @@ def _parser() -> argparse.ArgumentParser:
         type=Path,
         metavar="DIRECTORY",
         help=(
-            "Derive dependency-complete SBOM, provenance, supply-chain manifest, "
-            "hashes, and unsigned dossier."
+            "Derive dependency-complete SBOM, provenance, supply-chain manifest, hashes, and unsigned dossier."
         ),
     )
     parser.add_argument("--commercial-license-record", type=Path)

@@ -135,7 +135,7 @@ class SphereContactGeometry(AbstractImplicitContactGeometry):
             {
                 "kind": "sphere-contact-geometry",
                 "center": array_tree_fingerprint(np.asarray(center_)),
-                "dimension": int(center_.size),
+                "dimension": center_.size,
                 "radius": radius_.hex(),
                 "feature_policy": features.policy_id,
             }
@@ -143,7 +143,7 @@ class SphereContactGeometry(AbstractImplicitContactGeometry):
 
     @property
     def ambient_dimension(self) -> int:
-        return int(self.center.size)
+        return self.center.size
 
     @property
     def geometry_id(self) -> str:
@@ -201,7 +201,7 @@ class PlaneContactGeometry(AbstractImplicitContactGeometry):
             {
                 "kind": "plane-contact-geometry",
                 "normal": array_tree_fingerprint(np.asarray(self.unit_normal)),
-                "dimension": int(normal_.size),
+                "dimension": normal_.size,
                 "offset": offset_.hex(),
                 "feature_policy": features.policy_id,
             }
@@ -209,7 +209,7 @@ class PlaneContactGeometry(AbstractImplicitContactGeometry):
 
     @property
     def ambient_dimension(self) -> int:
-        return int(self.unit_normal.size)
+        return self.unit_normal.size
 
     @property
     def geometry_id(self) -> str:
@@ -276,7 +276,7 @@ class FunctionImplicitContactGeometry(AbstractImplicitContactGeometry):
             canonical_fingerprint(
                 {
                     "kind": "function-implicit-contact-geometry",
-                    "dimension": int(lower.size),
+                    "dimension": lower.size,
                     "distance_action": distance_action,
                     "support_action": support_action,
                     "guarantee": int(level),
@@ -298,7 +298,7 @@ class FunctionImplicitContactGeometry(AbstractImplicitContactGeometry):
 
     @property
     def ambient_dimension(self) -> int:
-        return int(self.lower_bound.size)
+        return self.lower_bound.size
 
     @property
     def geometry_id(self) -> str:

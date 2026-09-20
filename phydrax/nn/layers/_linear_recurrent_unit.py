@@ -14,6 +14,7 @@ import jax.random as jr
 from jaxtyping import Array, Key
 
 import phydrax.ein as ein
+from phydrax._strict import StrictModule
 
 from ..._doc import DOC_KEY0
 from .._keys import EvalKey
@@ -40,7 +41,7 @@ def _last_valid_array(values: Array, valid: Array, /) -> Array:
     return jnp.where(has_value, selected, jnp.zeros_like(selected))
 
 
-class LinearRecurrentUnit(eqx.Module):
+class LinearRecurrentUnit(StrictModule):
     """Stable complex-diagonal linear recurrence with real input/output maps."""
 
     raw_radius: Array
@@ -145,7 +146,7 @@ class LinearRecurrentUnit(eqx.Module):
         if not isinstance(batch, RecurrentBatch):
             raise TypeError("batch must be a RecurrentBatch.")
         values = jnp.asarray(batch.inputs)
-        if values.ndim < 1 or int(values.shape[-1]) != self.input_size:
+        if values.ndim < 1 or values.shape[-1] != self.input_size:
             raise ValueError(f"Recurrent inputs must end in width {self.input_size}.")
         if jnp.issubdtype(values.dtype, jnp.complexfloating):
             raise TypeError("LinearRecurrentUnit inputs must be real-valued.")

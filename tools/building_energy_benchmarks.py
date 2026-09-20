@@ -12,6 +12,7 @@ from pathlib import Path
 import jax
 import jax.numpy as jnp
 import numpy as np
+from phydrax.interchange.energy_runtime import pin_energy_executable
 
 from phydrax.applications.building_energy import (
     Adjacency,
@@ -31,7 +32,6 @@ from phydrax.applications.building_energy import (
     Zone,
 )
 from phydrax.applications.thermofluids import ResistiveHeatingLaw
-from phydrax.interchange.energy_runtime import pin_energy_executable
 from phydrax.optim import OptimizationTermination
 from phydrax.units import derived_unit, JOULE, KELVIN, SECOND
 

@@ -7,14 +7,14 @@ from jaxtyping import ArrayLike
 
 
 def structural_incidence(equation_variables: ArrayLike, /):
-    matrix = np.asarray(equation_variables, dtype=bool)
+    matrix = np.asarray(equation_variables, dtype=np.bool_)
     if matrix.ndim != 2:
         raise ValueError("Structural incidence must be a matrix.")
-    return jnp.asarray(matrix), int(np.linalg.matrix_rank(matrix.astype(float)))
+    return jnp.asarray(matrix), int(np.linalg.matrix_rank(matrix.astype("float64")))
 
 
 def maximum_structural_matching(incidence: ArrayLike, /):
-    graph = np.asarray(incidence, dtype=bool)
+    graph = np.asarray(incidence, dtype=np.bool_)
     matched = [-1] * graph.shape[1]
 
     def augment(eq, seen):

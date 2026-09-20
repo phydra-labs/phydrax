@@ -11,13 +11,14 @@ import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
 from .._strict import StrictModule
+from .._tree_math import tree_norm as _tree_norm
 from ._iterative import (
     Bounds,
     MinimizationProblem,
     NonlinearConstraint,
     OptimizationTermination,
 )
-from ._iterative._types import _tree_norm, OptimizationStatus
+from ._iterative._types import OptimizationStatus
 from ._pde_constrained import (
     StateAcceptanceEvidence,
     StateDesignConstraint,

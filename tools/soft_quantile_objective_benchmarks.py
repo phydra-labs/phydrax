@@ -500,7 +500,7 @@ def _metadata() -> dict[str, Any]:
 def main() -> None:
     arguments = _parser().parse_args()
     _validate(arguments)
-    size = 12 if arguments.smoke else int(arguments.size)
+    size = 12 if arguments.smoke else arguments.size
     steps = 2 if arguments.smoke else int(arguments.steps)
     seeds = (0,) if arguments.smoke else tuple(arguments.seeds)
     dtype = _DTYPES[arguments.dtype]
@@ -524,7 +524,7 @@ def main() -> None:
                 )
 
     payload = {
-        "schema": "phydrax.soft-quantile-objectives.v1",
+        "schema": "phydrax.soft-quantile-objectives",
         "metadata": _metadata(),
         "configuration": {
             "methods": list(arguments.methods),

@@ -22,7 +22,7 @@ def _matrix_structure():
     )
 
 
-def test_labelled_plan_preserves_output_order_refresh_and_jit():
+def test_labeled_plan_preserves_output_order_refresh_and_jit():
     structure = _matrix_structure()
     plan = tn.plan_contraction(structure, dtype="float64", optimizer="optimal")
     left = jnp.arange(6.0).reshape((2, 3))

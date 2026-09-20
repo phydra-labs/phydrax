@@ -84,7 +84,7 @@ def _minimum_image(
     lengths = jnp.asarray(address_plan.upper, dtype=relative.dtype) - jnp.asarray(
         address_plan.lower, dtype=relative.dtype
     )
-    periodic = jnp.asarray(address_plan.periodic_axes, dtype=bool)
+    periodic = jnp.asarray(address_plan.periodic_axes, dtype=jnp.bool_)
     wrapped = relative - jnp.round(relative / lengths) * lengths
     return jnp.where(periodic, wrapped, relative)
 
@@ -117,7 +117,7 @@ def _point_box_distance_bounds(
     lengths = jnp.asarray(address_plan.upper, dtype=relative.dtype) - jnp.asarray(
         address_plan.lower, dtype=relative.dtype
     )
-    periodic = jnp.asarray(address_plan.periodic_axes, dtype=bool)
+    periodic = jnp.asarray(address_plan.periodic_axes, dtype=jnp.bool_)
     wrapped = relative - jnp.round(relative / lengths) * lengths
     center_distance = jnp.where(periodic, jnp.abs(wrapped), jnp.abs(relative))
     lower_axis = jnp.maximum(center_distance - half_widths[None, :, :], 0)
@@ -239,9 +239,9 @@ class MortonNeighborQueryPlan(StrictModule):
             raise ValueError("radius must be positive when supplied.")
 
         if target_mask is None:
-            target_active = jnp.ones((self.target_capacity,), dtype=bool)
+            target_active = jnp.ones((self.target_capacity,), dtype=jnp.bool_)
         else:
-            target_active = jnp.asarray(target_mask, dtype=bool)
+            target_active = jnp.asarray(target_mask, dtype=jnp.bool_)
             if target_active.shape != (self.target_capacity,):
                 raise ValueError("target_mask must match target_capacity.")
 
@@ -505,9 +505,9 @@ class MortonRadiusRelationPlan(StrictModule):
             raise ValueError("pair_once requires equal source and target capacities.")
 
         if target_mask is None:
-            target_active = jnp.ones((self.target_capacity,), dtype=bool)
+            target_active = jnp.ones((self.target_capacity,), dtype=jnp.bool_)
         else:
-            target_active = jnp.asarray(target_mask, dtype=bool)
+            target_active = jnp.asarray(target_mask, dtype=jnp.bool_)
             if target_active.shape != (self.target_capacity,):
                 raise ValueError("target_mask must match target_capacity.")
         if target_stable_ids is None:
@@ -616,7 +616,7 @@ class MortonRadiusRelationPlan(StrictModule):
         selected_valid = (
             (route_rank < required_pairs) & complete
             if self.maximum_pairs
-            else jnp.zeros((0,), dtype=bool)
+            else jnp.zeros((0,), dtype=jnp.bool_)
         )
         selected_source = flat_source[selected].astype(jnp.int32)
         selected_target = flat_target[selected].astype(jnp.int32)

@@ -516,7 +516,10 @@ def test_short_lived_scoped_secrets_and_redaction():
         broker.resolve(handle, "tenant", "provider:read")
     assert SecretRedactor().redact(
         {"authorization": "Bearer secret", "safe": "value"}
-    ) == {"authorization": "<redacted>", "safe": "value"}
+    ) == {
+        "authorization": "<redacted>",
+        "safe": "value",
+    }
 
 
 def test_support_bundle_is_allowlisted_redacted_and_privacy_bounded():

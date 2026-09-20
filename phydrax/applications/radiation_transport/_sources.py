@@ -50,8 +50,8 @@ class AliasSpectrumPlan(StrictModule, NonTrainableState):
         commercial_use: bool = False,
         export: bool = False,
     ):
-        energy = np.asarray(energies, dtype=float)
-        probability = np.asarray(probabilities, dtype=float)
+        energy = np.asarray(energies, dtype=np.float64)
+        probability = np.asarray(probabilities, dtype=np.float64)
         if not isinstance(energy_unit, UnitDefinition):
             raise TypeError("energy_unit must be UnitDefinition.")
         conversion_factor(energy_unit, ELECTRONVOLT)
@@ -74,7 +74,7 @@ class AliasSpectrumPlan(StrictModule, NonTrainableState):
         scaled = normalized * count
         small = [index for index, value in enumerate(scaled) if value < 1.0]
         large = [index for index, value in enumerate(scaled) if value >= 1.0]
-        acceptance = np.ones((count,), dtype=float)
+        acceptance = np.ones((count,), dtype=np.float64)
         alias = np.arange(count, dtype=np.int32)
         while small and large:
             low = small.pop()
@@ -133,8 +133,8 @@ class DiagnosticXRaySourcePlan(StrictModule, NonTrainableState):
         cone_half_angle: float,
         source_id: str,
     ):
-        position_ = np.asarray(position, dtype=float)
-        axis_ = np.asarray(axis, dtype=float)
+        position_ = np.asarray(position, dtype=np.float64)
+        axis_ = np.asarray(axis, dtype=np.float64)
         angle = float(cone_half_angle)
         identifier = str(source_id).strip()
         norm = np.linalg.norm(axis_)

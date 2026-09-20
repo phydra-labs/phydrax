@@ -10,7 +10,7 @@ The implementation is bounded, fixed-capacity, fail-closed research software. A
 successful numerical evidence record applies only to the declared model, discretization,
 input support, tolerances, precision, and execution route. It is not clinical validation,
 diagnostic performance, treatment guidance, regulatory clearance, or a commercial
-licence.
+license.
 
 ## Public layout
 
@@ -24,7 +24,7 @@ passive_material = cardio.mechanics.HolzapfelOgden2009TensionOnlyEnergy
 closed_loop = cardio.circulation.biventricular_closed_loop
 flow_plan = cardio.hemodynamics.FixedWallLBMPlan
 pv_plan = cardio.observations.PressureVolumeLoopPlan
-inverse_problem = cardio.personalization.ElectrophysiologyInverseProblem
+inverse_problem = cardio.personalization.CardiovascularInverseProblem
 ```
 
 Shared substrates retain their generic public owners: use

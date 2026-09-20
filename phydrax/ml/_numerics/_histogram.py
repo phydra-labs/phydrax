@@ -44,7 +44,7 @@ def histogram_gradient_statistics(
     bin_indices = jnp.asarray(bins, dtype=jnp.int32)
     gradient = jnp.asarray(gradients)
     hessian = jnp.asarray(hessians)
-    weight = jnp.asarray(weights, dtype=float)
+    weight = jnp.asarray(weights, dtype=jnp.float64)
     if bin_indices.ndim != 2 or gradient.shape[0] != bin_indices.shape[0]:
         raise ValueError("Histogram statistics require aligned samples.")
     if hessian.shape != gradient.shape or weight.shape != (bin_indices.shape[0],):
@@ -104,7 +104,7 @@ def xgboost_leaf_weight(
     l1 = jnp.asarray(l1_regularization)
     shrunk = jnp.sign(gradient) * jnp.maximum(jnp.abs(gradient) - l1, 0.0)
     value = -shrunk / jnp.maximum(
-        hessian + jnp.asarray(l2_regularization), jnp.finfo(float).tiny
+        hessian + jnp.asarray(l2_regularization), jnp.finfo(jnp.float64).tiny
     )
     limit = jnp.asarray(max_delta_step)
     return jnp.where(limit > 0.0, jnp.clip(value, -limit, limit), value)
@@ -131,7 +131,7 @@ def xgboost_split_gain(
     def score(g, h):
         shrunk = jnp.sign(g) * jnp.maximum(jnp.abs(g) - l1, 0.0)
         return jnp.sum(
-            shrunk * shrunk / jnp.maximum(h + regularization, jnp.finfo(float).tiny)
+            shrunk * shrunk / jnp.maximum(h + regularization, jnp.finfo(jnp.float64).tiny)
         )
 
     return 0.5 * (score(lg, lh) + score(rg, rh) - score(lg + rg, lh + rh)) - jnp.asarray(

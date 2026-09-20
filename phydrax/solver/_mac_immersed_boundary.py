@@ -186,7 +186,7 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
             raise ValueError("Projection boundaries must share MAC operators.")
         spacings = []
         for axis in operators.discretization.grid.structured_axes:
-            widths = np.asarray(axis.interval_widths, dtype=float)
+            widths = np.asarray(axis.interval_widths, dtype=np.float64)
             spacings.extend(float(value) for value in widths)
         length = min(spacings) if constraint_length is None else float(constraint_length)
         tolerance_ = float(tolerance)
@@ -596,12 +596,10 @@ class MACImmersedBoundaryProjectionPlan(StrictModule, NonTrainableState):
         else:
             pressure_candidate = physical_increment
         divergence_candidate = self.operators.divergence(candidate_velocity)
-        marker_after_velocity_candidate = self.transfer.gather(
-            relation, candidate_velocity
-        )
+        self.transfer.gather(relation, candidate_velocity)
         constraint_after_candidate = gather_constraint(candidate_velocity)
         slip_constraint_candidate = constraint_after_candidate - target_constraint
-        slip_candidate = (
+        (
             slip_constraint_candidate[:, None] * unit_normals
             if normal_mode
             else slip_constraint_candidate

@@ -77,7 +77,7 @@ class CurrentSynapse(StrictModule, NonTrainableState):
         self.current_scale_nA = scale
         self.model_id = canonical_fingerprint(
             {
-                "kind": "current-synapse-v1",
+                "kind": "current-synapse",
                 "time_constant_ms": tau,
                 "current_scale_nA": scale,
                 "units_id": ELECTROPHYSIOLOGY_UNITS.units_id,
@@ -110,7 +110,7 @@ class ConductanceSynapse(StrictModule, NonTrainableState):
         self.reversal_mV = reversal
         self.model_id = canonical_fingerprint(
             {
-                "kind": "conductance-synapse-v1",
+                "kind": "conductance-synapse",
                 "time_constant_ms": tau,
                 "conductance_scale_uS": scale,
                 "reversal_mV": reversal,
@@ -302,7 +302,7 @@ class PreparedSynapseNetwork(StrictModule, NonTrainableState):
         self.plan = plan
         self.runtime_id = canonical_fingerprint(
             {
-                "kind": "prepared-electrophysiology-synapse-network-v1",
+                "kind": "prepared-electrophysiology-synapse-network",
                 "plan": plan.plan_id,
             }
         )

@@ -98,14 +98,14 @@ def classify_collapse(
     eigenvalues = jnp.asarray(tangent_eigenvalues)
     minimum = jnp.min(eigenvalues)
     yielded_ = (
-        jnp.zeros((1,), dtype=bool)
+        jnp.zeros((1,), dtype=jnp.bool_)
         if yielded is None
-        else jnp.asarray(yielded, dtype=bool)
+        else jnp.asarray(yielded, dtype=jnp.bool_)
     )
     fractured_ = (
-        jnp.zeros((1,), dtype=bool)
+        jnp.zeros((1,), dtype=jnp.bool_)
         if fractured is None
-        else jnp.asarray(fractured, dtype=bool)
+        else jnp.asarray(fractured, dtype=jnp.bool_)
     )
     strain = (
         jnp.zeros((1,)) if strain_utilization is None else jnp.asarray(strain_utilization)

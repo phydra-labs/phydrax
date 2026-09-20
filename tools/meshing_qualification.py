@@ -305,8 +305,7 @@ def _hybrid_face_indices(source, axis: int, coordinate: float):
     triangles = points[np.asarray(source.mesh_faces)]
     face_ids = np.asarray(source.triangle_face_ids)
     return tuple(
-        int(value)
-        for value in np.unique(
+        np.unique(
             face_ids[
                 np.all(
                     np.isclose(triangles[:, :, axis], coordinate),
@@ -931,10 +930,7 @@ def qualify_planar_bands() -> dict[str, object]:
     achieved = dict(mesh_result.compliance.achieved)
     front_residuals = {}
     for layer in source.layer_partitions:
-        key = (
-            f"planar_band:{layer.control_id}:{layer.region_name}:"
-            f"front:{layer.layer_index + 1}"
-        )
+        key = f"planar_band:{layer.control_id}:{layer.region_name}:front:{layer.layer_index + 1}"
         residual = achieved[f"{key}:maximum_residual"]
         if residual > 1.0e-12:
             raise RuntimeError("Planar band front departed from its exact CAD level.")

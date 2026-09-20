@@ -131,10 +131,7 @@ class AxisFactorizedField(StrictModule):
         if not isinstance(plan, AxisContractionPlan):
             raise TypeError("plan must be an AxisContractionPlan.")
         missing = tuple(
-            name
-            for term in plan.terms
-            for name in term.factor_names
-            if name not in names
+            name for term in plan.terms for name in term.factor_names if name not in names
         )
         if missing:
             raise ValueError(
@@ -194,14 +191,12 @@ def _apply_gathers(factor: AxisFactor, /) -> AxisFactor:
     for gather in factor.gathers:
         if gather.source_axis not in axes:
             raise ValueError(
-                f"Factor {factor.name!r} cannot gather missing axis "
-                f"{gather.source_axis!r}."
+                f"Factor {factor.name!r} cannot gather missing axis {gather.source_axis!r}."
             )
         for axis in gather.target_axes:
             if axis in axes and axis != gather.source_axis:
                 raise ValueError(
-                    f"Gather target axis {axis!r} already exists in factor "
-                    f"{factor.name!r} axes {axes!r}."
+                    f"Gather target axis {axis!r} already exists in factor {factor.name!r} axes {axes!r}."
                 )
         if gather.indices.ndim != len(gather.target_axes):
             raise ValueError(
@@ -234,7 +229,7 @@ def _broadcast_factor(factor: AxisFactor, output_axes: tuple[str, ...], /) -> Ar
     shape: list[int] = []
     for axis in output_axes:
         shape.append(int(axis_sizes[axis]) if axis in axis_sizes else 1)
-    shape.extend([int(factor.tensor.shape[-2]), int(factor.tensor.shape[-1])])
+    shape.extend([factor.tensor.shape[-2], factor.tensor.shape[-1]])
     return factor.tensor.reshape(tuple(shape))
 
 

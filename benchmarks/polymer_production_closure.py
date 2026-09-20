@@ -19,14 +19,14 @@ def main() -> int:
         np.ones((particle_count,)),
         phx.atomistic.AtomisticUnitSystem.reduced(),
         atom_type_ids=np.zeros((particle_count,), dtype=np.int32),
-        element_mask=np.zeros((particle_count,), dtype=bool),
+        element_mask=np.zeros((particle_count,), dtype="bool"),
     ).prepare()
     mobility = phx.atomistic.FreeSpaceRPYMobilityPlan(
         0.5, 1.0, maximum_particles=particle_count
     ).prepare(system, np.arange(particle_count))
     coordinate = jnp.stack(
         (
-            jnp.arange(particle_count, dtype=float) * 1.25,
+            jnp.arange(particle_count, dtype="float64") * 1.25,
             jnp.zeros((particle_count,)),
             jnp.zeros((particle_count,)),
         ),

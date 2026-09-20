@@ -50,9 +50,7 @@ def run_flip_qualification(*, smoke=False):
     problem = phx.equations.FLIPProblemIR(
         "qualification", 1000.0, jnp.asarray([0.0, -1.0])
     )
-    method = phx.discretization.flip.FLIPMethodPlan(
-        0.05, liquid_fraction_threshold=0.01
-    )
+    method = phx.discretization.flip.FLIPMethodPlan(0.05, liquid_fraction_threshold=0.01)
     compiled = phx.equations.compile_flip_problem(problem, transfer, projection, method)
     state = compiled.initialize_state(position, jnp.zeros_like(position))
     result = compiled.step_detailed(state, 2.0e-4)

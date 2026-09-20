@@ -38,10 +38,10 @@ class SignedMetricValidationReport(StrictModule):
         minimum_absolute_eigenvalue: Array,
         maximum_condition_number: Array,
     ):
-        self.valid = jnp.asarray(valid, dtype=bool)
-        self.finite = jnp.asarray(finite, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
         self.maximum_asymmetry = jnp.asarray(maximum_asymmetry)
-        self.signature_matches = jnp.asarray(signature_matches, dtype=bool)
+        self.signature_matches = jnp.asarray(signature_matches, dtype=jnp.bool_)
         self.observed_positive = jnp.asarray(observed_positive, dtype=jnp.int32)
         self.observed_negative = jnp.asarray(observed_negative, dtype=jnp.int32)
         self.observed_near_zero = jnp.asarray(observed_near_zero, dtype=jnp.int32)

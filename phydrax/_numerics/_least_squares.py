@@ -93,8 +93,8 @@ def _ridge(value: float, /) -> float:
 
 def _mask(value: ArrayLike | None, size: int, /) -> Array:
     if value is None:
-        return jnp.ones((size,), dtype=bool)
-    result = jnp.asarray(value, dtype=bool)
+        return jnp.ones((size,), dtype=jnp.bool_)
+    result = jnp.asarray(value, dtype=jnp.bool_)
     if result.shape != (size,):
         raise ValueError(f"mask must have shape ({size},); got {result.shape}.")
     return result
@@ -141,8 +141,8 @@ def _prepare_least_squares_design(
     if values.ndim != 2:
         raise ValueError("design must have shape (samples, features).")
     if not jnp.issubdtype(values.dtype, jnp.inexact):
-        values = values.astype(float)
-    samples, features = (int(size) for size in values.shape)
+        values = values.astype("float64")
+    samples, features = (size for size in values.shape)
     if samples < 1 or features < 1:
         raise ValueError("design must contain at least one sample and one feature.")
     if max_features is not None:
@@ -290,16 +290,16 @@ def _solve_prepared_least_squares(
     feature_mask: ArrayLike | None,
 ) -> WeightedLeastSquaresResult:
     response = jnp.asarray(target)
-    if response.ndim < 1 or int(response.shape[0]) != design.num_samples:
+    if response.ndim < 1 or response.shape[0] != design.num_samples:
         raise ValueError(
             "target must have one leading entry per normalized design sample."
         )
     if not jnp.issubdtype(response.dtype, jnp.inexact):
-        response = response.astype(float)
+        response = response.astype("float64")
     dtype = jnp.result_type(design.values, response)
     matrix = design.values.astype(dtype)
     response = response.astype(dtype)
-    output_shape = tuple(int(size) for size in response.shape[1:])
+    output_shape = tuple(response.shape[1:])
     flat_response = response.reshape((design.num_samples, -1))
     requested = _mask(mask, design.num_samples)
     finite_target = jnp.all(jnp.isfinite(flat_response), axis=-1)
@@ -309,13 +309,12 @@ def _solve_prepared_least_squares(
     denominator = jnp.maximum(weight_sum, jnp.asarray(1.0, dtype=weights.dtype))
 
     if feature_mask is None:
-        active = jnp.ones((design.num_features,), dtype=bool)
+        active = jnp.ones((design.num_features,), dtype=jnp.bool_)
     else:
-        active = jnp.asarray(feature_mask, dtype=bool)
+        active = jnp.asarray(feature_mask, dtype=jnp.bool_)
         if active.shape != (design.num_features,):
             raise ValueError(
-                f"feature_mask must have shape ({design.num_features},); got "
-                f"{active.shape}."
+                f"feature_mask must have shape ({design.num_features},); got {active.shape}."
             )
     active_count = jnp.sum(active).astype(jnp.int32)
     safe_matrix = jnp.where(valid_rows[:, None], matrix, jnp.zeros((), dtype))

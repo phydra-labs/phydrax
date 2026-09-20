@@ -11,7 +11,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._complex_matrix_manifold import SpecialUnitaryGroup, UnitaryGroup
 from ._lie_group import AbstractLieGroup
@@ -28,8 +28,7 @@ def _element(group: AbstractLieGroup, value: ArrayLike, /) -> Array:
     element = jnp.asarray(value)
     if element.shape[-2:] != group.point_shape:
         raise ValueError(
-            f"Group elements must have trailing shape {group.point_shape}; "
-            f"got {element.shape}."
+            f"Group elements must have trailing shape {group.point_shape}; got {element.shape}."
         )
     return element
 
@@ -48,8 +47,7 @@ def _apply_matrix(
         raise ValueError("color_axis lies outside the vector payload rank.")
     if value.shape[axis] != dimension:
         raise ValueError(
-            f"The declared color axis must have extent {dimension}; "
-            f"got {value.shape[axis]}."
+            f"The declared color axis must have extent {dimension}; got {value.shape[axis]}."
         )
     moved = jnp.moveaxis(value, axis, -1)
     vector_leading_rank = moved.ndim - 1
@@ -68,10 +66,10 @@ def _apply_matrix(
 class AbstractGaugeRepresentation(StrictModule, NonTrainableState):
     """Finite matrix representation acting on one declared payload color axis."""
 
-    group: AbstractAttribute[AbstractLieGroup]
-    dimension: AbstractAttribute[int]
-    color_axis: AbstractAttribute[int]
-    representation_id: AbstractAttribute[str]
+    group: eqx.AbstractVar[AbstractLieGroup]
+    dimension: eqx.AbstractVar[int]
+    color_axis: eqx.AbstractVar[int]
+    representation_id: eqx.AbstractVar[str]
 
     @abstractmethod
     def matrix(self, element: ArrayLike, /) -> Array:

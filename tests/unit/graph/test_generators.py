@@ -10,8 +10,8 @@ def test_get_fully_connected_graph_no_self_edges():
     assert graph.receivers is not None
     assert graph.n_node.tolist() == [3, 3]
     assert graph.n_edge.tolist() == [6, 6]
-    assert int(graph.senders.shape[0]) == 12
-    assert int(graph.receivers.shape[0]) == 12
+    assert graph.senders.shape[0] == 12
+    assert graph.receivers.shape[0] == 12
 
 
 def test_get_fully_connected_graph_with_features():

@@ -99,7 +99,7 @@ class OrthogonalRuleData(StrictModule, NonTrainableState):
         self.backend = str(backend)
         self.rule_id = canonical_fingerprint(
             {
-                "kind": "orthogonal-rule-v1",
+                "kind": "orthogonal-rule",
                 "family": family,
                 "node_rule": self.node_rule,
                 "reference_domain": self.reference_domain,
@@ -168,7 +168,7 @@ def standard_series_value(
     basis = _vandermonde_recurrence(
         family,
         x_.reshape((1,)),
-        int(coefficients_.shape[0]) - 1,
+        coefficients_.shape[0] - 1,
     )[0]
     return ein.contract("i,i->", basis, coefficients_)
 
@@ -231,15 +231,14 @@ def standard_series_derivative_coefficients(
     order_ = int(order)
     if coefficients_.ndim < 1 or order_ < 0:
         raise ValueError(
-            "Orthogonal derivative coefficients need a leading mode axis and "
-            "non-negative order."
+            "Orthogonal derivative coefficients need a leading mode axis and non-negative order."
         )
     if order_ == 0:
         return coefficients_
     operator = jnp.asarray(
         _derivative_operator(
             family,
-            int(coefficients_.shape[0]),
+            coefficients_.shape[0],
             order_,
         ),
         dtype=coefficients_.dtype,
@@ -255,7 +254,7 @@ def standard_derivative_matrix(
     /,
     *,
     scale: ArrayLike = 1.0,
-    dtype: Any = float,
+    dtype: Any = jnp.float64,
 ) -> Array:
     """Return the fixed-capacity coefficient derivative matrix."""
     count_ = _node_count(count)
@@ -297,8 +296,8 @@ def _node_count(value: int, /) -> int:
 
 
 def _canonical_arrays(nodes, weights, dtype, /) -> tuple[np.ndarray, np.ndarray]:
-    nodes_host = np.asarray(nodes, dtype=float).reshape((-1,))
-    weights_host = np.asarray(weights, dtype=float).reshape((-1,))
+    nodes_host = np.asarray(nodes, dtype=np.float64).reshape((-1,))
+    weights_host = np.asarray(weights, dtype=np.float64).reshape((-1,))
     order = np.argsort(nodes_host)
     dtype_ = np.dtype(dtype)
     return (
@@ -312,7 +311,7 @@ def legendre_rule_data(
     kind: LegendreRuleKind = "gauss",
     /,
     *,
-    dtype=float,
+    dtype=jnp.float64,
 ) -> OrthogonalRuleData:
     """Return a canonical raw-Lebesgue Legendre Gauss, Radau, or Lobatto rule."""
     count = _node_count(num_nodes)
@@ -389,7 +388,7 @@ def standard_normal_hermite_rule_data(
     num_nodes: int,
     /,
     *,
-    dtype=float,
+    dtype=jnp.float64,
 ) -> OrthogonalRuleData:
     """Return a probabilists' Hermite rule normalized as a standard-normal expectation."""
     count = _node_count(num_nodes)

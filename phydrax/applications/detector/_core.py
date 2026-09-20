@@ -199,7 +199,7 @@ class TransportTrackBank(StrictModule, NonTrainableState):
         momenta_ = jnp.asarray(momenta, dtype=positions_.dtype)
         masses = jnp.asarray(rest_energies, dtype=positions_.dtype)
         charges_ = jnp.asarray(charges, dtype=positions_.dtype)
-        active_ = jnp.asarray(active, dtype=bool)
+        active_ = jnp.asarray(active, dtype=jnp.bool_)
         if event_ids_.ndim != 1 or tracks.ndim != 2:
             raise ValueError("Track banks require event IDs and an event-by-track grid.")
         expected = tracks.shape
@@ -275,7 +275,7 @@ class TruthStepBank(StrictModule, NonTrainableState):
         start_times_ = jnp.asarray(start_times, dtype=starts.dtype)
         end_times_ = jnp.asarray(end_times, dtype=starts.dtype)
         energy = jnp.asarray(deposited_energy, dtype=starts.dtype)
-        active_ = jnp.asarray(active, dtype=bool)
+        active_ = jnp.asarray(active, dtype=jnp.bool_)
         if tracks.ndim != 2:
             raise ValueError("Truth steps require shape (event, step).")
         expected = tracks.shape
@@ -354,7 +354,7 @@ class SensitiveHitBank(StrictModule, NonTrainableState):
         positions_ = jnp.asarray(positions)
         times_ = jnp.asarray(times, dtype=positions_.dtype)
         energies_ = jnp.asarray(energies, dtype=positions_.dtype)
-        active_ = jnp.asarray(active, dtype=bool)
+        active_ = jnp.asarray(active, dtype=jnp.bool_)
         if hit_ids_.ndim != 2:
             raise ValueError("Sensitive hits require shape (event, hit).")
         expected = hit_ids_.shape
@@ -419,8 +419,8 @@ class DigitBank(StrictModule, NonTrainableState):
         channels = jnp.asarray(channel_ids, dtype=jnp.int32)
         signals_ = jnp.asarray(signals)
         times_ = jnp.asarray(times, dtype=signals_.dtype)
-        active_ = jnp.asarray(active, dtype=bool)
-        saturated_ = jnp.asarray(saturated, dtype=bool)
+        active_ = jnp.asarray(active, dtype=jnp.bool_)
+        saturated_ = jnp.asarray(saturated, dtype=jnp.bool_)
         if digits.ndim != 2:
             raise ValueError("Digits require shape (event, channel).")
         expected = digits.shape

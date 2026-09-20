@@ -204,22 +204,20 @@ def _game_inputs(
             "dynamics_matrices must have shape case_shape + (horizon, n, n)."
         )
     case_shape = tuple(a.shape[:-3])
-    horizon = int(a.shape[-3])
-    n = int(a.shape[-1])
+    horizon = a.shape[-3]
+    n = a.shape[-1]
     if horizon < 1:
         raise ValueError("Finite-horizon games require at least one stage.")
 
     b = _real_array(control_matrices, "control_matrices")
     if b.ndim < 3 or tuple(b.shape[:-3]) != case_shape or b.shape[-3:-1] != (horizon, n):
         raise ValueError(
-            "control_matrices must have shape case_shape + (horizon, n, m); "
-            f"got {b.shape}."
+            f"control_matrices must have shape case_shape + (horizon, n, m); got {b.shape}."
         )
-    m = int(b.shape[-1])
+    m = b.shape[-1]
     if partition.joint_control_size != m:
         raise ValueError(
-            "partition joint control size must match control_matrices; "
-            f"got {partition.joint_control_size} and {m}."
+            f"partition joint control size must match control_matrices; got {partition.joint_control_size} and {m}."
         )
     players = partition.num_players
 
@@ -320,7 +318,7 @@ def _game_inputs(
         q_terminal_linear,
         terminal_constant,
     )
-    dtype = jnp.result_type(*values, float)
+    dtype = jnp.result_type(*values, jnp.float64)
     if jnp.issubdtype(dtype, jnp.complexfloating):
         raise TypeError("Finite-horizon games require real-valued arrays.")
     return (
@@ -772,7 +770,7 @@ def finite_horizon_lq_feedback_nash(
         condition_reported = jnp.where(diagnostic_available, condition, jnp.nan)
         rank_valid = rank == m
         condition_valid = (
-            jnp.ones_like(condition, dtype=bool)
+            jnp.ones_like(condition, dtype=jnp.bool_)
             if condition_limit is None
             else condition <= condition_limit
         )

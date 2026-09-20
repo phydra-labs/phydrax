@@ -48,7 +48,7 @@ class SPDEApproximationLevel(StrictModule):
             raise TypeError("spde must be a SemidiscreteSPDE.")
         if not callable(transfer_to_reference):
             raise TypeError("transfer_to_reference must be callable.")
-        resolved = tuple(int(value) for value in resolution)
+        resolved = tuple(resolution)
         effort = float(work)
         if not resolved or any(value <= 0 for value in resolved):
             raise ValueError("resolution must contain positive finite capacities.")
@@ -111,7 +111,7 @@ class SPDEApproximationFamily(StrictModule):
         self.tail_envelope = tail_envelope
         self.family_id = canonical_fingerprint(
             {
-                "kind": "finite-spde-approximation-family-v1",
+                "kind": "finite-spde-approximation-family",
                 "levels": tuple(item.level_id for item in selected),
                 "refined_axis": refined_axis,
                 "reference_level": reference,
@@ -173,7 +173,7 @@ def prepare_spde_approximation(
         )
     prepared_id = canonical_fingerprint(
         {
-            "kind": "prepared-finite-spde-family-v1",
+            "kind": "prepared-finite-spde-family",
             "family": family.family_id,
             "ensemble_plan": ensemble_plan.plan_id,
             "realizations": tuple(item.realization.realization_id for item in ensembles),
@@ -220,7 +220,7 @@ def solve_spde_approximation(
         tails = jnp.asarray(envelope)
         if tails.shape != (len(prepared.family.levels),):
             raise ValueError("tail_envelope values must align with levels.")
-    valid = jnp.asarray(tuple(result.valid for result in solutions), dtype=bool)
+    valid = jnp.asarray(tuple(result.valid for result in solutions), dtype=jnp.bool_)
     if tails is not None:
         valid = valid & jnp.all(jnp.isfinite(tails) & (tails >= 0.0))
     status = jnp.where(valid, 0, 1).astype(jnp.int32)

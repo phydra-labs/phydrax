@@ -13,7 +13,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..units import CHARGE, ENERGY, UnitDefinition
-from ._identity import ParticleCatalogueReference
+from ._identity import ParticleCatalogReference
 
 
 class ParticleSpeciesTable(StrictModule, NonTrainableState):
@@ -23,7 +23,7 @@ class ParticleSpeciesTable(StrictModule, NonTrainableState):
     rest_energies: Array
     charges: Array
     active: Array
-    catalogue: ParticleCatalogueReference
+    catalog: ParticleCatalogReference
     energy_unit: UnitDefinition
     charge_unit: UnitDefinition
     capacity: int = eqx.field(static=True)
@@ -37,7 +37,7 @@ class ParticleSpeciesTable(StrictModule, NonTrainableState):
         /,
         *,
         active: ArrayLike | None = None,
-        catalogue: ParticleCatalogueReference,
+        catalog: ParticleCatalogReference,
         energy_unit: UnitDefinition,
         charge_unit: UnitDefinition,
     ):
@@ -50,16 +50,16 @@ class ParticleSpeciesTable(StrictModule, NonTrainableState):
             raise TypeError("pdg_ids must contain integers.")
         if energies.shape != identifiers.shape or charges_.shape != identifiers.shape:
             raise ValueError("Species energies and charges must align with pdg_ids.")
-        if not isinstance(catalogue, ParticleCatalogueReference):
-            raise TypeError("catalogue must be ParticleCatalogueReference.")
+        if not isinstance(catalog, ParticleCatalogReference):
+            raise TypeError("catalog must be ParticleCatalogReference.")
         if not isinstance(energy_unit, UnitDefinition) or energy_unit.dimension != ENERGY:
             raise ValueError("energy_unit must have energy dimension.")
         if not isinstance(charge_unit, UnitDefinition) or charge_unit.dimension != CHARGE:
             raise ValueError("charge_unit must have charge dimension.")
         active_ = (
-            np.ones(identifiers.shape, dtype=bool)
+            np.ones(identifiers.shape, dtype=np.bool_)
             if active is None
-            else np.asarray(active, dtype=bool)
+            else np.asarray(active, dtype=np.bool_)
         )
         if active_.shape != identifiers.shape:
             raise ValueError("active must align with pdg_ids.")
@@ -73,14 +73,14 @@ class ParticleSpeciesTable(StrictModule, NonTrainableState):
         self.rest_energies = jnp.asarray(energies)
         self.charges = jnp.asarray(charges_, dtype=self.rest_energies.dtype)
         self.active = jnp.asarray(active_)
-        self.catalogue = catalogue
+        self.catalog = catalog
         self.energy_unit = energy_unit
         self.charge_unit = charge_unit
-        self.capacity = int(identifiers.size)
+        self.capacity = identifiers.size
         self.table_id = canonical_fingerprint(
             {
                 "kind": "particle-species-table",
-                "catalogue": catalogue.catalogue_id,
+                "catalog": catalog.catalog_id,
                 "energy_unit": energy_unit.unit_id,
                 "charge_unit": charge_unit.unit_id,
                 "content": array_tree_fingerprint(

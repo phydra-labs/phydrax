@@ -64,7 +64,7 @@ def _validate_covariance(covariance: ArrayLike) -> Array:
     if matrix.shape[-1] < 1:
         raise ValueError("covariance must contain at least one feature.")
     if not jnp.issubdtype(matrix.dtype, jnp.inexact):
-        matrix = matrix.astype(float)
+        matrix = matrix.astype("float64")
     matrix = eqx.error_if(
         matrix,
         jnp.any(~jnp.isfinite(matrix)),
@@ -103,7 +103,7 @@ def marchenko_pastur_diagnostics(
     tolerance = float(edge_tolerance)
     if not math.isfinite(tolerance) or tolerance < 0.0:
         raise ValueError("edge_tolerance must be finite and nonnegative.")
-    features = int(matrix.shape[-1])
+    features = matrix.shape[-1]
     values = jnp.linalg.eigvalsh(matrix)
     values = eqx.error_if(
         values,

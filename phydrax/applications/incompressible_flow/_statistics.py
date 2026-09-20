@@ -196,7 +196,7 @@ class PeriodicModalTurbulenceStatisticsPlan(StrictModule, NonTrainableState):
         viscosity = float(np.asarray(dynamics.problem.viscosity))
         reality = float(reality_tolerance)
         solenoidal = float(solenoidal_tolerance)
-        edges = np.asarray(bin_edges, dtype=float).reshape((-1,))
+        edges = np.asarray(bin_edges, dtype=np.float64).reshape((-1,))
         if (
             not np.isfinite(viscosity)
             or viscosity < 0.0
@@ -226,7 +226,7 @@ class PeriodicModalTurbulenceStatisticsPlan(StrictModule, NonTrainableState):
             magnitude,
             edges,
             mode_mask=admissible,
-            mode_weights=np.ones(magnitude.shape, dtype=float),
+            mode_weights=np.ones(magnitude.shape, dtype=np.float64),
             final_edge_policy="include",
             source_id=f"full-complex:{projector.projector_id}",
         )
@@ -848,7 +848,7 @@ class SpectralChannelStatisticsPlan(StrictModule, NonTrainableState):
             or tolerance < 0.0
         ):
             raise ValueError("Spectral channel geometry or material data is invalid.")
-        nodes = np.asarray(wall.nodes, dtype=float)
+        nodes = np.asarray(wall.nodes, dtype=np.float64)
         lower_index = int(np.argmin(nodes))
         upper_index = int(np.argmax(nodes))
         height = float(nodes[upper_index] - nodes[lower_index])
@@ -1087,12 +1087,12 @@ class MACPlaneWallStatisticsPlan(StrictModule, NonTrainableState):
         stream_axis = int(streamwise_axis)
         density_ = float(density)
         viscosity = float(kinematic_viscosity)
-        lower_velocity = np.zeros((dimension,), dtype=float)
+        lower_velocity = np.zeros((dimension,), dtype=np.float64)
         if lower_wall_velocity is not None:
-            lower_velocity = np.asarray(lower_wall_velocity, dtype=float)
-        upper_velocity = np.zeros((dimension,), dtype=float)
+            lower_velocity = np.asarray(lower_wall_velocity, dtype=np.float64)
+        upper_velocity = np.zeros((dimension,), dtype=np.float64)
         if upper_wall_velocity is not None:
-            upper_velocity = np.asarray(upper_wall_velocity, dtype=float)
+            upper_velocity = np.asarray(upper_wall_velocity, dtype=np.float64)
         if (
             dimension not in (2, 3)
             or wall_axis < 0
@@ -1115,12 +1115,11 @@ class MACPlaneWallStatisticsPlan(StrictModule, NonTrainableState):
         homogeneous = tuple(axis for axis in range(dimension) if axis != wall_axis)
         if wall.periodic or any(not axes[axis].periodic for axis in homogeneous):
             raise ValueError(
-                "MAC plane statistics require one nonperiodic wall axis and "
-                "periodic homogeneous axes."
+                "MAC plane statistics require one nonperiodic wall axis and periodic homogeneous axes."
             )
         if wall.bounds is None:
             raise ValueError("The MAC wall-normal axis must have finite bounds.")
-        coordinates = np.asarray(wall.interval_centers, dtype=float)
+        coordinates = np.asarray(wall.interval_centers, dtype=np.float64)
         lower, upper = (float(value) for value in wall.bounds)
         height = upper - lower
         volumes = np.asarray(operators.discretization.cell_volumes)
@@ -1149,7 +1148,7 @@ class MACPlaneWallStatisticsPlan(StrictModule, NonTrainableState):
         self.operators_id = operators.prepared_id
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "mac-plane-wall-statistics-v1",
+                "kind": "mac-plane-wall-statistics",
                 "operators": operators.prepared_id,
                 "wall_normal_axis": wall_axis,
                 "streamwise_axis": stream_axis,

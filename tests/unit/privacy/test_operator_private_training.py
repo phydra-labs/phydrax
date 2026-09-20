@@ -47,7 +47,7 @@ def _dataset(cases: int = 4):
         jnp.linspace(0.0, 1.0, 8),
         quadrature_weights=jnp.full((8,), 1.0 / 8.0),
     )
-    offsets = jnp.arange(cases, dtype=float)[:, None]
+    offsets = jnp.arange(cases, dtype="float64")[:, None]
     values = offsets + axis.nodes[None, :]
     return phx.nn.operator.training.operator_dataset_from_arrays(
         {"state": values},

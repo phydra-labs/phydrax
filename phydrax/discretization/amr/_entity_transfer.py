@@ -120,8 +120,8 @@ def _pad_operator(
         raise ValueError("Compatible entity transfer route capacity is exceeded.")
     source = np.zeros((capacity,), dtype=np.int32)
     target = np.zeros((capacity,), dtype=np.int32)
-    weights = np.zeros((capacity,), dtype=float)
-    valid = np.zeros((capacity,), dtype=bool)
+    weights = np.zeros((capacity,), dtype=np.float64)
+    valid = np.zeros((capacity,), dtype=np.bool_)
     source[:route_count] = source_indices
     target[:route_count] = target_indices
     weights[:route_count] = coefficients
@@ -142,7 +142,7 @@ def _pad_operator(
 
 
 def _scipy_matrix(operator: SparseCoordinateOperator, /):
-    valid = np.asarray(operator.relation.valid, dtype=bool)
+    valid = np.asarray(operator.relation.valid, dtype=np.bool_)
     source = np.asarray(operator.relation.source_indices)[valid]
     target = np.asarray(operator.relation.target_indices)[valid]
     coefficients = np.asarray(operator.coefficients)[valid]
@@ -255,7 +255,7 @@ class CompatibleEntityTransferFamily(StrictModule, NonTrainableState):
         dtype=jnp.float64,
     ):
         ratio = int(refinement_ratio)
-        capacities = tuple(int(value) for value in route_capacities)
+        capacities = tuple(route_capacities)
         dimension = coarse.complex.dimension
         if (
             not isinstance(coarse, VariablePatchEntityComplex)
@@ -355,13 +355,13 @@ class CompatibleEntityTransferFamily(StrictModule, NonTrainableState):
             capacity,
         ) in enumerate(raw):
             coarse_active = np.asarray(
-                coarse.complex.entities(degree).active_mask, dtype=bool
+                coarse.complex.entities(degree).active_mask, dtype=np.bool_
             )
             fine_active = np.asarray(
-                fine.complex.entities(degree).active_mask, dtype=bool
+                fine.complex.entities(degree).active_mask, dtype=np.bool_
             )
             if degree == 0:
-                constant = prolongation_matrices[degree] @ coarse_active.astype(float)
+                constant = prolongation_matrices[degree] @ coarse_active.astype("float64")
                 constant_defect = float(
                     np.max(np.abs(constant[fine_active] - 1.0), initial=0.0)
                 )

@@ -98,7 +98,7 @@ def build_contraction_schedule(
 
     if not isinstance(structure, ContractionStructure):
         raise TypeError("structure must be ContractionStructure.")
-    path_ = tuple(tuple(int(index) for index in step) for step in path)
+    path_ = tuple(tuple(step) for step in path)
     if any(not step or len(set(step)) != len(step) or min(step) < 0 for step in path_):
         raise ValueError(
             "Every contraction path step needs distinct non-negative indices."

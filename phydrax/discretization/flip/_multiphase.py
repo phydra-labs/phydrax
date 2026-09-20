@@ -71,18 +71,20 @@ class MultiphaseFLIPPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(transfer, PreparedFLIPParticleTransfer):
             raise TypeError("transfer must be PreparedFLIPParticleTransfer.")
-        rho = np.asarray(densities, dtype=float)
-        mu = np.asarray(viscosities, dtype=float)
-        sigma = np.asarray(surface_tension, dtype=float)
+        rho = np.asarray(densities, dtype=np.float64)
+        mu = np.asarray(viscosities, dtype=np.float64)
+        sigma = np.asarray(surface_tension, dtype=np.float64)
         if rho.ndim != 1 or rho.size < 1 or mu.shape != rho.shape:
             raise ValueError(
                 "Multiphase FLIP densities/viscosities must be phase vectors."
             )
-        phase_count = int(rho.size)
+        phase_count = rho.size
         maximum = phase_count if maximum_phases is None else int(maximum_phases)
         if phase_count > maximum or sigma.shape != (phase_count, phase_count):
             raise ValueError("Multiphase material arrays exceed maximum_phases.")
-        drag_ = np.zeros_like(sigma) if drag is None else np.asarray(drag, dtype=float)
+        drag_ = (
+            np.zeros_like(sigma) if drag is None else np.asarray(drag, dtype=np.float64)
+        )
         if drag_.shape != sigma.shape:
             raise ValueError("Drag matrix must match the phase-pair shape.")
         if (

@@ -27,7 +27,7 @@ def main() -> None:
     screen = astro.GRImageScreen(
         coordinates,
         solid_angle,
-        jnp.ones(screen_x.shape, dtype=bool),
+        jnp.ones(screen_x.shape, dtype="bool"),
         angular_unit=phx.units.RADIAN,
         solid_angle_unit=steradian,
     )
@@ -52,8 +52,8 @@ def main() -> None:
         astro.ObservationDataProvenance.native("analytic-polarized-image"),
         frequency=frequency,
         redshift=jnp.ones(screen.pixel_shape),
-        redshift_valid=jnp.ones(screen.pixel_shape, dtype=bool),
-        lensing_masks=jnp.ones((1, *screen.pixel_shape), dtype=bool),
+        redshift_valid=jnp.ones(screen.pixel_shape, dtype="bool"),
+        lensing_masks=jnp.ones((1, *screen.pixel_shape), dtype="bool"),
         lensing_labels=("direct",),
         intensity_unit=intensity_unit,
         flux_density_unit=jansky,

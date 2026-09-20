@@ -59,9 +59,9 @@ class FraunhoferImagingPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Fraunhofer input and output transverse frames must be aligned."
             )
-        focal = jnp.asarray(focal_length, dtype=float)
+        focal = jnp.asarray(focal_length, dtype=jnp.float64)
         wavenumber = jnp.asarray(medium_wavenumber)
-        diameter = jnp.asarray(pupil_diameter, dtype=float)
+        diameter = jnp.asarray(pupil_diameter, dtype=jnp.float64)
         if focal.shape != () or wavenumber.shape != () or diameter.shape != ():
             raise ValueError(
                 "focal_length, medium_wavenumber, and pupil_diameter are scalars."

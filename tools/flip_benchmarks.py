@@ -49,19 +49,15 @@ def _case(count):
     y = jnp.linspace(0.2, 0.7, side)
     xx, yy = jnp.meshgrid(x, y, indexing="ij")
     position = jnp.stack((xx.reshape((-1,)), yy.reshape((-1,))), axis=-1)
-    particle_count = int(position.shape[0])
+    particle_count = position.shape[0]
     support = phx.discretization.ParticleSetPlan(
         jnp.arange(particle_count),
         jnp.full((particle_count,), 1000.0 * 0.005),
         ambient_dimension=2,
     ).prepare()
     transfer = phx.discretization.flip.FLIPParticleTransferPlan(mac).prepare(support)
-    problem = phx.equations.FLIPProblemIR(
-        "benchmark", 1000.0, jnp.asarray([0.0, -1.0])
-    )
-    method = phx.discretization.flip.FLIPMethodPlan(
-        0.05, liquid_fraction_threshold=0.01
-    )
+    problem = phx.equations.FLIPProblemIR("benchmark", 1000.0, jnp.asarray([0.0, -1.0]))
+    method = phx.discretization.flip.FLIPMethodPlan(0.05, liquid_fraction_threshold=0.01)
     compiled = phx.equations.compile_flip_problem(problem, transfer, projection, method)
     state = compiled.initialize_state(position, jnp.zeros_like(position))
     return compiled, state, particle_count

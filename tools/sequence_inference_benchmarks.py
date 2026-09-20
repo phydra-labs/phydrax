@@ -142,7 +142,7 @@ def run_sequence_inference_benchmarks(*, quick: bool = False):
             }
         )
     return {
-        "schema": "phydrax-sequence-inference-benchmark-v1",
+        "schema": "phydrax-sequence-inference-benchmark",
         "backend": jax.default_backend(),
         "quick": bool(quick),
         "variational": {

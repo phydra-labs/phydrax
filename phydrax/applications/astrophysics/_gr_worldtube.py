@@ -49,8 +49,8 @@ class FixedGRWorldtubeSamplingPlan(StrictModule, NonTrainableState):
         source_id: str,
         event_fingerprint: str,
     ):
-        shape = tuple(int(value) for value in event_shape)
-        smooth = jax.lax.stop_gradient(jnp.asarray(interpolation_smooth, dtype=bool))
+        shape = tuple(event_shape)
+        smooth = jax.lax.stop_gradient(jnp.asarray(interpolation_smooth, dtype=jnp.bool_))
         if not isinstance(stencil, GatherStencil):
             raise TypeError("stencil must be a GatherStencil.")
         if stencil.support.shape != shape or smooth.shape != shape:
@@ -69,7 +69,7 @@ class FixedGRWorldtubeSamplingPlan(StrictModule, NonTrainableState):
                 "source": identifier,
                 "events": event_id,
                 "event_shape": shape,
-                "stencil_capacity": int(stencil.indices.shape[-1]),
+                "stencil_capacity": stencil.indices.shape[-1],
             }
         )
 
@@ -112,7 +112,8 @@ class MonotoneSlowLightWorldtube(StrictModule, NonTrainableState):
             )
         reference = values[0]
         times_host = np.asarray(
-            [float(np.asarray(value.coordinate_time)) for value in values], dtype=float
+            [float(np.asarray(value.coordinate_time)) for value in values],
+            dtype=np.float64,
         )
         if np.any(~np.isfinite(times_host)) or np.any(np.diff(times_host) <= 0.0):
             raise ValueError(
@@ -175,7 +176,7 @@ class MonotoneSlowLightWorldtube(StrictModule, NonTrainableState):
     def prepare_sampling(
         self, event_coordinates: ArrayLike, /
     ) -> FixedGRWorldtubeSamplingPlan:
-        events_host = np.asarray(event_coordinates, dtype=float)
+        events_host = np.asarray(event_coordinates, dtype=np.float64)
         if events_host.ndim < 1 or events_host.shape[-1] != 4:
             raise ValueError(
                 "Slow-light event coordinates must end in (time, x1, x2, x3)."

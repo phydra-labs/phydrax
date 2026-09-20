@@ -17,7 +17,7 @@ from ._dependence import CorrelationMatrix
 
 
 def _positive_scalar(value: ArrayLike, name: str, /) -> Array:
-    array = jnp.asarray(value, dtype=float)
+    array = jnp.asarray(value, dtype=jnp.float64)
     if array.shape != ():
         raise ValueError(f"{name} must be scalar.")
     return eqx.error_if(
@@ -38,8 +38,8 @@ class CommoditySeasonality(StrictModule):
     def __init__(
         self, phases: ArrayLike, factors: ArrayLike, /, *, period: ArrayLike = 1.0
     ):
-        phases_ = jnp.asarray(phases, dtype=float)
-        factors_ = jnp.asarray(factors, dtype=float)
+        phases_ = jnp.asarray(phases, dtype=jnp.float64)
+        factors_ = jnp.asarray(factors, dtype=jnp.float64)
         if phases_.ndim != 1 or phases_.size < 2 or factors_.shape != phases_.shape:
             raise ValueError(
                 "phases and factors must be aligned vectors with at least two nodes."
@@ -61,10 +61,10 @@ class CommoditySeasonality(StrictModule):
         self.phases = phases_
         self.factors = factors_
         self.period = period_
-        self.node_count = int(phases_.size)
+        self.node_count = phases_.size
 
     def factor(self, time: ArrayLike, /) -> Array:
-        phase = jnp.mod(jnp.asarray(time, dtype=float), self.period)
+        phase = jnp.mod(jnp.asarray(time, dtype=jnp.float64), self.period)
         wrapped_phases = jnp.concatenate((self.phases, self.phases[:1] + self.period))
         wrapped_factors = jnp.concatenate((self.factors, self.factors[:1]))
         return linear_interpolate(wrapped_phases, wrapped_factors, phase).values
@@ -84,7 +84,7 @@ class SchwartzOneFactorModel(StrictModule):
         initial_factor: ArrayLike,
         /,
     ):
-        initial = jnp.asarray(initial_factor, dtype=float)
+        initial = jnp.asarray(initial_factor, dtype=jnp.float64)
         if initial.shape != ():
             raise ValueError("initial_factor must be scalar.")
         self.mean_reversion = _positive_scalar(mean_reversion, "mean_reversion")
@@ -94,7 +94,7 @@ class SchwartzOneFactorModel(StrictModule):
         )
 
     def factor_variance(self, horizon: ArrayLike, /) -> Array:
-        horizon_ = jnp.asarray(horizon, dtype=float)
+        horizon_ = jnp.asarray(horizon, dtype=jnp.float64)
         horizon_ = eqx.error_if(
             horizon_,
             jnp.any(~jnp.isfinite(horizon_)) | jnp.any(horizon_ < 0.0),
@@ -125,8 +125,8 @@ class SchwartzTwoFactorModel(StrictModule):
         initial_factors: ArrayLike,
         /,
     ):
-        correlation_ = jnp.asarray(correlation, dtype=float)
-        factors = jnp.asarray(initial_factors, dtype=float)
+        correlation_ = jnp.asarray(correlation, dtype=jnp.float64)
+        factors = jnp.asarray(initial_factors, dtype=jnp.float64)
         if correlation_.shape != () or factors.shape != (2,):
             raise ValueError(
                 "correlation must be scalar and initial_factors must have shape (2,)."
@@ -148,7 +148,7 @@ class SchwartzTwoFactorModel(StrictModule):
         self.initial_factors = factors
 
     def log_spot_variance(self, horizon: ArrayLike, /) -> Array:
-        t = jnp.asarray(horizon, dtype=float)
+        t = jnp.asarray(horizon, dtype=jnp.float64)
         t = eqx.error_if(
             t,
             jnp.any(~jnp.isfinite(t)) | jnp.any(t < 0.0),
@@ -191,7 +191,7 @@ class CommodityFactorModel(StrictModule):
             raise TypeError("dependence must be a CorrelationMatrix.")
         count = dependence.dimension
         arrays = tuple(
-            jnp.asarray(value, dtype=float)
+            jnp.asarray(value, dtype=jnp.float64)
             for value in (mean_reversions, volatilities, initial_factors, spot_loadings)
         )
         if any(value.shape != (count,) for value in arrays):

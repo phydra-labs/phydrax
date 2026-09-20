@@ -124,7 +124,7 @@ def snapshot_addressable_arrays(
         if not isinstance(leaf, jax.Array):
             continue
         array_path = jax.tree_util.keystr(path) or "<root>"
-        shape = tuple(int(size) for size in leaf.shape)
+        shape = tuple(leaf.shape)
         ownership: dict[CanonicalIndex, tuple[int, int]] = {}
         for device, index in leaf.sharding.devices_indices_map(shape).items():
             normalized = _canonical_index(index, shape)
@@ -158,7 +158,7 @@ def snapshot_addressable_arrays(
         snapshots.append(
             AddressableCheckpointShard(
                 array_path=array_path,
-                global_shape=tuple(int(size) for size in leaf.shape),
+                global_shape=tuple(leaf.shape),
                 dtype=np.dtype(leaf.dtype).str,
                 index=index,
                 process_index=int(shard.device.process_index),
@@ -305,7 +305,7 @@ def _validate_exact_coverage(shards: Sequence[CheckpointShard]) -> None:
         dtypes = {item["dtype"] for item in metadata}
         if len(shapes) != 1 or len(dtypes) != 1:
             raise ValueError(f"checkpoint array {path!r} has inconsistent metadata")
-        shape = tuple(int(size) for size in next(iter(shapes)))
+        shape = tuple(next(iter(shapes)))
         indices = [_parse_index(item["index"]) for item in metadata]
         if len(set(indices)) != len(indices):
             raise ValueError(f"checkpoint array {path!r} contains duplicate shards")
@@ -486,7 +486,7 @@ def restore_global_array_from_checkpoint(
         raise KeyError(f"checkpoint has no array at path {array_path!r}")
     _validate_exact_coverage(path_shards)
     first_metadata = _metadata(path_shards[0])
-    global_shape = tuple(int(size) for size in json.loads(first_metadata["global_shape"]))
+    global_shape = tuple(json.loads(first_metadata["global_shape"]))
     dtype = np.dtype(first_metadata["dtype"])
 
     source_records = tuple(
@@ -501,7 +501,7 @@ def restore_global_array_from_checkpoint(
         destination = _canonical_index(index, global_shape)
         local_shape = tuple(stop - start for start, stop, _ in destination)
         output = np.empty(local_shape, dtype=dtype)
-        covered = np.zeros(local_shape, dtype=bool)
+        covered = np.zeros(local_shape, dtype=np.bool_)
         for source_index, shard in source_records:
             overlap = _intersection(source_index, destination)
             if overlap is None:

@@ -27,7 +27,7 @@ def test_second_and_symmetric_deformation_align_known_translation():
     predictor = DenseDisplacementField2D(
         positions,
         jnp.broadcast_to(jnp.asarray([0.0, 1.0]), positions.shape),
-        jnp.ones((8, 8), dtype=bool),
+        jnp.ones((8, 8), dtype="bool"),
         geometry_id=geometry.geometry_id,
     )
 
@@ -51,7 +51,7 @@ def test_validation_evidence_and_replacement_do_not_mutate_raw_vectors():
     raw = DenseDisplacementField2D(
         positions,
         vectors,
-        jnp.ones((3, 3), dtype=bool),
+        jnp.ones((3, 3), dtype="bool"),
         geometry_id="geometry",
     )
     quality = PIVQuality2D(

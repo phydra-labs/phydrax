@@ -71,8 +71,8 @@ class TimeScaleTransform(StrictModule, NonTrainableState):
             raise ValueError("Unknown time offset interpolation policy.")
         if not isinstance(provenance, AstrodynamicsDataProvenance):
             raise TypeError("provenance must be AstrodynamicsDataProvenance.")
-        nodes_host = np.asarray(nodes, dtype=float)
-        offsets_host = np.asarray(offsets, dtype=float)
+        nodes_host = np.asarray(nodes, dtype=np.float64)
+        offsets_host = np.asarray(offsets, dtype=np.float64)
         if (
             nodes_host.ndim != 1
             or nodes_host.size == 0
@@ -116,7 +116,7 @@ class TimeScaleTransform(StrictModule, NonTrainableState):
                 offset = linear_interpolate(self.nodes, self.offsets, query).values
             else:
                 index = jnp.searchsorted(self.nodes, query, side="right") - 1
-                offset = self.offsets[jnp.clip(index, 0, int(self.nodes.size) - 1)]
+                offset = self.offsets[jnp.clip(index, 0, self.nodes.size - 1)]
         valid = finite & support
         status = jnp.where(
             ~finite,
@@ -184,8 +184,8 @@ class LeapSecondTable(StrictModule, NonTrainableState):
         provenance: AstrodynamicsDataProvenance,
         /,
     ):
-        transitions = np.asarray(transition_seconds, dtype=float)
-        offsets = np.asarray(tai_minus_utc, dtype=float)
+        transitions = np.asarray(transition_seconds, dtype=np.float64)
+        offsets = np.asarray(tai_minus_utc, dtype=np.float64)
         if (
             transitions.ndim != 1
             or transitions.size == 0
@@ -244,7 +244,7 @@ class PreparedTimeRoute(StrictModule, NonTrainableState):
     def apply(self, relative_seconds: ArrayLike, /) -> TimeScaleTransformResult:
         value = jnp.asarray(relative_seconds)
         total_offset = jnp.zeros_like(value)
-        valid = jnp.ones_like(value, dtype=bool)
+        valid = jnp.ones_like(value, dtype=jnp.bool_)
         status = jnp.zeros_like(value, dtype=jnp.int32)
         for transform in self.transforms:
             result = transform.apply(value)

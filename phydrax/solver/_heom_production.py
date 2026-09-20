@@ -35,7 +35,7 @@ class HEOMContinuationStage(StrictModule):
         self.auxiliary_count = int(auxiliary_count)
         self.root_difference = jnp.asarray(root_difference)
         self.maximum_top_tier_norm = jnp.asarray(maximum_top_tier_norm)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
 
 
 class HEOMContinuationResult(StrictModule):
@@ -69,7 +69,7 @@ def solve_heom_continuation(
     steps: int,
     tolerance: float = 1e-5,
 ) -> HEOMContinuationResult:
-    depth_sequence = tuple(int(depth) for depth in depths)
+    depth_sequence = tuple(depths)
     if not depth_sequence or any(
         right <= left
         for left, right in zip(depth_sequence[:-1], depth_sequence[1:], strict=True)
@@ -130,7 +130,7 @@ class HEOMGridContinuationResult(StrictModule):
         self.final_roots = jnp.asarray(final_roots)
         self.depth_differences = jnp.asarray(depth_differences)
         self.bath_differences = jnp.asarray(bath_differences)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
 
 
 def solve_heom_continuation_grid(
@@ -144,7 +144,7 @@ def solve_heom_continuation_grid(
     maximum_order: int = 2,
 ) -> HEOMGridContinuationResult:
     expansions_ = tuple(expansions)
-    depths_ = tuple(int(depth) for depth in depths)
+    depths_ = tuple(depths)
     if not expansions_ or not depths_:
         raise ValueError("HEOM continuation grid axes must be non-empty.")
     roots = []
@@ -163,8 +163,7 @@ def solve_heom_continuation_grid(
                 geometry_precision=base_problem.geometry_precision,
                 hermitian_precision=base_problem.hermitian_precision,
                 problem_id=(
-                    f"{base_problem.problem_id}:bath-{expansion.expansion_id}:"
-                    f"depth-{depth}"
+                    f"{base_problem.problem_id}:bath-{expansion.expansion_id}:depth-{depth}"
                 ),
             )
             result = solve_heom_bdf(
@@ -218,8 +217,8 @@ class PreparedHEOMRefinementPlan(StrictModule):
         plan_id: str,
     ):
         expansions_ = tuple(expansions)
-        depths_ = tuple(int(value) for value in depths)
-        steps_ = tuple(int(value) for value in time_steps)
+        depths_ = tuple(depths)
+        steps_ = tuple(time_steps)
         if (
             len(expansions_) < 1
             or len(depths_) < 2
@@ -297,8 +296,7 @@ def solve_prepared_heom_refinement(
                     geometry_precision=base_problem.geometry_precision,
                     hermitian_precision=base_problem.hermitian_precision,
                     problem_id=(
-                        f"{base_problem.problem_id}:prepared:"
-                        f"{expansion.expansion_id}:{depth}:{steps}"
+                        f"{base_problem.problem_id}:prepared:{expansion.expansion_id}:{depth}:{steps}"
                     ),
                 )
                 result = solve_heom_bdf(

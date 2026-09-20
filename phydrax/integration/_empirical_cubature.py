@@ -107,7 +107,7 @@ def empirical_cubature(
         selection=selection,
         numerical_rank=selection.diagnostics.numerical_rank,
         active_support=selection.active_points,
-        feature_count=int(selector_features.shape[1]),
+        feature_count=selector_features.shape[1],
         exactness="supplied-finite-feature-span-only",
     )
     compressed = transformed_weighted_realization(

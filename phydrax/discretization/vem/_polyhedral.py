@@ -75,7 +75,7 @@ def _cell_matrix(
     if not np.isfinite(characteristic_length) or characteristic_length <= 0.0:
         raise ValueError("Polyhedral VEM cells require positive diameter.")
 
-    gradients = np.zeros((3, vertices.size), dtype=float)
+    gradients = np.zeros((3, vertices.size), dtype=np.float64)
     volume = 0.0
     face_start, face_stop = cell_face_offsets[cell_index : cell_index + 2]
     for face_index, sign in zip(
@@ -114,14 +114,14 @@ def _cell_matrix(
 
     monomials = np.concatenate(
         (
-            np.ones((vertices.size, 1), dtype=float),
+            np.ones((vertices.size, 1), dtype=np.float64),
             (points - centroid[None, :]) / characteristic_length,
         ),
         axis=1,
     )
     singular_values = np.linalg.svd(monomials, compute_uv=False)
     rank_margin = float(singular_values[-1])
-    if rank_margin <= np.finfo(float).eps * singular_values[0] * vertices.size:
+    if rank_margin <= np.finfo(np.float64).eps * singular_values[0] * vertices.size:
         raise ValueError("Polyhedral VEM affine projector is rank deficient.")
     gram_inverse = np.linalg.inv(monomials.T @ monomials)
     projector = monomials @ gram_inverse @ monomials.T
@@ -167,13 +167,13 @@ def prepare_polyhedral_h1_virtual_element_3d(
     if connectivity.cell_count > budget.maximum_cells:
         raise ValueError("Polyhedral VEM cell capacity exceeded.")
 
-    coordinates = np.asarray(mesh.coordinates, dtype=float)
+    coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
     cell_vertex_offsets = np.asarray(connectivity.cell_vertex_offsets, dtype=np.int32)
     cell_vertex_values = np.asarray(connectivity.cell_vertex_values, dtype=np.int32)
     cell_arities = np.diff(cell_vertex_offsets)
     buckets: dict[int, list[int]] = {}
     matrices: dict[int, list[np.ndarray]] = {}
-    volumes = np.empty((connectivity.cell_count,), dtype=float)
+    volumes = np.empty((connectivity.cell_count,), dtype=np.float64)
     rank_margins = np.empty_like(volumes)
     defects = np.empty_like(volumes)
     estimated_bytes = 0
@@ -189,7 +189,7 @@ def prepare_polyhedral_h1_virtual_element_3d(
         volumes[cell_index] = volume
         rank_margins[cell_index] = margin
         defects[cell_index] = defect
-        estimated_bytes += int(matrix.nbytes * 3)
+        estimated_bytes += matrix.nbytes * 3
     if estimated_bytes > budget.maximum_projector_bytes:
         raise ValueError("Polyhedral VEM projector byte capacity exceeded.")
 

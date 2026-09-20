@@ -31,7 +31,7 @@ def _identifier(value: str, name: str, /) -> str:
 def _frozen_finite_array(
     value: ArrayLike, name: str, /, *, ndim: int | None = None
 ) -> Array:
-    array = jnp.asarray(value, dtype=float)
+    array = jnp.asarray(value, dtype=jnp.float64)
     if ndim is not None and array.ndim != ndim:
         raise ValueError(f"{name} must have rank {ndim}.")
     if array.size == 0 or bool(jnp.any(~jnp.isfinite(array))):
@@ -63,8 +63,8 @@ class FixedTopologyReferenceGeometry:
             len(set(int(value) for value in row)) != len(row) for row in np.asarray(cells)
         ):
             raise ValueError("Reference cells cannot repeat vertices.")
-        dimension = int(points.shape[1])
-        width = int(cells.shape[1])
+        dimension = points.shape[1]
+        width = cells.shape[1]
         if not (width == 2 or width == dimension + 1 or (dimension == 3 and width == 3)):
             raise ValueError(
                 "Cells must be line, full-simplex, or embedded 3-D triangle cells."
@@ -296,8 +296,8 @@ def _relative_cell_measures(
 ) -> tuple[Array, Array]:
     reference_vertices = reference[cells]
     candidate_vertices = candidate[cells]
-    width = int(cells.shape[1])
-    dimension = int(reference.shape[1])
+    width = cells.shape[1]
+    dimension = reference.shape[1]
     if width == 2:
         reference_edges = reference_vertices[:, 1] - reference_vertices[:, 0]
         candidate_edges = candidate_vertices[:, 1] - candidate_vertices[:, 0]
@@ -343,7 +343,7 @@ def _relative_cell_measures(
 
 
 def _determinant(matrices: Array, /) -> Array:
-    dimension = int(matrices.shape[-1])
+    dimension = matrices.shape[-1]
     if dimension == 1:
         return matrices[..., 0, 0]
     if dimension == 2:
@@ -400,9 +400,9 @@ class CardiacSurrogateCalibration:
     ) -> CardiacSurrogateCalibration:
         if not isinstance(prepared, PreparedLearningCohort):
             raise TypeError("prepared must be a PreparedLearningCohort.")
-        center = jnp.asarray(location, dtype=float)
-        raw_scale = jnp.asarray(scale, dtype=float)
-        truth = jnp.asarray(target, dtype=float)
+        center = jnp.asarray(location, dtype=jnp.float64)
+        raw_scale = jnp.asarray(scale, dtype=jnp.float64)
+        truth = jnp.asarray(target, dtype=jnp.float64)
         if (
             center.shape != raw_scale.shape
             or center.shape != truth.shape
@@ -455,7 +455,7 @@ class CardiacSurrogateCalibration:
         )
 
     def interval_half_width(self, raw_scale: ArrayLike, /) -> Array:
-        scale = jnp.asarray(raw_scale, dtype=float)
+        scale = jnp.asarray(raw_scale, dtype=jnp.float64)
         if bool(jnp.any(~jnp.isfinite(scale))) or bool(jnp.any(scale <= 0.0)):
             raise ValueError("Predictive scale must be finite and strictly positive.")
         return self.conformal.radius * self.scale_calibrator(scale)
@@ -664,8 +664,8 @@ def propose_cardiac_surrogate(
     if not isinstance(policy, SurrogateRefusalPolicy):
         raise TypeError("policy must be SurrogateRefusalPolicy.")
     topology = _identifier(topology_id, "topology_id")
-    prediction = jnp.asarray(predicted_state, dtype=float)
-    scale = jnp.asarray(raw_predictive_scale, dtype=float)
+    prediction = jnp.asarray(predicted_state, dtype=jnp.float64)
+    scale = jnp.asarray(raw_predictive_scale, dtype=jnp.float64)
     support = assess_surrogate_input(
         manifest,
         parameters,

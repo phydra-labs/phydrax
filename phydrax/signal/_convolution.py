@@ -18,15 +18,15 @@ ConvolutionMethod: TypeAlias = Literal["direct", "fft"]
 
 
 def _full_direct(values: Array, taps: Array, /) -> Array:
-    sample_count = int(values.shape[-1])
+    sample_count = values.shape[-1]
     flattened = values.reshape((-1, sample_count))
     output = jax.vmap(lambda stream: jnp.convolve(stream, taps, mode="full"))(flattened)
     return output.reshape((*values.shape[:-1], output.shape[-1]))
 
 
 def _full_fft(values: Array, taps: Array, /) -> Array:
-    sample_count = int(values.shape[-1])
-    tap_count = int(taps.shape[0])
+    sample_count = values.shape[-1]
+    tap_count = taps.shape[0]
     output_length = sample_count + tap_count - 1
     fft_length = 1 << (output_length - 1).bit_length()
     if jnp.issubdtype(values.dtype, jnp.complexfloating):
@@ -65,8 +65,8 @@ def convolve(
     array, coefficients = _promote_signal_and_taps(values, taps)
     resolved_axis = _normalize_axis(axis, array.ndim)
     canonical = jnp.moveaxis(array, resolved_axis, -1)
-    sample_count = int(canonical.shape[-1])
-    tap_count = int(coefficients.shape[0])
+    sample_count = canonical.shape[-1]
+    tap_count = coefficients.shape[0]
     if sample_count <= 0:
         raise ValueError("The signal axis must contain at least one sample.")
     if mode not in ("full", "same", "valid"):

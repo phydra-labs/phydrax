@@ -302,8 +302,7 @@ class ForceDensityDesignProblem(StrictModule, NonTrainableState):
             if self.has_aux:
                 if not isinstance(output, tuple) or len(output) != 2:
                     raise TypeError(
-                        "A has_aux force-density objective must return "
-                        "(value, auxiliary)."
+                        "A has_aux force-density objective must return (value, auxiliary)."
                     )
                 value, auxiliary = output
                 return jnp.asarray(value), auxiliary

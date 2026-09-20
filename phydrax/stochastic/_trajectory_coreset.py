@@ -74,11 +74,11 @@ class StochasticTrajectoryBlockView(StrictModule):
         self.valid = block_valid
         self.block_length = length
         self.stride = step
-        self.blocks_per_path = int(starts.size)
+        self.blocks_per_path = starts.size
 
     @property
     def count(self) -> int:
-        return int(self.path_indices.shape[0])
+        return self.path_indices.shape[0]
 
     @property
     def states(self) -> Array:
@@ -212,11 +212,11 @@ def _source_weights(
 ) -> Array:
     valid = view.valid
     if weighting == "block":
-        raw = valid.astype(float)
+        raw = valid.astype("float64")
     else:
         path_count = int(jnp.max(view.path_indices)) + 1
         if weighting == "trajectory":
-            within = valid.astype(float)
+            within = valid.astype("float64")
         else:
             duration = view.durations
             within = jnp.where(valid & (duration > 0.0), duration, 0.0)
@@ -321,8 +321,7 @@ def trajectory_block_coreset_to_operator_dataset(
     )
     provenance = tuple(
         OperatorCaseProvenance(
-            f"{reference.trajectory_id}:block:{reference.source_index}:"
-            f"{reference.target_index}:{position}",
+            f"{reference.trajectory_id}:block:{reference.source_index}:{reference.target_index}:{position}",
             identities={
                 "physical_case": reference.physical_case_id,
                 "trajectory": reference.trajectory_id,

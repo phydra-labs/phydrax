@@ -125,7 +125,7 @@ def test_boundary_normals_circle():
             [0.0, 1.0],
             [0.0, -1.0],
         ],
-        dtype=float,
+        dtype="float64",
     )
     normals = c._boundary_normals(pts)
     expected = jnp.array(

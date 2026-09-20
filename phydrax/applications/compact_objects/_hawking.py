@@ -124,10 +124,10 @@ class HawkingTailEvidence(StrictModule, NonTrainableState):
         derivative_valid: ArrayLike,
         qualification_id: str,
     ):
-        frequency = np.asarray(frequency_remainder_upper, dtype=float)
-        modes = np.asarray(mode_remainder_upper, dtype=float)
-        qualified_host = np.asarray(qualified, dtype=bool)
-        derivative_host = np.asarray(derivative_valid, dtype=bool)
+        frequency = np.asarray(frequency_remainder_upper, dtype=np.float64)
+        modes = np.asarray(mode_remainder_upper, dtype=np.float64)
+        qualified_host = np.asarray(qualified, dtype=np.bool_)
+        derivative_host = np.asarray(derivative_valid, dtype=np.bool_)
         identifier = str(qualification_id).strip()
         if frequency.shape != (3,) or modes.shape != (3,):
             raise ValueError("Hawking tail bounds must have shape (3,).")
@@ -168,7 +168,7 @@ class HawkingSpectrumPlan(StrictModule, NonTrainableState):
     rest_mass_frequencies: Array
     absolute_tail_tolerances: Array
     relative_tail_tolerance: float = eqx.field(static=True)
-    greybody_tolerance: float = eqx.field(static=True)
+    graybody_tolerance: float = eqx.field(static=True)
     corotation_tolerance: float = eqx.field(static=True)
     temperature_to_wavenumber: float = eqx.field(static=True)
     mode_species_ids: tuple[str, ...] = eqx.field(static=True)
@@ -191,7 +191,7 @@ class HawkingSpectrumPlan(StrictModule, NonTrainableState):
         energy_tail_tolerance: float = 0.0,
         angular_momentum_tail_tolerance: float = 0.0,
         relative_tail_tolerance: float = 1.0e-4,
-        greybody_tolerance: float = 1.0e-10,
+        graybody_tolerance: float = 1.0e-10,
         corotation_tolerance: float = 1.0e-8,
     ):
         if not isinstance(scale, RelativityScaleContract):
@@ -209,7 +209,7 @@ class HawkingSpectrumPlan(StrictModule, NonTrainableState):
         if len(set(species_ids)) != len(species_ids):
             raise ValueError("Hawking species IDs must be unique.")
 
-        frequencies = np.asarray(angular_frequencies, dtype=float)
+        frequencies = np.asarray(angular_frequencies, dtype=np.float64)
         if (
             frequencies.ndim != 1
             or frequencies.size < 2
@@ -222,8 +222,8 @@ class HawkingSpectrumPlan(StrictModule, NonTrainableState):
             )
         species_by_mode = tuple(str(value).strip() for value in mode_species_ids)
         modes = tuple(str(value).strip() for value in mode_ids)
-        polar = np.asarray(polar_mode_numbers, dtype=float)
-        azimuthal = np.asarray(azimuthal_mode_numbers, dtype=float)
+        polar = np.asarray(polar_mode_numbers, dtype=np.float64)
+        azimuthal = np.asarray(azimuthal_mode_numbers, dtype=np.float64)
         mode_capacity = len(species_by_mode)
         if mode_capacity < 1:
             raise ValueError("Hawking quadrature requires at least one angular mode.")
@@ -247,9 +247,9 @@ class HawkingSpectrumPlan(StrictModule, NonTrainableState):
                 "Mode l and m must be admissible integer or half-integer quantum numbers."
             )
         active = (
-            np.ones((mode_capacity,), dtype=bool)
+            np.ones((mode_capacity,), dtype=np.bool_)
             if active_modes is None
-            else np.asarray(active_modes, dtype=bool)
+            else np.asarray(active_modes, dtype=np.bool_)
         )
         if active.shape != (mode_capacity,) or not np.any(active):
             raise ValueError(
@@ -284,10 +284,10 @@ class HawkingSpectrumPlan(StrictModule, NonTrainableState):
                 energy_tail_tolerance,
                 angular_momentum_tail_tolerance,
             ),
-            dtype=float,
+            dtype=np.float64,
         )
         relative = float(relative_tail_tolerance)
-        greybody = float(greybody_tolerance)
+        graybody = float(graybody_tolerance)
         corotation = float(corotation_tolerance)
         if np.any(~np.isfinite(tolerances)) or np.any(tolerances < 0.0):
             raise ValueError(
@@ -295,8 +295,8 @@ class HawkingSpectrumPlan(StrictModule, NonTrainableState):
             )
         if not math.isfinite(relative) or relative < 0.0:
             raise ValueError("relative_tail_tolerance must be finite and nonnegative.")
-        if not math.isfinite(greybody) or greybody <= 0.0:
-            raise ValueError("greybody_tolerance must be positive and finite.")
+        if not math.isfinite(graybody) or graybody <= 0.0:
+            raise ValueError("graybody_tolerance must be positive and finite.")
         if not math.isfinite(corotation) or corotation <= 0.0:
             raise ValueError("corotation_tolerance must be positive and finite.")
 
@@ -305,13 +305,14 @@ class HawkingSpectrumPlan(StrictModule, NonTrainableState):
         )
         bosonic = np.asarray(
             [species_[int(index)].statistics == "boson" for index in indices],
-            dtype=bool,
+            dtype=np.bool_,
         )
         multiplicities = np.asarray(
-            [species_[int(index)].multiplicity for index in indices], dtype=float
+            [species_[int(index)].multiplicity for index in indices], dtype=np.float64
         )
         rest_masses = np.asarray(
-            [species_[int(index)].rest_mass_frequency for index in indices], dtype=float
+            [species_[int(index)].rest_mass_frequency for index in indices],
+            dtype=np.float64,
         )
 
         self.scale = scale
@@ -327,7 +328,7 @@ class HawkingSpectrumPlan(StrictModule, NonTrainableState):
         self.rest_mass_frequencies = jnp.asarray(rest_masses)
         self.absolute_tail_tolerances = jnp.asarray(tolerances)
         self.relative_tail_tolerance = relative
-        self.greybody_tolerance = greybody
+        self.graybody_tolerance = graybody
         self.corotation_tolerance = corotation
         self.temperature_to_wavenumber = float(thermal_factor)
         self.mode_species_ids = species_by_mode
@@ -345,7 +346,7 @@ class HawkingSpectrumPlan(StrictModule, NonTrainableState):
                 "active_modes": active,
                 "absolute_tail_tolerances": tolerances,
                 "relative_tail_tolerance": relative,
-                "greybody_tolerance": greybody,
+                "graybody_tolerance": graybody,
                 "corotation_tolerance": corotation,
             }
         )
@@ -356,18 +357,18 @@ class HawkingSpectrumPlan(StrictModule, NonTrainableState):
 
     @property
     def frequency_capacity(self) -> int:
-        return int(self.angular_frequencies.shape[0])
+        return self.angular_frequencies.shape[0]
 
 
 class HawkingScatteringData(StrictModule, NonTrainableState):
     """Neutral fixed-shape carrier for independently qualified scattering modes.
 
-    The greybody factor is signed: a qualified bosonic superradiant mode has a
+    The graybody factor is signed: a qualified bosonic superradiant mode has a
     negative value below corotation. ``corotation_slopes`` supplies
-    d(greybody)/d(angular_frequency) for the removable Bose singularity.
+    d(graybody)/d(angular_frequency) for the removable Bose singularity.
     """
 
-    greybody_factors: Array
+    graybody_factors: Array
     corotation_slopes: Array
     finite: Array
     converged: Array
@@ -383,7 +384,7 @@ class HawkingScatteringData(StrictModule, NonTrainableState):
     def __init__(
         self,
         plan: HawkingSpectrumPlan,
-        greybody_factors: ArrayLike,
+        graybody_factors: ArrayLike,
         corotation_slopes: ArrayLike,
         /,
         *,
@@ -401,16 +402,16 @@ class HawkingScatteringData(StrictModule, NonTrainableState):
         if not isinstance(tail_evidence, HawkingTailEvidence):
             raise TypeError("tail_evidence must be HawkingTailEvidence.")
         expected = (plan.mode_capacity, plan.frequency_capacity)
-        greybody = np.asarray(greybody_factors, dtype=float)
-        slopes = np.asarray(corotation_slopes, dtype=float)
-        if greybody.shape != expected:
+        graybody = np.asarray(graybody_factors, dtype=np.float64)
+        slopes = np.asarray(corotation_slopes, dtype=np.float64)
+        if graybody.shape != expected:
             raise ValueError(
-                "greybody_factors must have shape (mode_capacity, frequency_capacity)."
+                "graybody_factors must have shape (mode_capacity, frequency_capacity)."
             )
         if slopes.shape != (plan.mode_capacity,):
             raise ValueError("corotation_slopes must have shape (mode_capacity,).")
         flags = tuple(
-            np.asarray(value, dtype=bool)
+            np.asarray(value, dtype=np.bool_)
             for value in (
                 finite,
                 converged,
@@ -434,7 +435,7 @@ class HawkingScatteringData(StrictModule, NonTrainableState):
         if not qualification:
             raise ValueError("Scattering qualification_id must be non-empty.")
 
-        self.greybody_factors = jnp.asarray(greybody)
+        self.graybody_factors = jnp.asarray(graybody)
         self.corotation_slopes = jnp.asarray(slopes)
         self.finite = jnp.asarray(flags[0])
         self.converged = jnp.asarray(flags[1])
@@ -449,7 +450,7 @@ class HawkingScatteringData(StrictModule, NonTrainableState):
             {
                 "kind": "hawking-scattering-data",
                 "plan": plan.plan_id,
-                "greybody_factors": greybody,
+                "graybody_factors": graybody,
                 "corotation_slopes": slopes,
                 "finite": flags[0],
                 "converged": flags[1],
@@ -560,7 +561,7 @@ def evaluate_hawking_spectrum(
     temperature = jnp.asarray(horizon_temperature)
     angular_velocity = jnp.asarray(horizon_angular_velocity)
     horizon_flags = tuple(
-        jnp.asarray(value, dtype=bool)
+        jnp.asarray(value, dtype=jnp.bool_)
         for value in (
             horizon_finite,
             horizon_converged,
@@ -578,7 +579,7 @@ def evaluate_hawking_spectrum(
 
     dtype = jnp.result_type(
         plan.angular_frequencies,
-        scattering.greybody_factors,
+        scattering.graybody_factors,
         temperature,
         angular_velocity,
     )
@@ -590,7 +591,7 @@ def evaluate_hawking_spectrum(
     safe_thermal = jnp.where(thermal_wavenumber > 0.0, thermal_wavenumber, 1.0)
     delta = omega - m * angular_velocity.astype(dtype)
     exponent = delta / safe_thermal
-    greybody = scattering.greybody_factors.astype(dtype)
+    graybody = scattering.graybody_factors.astype(dtype)
 
     small_scale = jnp.sqrt(jnp.asarray(jnp.finfo(dtype).eps, dtype=dtype))
     small = jnp.abs(exponent) <= small_scale
@@ -605,7 +606,7 @@ def evaluate_hawking_spectrum(
         decay / (1.0 - decay),
         -1.0 / (1.0 - decay),
     )
-    bose_regular = greybody * bose_reciprocal
+    bose_regular = graybody * bose_reciprocal
     bose_series = (
         scattering.corotation_slopes.astype(dtype)[:, None]
         * safe_thermal
@@ -616,15 +617,15 @@ def evaluate_hawking_spectrum(
     fermi_reciprocal = jnp.exp(-jnp.maximum(exponent, 0.0)) / (
         1.0 + jnp.exp(-jnp.abs(exponent))
     )
-    fermi_ratio = greybody * fermi_reciprocal
-    occupation_times_greybody = jnp.where(
+    fermi_ratio = graybody * fermi_reciprocal
+    occupation_times_graybody = jnp.where(
         plan.bosonic_modes[:, None], bose_ratio, fermi_ratio
     )
 
     propagating = omega >= plan.rest_mass_frequencies.astype(dtype)[:, None]
     support = plan.active_modes[:, None] & propagating
     normalization = plan.multiplicities.astype(dtype)[:, None] / (2.0 * jnp.pi)
-    number_density = jnp.where(support, normalization * occupation_times_greybody, 0.0)
+    number_density = jnp.where(support, normalization * occupation_times_graybody, 0.0)
     energy_density = omega * number_density
     angular_density = m * number_density
 
@@ -645,34 +646,34 @@ def evaluate_hawking_spectrum(
     active_grid = plan.active_modes[:, None]
     mode_finite = (
         scattering.finite
-        & jnp.all(jnp.where(active_grid, jnp.isfinite(greybody), True), axis=-1)
+        & jnp.all(jnp.where(active_grid, jnp.isfinite(graybody), True), axis=-1)
         & jnp.isfinite(scattering.corotation_slopes)
     )
     threshold = jnp.asarray(plan.corotation_tolerance, dtype=dtype)
-    greybody_tolerance = jnp.asarray(plan.greybody_tolerance, dtype=dtype)
+    graybody_tolerance = jnp.asarray(plan.graybody_tolerance, dtype=dtype)
     above = delta > threshold
     below = delta < -threshold
     boson_sign_valid = jnp.where(
         above,
-        greybody >= -greybody_tolerance,
+        graybody >= -graybody_tolerance,
         jnp.where(
             below,
-            greybody <= greybody_tolerance,
-            jnp.abs(greybody)
-            <= greybody_tolerance
+            graybody <= graybody_tolerance,
+            jnp.abs(graybody)
+            <= graybody_tolerance
             + jnp.abs(scattering.corotation_slopes.astype(dtype)[:, None]) * threshold,
         ),
     )
-    boson_bounds = boson_sign_valid & (greybody <= 1.0 + greybody_tolerance)
-    fermion_bounds = (greybody >= -greybody_tolerance) & (
-        greybody <= 1.0 + greybody_tolerance
+    boson_bounds = boson_sign_valid & (graybody <= 1.0 + graybody_tolerance)
+    fermion_bounds = (graybody >= -graybody_tolerance) & (
+        graybody <= 1.0 + graybody_tolerance
     )
-    greybody_physical = jnp.where(
+    graybody_physical = jnp.where(
         plan.bosonic_modes[:, None], boson_bounds, fermion_bounds
     )
     density_physical = number_density >= 0.0
     mode_physical = scattering.physically_valid & jnp.all(
-        jnp.where(active_grid, greybody_physical & density_physical, True), axis=-1
+        jnp.where(active_grid, graybody_physical & density_physical, True), axis=-1
     )
     mode_converged = scattering.converged
     mode_qualified = scattering.qualified
@@ -869,7 +870,7 @@ class KerrEvaporationPlan(StrictModule, NonTrainableState):
             raise TypeError("scale must be a RelativityScaleContract.")
         if not scale.quantum_constants_explicit:
             raise ValueError("Kerr evaporation requires explicit hbar and k_B constants.")
-        times = np.asarray(time_offsets, dtype=float)
+        times = np.asarray(time_offsets, dtype=np.float64)
         if (
             times.ndim != 1
             or times.size < 2
@@ -925,7 +926,7 @@ class KerrEvaporationPlan(StrictModule, NonTrainableState):
 
     @property
     def step_capacity(self) -> int:
-        return int(self.time_offsets.shape[0]) - 1
+        return self.time_offsets.shape[0] - 1
 
 
 class HawkingSpectrumEvaluator(Protocol):

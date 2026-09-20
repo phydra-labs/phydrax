@@ -225,7 +225,7 @@ class PortfolioConstraints(StrictModule):
             else jnp.asarray(linear_upper, dtype=matrix.dtype)
         )
         if matrix is not None:
-            rows = int(matrix.shape[0])
+            rows = matrix.shape[0]
             if linear_lo.shape != (rows,) or linear_hi.shape != (rows,):
                 raise ValueError(f"Linear bounds must both have shape ({rows},).")
             lo = np.asarray(linear_lo)

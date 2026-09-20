@@ -22,16 +22,15 @@ class OperatorSupervisedExample(StrictModule):
     def __init__(self, batch: OperatorBatch, targets: Array, /):
         target = jnp.asarray(targets)
         prefix = batch.case_shape + batch.require_single_query().sample_shape
-        scalar = tuple(int(size) for size in target.shape) == prefix
+        scalar = tuple(target.shape) == prefix
         channel_last = (
             target.ndim == len(prefix) + 1
-            and tuple(int(size) for size in target.shape[:-1]) == prefix
-            and int(target.shape[-1]) > 0
+            and tuple(target.shape[:-1]) == prefix
+            and target.shape[-1] > 0
         )
         if not scalar and not channel_last:
             raise ValueError(
-                "Operator demonstration targets must have case/query shape, "
-                "optionally followed by one channel axis."
+                "Operator demonstration targets must have case/query shape, optionally followed by one channel axis."
             )
         self.batch = batch
         self.targets = target
@@ -41,7 +40,7 @@ class OperatorSupervisedExample(StrictModule):
         prefix_rank = len(self.batch.case_shape) + len(
             self.batch.require_single_query().sample_shape
         )
-        return 1 if self.targets.ndim == prefix_rank else int(self.targets.shape[-1])
+        return 1 if self.targets.ndim == prefix_rank else self.targets.shape[-1]
 
 
 class OperatorPrompt(StrictModule):
@@ -71,11 +70,11 @@ class OperatorPrompt(StrictModule):
         cases = first.batch.case_shape
         expected = cases + (len(resolved),)
         mask_ = (
-            jnp.ones(expected, dtype=bool)
+            jnp.ones(expected, dtype=jnp.bool_)
             if mask is None
-            else jnp.asarray(mask, dtype=bool)
+            else jnp.asarray(mask, dtype=jnp.bool_)
         )
-        if tuple(int(size) for size in mask_.shape) != expected:
+        if tuple(mask_.shape) != expected:
             raise ValueError(f"Operator prompt mask must have shape {expected}.")
         self.examples = resolved
         self.mask = mask_
@@ -90,7 +89,7 @@ class OperatorPrompt(StrictModule):
         return self.examples[0].target_channels
 
     def permute(self, permutation: Sequence[int], /) -> "OperatorPrompt":
-        indices = tuple(int(index) for index in permutation)
+        indices = tuple(permutation)
         if sorted(indices) != list(range(self.capacity)):
             raise ValueError("Prompt permutation must contain every capacity index once.")
         return OperatorPrompt(
@@ -125,7 +124,7 @@ def pad_operator_prompt(prompt: OperatorPrompt, capacity: int, /) -> OperatorPro
         return prompt
     added = target - prompt.capacity
     examples = prompt.examples + (prompt.examples[0],) * added
-    padding = jnp.zeros(prompt.case_shape + (added,), dtype=bool)
+    padding = jnp.zeros(prompt.case_shape + (added,), dtype=jnp.bool_)
     return OperatorPrompt(examples, mask=jnp.concatenate((prompt.mask, padding), axis=-1))
 
 

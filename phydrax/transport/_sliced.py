@@ -25,7 +25,7 @@ class SlicedWassersteinResult(StrictModule):
 
     @property
     def num_projections(self) -> int:
-        return int(self.projections.shape[0])
+        return self.projections.shape[0]
 
 
 def sliced_wasserstein_distance(
@@ -119,7 +119,7 @@ def sliced_wasserstein_distance(
 
 
 def _events(values: ArrayLike, /, *, name: str) -> Array:
-    result = jnp.asarray(values, dtype=float)
+    result = jnp.asarray(values, dtype=jnp.float64)
     if result.ndim == 1:
         result = result[:, None]
     if result.ndim != 2 or result.shape[0] == 0 or result.shape[1] == 0:

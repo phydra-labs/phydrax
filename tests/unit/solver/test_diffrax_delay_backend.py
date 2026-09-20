@@ -26,7 +26,7 @@ def _constant_delay_problem(
     delay_values = jnp.asarray(delays).reshape((-1,))
     delay_terms = tuple(
         phx.solver.ConstantDelay(f"delay_{index}", delay_values[index])
-        for index in range(int(delay_values.size))
+        for index in range(delay_values.size)
     )
     if diffusion is None:
         wiener_terms = ()
@@ -77,7 +77,7 @@ def test_diffrax_delay_recovers_piecewise_method_of_steps_and_dense_output():
     assert bool(solution.successful)
     assert solution.has_dense_interpolation
     assert solution.solver_name == "Tsit5"
-    assert solution.solver_id == "solver:diffrax-delay:Tsit5:retarded-v1"
+    assert solution.solver_id == "solver:diffrax-delay:Tsit5:retarded"
     assert solution.resolved_method == "Tsit5:causal-retarded-method-of-steps"
     assert solution.metadata["backend"] == "diffrax"
     assert solution.stats["num_delays"] == 1
@@ -157,7 +157,7 @@ def test_diffrax_delay_supports_stiff_implicit_solver_and_stage_time_bound():
     interpolation = solution.interpolation
     assert interpolation is not None
     history_buffer = interpolation.computed_history
-    used = int(history_buffer.size)
+    used = history_buffer.size
     lengths = history_buffer.ends[:used] - history_buffer.starts[:used]
     assert used == int(solution.stats["num_accepted_steps"])
     assert jnp.max(lengths) <= solution.stats["maximum_causal_step"] + 1e-14
@@ -173,7 +173,7 @@ def test_rejected_steps_never_enter_accepted_delay_history():
     interpolation = solution.interpolation
     assert interpolation is not None
     history_buffer = interpolation.computed_history
-    used = int(history_buffer.size)
+    used = history_buffer.size
 
     assert int(solution.stats["num_rejected_steps"]) > 0
     assert used == int(solution.stats["num_accepted_steps"])

@@ -91,8 +91,7 @@ class PseudospectralMethodPlan(StrictModule, NonTrainableState):
             raise TypeError("discretization must be a prepared spectral space.")
         if nonlinear and self.dealiasing is None:
             raise ValueError(
-                "Nonlinear pseudospectral compilation requires an explicit "
-                "dealiasing policy."
+                "Nonlinear pseudospectral compilation requires an explicit dealiasing policy."
             )
         dealiasing = NoDealiasingPlan() if self.dealiasing is None else self.dealiasing
         prepared = dealiasing.prepare(
@@ -209,7 +208,7 @@ class SpectralResidualDiagnostics(StrictModule):
         self.tail_mode_energy = jnp.asarray(tail_mode_energy)
         self.tail_energy_ratio = jnp.asarray(tail_energy_ratio)
         self.imaginary_leakage = jnp.asarray(imaginary_leakage)
-        self.admissible = jnp.asarray(admissible, dtype=bool)
+        self.admissible = jnp.asarray(admissible, dtype=jnp.bool_)
         self.total_entropy = None if total_entropy is None else jnp.asarray(total_entropy)
         self.semidiscrete_entropy_rate = (
             None

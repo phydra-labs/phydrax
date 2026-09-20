@@ -59,15 +59,15 @@ class FiniteLindbladChannelPlan(StrictModule):
             or operators.shape[0] < 1
         ):
             raise ValueError("jumps must have shape (capacity, dimension, dimension).")
-        capacity, dimension = int(operators.shape[0]), int(operators.shape[1])
+        capacity, dimension = operators.shape[0], operators.shape[1]
         if rate_values.shape not in ((capacity,), (slicing.num_steps, capacity)):
             raise ValueError(
                 "rates must have shape (capacity,) or (time_intervals, capacity)."
             )
         mask = (
-            jnp.ones((capacity,), dtype=bool)
+            jnp.ones((capacity,), dtype=jnp.bool_)
             if active_jumps is None
-            else jnp.asarray(active_jumps, dtype=bool)
+            else jnp.asarray(active_jumps, dtype=jnp.bool_)
         )
         if mask.shape != (capacity,):
             raise ValueError("active_jumps shape must equal jump capacity.")

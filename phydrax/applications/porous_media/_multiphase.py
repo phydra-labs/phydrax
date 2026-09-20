@@ -80,7 +80,7 @@ class MultiphaseConservationPlan(StrictModule, NonTrainableState):
         self.discretization = discretization
         self.phase_names, self.component_names = phases, components
         self.boundary_faces = jnp.asarray(
-            np.flatnonzero(np.asarray(discretization.neighbour_cells) < 0),
+            np.flatnonzero(np.asarray(discretization.neighbor_cells) < 0),
             dtype=jnp.int32,
         )
         self.plan_id = canonical_fingerprint(
@@ -217,13 +217,13 @@ class MultiphaseConservationPlan(StrictModule, NonTrainableState):
 
     def _divergence(self, face_rates: Array) -> Array:
         owner = self.discretization.owner_cells
-        neighbour = self.discretization.neighbour_cells
+        neighbor = self.discretization.neighbor_cells
         result = jnp.zeros(
             (self.cell_count,) + face_rates.shape[1:], dtype=face_rates.dtype
         )
         result = result.at[owner].add(face_rates)
-        interior = neighbour >= 0
-        safe = jnp.where(interior, neighbour, 0)
+        interior = neighbor >= 0
+        safe = jnp.where(interior, neighbor, 0)
         return result.at[safe].add(
             jnp.where(
                 interior.reshape((-1,) + (1,) * (face_rates.ndim - 1)), -face_rates, 0

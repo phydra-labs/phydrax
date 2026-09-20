@@ -150,8 +150,8 @@ def test_thermochemical_binding_requires_exact_reactants_orders_and_content():
         (ChemicalPhaseKind.GAS, ChemicalPhaseKind.GAS),
         np.asarray([1.0, 1.0]),
         ("E",),
-        np.asarray([[1, 1]], dtype=int),
-        np.asarray([0, 0], dtype=int),
+        np.asarray([[1, 1]], dtype="int64"),
+        np.asarray([0, 0], dtype="int64"),
         gas_standard_pressure=101325.0,
     )
     thermodynamics = PolynomialSpeciesThermodynamicsPlan(

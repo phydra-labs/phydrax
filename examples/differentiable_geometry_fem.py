@@ -101,8 +101,8 @@ def run():
         "invalid_trial_refresh_required": bool(expired.refresh_required),
         "surface_accepted": bool(surface.accepted),
         "surface_topology_id": surface.evidence.topology_id,
-        "surface_vertices": int(surface.vertices.shape[0]),
-        "surface_faces": int(surface.faces.shape[0]),
+        "surface_vertices": surface.vertices.shape[0],
+        "surface_faces": surface.faces.shape[0],
     }
 
 

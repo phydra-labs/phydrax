@@ -62,7 +62,7 @@ class SemilinearDrift(StrictModule):
             )
         if nonlinear_drift is not None and not callable(nonlinear_drift):
             raise TypeError("nonlinear_drift must be callable or None.")
-        shape = tuple(int(size) for size in state_shape)
+        shape = tuple(state_shape)
         if not shape or any(size <= 0 for size in shape):
             raise ValueError("state_shape must contain positive dimensions.")
         identifier = str(operator_id)
@@ -78,16 +78,15 @@ class SemilinearDrift(StrictModule):
                 or linear_operator.target.shape != shape
             ):
                 raise ValueError(
-                    "linear_operator must be an unbatched ArraySpace endomorphism "
-                    "with the declared state_shape."
+                    "linear_operator must be an unbatched ArraySpace endomorphism with the declared state_shape."
                 )
             if identifier != linear_operator.operator_id:
                 raise ValueError("operator_id must equal linear_operator.operator_id.")
         if mass_weights is None:
             weights = None
         else:
-            weights = jnp.asarray(mass_weights, dtype=float)
-            if value_shape := tuple(int(size) for size in weights.shape):
+            weights = jnp.asarray(mass_weights, dtype=jnp.float64)
+            if value_shape := tuple(weights.shape):
                 if shape[: len(value_shape)] != value_shape:
                     raise ValueError(
                         "mass_weights shape must be a leading prefix of state_shape."
@@ -127,10 +126,10 @@ class SemilinearDrift(StrictModule):
                     "compatible_noise_basis_id requires compatible noise eigenvalues."
                 )
         else:
-            noise_values = jnp.asarray(compatible_noise_eigenvalues, dtype=float).reshape(
-                (-1,)
-            )
-            if int(noise_values.size) <= 0 or bool(jnp.any(~jnp.isfinite(noise_values))):
+            noise_values = jnp.asarray(
+                compatible_noise_eigenvalues, dtype=jnp.float64
+            ).reshape((-1,))
+            if noise_values.size <= 0 or bool(jnp.any(~jnp.isfinite(noise_values))):
                 raise ValueError(
                     "compatible noise eigenvalues must be a non-empty finite vector."
                 )
@@ -151,7 +150,7 @@ class SemilinearDrift(StrictModule):
         self.nonlinear_id = nonlinear_identifier
         self.drift_id = canonical_fingerprint(
             {
-                "kind": "semilinear-drift-v1",
+                "kind": "semilinear-drift",
                 "linear": identifier,
                 "nonlinear": nonlinear_identifier,
                 "state_shape": list(shape),
@@ -175,8 +174,7 @@ class SemilinearDrift(StrictModule):
         result = jnp.asarray(action(value))
         if result.shape != self.state_shape:
             raise ValueError(
-                "linear_operator must preserve the declared state shape; "
-                f"got {result.shape}."
+                f"linear_operator must preserve the declared state shape; got {result.shape}."
             )
         return result
 
@@ -191,8 +189,7 @@ class SemilinearDrift(StrictModule):
         result = jnp.asarray(self.nonlinear_drift(time, value, args))
         if result.shape != self.state_shape:
             raise ValueError(
-                "nonlinear_drift must preserve the declared state shape; "
-                f"got {result.shape}."
+                f"nonlinear_drift must preserve the declared state shape; got {result.shape}."
             )
         return result
 

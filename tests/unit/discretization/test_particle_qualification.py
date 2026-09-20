@@ -55,7 +55,7 @@ def test_iisph_and_dfsph_lenient_execution_do_not_pass_production_gate():
         box=phx.discretization.ParticleBox([0.0], [1.0]),
     ).prepare(particles)
     kernel = phx.discretization.WendlandC2SPHKernel(1)
-    position = (jnp.arange(count, dtype=float) + 0.5)[:, None] * spacing
+    position = (jnp.arange(count, dtype="float64") + 0.5)[:, None] * spacing
     velocity = jnp.zeros_like(position)
     iisph = phx.discretization.PreparedIISPH(
         particles,

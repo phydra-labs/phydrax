@@ -66,12 +66,12 @@ class BoundarySheetParticleTransferPlan2D(StrictModule, NonTrainableState):
             }
         )
 
-    def initialize(self, /, *, dtype=float) -> WallVortexPoolState:
+    def initialize(self, /, *, dtype=jnp.float64) -> WallVortexPoolState:
         return WallVortexPoolState(
             jnp.zeros((self.particle_capacity, 2), dtype=dtype),
             jnp.zeros((self.particle_capacity,), dtype=dtype),
             jnp.full((self.particle_capacity,), self.core_radius, dtype=dtype),
-            jnp.zeros((self.particle_capacity,), dtype=bool),
+            jnp.zeros((self.particle_capacity,), dtype=jnp.bool_),
             jnp.asarray(0, dtype=jnp.int64),
         )
 
@@ -83,7 +83,7 @@ class BoundarySheetParticleTransferPlan2D(StrictModule, NonTrainableState):
         /,
     ) -> BoundarySheetParticleTransferResult:
         strength = jnp.asarray(sheet_strength, dtype=state.circulation.dtype)
-        panel_count = int(geometry.length.size)
+        panel_count = geometry.length.size
         if strength.shape != (panel_count,):
             raise ValueError("sheet_strength must have one value per panel.")
         emission = strength * geometry.length

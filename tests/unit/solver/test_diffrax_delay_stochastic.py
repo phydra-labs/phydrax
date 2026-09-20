@@ -160,7 +160,7 @@ def test_dense_history_uses_the_same_wiener_path_inside_an_accepted_step():
 
     assert jnp.allclose(solution.evaluate(query)[..., 0], expected)
     history = solution.interpolation.history.computed_history
-    assert int(history.size) == int(solution.stats["num_accepted_steps"])
+    assert history.size == int(solution.stats["num_accepted_steps"])
 
 
 def test_batched_stochastic_rolling_history_replays_full_path_solution():

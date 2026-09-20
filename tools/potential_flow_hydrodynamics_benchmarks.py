@@ -64,7 +64,7 @@ def _case(*, depth: float | None, smoke: bool):
         np.asarray(mesh.faces, dtype=np.int32),
         feature_id="potential-flow-benchmark-sphere",
     )
-    face_count = int(mesh.faces.shape[0])
+    face_count = mesh.faces.shape[0]
     started = time.perf_counter()
     prepared = prepare_free_surface_hydrodynamics_3d(
         region,
@@ -103,12 +103,12 @@ def _case(*, depth: float | None, smoke: bool):
     added_diagonal = np.asarray(jnp.diag(result.added_mass))
     damping_diagonal = np.asarray(jnp.diag(result.radiation_damping))
     surge_sway_added_symmetry = abs(added_diagonal[0] - added_diagonal[1]) / max(
-        abs(added_diagonal[0]), abs(added_diagonal[1]), np.finfo(float).tiny
+        abs(added_diagonal[0]), abs(added_diagonal[1]), np.finfo(np.float64).tiny
     )
     surge_sway_damping_symmetry = abs(damping_diagonal[0] - damping_diagonal[1]) / max(
         abs(damping_diagonal[0]),
         abs(damping_diagonal[1]),
-        np.finfo(float).tiny,
+        np.finfo(np.float64).tiny,
     )
     passed = bool(
         result.valid

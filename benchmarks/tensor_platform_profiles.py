@@ -124,7 +124,7 @@ def _quantum_profile(repeats: int):
     one = jnp.asarray([[0.0, 0.0], [0.0, 1.0]], dtype=jnp.complex64)
     instrument = phx.solver.QuantumInstrument(
         jnp.stack((zero, one))[:, None, :, :],
-        jnp.ones((2, 1), dtype=bool),
+        jnp.ones((2, 1), dtype="bool"),
         tolerance=1e-5,
     )
     state = jnp.asarray([1.0, 1.0], dtype=jnp.complex64) / jnp.sqrt(2.0)

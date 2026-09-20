@@ -103,8 +103,8 @@ class TopologyAdjointEvent(StrictModule, NonTrainableState):
         policy: TopologyAdjointPolicy,
         event_id: str,
     ):
-        source = tuple(int(value) for value in source_shape)
-        target = tuple(int(value) for value in target_shape)
+        source = tuple(source_shape)
+        target = tuple(target_shape)
         if (
             not callable(pullback)
             or any(value <= 0 for value in (*source, *target))

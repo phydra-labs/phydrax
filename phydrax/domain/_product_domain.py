@@ -89,8 +89,7 @@ class ProductDomain(Domain):
         unknown = tuple(label for label in mapping if label not in self.labels)
         if unknown:
             raise KeyError(
-                f"Relabel mapping contains unknown labels {unknown}; "
-                f"expected a subset of {self.labels}."
+                f"Relabel mapping contains unknown labels {unknown}; expected a subset of {self.labels}."
             )
         replacement = tuple(mapping.get(label, label) for label in self.labels)
         if len(set(replacement)) != len(replacement):
@@ -112,8 +111,7 @@ class ProductDomain(Domain):
         for factor in self.factors:
             if len(factor.labels) != 1:
                 raise TypeError(
-                    "boundary() requires a boundary decomposition provider for coupled "
-                    f"factor {factor.labels}."
+                    f"boundary() requires a boundary decomposition provider for coupled factor {factor.labels}."
                 )
             label = factor.labels[0]
             if isinstance(factor, AbstractGeometry):

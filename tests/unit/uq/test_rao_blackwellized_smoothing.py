@@ -117,7 +117,7 @@ def _initial_mode_dependent_problems():
         lambda mode, args: (jnp.zeros(1), jnp.eye(1)),
         lambda previous_mode, mode, t0, t1, context: (
             jnp.eye(1),
-            (previous_mode + mode).astype(float),
+            (previous_mode + mode).astype("float64"),
             jnp.asarray([[0.1]]),
         ),
         lambda mode, time, context: (jnp.eye(1), jnp.zeros(1), jnp.asarray([[0.2]])),
@@ -206,7 +206,7 @@ def _correlated_nonlinear_problem(*, normalized=True):
     observations = phx.stochastic.ObservationSequence(
         jnp.asarray([0.5, 1.0]),
         jnp.zeros((2, 1)),
-        observation_mask=jnp.zeros((2, 1), dtype=bool),
+        observation_mask=jnp.zeros((2, 1), dtype="bool"),
         case_ids=("only",),
         sequence_id="correlated-sequence",
     )

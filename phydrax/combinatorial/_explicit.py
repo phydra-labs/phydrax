@@ -64,7 +64,7 @@ def _catalog(
             raise TypeError(f"{name} leaves must be numerical or boolean arrays.")
         if real_features and jnp.issubdtype(array.dtype, jnp.complexfloating):
             raise TypeError("objective feature leaves must be real-valued.")
-        leading = int(array.shape[0])
+        leading = array.shape[0]
         if leading == 0:
             raise ValueError(f"{name} candidate dimensions must be nonempty.")
         if count is None:
@@ -81,7 +81,7 @@ def _catalog(
         ):
             raise ValueError("objective feature catalogs must be finite.")
         arrays.append(array)
-        payload_shapes.append(tuple(int(size) for size in array.shape[1:]))
+        payload_shapes.append(tuple(array.shape[1:]))
         dtypes.append(str(array.dtype))
     assert count is not None
     return (
@@ -133,9 +133,9 @@ class ExplicitDecisionSpace(AbstractCombinatorialSpace):
         if feature_count != decision_count:
             raise ValueError("decisions and features must share one candidate count.")
         if valid is None:
-            validity = jnp.ones((decision_count,), dtype=bool)
+            validity = jnp.ones((decision_count,), dtype=jnp.bool_)
         else:
-            validity = jnp.asarray(valid, dtype=bool)
+            validity = jnp.asarray(valid, dtype=jnp.bool_)
             if validity.shape != (decision_count,):
                 raise ValueError(
                     f"valid must have shape {(decision_count,)}; got {validity.shape}."
@@ -225,7 +225,7 @@ class ExplicitDecisionSpace(AbstractCombinatorialSpace):
         canonical = self.canonicalize(decision)
         safe, in_range = self._safe_index(canonical.index)
         catalog_valid = self.valid[safe]
-        value_residual = jnp.zeros_like(canonical.index, dtype=float)
+        value_residual = jnp.zeros_like(canonical.index, dtype=jnp.float64)
         provided_leaves, provided_tree = jax.tree_util.tree_flatten(decision.value)
         canonical_leaves, canonical_tree = jax.tree_util.tree_flatten(canonical.value)
         if provided_tree != canonical_tree:
@@ -244,7 +244,9 @@ class ExplicitDecisionSpace(AbstractCombinatorialSpace):
         feasible = in_range & catalog_valid & (value_residual == 0)
         return CombinatorialFeasibility(
             feasible,
-            (~in_range).astype(float) + (~catalog_valid).astype(float) + value_residual,
+            (~in_range).astype("float64")
+            + (~catalog_valid).astype("float64")
+            + value_residual,
         )
 
 
@@ -301,8 +303,7 @@ class ExhaustiveLinearOracle(AbstractLinearCombinatorialMethod):
         count = problem.space.candidate_count
         if count > self.maximum_candidates:
             raise ValueError(
-                f"explicit decision count {count} exceeds maximum_candidates "
-                f"{self.maximum_candidates}."
+                f"explicit decision count {count} exceeds maximum_candidates {self.maximum_candidates}."
             )
         feature_size = sum(prod(shape) for shape in problem.space.feature_shapes)
         return make_combinatorial_plan(
@@ -332,7 +333,7 @@ class ExhaustiveLinearOracle(AbstractLinearCombinatorialMethod):
             lambda value: value.reshape((flat_batch,) + value.shape[len(batch_shape) :]),
             problem.costs,
         )
-        finite_cost = jnp.ones((flat_batch,), dtype=bool)
+        finite_cost = jnp.ones((flat_batch,), dtype=jnp.bool_)
         for value in jax.tree_util.tree_leaves(costs):
             feature_rank = value.ndim - 1
             finite = jnp.isfinite(value)
@@ -344,8 +345,8 @@ class ExhaustiveLinearOracle(AbstractLinearCombinatorialMethod):
             jnp.full((flat_batch,), jnp.inf, dtype=np.dtype(problem.cost_dtype)),
             jnp.full((flat_batch,), jnp.inf, dtype=np.dtype(problem.cost_dtype)),
             jnp.full((flat_batch,), -1, dtype=jnp.int32),
-            jnp.zeros((flat_batch,), dtype=bool),
-            jnp.zeros((flat_batch,), dtype=bool),
+            jnp.zeros((flat_batch,), dtype=jnp.bool_),
+            jnp.zeros((flat_batch,), dtype=jnp.bool_),
         )
 
         feature_catalogs = jax.tree_util.tree_leaves(space.features)
@@ -486,7 +487,7 @@ class ExhaustiveLinearOracle(AbstractLinearCombinatorialMethod):
             absolute_gap=zero,
             relative_gap=zero,
             tie_margin=tie_margin,
-            dual_available=jnp.zeros(batch_shape, dtype=bool),
+            dual_available=jnp.zeros(batch_shape, dtype=jnp.bool_),
             gap_available=gap_available,
             tie_available=tie_available,
         )

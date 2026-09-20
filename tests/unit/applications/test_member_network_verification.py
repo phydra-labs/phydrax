@@ -32,7 +32,7 @@ def _axial_network():
     properties = mn.MemberPropertyMap((material,), (section,), (0,), (0,))
     reference = mn.MemberReferenceState(structure, positions)
     dofs = mn.MemberDOFLayout(
-        structure, rotation_constrained=jnp.ones((2, 1), dtype=bool)
+        structure, rotation_constrained=jnp.ones((2, 1), dtype="bool")
     )
     definition = mn.MemberNetworkDefinition(structure, reference, properties, dofs)
     assembly = mn.MemberNetworkAssembly((mn.AxialMemberBlock((0,)),))
@@ -78,7 +78,7 @@ def _axial_modal_network(*, repeated: bool = False):
     reference = mn.MemberReferenceState(structure, positions)
     dofs = mn.MemberDOFLayout(
         structure,
-        rotation_constrained=jnp.ones((node_count, 1), dtype=bool),
+        rotation_constrained=jnp.ones((node_count, 1), dtype="bool"),
     )
     definition = mn.MemberNetworkDefinition(structure, reference, properties, dofs)
     assembly = mn.MemberNetworkAssembly(

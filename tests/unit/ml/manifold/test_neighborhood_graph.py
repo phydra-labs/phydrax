@@ -48,7 +48,9 @@ def test_neighbor_graph_has_fixed_sparse_capacity_deterministic_ties_and_case_di
 
 def test_neighbor_graph_reports_disconnected_components_and_keeps_edge_length_gradients():
     disconnected = jnp.array([[0.0], [1.0], [10.0], [11.0]])
-    graph = build_neighbor_graph(disconnected, jnp.ones((4,), dtype=bool), n_neighbors=1)
+    graph = build_neighbor_graph(
+        disconnected, jnp.ones((4,), dtype="bool"), n_neighbors=1
+    )
 
     assert graph.components == 2
     assert graph.minimum_degree == 1
@@ -58,7 +60,7 @@ def test_neighbor_graph_reports_disconnected_components_and_keeps_edge_length_gr
     gradient = jax.grad(
         lambda value: jnp.sum(
             build_neighbor_graph(
-                value, jnp.ones((4,), dtype=bool), n_neighbors=1
+                value, jnp.ones((4,), dtype="bool"), n_neighbors=1
             ).distances
         )
     )(differentiable)
@@ -69,7 +71,7 @@ def test_neighbor_graph_reports_disconnected_components_and_keeps_edge_length_gr
 
 def test_neighbor_graph_rejects_precomputed_geometry_and_invalid_capacity():
     coordinates = jnp.eye(4)
-    active = jnp.ones((4,), dtype=bool)
+    active = jnp.ones((4,), dtype="bool")
     invalid_metric: Any = "precomputed"
 
     with pytest.raises(ValueError, match="Unsupported metric"):

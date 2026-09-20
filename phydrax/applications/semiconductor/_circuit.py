@@ -101,7 +101,7 @@ class SemiconductorCircuitLaw(AbstractImplicitCircuitLaw):
         )
 
     def initialize(self, coordinates: ArrayLike, /) -> Array:
-        value = jnp.asarray(coordinates, dtype=float)
+        value = jnp.asarray(coordinates, dtype=jnp.float64)
         expected = self.prepared.layout.shape
         if value.shape != expected or bool(jnp.any(~jnp.isfinite(value))):
             raise ValueError(
@@ -360,7 +360,7 @@ def semiconductor_circuit_operating_point(
             ),
             is_leaf=lambda value: value is None,
         )
-    initial = jnp.asarray(initial_state, dtype=float)
+    initial = jnp.asarray(initial_state, dtype=jnp.float64)
     plan = plan_circuit_operating_point(prepared_circuit)
     latent = initial
     for law, (start, stop) in zip(

@@ -113,7 +113,7 @@ class SampleTimeAxis:
 
     @property
     def sample_count(self) -> int:
-        return int(self.sample_times.size)
+        return self.sample_times.size
 
     @property
     def is_uniform(self) -> bool:

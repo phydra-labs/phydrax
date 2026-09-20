@@ -17,7 +17,7 @@ from jaxtyping import Array
 
 from phydrax._frozendict import frozendict
 from phydrax._model import AbstractArrayModel
-from phydrax._strict import AbstractAttribute, StrictModule
+from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
 from phydrax.nn._keys import EvalKey, split_eval_key
 from phydrax.nn._utils import _get_size
@@ -35,10 +35,9 @@ def _query_coordinates(
     /,
 ) -> Array:
     coordinates = query.coordinates_array(case_shape=case_shape)
-    if int(coordinates.shape[-1]) != int(coord_dim):
+    if coordinates.shape[-1] != int(coord_dim):
         raise ValueError(
-            f"Expected query coordinate dimension {coord_dim}, got "
-            f"{coordinates.shape[-1]}."
+            f"Expected query coordinate dimension {coord_dim}, got {coordinates.shape[-1]}."
         )
     return coordinates
 
@@ -56,7 +55,7 @@ def _sample_coordinates(
 
 
 class AbstractBranchEncoder(StrictModule):
-    latent_size: AbstractAttribute[int]
+    latent_size: eqx.AbstractVar[int]
 
     @abstractmethod
     def __call__(
@@ -81,8 +80,7 @@ class FixedBranchEncoder(AbstractBranchEncoder):
         self.latent_size = int(latent_size)
         if _get_size(model.out_size) != self.latent_size:
             raise ValueError(
-                "Fixed branch model output size must match latent_size; got "
-                f"{model.out_size!r} and {self.latent_size}."
+                f"Fixed branch model output size must match latent_size; got {model.out_size!r} and {self.latent_size}."
             )
 
     def __call__(
@@ -98,7 +96,7 @@ class FixedBranchEncoder(AbstractBranchEncoder):
         values = jnp.asarray(samples.values)
         if int(case_ndim) < 0 or int(case_ndim) > values.ndim:
             raise ValueError("Invalid case_ndim for fixed branch values.")
-        case_shape = tuple(int(size) for size in values.shape[: int(case_ndim)])
+        case_shape = tuple(values.shape[: int(case_ndim)])
         flat = values.reshape((-1, prod(values.shape[case_ndim:])))
         encoded = jax.vmap(lambda value: self.model(value, key=key))(flat)
         return jnp.asarray(encoded).reshape(case_shape + (self.latent_size,))
@@ -135,8 +133,7 @@ class IntegralBranchEncoder(AbstractBranchEncoder):
         expected_input = self.value_channels + self.coord_dim
         if _get_size(feature_model.in_size) != expected_input:
             raise ValueError(
-                f"feature_model.in_size must be {expected_input}; got "
-                f"{feature_model.in_size!r}."
+                f"feature_model.in_size must be {expected_input}; got {feature_model.in_size!r}."
             )
         if _get_size(feature_model.out_size) != self.latent_size:
             raise ValueError("feature_model.out_size must match latent_size.")
@@ -165,14 +162,13 @@ class IntegralBranchEncoder(AbstractBranchEncoder):
             raise ValueError(
                 "Branch values do not contain the source sample shape after case axes."
             )
-        case_shape = tuple(int(size) for size in values.shape[:case_ndim])
+        case_shape = tuple(values.shape[:case_ndim])
         trailing = values.shape[case_ndim + sample_ndim :]
         if not trailing:
             values = values[..., None]
-        elif tuple(int(size) for size in trailing) != (self.value_channels,):
+        elif tuple(trailing) != (self.value_channels,):
             raise ValueError(
-                f"Expected {self.value_channels} value channels, got trailing shape "
-                f"{trailing}."
+                f"Expected {self.value_channels} value channels, got trailing shape {trailing}."
             )
 
         coordinates = _sample_coordinates(samples, case_shape)
@@ -203,8 +199,8 @@ class IntegralBranchEncoder(AbstractBranchEncoder):
 class AbstractBasisTrunk(StrictModule):
     """Coordinate basis evaluator consumed by the shared DeepONet decoder."""
 
-    latent_size: AbstractAttribute[int]
-    out_size: AbstractAttribute[int | Literal["scalar"]]
+    latent_size: eqx.AbstractVar[int]
+    out_size: eqx.AbstractVar[int | Literal["scalar"]]
 
     @property
     @abstractmethod
@@ -322,7 +318,7 @@ class PODBasis(AbstractBasisTrunk, NonTrainableState):
         self.query_coordinate_dimension = (
             None
             if query_layout is None or query_layout.coordinates is None
-            else int(query_layout.coordinates.shape[-1])
+            else query_layout.coordinates.shape[-1]
         )
         self.query_axis_nodes = (
             ()
@@ -359,7 +355,7 @@ class PODBasis(AbstractBasisTrunk, NonTrainableState):
             raise ValueError("POD basis query axis layout does not match its fit layout.")
         if self.query_coordinate_dimension is not None and (
             query.coordinates is None
-            or int(query.coordinates.shape[-1]) != self.query_coordinate_dimension
+            or query.coordinates.shape[-1] != self.query_coordinate_dimension
         ):
             raise ValueError(
                 "POD basis point-cloud coordinate dimension does not match its fit layout."
@@ -517,7 +513,9 @@ class DeepONet(AbstractOperatorModel):
         self.trunk = trunk
         self.use_bias = bool(use_bias)
         self.bias = (
-            jnp.zeros((_get_size(out_size),), dtype=float) if self.use_bias else None
+            jnp.zeros((_get_size(out_size),), dtype=jnp.float64)
+            if self.use_bias
+            else None
         )
         if self.coord_dim <= 0 or self.latent_size <= 0:
             raise ValueError("coord_dim and latent_size must be positive.")
@@ -571,8 +569,7 @@ class DeepONet(AbstractOperatorModel):
                 )
             if _get_size(trunk.in_size) != self.coord_dim:
                 raise ValueError(
-                    "trunk.in_size must match coord_dim; got "
-                    f"{trunk.in_size!r} and {self.coord_dim}."
+                    f"trunk.in_size must match coord_dim; got {trunk.in_size!r} and {self.coord_dim}."
                 )
 
     def _source_for_branch(
@@ -640,7 +637,7 @@ class DeepONet(AbstractOperatorModel):
             evaluated = jax.vmap(lambda point: trunk(point, key=key))(flat)
         else:
             chunks = []
-            for start in range(0, int(flat.shape[0]), self.query_chunk_size):
+            for start in range(0, flat.shape[0], self.query_chunk_size):
                 chunk = flat[start : start + self.query_chunk_size]
                 chunks.append(jax.vmap(lambda point: trunk(point, key=key))(chunk))
             evaluated = jnp.concatenate(chunks, axis=0)
@@ -711,10 +708,10 @@ class DeepONet(AbstractOperatorModel):
         if (
             len(coordinates) == 1
             and coordinates[0].ndim >= 2
-            and int(coordinates[0].shape[-1]) == self.coord_dim
+            and coordinates[0].shape[-1] == self.coord_dim
         ):
             points = coordinates[0]
-            point_shape = tuple(int(size) for size in points.shape[:-1])
+            point_shape = tuple(points.shape[:-1])
             query = FunctionSamples(
                 values=None,
                 coordinates=points.reshape((-1, self.coord_dim)),

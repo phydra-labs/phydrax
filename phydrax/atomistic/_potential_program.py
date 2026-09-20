@@ -17,7 +17,7 @@ from jaxtyping import Array, ArrayLike
 from phydrax.ein import contract
 
 from .._fingerprint import canonical_fingerprint
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from ..discretization import ParticleNeighborhoodState, PeriodicCell
 from ._graph import (
     AtomisticGraph,
@@ -57,10 +57,10 @@ class AtomisticInteractionScaleState(StrictModule):
     ) -> "AtomisticInteractionScaleState":
         one = lambda size: jnp.ones((size,), dtype=dtype)
         return cls(
-            bond=one(int(system.topology.bond_indices.shape[0])),
-            angle=one(int(system.topology.angle_indices.shape[0])),
-            torsion=one(int(system.topology.torsion_indices.shape[0])),
-            improper=one(int(system.topology.improper_indices.shape[0])),
+            bond=one(system.topology.bond_indices.shape[0]),
+            angle=one(system.topology.angle_indices.shape[0]),
+            torsion=one(system.topology.torsion_indices.shape[0]),
+            improper=one(system.topology.improper_indices.shape[0]),
             lennard_jones=one(pair_count),
             electrostatic=one(pair_count),
             lennard_jones_softcore_alpha=jnp.zeros((), dtype=dtype),
@@ -111,11 +111,11 @@ class AtomisticTermEvaluation(StrictModule):
 class AbstractAtomisticEnergyTerm(StrictModule):
     """One composable scalar-energy term in a prepared atomistic program."""
 
-    name: AbstractAttribute[str]
-    force_group: AbstractAttribute[int]
-    term_id: AbstractAttribute[str]
-    capabilities: AbstractAttribute[AtomisticPotentialCapabilities]
-    requirements: AbstractAttribute[AtomisticPotentialRequirements]
+    name: eqx.AbstractVar[str]
+    force_group: eqx.AbstractVar[int]
+    term_id: eqx.AbstractVar[str]
+    capabilities: eqx.AbstractVar[AtomisticPotentialCapabilities]
+    requirements: eqx.AbstractVar[AtomisticPotentialRequirements]
 
     @abc.abstractmethod
     def prepare(
@@ -125,12 +125,12 @@ class AbstractAtomisticEnergyTerm(StrictModule):
 
 
 class AbstractPreparedAtomisticEnergyTerm(StrictModule):
-    name: AbstractAttribute[str]
-    force_group: AbstractAttribute[int]
-    term_id: AbstractAttribute[str]
-    prepared_id: AbstractAttribute[str]
-    capabilities: AbstractAttribute[AtomisticPotentialCapabilities]
-    requirements: AbstractAttribute[AtomisticPotentialRequirements]
+    name: eqx.AbstractVar[str]
+    force_group: eqx.AbstractVar[int]
+    term_id: eqx.AbstractVar[str]
+    prepared_id: eqx.AbstractVar[str]
+    capabilities: eqx.AbstractVar[AtomisticPotentialCapabilities]
+    requirements: eqx.AbstractVar[AtomisticPotentialRequirements]
 
     @abc.abstractmethod
     def energy(self, context: AtomisticPotentialContext, /) -> AtomisticTermEvaluation:
@@ -294,9 +294,9 @@ class AtomisticPotentialProgram(StrictModule):
         if len(set(names)) != len(names):
             raise ValueError("Potential program term names must be unique.")
         weights = (
-            np.ones((len(values),), dtype=float)
+            np.ones((len(values),), dtype=np.float64)
             if coefficients is None
-            else np.asarray(coefficients, dtype=float)
+            else np.asarray(coefficients, dtype=np.float64)
         )
         if weights.shape != (len(values),) or np.any(~np.isfinite(weights)):
             raise ValueError("coefficients must be finite with one value per term.")
@@ -384,13 +384,13 @@ class AtomisticPotentialEvaluation(StrictModule):
 class AbstractPreparedAtomisticHamiltonian(StrictModule):
     """Prepared scalar Hamiltonian boundary shared by fixed and controlled programs."""
 
-    system: AbstractAttribute[PreparedAtomisticSystem]
-    plan: AbstractAttribute[Any]
-    terms: AbstractAttribute[tuple[AbstractPreparedAtomisticEnergyTerm, ...]]
-    prepared_id: AbstractAttribute[str]
-    control_ids: AbstractAttribute[tuple[str, ...]]
-    control_layout_id: AbstractAttribute[str]
-    coefficients: AbstractAttribute[Array]
+    system: eqx.AbstractVar[PreparedAtomisticSystem]
+    plan: eqx.AbstractVar[Any]
+    terms: eqx.AbstractVar[tuple[AbstractPreparedAtomisticEnergyTerm, ...]]
+    prepared_id: eqx.AbstractVar[str]
+    control_ids: eqx.AbstractVar[tuple[str, ...]]
+    control_layout_id: eqx.AbstractVar[str]
+    coefficients: eqx.AbstractVar[Array]
 
     @abc.abstractmethod
     def context(
@@ -660,7 +660,7 @@ class PreparedAtomisticPotentialProgram(AbstractPreparedAtomisticHamiltonian):
         )
         scales = (
             AtomisticInteractionScaleState.identity(
-                self.system, int(left.shape[0]), position.dtype
+                self.system, left.shape[0], position.dtype
             )
             if interaction_scales is None
             else interaction_scales
@@ -670,10 +670,10 @@ class PreparedAtomisticPotentialProgram(AbstractPreparedAtomisticHamiltonian):
                 "interaction_scales must be AtomisticInteractionScaleState or None."
             )
         expected_scale_shapes = {
-            "bond": (int(self.system.topology.bond_indices.shape[0]),),
-            "angle": (int(self.system.topology.angle_indices.shape[0]),),
-            "torsion": (int(self.system.topology.torsion_indices.shape[0]),),
-            "improper": (int(self.system.topology.improper_indices.shape[0]),),
+            "bond": (self.system.topology.bond_indices.shape[0],),
+            "angle": (self.system.topology.angle_indices.shape[0],),
+            "torsion": (self.system.topology.torsion_indices.shape[0],),
+            "improper": (self.system.topology.improper_indices.shape[0],),
             "lennard_jones": left.shape,
             "electrostatic": left.shape,
         }

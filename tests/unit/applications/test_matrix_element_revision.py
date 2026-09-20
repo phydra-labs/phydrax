@@ -18,7 +18,7 @@ def _digest(name):
     return canonical_fingerprint({"test": name})
 
 
-def _revision(parameter, *, training="training-v1", rights="native-commercial"):
+def _revision(parameter, *, training="training", rights="native-commercial"):
     return MatrixElementRevision(
         "dark-fermion-annihilation",
         "vector-mediator-tree",
@@ -26,10 +26,10 @@ def _revision(parameter, *, training="training-v1", rights="native-commercial"):
         rights,
         "covariant-2E",
         "two-to-two-massive",
-        "multi-channel-v1",
-        "held-out-gated-v1",
+        "multi-channel",
+        "held-out-gated",
         training,
-        "adam-v2",
+        "adam",
         "relative-cross-section-error",
         _digest(parameter),
         differentiation_id="analytic-native",
@@ -61,7 +61,7 @@ def test_adaptation_accept_reject_and_replay_are_epoch_bound_and_exact():
     )
     accepted_evidence = MatrixElementAdaptationEvidence(
         proposal.proposal_record_id,
-        "held-out-v2",
+        "held-out",
         "relative-error",
         0.20,
         0.12,
@@ -98,7 +98,7 @@ def test_adaptation_accept_reject_and_replay_are_epoch_bound_and_exact():
 
     rejected_evidence = MatrixElementAdaptationEvidence(
         proposal.proposal_record_id,
-        "held-out-v2",
+        "held-out",
         "relative-error",
         0.20,
         0.21,

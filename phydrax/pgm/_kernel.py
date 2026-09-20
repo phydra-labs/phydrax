@@ -19,7 +19,7 @@ from .._precision import (
     PrecisionResolution,
     real_precision_dtype_name,
 )
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 
 
 class FactorKernelCapabilities(StrictModule):
@@ -85,8 +85,8 @@ class FactorKernelCapabilities(StrictModule):
 class AbstractDiscreteFactorKernel(StrictModule):
     """Open factor contract defined by batched local log-score evaluation."""
 
-    kernel_id: AbstractAttribute[str]
-    capabilities: AbstractAttribute[FactorKernelCapabilities]
+    kernel_id: eqx.AbstractVar[str]
+    capabilities: eqx.AbstractVar[FactorKernelCapabilities]
 
     @abstractmethod
     def log_scores(self, parameters: Any, states: Array, /) -> Array:
@@ -124,8 +124,7 @@ class CallableFactorKernel(AbstractDiscreteFactorKernel):
         values = jnp.asarray(self.function(parameters, states))
         if values.shape != states.shape[:-1]:
             raise ValueError(
-                "Callable factor kernel must return states.shape[:-1]; "
-                f"got {values.shape} for states {states.shape}."
+                f"Callable factor kernel must return states.shape[:-1]; got {values.shape} for states {states.shape}."
             )
         if jnp.iscomplexobj(values):
             raise TypeError("Callable factor scores must be real-valued.")
@@ -277,8 +276,7 @@ class FactorExecutionEvidence(StrictModule):
         if not isinstance(capabilities, FactorKernelCapabilities):
             raise TypeError("capabilities must be FactorKernelCapabilities.")
         counts = tuple(
-            int(value)
-            for value in (
+            (
                 represented_configurations,
                 dense_elements,
                 message_entries,

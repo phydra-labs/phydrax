@@ -152,8 +152,8 @@ def discrepancy_identifiability_report(
     )
     if baseline.shape != fixed.shape or baseline.shape != joint.shape:
         raise ValueError("All parameter estimate arrays must have identical shape.")
-    repeats = int(baseline.shape[0])
-    truth = jnp.asarray(true_parameters, dtype=float)
+    repeats = baseline.shape[0]
+    truth = jnp.asarray(true_parameters, dtype=jnp.float64)
     if truth.ndim == 0:
         truth = truth[None]
     if truth.shape != baseline.shape[1:]:
@@ -164,8 +164,8 @@ def discrepancy_identifiability_report(
     baseline_crps_array = _repeat_metric(baseline_crps, repeats, "baseline_crps")
     fixed_crps_array = _repeat_metric(fixed_gp_crps, repeats, "fixed_gp_crps")
     coverage = _repeat_metric(fixed_gp_coverage, repeats, "fixed_gp_coverage")
-    correlations = jnp.asarray(joint_parameter_gp_correlations, dtype=float)
-    if correlations.ndim < 2 or int(correlations.shape[0]) != repeats:
+    correlations = jnp.asarray(joint_parameter_gp_correlations, dtype=jnp.float64)
+    if correlations.ndim < 2 or correlations.shape[0] != repeats:
         raise ValueError(
             "joint_parameter_gp_correlations must have a leading repeat axis."
         )
@@ -203,23 +203,19 @@ def discrepancy_identifiability_report(
     joint_ratio = joint_bias / bias_denominator
     if float(fixed_ratio) > limits.max_fixed_bias_ratio:
         failures.append(
-            "fixed GP parameter-bias ratio "
-            f"{float(fixed_ratio):.6g} > {limits.max_fixed_bias_ratio:.6g}"
+            f"fixed GP parameter-bias ratio {float(fixed_ratio):.6g} > {limits.max_fixed_bias_ratio:.6g}"
         )
     if float(joint_ratio) > limits.max_joint_bias_ratio:
         failures.append(
-            "joint GP parameter-bias ratio "
-            f"{float(joint_ratio):.6g} > {limits.max_joint_bias_ratio:.6g}"
+            f"joint GP parameter-bias ratio {float(joint_ratio):.6g} > {limits.max_joint_bias_ratio:.6g}"
         )
     if float(nll_improvement) < limits.min_nll_improvement:
         failures.append(
-            f"NLL improvement {float(nll_improvement):.6g} < "
-            f"{limits.min_nll_improvement:.6g}"
+            f"NLL improvement {float(nll_improvement):.6g} < {limits.min_nll_improvement:.6g}"
         )
     if float(crps_improvement) < limits.min_crps_improvement:
         failures.append(
-            f"CRPS improvement {float(crps_improvement):.6g} < "
-            f"{limits.min_crps_improvement:.6g}"
+            f"CRPS improvement {float(crps_improvement):.6g} < {limits.min_crps_improvement:.6g}"
         )
     if float(mean_coverage) < limits.min_coverage:
         failures.append(
@@ -227,9 +223,7 @@ def discrepancy_identifiability_report(
         )
     if float(max_correlation) > limits.max_abs_parameter_gp_correlation:
         failures.append(
-            "parameter/GP correlation "
-            f"{float(max_correlation):.6g} > "
-            f"{limits.max_abs_parameter_gp_correlation:.6g}"
+            f"parameter/GP correlation {float(max_correlation):.6g} > {limits.max_abs_parameter_gp_correlation:.6g}"
         )
 
     return DiscrepancyIdentifiabilityReport(
@@ -246,16 +240,16 @@ def discrepancy_identifiability_report(
 
 
 def _parameter_estimates(value: ArrayLike, *, name: str) -> Array:
-    array = jnp.asarray(value, dtype=float)
+    array = jnp.asarray(value, dtype=jnp.float64)
     if array.ndim == 1:
         array = array[:, None]
-    if array.ndim != 2 or int(array.shape[0]) < 1:
+    if array.ndim != 2 or array.shape[0] < 1:
         raise ValueError(f"{name} must have shape (repeat, parameter).")
     return array
 
 
 def _repeat_metric(value: ArrayLike, repeats: int, name: str) -> Array:
-    array = jnp.asarray(value, dtype=float)
+    array = jnp.asarray(value, dtype=jnp.float64)
     if array.shape != (repeats,):
         raise ValueError(f"{name} must have shape ({repeats},).")
     return array

@@ -6,10 +6,11 @@
 
 from __future__ import annotations
 
-import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
+
+from phydrax._strict import StrictModule
 
 from ....ein import contract
 from ._basis import PreparedGaussianBasis
@@ -28,7 +29,7 @@ def cartesian_ao_values(
     if points_.ndim != 2 or points_.shape[1] != 3:
         raise ValueError("AO evaluation points must have shape (P, 3).")
     count = basis.cartesian_basis_function_count
-    primitive_count = int(basis.exponents.shape[1])
+    primitive_count = basis.exponents.shape[1]
     values = jnp.zeros((points_.shape[0], count), dtype=positions.dtype)
     for function in range(count):
         displacement = points_ - positions[basis.center_indices[function]][None, :]
@@ -91,7 +92,7 @@ def ao_hessians(
     return jax.vmap(jax.jacfwd(jax.jacfwd(at_point)))(points_)
 
 
-class AOEvaluation(eqx.Module):
+class AOEvaluation(StrictModule):
     values: Array
     gradients: Array | None
     hessians: Array | None

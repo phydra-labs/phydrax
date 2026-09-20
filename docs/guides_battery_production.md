@@ -222,4 +222,4 @@ sums terminal voltage, and commits only when every cell accepts. The correspondi
 `battery.dfn.isothermal-finite-volume` and `battery.pack.series-dfn` profiles are
 unreleased candidates. They require mesh/time refinement, mass balance, two
 independent references, resource evidence, and real-cell validation. They make no
-thermal, ageing, abuse, fast-charge, safety, warranty, or arbitrary-pack claim.
+thermal, aging, abuse, fast-charge, safety, warranty, or arbitrary-pack claim.

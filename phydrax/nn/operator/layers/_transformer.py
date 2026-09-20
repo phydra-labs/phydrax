@@ -15,6 +15,7 @@ import jax.random as jr
 from jaxtyping import Array, Key
 
 import phydrax.ein as ein
+from phydrax._strict import StrictModule
 
 from ...._doc import DOC_KEY0
 from ..._keys import EvalKey, split_eval_key
@@ -24,7 +25,7 @@ from ...layers._linear import Linear
 
 def _apply_feature_norm(norm: eqx.nn.RMSNorm, values: Array, /) -> Array:
     values = jnp.asarray(values)
-    flattened = values.reshape((-1, int(values.shape[-1])))
+    flattened = values.reshape((-1, values.shape[-1]))
     return jax.vmap(norm)(flattened).reshape(values.shape)
 
 
@@ -38,10 +39,10 @@ def _patchify_grid(
     spatial_ndim = len(spatial_shape)
     if values.ndim < spatial_ndim + 1:
         raise ValueError("Patch values must contain spatial and channel axes.")
-    if tuple(int(size) for size in values.shape[-spatial_ndim - 1 : -1]) != spatial_shape:
+    if tuple(values.shape[-spatial_ndim - 1 : -1]) != spatial_shape:
         raise ValueError("Patch values do not match the configured latent shape.")
-    case_shape = tuple(int(size) for size in values.shape[: -spatial_ndim - 1])
-    channels = int(values.shape[-1])
+    case_shape = tuple(values.shape[: -spatial_ndim - 1])
+    channels = values.shape[-1]
     patch_grid = tuple(
         size // patch for size, patch in zip(spatial_shape, patch_shape, strict=True)
     )
@@ -93,7 +94,7 @@ def _unpatchify_grid(
 
 
 def _sinusoidal_positions(positions: Array, width: int, /) -> Array:
-    coord_dim = int(positions.shape[-1])
+    coord_dim = positions.shape[-1]
     frequency_count = max(1, ceil(int(width) / (2 * coord_dim)))
     frequencies = jnp.exp(
         -log(10000.0)
@@ -106,7 +107,7 @@ def _sinusoidal_positions(positions: Array, width: int, /) -> Array:
     return embedding[..., : int(width)]
 
 
-class _SelfAttention(eqx.Module):
+class _SelfAttention(StrictModule):
     query: Linear
     key: Linear
     value: Linear
@@ -170,8 +171,8 @@ class _SelfAttention(eqx.Module):
         key: EvalKey = None,
     ) -> Array:
         values = jnp.asarray(values)
-        case_shape = tuple(int(size) for size in values.shape[:-2])
-        token_count = int(values.shape[-2])
+        case_shape = tuple(values.shape[:-2])
+        token_count = values.shape[-2]
         width = self.heads * self.head_dim
         cases = prod(case_shape) if case_shape else 1
         flattened = values.reshape((cases, token_count, width))
@@ -193,7 +194,7 @@ class _SelfAttention(eqx.Module):
         measure = jnp.asarray(token_measure, dtype=logits.dtype).reshape(
             (cases, token_count)
         )
-        mask = jnp.asarray(token_mask, dtype=bool).reshape((cases, token_count))
+        mask = jnp.asarray(token_mask, dtype=jnp.bool_).reshape((cases, token_count))
         log_measure = jnp.where(
             mask,
             jnp.log(jnp.maximum(measure, jnp.finfo(logits.dtype).tiny)),
@@ -209,7 +210,7 @@ class _SelfAttention(eqx.Module):
         return output.reshape(values.shape)
 
 
-class _SwiGLU(eqx.Module):
+class _SwiGLU(StrictModule):
     gate: Linear
     value: Linear
     output: Linear
@@ -253,7 +254,7 @@ class _SwiGLU(eqx.Module):
         return self.dropout(output, key=key)
 
 
-class _TransformerBlock(eqx.Module):
+class _TransformerBlock(StrictModule):
     attention: _SelfAttention
     feed_forward: _SwiGLU
     attention_norm: eqx.nn.RMSNorm
@@ -340,7 +341,7 @@ class _TransformerBlock(eqx.Module):
         return values * token_mask[..., None].astype(values.dtype)
 
 
-class OperatorTransformerProcessor(eqx.Module):
+class OperatorTransformerProcessor(StrictModule):
     """Patchwise U-shaped operator transformer on a tensor latent grid.
 
     Patch tokens retain all cell channels, receive sinusoidal encodings of
@@ -377,13 +378,13 @@ class OperatorTransformerProcessor(eqx.Module):
         norm_eps: float = 1e-6,
         key: Key[Array, ""] = DOC_KEY0,
     ):
-        shape = tuple(int(size) for size in latent_shape)
+        shape = tuple(latent_shape)
         if not shape or any(size <= 0 for size in shape):
             raise ValueError("latent_shape must contain positive dimensions.")
         patches = (
             (int(patch_shape),) * len(shape)
             if isinstance(patch_shape, int)
-            else tuple(int(size) for size in patch_shape)
+            else tuple(patch_shape)
         )
         if len(patches) != len(shape) or any(size <= 0 for size in patches):
             raise ValueError("patch_shape must contain one positive size per dimension.")
@@ -476,17 +477,17 @@ class OperatorTransformerProcessor(eqx.Module):
     def patchify(self, values: Array, /) -> Array:
         """Convert flattened latent point values into ordered patch tokens."""
         values = jnp.asarray(values)
-        if values.ndim < 2 or int(values.shape[-2]) != prod(self.latent_shape):
+        if values.ndim < 2 or values.shape[-2] != prod(self.latent_shape):
             raise ValueError("Latent values do not match the configured point count.")
-        if int(values.shape[-1]) != self.channels:
+        if values.shape[-1] != self.channels:
             raise ValueError(f"Latent values must have {self.channels} channels.")
-        case_shape = tuple(int(size) for size in values.shape[:-2])
+        case_shape = tuple(values.shape[:-2])
         grid = values.reshape(case_shape + self.latent_shape + (self.channels,))
         return _patchify_grid(grid, self.latent_shape, self.patch_shape)
 
     def unpatchify(self, tokens: Array, case_shape: Sequence[int], /) -> Array:
         """Invert :meth:`patchify` without interpolation or averaging."""
-        cases = tuple(int(size) for size in case_shape)
+        cases = tuple(case_shape)
         grid = _unpatchify_grid(
             tokens,
             cases,
@@ -507,15 +508,15 @@ class OperatorTransformerProcessor(eqx.Module):
         key: EvalKey = None,
     ) -> Array:
         values = jnp.asarray(values)
-        coordinates = jnp.asarray(coordinates, dtype=float)
-        measure = jnp.asarray(measure, dtype=float)
-        mask = jnp.asarray(mask, dtype=bool)
+        coordinates = jnp.asarray(coordinates, dtype=jnp.float64)
+        measure = jnp.asarray(measure, dtype=jnp.float64)
+        mask = jnp.asarray(mask, dtype=jnp.bool_)
         point_count = prod(self.latent_shape)
         if values.ndim < 2 or values.shape[-2:] != (point_count, self.channels):
             raise ValueError(
                 f"Transformer values must end in {(point_count, self.channels)}."
             )
-        case_shape = tuple(int(size) for size in values.shape[:-2])
+        case_shape = tuple(values.shape[:-2])
         if coordinates.shape != case_shape + (point_count, self.coord_dim):
             raise ValueError("Transformer coordinates do not match its latent grid.")
         if measure.shape != case_shape + (point_count,):
@@ -542,7 +543,7 @@ class OperatorTransformerProcessor(eqx.Module):
                 self.patch_shape,
             )
             .reshape(case_shape + (self.patch_count, prod(self.patch_shape)))
-            .astype(bool)
+            .astype("bool")
         )
         weighted_measure = measure_cells * mask_cells.astype(measure_cells.dtype)
         token_measure = jnp.sum(weighted_measure, axis=-1)

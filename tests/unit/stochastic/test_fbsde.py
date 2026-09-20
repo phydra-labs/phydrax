@@ -67,7 +67,7 @@ def _jump_problem(*, status=None, realization=None):
         jnp.asarray([[0.25], [0.75]]),
         jnp.zeros((2, 1), dtype=jnp.int32),
         jnp.zeros((2, 1)),
-        jnp.ones((2, 1), dtype=bool),
+        jnp.ones((2, 1), dtype="bool"),
         event_status,
         state_shape=(1,),
         pre_states=jnp.zeros((2, 1, 1)),

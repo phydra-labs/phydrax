@@ -557,7 +557,7 @@ def prepare_free_surface_green_3d(
             "Green spectral tail envelope exceeds maximum_spectral_tail_bound."
         )
     resources = FreeSurfaceGreenResourceEvidence3D(
-        radial_node_count=int(radial_nodes_array.size),
+        radial_node_count=radial_nodes_array.size,
         angular_node_count=selected.angular_order,
         resident_bytes=resident_bytes,
         action_workspace_bytes=workspace_bytes,

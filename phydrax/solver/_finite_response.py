@@ -287,13 +287,13 @@ def solve_finite_response(
         policy, FiniteResponsePolicy
     ):
         raise TypeError("solve_finite_response requires a finite problem and policy.")
-    required = (policy.steps + 1) * (4 + int(problem.frequencies.size))
+    required = (policy.steps + 1) * (4 + problem.frequencies.size)
     if required > policy.maximum_history_elements:
         raise MemoryError("Finite response histories exceed maximum_history_elements.")
     hermiticity = mpo_hermiticity_residual(problem.hamiltonian)
     exact_excited = apply_mpo_exact(problem.excitation, problem.ground_state)
     if (
-        sum(int(tensor.size) for tensor in exact_excited.tensors)
+        sum(tensor.size for tensor in exact_excited.tensors)
         > policy.maximum_state_elements
     ):
         raise MemoryError("Exact response excitation exceeds maximum_state_elements.")
@@ -317,7 +317,7 @@ def solve_finite_response(
     correlations = jnp.full((policy.steps + 1,), jnp.nan + 0j, dtype=complex_dtype)
     zero = approximate_sum_rule * mps_inner(excited, excited)
     correlations = correlations.at[0].set(zero)
-    active = jnp.zeros((policy.steps,), dtype=bool)
+    active = jnp.zeros((policy.steps,), dtype=jnp.bool_)
     tdvp_status = jnp.full((policy.steps,), -1, dtype=jnp.int32)
     truncation = jnp.full((policy.steps,), jnp.nan, dtype=real_dtype)
     status = FiniteResponseStatus.SUCCESS

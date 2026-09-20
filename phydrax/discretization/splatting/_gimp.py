@@ -55,7 +55,7 @@ def _gimp_axis_stencil(
     route_axis_width,
     maximum_half_width_cells,
 ):
-    count = int(coordinates.size)
+    count = coordinates.size
     spacing_value = _uniform_spacing(coordinates, bounds, periodic)
     spacing = jnp.asarray(spacing_value, dtype=position.dtype)
     lower, upper = bounds
@@ -118,7 +118,7 @@ class UniformGIMPSplatAssignment(AbstractStructuredSplatAssignment):
         maximum_half_width_cells: float = 1.0,
         evolving: bool = False,
     ):
-        widths = np.asarray(reference_half_widths, dtype=float)
+        widths = np.asarray(reference_half_widths, dtype=np.float64)
         maximum = float(maximum_half_width_cells)
         if (
             widths.ndim != 2
@@ -200,9 +200,7 @@ class UniformGIMPSplatAssignment(AbstractStructuredSplatAssignment):
         *,
         assignment_input=None,
     ) -> SplatAssignmentState:
-        self.validate_input(
-            assignment_input, int(position.shape[0]), int(position.shape[1])
-        )
+        self.validate_input(assignment_input, position.shape[0], position.shape[1])
         widths = (
             assignment_input.half_widths
             if self.evolving

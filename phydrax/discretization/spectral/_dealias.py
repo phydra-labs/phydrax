@@ -62,8 +62,8 @@ class DealiasingReport(StrictModule, NonTrainableState):
         output_bandlimit: int | None = None,
         spin: int | None = None,
     ):
-        retained = tuple(int(value) for value in retained_shape)
-        evaluation = tuple(int(value) for value in evaluation_shape)
+        retained = tuple(retained_shape)
+        evaluation = tuple(evaluation_shape)
         if (
             not retained
             or len(retained) != len(evaluation)
@@ -322,8 +322,7 @@ class PolynomialClosureDealiasingPlan(AbstractDealiasingPlan):
     ) -> "PreparedDealiasingPlan":
         if required_polynomial_degree is None:
             raise ValueError(
-                "Finite polynomial closure cannot certify a nonpolynomial "
-                "spectral expression."
+                "Finite polynomial closure cannot certify a nonpolynomial spectral expression."
             )
         required = int(required_polynomial_degree)
         if required > self.maximum_polynomial_degree:
@@ -347,8 +346,7 @@ class PolynomialClosureDealiasingPlan(AbstractDealiasingPlan):
         )
         if prod(target) > self.maximum_evaluation_modes:
             raise ValueError(
-                "Polynomial closure exceeds maximum_evaluation_modes before "
-                "spectral preparation."
+                "Polynomial closure exceeds maximum_evaluation_modes before spectral preparation."
             )
         basis_plans = tuple(
             axis.plan.resized(count)
@@ -437,8 +435,7 @@ class OversamplingDealiasingPlan(AbstractDealiasingPlan):
         )
         if prod(target) > self.maximum_evaluation_modes:
             raise ValueError(
-                "Oversampling exceeds maximum_evaluation_modes before spectral "
-                "preparation."
+                "Oversampling exceeds maximum_evaluation_modes before spectral preparation."
             )
         basis_plans = tuple(
             axis.plan.resized(count)
@@ -575,7 +572,7 @@ class PreparedDealiasingPlan(StrictModule, NonTrainableState):
         if not tensor_pair and not spherical_pair:
             raise TypeError("retained and evaluation must use one spectral family.")
         if spherical_pair:
-            masks = tuple(jnp.asarray(mask, dtype=bool) for mask in modal_masks)
+            masks = tuple(jnp.asarray(mask, dtype=jnp.bool_) for mask in modal_masks)
             if masks and (
                 len(masks) != 1 or masks[0].shape != retained.coefficient_shape
             ):
@@ -584,7 +581,7 @@ class PreparedDealiasingPlan(StrictModule, NonTrainableState):
                 )
         else:
             masks = tuple(
-                jnp.asarray(mask, dtype=bool).reshape((-1,)) for mask in modal_masks
+                jnp.asarray(mask, dtype=jnp.bool_).reshape((-1,)) for mask in modal_masks
             )
             if masks and (
                 len(masks) != len(retained.axes)

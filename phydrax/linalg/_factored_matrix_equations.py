@@ -111,7 +111,7 @@ class FactoredMatrixSolution(StrictModule):
 
     @property
     def capacity(self) -> int:
-        return int(self.left_factor.shape[1])
+        return self.left_factor.shape[1]
 
     @property
     def hermitian_positive_semidefinite(self) -> bool:
@@ -188,7 +188,7 @@ class FactoredMatrixEquationProblem(StrictModule):
                     "kind": "factored-continuous-lyapunov-problem",
                     "operator": operator_.operator_id,
                     "space": operator_.source.space_id,
-                    "source_rank": int(factor.shape[1]),
+                    "source_rank": factor.shape[1],
                     "dtype": coordinate_dtype.str,
                 }
             )
@@ -208,7 +208,7 @@ class FactoredMatrixEquationProblem(StrictModule):
 
     @property
     def source_rank(self) -> int:
-        return int(self.source_factor.shape[1])
+        return self.source_factor.shape[1]
 
 
 class FactoredMatrixEquationPolicy(StrictModule):

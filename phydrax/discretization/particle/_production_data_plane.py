@@ -84,10 +84,10 @@ class MultiPopulationCellPlan(StrictModule, NonTrainableState):
         /,
     ):
         size = float(cell_size)
-        capacities = tuple(int(value) for value in maximum_particles_per_cell)
+        capacities = tuple(maximum_particles_per_cell)
         if size <= 0.0 or not capacities or any(value <= 0 for value in capacities):
             raise ValueError("Multi-population cell parameters are invalid.")
-        lengths = np.asarray(box.lengths, dtype=float)
+        lengths = np.asarray(box.lengths, dtype=np.float64)
         shape = tuple(max(int(np.floor(length / size)), 1) for length in lengths)
         self.box = box
         self.cell_size = size
@@ -163,7 +163,7 @@ class PreparedMultiPopulationCells(StrictModule, NonTrainableState):
     ) -> PopulationCellView:
         population = self.populations[population_index]
         particles = population.particles
-        capacity = self.plan.maximum_particles_per_cell[population_index]
+        self.plan.maximum_particles_per_cell[population_index]
         finite = jnp.all(jnp.isfinite(position), axis=-1)
         safe = jnp.where(finite[:, None], position, self.plan.box.lower)
         relative = (safe - self.plan.box.lower) / self.widths
@@ -248,7 +248,7 @@ class PreparedMultiPopulationCells(StrictModule, NonTrainableState):
             coordinates.append((target_cell // stride) % self.plan.cell_shape[axis])
         base = jnp.stack(coordinates, axis=-1)
         candidate_coordinates = base[:, None, :] + jnp.asarray(offsets)[None, :, :]
-        neighbor_valid = jnp.ones(candidate_coordinates.shape[:-1], dtype=bool)
+        neighbor_valid = jnp.ones(candidate_coordinates.shape[:-1], dtype=jnp.bool_)
         resolved = []
         for axis, count in enumerate(self.plan.cell_shape):
             coordinate = candidate_coordinates[..., axis]

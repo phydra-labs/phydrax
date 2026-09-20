@@ -64,7 +64,7 @@ class MotorUnitActionPotentialTemplatePlan(StrictModule, NonTrainableState):
         if template.ndim != 3:
             raise ValueError("template_V must have shape (motor_unit, channel, sample).")
         if not jnp.issubdtype(template.dtype, jnp.inexact):
-            template = template.astype(float)
+            template = template.astype("float64")
         units = tuple(str(value).strip() for value in unit_ids)
         channels = tuple(str(value).strip() for value in channel_ids)
         if (
@@ -120,7 +120,7 @@ class PreparedMotorUnitActionPotentialTemplates(StrictModule):
         /,
     ) -> TemplateEMGResult:
         events = jnp.asarray(event_times_s, dtype=self.plan.template_V.dtype)
-        mask = jnp.asarray(event_mask, dtype=bool)
+        mask = jnp.asarray(event_mask, dtype=jnp.bool_)
         times = jnp.asarray(sample_times_s, dtype=self.plan.template_V.dtype)
         if events.ndim != 2 or events.shape[0] != len(self.plan.unit_ids):
             raise ValueError("event_times_s must have shape (motor_unit, event_slot).")
@@ -137,24 +137,17 @@ class PreparedMotorUnitActionPotentialTemplates(StrictModule):
         active_event_times = jnp.where(topology_mask, topology_events, 0.0)
 
         def one_template(values, unit_event_times, unit_mask):
-            coordinate = (
-                times[None, :] - unit_event_times[:, None]
-            ) / period + origin
-            lower = jax.lax.stop_gradient(
-                jnp.floor(coordinate).astype(jnp.int32)
-            )
+            coordinate = (times[None, :] - unit_event_times[:, None]) / period + origin
+            lower = jax.lax.stop_gradient(jnp.floor(coordinate).astype(jnp.int32))
             fraction = coordinate - lower
             valid = (
-                unit_mask[:, None]
-                & (coordinate >= 0)
-                & (coordinate <= sample_count - 1)
+                unit_mask[:, None] & (coordinate >= 0) & (coordinate <= sample_count - 1)
             )
             lower_safe = jnp.clip(lower, 0, sample_count - 1)
             upper_safe = jnp.clip(lower + 1, 0, sample_count - 1)
-            interpolated = (
-                (1.0 - fraction) * values[lower_safe]
-                + fraction * values[upper_safe]
-            )
+            interpolated = (1.0 - fraction) * values[lower_safe] + fraction * values[
+                upper_safe
+            ]
             return jnp.sum(jnp.where(valid, interpolated, 0.0), axis=0)
 
         def one_unit(unit_index):

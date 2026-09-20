@@ -60,20 +60,20 @@ class AeroHydroServoElasticSystem:
         air_density_kg_m3: float = 1.225,
         thrust_coefficient: float = 0.8,
     ) -> AeroHydroServoElasticSystem:
-        mass_ = np.asarray(mass, dtype=float) + np.asarray(
-            hydrodynamic_added_mass, dtype=float
+        mass_ = np.asarray(mass, dtype=np.float64) + np.asarray(
+            hydrodynamic_added_mass, dtype=np.float64
         )
         damping = (
-            np.asarray(structural_damping, dtype=float)
-            + np.asarray(aerodynamic_damping, dtype=float)
-            + np.asarray(hydrodynamic_damping, dtype=float)
+            np.asarray(structural_damping, dtype=np.float64)
+            + np.asarray(aerodynamic_damping, dtype=np.float64)
+            + np.asarray(hydrodynamic_damping, dtype=np.float64)
         )
-        stiffness_ = np.asarray(stiffness, dtype=float) + np.asarray(
-            hydrostatic_mooring_stiffness, dtype=float
+        stiffness_ = np.asarray(stiffness, dtype=np.float64) + np.asarray(
+            hydrostatic_mooring_stiffness, dtype=np.float64
         )
         dynamics = LinearStructuralSystem.create(mass_, damping, stiffness_)
-        aero_shape = np.asarray(aerodynamic_force_shape, dtype=float)
-        wave_shape = np.asarray(wave_force_shape_n_m, dtype=float)
+        aero_shape = np.asarray(aerodynamic_force_shape, dtype=np.float64)
+        wave_shape = np.asarray(wave_force_shape_n_m, dtype=np.float64)
         size = dynamics.size
         if aero_shape.shape != (size,) or wave_shape.shape != (size,):
             raise ValueError("Wind and wave generalized-force shapes must align.")

@@ -34,7 +34,7 @@ def _evaluate_score(score, state, time, context, key, /):
     return score(state, time, context=values, key=key)
 
 
-class _GeneralReverseDrift(eqx.Module):
+class _GeneralReverseDrift(StrictModule):
     process: AbstractItoScoreDiffusion
     score: Any
 
@@ -50,7 +50,7 @@ class _GeneralReverseDrift(eqx.Module):
         return self.process.reverse_drift(reverse_time, state, score)
 
 
-class _GeneralProbabilityFlowField(eqx.Module):
+class _GeneralProbabilityFlowField(StrictModule):
     process: AbstractItoScoreDiffusion
     score: Any
     score_key: Array
@@ -69,7 +69,7 @@ class _GeneralProbabilityFlowField(eqx.Module):
         return self.process.probability_flow_drift(reverse_time, state, score)
 
 
-class _GeneralDiffusionOperator(eqx.Module):
+class _GeneralDiffusionOperator(StrictModule):
     process: AbstractItoScoreDiffusion
 
     def __call__(self, reverse_time, state, args, /):
@@ -117,7 +117,7 @@ def general_reverse_diffusion_problem(
     if state.shape != process.state_shape:
         raise ValueError("initial_state must match the diffusion state shape.")
     probe_factor = process.diffusion_factor(process.terminal_time, state)
-    noise_shape = (int(probe_factor.shape[-1]),)
+    noise_shape = (probe_factor.shape[-1],)
     drift = _GeneralReverseDrift(process, score)
     coefficient = _GeneralDiffusionOperator(process)
     term = WienerTerm(
@@ -175,7 +175,9 @@ def general_probability_flow_system(
     if not score_id:
         raise ValueError("score_id must be non-empty.")
     if state_layout.shape != process.state_shape or not state_layout.geometry.trivial:
-        raise ValueError("General probability flow requires matching trivial state layout.")
+        raise ValueError(
+            "General probability flow requires matching trivial state layout."
+        )
     resolved_context = ScoreContext({}) if context is None else context
     if not isinstance(resolved_context, ScoreContext):
         raise TypeError("context must be a ScoreContext or None.")

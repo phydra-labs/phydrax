@@ -100,7 +100,7 @@ def compress_lpdo(
         matrix = tensor.reshape((left * physical * purification, right))
         decomposition = factorize(DenseLinearOperator(matrix), FactorizationPolicy("svd"))
         svd = decomposition.prepared_solve.state
-        retained = min(int(svd.singular_values.shape[0]), plan.maximum_bond_dimension)
+        retained = min(svd.singular_values.shape[0], plan.maximum_bond_dimension)
         discarded_bond_squared = discarded_bond_squared + jnp.sum(
             jnp.abs(svd.singular_values[retained:]) ** 2
         )

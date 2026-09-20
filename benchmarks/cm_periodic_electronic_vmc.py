@@ -49,7 +49,7 @@ def _case(electrons: int, determinants: int, real_radius: int, reciprocal_radius
         jnp.ones((1,), dtype=jnp.float64),
         AtomisticScaleContract(BOHR, HARTREE),
         cell=vectors,
-        periodic_axes=jnp.ones((3,), dtype=bool),
+        periodic_axes=jnp.ones((3,), dtype="bool"),
         name=f"periodic-Z{electrons}",
     )
     resource = ElectronicVMCResourcePlan(
@@ -167,7 +167,7 @@ def _record(
         "axes": {
             "electron_count": electrons,
             "determinant_count": determinants,
-            "walker_count": int(walkers.shape[0]),
+            "walker_count": walkers.shape[0],
             "coordinate_count": 3 * electrons,
             "real_image_radius": real_radius,
             "reciprocal_radius": reciprocal_radius,

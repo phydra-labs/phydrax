@@ -265,13 +265,13 @@ class GSquareTest(AbstractConditionalIndependenceTest):
         degrees = 0
         sparse = False
         for assignment in assignments:
-            mask = np.ones((count,), dtype=bool)
+            mask = np.ones((count,), dtype=np.bool_)
             for offset, value in enumerate(assignment):
                 mask &= matrix[:, offset + 2] == value
-            table = np.zeros((left_cardinality, right_cardinality), dtype=float)
+            table = np.zeros((left_cardinality, right_cardinality), dtype=np.float64)
             np.add.at(
                 table,
-                (matrix[mask, 0].astype(int), matrix[mask, 1].astype(int)),
+                (matrix[mask, 0].astype("int64"), matrix[mask, 1].astype("int64")),
                 1.0,
             )
             total = table.sum()
@@ -398,7 +398,7 @@ class KernelConditionalIndependenceTest(AbstractConditionalIndependenceTest):
         y_kernel = centering @ y_kernel @ centering
         statistic = float(np.sum(x_kernel * y_kernel) / (count * count))
         permutation_keys = jax.random.split(key, self.permutations)
-        permuted = np.empty((self.permutations,), dtype=float)
+        permuted = np.empty((self.permutations,), dtype=np.float64)
         for index, permutation_key in enumerate(permutation_keys):
             permutation = np.asarray(jax.random.permutation(permutation_key, count))
             shuffled = y_kernel[np.ix_(permutation, permutation)]
@@ -489,8 +489,7 @@ class DiscoveryResourcePolicy(StrictModule, NonTrainableState):
         maximum_score_candidates: int = 100_000,
     ) -> None:
         values = tuple(
-            int(value)
-            for value in (
+            (
                 maximum_ci_tests,
                 maximum_conditioning_depth,
                 maximum_extensions,
@@ -802,8 +801,7 @@ def discover_conservative_fci(
         knowledge=plan.knowledge,
         resources=plan.resources,
         reason=(
-            "Conservative FCI returned a sound partial ancestral graph; "
-            "unresolved endpoints remain circles."
+            "Conservative FCI returned a sound partial ancestral graph; unresolved endpoints remain circles."
             if status is DiscoveryStatus.SUCCESS
             else reason
         ),
@@ -1342,7 +1340,7 @@ def _ci_matrix(
     sample_indices: Array | None,
 ) -> tuple[np.ndarray, int]:
     indices = _active_indices(dataset, sample_indices)
-    observed = np.ones((indices.size,), dtype=bool)
+    observed = np.ones((indices.size,), dtype=np.bool_)
     columns = []
     for name in names:
         observed &= np.asarray(dataset.observed_mask(name))[indices]
@@ -1352,7 +1350,7 @@ def _ci_matrix(
             "CI tests require complete observations for all query variables."
         )
     matrix = np.column_stack(columns)
-    return matrix, int(matrix.shape[0])
+    return matrix, matrix.shape[0]
 
 
 def _active_indices(dataset: CausalDataset, sample_indices: Array | None) -> np.ndarray:

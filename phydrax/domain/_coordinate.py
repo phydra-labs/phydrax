@@ -39,7 +39,7 @@ class CoordinateSpec(StrictModule):
         dtype: str | None = "float",
     ):
         if event_shape is not None:
-            shape = tuple(int(size) for size in event_shape)
+            shape = tuple(event_shape)
             if any(size <= 0 for size in shape):
                 raise ValueError("Coordinate event dimensions must be positive.")
         else:

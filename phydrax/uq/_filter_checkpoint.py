@@ -85,8 +85,7 @@ def _validate_arrays(
     for name, shape in expected_shapes.items():
         if arrays[name].shape != shape:
             raise ValueError(
-                f"{owner} checkpoint array {name!r} has shape "
-                f"{arrays[name].shape}; expected {shape}."
+                f"{owner} checkpoint array {name!r} has shape {arrays[name].shape}; expected {shape}."
             )
 
 
@@ -106,7 +105,7 @@ def write_kalman_filter_checkpoint(
     compatibility["covariance_regularization"] = state.covariance_regularization
     return write_checkpoint_archive(
         path,
-        kind="kalman-filter-state-v1",
+        kind="kalman-filter-state",
         compatibility=compatibility,
         state={"step_index": _validate_step_index(state.step_index, problem)},
         arrays={
@@ -136,7 +135,7 @@ def read_kalman_filter_checkpoint(
     compatibility["covariance_regularization"] = regularization
     state_data, arrays = read_checkpoint_archive(
         path,
-        kind="kalman-filter-state-v1",
+        kind="kalman-filter-state",
         compatibility=compatibility,
     )
     if set(state_data) != {"step_index"}:
@@ -161,7 +160,7 @@ def read_kalman_filter_checkpoint(
         covariance=arrays["covariance"],
         time=arrays["time"],
         log_likelihood=arrays["log_likelihood"],
-        valid=arrays["valid"].astype(bool),
+        valid=arrays["valid"].astype("bool"),
         status=arrays["status"].astype(jnp.int32),
         step_index=step_index,
         problem_id=problem.problem_id,
@@ -195,7 +194,7 @@ def write_bellman_filter_checkpoint(
     )
     return write_checkpoint_archive(
         path,
-        kind="bellman-filter-state-v1",
+        kind="bellman-filter-state",
         compatibility=compatibility,
         state={"step_index": _validate_step_index(state.step_index, problem)},
         arrays={
@@ -257,7 +256,7 @@ def read_bellman_filter_checkpoint(
     )
     state_data, arrays = read_checkpoint_archive(
         path,
-        kind="bellman-filter-state-v1",
+        kind="bellman-filter-state",
         compatibility=compatibility,
     )
     if set(state_data) != {"step_index"}:
@@ -285,8 +284,8 @@ def read_bellman_filter_checkpoint(
         covariance=arrays["covariance"],
         time=arrays["time"],
         pseudo_log_likelihood=arrays["pseudo_log_likelihood"],
-        mode_valid=arrays["mode_valid"].astype(bool),
-        pseudo_likelihood_valid=arrays["pseudo_likelihood_valid"].astype(bool),
+        mode_valid=arrays["mode_valid"].astype("bool"),
+        pseudo_likelihood_valid=arrays["pseudo_likelihood_valid"].astype("bool"),
         status=arrays["status"].astype(jnp.int32),
         step_index=jnp.asarray(step_index, dtype=jnp.int32),
         problem_id=problem.problem_id,
@@ -322,7 +321,7 @@ def write_ensemble_filter_checkpoint(
     )
     return write_checkpoint_archive(
         path,
-        kind="ensemble-filter-state-v1",
+        kind="ensemble-filter-state",
         compatibility=compatibility,
         state={"step_index": state.step_index},
         arrays={
@@ -366,7 +365,7 @@ def read_ensemble_filter_checkpoint(
     )
     state_data, arrays = read_checkpoint_archive(
         path,
-        kind="ensemble-filter-state-v1",
+        kind="ensemble-filter-state",
         compatibility=compatibility,
     )
     if set(state_data) != {"step_index"}:
@@ -389,7 +388,7 @@ def read_ensemble_filter_checkpoint(
         ensemble=arrays["ensemble"],
         time=arrays["time"],
         log_likelihood=arrays["log_likelihood"],
-        valid=arrays["valid"].astype(bool),
+        valid=arrays["valid"].astype("bool"),
         status=arrays["status"].astype(jnp.int32),
         root_key=jr.wrap_key_data(arrays["root_key_data"].astype(jnp.uint32)),
         step_index=step_index,

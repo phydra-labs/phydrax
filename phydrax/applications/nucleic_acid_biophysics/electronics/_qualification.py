@@ -141,11 +141,11 @@ class ChargeTransferObservationSeries:
             raise ValueError(
                 "Electronics qualification is limited to population transfer or spectroscopic signal."
             )
-        coordinates = np.asarray(times, dtype=float)
-        observations = np.asarray(values, dtype=float)
-        errors = np.asarray(standard_errors, dtype=float)
+        coordinates = np.asarray(times, dtype=np.float64)
+        observations = np.asarray(values, dtype=np.float64)
+        errors = np.asarray(standard_errors, dtype=np.float64)
         mask = (
-            np.ones(observations.shape, dtype=bool)
+            np.ones(observations.shape, dtype=np.bool_)
             if valid is None
             else np.asarray(valid)
         )
@@ -286,7 +286,7 @@ class ElectronicModelFit:
                 }
             )
         )
-        parameters = np.asarray(fitted_parameters, dtype=float)
+        parameters = np.asarray(fitted_parameters, dtype=np.float64)
         if not parameters.size or not np.all(np.isfinite(parameters)):
             raise ValueError("Fitted electronic parameters must be finite and nonempty.")
         parameter_id = canonical_fingerprint(
@@ -395,7 +395,7 @@ class ElectronicModelPrediction:
         if not isinstance(fit, ElectronicModelFit):
             raise TypeError("fit must be an ElectronicModelFit.")
         _validate_locked_campaign(fit.campaign, observations)
-        converted = np.asarray(values, dtype=float)
+        converted = np.asarray(values, dtype=np.float64)
         if converted.shape != observations.values.shape:
             raise ValueError("Electronic prediction must match the observation tensor.")
         factor = float(conversion_factor(observable_unit, observations.observable_unit))

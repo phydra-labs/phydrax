@@ -54,7 +54,7 @@ class ComplexAffineNormalization(StrictModule, NonTrainableState):
         self.matrix = jnp.asarray(matrix_)
         self.normalization_id = canonical_fingerprint(
             {
-                "kind": "complex-affine-normalization-v1",
+                "kind": "complex-affine-normalization",
                 "center": array_tree_fingerprint(self.center),
                 "matrix": array_tree_fingerprint(self.matrix),
             }
@@ -86,7 +86,7 @@ class ComplexAffineNormalization(StrictModule, NonTrainableState):
 
     @property
     def dimension(self) -> int:
-        return int(self.center.shape[0])
+        return self.center.shape[0]
 
     def __call__(self, coordinates: ArrayLike, /) -> Array:
         values = jnp.asarray(coordinates)

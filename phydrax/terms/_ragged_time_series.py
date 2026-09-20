@@ -73,7 +73,7 @@ class RaggedTimeSeriesBatch(StrictModule):
         self.target = jnp.asarray(target)
         self.case_indices = jnp.asarray(case_indices, dtype=jnp.int32)
         self.time_indices = jnp.asarray(time_indices, dtype=jnp.int32)
-        self.times = jnp.asarray(times, dtype=float)
+        self.times = jnp.asarray(times, dtype=jnp.float64)
 
 
 def _flat_observation_indices(
@@ -89,7 +89,7 @@ def _flat_observation_indices(
     mask = jnp.any(flat_cases[:, None] == allowed[None, :], axis=1)
     cases = flat_cases[mask]
     times = flat_times[mask]
-    if int(cases.shape[0]) <= 0:
+    if cases.shape[0] <= 0:
         raise ValueError("case_indices contain no valid trajectory observations.")
     return cases, times
 
@@ -104,14 +104,13 @@ def _validate_values(
         raise ValueError(
             "Ragged time-series values must have shape (N, T, ...) with a time axis."
         )
-    if int(arr.shape[0]) != domain.size:
+    if arr.shape[0] != domain.size:
         raise ValueError(
             f"values leading axis must be N={domain.size}, got {arr.shape[0]}."
         )
-    if int(arr.shape[1]) < domain.max_length:
+    if arr.shape[1] < domain.max_length:
         raise ValueError(
-            "values time axis must have at least "
-            f"{domain.max_length} entries, got {arr.shape[1]}."
+            f"values time axis must have at least {domain.max_length} entries, got {arr.shape[1]}."
         )
     return arr
 
@@ -129,14 +128,14 @@ def _gather_linear(
 ) -> tuple[Array, Array]:
     lower = jnp.floor(tau).astype(jnp.int32)
     upper = jnp.minimum(lower + 1, lengths - 1)
-    fraction = tau - lower.astype(float)
-    time_count = int(values.shape[1])
+    fraction = tau - lower.astype("float64")
+    time_count = values.shape[1]
     source = values.reshape((-1,) + values.shape[2:])
     stencil = linear_stencil_from_indices(
         case_indices * time_count + lower,
         case_indices * time_count + upper,
         fraction,
-        source_size=int(source.shape[0]),
+        source_size=source.shape[0],
     )
     return apply_gather_stencil(source, stencil).values, lower
 
@@ -149,13 +148,13 @@ def _gather_linear_irregular(
     /,
 ) -> tuple[Array, Array]:
     lower, upper, fraction = domain.bracketing_time_indices(case_indices, times)
-    time_count = int(values.shape[1])
+    time_count = values.shape[1]
     source = values.reshape((-1,) + values.shape[2:])
     stencil = linear_stencil_from_indices(
         case_indices * time_count + lower,
         case_indices * time_count + upper,
         fraction,
-        source_size=int(source.shape[0]),
+        source_size=source.shape[0],
     )
     return apply_gather_stencil(source, stencil).values, lower
 
@@ -199,8 +198,7 @@ def _case_time_grid_structure(
     time_axis = structure_.axis_for(domain.time_label)
     if data_axis is None or time_axis is None or data_axis == time_axis:
         raise ValueError(
-            "case-major ragged trajectory batches require SampleLayout "
-            "with separate singleton data and time blocks."
+            "case-major ragged trajectory batches require SampleLayout with separate singleton data and time blocks."
         )
     for block in structure_.blocks:
         if domain.data_label in block and len(block) != 1:
@@ -221,13 +219,13 @@ def _grid_points_from_case_time(
 ) -> PointBatch:
     structure_, data_axis, time_axis = _case_time_grid_structure(domain, structure)
     case_idx = jnp.asarray(case_indices, dtype=jnp.int32).reshape((-1,))
-    time_arr = jnp.asarray(times, dtype=float)
+    time_arr = jnp.asarray(times, dtype=jnp.float64)
     time_idx = jnp.asarray(time_indices, dtype=jnp.int32)
     if time_arr.ndim != 2:
         raise ValueError("case-major times must have shape (num_cases, num_times).")
     if time_idx.shape != time_arr.shape:
         raise ValueError("time_indices must have the same shape as times.")
-    if int(time_arr.shape[0]) != int(case_idx.shape[0]):
+    if time_arr.shape[0] != case_idx.shape[0]:
         raise ValueError("times leading axis must match case_indices length.")
 
     data_samples = domain.input_rows(case_idx)
@@ -305,7 +303,7 @@ def _flatten_grid_prediction_target(
     target_arr = jnp.asarray(target)
     if batch.times.ndim != 2:
         return pred_arr, target_arr
-    grid_shape = tuple(int(n) for n in batch.times.shape)
+    grid_shape = tuple(batch.times.shape)
     n = grid_shape[0] * grid_shape[1]
     if pred_arr.shape[:2] == grid_shape:
         pred_arr = pred_arr.reshape((n,) + pred_arr.shape[2:])
@@ -315,16 +313,16 @@ def _flatten_grid_prediction_target(
 
 
 def _flatten_grid_weight(weight: Array, batch: "RaggedTimeSeriesBatch", /) -> Array:
-    weight_arr = jnp.asarray(weight, dtype=float)
+    weight_arr = jnp.asarray(weight, dtype=jnp.float64)
     if batch.times.ndim != 2 or weight_arr.ndim == 0:
         return weight_arr
-    n_cases = int(batch.times.shape[0])
-    n_times = int(batch.times.shape[1])
+    n_cases = batch.times.shape[0]
+    n_times = batch.times.shape[1]
     n = n_cases * n_times
     grid_shape = (n_cases, n_times)
     if weight_arr.shape[:2] == grid_shape:
         return weight_arr.reshape((n,) + weight_arr.shape[2:])
-    if int(weight_arr.shape[0]) == n_cases:
+    if weight_arr.shape[0] == n_cases:
         expanded = jnp.broadcast_to(
             weight_arr[:, None],
             grid_shape + weight_arr.shape[1:],
@@ -406,8 +404,7 @@ class RaggedTimeSeriesDataTerm(AbstractSamplingTerm):
             "case_time_uniform",
         ):
             raise ValueError(
-                "selection must be 'observation_uniform', 'case_uniform', "
-                "or 'case_time_uniform'."
+                "selection must be 'observation_uniform', 'case_uniform', or 'case_time_uniform'."
             )
         sampling_value: RaggedTimeSeriesSampling
         if sampling_str == "observation_uniform":
@@ -443,10 +440,10 @@ class RaggedTimeSeriesDataTerm(AbstractSamplingTerm):
         self.reduction = reduction_value
         self.values = _validate_values(domain, values)
         if isinstance(weight, DomainFunction):
-            self.weight = jnp.asarray(1.0, dtype=float)
+            self.weight = jnp.asarray(1.0, dtype=jnp.float64)
             self.pointwise_weight = weight
         else:
-            self.weight = jnp.asarray(weight, dtype=float)
+            self.weight = jnp.asarray(weight, dtype=jnp.float64)
             self.pointwise_weight = None
         self.case_indices = validate_case_indices(
             case_indices,
@@ -456,11 +453,11 @@ class RaggedTimeSeriesDataTerm(AbstractSamplingTerm):
         obs_cases, obs_times = _flat_observation_indices(domain, self.case_indices)
         self.observation_case_indices = obs_cases
         self.observation_time_indices = obs_times
-        self.observation_count = int(obs_cases.shape[0])
+        self.observation_count = obs_cases.shape[0]
         self.label = None if label is None else str(label)
         self.selection = sampling_value
         self.interpolation = interpolation_value
-        self.data_accuracy_eps = jnp.asarray(float(data_accuracy_eps), dtype=float)
+        self.data_accuracy_eps = jnp.asarray(float(data_accuracy_eps), dtype=jnp.float64)
 
     @property
     def domain(self) -> TrajectoryDatasetDomain | IrregularTrajectoryDatasetDomain:
@@ -529,7 +526,9 @@ class RaggedTimeSeriesDataTerm(AbstractSamplingTerm):
                         target = _gather_nearest(self.values, case_indices, time_indices)
                     times = tau
                 else:
-                    tau = jr.uniform(key_time, shape=(n,)) * (lengths.astype(float) - 1.0)
+                    tau = jr.uniform(key_time, shape=(n,)) * (
+                        lengths.astype("float64") - 1.0
+                    )
                     if self.interpolation == "linear":
                         target, time_indices = _gather_linear(
                             self.values, case_indices, tau, lengths
@@ -541,7 +540,7 @@ class RaggedTimeSeriesDataTerm(AbstractSamplingTerm):
                     times = domain.start + domain.dt * tau
             else:
                 u = jr.uniform(key_time, shape=(n,))
-                time_indices = jnp.floor(u * lengths.astype(float)).astype(jnp.int32)
+                time_indices = jnp.floor(u * lengths.astype("float64")).astype(jnp.int32)
                 time_indices = jnp.clip(time_indices, 0, lengths - 1)
                 times = domain.observation_times(case_indices, time_indices)
                 target = _gather_nearest(self.values, case_indices, time_indices)
@@ -608,7 +607,7 @@ class RaggedTimeSeriesDataTerm(AbstractSamplingTerm):
                     )
             else:
                 u = jr.uniform(key_time, shape=(n_cases, n_times))
-                tau = u * (lengths[:, None].astype(float) - 1.0)
+                tau = u * (lengths[:, None].astype("float64") - 1.0)
                 if self.interpolation == "linear":
                     target, time_indices = _gather_linear_grid(
                         self.values,
@@ -627,7 +626,9 @@ class RaggedTimeSeriesDataTerm(AbstractSamplingTerm):
                 times = domain.start + domain.dt * tau
         else:
             u = jr.uniform(key_time, shape=(n_cases, n_times))
-            time_indices = jnp.floor(u * lengths[:, None].astype(float)).astype(jnp.int32)
+            time_indices = jnp.floor(u * lengths[:, None].astype("float64")).astype(
+                jnp.int32
+            )
             time_indices = jnp.clip(time_indices, 0, lengths[:, None] - 1)
             times = domain.observation_times(case_grid, time_indices)
             target = _gather_nearest_grid(self.values, case_indices, time_indices)
@@ -677,7 +678,7 @@ class RaggedTimeSeriesDataTerm(AbstractSamplingTerm):
         batch_ = self.sample(key=key) if batch is None else batch
         prediction = self._prediction(functions, batch_, key=key, **kwargs)
         pred_arr, target_arr = _flatten_grid_prediction_target(
-            jnp.asarray(prediction.data, dtype=float),
+            jnp.asarray(prediction.data, dtype=jnp.float64),
             batch_.target,
             batch_,
         )
@@ -702,7 +703,7 @@ class RaggedTimeSeriesDataTerm(AbstractSamplingTerm):
         batch_ = self.sample(key=key) if batch is None else batch
         prediction = self._prediction(functions, batch_, key=key, **kwargs)
         pred_arr, target_arr = _flatten_grid_prediction_target(
-            jnp.asarray(prediction.data, dtype=float),
+            jnp.asarray(prediction.data, dtype=jnp.float64),
             batch_.target,
             batch_,
         )
@@ -715,14 +716,14 @@ class RaggedTimeSeriesDataTerm(AbstractSamplingTerm):
             w = self.pointwise_weight(batch_.points, key=key, **kwargs)
             if not isinstance(w, cx.AxisArray):
                 raise TypeError("pointwise weight must return a phydrax.axes.AxisArray.")
-            w_arr = _flatten_grid_weight(jnp.asarray(w.data, dtype=float), batch_)
+            w_arr = _flatten_grid_weight(jnp.asarray(w.data, dtype=jnp.float64), batch_)
             if w_arr.ndim == 0:
                 per_sample = per_sample * w_arr
             else:
                 per_sample = per_sample * jnp.squeeze(w_arr).reshape((-1,))
 
         reduced = reduce_supervised_loss(per_sample, reduction=self.reduction)
-        return self.weight * jnp.asarray(reduced, dtype=float).reshape(())
+        return self.weight * jnp.asarray(reduced, dtype=jnp.float64).reshape(())
 
 
 __all__ = [

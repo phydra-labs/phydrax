@@ -48,14 +48,10 @@ def test_field_ionization_is_charge_neutral_when_event_occurs():
     electron_support = phx.discretization.ParticleSetPlan(
         jnp.arange(10, 12), jnp.ones((2,)), ambient_dimension=3
     ).prepare()
-    ion_population = phx.discretization.ParticlePopulationPlan(
-        ion_support
-    ).initialize(
+    ion_population = phx.discretization.ParticlePopulationPlan(ion_support).initialize(
         active_mask=jnp.asarray([True, False]), masses=jnp.asarray([1.0, 0.0])
     )
-    electron_population_plan = phx.discretization.ParticlePopulationPlan(
-        electron_support
-    )
+    electron_population_plan = phx.discretization.ParticlePopulationPlan(electron_support)
     electron_population = electron_population_plan.initialize(
         active_mask=jnp.asarray([False, False]), masses=jnp.zeros((2,))
     )
@@ -113,12 +109,12 @@ def test_nonzero_response_semi_implicit_pic_preserves_physical_gauss_law():
     support = phx.discretization.ParticleSetPlan(
         jnp.arange(1), jnp.ones((1,)), ambient_dimension=3
     ).prepare()
-    charged = phx.discretization.ChargedParticlePlan(
-        -jnp.ones((1,)), "route"
-    ).prepare(support)
-    transfer = phx.discretization.pic.PICParticleCochainTransferPlan(
-        bridge
-    ).prepare(charged)
+    charged = phx.discretization.ChargedParticlePlan(-jnp.ones((1,)), "route").prepare(
+        support
+    )
+    transfer = phx.discretization.pic.PICParticleCochainTransferPlan(bridge).prepare(
+        charged
+    )
     population = phx.discretization.ParticlePopulationPlan(support).initialize()
     charge_model = phx.discretization.pic.PICChargeModelPlan(
         -1.0,
@@ -132,9 +128,7 @@ def test_nonzero_response_semi_implicit_pic_preserves_physical_gauss_law():
         sources=(phx.solver.PICMaxwellCurrentSourcePlan(),),
         plan_id="semi-implicit-test",
     ).prepare()
-    plan = phx.solver.SemiImplicitPICPlan(
-        maxwell, transfer, charge_model, tolerance=1e-7
-    )
+    plan = phx.solver.SemiImplicitPICPlan(maxwell, transfer, charge_model, tolerance=1e-7)
     position = jnp.asarray([[0.2, 0.3, 0.4]])
     velocity = jnp.asarray([[0.1, 0.0, 0.0]])
     charge = transfer.deposit_charge(transfer.build(position)).cochain + 1.0

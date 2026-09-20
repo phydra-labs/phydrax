@@ -28,7 +28,7 @@ Window batches are fixed at preparation. Runtime processes one batch, extracts f
 
 ## Peaks and subpixel displacement
 
-The result retains primary and alternate candidates, integer lag, refined lag, score, ambiguity, curvature/width, and fit status. Gaussian and parabolic three-point fits operate only when their local neighbourhood is finite and admissible. A failed subpixel fit retains the integer candidate and an explicit fallback status.
+The result retains primary and alternate candidates, integer lag, refined lag, score, ambiguity, curvature/width, and fit status. Gaussian and parabolic three-point fits operate only when their local neighborhood is finite and admissible. A failed subpixel fit retains the integer candidate and an explicit fallback status.
 
 A primary peak at the declared search boundary is not silently accepted as an interior optimum. Ties use a deterministic score/index policy without perturbing the scientific correlation values.
 
@@ -55,7 +55,7 @@ Replacement consumes a validated result and creates a new displacement plus repl
 
 ## Physical calibration
 
-An affine calibration applies one constant pixel-to-physical Jacobian. A homographic calibration evaluates its local Jacobian at every interrogation centre. Physical velocity is that mapped displacement divided by explicit positive frame timing. Singular maps, invalid homography denominators, unsupported positions, and inconsistent frames/units fail closed.
+An affine calibration applies one constant pixel-to-physical Jacobian. A homographic calibration evaluates its local Jacobian at every interrogation center. Physical velocity is that mapped displacement divided by explicit positive frame timing. Singular maps, invalid homography denominators, unsupported positions, and inconsistent frames/units fail closed.
 
 ## Ensemble and residual disparity
 

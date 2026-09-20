@@ -51,7 +51,8 @@ def test_geometry_supports_distinct_structures_and_weighted_pairing():
 
 def test_parameter_path_corrector_preserves_explicit_weighted_jacobian_spaces():
     space = phx.linalg.ArraySpace(
-        (2,), dtype=jnp.float64,
+        (2,),
+        dtype=jnp.float64,
         pairing=phx.linalg.DiagonalPairing(jnp.array([0.25, 0.75])),
     )
     coefficients = jnp.array([2.0, 3.0])
@@ -61,8 +62,11 @@ def test_parameter_path_corrector_preserves_explicit_weighted_jacobian_spaces():
     problem = phx.continuation.ParameterPathContinuationProblem(
         lambda state, parameters, _: coefficients * (state - parameters),
         lambda coordinate, _: jnp.array([coordinate, coordinate**2]),
-        jnp.zeros(2), state_space=space, residual_space=space,
-        coordinate_lower=0.0, coordinate_upper=1.0,
+        jnp.zeros(2),
+        state_space=space,
+        residual_space=space,
+        coordinate_lower=0.0,
+        coordinate_upper=1.0,
         problem_id="weighted-explicit-path",
     )
     corrector = phx.nonlinear.NewtonKrylov(
@@ -71,8 +75,11 @@ def test_parameter_path_corrector_preserves_explicit_weighted_jacobian_spaces():
         )
     )
     result = phx.continuation.continue_branch(
-        problem, jnp.array([0.2, -0.1]), jnp.asarray(0.0),
-        num_steps=5, terminal_coordinate=1.0,
+        problem,
+        jnp.array([0.2, -0.1]),
+        jnp.asarray(0.0),
+        num_steps=5,
+        terminal_coordinate=1.0,
         method=phx.continuation.NaturalParameterContinuation(
             corrector=corrector, initial_step=0.25, maximum_step=0.5
         ),

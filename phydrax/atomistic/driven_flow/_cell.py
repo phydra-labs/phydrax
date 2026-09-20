@@ -429,7 +429,7 @@ class GeneralizedKraynikReineltPlan(StrictModule, NonTrainableState):
         )
         residual = float(
             np.linalg.norm(matrix @ evolved - vectors)
-            / max(np.linalg.norm(vectors), np.finfo(float).tiny)
+            / max(np.linalg.norm(vectors), np.finfo(np.float64).tiny)
         )
         if not math.isfinite(residual) or residual > tolerance_:
             raise ValueError("Reference lattice, flow, period, and remap do not recur.")
@@ -575,7 +575,7 @@ class PlanarKraynikReineltPlan(StrictModule, NonTrainableState):
                 "Planar KR rate and cell scales must be finite and positive."
             )
         automorphism = np.asarray([[2, 1], [1, 1]], dtype=np.int64)
-        eigenvalues, eigenvectors = np.linalg.eigh(automorphism.astype(float))
+        eigenvalues, eigenvectors = np.linalg.eigh(automorphism.astype("float64"))
         order = np.argsort(eigenvalues)[::-1]
         eigenvalues = eigenvalues[order]
         eigenvectors = eigenvectors[:, order]

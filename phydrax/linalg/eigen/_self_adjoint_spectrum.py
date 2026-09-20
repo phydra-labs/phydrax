@@ -193,8 +193,8 @@ class SelfAdjointSpectrumDiagnostics(StrictModule):
         residual = jnp.asarray(maximum_residual_norm)
         relative = jnp.asarray(maximum_relative_residual)
         normalization = jnp.asarray(normalization_error)
-        finite_ = jnp.asarray(finite, dtype=bool)
-        converged_ = jnp.asarray(converged, dtype=bool)
+        finite_ = jnp.asarray(finite, dtype=jnp.bool_)
+        converged_ = jnp.asarray(converged, dtype=jnp.bool_)
         source = jnp.asarray(source_status, dtype=jnp.int32)
         batch_shape = residual.shape
         if any(
@@ -287,8 +287,7 @@ def plan_self_adjoint_spectrum(
     )
     if retained > selected.max_retained_bytes:
         raise ValueError(
-            f"Self-adjoint spectrum retained estimate {retained} exceeds limit "
-            f"{selected.max_retained_bytes}."
+            f"Self-adjoint spectrum retained estimate {retained} exceeds limit {selected.max_retained_bytes}."
         )
     cost = SelfAdjointSpectrumCostEstimate(
         source_cost,

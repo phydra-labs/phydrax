@@ -235,7 +235,7 @@ def _solve_grid(device, bath, grid, *, tolerance, maximum_steps, damping):
     leads = (device.left, device.right)
     sigma = jnp.stack(tuple(lead.self_energy(energies) / Q for lead in leads), axis=-1)
     gamma_lead = -2 * jnp.imag(sigma)
-    diagonal = (e[:, None] - (h.diagonal - origin)[None, :] / Q).astype(complex)
+    diagonal = (e[:, None] - (h.diagonal - origin)[None, :] / Q).astype("complex128")
     diagonal = diagonal.at[:, 0].add(-sigma[:, 0]).at[:, -1].add(-sigma[:, 1])
     hopping = h.off_diagonal / Q
     occupation = bath.occupation

@@ -16,7 +16,7 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._integration_domain import IntegrationDomain
 from ._lifecycle import AbstractPreparedDiscretization
@@ -404,9 +404,9 @@ class LocalFieldBinding(StrictModule, NonTrainableState):
         name_ = str(name)
         if not isinstance(field_space, DiscreteFieldSpace):
             raise TypeError("field_space must be a DiscreteFieldSpace.")
-        components = tuple(int(value) for value in component_shape)
-        public = tuple(int(value) for value in public_shape)
-        execution = tuple(int(value) for value in execution_shape)
+        components = tuple(component_shape)
+        public = tuple(public_shape)
+        execution = tuple(execution_shape)
         width = int(local_width)
         layout = str(layout_id)
         if (
@@ -464,12 +464,12 @@ class LocalReferenceActions(StrictModule, NonTrainableState):
 
     __strict_abstract__ = True
 
-    action_id: AbstractAttribute[str]
-    realization_id: AbstractAttribute[str]
-    local_width: AbstractAttribute[int]
-    point_count: AbstractAttribute[int]
-    maximum_derivative_order: AbstractAttribute[int]
-    kernel_modes: AbstractAttribute[tuple[str, ...]]
+    action_id: eqx.AbstractVar[str]
+    realization_id: eqx.AbstractVar[str]
+    local_width: eqx.AbstractVar[int]
+    point_count: eqx.AbstractVar[int]
+    maximum_derivative_order: eqx.AbstractVar[int]
+    kernel_modes: eqx.AbstractVar[tuple[str, ...]]
 
     @abc.abstractmethod
     def realize_reference_actions(self, runtime: object, /) -> LocalReferenceActions:
@@ -559,12 +559,11 @@ class LocalMetricResult(StrictModule, NonTrainableState):
             != jacobian_.shape[:2] + (jacobian_.shape[3], jacobian_.shape[2])
         ):
             raise ValueError("Local metric point, weight, and Jacobian shapes disagree.")
-        physical_dimension = int(jacobian_.shape[2])
-        reference_dimension = int(jacobian_.shape[3])
+        physical_dimension = jacobian_.shape[2]
+        reference_dimension = jacobian_.shape[3]
         if reference_dimension > physical_dimension:
             raise ValueError(
-                "Local metrics require reference dimension no larger than physical "
-                "dimension."
+                "Local metrics require reference dimension no larger than physical dimension."
             )
         metric = ein.contract("cqdr,cqds->cqrs", jacobian_, jacobian_)
         inverse_metric = ein.contract("cqrd,cqds->cqrs", inverse, inverse)
@@ -580,8 +579,7 @@ class LocalMetricResult(StrictModule, NonTrainableState):
         )
         if inverse_hessian_.size and inverse_hessian_.shape != expected_inverse_hessian:
             raise ValueError(
-                "Local inverse-map Hessians must have axes "
-                "(entity, point, reference, physical, physical)."
+                "Local inverse-map Hessians must have axes (entity, point, reference, physical, physical)."
             )
         normals_ = (
             jnp.empty((0,), dtype=points_.dtype)
@@ -591,9 +589,9 @@ class LocalMetricResult(StrictModule, NonTrainableState):
         if normals_.size and normals_.shape != points_.shape:
             raise ValueError("Local metric normals must match physical point shape.")
         valid_ = (
-            jnp.ones((points_.shape[0],), dtype=bool)
+            jnp.ones((points_.shape[0],), dtype=jnp.bool_)
             if valid is None
-            else jnp.asarray(valid, dtype=bool)
+            else jnp.asarray(valid, dtype=jnp.bool_)
         )
         if valid_.shape != (points_.shape[0],):
             raise ValueError("Local metric validity must have one value per entity.")
@@ -670,10 +668,10 @@ class LocalGeometryActions(StrictModule, NonTrainableState):
 
     __strict_abstract__ = True
 
-    action_id: AbstractAttribute[str]
-    runtime_layout_id: AbstractAttribute[str]
-    entity_count: AbstractAttribute[int]
-    domain_kind: AbstractAttribute[str]
+    action_id: eqx.AbstractVar[str]
+    runtime_layout_id: eqx.AbstractVar[str]
+    entity_count: eqx.AbstractVar[int]
+    domain_kind: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def realize(self, runtime: object, /) -> LocalMetricResult:
@@ -688,14 +686,14 @@ class PreparedLocalRegion(StrictModule, NonTrainableState):
     block_name: str = eqx.field(static=True)
     cell_kind: str = eqx.field(static=True)
     field_gathers: tuple[Array, ...]
-    neighbour_gathers: tuple[Array, ...]
+    neighbor_gathers: tuple[Array, ...]
     reference_actions: tuple[LocalReferenceActions, ...]
     geometry_actions: LocalGeometryActions
     entity_indices: Array
     owner_cells: Array
-    neighbour_cells: Array
+    neighbor_cells: Array
     owner_local_entities: Array
-    neighbour_local_entities: Array
+    neighbor_local_entities: Array
     trace_permutations: Array
     valid: Array
     region_id: str = eqx.field(static=True)
@@ -711,12 +709,12 @@ class PreparedLocalRegion(StrictModule, NonTrainableState):
         *,
         block_name: str = "local",
         cell_kind: str = "parametric",
-        neighbour_gathers: Sequence[ArrayLike] = (),
+        neighbor_gathers: Sequence[ArrayLike] = (),
         entity_indices: ArrayLike | None = None,
         owner_cells: ArrayLike | None = None,
-        neighbour_cells: ArrayLike | None = None,
+        neighbor_cells: ArrayLike | None = None,
         owner_local_entities: ArrayLike | None = None,
-        neighbour_local_entities: ArrayLike | None = None,
+        neighbor_local_entities: ArrayLike | None = None,
         trace_permutations: ArrayLike | None = None,
         valid: ArrayLike | None = None,
     ):
@@ -762,17 +760,15 @@ class PreparedLocalRegion(StrictModule, NonTrainableState):
             return result
 
         owners = route(owner_cells, domain.owner_cells)
-        neighbours = route(neighbour_cells, domain.neighbour_cells)
+        neighbors = route(neighbor_cells, domain.neighbor_cells)
         owner_local = route(owner_local_entities, domain.owner_local_entities)
-        neighbour_local = route(neighbour_local_entities, domain.neighbour_local_entities)
-        neighbour = tuple(
-            np.asarray(value, dtype=np.int32) for value in neighbour_gathers
-        )
-        if neighbour and (
-            len(neighbour) != len(names)
-            or any(value.shape[0] != count for value in neighbour)
+        neighbor_local = route(neighbor_local_entities, domain.neighbor_local_entities)
+        neighbor = tuple(np.asarray(value, dtype=np.int32) for value in neighbor_gathers)
+        if neighbor and (
+            len(neighbor) != len(names)
+            or any(value.shape[0] != count for value in neighbor)
         ):
-            raise ValueError("Prepared neighbour gathers do not match region fields.")
+            raise ValueError("Prepared neighbor gathers do not match region fields.")
         traces = (
             np.empty((count, 0), dtype=np.int32)
             if trace_permutations is None
@@ -781,9 +777,9 @@ class PreparedLocalRegion(StrictModule, NonTrainableState):
         if traces.ndim != 2 or traces.shape[0] != count:
             raise ValueError("Prepared trace permutations must be rank-2 by entity.")
         valid_ = (
-            np.ones((count,), dtype=bool)
+            np.ones((count,), dtype=np.bool_)
             if valid is None
-            else np.asarray(valid, dtype=bool)
+            else np.asarray(valid, dtype=np.bool_)
         )
         if valid_.shape != (count,):
             raise ValueError("Prepared local validity must have one value per entity.")
@@ -792,14 +788,14 @@ class PreparedLocalRegion(StrictModule, NonTrainableState):
         self.cell_kind = cell
         self.field_names = names
         self.field_gathers = tuple(jnp.asarray(value) for value in gathers)
-        self.neighbour_gathers = tuple(jnp.asarray(value) for value in neighbour)
+        self.neighbor_gathers = tuple(jnp.asarray(value) for value in neighbor)
         self.reference_actions = references
         self.geometry_actions = geometry_actions
         self.entity_indices = jnp.asarray(entities)
         self.owner_cells = jnp.asarray(owners)
-        self.neighbour_cells = jnp.asarray(neighbours)
+        self.neighbor_cells = jnp.asarray(neighbors)
         self.owner_local_entities = jnp.asarray(owner_local)
-        self.neighbour_local_entities = jnp.asarray(neighbour_local)
+        self.neighbor_local_entities = jnp.asarray(neighbor_local)
         self.trace_permutations = jnp.asarray(traces)
         self.valid = jnp.asarray(valid_)
         self.region_id = canonical_fingerprint(
@@ -810,16 +806,14 @@ class PreparedLocalRegion(StrictModule, NonTrainableState):
                 "cell_kind": cell,
                 "fields": names,
                 "gathers": [array_tree_fingerprint(value) for value in gathers],
-                "neighbour_gathers": [
-                    array_tree_fingerprint(value) for value in neighbour
-                ],
+                "neighbor_gathers": [array_tree_fingerprint(value) for value in neighbor],
                 "references": [value.action_id for value in references],
                 "geometry": geometry_actions.action_id,
                 "entities": array_tree_fingerprint(entities),
                 "owners": array_tree_fingerprint(owners),
-                "neighbours": array_tree_fingerprint(neighbours),
+                "neighbors": array_tree_fingerprint(neighbors),
                 "owner_local": array_tree_fingerprint(owner_local),
-                "neighbour_local": array_tree_fingerprint(neighbour_local),
+                "neighbor_local": array_tree_fingerprint(neighbor_local),
                 "trace_permutations": array_tree_fingerprint(traces),
                 "valid": array_tree_fingerprint(valid_),
             }
@@ -829,10 +823,10 @@ class PreparedLocalRegion(StrictModule, NonTrainableState):
 class AbstractPreparedLocalDiscretization(AbstractPreparedDiscretization):
     """Prepared discretization capable of method-neutral local variational work."""
 
-    block_space: AbstractAttribute[object]
-    precision_policy: AbstractAttribute[object]
+    block_space: eqx.AbstractVar[object]
+    precision_policy: eqx.AbstractVar[object]
 
-    default_runtime: AbstractAttribute[object]
+    default_runtime: eqx.AbstractVar[object]
 
     @abc.abstractmethod
     def local_variational_capabilities(self, /) -> LocalVariationalCapabilities:

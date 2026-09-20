@@ -37,7 +37,7 @@ def _feature_tree_size(tree: Any, /) -> int | None:
     leaves = jax.tree_util.tree_leaves(tree)
     if not leaves:
         return None
-    return int(jnp.asarray(leaves[0]).shape[0])
+    return jnp.asarray(leaves[0]).shape[0]
 
 
 def _to_axis_fields(tree: Any, axis: str, /) -> Any:
@@ -176,13 +176,13 @@ class GraphDomain(JointFactor):
     def component_size(self, component: Selection, /) -> int:
         """Return the number of entities selected by a graph component."""
         kind = graph_component_kind(component)
-        return int(self._component_indices(component, kind).shape[0])
+        return self._component_indices(component, kind).shape[0]
 
     def component_measure(self, component: Selection, /) -> Array:
         """Return the total measure assigned to a graph component."""
         if self._measure_mode == "probability":
-            return jnp.asarray(1.0, dtype=float)
-        return jnp.asarray(float(self.component_size(component)), dtype=float)
+            return jnp.asarray(1.0, dtype=jnp.float64)
+        return jnp.asarray(float(self.component_size(component)), dtype=jnp.float64)
 
     def _graph_ids_for_kind(self, kind: GraphComponentKind, /) -> Array:
         graph_ids = jnp.arange(self.num_graphs, dtype=jnp.int32)
@@ -240,7 +240,7 @@ class GraphDomain(JointFactor):
 
         kind = graph_component_kind(component)
         entity_indices = self._component_indices(component, kind)
-        size = int(entity_indices.shape[0])
+        size = entity_indices.shape[0]
         n = int(num_points)
         if n != size:
             raise ValueError(

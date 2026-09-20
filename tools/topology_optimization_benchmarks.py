@@ -43,13 +43,15 @@ def _state_solver():
 
 
 def _problem(cells: int):
-    centers = jnp.stack((jnp.arange(cells, dtype=float), jnp.zeros((cells,))), axis=-1)
+    centers = jnp.stack(
+        (jnp.arange(cells, dtype="float64"), jnp.zeros((cells,))), axis=-1
+    )
     measures = jnp.ones((cells,))
     prepared = phx.optim.DensityTransformPlan(
         phx.optim.ConicDensityFilterPlan(
             centers,
             1.1,
-            jnp.ones((cells,), dtype=bool),
+            jnp.ones((cells,), dtype="bool"),
             None,
             measures,
         ),

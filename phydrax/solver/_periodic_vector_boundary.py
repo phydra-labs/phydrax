@@ -56,7 +56,7 @@ def periodic_vector_boundary_support_3d(
         raise ValueError("Periodic Maxwell field support evidence is inconsistent.")
     support_id = canonical_fingerprint(
         {
-            "kind": "periodic-vector-boundary-support-3d-v1",
+            "kind": "periodic-vector-boundary-support-3d",
             "action": action.action_id,
             "action_support": field_support.support_id,
             "boundary_trace": False,

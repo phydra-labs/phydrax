@@ -28,7 +28,9 @@ def test_raw_upfirdn_matches_scipy_without_ratio_reduction_or_tap_scaling(up, do
 
 
 def test_upfirdn_preserves_middle_axis_and_complex_values():
-    values = jnp.arange(2 * 5 * 3, dtype=float).reshape((2, 5, 3)).astype(complex)
+    values = (
+        jnp.arange(2 * 5 * 3, dtype="float64").reshape((2, 5, 3)).astype("complex128")
+    )
     values = values + 0.25j
     taps = jnp.asarray((1.0 + 0.5j, -0.25j, 0.1))
 

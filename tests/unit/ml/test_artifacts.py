@@ -52,7 +52,7 @@ def test_ml_artifact_round_trip_preserves_model_and_contract(tmp_path):
     points = jnp.array([[1.0, 2.0], [-3.0, 0.5]])
 
     assert jnp.allclose(restored.model(points), result.model(points))
-    assert restored.manifest.model_type == "phydrax.artifact:FrozenModel@1"
+    assert restored.manifest.model_type == "phydrax.artifact:FrozenModel"
     assert restored.manifest.feature_schema["names"] == ["x", "t"]
     assert restored.manifest.target_schema["names"] == ["u"]
     assert restored.manifest.fit["gradient_contract"]["fit_mode"] == "direct"

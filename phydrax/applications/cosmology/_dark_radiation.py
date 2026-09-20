@@ -185,8 +185,7 @@ class DarkRadiationLedgerPlan(StrictModule, NonTrainableState):
             or relative < 0.0
         ):
             raise ValueError(
-                "Light speed must be positive and four-momentum tolerances "
-                "must be finite and nonnegative."
+                "Light speed must be positive and four-momentum tolerances must be finite and nonnegative."
             )
         self.capacity = capacity_
         self.dimension = dimension_
@@ -227,7 +226,7 @@ class DarkRadiationLedgerPlan(StrictModule, NonTrainableState):
             physical_momentum=jnp.zeros(vectors, dtype=dtype_),
             comoving_position=jnp.zeros(vectors, dtype=dtype_),
             emission_scale_factors=jnp.zeros(shape, dtype=dtype_),
-            active_mask=jnp.zeros(shape, dtype=bool),
+            active_mask=jnp.zeros(shape, dtype=jnp.bool_),
         )
 
     def valid(self, ledger: DarkRadiationLedger, /) -> Array:

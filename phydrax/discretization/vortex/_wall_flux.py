@@ -111,7 +111,7 @@ class BoundaryIntegralVorticityFluxPlan2D(StrictModule, NonTrainableState):
             policy=self.policy,
         )
         solution = jnp.asarray(linear.value)
-        count = int(self.geometry.length.size)
+        count = self.geometry.length.size
         source_strength, sheet = solution[:count], solution[count:]
         residual = block @ solution - rhs
         normal_residual, tangential_residual = residual[:count], residual[count:]

@@ -47,7 +47,11 @@ def test_hierarchy_validates_order_parent_and_transfer_identity():
     )
     assert tuple(
         level.level_id for level in hierarchy.discretization_hierarchy.levels
-    ) == ("level-0", "level-1", "level-2")
+    ) == (
+        "level-0",
+        "level-1",
+        "level-2",
+    )
     assert all(level.discretization_bundle.records for level in levels)
     assert (
         hierarchy.fingerprint

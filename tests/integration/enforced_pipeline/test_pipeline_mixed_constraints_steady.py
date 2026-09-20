@@ -25,7 +25,7 @@ def _batch(domain, xs):
     points = frozendict(
         {
             "x": cx.AxisArray(
-                jnp.asarray(xs, dtype=float).reshape((-1, 1)), dims=(axis, None)
+                jnp.asarray(xs, dtype="float64").reshape((-1, 1)), dims=(axis, None)
             )
         }
     )
@@ -43,7 +43,7 @@ def test_mixed_constraints_steady_state():
     right_component = geom.component(
         {"x": Boundary()}, where={"x": lambda p: p[0] >= 0.5}
     )
-    full_boundary = geom.component({"x": Boundary()})
+    geom.component({"x": Boundary()})
 
     left_constraint = EnforcementSpec(
         phx.conditions.Dirichlet("u", left_component, target=1.0)
@@ -52,8 +52,8 @@ def test_mixed_constraints_steady_state():
         phx.conditions.Dirichlet("u", right_component, target=2.0)
     )
 
-    anchors = {"x": jnp.array([[0.25], [0.75]], dtype=float)}
-    anchor_values = jnp.array([3.0, 4.0], dtype=float)
+    anchors = {"x": jnp.array([[0.25], [0.75]], dtype="float64")}
+    anchor_values = jnp.array([3.0, 4.0], dtype="float64")
     interior = InteriorAnchors("u", points=anchors, values=anchor_values)
 
     pipelines = EnforcementProgram.build(
@@ -64,12 +64,12 @@ def test_mixed_constraints_steady_state():
     )
     u_enforced = pipelines.apply({"u": u})["u"]
 
-    batch = _batch(geom, xs=jnp.array([0.0, 1.0], dtype=float))
+    batch = _batch(geom, xs=jnp.array([0.0, 1.0], dtype="float64"))
     out = jnp.asarray(u_enforced(batch).data).reshape((-1,))
     assert jnp.allclose(out[0], 1.0, atol=1e-3)
     assert jnp.allclose(out[1], 2.0, atol=1e-3)
 
-    batch = _batch(geom, xs=jnp.array([0.25, 0.75], dtype=float))
+    batch = _batch(geom, xs=jnp.array([0.25, 0.75], dtype="float64"))
     out = jnp.asarray(u_enforced(batch).data).reshape((-1,))
     assert jnp.allclose(out, anchor_values, atol=1e-3)
 

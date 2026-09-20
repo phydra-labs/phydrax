@@ -170,8 +170,7 @@ class IncompressibleTwoPhaseVOFMethod(AbstractFixedStepMethod):
             raise TypeError("body must be TwoPhaseMovingBodyPlan or None.")
         if body is not None and two_phase.geometry is not None:
             raise ValueError(
-                "VOF cannot combine qualified cut measures with the independent "
-                "penalty moving-body path."
+                "VOF cannot combine qualified cut measures with the independent penalty moving-body path."
             )
         self.two_phase = two_phase
         self.body = body

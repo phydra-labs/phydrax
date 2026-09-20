@@ -53,10 +53,10 @@ def linearize_circuit(
     if not isinstance(prepared_dae, PreparedCircuitDAE):
         raise TypeError("prepared_dae must be PreparedCircuitDAE.")
     _validate_input_policy(prepared_dae, input_policy)
-    value = jnp.asarray(state, dtype=float)
+    value = jnp.asarray(state, dtype=jnp.float64)
     if value.shape != (prepared_dae.plan.layout.size,):
         raise ValueError("Linearization state has the wrong shape.")
-    time_ = jnp.asarray(time, dtype=float)
+    time_ = jnp.asarray(time, dtype=jnp.float64)
     if time_.shape != ():
         raise ValueError("Linearization time must be scalar.")
     zero_rate = jnp.zeros_like(value)

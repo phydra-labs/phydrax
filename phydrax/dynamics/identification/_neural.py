@@ -1134,8 +1134,7 @@ def fit_discrete_model(
             )
         if not resolved_transition.supports_linear_refinement:
             raise ValueError(
-                "The selected discrete rollout transition does not support linear "
-                "refinement."
+                "The selected discrete rollout transition does not support linear refinement."
             )
         if validation is None:
             raise ValueError("Linear refinement requires fixed validation data.")

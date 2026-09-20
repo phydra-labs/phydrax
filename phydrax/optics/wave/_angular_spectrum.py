@@ -195,8 +195,7 @@ class AngularSpectrumPlan(StrictModule, NonTrainableState):
                 width <= 0 for pair in self.padding for width in pair
             ):
                 raise ValueError(
-                    "Finite-window propagation requires explicit positive padding "
-                    "before and after both axes."
+                    "Finite-window propagation requires explicit positive padding before and after both axes."
                 )
             padding = self.padding
         spacings = tuple(_uniform_spacing(space, index) for index in range(2))
@@ -314,8 +313,7 @@ class PreparedAngularSpectrum(StrictModule, NonTrainableState):
             | (~jnp.isfinite(jnp.imag(wavenumber)))
             | (jnp.real(wavenumber) <= 0.0)
             | (jnp.imag(wavenumber) < 0.0),
-            "medium_wavenumber must be finite with positive real part and "
-            "nonnegative imaginary part.",
+            "medium_wavenumber must be finite with positive real part and nonnegative imaginary part.",
         )
 
         tangential = isinstance(field, TangentialPlaneField)

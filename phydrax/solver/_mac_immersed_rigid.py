@@ -869,7 +869,7 @@ class MACRigidImmersedBackwardEulerMethod(StrictModule, NonTrainableState):
 
 
 class MACRigidImmersedMidpointMethod(StrictModule, NonTrainableState):
-    """Second-order pose-centred rigid coupling built on accepted-time iterations."""
+    """Second-order pose-centered rigid coupling built on accepted-time iterations."""
 
     backward_euler: MACRigidImmersedBackwardEulerMethod
     method_id: str = eqx.field(static=True)

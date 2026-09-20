@@ -106,7 +106,7 @@ class MPMRuntimeState(StrictModule):
         self.last_status = jnp.asarray(last_status, dtype=jnp.int32)
         self.topology_generation = jnp.asarray(topology_generation, dtype=jnp.int32)
         self.assignment_input = assignment_input
-        count = int(particles.position.shape[0])
+        count = particles.position.shape[0]
         self.material_slots = (
             jnp.zeros((count,), dtype=jnp.int32)
             if material_slots is None

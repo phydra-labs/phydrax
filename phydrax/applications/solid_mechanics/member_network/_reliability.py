@@ -51,7 +51,7 @@ class StructuralRandomModel(StrictModule, NonTrainableState):
 
     @property
     def dimension(self) -> int:
-        return int(self.mean.size)
+        return self.mean.size
 
     def transform(self, standard_normal: ArrayLike, /) -> Array:
         standard = jnp.asarray(standard_normal, dtype=self.mean.dtype)

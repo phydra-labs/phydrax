@@ -117,7 +117,7 @@ class _AbstractMeshProposal(StrictModule, NonTrainableState):
         _scope_rows(source, scope)
         if scope.entity_dimension != dimension:
             raise ValueError("Proposal scope has the wrong entity dimension.")
-        data = np.asarray(values, dtype=float)
+        data = np.asarray(values, dtype=np.float64)
         if data.shape != (scope.entity_ids.size, *value_shape) or not np.all(
             np.isfinite(data)
         ):
@@ -298,7 +298,7 @@ class MeshProposalSafetyPolicy(StrictModule, NonTrainableState):
             raise ValueError(
                 "Invalid proposal size, anisotropy, gradation, or displacement bounds."
             )
-        normal_floor = np.sqrt(np.finfo(float).tiny)
+        normal_floor = np.sqrt(np.finfo(np.float64).tiny)
         if (
             minimum < normal_floor
             or maximum > 1.0 / normal_floor
@@ -327,7 +327,7 @@ class MeshProposalSafetyPolicy(StrictModule, NonTrainableState):
         bounds = (
             None
             if coordinate_bounds is None
-            else np.asarray(coordinate_bounds, dtype=float)
+            else np.asarray(coordinate_bounds, dtype=np.float64)
         )
         if bounds is not None:
             if (
@@ -388,7 +388,7 @@ def _entity_closure(
 def _protected_vertices(
     source: CellMeshingResult, policy: MeshProposalSafetyPolicy
 ) -> np.ndarray:
-    fixed = np.zeros(source.mesh.coordinates.shape[0], dtype=bool)
+    fixed = np.zeros(source.mesh.coordinates.shape[0], dtype=np.bool_)
     for scope in policy.protected_scopes:
         rows = _entity_closure(
             source.mesh, scope.entity_dimension, _scope_rows(source, scope), 0
@@ -527,7 +527,7 @@ def _project_metric(scope, raw, edges, policy) -> MeshMetricField:
 
 def _coordinate_projector(source, proposal, policy):
     points = jnp.asarray(source.mesh.coordinates)
-    movable = np.zeros(points.shape[0], dtype=bool)
+    movable = np.zeros(points.shape[0], dtype=np.bool_)
     movable[_scope_rows(source, proposal.scope)] = True
     fixed = jnp.asarray(~movable | _protected_vertices(source, policy))
     bounds = policy.coordinate_bounds
@@ -551,7 +551,7 @@ def _safe_marks(source, scores, policy):
     mesh = source.mesh
     cells = np.asarray(mesh.blocks[0].global_ids)
     cell_edges = np.asarray(mesh.connectivity.cell_edges)[:, :3]
-    forbidden_edges = np.zeros(mesh.entity_set(1).count, dtype=bool)
+    forbidden_edges = np.zeros(mesh.entity_set(1).count, dtype=np.bool_)
     for scope in policy.protected_scopes:
         if scope.entity_dimension > 0:
             rows = _entity_closure(
@@ -799,7 +799,7 @@ def _preservation_issues(source, candidate, projection):
                 np.linalg.norm(delta, axis=1) > policy.maximum_displacement + tolerance
             ):
                 issues.append("maximum_displacement")
-            movable = np.zeros(delta.shape[0], dtype=bool)
+            movable = np.zeros(delta.shape[0], dtype=np.bool_)
             movable[_scope_rows(source, projection.proposal.scope)] = True
             if np.any(delta[~movable] != 0):
                 issues.append("coordinate_scope")

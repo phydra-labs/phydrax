@@ -26,7 +26,7 @@
   coupled electrohydrodynamics, smart and chemo-mechanics, EHL and thermal
   systems, membranes, catalysis, optomechanics, acoustics, electrochemistry, and
   equation-oriented processes. Added full engineering application workflows,
-  pinned source and licence records, independent controls, three refinement
+  pinned source and license records, independent controls, three refinement
   campaigns, analytic application validations, and exact runtime-provider
   evidence. Implementation closure is separate from release: retained evidence
   covers one float64 `jax-cpu-arm64` host and explicitly does not qualify
@@ -100,7 +100,7 @@
   and LAOS analysis, exact support admission, composite replay checkpoints,
   qualification gates, bounded smokes, and performance benchmarks.
 - Added a conservative general-relativistic radiation-MHD suite: standalone
-  boundary-aware grey and multigroup M1 transport, implicit four-force GRRMHD,
+  boundary-aware gray and multigroup M1 transport, implicit four-force GRRMHD,
   dynamic Z4c coupling, neutrino lepton exchange, resistive and force-free
   transitions, physical opacity/photon-number and electron/pair plasma evolution,
   VET/discrete-ordinates/Monte-Carlo closures, polarized feedback, ingoing-Kerr
@@ -201,7 +201,7 @@
   graph and total energy/entropy/conservation ledger; thermodynamically
   consistent nonisothermal grand-potential phases; calibrated anti-trapping
   transport; prefix-stable transactional nucleation; coherent small- and
-  finite-strain mechanics; power-cancelling Model-H flow; fixed-charge and
+  finite-strain mechanics; power-canceling Model-H flow; fixed-charge and
   fixed-voltage dielectric coupling; electrochemical flux, Maxwell stress, and
   Joule heat; power-adjoint transfers; coupled fixed-step/checkpoint identities;
   exact profiles; PFHub-style qualification; and compiled flagship performance
@@ -435,7 +435,7 @@
   residuals, and strict axial/polar isospectral QNM regression; real scattering/
   superradiance and exact-state-bound Hawking spectra
   and bounded evaporation; accretion, plasma and first-order self-force; relativistic
-  EOS/GRHD and periodic all-active GRMHD/CT, force-free, resistive and grey-M1 systems;
+  EOS/GRHD and periodic all-active GRMHD/CT, force-free, resistive and gray-M1 systems;
   bounded GR rays, typed polarized ray paths, exact chart/path/snapshot-bound midpoint
   sampling, MNY96 Stokes-I/K2 evidence with reference-unqualified polarization/Faraday,
   Jy images/interferometry and fixed-branch
@@ -774,7 +774,7 @@
   preserved shared geometry during native operator minibatch collation, and
   restored structured dynamics shapes for prescribed finite-volume advancement.
 - Added independently checked balanced atmospheric references and dimensional
-  energy/torque diagnostics; conservative grey column radiation; state-dependent
+  energy/torque diagnostics; conservative gray column radiation; state-dependent
   wet-surface heat and water exchange; explicit conservative spectral water
   limiting with measured redistribution; and a restartable finite-rate moist
   column with cloud, rain, snow, sedimentation, and unresolved-mechanics evidence.
@@ -1026,8 +1026,8 @@
   explicit nearest-neighbor routes, fixed bond and purification capacities,
   CP/PSD construction evidence, and observable norm, trace, and truncation
   loss without hidden SWAPs or normalization.
-- Added immutable ordinary labelled-contraction structures with explicit output
-  ordering, host-side `opt_einsum` path/resource planning, fixed-signature
+- Added immutable ordinary labeled-contraction structures with explicit output
+  ordering, native contraction path/resource planning, fixed-signature
   prepare/refresh execution, precision provenance, and concrete prepared MPS
   and MPO inner-product consumers.
 - Added static Abelian U(1), Z_n, and product-charge tensor layouts with
@@ -1354,7 +1354,7 @@
   convolution quadrature, RWG Maxwell support, and fail-closed commercial
   qualification evidence.
 - Reconciled cosmology, astrodynamics, and astrophysical-observation foundations:
-  dimensional scales, artifacts and derivative capabilities, labelled observation/
+  dimensional scales, artifacts and derivative capabilities, labeled observation/
   covariance/likelihood algebra, direct and hierarchical particle gravity, KDK
   transactions, ratio-two AMR mechanics, and event replay now have core owners.
   Domain applications retain comoving/canonical/scale-factor, physical epoch/frame/
@@ -1712,7 +1712,7 @@
 - Expanded kinetic methods with D3Q27, prepared moment bases and advanced collision
   families, staged open/curved/moving-wall ownership, explicit local implicit forcing,
   geometry epochs and conservative transfers, multiblock and ratio-2 refinement
-  contracts, colour-gradient/free-energy/thermal/species/reactive distributions,
+  contracts, color-gradient/free-energy/thermal/species/reactive distributions,
   certified D2V17 and off-lattice D2V37 smooth-compressible methods, fixed FV/kinetic
   interfaces, sharded and AA/fused execution, block reverse replay, and a forward-only
   stable-tuple IREE export contract. Advanced paths report capability, conservation,
@@ -2786,7 +2786,7 @@
   compiled root solves, implicit-root derivative compilation/execution, numeric
   refresh, refreshed solves, and refreshed verification; campaigns preserve float64
   inputs and canonical problem identities across adapters.
-- Tensor contractions across the package, tests, benchmarks, and tools now consistently use `opt_einsum.contract` instead of direct `jax.numpy.einsum` calls.
+- Tensor contractions across the package, tests, benchmarks, and tools now consistently use `phydrax.ein.contract` instead of direct `jax.numpy.einsum` calls.
 - Closure-converted matrix-free SVD, eigensolve, spectral-projector, density-kernel, and spectral-function derivatives now support filtered JVP, reverse mode, and JIT.
 - Named truncated-normal initializers now produce their conventional target variance, while rectangular orthogonal initialization avoids max-dimension square samples.
 - `phydrax.nn.layers.inference_mode` now switches every inference-aware Equinox or Phydrax leaf in mixed model trees.

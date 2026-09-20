@@ -77,7 +77,7 @@ class AllSpeedHLLFluxPlan(AbstractArbitraryNormalNumericalFluxPlan, NonTrainable
                 "policy": policy.policy_id,
                 "signal_scaling": "center-plus-minus-scaled-half-width",
                 "normal_ale_contract": (
-                    "physical-normal-flux-minus-grid-transport-relative-waves-v1"
+                    "physical-normal-flux-minus-grid-transport-relative-waves"
                 ),
             }
         )
@@ -222,8 +222,7 @@ class ShockAwareAllSpeedFluxPlan(
             ),
         ):
             raise TypeError(
-                "Shock-aware all-speed flux requires a canonical "
-                "homogeneous-mixture system."
+                "Shock-aware all-speed flux requires a canonical homogeneous-mixture system."
             )
         return self.policy.fallback_flux
 
@@ -247,8 +246,8 @@ class ShockAwareAllSpeedFluxPlan(
         /,
     ) -> NumericalFluxResult:
         sensor = self._sensor(system, left, right)
-        admissible = jnp.asarray(system.admissible(left), dtype=bool) & jnp.asarray(
-            system.admissible(right), dtype=bool
+        admissible = jnp.asarray(system.admissible(left), dtype=jnp.bool_) & jnp.asarray(
+            system.admissible(right), dtype=jnp.bool_
         )
         primary_finite = jnp.all(
             jnp.isfinite(primary.normal_flux), axis=-1

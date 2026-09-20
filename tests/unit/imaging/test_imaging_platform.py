@@ -93,7 +93,7 @@ def test_medical_image_asset_preserves_references_uncertainty_and_quality_flags(
     )
     flag = phx.measurement.QualityFlag(
         "motion",
-        np.broadcast_to(np.eye(2, dtype=bool)[:, :, None], values.shape),
+        np.broadcast_to(np.eye(2, dtype="bool")[:, :, None], values.shape),
         "Potential motion artifact",
     )
     asset = _asset(
@@ -118,7 +118,7 @@ def test_medical_image_asset_preserves_references_uncertainty_and_quality_flags(
 
 
 def test_nifti_export_requires_rights_from_every_reference(tmp_path):
-    values = np.zeros((2, 2, 2), dtype=float)
+    values = np.zeros((2, 2, 2), dtype="float64")
     layout = phx.imaging.ImageFieldSpec.named(
         "signal", phx.units.ONE, phx.measurement.ValueKind.REAL_SCALAR
     )
@@ -295,7 +295,7 @@ def test_label_compartments_and_single_oriented_interface():
 
 
 def test_probability_transfer_preserves_simplex_and_segmentation_transition():
-    probabilities = np.zeros((2, 2, 2, 2), dtype=float)
+    probabilities = np.zeros((2, 2, 2, 2), dtype="float64")
     probabilities[..., 0] = np.fromfunction(lambda i, j, k: (i + j + k) / 3.0, (2, 2, 2))
     probabilities[..., 1] = 1.0 - probabilities[..., 0]
     probability_layout = phx.imaging.ImageFieldSpec.named(
@@ -330,7 +330,7 @@ def test_probability_transfer_preserves_simplex_and_segmentation_transition():
         np.full(labels_array.shape, 0.5), phx.units.ONE
     )
     source_flag = phx.measurement.QualityFlag(
-        "reviewed", np.ones(labels_array.shape, dtype=bool), "Reviewed source voxel"
+        "reviewed", np.ones(labels_array.shape, dtype="bool"), "Reviewed source voxel"
     )
     labels = phx.imaging.LabelVolume(
         _asset(

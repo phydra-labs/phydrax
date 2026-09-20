@@ -16,7 +16,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike, Key, PyTree
 
 from .._fingerprint import canonical_fingerprint
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 
 
 class ProposalMove(StrictModule):
@@ -32,7 +32,7 @@ class ProposalMove(StrictModule):
 class AbstractProposal(StrictModule):
     """Normalized proposal density over a structure-preserving position PyTree."""
 
-    proposal_id: AbstractAttribute[str]
+    proposal_id: eqx.AbstractVar[str]
 
     @abstractmethod
     def sample(self, key: Key[Array, ""], current: PyTree[Any], /) -> PyTree[Array]:
@@ -289,7 +289,7 @@ class GaussianRandomWalkProposal(AbstractProposal):
             raise ValueError("Proposed and current position structures must agree.")
         if not current_leaves:
             raise ValueError("Positions must contain at least one array leaf.")
-        dimension = sum(int(jnp.asarray(leaf).size) for leaf in current_leaves)
+        dimension = sum(jnp.asarray(leaf).size for leaf in current_leaves)
         squared = sum(
             (
                 jnp.sum(

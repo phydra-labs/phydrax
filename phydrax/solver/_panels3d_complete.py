@@ -116,8 +116,8 @@ class CompletePanelFlowPlan3D(StrictModule, NonTrainableState):
                 "kind": "complete-panel-flow-3d",
                 "geometry": geometry.geometry_id,
                 "formulation": formulation,
-                "components": tuple(int(value) for value in components),
-                "kutta_count": int(pairs.shape[0]),
+                "components": tuple(components),
+                "kutta_count": pairs.shape[0],
                 "density": self.density,
                 "compressibility": compressibility_.policy_id,
             }
@@ -171,7 +171,7 @@ class CompletePanelFlowPlan3D(StrictModule, NonTrainableState):
             rhs = jnp.concatenate((normal_rhs, jnp.zeros((count,), dtype=incident.dtype)))
             source_slice, doublet_slice = slice(0, count), slice(count, 2 * count)
         offset = count if self.formulation == "source-doublet" else 0
-        for pair_index in range(int(self.kutta_panel_pairs.shape[0])):
+        for pair_index in range(self.kutta_panel_pairs.shape[0]):
             upper, lower = self.kutta_panel_pairs[pair_index]
             row = matrix.shape[0] - 1 - pair_index
             kutta = (

@@ -290,7 +290,7 @@ class SU2ReducedLeg(StrictModule):
         active_multiplicities: ArrayLike | None = None,
     ):
         spins = tuple(_spin(value) for value in twice_spins)
-        allocated = tuple(int(value) for value in capacities)
+        allocated = tuple(capacities)
         if not spins or len(spins) != len(allocated) or len(set(spins)) != len(spins):
             raise ValueError("SU2 spins and capacities must align uniquely.")
         if any(value < 1 for value in allocated):
@@ -346,7 +346,7 @@ class SU2ReducedTensor(StrictModule):
         total_twice_spin: int = 0,
     ):
         legs_ = tuple(legs)
-        sectors_ = tuple(tuple(int(value) for value in sector) for sector in sectors)
+        sectors_ = tuple(tuple(sector) for sector in sectors)
         blocks_ = tuple(jnp.asarray(block) for block in blocks)
         target = _spin(total_twice_spin)
         if not legs_ or any(not isinstance(leg, SU2ReducedLeg) for leg in legs_):
@@ -477,7 +477,7 @@ def truncate_su2_multiplets(
             for spin, value in zip(spins, spectra, strict=True)
         )
     )
-    selected = jnp.zeros(flat.shape, dtype=bool)
+    selected = jnp.zeros(flat.shape, dtype=jnp.bool_)
     used = jnp.asarray(0, dtype=jnp.int32)
     cursor = 0
     for spin, values in zip(spins, spectra, strict=True):

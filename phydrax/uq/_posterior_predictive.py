@@ -130,7 +130,7 @@ def sample_observations_from_position_samples(
     for name in names:
         template = templates[name]
         data = jnp.concatenate(tuple(parts[name]), axis=0)
-        expected = tuple(int(size) for size in template.data.shape)
+        expected = tuple(template.data.shape)
         if tuple(data.shape[2:]) != expected:
             raise ValueError("Posterior observation shape changed between draws.")
         data = data.reshape((*first_shape, count, *expected))
@@ -188,7 +188,7 @@ def _evaluate_position_callback(
     for name in names:
         template = templates[name]
         data = jnp.concatenate(tuple(parts[name]), axis=0)
-        expected = tuple(int(size) for size in template.data.shape)
+        expected = tuple(template.data.shape)
         if tuple(data.shape[1:]) != expected:
             raise ValueError(f"{owner} shape changed between draws.")
         data = data.reshape((*first_shape, *expected))
@@ -227,11 +227,11 @@ def _position_sample_layout(
     if not leaves:
         raise ValueError("Posterior position samples must contain array leaves.")
     axis_count = len(dimensions)
-    first_shape = tuple(int(size) for size in leaves[0].shape[:axis_count])
+    first_shape = tuple(leaves[0].shape[:axis_count])
     if len(first_shape) != axis_count or any(size <= 0 for size in first_shape):
         raise ValueError("Posterior sample axes must be present and non-empty.")
     for leaf in leaves:
-        if tuple(int(size) for size in leaf.shape[:axis_count]) != first_shape:
+        if tuple(leaf.shape[:axis_count]) != first_shape:
             raise ValueError("Posterior position leaves have inconsistent sample axes.")
     total = 1
     for size in first_shape:
@@ -260,7 +260,7 @@ def _raise_invalid(
     if policy not in ("record", "raise"):
         raise ValueError("valid_policy must be 'record' or 'raise'.")
     if policy == "raise" and not bool(jnp.all(valid)):
-        failed = tuple(tuple(int(index) for index in row) for row in jnp.argwhere(~valid))
+        failed = tuple(tuple(row) for row in jnp.argwhere(~valid))
         raise FloatingPointError(f"{owner} produced invalid sample indices {failed!r}.")
 
 

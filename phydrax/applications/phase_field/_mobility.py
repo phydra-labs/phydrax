@@ -15,7 +15,7 @@ from jaxtyping import Array, ArrayLike
 from phydrax import ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
 
@@ -31,8 +31,8 @@ class PhaseFieldMobilityEvaluation(StrictModule):
 
 
 class AbstractPhaseFieldMobility(StrictModule, NonTrainableState):
-    mobility_id: AbstractAttribute[str]
-    scalar_kinetics: AbstractAttribute[bool]
+    mobility_id: eqx.AbstractVar[str]
+    scalar_kinetics: eqx.AbstractVar[bool]
 
     @abc.abstractmethod
     def evaluate(

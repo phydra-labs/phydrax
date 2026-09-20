@@ -11,16 +11,20 @@ from phydrax.chemistry.periodic._orbital_model import (
     PeriodicOrbitalBasisPlan,
     PeriodicOrbitalPencilPlan,
 )
-from phydrax.chemistry.periodic._spectrum import PeriodicSpectrumPlan
-from phydrax.chemistry.periodic._topology import PeriodicBandManifold
 from phydrax.chemistry.periodic._source import (
     PeriodicProvenanceManifest,
     PeriodicSourceContext,
 )
-from phydrax.discretization import PeriodicCell, ReciprocalConnectivityPlan, ReciprocalMeshPlan
+from phydrax.chemistry.periodic._spectrum import PeriodicSpectrumPlan
+from phydrax.chemistry.periodic._topology import PeriodicBandManifold
+from phydrax.discretization import (
+    PeriodicCell,
+    ReciprocalConnectivityPlan,
+    ReciprocalMeshPlan,
+)
 from phydrax.operators.periodic import (
-    PeriodicResourceError,
     periodic_translation_family_from_dense_blocks,
+    PeriodicResourceError,
 )
 from phydrax.units import ANGSTROM, ELECTRONVOLT
 
@@ -41,27 +45,21 @@ def _context(payload, cell, labels, centers, source):
 
 def test_hr_public_spec_bytes_apply_degeneracy_exactly_once():
     payload = (
-        "independent one-orbital chain\n"
-        "1\n"
-        "3\n"
-        "2 1 2\n"
-        "-1 0 0 1 1 -2.0 0.0\n"
-        "0 0 0 1 1 -1.0 0.0\n"
-        "1 0 0 1 1 -2.0 0.0\n"
+        "independent one-orbital chain\n1\n3\n2 1 2\n-1 0 0 1 1 -2.0 0.0\n0 0 0 1 1 -1.0 0.0\n1 0 0 1 1 -2.0 0.0\n"
     ).encode()
     context = _context(payload, PeriodicCell([[1.0]]), ("s",), [[0.0]], "hr-chain")
     imported = read_wannier90_hr(payload, context)
 
     np.testing.assert_allclose(imported.prepared_family.evaluate([[0.0]])[0, 0, 0], -3.0)
     np.testing.assert_array_equal(imported.degeneracies, [2, 1, 2])
-    np.testing.assert_allclose(imported.raw_hamiltonian_blocks[:, 0, 0], [-2.0, -1.0, -2.0])
+    np.testing.assert_allclose(
+        imported.raw_hamiltonian_blocks[:, 0, 0], [-2.0, -1.0, -2.0]
+    )
 
 
 def test_hr_requires_complete_context_digest_reverse_and_capacity():
     payload = (
-        "bad reverse\n1\n2\n1 1\n"
-        "-1 0 0 1 1 -1.0 0.0\n"
-        "1 0 0 1 1 -2.0 0.0\n"
+        "bad reverse\n1\n2\n1 1\n-1 0 0 1 1 -1.0 0.0\n1 0 0 1 1 -2.0 0.0\n"
     ).encode()
     context = _context(payload, PeriodicCell([[1.0]]), ("s",), [[0.0]], "bad-hr")
     with pytest.raises(ValueError, match="Hermitian adjoints"):
@@ -102,9 +100,7 @@ def test_mmn_public_spec_bytes_require_exact_connectivity_coverage():
         hamiltonian.state,
         ELECTRONVOLT,
     ).prepare()
-    manifold = PeriodicBandManifold(
-        PeriodicSpectrumPlan(pencil, mesh).evaluate(), [0]
-    )
+    manifold = PeriodicBandManifold(PeriodicSpectrumPlan(pencil, mesh).evaluate(), [0])
     bundle = lower_wannier90_mmn(imported, manifold)
     np.testing.assert_allclose(bundle.raw_overlaps, imported.raw_overlaps)
     assert bundle.source_id.startswith("wannier90-mmn:")
@@ -112,10 +108,7 @@ def test_mmn_public_spec_bytes_require_exact_connectivity_coverage():
 
 def test_mmn_rejects_missing_edge_and_cell_mismatch():
     payload = (
-        "missing link\n1 2 2\n"
-        "1 2 0 0 0\n1.0 0.0\n"
-        "1 2 -1 0 0\n1.0 0.0\n"
-        "2 1 1 0 0\n1.0 0.0\n"
+        "missing link\n1 2 2\n1 2 0 0 0\n1.0 0.0\n1 2 -1 0 0\n1.0 0.0\n2 1 1 0 0\n1.0 0.0\n"
     ).encode()
     cell = PeriodicCell([[1.0]])
     mesh = ReciprocalMeshPlan.monkhorst_pack(cell, (2,))

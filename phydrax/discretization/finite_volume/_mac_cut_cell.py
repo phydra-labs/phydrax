@@ -65,7 +65,6 @@ class MACDiffuseSDFGeometryPlan(StrictModule, NonTrainableState):
         width, small = float(interface_width), float(small_cell_fraction)
         if width <= 0.0 or not 0.0 < small < 1.0:
             raise ValueError("Cut-cell interface/small-cell policy is invalid.")
-        grid = operators.discretization.grid
 
         def points(layout):
             mesh = jnp.meshgrid(*layout.coordinates_by_axis, indexing="ij")

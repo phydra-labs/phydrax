@@ -44,7 +44,7 @@ def shape_average(shape_values: ArrayLike, valid: ArrayLike | None = None, /) ->
         raise ValueError("shape_values must contain sample and local-DOF axes.")
     if valid is None:
         return jnp.mean(values, axis=-2)
-    valid_ = jnp.asarray(valid, dtype=bool)
+    valid_ = jnp.asarray(valid, dtype=jnp.bool_)
     if valid_.shape != values.shape[:-1]:
         raise ValueError("Shape-average validity must match all non-DOF axes.")
     count = jnp.sum(valid_, axis=-1, keepdims=True)

@@ -14,11 +14,12 @@ from jaxtyping import Array, Key
 
 import phydrax.ein as ein
 from phydrax._doc import DOC_KEY0
+from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
 from phydrax.nn.operator.representations import O3Features, O3Representation
 
 
-class RadialBasis(eqx.Module, NonTrainableState):
+class RadialBasis(StrictModule, NonTrainableState):
     """Smooth compactly supported Gaussian radial basis."""
 
     centers: Array
@@ -46,7 +47,7 @@ class RadialBasis(eqx.Module, NonTrainableState):
         return gaussian * envelope[..., None]
 
 
-class RadialMap(eqx.Module):
+class RadialMap(StrictModule):
     """Distance-conditioned linear map between irrep multiplicities."""
 
     weight: Array
@@ -124,7 +125,7 @@ def _symmetric_traceless(left: Array, right: Array, /) -> Array:
     return outer - trace[..., None, None] * identity / 3.0
 
 
-class EquivariantIntegralLayer(eqx.Module):
+class EquivariantIntegralLayer(StrictModule):
     """Quadrature-aware O(3)-equivariant source-to-target kernel integral."""
 
     in_representation: O3Representation
@@ -244,7 +245,7 @@ class EquivariantIntegralLayer(eqx.Module):
     ) -> Array:
         source_array = jnp.asarray(source_values)
         batch, source_count = source_array.shape[:2]
-        query_count = int(target_coordinates.shape[1])
+        query_count = target_coordinates.shape[1]
         features = self.in_representation.split(source_array)
         displacement = (
             jnp.asarray(target_coordinates)[:, :, None, :]
@@ -463,7 +464,7 @@ class EquivariantIntegralLayer(eqx.Module):
         return packed
 
 
-class O3PointwiseLinear(eqx.Module):
+class O3PointwiseLinear(StrictModule):
     """Equivariant multiplicity mixing that never mixes irrep types."""
 
     in_representation: O3Representation

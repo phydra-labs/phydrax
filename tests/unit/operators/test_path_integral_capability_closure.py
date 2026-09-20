@@ -229,7 +229,7 @@ def _stochastic_paths(times):
         solution=None,
         states=jnp.zeros((2, 3, 1)),
         times=times,
-        path_valid=jnp.ones((2,), dtype=bool),
+        path_valid=jnp.ones((2,), dtype="bool"),
         status=jnp.zeros((2,), dtype=jnp.int32),
         accepted_steps=jnp.ones((2,), dtype=jnp.int32),
         rejected_steps=jnp.zeros((2,), dtype=jnp.int32),

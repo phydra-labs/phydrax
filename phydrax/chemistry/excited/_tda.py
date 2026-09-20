@@ -279,7 +279,7 @@ class NonadiabaticCouplingResult(StrictModule, NonTrainableState):
         self.antisymmetry_residual = jnp.asarray(
             antisymmetry_residual, dtype=derivative.dtype
         ).reshape(())
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.inverse_length_unit = inverse_length_unit
         if not isinstance(energy_weighted_unit, UnitDefinition):
             raise TypeError("energy_weighted_unit must be UnitDefinition.")

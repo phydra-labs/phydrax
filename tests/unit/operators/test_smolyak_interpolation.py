@@ -316,7 +316,7 @@ def test_adaptive_interpolation_accepts_an_exactly_in_cap_refinement(monkeypatch
 
     def instrumented(function, plan, index_set, /, *, key):
         fitted, points = original(function, plan, index_set, key=key)
-        fitted_node_counts.append(int(points.shape[0]))
+        fitted_node_counts.append(points.shape[0])
         return fitted, points
 
     monkeypatch.setattr(smolyak_module, "_interpolate_index_set", instrumented)

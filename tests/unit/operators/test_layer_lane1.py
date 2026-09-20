@@ -151,7 +151,7 @@ def test_helmholtz_cfie_requires_and_reports_explicit_self_policy():
     )
     result = phx.solver.solve_exterior_helmholtz_dirichlet_2d(
         panelization,
-        jnp.zeros((panelization.node_count,), dtype=complex),
+        jnp.zeros((panelization.node_count,), dtype="complex128"),
         2.0,
         quadrature=quadrature,
     )
@@ -234,7 +234,7 @@ def test_3d_qbx_directional_expansion_covers_real_and_complex_layers():
             panelization,
             2.0,
             kind="single",
-            density=density.astype(complex),
+            density=density.astype("complex128"),
         ),
         targets,
         target_side="interior",
@@ -256,13 +256,13 @@ def test_3d_qbx_directional_expansion_covers_real_and_complex_layers():
 
 
 def test_helmholtz_qbx_uses_directional_hankel_expansion():
-    geometry = phx.geometry.Circle((0.0, 0.0), 1.0).compile()
+    phx.geometry.Circle((0.0, 0.0), 1.0).compile()
     panelization = _circle_panelization(panels=1, order=2)
     potential = phx.operators.HelmholtzLayerPotential2D(
         panelization,
         2.0,
         kind="single",
-        density=jnp.ones((panelization.node_count,), dtype=complex),
+        density=jnp.ones((panelization.node_count,), dtype="complex128"),
     )
     result = phx.operators.evaluate_layer_potential(
         potential,
@@ -292,7 +292,7 @@ def test_helmholtz_directional_terms_match_order_three_ad_oracle(field_kind):
     from phydrax.operators.integral.layer_potential._qbx2d import _directional_terms
 
     panelization = _circle_panelization(panels=1, order=2)
-    density = jnp.ones((panelization.node_count,), dtype=complex)
+    density = jnp.ones((panelization.node_count,), dtype="complex128")
     if field_kind == "combined":
         potential = phx.operators.HelmholtzCombinedField2D(
             panelization,
@@ -371,7 +371,7 @@ def test_direct_near_far_backend_matches_direct_representation():
     backend = phx.operators.DirectNearFarReferenceBackend2D()
     reference = backend.evaluate(potential, targets, near_ratio=3.0)
 
-    assert backend.backend_id == "direct-near-far-reference-2d-v1"
+    assert backend.backend_id == "direct-near-far-reference-2d"
     assert jnp.allclose(reference.values, potential._evaluate_direct(targets))
     assert bool(reference.accuracy_supported)
     assert reference.near_panel_count + reference.far_panel_count == (
@@ -515,7 +515,7 @@ def test_fmm_mixed_excluded_leaf_is_kept_in_near_correction():
         excluded_source_indices=(0,),
     )
     near_blocks = tuple(
-        tuple(int(index) for index in source_block)
+        tuple(source_block)
         for target_sources in near_sources
         for source_block in target_sources
     )

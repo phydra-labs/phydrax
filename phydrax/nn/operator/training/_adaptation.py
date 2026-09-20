@@ -71,7 +71,7 @@ def adapt_operator_context(
     resolved = BoundedResidualAdaptationPolicy() if policy is None else policy
     if not isinstance(resolved, BoundedResidualAdaptationPolicy):
         raise TypeError("policy must be BoundedResidualAdaptationPolicy or None.")
-    initial = jnp.asarray(initial_context, dtype=float)
+    initial = jnp.asarray(initial_context, dtype=jnp.float64)
     if initial.size == 0 or bool(jnp.any(~jnp.isfinite(initial))):
         raise ValueError("initial_context must be finite and non-empty.")
     lower = (

@@ -42,7 +42,7 @@ class _ScaledQueryTransfer(eqx.Module):
 
     def __init__(self, transfer: phx.graph.QueryGraphOperator, scale):
         self.transfer = transfer
-        self.scale = jnp.asarray(scale, dtype=float)
+        self.scale = jnp.asarray(scale, dtype="float64")
 
     def __call__(self, graph):
         out = self.transfer(graph)
@@ -55,7 +55,7 @@ class _ScaledNodeRate(eqx.Module):
     scale: jnp.ndarray
 
     def __init__(self, scale):
-        self.scale = jnp.asarray(scale, dtype=float)
+        self.scale = jnp.asarray(scale, dtype="float64")
 
     def __call__(self, graph):
         return graph.replace(

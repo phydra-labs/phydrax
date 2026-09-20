@@ -48,7 +48,7 @@ class GaussianRasterExecutionPlan(StrictModule, NonTrainableState):
     ) -> None:
         if kind not in ("reference", "tiled"):
             raise ValueError("kind must be 'reference' or 'tiled'.")
-        tiles = tuple(int(size) for size in tile_shape)
+        tiles = tuple(tile_shape)
         if len(tiles) != 2 or any(size <= 0 for size in tiles):
             raise ValueError("tile_shape must contain two positive sizes.")
         capacity = None if maximum_tile_routes is None else int(maximum_tile_routes)
@@ -170,8 +170,8 @@ class GaussianRasterizer(StrictModule, NonTrainableState):
         if coordinates.ndim != 2 or coordinates.shape[1] != 2:
             raise ValueError("row_column must have shape (particle_capacity, 2).")
         if not jnp.issubdtype(coordinates.dtype, jnp.inexact):
-            coordinates = coordinates.astype(float)
-        capacity = int(coordinates.shape[0])
+            coordinates = coordinates.astype("float64")
+        capacity = coordinates.shape[0]
         amplitudes = jnp.asarray(amplitude, dtype=coordinates.dtype)
         if amplitudes.shape != (capacity,):
             raise ValueError("amplitude must have shape (particle_capacity,).")
@@ -184,13 +184,12 @@ class GaussianRasterizer(StrictModule, NonTrainableState):
             sigmas = jnp.broadcast_to(sigmas, (capacity, 2))
         elif sigmas.shape != (capacity, 2):
             raise ValueError(
-                "sigma must be scalar, (2,), (particle_capacity,), or "
-                "(particle_capacity, 2)."
+                "sigma must be scalar, (2,), (particle_capacity,), or (particle_capacity, 2)."
             )
         active_ = (
-            jnp.ones((capacity,), dtype=bool)
+            jnp.ones((capacity,), dtype=jnp.bool_)
             if active is None
-            else jnp.asarray(active, dtype=bool)
+            else jnp.asarray(active, dtype=jnp.bool_)
         )
         if active_.shape != (capacity,):
             raise ValueError("active must have shape (particle_capacity,).")
@@ -286,7 +285,7 @@ class GaussianRasterizer(StrictModule, NonTrainableState):
         width = int(geometry.image_shape[1])
         del height_array, width_array
         route_count = jnp.sum(routes.routed, dtype=jnp.int32)
-        candidate_capacity = int(routes.routed.size)
+        candidate_capacity = routes.routed.size
         declared_capacity = (
             candidate_capacity
             if self.execution.maximum_tile_routes is None
@@ -392,7 +391,7 @@ class GaussianRasterizer(StrictModule, NonTrainableState):
         ).reshape((-1,))
         route_values = contributions.reshape((-1,))
         route_valid = routed.reshape((-1,))
-        route_capacity = int(tile_slots.size)
+        route_capacity = tile_slots.size
         relation = EdgeRelation(
             jnp.arange(route_capacity, dtype=jnp.int32),
             tile_slots,

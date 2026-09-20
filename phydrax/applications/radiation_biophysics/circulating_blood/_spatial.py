@@ -95,8 +95,7 @@ def _weight_row(
         raise TypeError(f"Mixture weights for label {label_id!r} must be a mapping.")
     if set(values) != set(compartments):
         raise ValueError(
-            f"Mixture weights for label {label_id!r} must explicitly name every "
-            "compartment and no others."
+            f"Mixture weights for label {label_id!r} must explicitly name every compartment and no others."
         )
     row_values: list[float] = []
     for compartment in compartments:
@@ -104,7 +103,7 @@ def _weight_row(
         if isinstance(value, bool) or not isinstance(value, Real):
             raise TypeError("Spatial mixture weights must be real numbers.")
         row_values.append(float(value))
-    row = np.asarray(row_values, dtype=float)
+    row = np.asarray(row_values, dtype=np.float64)
     tolerance = 128.0 * np.finfo(row.dtype).eps
     if np.any(~np.isfinite(row)) or np.any(row < 0.0):
         raise ValueError("Spatial mixture weights must be finite and nonnegative.")
@@ -160,15 +159,15 @@ def prepare_spatial_compartment_mixture(
         )
         for label in labels.ontology.labels
     }
-    values = np.asarray(dose_rate.values, dtype=float)
-    valid = np.asarray(dose_rate.valid_mask, dtype=bool) & np.asarray(
-        labels.asset.valid_mask, dtype=bool
+    values = np.asarray(dose_rate.values, dtype=np.float64)
+    valid = np.asarray(dose_rate.valid_mask, dtype=np.bool_) & np.asarray(
+        labels.asset.valid_mask, dtype=np.bool_
     )
     if not np.any(valid):
         raise ValueError("Dose/label support has no jointly valid voxels.")
     if np.any(~np.isfinite(values[valid])) or np.any(values[valid] < 0.0):
         raise ValueError("Valid spatial dose-rate values must be finite and nonnegative.")
-    voxel_weights = np.zeros(values.shape + (len(compartments),), dtype=float)
+    voxel_weights = np.zeros(values.shape + (len(compartments),), dtype=np.float64)
     label_values = np.asarray(labels.asset.values)
     for label in labels.ontology.labels:
         voxel_weights[label_values == label.value] = rows[label.label_id]
@@ -188,7 +187,9 @@ def prepare_spatial_compartment_mixture(
         uncertainty = None
     else:
         scale = float(conversion_factor(dose_rate.uncertainty.unit, GRAY_PER_SECOND))
-        voxel_uncertainty = np.asarray(dose_rate.uncertainty.values, dtype=float) * scale
+        voxel_uncertainty = (
+            np.asarray(dose_rate.uncertainty.values, dtype=np.float64) * scale
+        )
         uncertainty = np.sqrt(
             np.sum(
                 np.square(normalized * voxel_uncertainty[..., None]),

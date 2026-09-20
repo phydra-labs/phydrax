@@ -49,7 +49,7 @@ def _target(*, failures=False):
         valid = (
             sample_indices % 5 != 0
             if failures
-            else jnp.ones(sample_indices.shape, dtype=bool)
+            else jnp.ones(sample_indices.shape, dtype="bool")
         )
         return phx.integration.MultilevelSampleBatch(
             fine,

@@ -269,8 +269,7 @@ ROUTES: dict[str, RouteDefinition] = {
             _gate(
                 "all-speed-shock-switch",
                 "scientific",
-                "Declared shock-ledger selection and stage admissibility choose "
-                "the exact robust fallback route.",
+                "Declared shock-ledger selection and stage admissibility choose the exact robust fallback route.",
             ),
             _RESOURCE_GATE,
             _gate(
@@ -394,8 +393,7 @@ ROUTES: dict[str, RouteDefinition] = {
             _gate(
                 "material-schema-standard-state",
                 "scientific",
-                "Component, species, phase, ordering, and gas standard pressure "
-                "have one canonical identity.",
+                "Component, species, phase, ordering, and gas standard pressure have one canonical identity.",
             ),
             _gate(
                 "material-density-energy-inversion",
@@ -411,15 +409,13 @@ ROUTES: dict[str, RouteDefinition] = {
             _gate(
                 "material-real-fluid-provenance",
                 "scientific",
-                "Real-fluid parameters, roots, stability, and phase-equilibrium "
-                "evidence retain canonical provenance.",
+                "Real-fluid parameters, roots, stability, and phase-equilibrium evidence retain canonical provenance.",
             ),
             _RESOURCE_GATE,
             _gate(
                 "material-domain-admission",
                 "operational",
-                "The exact homogeneous model, domain, gas system, and phase "
-                "boundary are admitted.",
+                "The exact homogeneous model, domain, gas system, and phase boundary are admitted.",
             ),
         ),
         (

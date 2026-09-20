@@ -16,7 +16,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic import AtomisticSystemPlan, AtomisticUnitSystem
 from ...units import BOHR, conversion_factor, DALTON, ELEMENTARY_CHARGE, HARTREE
@@ -54,7 +54,7 @@ class QuantumRegionPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(system, AtomisticSystemPlan):
             raise TypeError("system must be AtomisticSystemPlan.")
-        ids = tuple(int(value) for value in particle_ids)
+        ids = tuple(particle_ids)
         if not ids or len(set(ids)) != len(ids):
             raise ValueError("QM particle IDs must be non-empty and unique.")
         active_ids = {
@@ -124,7 +124,7 @@ class PreparedQuantumRegion(StrictModule, NonTrainableState):
         boundary_indices = tuple(
             (id_to_index[qm], id_to_index[mm]) for qm, mm in plan.boundary_bonds
         )
-        active = np.asarray(system.active_mask, dtype=bool)
+        active = np.asarray(system.active_mask, dtype=np.bool_)
         quantum_set = set(quantum_indices)
         mm_indices = tuple(
             int(index)
@@ -180,7 +180,7 @@ class PreparedQuantumRegion(StrictModule, NonTrainableState):
 
     def realize(self, positions: ArrayLike, /) -> Array:
         coordinate = jnp.asarray(positions)
-        expected = (int(self.plan.system.particle_ids.shape[0]), 3)
+        expected = (self.plan.system.particle_ids.shape[0], 3)
         if coordinate.shape != expected:
             raise ValueError(f"positions must have shape {expected}.")
         quantum = coordinate[jnp.asarray(self.quantum_indices)]
@@ -199,9 +199,7 @@ class PreparedQuantumRegion(StrictModule, NonTrainableState):
         expected = (len(self.quantum_indices) + len(self.boundary_indices), 3)
         if force.shape != expected:
             raise ValueError(f"region_forces must have shape {expected}.")
-        full = jnp.zeros(
-            (int(self.plan.system.particle_ids.shape[0]), 3), dtype=force.dtype
-        )
+        full = jnp.zeros((self.plan.system.particle_ids.shape[0], 3), dtype=force.dtype)
         full = full.at[jnp.asarray(self.quantum_indices)].add(
             force[: len(self.quantum_indices)]
         )
@@ -263,7 +261,7 @@ class QMMMEvaluation(StrictModule, NonTrainableState):
         self.classical_model_energy = classical_model
         self.forces = force
         self.point_charge_forces = point_force
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.component_result_ids = component_result_ids
         self.result_id = canonical_fingerprint(
             {
@@ -417,7 +415,7 @@ class EmbeddedRegionEvaluation(StrictModule, NonTrainableState):
         self.energy = energy_
         self.region_forces = region
         self.point_charge_forces = points
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.provider_id = provider
         self.result_id = canonical_fingerprint(
             {
@@ -436,10 +434,10 @@ class EmbeddedRegionEvaluation(StrictModule, NonTrainableState):
 
 
 class AbstractEmbeddedRegionProvider(StrictModule, NonTrainableState):
-    provider_id: AbstractAttribute[str]
-    conservative: AbstractAttribute[bool]
-    region_system_id: AbstractAttribute[str]
-    unit_system_id: AbstractAttribute[str]
+    provider_id: eqx.AbstractVar[str]
+    conservative: eqx.AbstractVar[bool]
+    region_system_id: eqx.AbstractVar[str]
+    unit_system_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def evaluate(
@@ -551,10 +549,10 @@ class NativeRHFEmbeddedRegionProvider(AbstractEmbeddedRegionProvider):
         if embedding.units.unit_system_id != self.plan.system.units.unit_system_id:
             raise ValueError("Embedding and native RHF unit systems differ.")
         region = jnp.asarray(region_positions)
-        expected = (int(self.plan.system.particle_ids.shape[0]), 3)
+        expected = (self.plan.system.particle_ids.shape[0], 3)
         if region.shape != expected:
             raise ValueError(f"region_positions must have shape {expected}.")
-        active = np.asarray(embedding.active_mask, dtype=bool)
+        active = np.asarray(embedding.active_mask, dtype=np.bool_)
         point_positions = jnp.asarray(embedding.positions)[active]
         charge_factor = float(
             conversion_factor(
@@ -588,7 +586,7 @@ class NativeRHFEmbeddedRegionProvider(AbstractEmbeddedRegionProvider):
         region_forces = jnp.zeros_like(region)
         point_forces = jnp.zeros_like(point_positions)
         successful = bool(central.converged)
-        for atom in range(int(region.shape[0])):
+        for atom in range(region.shape[0]):
             for component in range(3):
                 shift = jnp.zeros_like(region).at[atom, component].set(displacement)
                 plus = solve(region + shift, point_positions)
@@ -599,7 +597,7 @@ class NativeRHFEmbeddedRegionProvider(AbstractEmbeddedRegionProvider):
                     * energy_factor
                     / (2.0 * displacement)
                 )
-        for point in range(int(point_positions.shape[0])):
+        for point in range(point_positions.shape[0]):
             for component in range(3):
                 shift = (
                     jnp.zeros_like(point_positions).at[point, component].set(displacement)

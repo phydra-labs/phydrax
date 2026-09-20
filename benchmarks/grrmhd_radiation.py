@@ -65,14 +65,14 @@ def _setup(cell_count: int):
         recovery_iterations=32,
         enthalpy_iterations=32,
     )
-    radiation = phx.equations.GRGreyM1RadiationSystem(scale, convention)
-    opacity = phx.equations.ConstantGRGreyOpacityPlan(
+    radiation = phx.equations.GRGrayM1RadiationSystem(scale, convention)
+    opacity = phx.equations.ConstantGRGrayOpacityPlan(
         planck_absorption=0.5,
         planck_emission=0.0,
         rosseland_transport=0.5,
         scattering=0.1,
     )
-    interaction = phx.equations.GRGreyRadiationInteractionPlan(radiation, opacity)
+    interaction = phx.equations.GRGrayRadiationInteractionPlan(radiation, opacity)
     source = phx.solver.GRRMHDImplicitSourcePlan(
         material,
         interaction,
@@ -88,8 +88,8 @@ def _setup(cell_count: int):
         identity,
         jnp.ones(shape),
         jnp.zeros(shape + (3, 3)),
-        jnp.ones(shape, dtype=bool),
-        jnp.ones(shape, dtype=bool),
+        jnp.ones(shape, dtype="bool"),
+        jnp.ones(shape, dtype="bool"),
         snapshot_token=jnp.asarray(0, dtype=jnp.int32),
         chart_id="benchmark-cartesian",
         convention_id=convention.convention_id,

@@ -266,11 +266,7 @@ def _normalize_mapping(
     result: dict[str, JSONValue] = {}
     keys = heapq.nsmallest(
         max(budget[0], 0),
-        (
-            key
-            for key in value
-            if isinstance(key, str) and _FIELD_NAME.fullmatch(key)
-        ),
+        (key for key in value if isinstance(key, str) and _FIELD_NAME.fullmatch(key)),
     )
     if len(keys) < len(value):
         omitted.append(f"{path}.*")
@@ -362,9 +358,7 @@ def _sanitize_text(value: str, /, *, path: str, omitted: list[str]) -> str:
 
 def _json_format(record: Record) -> str:
     event = cast(dict[str, JSONValue], record["extra"]["phydrax"])
-    timestamp = record["time"].astimezone(UTC).isoformat().replace(
-        "+00:00", "Z"
-    )
+    timestamp = record["time"].astimezone(UTC).isoformat().replace("+00:00", "Z")
     payload: dict[str, object] = {
         "component": event["component"],
         "context": event["context"],
@@ -395,9 +389,7 @@ def _json_format(record: Record) -> str:
 
 def _text_format(record: Record) -> str:
     event = cast(dict[str, JSONValue], record["extra"]["phydrax"])
-    timestamp = record["time"].astimezone(UTC).isoformat().replace(
-        "+00:00", "Z"
-    )
+    timestamp = record["time"].astimezone(UTC).isoformat().replace("+00:00", "Z")
     context_text = _canonical_json(event["context"])
     fields_text = _canonical_json(event["fields"])
     text = (

@@ -66,7 +66,7 @@ class ProbabilisticMultiheadWarp(StrictModule):
             fill_value=fill_value,
             key=base_key,
         )
-        hidden_width = int(self.base.displacement_hidden.weight.shape[0])
+        hidden_width = self.base.displacement_hidden.weight.shape[0]
         self.scale_projection = Linear(
             in_size=hidden_width,
             out_size=int(num_heads) * int(spatial_ndim),

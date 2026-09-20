@@ -35,7 +35,7 @@ def _case(body_count):
     ).prepare(particles)
     position = jnp.stack(
         (
-            jnp.arange(body_count, dtype=float),
+            jnp.arange(body_count, dtype="float64"),
             jnp.zeros((body_count,)),
             jnp.zeros((body_count,)),
         ),
@@ -57,9 +57,9 @@ def _case(body_count):
         body_ids[ball_edge + 1],
         jnp.stack(
             (
-                ball_edge.astype(float) + 0.5,
-                jnp.zeros_like(ball_edge, dtype=float),
-                jnp.zeros_like(ball_edge, dtype=float),
+                ball_edge.astype("float64") + 0.5,
+                jnp.zeros_like(ball_edge, dtype="float64"),
+                jnp.zeros_like(ball_edge, dtype="float64"),
             ),
             axis=-1,
         ),
@@ -70,9 +70,9 @@ def _case(body_count):
         body_ids[hinge_edge + 1],
         jnp.stack(
             (
-                hinge_edge.astype(float) + 0.5,
-                jnp.zeros_like(hinge_edge, dtype=float),
-                jnp.zeros_like(hinge_edge, dtype=float),
+                hinge_edge.astype("float64") + 0.5,
+                jnp.zeros_like(hinge_edge, dtype="float64"),
+                jnp.zeros_like(hinge_edge, dtype="float64"),
             ),
             axis=-1,
         ),

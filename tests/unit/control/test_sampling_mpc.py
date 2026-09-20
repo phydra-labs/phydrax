@@ -490,7 +490,7 @@ def test_resample_policy_is_key_and_solve_count_reproducible_and_auditable():
         {"gain": jnp.asarray([1.0, 2.0, 4.0, 8.0])},
         ("r0", "r1", "r2", "r3"),
         weights=jnp.asarray([0.7, 0.1, 0.1, 0.1]),
-        support_mask=jnp.ones((4,), dtype=bool),
+        support_mask=jnp.ones((4,), dtype="bool"),
         posterior_id="posterior:draws",
         campaign_id="campaign:draws",
         policy="resample",
@@ -533,7 +533,7 @@ def test_resample_policy_is_key_and_solve_count_reproducible_and_auditable():
     np.testing.assert_allclose(first.evidence.realization_weights, 0.25)
     np.testing.assert_array_equal(
         first.evidence.realization_support,
-        jnp.ones((4,), dtype=bool),
+        jnp.ones((4,), dtype="bool"),
     )
     assert first.evidence.realization_policy == "resample"
     np.testing.assert_array_equal(

@@ -469,7 +469,7 @@ def _coerce_operator(
         if value.ndim != 2 or value.shape[0] != value.shape[1]:
             raise ValueError("Structure compilation requires one square matrix.")
         if not jnp.issubdtype(value.dtype, jnp.inexact):
-            value = value.astype(float)
+            value = value.astype("float64")
         operator = DenseLinearOperator(value)
         matrix = np.asarray(value)
     if not np.all(np.isfinite(matrix)):

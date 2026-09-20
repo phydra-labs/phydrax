@@ -1,7 +1,6 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-# ruff: noqa: I001
 
 from __future__ import annotations
 

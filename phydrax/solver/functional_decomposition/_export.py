@@ -16,7 +16,7 @@ import optax
 
 from ..._fingerprint import canonical_fingerprint
 from ..._frozendict import frozendict
-from ..._model._structure import deserialise_model_leaf, serialise_model_leaf
+from ..._model._structure import deserialize_model_leaf, serialize_model_leaf
 from ..._strict import StrictModule
 from ..._trainable import is_non_trainable_leaf
 from ..._training_checkpoint import (
@@ -173,7 +173,7 @@ def _field_content_fingerprint(family: LocalFieldFamily, /) -> str:
         array = np.ascontiguousarray(np.asarray(jax.device_get(leaf)))
         records.append(
             {
-                "shape": tuple(int(value) for value in array.shape),
+                "shape": tuple(array.shape),
                 "dtype": array.dtype.str,
                 "sha256": hashlib.sha256(array.tobytes()).hexdigest(),
             }
@@ -236,7 +236,7 @@ def save_decomposition_artifact(
         lambda target: eqx.tree_serialise_leaves(
             target,
             artifact,
-            filter_spec=serialise_model_leaf,
+            filter_spec=serialize_model_leaf,
             is_leaf=is_non_trainable_leaf,
         ),
     )
@@ -287,7 +287,7 @@ def load_decomposition_artifact(
     return eqx.tree_deserialise_leaves(
         state_path,
         artifact_like,
-        filter_spec=deserialise_model_leaf,
+        filter_spec=deserialize_model_leaf,
         is_leaf=is_non_trainable_leaf,
     )
 

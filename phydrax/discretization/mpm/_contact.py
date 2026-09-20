@@ -16,7 +16,7 @@ from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._numerics._compensated import compensated_sum
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
 
@@ -32,8 +32,8 @@ class MPMGridConstraintResult(StrictModule):
 
 
 class AbstractMPMFrictionPlan(StrictModule, NonTrainableState):
-    coefficient: AbstractAttribute[float]
-    plan_id: AbstractAttribute[str]
+    coefficient: eqx.AbstractVar[float]
+    plan_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def impulse_magnitude(

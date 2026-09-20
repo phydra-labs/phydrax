@@ -100,8 +100,7 @@ def dense_local_curvature_step(
     subspace.validate_root(solver.functions)
     if subspace.total_dimension > plan_.max_parameters:
         raise ValueError(
-            f"Local curvature dimension {subspace.total_dimension} exceeds "
-            f"max_parameters={plan_.max_parameters}."
+            f"Local curvature dimension {subspace.total_dimension} exceeds max_parameters={plan_.max_parameters}."
         )
     position = subspace.pack()
 

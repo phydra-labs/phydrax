@@ -87,7 +87,9 @@ def _finite_real_array(value: ArrayLike, shape: tuple[int, ...], name: str, /) -
     if not np.all(np.isfinite(host)):
         raise ValueError(f"{name} must be finite.")
     result = jnp.asarray(host)
-    return result if jnp.issubdtype(result.dtype, jnp.inexact) else result.astype(float)
+    return (
+        result if jnp.issubdtype(result.dtype, jnp.inexact) else result.astype("float64")
+    )
 
 
 def _positive_weight(value: ArrayLike, shape: tuple[int, ...], name: str, /) -> Array:
@@ -151,7 +153,7 @@ def _canonical_quaternion(value: ArrayLike, name: str, /) -> Array:
     if not np.all(np.isfinite(quaternion)):
         raise ValueError(f"{name} must be finite.")
     norm = float(np.linalg.norm(quaternion))
-    if norm <= np.finfo(np.result_type(quaternion.dtype, float)).eps:
+    if norm <= np.finfo(np.result_type(quaternion.dtype, np.float64)).eps:
         raise ValueError(f"{name} must have nonzero norm.")
     canonical = quaternion / norm
     nonzero = np.flatnonzero(canonical)
@@ -1547,8 +1549,7 @@ class SmoothReducedRodTrajectoryPlan(StrictModule, NonTrainableState):
             raise ValueError("profile must be 'passive' or 'tendon'.")
         if (profile == "passive") != (not controlled):
             raise ValueError(
-                "Passive profiles require an autonomous plant; tendon profiles "
-                "require a controlled plant."
+                "Passive profiles require an autonomous plant; tendon profiles require a controlled plant."
             )
         if controlled:
             if not isinstance(control_codec, ControlVectorCodec):

@@ -101,7 +101,7 @@ class UnstructuredWhitneyCurrentPlan(StrictModule, NonTrainableState):
         start = jnp.asarray(start_position)
         end = jnp.asarray(end_position, dtype=start.dtype)
         charge = jnp.asarray(macrocharge, dtype=start.dtype)
-        active = jnp.asarray(active_mask, dtype=bool)
+        active = jnp.asarray(active_mask, dtype=jnp.bool_)
         dt = jnp.asarray(step_size, dtype=start.dtype).reshape(())
         if (
             start.shape != end.shape

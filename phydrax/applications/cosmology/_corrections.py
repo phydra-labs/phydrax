@@ -169,8 +169,8 @@ class MultiplicativeMatterPowerCorrectionPlan(StrictModule, NonTrainableState):
             differentiation_ = differentiation
         if not isinstance(differentiation_, DifferentiationContract):
             raise TypeError("differentiation must be DifferentiationContract.")
-        scales = np.asarray(scale_factors, dtype=float).reshape((-1,))
-        wavenumbers_ = np.asarray(wavenumbers, dtype=float).reshape((-1,))
+        scales = np.asarray(scale_factors, dtype=np.float64).reshape((-1,))
+        wavenumbers_ = np.asarray(wavenumbers, dtype=np.float64).reshape((-1,))
         factors = jnp.asarray(factor_values)
         if (
             scales.size < 2

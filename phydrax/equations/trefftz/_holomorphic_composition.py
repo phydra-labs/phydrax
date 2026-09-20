@@ -42,8 +42,7 @@ def _certificates(
     for provider in providers:
         if not isinstance(provider, HolomorphicPotentialProvider):
             raise TypeError(
-                "Holomorphic composition children must implement "
-                "HolomorphicPotentialProvider."
+                "Holomorphic composition children must implement HolomorphicPotentialProvider."
             )
         certificates.append(provider.holomorphic_certificate())
     return tuple(certificates)

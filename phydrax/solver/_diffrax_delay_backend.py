@@ -15,6 +15,8 @@ import optimistix as optx
 from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
+from phydrax._strict import StrictModule
+
 from ..linalg import AbstractRealCoordinateMap
 from ..stochastic._wiener import WienerRealization
 from ._delay import (
@@ -68,7 +70,7 @@ from ._memory import MemoryEquationSolution
 from ._save_schedule import validate_save_times
 
 
-class _DelayValidation(eqx.Module):
+class _DelayValidation(StrictModule):
     """Runtime delay checks attached to a consumed vector-field output."""
 
     predicates: Array
@@ -81,7 +83,7 @@ class _DelayValidation(eqx.Module):
         return checked
 
 
-class _CoordinateDelayHistory(eqx.Module):
+class _CoordinateDelayHistory(StrictModule):
     function: Any
     adapter: _PreparedDiffraxStateAdapter
 
@@ -91,7 +93,7 @@ class _CoordinateDelayHistory(eqx.Module):
         return self.adapter.pack_state(value, owner="Delay history")
 
 
-class _CoordinateDelayDerivative(eqx.Module):
+class _CoordinateDelayDerivative(StrictModule):
     function: Any
     adapter: _PreparedDiffraxStateAdapter
 
@@ -107,7 +109,7 @@ class _CoordinateDelayDerivative(eqx.Module):
         )
 
 
-class _PublicDelayWindow(eqx.Module):
+class _PublicDelayWindow(StrictModule):
     window: DelayHistoryWindow
     adapter: _PreparedDiffraxStateAdapter
 
@@ -136,7 +138,7 @@ class _PublicDelayWindow(eqx.Module):
         )
 
 
-class _CoordinateDelayInterpolation(eqx.Module):
+class _CoordinateDelayInterpolation(StrictModule):
     interpolation: Any
     adapter: _PreparedDiffraxStateAdapter
 
@@ -158,7 +160,7 @@ class _CoordinateDelayInterpolation(eqx.Module):
         )
 
 
-class _DelayVectorField(eqx.Module):
+class _DelayVectorField(StrictModule):
     function: Any
     initial_history: Any
     initial_derivative: Any
@@ -289,10 +291,10 @@ class _DelayVectorField(eqx.Module):
             if self.geometry is not None and delayed_states is not None:
                 historical_membership = jax.vmap(
                     lambda candidate: jnp.asarray(
-                        self.geometry.contains(candidate), dtype=bool
+                        self.geometry.contains(candidate), dtype=jnp.bool_
                     )
                 )(delayed_states)
-                if historical_membership.shape != (int(delayed_states.shape[0]),):
+                if historical_membership.shape != (delayed_states.shape[0],):
                     raise ValueError(
                         "State geometry contains() must return a scalar boolean."
                     )
@@ -312,34 +314,31 @@ class _DelayVectorField(eqx.Module):
                     )
                 )
                 messages.append(
-                    f"DerivativeDelay {term.name!r} transport must return a tangent "
-                    "at the current state."
+                    f"DerivativeDelay {term.name!r} transport must return a tangent at the current state."
                 )
             if self.geometry is not None and isinstance(term, DistributedDelay):
-                membership = jnp.asarray(self.geometry.contains(value), dtype=bool)
+                membership = jnp.asarray(self.geometry.contains(value), dtype=jnp.bool_)
                 if membership.shape != ():
                     raise ValueError(
                         "State geometry contains() must return a scalar boolean."
                     )
                 predicates.append(~membership)
                 messages.append(
-                    f"DistributedDelay {term.name!r} reducer returned a point "
-                    "outside state_geometry."
+                    f"DistributedDelay {term.name!r} reducer returned a point outside state_geometry."
                 )
             if (
                 self.geometry is not None
                 and isinstance(term, FunctionalDelay)
                 and term.output_kind == "point"
             ):
-                membership = jnp.asarray(self.geometry.contains(value), dtype=bool)
+                membership = jnp.asarray(self.geometry.contains(value), dtype=jnp.bool_)
                 if membership.shape != ():
                     raise ValueError(
                         "State geometry contains() must return a scalar boolean."
                     )
                 predicates.append(~membership)
                 messages.append(
-                    f"FunctionalDelay {term.name!r} returned a point outside "
-                    "state_geometry."
+                    f"FunctionalDelay {term.name!r} returned a point outside state_geometry."
                 )
             if (
                 self.geometry is not None
@@ -368,7 +367,7 @@ class _DelayVectorField(eqx.Module):
                 (
                     jnp.stack(tuple(predicates))
                     if predicates
-                    else jnp.empty((0,), dtype=bool)
+                    else jnp.empty((0,), dtype=jnp.bool_)
                 ),
                 tuple(messages),
             ),
@@ -381,7 +380,7 @@ class _DelayVectorField(eqx.Module):
             raise ValueError("Delay solver state changed its backend coordinate shape.")
         current = self.state_adapter.unpack_state(backend)
         if self.geometry is not None:
-            membership = jnp.asarray(self.geometry.contains(current), dtype=bool)
+            membership = jnp.asarray(self.geometry.contains(current), dtype=jnp.bool_)
             if membership.shape != ():
                 raise ValueError(
                     "State geometry contains() must return a scalar boolean."
@@ -421,7 +420,7 @@ class _DelayVectorField(eqx.Module):
         )
 
 
-class _ZeroVectorField(eqx.Module):
+class _ZeroVectorField(StrictModule):
     """Identically zero physical tangent term for drift-only SRKMK."""
 
     tangent_shape: tuple[int, ...] = eqx.field(static=True)
@@ -450,7 +449,7 @@ def _bind_delay_history(
     )
 
 
-class _RetardedSolverState(eqx.Module):
+class _RetardedSolverState(StrictModule):
     inner_state: Any
     history: DenseDelayHistory | RollingDelayHistory
 
@@ -559,7 +558,7 @@ class _RetardedSolver(dfx.AbstractWrappedSolver):
         )
 
 
-class _NeutralRecovery(eqx.Module):
+class _NeutralRecovery(StrictModule):
     """Recover the physical state from one transformed neutral state."""
 
     context: _DelayVectorField
@@ -652,7 +651,7 @@ class _NeutralRecovery(eqx.Module):
         )
 
 
-class _NeutralVectorField(eqx.Module):
+class _NeutralVectorField(StrictModule):
     """Transformed-state differential with physical-state recovery."""
 
     differential: Any
@@ -710,7 +709,7 @@ def _underlying_neutral_vector_field(terms: Any, /) -> _NeutralVectorField:
     return fields[0]
 
 
-class _NeutralInnerState(eqx.Module):
+class _NeutralInnerState(StrictModule):
     solver_state: Any
     transformed_state: Array
 
@@ -893,11 +892,11 @@ class _CausalFixedStepSizeController(dfx.AbstractStepSizeController):
         )
 
     def _next_jump(self, index, dtype):
-        if int(self.jump_ts.size) == 0:
+        if self.jump_ts.size == 0:
             return jnp.asarray(jnp.inf, dtype=dtype)
-        safe = jnp.minimum(index, int(self.jump_ts.size) - 1)
+        safe = jnp.minimum(index, self.jump_ts.size - 1)
         return jnp.where(
-            index < int(self.jump_ts.size),
+            index < self.jump_ts.size,
             self.jump_ts[safe],
             jnp.asarray(jnp.inf, dtype=dtype),
         )
@@ -994,11 +993,11 @@ def _neutral_discontinuity_times(
     def next_after(previous, known):
         tolerance = epsilon * jnp.maximum(1.0, jnp.abs(previous))
         threshold = jnp.where(jnp.isneginf(previous), previous, previous + tolerance)
-        if int(sources.size) == 0:
+        if sources.size == 0:
             source_candidate = jnp.asarray(jnp.inf, dtype=dtype)
         else:
             source_candidate = jnp.min(jnp.where(sources > threshold, sources, jnp.inf))
-        if int(lag_values.size) == 0:
+        if lag_values.size == 0:
             descendant_candidate = jnp.asarray(jnp.inf, dtype=dtype)
         else:
             target = threshold - lag_values
@@ -1138,7 +1137,7 @@ def _delay_solver_provenance(
     name = type(solver).__name__
     equation_kind = "neutral" if neutral else "retarded"
     return (
-        f"solver:diffrax-delay:{name}:{equation_kind}-v1",
+        f"solver:diffrax-delay:{name}:{equation_kind}",
         f"{name}:causal-{equation_kind}-method-of-steps",
     )
 
@@ -1191,8 +1190,7 @@ def solve_diffrax_delay(
     """Solve a declared delay differential equation through Diffrax."""
     if not isinstance(problem, (DelayDifferentialProblem, NeutralDelayProblem)):
         raise TypeError(
-            "solve_diffrax_delay requires a DelayDifferentialProblem or "
-            "NeutralDelayProblem."
+            "solve_diffrax_delay requires a DelayDifferentialProblem or NeutralDelayProblem."
         )
     state_adapter = _prepare_diffrax_state_adapter(
         problem.initial_state,
@@ -1271,8 +1269,7 @@ def solve_diffrax_delay(
 
     if problem.neutral and discontinuity_depth is not None:
         raise ValueError(
-            "Neutral delay solves propagate discontinuities through the full horizon; "
-            "discontinuity_depth must be None."
+            "Neutral delay solves propagate discontinuities through the full horizon; discontinuity_depth must be None."
         )
 
     if isinstance(problem, NeutralDelayProblem):
@@ -1328,7 +1325,7 @@ def solve_diffrax_delay(
         geometry=problem.state_geometry,
         state_adapter=state_adapter,
         backend_shape=state_adapter.backend_shape,
-        backend_tangent_shape=tuple(int(size) for size in packed_derivative.shape),
+        backend_tangent_shape=tuple(packed_derivative.shape),
         computed_history=empty_history,
     )
     if isinstance(problem, NeutralDelayProblem):
@@ -1466,7 +1463,7 @@ def solve_diffrax_delay(
             raise ValueError(
                 "Adaptive step-size controllers require an adaptive Diffrax solver."
             )
-        if int(controller_discontinuities.size) == 0:
+        if controller_discontinuities.size == 0:
             clipped_controller = base_controller
         else:
             clipped_controller = dfx.ClipStepSizeController(
@@ -1510,8 +1507,7 @@ def solve_diffrax_delay(
         else:
             if dt0 is None:
                 raise ValueError(
-                    "Fixed-step rolling history requires dt0 when history_capacity "
-                    "is inferred."
+                    "Fixed-step rolling history requires dt0 when history_capacity is inferred."
                 )
             if any(
                 isinstance(leaf, jax_core.Tracer)
@@ -1575,8 +1571,7 @@ def solve_diffrax_delay(
             native_states = eqx.error_if(
                 native_states,
                 rolling_history.overflowed,
-                "Rolling delay history exhausted history_capacity before its lag "
-                "window could be pruned.",
+                "Rolling delay history exhausted history_capacity before its lag window could be pruned.",
             )
     interpolation = None
     if dense:
@@ -1597,7 +1592,7 @@ def solve_diffrax_delay(
             initial_time=problem.t0,
             computed_history=solver_state.history,
             state_shape=state_adapter.backend_shape,
-            derivative_shape=tuple(int(size) for size in packed_derivative.shape),
+            derivative_shape=tuple(packed_derivative.shape),
             geometry=None,
         )
         interpolation = DelayDenseInterpolation(
@@ -1621,7 +1616,7 @@ def solve_diffrax_delay(
         neutral=problem.neutral,
     )
     if isinstance(problem, NeutralDelayProblem):
-        solver_id = "solver:diffrax-delay:Euler:transformed-neutral-v1"
+        solver_id = "solver:diffrax-delay:Euler:transformed-neutral"
         resolved_method = "Euler:transformed-neutral-method-of-steps"
     if dynamic_tracker is not None:
         solver_id = f"{solver_id}:state-dependent"

@@ -150,8 +150,7 @@ class HolomorphicPolynomialFrame(StrictModule, NonTrainableState):
             values = values.reshape((1,))
         if values.shape != (dimension,):
             raise ValueError(
-                f"Holomorphic polynomial frame expected shape ({dimension},); "
-                f"got {values.shape}."
+                f"Holomorphic polynomial frame expected shape ({dimension},); got {values.shape}."
             )
         return values
 
@@ -161,7 +160,7 @@ class HolomorphicPolynomialFrame(StrictModule, NonTrainableState):
         multi_index: Sequence[int],
         /,
     ) -> Array:
-        derivative = tuple(int(item) for item in multi_index)
+        derivative = tuple(multi_index)
         dimension = self.index_set.complex_dimension
         if len(derivative) != dimension or any(item < 0 for item in derivative):
             raise ValueError("Polynomial frame derivative multi-index is invalid.")

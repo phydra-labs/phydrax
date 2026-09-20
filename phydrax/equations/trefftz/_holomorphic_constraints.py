@@ -70,8 +70,6 @@ def _component_weight(component: HolomorphicConstraintComponent, /) -> complex:
     raise ValueError("Holomorphic constraint component must be real or imaginary.")
 
 
-
-
 class HolomorphicJetFunctionalTerm(StrictModule, NonTrainableState):
     """One weighted real part of one complex output derivative."""
 
@@ -88,7 +86,7 @@ class HolomorphicJetFunctionalTerm(StrictModule, NonTrainableState):
         /,
     ):
         output = int(output_index)
-        derivative = tuple(int(item) for item in derivative_multi_index)
+        derivative = tuple(derivative_multi_index)
         weight_raw = np.asarray(weight)
         if output < 0 or not derivative or any(item < 0 for item in derivative):
             raise ValueError("Holomorphic functional term indices are invalid.")
@@ -144,9 +142,7 @@ class HolomorphicPointFunctional(StrictModule, NonTrainableState):
             isinstance(term, HolomorphicJetFunctionalTerm) for term in terms_
         ):
             raise TypeError("terms must contain HolomorphicJetFunctionalTerm values.")
-        if any(
-            len(term.derivative_multi_index) != int(coordinate_.size) for term in terms_
-        ):
+        if any(len(term.derivative_multi_index) != coordinate_.size for term in terms_):
             raise ValueError(
                 "Functional derivative dimensions must match the coordinate."
             )
@@ -185,7 +181,7 @@ class HolomorphicPointFunctional(StrictModule, NonTrainableState):
             (
                 HolomorphicJetFunctionalTerm(
                     output_index,
-                    (0,) * int(coordinates.size),
+                    (0,) * coordinates.size,
                     scale * _component_weight(component),
                 ),
             ),
@@ -203,7 +199,7 @@ class HolomorphicPointFunctional(StrictModule, NonTrainableState):
         weight: float = 1.0,
     ) -> HolomorphicPointFunctional:
         coordinates = _coordinate_vector(coordinate)
-        dimension = int(coordinates.size)
+        dimension = coordinates.size
         normal_raw = np.asarray(normal)
         if normal_raw.shape != (2 * dimension,) or np.iscomplexobj(normal_raw):
             raise TypeError(f"Holomorphic normal must be real shape ({2 * dimension},).")
@@ -271,7 +267,7 @@ class HolomorphicPointFunctional(StrictModule, NonTrainableState):
         if not isinstance(frame, HolomorphicLinearFrame):
             raise TypeError("frame must implement HolomorphicLinearFrame.")
         certificate = frame.linear_frame_certificate()
-        if int(self.coordinate.size) != certificate.complex_input_size:
+        if self.coordinate.size != certificate.complex_input_size:
             raise ValueError("Functional and holomorphic frame input dimensions differ.")
         row = jnp.zeros((certificate.real_coefficient_count,), dtype=jnp.float64)
         for term in self.terms:
@@ -294,13 +290,13 @@ class HolomorphicPointFunctional(StrictModule, NonTrainableState):
         return row
 
     def evaluate_provider(self, provider: Any, /) -> Array:
-        dimension = int(self.coordinate.size)
+        dimension = self.coordinate.size
         if dimension == 1:
             if not isinstance(provider, HolomorphicPotentialProvider):
                 raise TypeError("Scalar functional provider lacks holomorphic jets.")
             maximum = max(sum(term.derivative_multi_index) for term in self.terms)
             jet = provider.jet(self.coordinate[0], maximum)
-            result = jnp.asarray(0.0, dtype=jnp.result_type(jet.value.real, float))
+            result = jnp.asarray(0.0, dtype=jnp.result_type(jet.value.real, jnp.float64))
             for term in self.terms:
                 derivative = jet.derivative(term.derivative_multi_index[0])
                 result = result + jnp.real(term.weight * derivative[term.output_index])
@@ -323,7 +319,7 @@ class HolomorphicPointFunctional(StrictModule, NonTrainableState):
             require_downward_closed=True,
         )
         jet = provider.multi_jet(self.coordinate, index_set)
-        result = jnp.asarray(0.0, dtype=jnp.result_type(jet.value.real, float))
+        result = jnp.asarray(0.0, dtype=jnp.result_type(jet.value.real, jnp.float64))
         for term in self.terms:
             derivative = jet.derivative(term.derivative_multi_index)
             result = result + jnp.real(term.weight * derivative[term.output_index])
@@ -517,7 +513,9 @@ class HolomorphicConstraintOperatorPlan(StrictModule, NonTrainableState):
         right_residual_norm = jnp.linalg.norm(right_residual)
         nullspace_residual_norm = jnp.linalg.norm(nullspace_residual)
         if not bool(right_residual_norm <= right_tolerance):
-            raise RuntimeError("Shared constraint right inverse failed its residual check.")
+            raise RuntimeError(
+                "Shared constraint right inverse failed its residual check."
+            )
         if not bool(nullspace_residual_norm <= nullspace_tolerance):
             raise RuntimeError("Shared constraint nullspace failed its residual check.")
         evidence = HolomorphicConstraintOperatorEvidence(
@@ -539,7 +537,7 @@ class HolomorphicConstraintOperatorPlan(StrictModule, NonTrainableState):
 
 
 class PreparedHolomorphicConstraintOperator(StrictModule, NonTrainableState):
-    """Compatibility facade over the shared prepared constraint operator."""
+    """Domain evidence and coordinate views over one prepared constraint operator."""
 
     plan: HolomorphicConstraintOperatorPlan
     prepared_operator: PreparedConstraintOperator
@@ -595,7 +593,7 @@ class PreparedHolomorphicConstraintOperator(StrictModule, NonTrainableState):
 
     @property
     def target_count(self) -> int:
-        return int(self.constraint_matrix.shape[0])
+        return self.constraint_matrix.shape[0]
 
     def minimum_norm_coefficients(self, targets: ArrayLike, /) -> Array:
         values = jnp.asarray(targets)
@@ -606,7 +604,9 @@ class PreparedHolomorphicConstraintOperator(StrictModule, NonTrainableState):
         flattened = values.reshape((-1, self.target_count))
         compatible = jax.vmap(self.prepared_operator.is_compatible)(flattened)
         if not bool(np.all(np.asarray(compatible))):
-            raise ValueError("Constraint targets are inconsistent with the operator range.")
+            raise ValueError(
+                "Constraint targets are inconsistent with the operator range."
+            )
         lifted = jax.vmap(
             lambda value: self.prepared_operator.minimum_norm_lift(
                 value, check_compatibility=False

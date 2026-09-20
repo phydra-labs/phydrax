@@ -187,7 +187,7 @@ def run_example(*, steps=40, artifact_directory=None):
         area_weights=area,
         layer_weights=jnp.ones(1),
         time_weights=jnp.ones(1),
-        mask=jnp.ones_like(truth, dtype=bool),
+        mask=jnp.ones_like(truth, dtype="bool"),
     )
 
     temperature = GeophysicalQuantity("temperature", "temperature", phx.units.KELVIN)

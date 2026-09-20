@@ -92,7 +92,7 @@ def test_supervised_likelihood_rejects_invalid_case_masks_and_weights():
             domain.component(),
             jnp.zeros((3,)),
             phx.uq.GaussianLikelihood(1.0),
-            sample_mask=jnp.zeros((3,), dtype=bool),
+            sample_mask=jnp.zeros((3,), dtype="bool"),
             **common,
         )
     with pytest.raises(ValueError, match="strictly positive"):

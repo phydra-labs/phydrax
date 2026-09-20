@@ -144,7 +144,7 @@ def test_endogenous_lif_delay_keeps_emission_weight_during_inflight_learning():
     second = ep.step_neural_network(runtime, first.state, inputs)
     assert bool(second.evidence.successful)
     assert int(second.evidence.delivered_messages) == 1
-    assert int(second.state.queue.size) == 0
+    assert second.state.queue.size == 0
     # Emission at 0.5 ms arrives at 1.2 ms; later potentiation cannot rewrite it.
     np.testing.assert_allclose(
         second.state.relations.activation, [0.4 * np.exp(-0.8 / 5.0)], atol=1.0e-8
@@ -226,7 +226,7 @@ def test_voltage_recording_overflow_rolls_back_already_pending_transport():
     )
     first = ep.step_neural_network(runtime, ep.initialize_neural_network(runtime))
     assert bool(first.evidence.successful)
-    assert int(first.state.queue.size) == 1
+    assert first.state.queue.size == 1
     rejected = ep.step_neural_network(runtime, first.state)
     assert int(rejected.evidence.status) & int(ep.NeuralStatus.RECORDING_CAPACITY)
     assert not bool(rejected.evidence.successful)
@@ -298,7 +298,7 @@ def test_relation_deletion_and_slot_reuse_cancel_old_arrival_and_rebuild_source_
     ).prepare()
     emitted = ep.step_neural_network(runtime, ep.initialize_neural_network(runtime))
     assert bool(emitted.evidence.successful)
-    assert int(emitted.state.queue.size) == 1
+    assert emitted.state.queue.size == 1
     assert float(emitted.state.learning.pre_trace[0]) > 0.0
     deletion = ep.SynapseRelationEvent(
         int(ep.SynapseRelationEventKind.DEACTIVATE),
@@ -316,7 +316,7 @@ def test_relation_deletion_and_slot_reuse_cancel_old_arrival_and_rebuild_source_
     )
     deleted = ep.apply_neural_relation_event(runtime, emitted.state, deletion)
     assert bool(deleted.evidence.successful)
-    assert int(deleted.state.queue.size) == 0
+    assert deleted.state.queue.size == 0
     np.testing.assert_array_equal(deleted.state.learning.pre_trace, [0.0])
     np.testing.assert_array_equal(deleted.state.learning.post_trace, [0.0])
     activation = ep.SynapseRelationEvent(
@@ -476,7 +476,7 @@ def test_failed_ion_coupling_rolls_back_channel_draw_keys_and_membrane_state():
                 "cell",
                 ions,
                 outward_leak_current,
-                coupling_id="outward-leak-current-v1",
+                coupling_id="outward-leak-current",
             ),
         ),
         channel_couplings=(ep.NeuralChannelCoupling("cell", channels, 1, 0.001, -65.0),),

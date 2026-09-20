@@ -48,7 +48,7 @@ def _parameter_tree_metadata(
         array = jnp.asarray(leaf)
         leaves.append(array)
         paths.append(path_name)
-        shapes.append(tuple(int(size) for size in array.shape))
+        shapes.append(tuple(array.shape))
         dtypes.append(str(array.dtype))
     return (
         tuple(leaves),
@@ -131,9 +131,9 @@ class _PyTreeVectorizer(StrictModule):
                     "Differential evolution supports only real floating-point leaves."
                 )
             paths.append(jax.tree_util.keystr(path) or "<root>")
-            shape = tuple(int(size) for size in array.shape)
+            shape = tuple(array.shape)
             shapes.append(shape)
-            sizes.append(int(array.size))
+            sizes.append(array.size)
             dtype_name = str(array.dtype)
             dtypes.append(dtype_name)
             numpy_dtypes.append(np.dtype(dtype_name))
@@ -156,7 +156,7 @@ class _PyTreeVectorizer(StrictModule):
         vectors = []
         for path, leaf, shape in zip(self.paths, leaves, self.shapes, strict=True):
             array = jnp.asarray(leaf)
-            if tuple(int(size) for size in array.shape) != shape:
+            if tuple(array.shape) != shape:
                 raise ValueError(
                     f"{name} leaf {path} must have shape {shape}, got {array.shape}."
                 )
@@ -178,8 +178,7 @@ class _PyTreeVectorizer(StrictModule):
                 array = np.full(shape, float(array), dtype=np.dtype(self.dtype_name))
             elif array.shape != shape:
                 raise ValueError(
-                    f"{side} bound for leaf {path} must be scalar or have shape "
-                    f"{shape}, got {array.shape}."
+                    f"{side} bound for leaf {path} must be scalar or have shape {shape}, got {array.shape}."
                 )
             if not np.issubdtype(array.dtype, np.floating):
                 array = array.astype(np.dtype(self.dtype_name))
@@ -192,7 +191,7 @@ class _PyTreeVectorizer(StrictModule):
 
     def unravel(self, vector: Array, /) -> PyTree[Array]:
         array = jnp.asarray(vector, dtype=np.dtype(self.dtype_name))
-        if array.ndim != 1 or int(array.shape[0]) != self.dimension:
+        if array.ndim != 1 or array.shape[0] != self.dimension:
             raise ValueError(
                 f"Search vector must have shape ({self.dimension},), got {array.shape}."
             )
@@ -214,9 +213,8 @@ class _PyTreeVectorizer(StrictModule):
 
     def unravel_population(self, population: Array, /) -> PyTree[Array]:
         vectors = jnp.asarray(population, dtype=np.dtype(self.dtype_name))
-        if vectors.ndim != 2 or int(vectors.shape[1]) != self.dimension:
+        if vectors.ndim != 2 or vectors.shape[1] != self.dimension:
             raise ValueError(
-                "Population vectors must have shape "
-                f"(population_size, {self.dimension}), got {vectors.shape}."
+                f"Population vectors must have shape (population_size, {self.dimension}), got {vectors.shape}."
             )
         return jax.vmap(self.unravel)(vectors)

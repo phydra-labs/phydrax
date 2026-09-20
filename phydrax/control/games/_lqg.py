@@ -137,7 +137,7 @@ def finite_horizon_lqg_feedback_nash(
         jnp.asarray(dynamics_matrices),
         factors,
         driving_covariances,
-        float,
+        jnp.float64,
     )
     (
         resolved_initial_mean,

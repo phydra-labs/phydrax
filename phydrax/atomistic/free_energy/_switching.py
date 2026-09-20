@@ -37,7 +37,9 @@ class AlchemicalSwitchingLineage(StrictModule, NonTrainableState):
     dependence_ids: Array
     lineage_id: str = eqx.field(static=True)
 
-    def __init__(self, origin_ids, chain_ids, draw_indices, repeat_ids, dependence_ids, /):
+    def __init__(
+        self, origin_ids, chain_ids, draw_indices, repeat_ids, dependence_ids, /
+    ):
         arrays = tuple(
             np.asarray(value)
             for value in (
@@ -83,7 +85,7 @@ class AlchemicalSwitchingLineage(StrictModule, NonTrainableState):
 
     @property
     def sample_count(self) -> int:
-        return int(self.origin_ids.shape[0])
+        return self.origin_ids.shape[0]
 
 
 class AlchemicalSwitchingRecord(StrictModule, NonTrainableState):
@@ -152,9 +154,7 @@ class AlchemicalSwitchingPlan(StrictModule, NonTrainableState):
             raise TypeError("thermodynamic must be PreparedThermodynamicStateTable.")
         from ..sampling._multistate import AtomisticCanonicalSamplingQualification
 
-        if not isinstance(
-            qualification, AtomisticCanonicalSamplingQualification
-        ):
+        if not isinstance(qualification, AtomisticCanonicalSamplingQualification):
             raise TypeError(
                 "qualification must be AtomisticCanonicalSamplingQualification."
             )
@@ -194,7 +194,7 @@ class AlchemicalSwitchingPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "protocol_time must equal integration_steps times the dynamics step size."
             )
-        beta = np.asarray(thermodynamic.beta, dtype=float)[[source, destination]]
+        beta = np.asarray(thermodynamic.beta, dtype=np.float64)[[source, destination]]
         ensemble = np.asarray(thermodynamic.ensemble_code, dtype=np.int32)[
             [source, destination]
         ]
@@ -248,17 +248,14 @@ class AlchemicalSwitchingPlan(StrictModule, NonTrainableState):
     def _protocol_table(self, reverse: bool, /) -> PreparedThermodynamicStateTable:
         start = self.destination_state_index if reverse else self.source_state_index
         stop = self.source_state_index if reverse else self.destination_state_index
-        state_controls = np.asarray(self.thermodynamic.controls, dtype=float)
-        coordinate = np.linspace(
-            float(start), float(stop), self.integration_steps + 1
-        )
+        state_controls = np.asarray(self.thermodynamic.controls, dtype=np.float64)
+        coordinate = np.linspace(float(start), float(stop), self.integration_steps + 1)
         lower = np.floor(coordinate).astype(np.int32)
         upper = np.ceil(coordinate).astype(np.int32)
-        fraction = (coordinate - lower.astype(float))[:, None]
-        controls = (
-            (1.0 - fraction) * state_controls[lower]
-            + fraction * state_controls[upper]
-        )
+        fraction = (coordinate - lower.astype("float64"))[:, None]
+        controls = (1.0 - fraction) * state_controls[lower] + fraction * state_controls[
+            upper
+        ]
         temperature = float(np.asarray(self.thermodynamic.temperature)[start])
         phase_space = AtomisticPhaseSpaceMeasurePlan(self.dynamics.system)
         direction = "reverse" if reverse else "forward"
@@ -321,16 +318,13 @@ class AlchemicalSwitchingPlan(StrictModule, NonTrainableState):
             or not isinstance(lineage, AlchemicalSwitchingLineage)
             or lineage.sample_count != self.sample_count
             or any(
-                not isinstance(state, AtomisticDynamicsState)
-                for state in initial_states
+                not isinstance(state, AtomisticDynamicsState) for state in initial_states
             )
         ):
             raise ValueError(
                 "Switching states and authenticated lineage must match sample_count."
             )
-        if not np.all(
-            np.asarray(lineage.origin_ids, dtype=np.int64) == expected_index
-        ):
+        if not np.all(np.asarray(lineage.origin_ids, dtype=np.int64) == expected_index):
             raise ValueError(
                 "Switching lineage origins must identify the expected endpoint."
             )
@@ -419,8 +413,7 @@ class AlchemicalSwitchingPlan(StrictModule, NonTrainableState):
             "sampling_bias_bound": self.qualification.sampling_bias_bound,
         }
         successful = bool(
-            np.all(np.asarray(forward_coverage))
-            and np.all(np.asarray(reverse_coverage))
+            np.all(np.asarray(forward_coverage)) and np.all(np.asarray(reverse_coverage))
         )
         return AlchemicalSwitchingRecord(
             forward_work=forward,
@@ -433,9 +426,7 @@ class AlchemicalSwitchingPlan(StrictModule, NonTrainableState):
             reverse_final_states=reverse_states,
             source_state_id=self.source_state_id,
             destination_state_id=self.destination_state_id,
-            source_potential_id=self.thermodynamic.potential_ids[
-                self.source_state_index
-            ],
+            source_potential_id=self.thermodynamic.potential_ids[self.source_state_index],
             destination_potential_id=self.thermodynamic.potential_ids[
                 self.destination_state_index
             ],

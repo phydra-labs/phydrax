@@ -5,7 +5,7 @@
 """Local ingredients for a matched learned-thermal collision experiment.
 
 This module adapts the two-population thermal construction described by NeurDE
-v3 to PHYDRAX's weight-absorbed, native-energy convention: ``sum(g) = E``.
+canonical to PHYDRAX's weight-absorbed, native-energy convention: ``sum(g) = E``.
 It contains no spatial transport, shock ownership, TVD regularization, or
 full-discretization theorem. A later experimental collide-stream owner must
 consume the results and statuses explicitly.
@@ -63,7 +63,7 @@ def _require_standard_d2q9(
     }
     velocities = np.asarray(quadrature.velocities)
     rounded = np.rint(velocities)
-    actual = {tuple(int(value) for value in row) for row in rounded}
+    actual = {tuple(row) for row in rounded}
     tolerance = quadrature.certification.tolerance
     if (
         quadrature.dimension != 2
@@ -125,7 +125,7 @@ class ExtendedParticleEquilibriumResult(StrictModule):
 class PressureExtendedParticleEquilibriumPlan(StrictModule, NonTrainableState):
     """Prepare the pressure-dependent extended D2Q9 particle equilibrium.
 
-    This is the weight-absorbed factorized equilibrium from NeurDE v3 Eq. (97):
+    This is the weight-absorbed factorized equilibrium from NeurDE canonical Eq. (97):
     in each direction ``Psi_0 = 1 - (T + u²)`` and
     ``Psi_± = (T + u² ± u) / 2``, with ``T = p/rho``. Two native
     three-by-three solves remove floating-point residuals while imposing
@@ -761,7 +761,7 @@ class ThermalCrossRelaxationResult(StrictModule):
 class MatchedThermalCrossRelaxationPlan(StrictModule, NonTrainableState):
     """Prepare native ``g_star`` and the matched independently-Pr collision.
 
-    NeurDE v3 writes ``sum(g_paper)=2 E`` and uses ``2/T`` in its stress
+    NeurDE canonical writes ``sum(g_paper)=2 E`` and uses ``2/T`` in its stress
     correction. Here ``g = g_paper/2``, so the native coefficient is ``1/T``.
     The D2Q9 temperature weights are ``W_0=1-T`` and ``W_±=T/2`` in each
     direction. A residual sum is removed

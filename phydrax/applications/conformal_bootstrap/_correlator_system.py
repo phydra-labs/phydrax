@@ -52,7 +52,7 @@ class ExternalPrimaryOperator(StrictModule):
     ):
         label_ = _identifier(label, "primary label")
         dimension = float(scaling_dimension)
-        weight = tuple(int(value) for value in lorentz_highest_weight)
+        weight = tuple(lorentz_highest_weight)
         representation = _identifier(global_representation, "global representation")
         if not math.isfinite(dimension) or dimension < 0.0:
             raise ValueError(
@@ -121,7 +121,7 @@ class CorrelatorSpecification(StrictModule):
         parities = (
             (1,) * len(structures)
             if structure_parities is None
-            else tuple(int(value) for value in structure_parities)
+            else tuple(structure_parities)
         )
         if len(parities) != len(structures) or any(
             value not in (-1, 1) for value in parities

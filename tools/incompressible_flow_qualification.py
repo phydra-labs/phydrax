@@ -404,7 +404,7 @@ def _periodic_compile(space, viscosity, *, forcing=None, forcing_id=None):
 
 def _etdrk_solve(dynamics, initial, step, steps):
     method = phx.solver.ETDRKMethod(4)
-    times = jnp.arange(steps + 1, dtype=float) * step
+    times = jnp.arange(steps + 1, dtype="float64") * step
     result = phx.solver.solve_etdrk(method, dynamics.semilinear_drift, initial, times)
     return method, result
 
@@ -463,13 +463,13 @@ def periodic_spectral_qualification(
         temporal_method,
         forced.semilinear_drift,
         forced_initial,
-        jnp.arange(half + 1, dtype=float) * dt,
+        jnp.arange(half + 1, dtype="float64") * dt,
     )
     second = phx.solver.solve_etdrk(
         temporal_method,
         forced.semilinear_drift,
         first.states[-1],
-        (jnp.arange(half + 1, dtype=float) + half) * dt,
+        (jnp.arange(half + 1, dtype="float64") + half) * dt,
     )
     restart_error = float(jnp.max(jnp.abs(second.states[-1] - coarse.states[-1])))
     forced_diagnostics = forced.diagnostics(final_time, fine.states[-1])
@@ -646,7 +646,7 @@ def spectral_channel_qualification(
     minimum_temporal_order: float = 1.8,
     external_reference: Mapping[str, object] | None = None,
 ) -> dict[str, object]:
-    shape_ = tuple(int(value) for value in shape)
+    shape_ = tuple(shape)
     nu, dt, step_count = float(viscosity), float(step_size), int(steps)
     minimum_order = float(minimum_temporal_order)
     if (
@@ -716,13 +716,13 @@ def spectral_channel_qualification(
     coarse = phx.solver.solve_channel_sbdf2(
         dynamics,
         initial,
-        jnp.arange(step_count + 1, dtype=float) * dt,
+        jnp.arange(step_count + 1, dtype="float64") * dt,
         method=temporal_method,
     )
     fine = phx.solver.solve_channel_sbdf2(
         dynamics,
         initial,
-        jnp.arange(2 * step_count + 1, dtype=float) * (0.5 * dt),
+        jnp.arange(2 * step_count + 1, dtype="float64") * (0.5 * dt),
         method=temporal_method,
     )
     exact = (1.0 + 0.1 * jnp.sin(step_count * dt)) * base

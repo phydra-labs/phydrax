@@ -139,7 +139,7 @@ class GRObserverScreenPlan(StrictModule):
         if jnp.iscomplexobj(coordinates):
             raise TypeError("Observer coordinates must be real.")
         if not jnp.issubdtype(coordinates.dtype, jnp.floating):
-            coordinates = coordinates.astype(float)
+            coordinates = coordinates.astype("float64")
         velocity = jnp.asarray(observer_velocity, dtype=coordinates.dtype)
         sight = jnp.asarray(line_of_sight, dtype=coordinates.dtype)
         up = jnp.asarray(screen_up, dtype=coordinates.dtype)
@@ -149,9 +149,9 @@ class GRObserverScreenPlan(StrictModule):
         if pixels.ndim != 2 or pixels.shape[1] != 2 or pixels.shape[0] < 1:
             raise ValueError("pixel_coordinates must have shape (num_rays, 2).")
         mask = (
-            jnp.ones((pixels.shape[0],), dtype=bool)
+            jnp.ones((pixels.shape[0],), dtype=jnp.bool_)
             if pixel_mask is None
-            else jnp.asarray(pixel_mask, dtype=bool)
+            else jnp.asarray(pixel_mask, dtype=jnp.bool_)
         )
         if mask.shape != (pixels.shape[0],):
             raise ValueError("pixel_mask must have shape (num_rays,).")
@@ -271,7 +271,7 @@ class GRObserverScreenResult(StrictModule, NonTrainableState):
         coordinates = jnp.asarray(ray_coordinates, dtype=observer.dtype)
         tangents = jnp.asarray(ray_tangents, dtype=observer.dtype)
         basis = jnp.asarray(screen_basis, dtype=observer.dtype)
-        valid_ = jnp.asarray(valid, dtype=bool)
+        valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         tetrad_error = jnp.asarray(tetrad_residual, dtype=observer.dtype)
         null_error = jnp.asarray(null_residual, dtype=observer.dtype)
         count = pixels.shape[0]

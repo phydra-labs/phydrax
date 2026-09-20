@@ -128,7 +128,7 @@ _PROFILE_METADATA: dict[str, dict[str, object]] = {
                 "qnm": {
                     "background": "Schwarzschild-M1",
                     "mode": "spin-minus2-l2-m2-n0-Regge-Wheeler",
-                    "reference": "schwarzschild-leaver-Momega-reference-v1",
+                    "reference": "schwarzschild-leaver-Momega-reference",
                     "reference_Momega": [0.373671684418042, -0.088962315688936],
                     "node_count": 65,
                     "outer_radius": 30.0,
@@ -163,7 +163,7 @@ _PROFILE_METADATA: dict[str, dict[str, object]] = {
                     "species": "massless-scalar",
                     "mode": "l0-m0",
                     "frequency_nodes": [0.015, 0.02, 0.025],
-                    "greybody_source": "computed-qualified-radial-solves",
+                    "graybody_source": "computed-qualified-radial-solves",
                     "tail_evidence_qualified": False,
                 },
             },
@@ -171,13 +171,13 @@ _PROFILE_METADATA: dict[str, dict[str, object]] = {
             "real-frequency flux ledgers, and explicitly evidenced bounded Hawking quadrature",
         },
         "references": [
-            "Maintained Schwarzschild Leaver Mω reference v1 for the spin -2, l=2, n=0 fundamental.",
+            "Maintained Schwarzschild Leaver Mω reference for the spin -2, l=2, n=0 fundamental.",
             "Strict two-sided QNM residuals plus computed Schwarzschild scattering "
             "decomposition, refinement, asymptotic, low-frequency, Wronskian, and "
             "flux evidence.",
         ],
         "limitations": [
-            "No external greybody reference artifact is used; greybody factors "
+            "No external graybody reference artifact is used; graybody factors "
             "come from the bounded native radial solve.",
             "The QNM evidence qualifies only the listed Schwarzschild fundamental.",
             "The Hawking spectrum remains unqualified because omitted-tail evidence is deliberately absent.",
@@ -344,7 +344,7 @@ _PROFILE_METADATA: dict[str, dict[str, object]] = {
                 "self_force": "first-order-mode-sum-ell-max14",
                 "inverse": "subextremal-Kerr-M2-a0.4-direction-[0.25,-0.1]",
                 "plasma": "two-temperature-[100,400]-dt2",
-                "radiation": "single-cell-GR-grey-M1",
+                "radiation": "single-cell-GR-gray-M1",
                 "electromagnetism": "single-cell-Ohm-and-force-free",
                 "characteristic": "flat-nine-time-three-radius-l2m2",
                 "bms": "octahedral-l<=1-rest-mass2",
@@ -462,7 +462,7 @@ def _runtime_manifest(valid_at: int, /) -> dict[str, object]:
 
 
 def _all_true(value: object) -> bool:
-    return bool(np.all(np.asarray(value, dtype=bool)))
+    return bool(np.all(np.asarray(value, dtype="bool")))
 
 
 def _maximum_absolute(value: object) -> float:
@@ -526,8 +526,8 @@ def _flat_adm_geometry(
         identity,
         jnp.ones(shape, dtype=dtype),
         jnp.zeros(shape + (3, 3), dtype=dtype),
-        jnp.ones(shape, dtype=bool),
-        jnp.ones(shape, dtype=bool),
+        jnp.ones(shape, dtype="bool"),
+        jnp.ones(shape, dtype="bool"),
         chart_id="cartesian",
         convention_id=convention_id,
         scale_id=scale_id,
@@ -867,7 +867,7 @@ def qualify_grrt_interferometry() -> dict[str, object]:
     screen = GRImageScreen(
         position.reshape((1, 1, 2)),
         solid_angle,
-        np.ones((1, 1), dtype=bool),
+        np.ones((1, 1), dtype="bool"),
         angular_unit=RADIAN,
         solid_angle_unit=steradian,
     )
@@ -877,8 +877,8 @@ def qualify_grrt_interferometry() -> dict[str, object]:
         ObservationDataProvenance.native("qualification:point-source"),
         frequency=frequency,
         redshift=np.ones((1, 1)),
-        redshift_valid=np.ones((1, 1), dtype=bool),
-        lensing_masks=np.ones((1, 1, 1), dtype=bool),
+        redshift_valid=np.ones((1, 1), dtype="bool"),
+        lensing_masks=np.ones((1, 1, 1), dtype="bool"),
         lensing_labels=("direct",),
         intensity_unit=intensity,
         flux_density_unit=flux_density,
@@ -900,7 +900,7 @@ def qualify_grrt_interferometry() -> dict[str, object]:
         phase_cycles=(("A", "B", "C"),),
         amplitude_cycles=(("A", "B", "C", "D"),),
     )
-    values = np.zeros((4, 5), dtype=complex)
+    values = np.zeros((4, 5), dtype="complex128")
     values[0] = np.asarray(
         (
             2.0 * np.exp(0.2j),
@@ -1145,12 +1145,12 @@ def qualify_perturbations_scattering_hawking() -> dict[str, object]:
         for frequency in scattering_frequencies
     )
     central_scattering = scattering_results[1]
-    greybody_factors = jnp.stack(
-        tuple(result.greybody_factor for result in scattering_results)
+    graybody_factors = jnp.stack(
+        tuple(result.graybody_factor for result in scattering_results)
     )
     neighboring_frequency_slope = (
-        central_scattering.evidence.neighboring_greybody_factors[2]
-        - central_scattering.evidence.neighboring_greybody_factors[1]
+        central_scattering.evidence.neighboring_graybody_factors[2]
+        - central_scattering.evidence.neighboring_graybody_factors[1]
     ) / (
         central_scattering.evidence.neighboring_frequencies[2]
         - central_scattering.evidence.neighboring_frequencies[1]
@@ -1168,7 +1168,7 @@ def qualify_perturbations_scattering_hawking() -> dict[str, object]:
         float(result.evidence.decomposition_residual) for result in scattering_results
     )
     refinement_residual = max(
-        float(result.evidence.greybody_refinement_error) for result in scattering_results
+        float(result.evidence.graybody_refinement_error) for result in scattering_results
     )
     slope_refinement_residual = max(
         float(result.evidence.dimensionless_slope_refinement_error)
@@ -1222,7 +1222,7 @@ def qualify_perturbations_scattering_hawking() -> dict[str, object]:
     )
     scattering_data = HawkingScatteringData(
         hawking_plan,
-        greybody_factors[None, :],
+        graybody_factors[None, :],
         jnp.asarray((central_scattering.corotation_slope,)),
         finite=scattering_finite,
         converged=scattering_converged,
@@ -1386,14 +1386,14 @@ def qualify_perturbations_scattering_hawking() -> dict[str, object]:
             "scattering_flux_max_abs": flux_residual,
             "scattering_wronskian_max_abs": wronskian_residual,
             "scattering_decomposition_max_abs": decomposition_residual,
-            "scattering_greybody_refinement_max_abs": refinement_residual,
+            "scattering_graybody_refinement_max_abs": refinement_residual,
             "scattering_low_frequency_relative_max": low_frequency_relative_error,
             "scattering_neighbor_slope_abs": slope_residual,
             "scattering_dimensionless_slope_refinement_max_abs": (
                 slope_refinement_residual
             ),
-            "scattering_greybody_minimum": float(jnp.min(greybody_factors)),
-            "scattering_greybody_maximum": float(jnp.max(greybody_factors)),
+            "scattering_graybody_minimum": float(jnp.min(graybody_factors)),
+            "scattering_graybody_maximum": float(jnp.max(graybody_factors)),
             "hawking_number_flux": float(spectrum.number_flux),
             "hawking_energy_flux": float(spectrum.energy_flux),
             "hawking_tail_number_upper": float(spectrum.tail_remainder_upper[0]),
@@ -1834,8 +1834,8 @@ def qualify_coupling() -> dict[str, object]:
             identity,
             jnp.ones((2,), dtype=dtype),
             jnp.asarray(z4c, dtype=dtype) * identity,
-            jnp.ones((2,), dtype=bool),
-            jnp.ones((2,), dtype=bool),
+            jnp.ones((2,), dtype="bool"),
+            jnp.ones((2,), dtype="bool"),
             chart_id="qualification:cartesian",
             convention_id="mostly-plus",
             scale_id="qualification:geometric",
@@ -1852,7 +1852,7 @@ def qualify_coupling() -> dict[str, object]:
             jnp.zeros((2, 3), dtype=dtype),
             jnp.zeros((2, 3, 3), dtype=dtype),
             geometry.active,
-            jnp.ones((2,), dtype=bool),
+            jnp.ones((2,), dtype="bool"),
             jnp.zeros((2,), dtype=dtype),
             jnp.zeros((2,), dtype=dtype),
             geometry_lineage_id=geometry.geometry_lineage_id,
@@ -2128,6 +2128,8 @@ def qualify_scaling_restart() -> dict[str, object]:
 
 
 def qualify_production_interchange() -> dict[str, object]:
+    from phydrax.interchange._resource import ResourceLimits
+
     from phydrax._execution_plan import (
         ExecutionCandidate,
         ExecutionRequirements,
@@ -2167,7 +2169,6 @@ def qualify_production_interchange() -> dict[str, object]:
         BlackHoleArtifactUsePolicy,
         map_field_artifact,
     )
-    from phydrax.interchange._resource import ResourceLimits
     from phydrax.lifecycle._resolved_run import ResolvedRunSpec
     from phydrax.metrix._spacetime_conventions import RelativityConvention
     from phydrax.qualification._registry import SupportTuple
@@ -2483,7 +2484,7 @@ def qualify_waveforms_remnants() -> dict[str, object]:
         ],
         dtype=jnp.int32,
     )
-    active = jnp.ones((2, 2), dtype=bool)
+    active = jnp.ones((2, 2), dtype="bool")
     real_field = gw.PolynomialEmpiricalField(
         reconstruction,
         coefficients,
@@ -2495,7 +2496,7 @@ def qualify_waveforms_remnants() -> dict[str, object]:
         reconstruction,
         jnp.zeros((2, 1), dtype=jnp.float64),
         jnp.zeros((2, 1, 3), dtype=jnp.int32),
-        jnp.ones((2, 1), dtype=bool),
+        jnp.ones((2, 1), dtype="bool"),
         field_id="qualification:imaginary-l2m2",
     )
     artifact = gw.AlignedNRSurrogateArtifact(
@@ -2686,10 +2687,10 @@ def qualify_advanced() -> dict[str, object]:
         SphericalSpectralSurface,
     )
     from phydrax.equations._force_free import GRForceFreeSystem
-    from phydrax.equations._relativistic_radiation import GRGreyM1RadiationSystem
+    from phydrax.equations._relativistic_radiation import GRGrayM1RadiationSystem
     from phydrax.equations._relativistic_radiation_interaction import (
-        ConstantGRGreyOpacityPlan,
-        GRGreyRadiationInteractionPlan,
+        ConstantGRGrayOpacityPlan,
+        GRGrayRadiationInteractionPlan,
     )
     from phydrax.equations._resistive_grmhd import ResistiveGRMHDOhmicClosure
     from phydrax.metrix._adm_exchange import ADMGridGeometry
@@ -2794,7 +2795,7 @@ def qualify_advanced() -> dict[str, object]:
         realization_id="qualification:kerr-analytic",
         branch_id="subextremal",
         adapter_id="qualification:kerr-geometry-sensitivity",
-        evaluator_semantic_id="qualification:kerr-geometry-observable:v1",
+        evaluator_semantic_id="qualification:kerr-geometry-observable",
         evaluator_numeric_id="qualification:kerr-geometry-implementation:r1",
     )
     sensitivity = inverse.sensitivity(
@@ -2826,10 +2827,10 @@ def qualify_advanced() -> dict[str, object]:
         geometry_lineage_id="qualification:flat-single-cell",
         dtype=jnp.float32,
     )
-    radiation_system = GRGreyM1RadiationSystem(plasma_scale, convention)
-    radiation_interaction = GRGreyRadiationInteractionPlan(
+    radiation_system = GRGrayM1RadiationSystem(plasma_scale, convention)
+    radiation_interaction = GRGrayRadiationInteractionPlan(
         radiation_system,
-        ConstantGRGreyOpacityPlan(
+        ConstantGRGrayOpacityPlan(
             planck_absorption=2.0,
             scattering=3.0,
         ),
@@ -2872,8 +2873,8 @@ def qualify_advanced() -> dict[str, object]:
         inverse_radius,
         np.asarray((2,)),
         np.asarray((2,)),
-        np.zeros((sample_count, 1), dtype=complex),
-        np.zeros((sample_count, 3, 1), dtype=complex),
+        np.zeros((sample_count, 1), dtype="complex128"),
+        np.zeros((sample_count, 3, 1), dtype="complex128"),
         history_name="qualification:minkowski-worldtube",
     )
     characteristic = characteristic_plan.evolve(flat_history)
@@ -2899,7 +2900,7 @@ def qualify_advanced() -> dict[str, object]:
     scri = BMSScriData(
         (0.0, 1.0),
         np.full((2, quadrature.direction_capacity), 2.0),
-        np.zeros((2, quadrature.direction_capacity), dtype=complex),
+        np.zeros((2, quadrature.direction_capacity), dtype="complex128"),
         np.zeros((2, quadrature.direction_capacity, 4, 4)),
         data_name="qualification:rest-bondi-data",
     )
@@ -2918,8 +2919,8 @@ def qualify_advanced() -> dict[str, object]:
         identity,
         np.ones(history_shape),
         np.zeros(history_shape + (3, 3)),
-        np.ones(history_shape, dtype=bool),
-        np.ones(history_shape, dtype=bool),
+        np.ones(history_shape, dtype="bool"),
+        np.ones(history_shape, dtype="bool"),
         chart_id="qualification:minkowski-cartesian",
         convention_id="mostly-plus",
         scale_id="qualification:geometric",
@@ -2947,7 +2948,7 @@ def qualify_advanced() -> dict[str, object]:
         terminal_surface,
         terminal_positions,
         terminal_covectors,
-        np.ones((2,), dtype=bool),
+        np.ones((2,), dtype="bool"),
         np.asarray(((1,), (0,))),
         time_capacity=len(event_times),
         grid_shape=(3, 3, 3),
@@ -3175,10 +3176,8 @@ def run_qualification(
             "is silently treated as reference evidence.",
         ],
         "limitations": [
-            "A passing bounded profile is technical evidence only and does not "
-            "authorize PNPL deployment.",
-            "No hidden download, pickle loading, benchmark result, or external "
-            "validation is used.",
+            "A passing bounded profile is technical evidence only and does not authorize PNPL deployment.",
+            "No hidden download, pickle loading, benchmark result, or external validation is used.",
         ],
     }
     report["report_id"] = _content_id("black-hole-qualification-report", report)

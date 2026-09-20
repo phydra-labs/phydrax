@@ -807,9 +807,7 @@ class POSIXArtifactRepository:
         default_policy: RetentionPolicy | None = None,
     ) -> GarbageCollectionReport:
         with self._exclusive_lock():
-            report = self._collect_garbage_locked(
-                now=now, default_policy=default_policy
-            )
+            report = self._collect_garbage_locked(now=now, default_policy=default_policy)
         emit(
             "INFO",
             "lifecycle.repository.garbage_collection.completed",

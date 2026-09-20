@@ -45,7 +45,7 @@ def _prepared(*, cells: int = 8, adaptive: bool = False):
     )
     fd = phx.discretization.FDAMRHierarchyPlan(hierarchy).prepare()
     initial = fd.initial_topology()
-    tags = jnp.zeros((base_blocks, 4), dtype=bool).at[base_blocks // 2, 1:3].set(True)
+    tags = jnp.zeros((base_blocks, 4), dtype="bool").at[base_blocks // 2, 1:3].set(True)
     compilation = fd.compile_topology(initial, (tags,))
     assert compilation.status.successful
     topology = compilation.topology

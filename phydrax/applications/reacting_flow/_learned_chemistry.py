@@ -51,8 +51,8 @@ class LearnedChemicalFeatureSchema(StrictModule, NonTrainableState):
     ):
         names = tuple(str(value).strip() for value in feature_names)
         units = tuple(str(value).strip() for value in feature_units)
-        lower_ = np.asarray(lower, dtype=float)
-        upper_ = np.asarray(upper, dtype=float)
+        lower_ = np.asarray(lower, dtype=np.float64)
+        upper_ = np.asarray(upper, dtype=np.float64)
         if (
             not names
             or len(names) != len(units)
@@ -308,7 +308,10 @@ class LearnedChemicalTransitionPlan(StrictModule, NonTrainableState):
 
         exact, exact_success = jax.lax.cond(
             jnp.all(use_learned),
-            lambda _: (concentration, jnp.ones(concentration.shape[:-1], dtype=bool)),
+            lambda _: (
+                concentration,
+                jnp.ones(concentration.shape[:-1], dtype=jnp.bool_),
+            ),
             exact_transition,
             operand=None,
         )

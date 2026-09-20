@@ -17,7 +17,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.dlr import matsubara_frequencies
 from ..linalg import HermitianSpectrum
@@ -146,7 +146,7 @@ def fit_causal_anderson_bath(
         raise TypeError("plan must be AndersonBathFitPlan.")
     if not isinstance(target, MatsubaraHybridization):
         raise TypeError("target must be MatsubaraHybridization.")
-    samples = int(target.indices.shape[0])
+    samples = target.indices.shape[0]
     required = np.dtype(np.complex128).itemsize * (
         2 * samples * plan.site_count + 6 * plan.site_count + 4 * samples
     )
@@ -369,8 +369,8 @@ class ImpuritySolveResult(StrictModule):
 class AbstractImpurityProvider(StrictModule, NonTrainableState):
     """Host-selected provider returning the normalized impurity result contract."""
 
-    provider_id: AbstractAttribute[str]
-    differentiable: AbstractAttribute[bool]
+    provider_id: eqx.AbstractVar[str]
+    differentiable: eqx.AbstractVar[bool]
 
     @abc.abstractmethod
     def solve(self, request: ImpuritySolveRequest, /) -> ImpuritySolveResult:

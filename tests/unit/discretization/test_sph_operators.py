@@ -21,7 +21,7 @@ def _context(count=6):
     prepared = phx.discretization.DenseParticleNeighborhoodPlan(
         count * (count - 1) // 2, box=box
     ).prepare(particles)
-    position = (jnp.arange(count, dtype=float) + 0.5)[:, None] * spacing
+    position = (jnp.arange(count, dtype="float64") + 0.5)[:, None] * spacing
     position = position + 0.01 * spacing * jnp.sin(2.0 * jnp.pi * position)
     state = prepared.build(position)
     geometry = phx.discretization.particle_pair_geometry(

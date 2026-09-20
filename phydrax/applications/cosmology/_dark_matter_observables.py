@@ -67,7 +67,7 @@ def _real_array(value: ArrayLike, name: str, /) -> Array:
 
 
 def _scalar_flag(value: ArrayLike, name: str, /) -> Array:
-    flag = jnp.asarray(value, dtype=bool)
+    flag = jnp.asarray(value, dtype=jnp.bool_)
     if flag.shape != ():
         raise ValueError(f"{name} must be scalar.")
     return flag
@@ -259,7 +259,7 @@ class WaveDarkMatterObservablePlan(StrictModule, NonTrainableState):
             np.asarray(lengths), np.asarray(shells.box_lengths)
         ):
             raise ValueError("Wave and Fourier-shell periodic boxes disagree.")
-        edges_host = np.asarray(radial_edges, dtype=float).reshape((-1,))
+        edges_host = np.asarray(radial_edges, dtype=np.float64).reshape((-1,))
         maximum_radius = 0.5 * math.sqrt(sum(length * length for length in lengths))
         if (
             edges_host.size < 2
@@ -278,9 +278,7 @@ class WaveDarkMatterObservablePlan(StrictModule, NonTrainableState):
         pairs = (
             ((0, 1),) if rank == 2 else (((0, 1), (1, 2), (2, 0)) if rank == 3 else ())
         )
-        valid_shell_indices = tuple(
-            int(index) for index in np.flatnonzero(np.asarray(shells.valid_shells))
-        )
+        valid_shell_indices = tuple(np.flatnonzero(np.asarray(shells.valid_shells)))
         self.wave = wave
         self.shells = shells
         self.radial_edges = jax.lax.stop_gradient(jnp.asarray(edges_host))
@@ -327,7 +325,7 @@ class WaveDarkMatterObservablePlan(StrictModule, NonTrainableState):
             shape[axis] = nodes.size
             squared = squared + periodic.reshape(tuple(shape)) ** 2
         radius = jnp.sqrt(squared)
-        bin_count = int(self.radial_edges.size - 1)
+        bin_count = self.radial_edges.size - 1
         indices = jnp.searchsorted(self.radial_edges, radius, side="right") - 1
         indices = jnp.where(
             jnp.isclose(radius, self.radial_edges[-1]),
@@ -399,7 +397,7 @@ class WaveDarkMatterObservablePlan(StrictModule, NonTrainableState):
             shape = (0,) + psi.shape
             empty_integer = jnp.zeros(shape, dtype=jnp.int32)
             empty_real = jnp.zeros(shape, dtype=psi.real.dtype)
-            empty_mask = jnp.zeros(shape, dtype=bool)
+            empty_mask = jnp.zeros(shape, dtype=jnp.bool_)
             return VortexCirculationProduct(
                 self.axis_pairs,
                 empty_integer,
@@ -589,7 +587,7 @@ def weighted_particle_statistics(
             "Weighted particle values must have shape (particle, component)."
         )
     weight = _real_array(weights, "weights").reshape((-1,))
-    active = jnp.asarray(active_mask, dtype=bool).reshape((-1,))
+    active = jnp.asarray(active_mask, dtype=jnp.bool_).reshape((-1,))
     if weight.shape != active.shape or samples.shape[0] != weight.size:
         raise ValueError("Weighted particle values, weights, and mask must align.")
     sample_finite = jnp.all(jnp.isfinite(samples), axis=-1)
@@ -657,7 +655,7 @@ def weighted_sidm_packet_observables(
 ) -> WeightedSIDMPacketObservableProduct:
     if not isinstance(state, WeightedSIDMPacketState):
         raise TypeError("state must be WeightedSIDMPacketState.")
-    capacity = int(state.positions.shape[0])
+    capacity = state.positions.shape[0]
     if (
         state.positions.ndim != 2
         or state.canonical_momenta.shape != state.positions.shape
@@ -817,8 +815,8 @@ class ParticleDarkMatterObservablePlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Particle dark-matter anisotropy and gravothermal diagnostics require three dimensions."
             )
-        center_host = np.asarray(center, dtype=float).reshape((-1,))
-        edges_host = np.asarray(radial_edges, dtype=float).reshape((-1,))
+        center_host = np.asarray(center, dtype=np.float64).reshape((-1,))
+        edges_host = np.asarray(radial_edges, dtype=np.float64).reshape((-1,))
         lengths = tuple(upper - lower for lower, upper in transfer.axis_bounds)
         if (
             center_host.shape != (dimension,)
@@ -856,7 +854,7 @@ class ParticleDarkMatterObservablePlan(StrictModule, NonTrainableState):
         radial_unit = jnp.where(
             (radius > 0.0)[:, None], relative / safe_radius[:, None], 0.0
         )
-        bin_count = int(self.radial_edges.size - 1)
+        bin_count = self.radial_edges.size - 1
         indices = jnp.searchsorted(self.radial_edges, radius, side="right") - 1
         indices = jnp.where(
             jnp.isclose(radius, self.radial_edges[-1]),
@@ -885,7 +883,7 @@ class ParticleDarkMatterObservablePlan(StrictModule, NonTrainableState):
         safe_positions = jnp.where(active[:, None], positions, self.center)
         safe_velocities = jnp.where(active[:, None], velocities, 0.0)
         radius, radial_unit, indices = self._radial_geometry(safe_positions)
-        bin_count = int(self.radial_edges.size - 1)
+        bin_count = self.radial_edges.size - 1
         inside = active & (radius <= self.radial_edges[-1])
         weight = jnp.where(inside, effective_mass, 0.0)
         counts = (
@@ -1404,7 +1402,7 @@ def sidm_angular_moments(
 ) -> SIDMAngularMomentProduct:
     cosine = _real_array(scattering_cosine, "scattering_cosine").reshape((-1,))
     weight = _real_array(weights, "weights").reshape((-1,))
-    active = jnp.asarray(active_mask, dtype=bool).reshape((-1,))
+    active = jnp.asarray(active_mask, dtype=jnp.bool_).reshape((-1,))
     order = int(maximum_order)
     if cosine.shape != weight.shape or cosine.shape != active.shape:
         raise ValueError("SIDM angles, weights, and mask must align.")
@@ -2094,7 +2092,7 @@ def find_dark_matter_halos(
         raise TypeError("particles must be ParticleDiscretization.")
     if not isinstance(spatial, DarkMatterSpatialContract):
         raise TypeError("spatial must be DarkMatterSpatialContract.")
-    active_host = np.asarray(snapshot.active_mask, dtype=bool)
+    active_host = np.asarray(snapshot.active_mask, dtype=np.bool_)
     mass_host = np.asarray(snapshot.macro_masses)
     weight_host = np.asarray(snapshot.packet_weights)
     active_properties_valid = bool(
@@ -2192,7 +2190,7 @@ def select_dark_matter_periodic_radial_shells(
         raise TypeError("snapshot must be ParticleSimulationSnapshot.")
     if not isinstance(spatial, DarkMatterSpatialContract):
         raise TypeError("spatial must be DarkMatterSpatialContract.")
-    radii_host = np.asarray(plan.shell_radii, dtype=float).reshape((-1,))
+    radii_host = np.asarray(plan.shell_radii, dtype=np.float64).reshape((-1,))
     observer = jax.lax.stop_gradient(
         jnp.asarray(
             observer_position,

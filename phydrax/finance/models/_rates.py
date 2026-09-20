@@ -37,7 +37,7 @@ def _identifier(value: str, name: str, /) -> str:
 
 
 def _scalar(value: ArrayLike, name: str, /, *, positive: bool = False) -> Array:
-    result = jnp.asarray(value, dtype=float)
+    result = jnp.asarray(value, dtype=jnp.float64)
     if result.shape != ():
         raise ValueError(f"{name} must be scalar.")
     host = float(np.asarray(jax.device_get(result)))
@@ -55,7 +55,7 @@ def _nonnegative_scalar(value: ArrayLike, name: str, /) -> Array:
 
 
 def _finite_vector(value: ArrayLike, name: str, /, *, minimum_size: int = 1) -> Array:
-    result = jnp.asarray(value, dtype=float)
+    result = jnp.asarray(value, dtype=jnp.float64)
     host = np.asarray(jax.device_get(result))
     if result.ndim != 1 or result.shape[0] < minimum_size:
         raise ValueError(f"{name} must be a vector with at least {minimum_size} entries.")
@@ -73,7 +73,7 @@ def _strict_grid(value: ArrayLike, name: str, /, *, minimum_size: int = 2) -> Ar
 
 
 def _correlation(value: ArrayLike, factor_count: int, /) -> Array:
-    result = jnp.asarray(value, dtype=float)
+    result = jnp.asarray(value, dtype=jnp.float64)
     host = np.asarray(jax.device_get(result))
     expected = (factor_count, factor_count)
     if result.shape != expected:
@@ -289,7 +289,7 @@ class FiniteFactorHJMModel(StrictModule):
         ids = tuple(_identifier(value, "factor_id") for value in factor_ids)
         if not ids or len(set(ids)) != len(ids):
             raise ValueError("factor_ids must be non-empty and unique.")
-        sigma = jnp.asarray(volatility, dtype=float)
+        sigma = jnp.asarray(volatility, dtype=jnp.float64)
         sigma_host = np.asarray(jax.device_get(sigma))
         if sigma.shape != (times.shape[0], len(ids)):
             raise ValueError("volatility must have shape (tenor, factor).")
@@ -346,7 +346,7 @@ class LiborMarketModel(StrictModule):
             raise ValueError("measure must be 'spot' or 'terminal'.")
         forward_count = times.shape[0] - 1
         shifts = _finite_vector(displacements, "displacements", minimum_size=1)
-        sigma = jnp.asarray(volatility, dtype=float)
+        sigma = jnp.asarray(volatility, dtype=jnp.float64)
         if shifts.shape != (forward_count,):
             raise ValueError("displacements must have one value per forward tenor.")
         if sigma.shape != (forward_count, len(ids)):
@@ -396,9 +396,9 @@ class RatesPathBatch(StrictModule):
         realization_id: str,
         state_layout_id: str,
     ):
-        nodes = jnp.asarray(times, dtype=float)
-        paths = jnp.asarray(values, dtype=float)
-        path_valid = jnp.asarray(valid, dtype=bool)
+        nodes = jnp.asarray(times, dtype=jnp.float64)
+        paths = jnp.asarray(values, dtype=jnp.float64)
+        path_valid = jnp.asarray(valid, dtype=jnp.bool_)
         if nodes.ndim != 1 or nodes.shape[0] < 2:
             raise ValueError("times must be a vector with at least two nodes.")
         if paths.ndim != 3 or paths.shape[1] != nodes.shape[0]:
@@ -427,7 +427,7 @@ def vasicek_zero_coupon_bond(
     if not isinstance(model, VasicekModel):
         raise TypeError("model must be a VasicekModel.")
     _require_law(law, state_layout_id=model.state_layout_id, pricing_only=True)
-    t = jnp.asarray(time, dtype=float)
+    t = jnp.asarray(time, dtype=jnp.float64)
     maturity_ = jnp.asarray(maturity, dtype=t.dtype)
     tau = maturity_ - t
     tau = eqx.error_if(tau, jnp.any(tau < 0.0), "maturity must not precede time.")
@@ -457,7 +457,7 @@ def hull_white_zero_coupon_bond(
     if not isinstance(model, HullWhiteModel):
         raise TypeError("model must be a HullWhiteModel.")
     _require_law(law, state_layout_id=model.state_layout_id, pricing_only=True)
-    t = jnp.asarray(time, dtype=float)
+    t = jnp.asarray(time, dtype=jnp.float64)
     maturity_ = jnp.asarray(maturity, dtype=t.dtype)
     tau = maturity_ - t
     tau = eqx.error_if(tau, jnp.any(tau < 0.0), "maturity must not precede time.")
@@ -494,7 +494,7 @@ def cir_zero_coupon_bond(
     if not isinstance(model, CIRModel):
         raise TypeError("model must be a CIRModel.")
     _require_law(law, state_layout_id=model.state_layout_id, pricing_only=True)
-    rate = jnp.asarray(short_rate, dtype=float)
+    rate = jnp.asarray(short_rate, dtype=jnp.float64)
     rate = eqx.error_if(rate, jnp.any(rate < 0.0), "CIR short rates must be nonnegative.")
     t = jnp.asarray(time, dtype=rate.dtype)
     tau = jnp.asarray(maturity, dtype=rate.dtype) - t
@@ -522,7 +522,7 @@ def cir_plus_plus_shift_integral(
 
     if not isinstance(model, CIRPlusPlusModel):
         raise TypeError("model must be a CIRPlusPlusModel.")
-    left = jnp.asarray(start, dtype=float)
+    left = jnp.asarray(start, dtype=jnp.float64)
     right = jnp.asarray(end, dtype=left.dtype)
     right = eqx.error_if(right, jnp.any(right < left), "end must not precede start.")
     left = eqx.error_if(
@@ -614,7 +614,7 @@ def lmm_drift(
         raise TypeError("alive_index must be an integer.")
     if alive_index < 0 or alive_index >= model.forward_count:
         raise ValueError("alive_index lies outside the forward-tenor axis.")
-    rates = jnp.asarray(forwards, dtype=float)
+    rates = jnp.asarray(forwards, dtype=jnp.float64)
     if rates.shape[-1:] != (model.forward_count,):
         raise ValueError("forwards must end in the model forward-tenor axis.")
     shifted = rates + model.displacements
@@ -656,7 +656,7 @@ def require_tenor_compatibility(
 
     if not isinstance(model, (FiniteFactorHJMModel, LiborMarketModel)):
         raise TypeError("model must be a FiniteFactorHJMModel or LiborMarketModel.")
-    values = np.asarray(jax.device_get(jnp.asarray(cashflow_times, dtype=float)))
+    values = np.asarray(jax.device_get(jnp.asarray(cashflow_times, dtype=jnp.float64)))
     if values.ndim != 1 or not np.all(np.isfinite(values)):
         raise ValueError("cashflow_times must be one-dimensional and finite.")
     tol = float(tolerance)
@@ -694,7 +694,7 @@ def simulate_short_rate_paths(
         raise ValueError("Simulation time grid lies outside the Wiener support.")
     if realization.noise_shape != (1,):
         raise ValueError("One-factor short-rate simulation requires noise_shape=(1,).")
-    initial = jnp.asarray(initial_rate, dtype=float)
+    initial = jnp.asarray(initial_rate, dtype=jnp.float64)
     if initial.shape != ():
         raise ValueError("initial_rate must be scalar.")
     invalid_initial = ~jnp.isfinite(initial)
@@ -900,9 +900,9 @@ def rates_model_identity(
     """Content address the model's declared identity and fixed public shapes."""
 
     if isinstance(model, CIRPlusPlusModel):
-        shape = (int(model.shift_times.shape[0]),)
+        shape = (model.shift_times.shape[0],)
     elif isinstance(model, FiniteFactorHJMModel):
-        shape = (int(model.tenor_times.shape[0]), model.factor_count)
+        shape = (model.tenor_times.shape[0], model.factor_count)
     elif isinstance(model, LiborMarketModel):
         shape = (model.forward_count, model.factor_count)
     else:

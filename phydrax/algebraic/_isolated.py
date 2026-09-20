@@ -292,10 +292,8 @@ def prepare_isolated_roots(plan: IsolatedRootPlan, /) -> PreparedIsolatedRootSol
         system.system_id,
         support.equation_count,
         support.variable_count,
-        tuple(int(value) for value in np.asarray(support.equation_indices)),
-        tuple(
-            tuple(int(value) for value in row) for row in np.asarray(support.exponents)
-        ),
+        tuple(np.asarray(support.equation_indices)),
+        tuple(tuple(row) for row in np.asarray(support.exponents)),
         tuple(complex(value) for value in coefficients),
     )
     preparation_id = canonical_fingerprint(
@@ -422,10 +420,10 @@ def _empty_result(
 ) -> PolynomialRootResult:
     capacity = prepared.plan.policy.path_capacity
     variables = prepared.request.variable_count
-    roots = jnp.full((capacity, variables), complex(np.nan, np.nan), dtype=complex)
-    root_mask = jnp.zeros((capacity,), dtype=bool)
+    roots = jnp.full((capacity, variables), complex(np.nan, np.nan), dtype=jnp.complex128)
+    root_mask = jnp.zeros((capacity,), dtype=jnp.bool_)
     cluster_path_counts = jnp.zeros((capacity,), dtype=jnp.int32)
-    near_real = jnp.zeros((capacity,), dtype=bool)
+    near_real = jnp.zeros((capacity,), dtype=jnp.bool_)
     identifier = canonical_fingerprint(
         {
             "kind": "polynomial-root-result",
@@ -578,7 +576,9 @@ def solve_prepared_isolated_roots(
         accepted = False
         if has_endpoint:
             scaled = jnp.asarray(path.endpoint)
-            physical = np.asarray(plan.problem.to_physical_points(scaled), dtype=complex)
+            physical = np.asarray(
+                plan.problem.to_physical_points(scaled), dtype=np.complex128
+            )
             endpoint = physical
             residual = np.asarray(original_system.evaluate(physical))
             original_residual = float(np.max(np.abs(residual), initial=0.0))
@@ -643,9 +643,9 @@ def solve_prepared_isolated_roots(
     )
     capacity = plan.policy.path_capacity
     roots_host = np.full((capacity, variables), complex(np.nan, np.nan))
-    mask_host = np.zeros((capacity,), dtype=bool)
+    mask_host = np.zeros((capacity,), dtype=np.bool_)
     cluster_path_counts_host = np.zeros((capacity,), dtype=np.int32)
-    near_real_host = np.zeros((capacity,), dtype=bool)
+    near_real_host = np.zeros((capacity,), dtype=np.bool_)
     for index, (root, cluster_path_count, near_real, _) in enumerate(clusters):
         roots_host[index] = root
         mask_host[index] = True

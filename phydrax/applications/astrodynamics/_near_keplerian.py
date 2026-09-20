@@ -88,9 +88,9 @@ class NearlyKeplerianPlan(StrictModule, NonTrainableState):
             raise TypeError("context must be an AstrodynamicsContext.")
         central = jnp.asarray(central_mass).reshape(())
         masses = jnp.asarray(planet_masses)
-        if masses.ndim != 1 or int(masses.size) == 0:
+        if masses.ndim != 1 or masses.size == 0:
             raise ValueError("planet_masses must be a nonempty vector.")
-        times_host = np.asarray(times, dtype=float)
+        times_host = np.asarray(times, dtype=np.float64)
         if (
             times_host.ndim != 1
             or times_host.size < 2
@@ -115,17 +115,17 @@ class NearlyKeplerianPlan(StrictModule, NonTrainableState):
             {
                 "kind": "nearly-keplerian-plan",
                 "context": context.context_id,
-                "planet_count": int(masses.size),
-                "num_times": int(times_host.size),
+                "planet_count": masses.size,
+                "num_times": times_host.size,
                 "kepler_policy": policy.policy_id,
             }
         )
 
     def _perturbation(self, positions: Array, /) -> tuple[Array, Array, Array]:
-        count = int(self.planet_masses.size)
+        count = self.planet_masses.size
         displacement = positions[None, :, :] - positions[:, None, :]
         distance_squared = jnp.sum(displacement * displacement, axis=-1)
-        pair = ~jnp.eye(count, dtype=bool)
+        pair = ~jnp.eye(count, dtype=jnp.bool_)
         safe_distance = jnp.where(pair, distance_squared, 1.0)
         direct = jnp.sum(
             self.planet_masses[None, :, None]
@@ -222,7 +222,7 @@ class NearlyKeplerianPlan(StrictModule, NonTrainableState):
         if not isinstance(initial_state, NearlyKeplerianState):
             raise TypeError("initial_state must be a NearlyKeplerianState.")
         self.context.require_compatible(initial_state.context)
-        expected = (int(self.planet_masses.size), 3)
+        expected = (self.planet_masses.size, 3)
         if initial_state.position.shape != expected:
             raise ValueError(f"Nearly Keplerian state must have shape {expected}.")
         dt = self.times[1] - self.times[0]
@@ -303,7 +303,7 @@ class NearlyKeplerianPlan(StrictModule, NonTrainableState):
                 initial_valid,
             ),
             xs=None,
-            length=int(self.times.size) - 1,
+            length=self.times.size - 1,
         )
         positions = jnp.concatenate((initial_state.position[None], outputs[0]), axis=0)
         velocities = jnp.concatenate((initial_state.velocity[None], outputs[1]), axis=0)

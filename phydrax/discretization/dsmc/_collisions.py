@@ -36,8 +36,8 @@ class DSMCPairCollisionParameters(StrictModule, NonTrainableState):
         reference_temperature: float = 273.15,
         boltzmann_constant: float = 1.380649e-23,
     ) -> None:
-        diameters = np.asarray(reference_diameters, dtype=float)
-        exponents = np.asarray(viscosity_exponents, dtype=float)
+        diameters = np.asarray(reference_diameters, dtype=np.float64)
+        exponents = np.asarray(viscosity_exponents, dtype=np.float64)
         temperature = float(reference_temperature)
         boltzmann = float(boltzmann_constant)
         if (
@@ -217,7 +217,7 @@ class DSMCVSSCollisionPlan(StrictModule, NonTrainableState):
         scattering_parameters: ArrayLike,
         /,
     ) -> None:
-        scattering = np.asarray(scattering_parameters, dtype=float)
+        scattering = np.asarray(scattering_parameters, dtype=np.float64)
         if (
             not isinstance(species, DSMCSpeciesPlan)
             or not isinstance(parameters, DSMCPairCollisionParameters)
@@ -383,7 +383,7 @@ def _collide_one(
 ) -> DSMCCollisionEventResult:
     first = jnp.asarray(first_index, dtype=jnp.int32)
     second = jnp.asarray(second_index, dtype=jnp.int32)
-    valid = jnp.asarray(valid_event, dtype=bool)
+    valid = jnp.asarray(valid_event, dtype=jnp.bool_)
     random = jnp.asarray(uniforms, dtype=state.velocity.dtype)
     majorant = jnp.asarray(majorant_sigma_speed, dtype=state.velocity.dtype)
     if first.shape != () or second.shape != () or valid.shape != ():
@@ -479,7 +479,7 @@ def _collide_many(
 ) -> DSMCCollisionResult:
     first = jnp.asarray(first_indices, dtype=jnp.int32)
     second = jnp.asarray(second_indices, dtype=jnp.int32)
-    valid = jnp.asarray(valid_events, dtype=bool)
+    valid = jnp.asarray(valid_events, dtype=jnp.bool_)
     random = jnp.asarray(uniforms, dtype=state.velocity.dtype)
     majorant = jnp.asarray(majorant_sigma_speed, dtype=state.velocity.dtype)
     event_count = first.size

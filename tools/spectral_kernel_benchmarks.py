@@ -144,12 +144,12 @@ def run_benchmarks(
         "feature_evaluation": {
             "compile_and_first_seconds": feature_first,
             "steady_seconds": feature_steady,
-            "output_bytes": int(features.size * features.dtype.itemsize),
+            "output_bytes": features.size * features.dtype.itemsize,
         },
         "gram_evaluation": {
             "compile_and_first_seconds": gram_first,
             "steady_seconds": gram_steady,
-            "output_bytes": int(gram.size * gram.dtype.itemsize),
+            "output_bytes": gram.size * gram.dtype.itemsize,
         },
         "gp_factorization": {
             "feature_space_selected": feature_selected,

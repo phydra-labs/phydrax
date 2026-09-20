@@ -59,8 +59,8 @@ class ElectrostaticConductorCoupling(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-10,
         maximum_iterations: int = 500,
     ):
-        matrix = np.asarray(stiffness, dtype=float)
-        constraint = np.asarray(constraint_matrix, dtype=float)
+        matrix = np.asarray(stiffness, dtype=np.float64)
+        constraint = np.asarray(constraint_matrix, dtype=np.float64)
         if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
             raise ValueError("stiffness must be square.")
         if constraint.ndim != 2 or constraint.shape[1] != matrix.shape[0]:
@@ -71,7 +71,7 @@ class ElectrostaticConductorCoupling(StrictModule, NonTrainableState):
             or np.any(~np.isfinite(constraint))
         ):
             raise ValueError("Conductor KKT inputs are invalid.")
-        zero = np.zeros((constraint.shape[0], constraint.shape[0]), dtype=float)
+        zero = np.zeros((constraint.shape[0], constraint.shape[0]), dtype=np.float64)
         kkt = np.block([[matrix, constraint.T], [constraint, zero]])
         operator = DenseLinearOperator(
             jnp.asarray(kkt),

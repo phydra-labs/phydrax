@@ -81,7 +81,7 @@ class ConstraintLikelihoodTerm(StrictModule):
         raw_value = jnp.asarray(observed)
         if jnp.iscomplexobj(raw_value):
             raise TypeError("observed must be real-valued.")
-        value = raw_value.astype(float)
+        value = raw_value.astype("float64")
         if value.ndim != 1 or value.size <= 0:
             raise ValueError("observed must be a nonempty flat vector.")
         value = eqx.error_if(
@@ -201,7 +201,7 @@ class ConstraintLikelihoodTerm(StrictModule):
         relation = bound.relation
         if isinstance(relation, Equality):
             observed = (
-                jnp.zeros(bound.codomain.shape, dtype=float)
+                jnp.zeros(bound.codomain.shape, dtype=jnp.float64)
                 if not relation.has_target
                 else relation.target
             )
@@ -239,7 +239,7 @@ class ConstraintLikelihoodTerm(StrictModule):
 
     @property
     def event_size(self) -> int:
-        return int(self.observed.size)
+        return self.observed.size
 
     @property
     def physical_noise_rank(self) -> Array:
@@ -312,9 +312,9 @@ class LinearGaussianConstraintConditioner(StrictModule):
         rank_tolerance: ArrayLike = 1e-8,
         support_tolerance: ArrayLike = 1e-8,
     ):
-        jitter = jnp.asarray(numerical_jitter, dtype=float)
-        rank = jnp.asarray(rank_tolerance, dtype=float)
-        support = jnp.asarray(support_tolerance, dtype=float)
+        jitter = jnp.asarray(numerical_jitter, dtype=jnp.float64)
+        rank = jnp.asarray(rank_tolerance, dtype=jnp.float64)
+        support = jnp.asarray(support_tolerance, dtype=jnp.float64)
         if jitter.ndim != 0 or rank.ndim != 0 or support.ndim != 0:
             raise ValueError("Conditioner tolerances and jitter must be scalar.")
         jitter = eqx.error_if(
@@ -536,9 +536,9 @@ class ApproximateGaussianConstraintConditioner(StrictModule):
     ):
         if method not in ("first-order", "cubature", "unscented", "gauss-hermite"):
             raise ValueError("Unknown nonlinear Gaussian approximation method.")
-        jitter = jnp.asarray(numerical_jitter, dtype=float)
-        rank = jnp.asarray(rank_tolerance, dtype=float)
-        support = jnp.asarray(support_tolerance, dtype=float)
+        jitter = jnp.asarray(numerical_jitter, dtype=jnp.float64)
+        rank = jnp.asarray(rank_tolerance, dtype=jnp.float64)
+        support = jnp.asarray(support_tolerance, dtype=jnp.float64)
         if jitter.ndim != 0 or rank.ndim != 0 or support.ndim != 0:
             raise ValueError("Conditioner tolerances and jitter must be scalar.")
         alpha_value = float(alpha)
@@ -794,8 +794,7 @@ def _conditioning_result(
         jnp.where(valid, 1.0, 0.0),
         jnp.where(valid, 1.0, 0.0),
         evidence_id=(
-            f"{likelihood.likelihood_id}:{approximation}:"
-            f"physical-noise+separate-numerical-jitter"
+            f"{likelihood.likelihood_id}:{approximation}:physical-noise+separate-numerical-jitter"
         ),
     )
     return ConstraintConditioningResult(

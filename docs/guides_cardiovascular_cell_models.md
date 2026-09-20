@@ -182,7 +182,7 @@ from phydrax.applications.cardiovascular.electrophysiology import (
 voltage = ReactionIRInput(0)
 reversal = ReactionIRInput(1)
 ir = PinnedReactionIR(
-    "driving-force-v1",
+    "driving-force",
     ("voltage_mV", "reversal_mV"),
     (
         ReactionIROutput(

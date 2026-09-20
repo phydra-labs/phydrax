@@ -45,7 +45,7 @@ class PeriodicFiniteBoundaryPlan(StrictModule, NonTrainableState):
         kind: BoundaryKind,
         /,
     ):
-        shape = tuple(int(value) for value in supercell_shape)
+        shape = tuple(supercell_shape)
         axes = tuple(bool(value) for value in periodic_axes)
         twist = tuple(float(value) for value in twists)
         if (

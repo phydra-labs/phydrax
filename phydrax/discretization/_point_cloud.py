@@ -14,6 +14,8 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 from scipy.spatial import cKDTree
 
+import phydrax.ein as ein
+
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._polynomial._total_degree import TotalDegreePolynomialFeatures
 from .._strict import StrictModule
@@ -47,7 +49,7 @@ class PointStencilReport(StrictModule):
     report_id: str = eqx.field(static=True)
 
 
-class PointCloudPlan(eqx.Module):
+class PointCloudPlan(StrictModule):
     points: Array
     quadrature_weights: Array
     boundary_mask: Array
@@ -71,8 +73,8 @@ class PointCloudPlan(eqx.Module):
         neighbor_count: int | None = None,
         condition_limit: float = 1e8,
     ):
-        points_ = np.asarray(points, dtype=float)
-        weights = np.asarray(quadrature_weights, dtype=float)
+        points_ = np.asarray(points, dtype=np.float64)
+        weights = np.asarray(quadrature_weights, dtype=np.float64)
         if points_.ndim != 2 or points_.shape[0] == 0 or points_.shape[1] == 0:
             raise ValueError("Point cloud must have shape (points, dimension).")
         if np.any(~np.isfinite(points_)):
@@ -100,17 +102,17 @@ class PointCloudPlan(eqx.Module):
         if not np.isfinite(condition) or condition <= 1.0:
             raise ValueError("condition_limit must exceed one.")
         boundary = (
-            np.zeros(points_.shape[0], dtype=bool)
+            np.zeros(points_.shape[0], dtype=np.bool_)
             if boundary_mask is None
             else np.asarray(boundary_mask)
         )
-        if boundary.dtype != np.dtype(bool) or boundary.shape != points_.shape[:1]:
+        if boundary.dtype != np.dtype(np.bool_) or boundary.shape != points_.shape[:1]:
             raise ValueError("boundary_mask must be Boolean with shape (points,).")
-        boundary = np.asarray(boundary, dtype=bool)
+        boundary = np.asarray(boundary, dtype=np.bool_)
         normals = (
             np.zeros_like(points_)
             if boundary_normals is None
-            else np.asarray(boundary_normals, dtype=float).copy()
+            else np.asarray(boundary_normals, dtype=np.float64).copy()
         )
         if normals.shape != points_.shape or np.any(~np.isfinite(normals)):
             raise ValueError("boundary_normals must be finite with point-cloud shape.")
@@ -122,7 +124,7 @@ class PointCloudPlan(eqx.Module):
         boundary_weights = (
             None
             if boundary_quadrature_weights is None
-            else np.asarray(boundary_quadrature_weights, dtype=float)
+            else np.asarray(boundary_quadrature_weights, dtype=np.float64)
         )
         if boundary_weights is not None:
             if (
@@ -132,8 +134,7 @@ class PointCloudPlan(eqx.Module):
                 or np.any(boundary_weights[~boundary] != 0.0)
             ):
                 raise ValueError(
-                    "boundary_quadrature_weights must be positive on boundary "
-                    "points and zero elsewhere."
+                    "boundary_quadrature_weights must be positive on boundary points and zero elsewhere."
                 )
         self.points = jnp.asarray(points_)
         self.quadrature_weights = jnp.asarray(weights)
@@ -241,8 +242,8 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
                         "Polynomial basis does not contain requested derivative."
                     )
                 target[:, 1 + matches[0]] = math.factorial(order) / characteristic**order
-                weights = np.einsum("rf,rfk->rk", target, factors)
-                moments = np.einsum("rk,rkf->rf", weights, design)
+                weights = ein.contract("rf,rfk->rk", target, factors)
+                moments = ein.contract("rk,rkf->rf", weights, design)
                 residuals.append(np.max(np.abs(moments - target)))
                 amplifications.append(np.max(np.sum(np.abs(weights), axis=1)))
                 axis_weights.append(jnp.asarray(weights))
@@ -357,11 +358,11 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
 
     @property
     def spatial_dimension(self) -> int:
-        return int(self.plan.points.shape[1])
+        return self.plan.points.shape[1]
 
     @property
     def state_shape(self) -> tuple[int, ...]:
-        return (int(self.plan.points.shape[0]),)
+        return (self.plan.points.shape[0],)
 
     @property
     def quadrature_weights(self) -> Array:
@@ -391,7 +392,7 @@ class PreparedPointCloudDiscretization(AbstractStrongFormDiscretization):
             if axes is None
             else (int(axes),)
             if isinstance(axes, int)
-            else tuple(int(axis) for axis in axes)
+            else tuple(axes)
         )
         if (
             not selected

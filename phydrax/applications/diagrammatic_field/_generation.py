@@ -90,7 +90,7 @@ def _route_internal_lines(
     dimension: int,
     /,
 ) -> tuple[MomentumRoute, ...] | None:
-    divergence = np.zeros((vertex_count, dimension + 1), dtype=float)
+    divergence = np.zeros((vertex_count, dimension + 1), dtype=np.float64)
     for leg in external:
         vector = np.concatenate(
             (np.asarray(leg.route.momentum), np.asarray(leg.route.frequency)[None])
@@ -118,7 +118,7 @@ def _route_internal_lines(
     if len(visited) != vertex_count:
         return None
 
-    routed = np.zeros((len(endpoints), dimension + 1), dtype=float)
+    routed = np.zeros((len(endpoints), dimension + 1), dtype=np.float64)
     balance = required.copy()
     for vertex in reversed(order[1:]):
         edge = int(parent_edge[vertex])

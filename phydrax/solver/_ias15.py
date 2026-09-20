@@ -123,7 +123,7 @@ class IAS15Plan(StrictModule, NonTrainableState):
     ) -> tuple[Array, Array, Array]:
         initial_acceleration = acceleration(time, position, velocity, args)
         accelerations = jnp.broadcast_to(
-            initial_acceleration, (int(self.nodes.size), *initial_acceleration.shape)
+            initial_acceleration, (self.nodes.size, *initial_acceleration.shape)
         )
 
         def correct(_, values):
@@ -197,7 +197,7 @@ class IAS15Plan(StrictModule, NonTrainableState):
         times = jnp.asarray(save_times, dtype=position0.dtype)
         if position0.ndim != 1 or velocity0.shape != position0.shape:
             raise ValueError("IAS15 position and velocity must be matching vectors.")
-        if times.ndim != 1 or int(times.size) < 2:
+        if times.ndim != 1 or times.size < 2:
             raise ValueError("IAS15 save_times must be a vector with at least two nodes.")
 
         def interval(carry, target):

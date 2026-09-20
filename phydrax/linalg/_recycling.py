@@ -55,8 +55,7 @@ class RecyclingSubspace(StrictModule):
             or source_basis_.shape[1] < 1
         ):
             raise ValueError(
-                "Recycling bases must have shapes (source.size, k) and "
-                "(target.size, k) for the same positive k."
+                "Recycling bases must have shapes (source.size, k) and (target.size, k) for the same positive k."
             )
         if not jnp.issubdtype(source_basis_.dtype, jnp.inexact) or not jnp.issubdtype(
             image_basis_.dtype, jnp.inexact
@@ -73,7 +72,7 @@ class RecyclingSubspace(StrictModule):
 
     @property
     def dimension(self) -> int:
-        return int(self.source_basis.shape[1])
+        return self.source_basis.shape[1]
 
     def coefficients(self, residual: PyTree[Any], /) -> Array:
         """Return coarse coefficients under the target-space pairing."""
@@ -162,7 +161,7 @@ class RecyclingState(StrictModule):
             raise TypeError("source_basis dtype must match the source space.")
         if np.dtype(image_basis_.dtype) != _coordinate_dtype(target):
             raise TypeError("image_basis dtype must match the target space.")
-        capacity = int(source_basis_.shape[1])
+        capacity = source_basis_.shape[1]
         effective = jnp.asarray(effective_dimension, dtype=jnp.int32)
         numeric_version = jnp.asarray(operator_numeric_version, dtype=jnp.int32)
         updates = jnp.asarray(update_count, dtype=jnp.int32)
@@ -226,7 +225,7 @@ class RecyclingState(StrictModule):
 
     @property
     def capacity(self) -> int:
-        return int(self.source_basis.shape[1])
+        return self.source_basis.shape[1]
 
     def coefficients(self, residual: PyTree[Any], /) -> Array:
         value = self.target.validate(residual)
@@ -325,7 +324,7 @@ def prepare_recycling_subspace(
                 "kind": "recycling-subspace",
                 "operator": operator.operator_id,
                 "source_subspace": source_id,
-                "dimension": int(source_basis.shape[1]),
+                "dimension": source_basis.shape[1],
             }
         )
         if recycling_id is None

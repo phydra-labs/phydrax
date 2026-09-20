@@ -14,7 +14,7 @@ class _BrownianFieldOperator(phx.nn.operator.AbstractProbabilisticOperatorModel)
     out_size: str
 
     def __init__(self, scale_power=0.5, uncertainty_source="process"):
-        self.scale_power = jnp.asarray(scale_power, dtype=float)
+        self.scale_power = jnp.asarray(scale_power, dtype="float64")
         self.uncertainty_source = str(uncertainty_source)
         self.in_size = "scalar"
         self.out_size = "scalar"

@@ -117,7 +117,7 @@ class RobotNameIDMap(StrictModule, NonTrainableState):
             raise ValueError("Robot name maps require unique, non-empty, sorted names.")
         ids_host = np.arange(len(names_), dtype=np.int64)
         self.names = names_
-        self.ids = tuple(int(identifier) for identifier in ids_host)
+        self.ids = tuple(ids_host)
         self.mapping_id = canonical_fingerprint(
             {
                 "kind": "robot-name-id-map",
@@ -152,7 +152,7 @@ class RobotNameIDMap(StrictModule, NonTrainableState):
 
 
 class URDFLinkEvidence(StrictModule, NonTrainableState):
-    """Exact link-frame information retained beside COM-centred native bodies."""
+    """Exact link-frame information retained beside COM-centered native bodies."""
 
     name: str = eqx.field(static=True)
     body_id: int = eqx.field(static=True)
@@ -559,18 +559,18 @@ def _parse_origin(
 ) -> tuple[np.ndarray, np.ndarray]:
     origin = _single_child(owner, "origin", owner_path, required=False)
     if origin is None:
-        return np.zeros((3,), dtype=float), np.zeros((3,), dtype=float)
+        return np.zeros((3,), dtype=np.float64), np.zeros((3,), dtype=np.float64)
     path = f"{owner_path}/origin"
     _attribute_losses(origin, frozenset(("xyz", "rpy")), path, losses)
     _unknown_child_losses(origin, frozenset(), path, losses)
     _check_leaf_text(origin, path)
     xyz = (
-        np.zeros((3,), dtype=float)
+        np.zeros((3,), dtype=np.float64)
         if "xyz" not in origin.attrib
         else _vector(origin.attrib["xyz"], 3, f"{path}/@xyz")
     )
     rpy = (
-        np.zeros((3,), dtype=float)
+        np.zeros((3,), dtype=np.float64)
         if "rpy" not in origin.attrib
         else _vector(origin.attrib["rpy"], 3, f"{path}/@rpy")
     )
@@ -588,7 +588,7 @@ def _rotation_from_rpy(rpy: np.ndarray, /) -> np.ndarray:
             (sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr),
             (-sp, cp * sr, cp * cr),
         ),
-        dtype=float,
+        dtype=np.float64,
     )
 
 
@@ -692,11 +692,11 @@ def _parse_link(element: ET.Element, losses: _LossAccumulator, /) -> _LinkRecord
             (tensor_values["ixy"], tensor_values["iyy"], tensor_values["iyz"]),
             (tensor_values["ixz"], tensor_values["iyz"], tensor_values["izz"]),
         ),
-        dtype=float,
+        dtype=np.float64,
     )
     eigenvalues = np.linalg.eigvalsh(inertia_inertial)
     scale = float(np.max(np.abs(inertia_inertial)))
-    tolerance = 64.0 * np.finfo(float).eps * scale
+    tolerance = 64.0 * np.finfo(np.float64).eps * scale
     if np.any(eigenvalues <= 0.0):
         _fail(
             AdapterStatus.MALFORMED_SOURCE,
@@ -916,7 +916,7 @@ def _parse_joint(element: ET.Element, losses: _LossAccumulator, /) -> _JointReco
                 axis_element.attrib.get("xyz", "1 0 0"), 3, f"{axis_path}/@xyz"
             )
             norm = float(np.linalg.norm(axis))
-            if norm <= np.finfo(float).eps:
+            if norm <= np.finfo(np.float64).eps:
                 _fail(AdapterStatus.MALFORMED_SOURCE, f"{axis_path} must be nonzero.")
             axis = axis / norm
     lower, upper, effort, velocity = _parse_limit(element, path, kind, losses)
@@ -1117,8 +1117,7 @@ def _validated_xml(resource: BoundedResource, /) -> tuple[ET.Element, str, int, 
                 if attributes > limits.max_attributes:
                     _fail(
                         AdapterStatus.MALFORMED_SOURCE,
-                        "URDF XML exceeds the configured "
-                        f"{limits.max_attributes}-attribute limit.",
+                        f"URDF XML exceeds the configured {limits.max_attributes}-attribute limit.",
                     )
                 _reject_external_execution(element)
             else:
@@ -1199,7 +1198,7 @@ def _world_link_frames(
     /,
 ) -> dict[str, tuple[np.ndarray, np.ndarray]]:
     frames: dict[str, tuple[np.ndarray, np.ndarray]] = {
-        parsed.root_link: (np.zeros((3,), dtype=float), np.eye(3, dtype=float))
+        parsed.root_link: (np.zeros((3,), dtype=np.float64), np.eye(3, dtype=np.float64))
     }
     for joint in parsed.traversal:
         parent_position, parent_rotation = frames[joint.parent]
@@ -1303,10 +1302,10 @@ def _adapt(
     joint_id = {name: int(identifier) for name, identifier in joint_ids.name_to_id}
     frames = _world_link_frames(parsed)
     count = len(parsed.links)
-    masses = np.asarray([link.mass for link in parsed.links], dtype=float)
+    masses = np.asarray([link.mass for link in parsed.links], dtype=np.float64)
     inertias = np.stack([link.inertia_body for link in parsed.links], axis=0)
-    positions = np.empty((count, 3), dtype=float)
-    orientations = np.empty((count, 4), dtype=float)
+    positions = np.empty((count, 3), dtype=np.float64)
+    orientations = np.empty((count, 4), dtype=np.float64)
     link_evidence: list[URDFLinkEvidence] = []
     for index, link in enumerate(parsed.links):
         link_position, link_rotation = frames[link.name]
@@ -1338,7 +1337,7 @@ def _adapt(
         coordinate_dtype="float64",
     )
     fixed_mask = np.asarray(
-        [link.name == parsed.root_link for link in parsed.links], dtype=bool
+        [link.name == parsed.root_link for link in parsed.links], dtype=np.bool_
     )
     bodies = RigidBodySetPlan(
         np.zeros((count,), dtype=np.int64),
@@ -1516,7 +1515,7 @@ def _adapt(
         coordinate_mapping=(
             "URDF parent-link joint origin -> zero-configuration world anchor",
             "URDF joint-frame axis -> zero-configuration world reference axis",
-            "URDF link origin -> COM-centred body position with link-frame offset retained as evidence",
+            "URDF link origin -> COM-centered body position with link-frame offset retained as evidence",
             "URDF inertial-frame tensor -> body-frame tensor by R_link_inertial I R_link_inertial^T",
             "URDF roll-pitch-yaw -> scalar-first unit quaternion",
         ),
@@ -1531,7 +1530,7 @@ def _adapt(
             "zero-configuration reference kinematics",
         ),
         assumptions=(
-            "URDF linear dimensions are metres",
+            "URDF linear dimensions are meters",
             "URDF masses are kilograms",
             "URDF angles are radians",
             "URDF inertia components are kg*m^2 about the link COM",
@@ -1594,8 +1593,7 @@ def _adapt_resource(
     if root_policy == "reject_unpinned":
         _fail(
             AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC,
-            "URDF does not encode a world attachment for its root link; "
-            "reject_unpinned forbids synthesizing one.",
+            "URDF does not encode a world attachment for its root link; reject_unpinned forbids synthesizing one.",
         )
     source_id = canonical_fingerprint(
         {

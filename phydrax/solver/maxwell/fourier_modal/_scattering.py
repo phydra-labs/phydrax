@@ -90,7 +90,7 @@ class MaxwellPortScatteringOperator(StrictModule):
 
     @property
     def block_size(self) -> int:
-        return int(self.s11.matrix.shape[-1])
+        return self.s11.matrix.shape[-1]
 
     def matrix(self) -> Array:
         return jnp.block(

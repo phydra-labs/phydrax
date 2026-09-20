@@ -49,7 +49,7 @@ def _axis_metadata(
     if jnp.issubdtype(raw_values.dtype, jnp.complexfloating):
         raise TypeError("Rectilinear coordinates must be real-valued.")
     values = raw_values.astype(dtype).reshape((-1,))
-    if int(values.size) < 2:
+    if values.size < 2:
         raise ValueError("Every rectilinear axis must contain at least two nodes.")
     spacing = jnp.diff(values)
     values = eqx.error_if(
@@ -135,20 +135,19 @@ def rectilinear_stencil(
     if invalid_modes:
         raise ValueError(f"Unsupported rectilinear boundary modes: {invalid_modes}.")
 
-    batch = tuple(int(size) for size in batch_shape)
+    batch = tuple(batch_shape)
     if any(size <= 0 for size in batch):
         raise ValueError("batch_shape dimensions must be positive.")
     query = jnp.asarray(coordinates)
     if jnp.issubdtype(query.dtype, jnp.complexfloating):
         raise TypeError("Rectilinear query coordinates must be real-valued.")
-    dtype = jnp.result_type(query.dtype, float)
+    dtype = jnp.result_type(query.dtype, jnp.float64)
     query = query.astype(dtype)
-    if query.ndim < len(batch) + 1 or int(query.shape[-1]) != dimensions:
+    if query.ndim < len(batch) + 1 or query.shape[-1] != dimensions:
         raise ValueError(
-            "coordinates must have shape batch_shape + query_shape + "
-            f"({dimensions},); got {query.shape}."
+            f"coordinates must have shape batch_shape + query_shape + ({dimensions},); got {query.shape}."
         )
-    if tuple(int(size) for size in query.shape[: len(batch)]) != batch:
+    if tuple(query.shape[: len(batch)]) != batch:
         raise ValueError(
             f"Coordinate batch shape must be {batch}; got {query.shape[: len(batch)]}."
         )
@@ -157,7 +156,7 @@ def rectilinear_stencil(
         jnp.any(~jnp.isfinite(query)),
         "Rectilinear query coordinates must be finite.",
     )
-    query_shape = tuple(int(size) for size in query.shape[len(batch) : -1])
+    query_shape = tuple(query.shape[len(batch) : -1])
 
     period_values = (None,) * dimensions if periods is None else tuple(periods)
     bounds = (None,) * dimensions if axis_bounds is None else tuple(axis_bounds)
@@ -187,7 +186,7 @@ def rectilinear_stencil(
         domain_uppers.append(upper)
         resolved_periods.append(resolved_period)
 
-    spatial_shape = tuple(int(values.size) for values in nodes)
+    spatial_shape = tuple(values.size for values in nodes)
     spatial_count = prod(spatial_shape)
     index_dtype = jnp.int64 if bool(jax.config.read("jax_enable_x64")) else jnp.int32
     if spatial_count > jnp.iinfo(index_dtype).max:
@@ -196,7 +195,7 @@ def rectilinear_stencil(
     lower_indices: list[Array] = []
     upper_indices: list[Array] = []
     fractions: list[Array] = []
-    outside = jnp.zeros(batch + query_shape, dtype=bool)
+    outside = jnp.zeros(batch + query_shape, dtype=jnp.bool_)
     for axis, (size, mode, values, domain_lower, domain_upper, period) in enumerate(
         zip(
             spatial_shape,

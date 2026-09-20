@@ -84,7 +84,7 @@ def run_control_horizon_campaign(
 ) -> dict[str, Any]:
     """Compare cold and explicitly shifted warm MPC across declared horizons."""
 
-    values = tuple(int(value) for value in horizons)
+    values = tuple(horizons)
     if not values or any(value < 1 for value in values):
         raise ValueError("horizons must contain positive integers.")
     if warmup < 0 or repeats < 1:
@@ -168,7 +168,6 @@ def run_control_horizon_campaign(
             }
         )
     return {
-        "schema_version": 1,
         "campaign": "control-horizon-warm-start",
         "seed": seed,
         "warmup": warmup,

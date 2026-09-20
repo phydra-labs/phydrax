@@ -205,8 +205,7 @@ class ConstantRefractiveIndex(AbstractRefractiveIndexLaw):
             raise ValueError("refractive_index must be finite.")
         if branch == "positive-imaginary" and not bool(_on_passive_branch(index)):
             raise ValueError(
-                "A passive-branch constant index must have Im(n) > 0, "
-                "or Im(n) = 0 and Re(n) >= 0."
+                "A passive-branch constant index must have Im(n) > 0, or Im(n) = 0 and Re(n) >= 0."
             )
         self.refractive_index = index
         self.validity = validity
@@ -251,7 +250,7 @@ class CauchyRefractiveIndex(AbstractRefractiveIndexLaw):
         coefficients_ = _real_vector(coefficients, "coefficients")
         scale = jnp.asarray(wavelength_scale)
         if scale.ndim != 0 or not jnp.issubdtype(scale.dtype, jnp.floating):
-            raise TypeError("wavelength_scale must be a real scalar in metres.")
+            raise TypeError("wavelength_scale must be a real scalar in meters.")
         if not bool(jnp.isfinite(scale) & (scale > 0)):
             raise ValueError("wavelength_scale must be positive and finite.")
         self.coefficients = coefficients_
@@ -275,7 +274,7 @@ class CauchyRefractiveIndex(AbstractRefractiveIndexLaw):
 
 
 class SellmeierRefractiveIndex(AbstractRefractiveIndexLaw):
-    """Sellmeier law with dimensionless strengths and metre resonances."""
+    """Sellmeier law with dimensionless strengths and meter resonances."""
 
     strengths: Array
     resonance_wavelengths: Array
@@ -303,7 +302,7 @@ class SellmeierRefractiveIndex(AbstractRefractiveIndexLaw):
         if strengths_.shape != resonances.shape:
             raise ValueError("strengths and resonance_wavelengths must have equal shape.")
         if not bool(jnp.all(resonances > 0)):
-            raise ValueError("resonance_wavelengths must be positive metres.")
+            raise ValueError("resonance_wavelengths must be positive meters.")
         self.strengths = strengths_
         self.resonance_wavelengths = resonances
         self.validity = validity
@@ -452,8 +451,7 @@ class TabulatedComplexRefractiveIndex(AbstractRefractiveIndexLaw):
             jnp.all(_on_passive_branch(indices))
         ):
             raise ValueError(
-                "Passive tabulated indices must have Im(n) > 0, "
-                "or Im(n) = 0 and Re(n) >= 0."
+                "Passive tabulated indices must have Im(n) > 0, or Im(n) = 0 and Re(n) >= 0."
             )
         self.angular_frequencies = frequencies
         self.refractive_indices = indices

@@ -22,7 +22,7 @@ def test_masked_softmax_normalizes_active_entries_and_closes_empty_masks():
         probabilities,
     )
 
-    empty = jnp.zeros((3,), dtype=bool)
+    empty = jnp.zeros((3,), dtype="bool")
     gradient = jax.grad(
         lambda values: jnp.sum(phx.ml.masked_softmax(values, mask=empty) ** 2)
     )(logits[0])

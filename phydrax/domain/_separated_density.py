@@ -60,7 +60,7 @@ class SeparatedLogDensityField(StrictModule):
         if len(labels) != len(selected) or len(set(labels)) != len(labels):
             raise ValueError("state_labels must uniquely align with factors.")
         weights = (
-            jnp.ones((fixed_rank,), dtype=float)
+            jnp.ones((fixed_rank,), dtype=jnp.float64)
             if rank_weights is None
             else jnp.asarray(rank_weights)
         )
@@ -68,7 +68,7 @@ class SeparatedLogDensityField(StrictModule):
             raise ValueError("rank_weights must be finite and rank-aligned.")
         resolved_id = field_id or canonical_fingerprint(
             {
-                "kind": "separated-log-density-v1",
+                "kind": "separated-log-density",
                 "rank": fixed_rank,
                 "state_labels": labels,
             }

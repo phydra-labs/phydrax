@@ -39,15 +39,17 @@ def materialize_mapped(
     data = reference_rule_data(rule)
     reference_points = data.points
     points = target.mapping(reference_points)
-    jacobian = jnp.asarray(target.jacobian(reference_points), dtype=float).reshape((-1,))
+    jacobian = jnp.asarray(target.jacobian(reference_points), dtype=jnp.float64).reshape(
+        (-1,)
+    )
     if jacobian.shape != data.weights.shape:
         raise ValueError("Mapped Jacobian must return one measure scale per point.")
     if target.mask is None:
-        mask = jnp.ones(data.weights.shape, dtype=bool)
+        mask = jnp.ones(data.weights.shape, dtype=jnp.bool_)
     elif callable(target.mask):
-        mask = jnp.asarray(target.mask(reference_points), dtype=bool).reshape((-1,))
+        mask = jnp.asarray(target.mask(reference_points), dtype=jnp.bool_).reshape((-1,))
     else:
-        mask = jnp.asarray(target.mask, dtype=bool).reshape((-1,))
+        mask = jnp.asarray(target.mask, dtype=jnp.bool_).reshape((-1,))
     if mask.shape != data.weights.shape:
         raise ValueError("Mapped target mask must have one entry per reference point.")
     raw_weights = data.weights * jnp.abs(jacobian)
@@ -56,7 +58,7 @@ def materialize_mapped(
         weights = raw_weights
         target_mass = represented_mass
     else:
-        target_mass = jnp.asarray(target.target_mass, dtype=float).reshape(())
+        target_mass = jnp.asarray(target.target_mass, dtype=jnp.float64).reshape(())
         scale = jnp.where(
             represented_mass != 0.0,
             target_mass / represented_mass,
@@ -105,7 +107,7 @@ def _mapped_values(
     else:
         values = jnp.asarray(result)
         output_dims = (None,) * max(values.ndim - 1, 0)
-    count = int(batch.weights.shape[0])
+    count = batch.weights.shape[0]
     if values.ndim == 0:
         values = jnp.broadcast_to(values, (count,))
         output_dims = ()
@@ -148,7 +150,7 @@ def integrate_mapped(
         normalized = target.normalized
     else:
         normalized = False
-    count = int(batch.weights.shape[0])
+    count = batch.weights.shape[0]
     expanded = jnp.reshape(weights, (count,) + (1,) * (values.ndim - 1))
     numerator = jnp.sum(
         precision_.accumulation(expanded * values),

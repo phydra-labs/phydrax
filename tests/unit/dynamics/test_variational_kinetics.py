@@ -24,9 +24,9 @@ def _linear_data(matrix, *, steps=400, reset=None):
         values,
         state_layout=phx.dynamics.StateLayout((2,), component_names=("x", "y")),
         reset_mask=(
-            jnp.zeros((steps - 1,), dtype=bool)
+            jnp.zeros((steps - 1,), dtype="bool")
             if reset is None
-            else jnp.asarray(reset, dtype=bool)
+            else jnp.asarray(reset, dtype="bool")
         ),
         source_id="linear-process",
     )
@@ -64,7 +64,7 @@ def test_vamp_and_tica_return_diagnosed_slow_coordinates():
 
 
 def test_lagged_fit_excludes_resets_and_rejects_irregular_physical_lag():
-    reset = jnp.zeros((29,), dtype=bool).at[12].set(True)
+    reset = jnp.zeros((29,), dtype="bool").at[12].set(True)
     data = _linear_data([[0.9, 0.0], [0.0, 0.7]], steps=30, reset=reset)
     library = _identity_library(data.state_layout)
     fitted = phx.dynamics.identification.fit_vamp(data, library, lag=2, n_modes=1)

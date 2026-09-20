@@ -225,7 +225,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
         for axis_index, (axis, coordinate) in enumerate(
             zip(axes, coordinates, strict=True)
         ):
-            values = np.asarray(coordinate, dtype=float)
+            values = np.asarray(coordinate, dtype=np.float64)
             spacing = float(np.diff(values)[0])
             spacings.append(spacing)
             if bool(axis.periodic) != particle_domain.periodic[axis_index]:
@@ -234,15 +234,14 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                 assignment_capabilities.maximum_support_radius_cells * spacing
             )
             if not axis.periodic:
-                grid_bounds = np.asarray(axis.bounds, dtype=float)
+                grid_bounds = np.asarray(axis.bounds, dtype=np.float64)
                 material_bounds = np.asarray(particle_domain.bounds)[:, axis_index]
                 lower_gap = float(material_bounds[0] - grid_bounds[0])
                 upper_gap = float(grid_bounds[1] - material_bounds[1])
                 declared = particle_domain.support_margin[axis_index]
                 if declared < required_margin or min(lower_gap, upper_gap) < declared:
                     raise ValueError(
-                        "Nonperiodic MPM needs the assignment's complete declared "
-                        "support halo."
+                        "Nonperiodic MPM needs the assignment's complete declared support halo."
                     )
         if isinstance(storage, DenseMPMNodalStoragePlan):
             mesh = jnp.meshgrid(*coordinates, indexing="ij")
@@ -417,7 +416,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
     def _storage_node_valid(self, storage_state):
         if isinstance(self.nodal_storage, BlockSparseMPMNodalStoragePlan):
             return storage_state.node_valid.reshape((-1,))
-        return jnp.ones((self.grid_count,), dtype=bool)
+        return jnp.ones((self.grid_count,), dtype=jnp.bool_)
 
     def _storage_boundary_data(self, storage_state):
         if self.boundary is None:
@@ -592,7 +591,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
                 jnp.zeros((), dtype=velocity.dtype),
                 jnp.zeros((), dtype=velocity.dtype),
                 jnp.asarray(jnp.inf, dtype=velocity.dtype),
-                jnp.zeros(mass.shape, dtype=bool),
+                jnp.zeros(mass.shape, dtype=jnp.bool_),
                 jnp.zeros(mass.shape, dtype=jnp.int32),
                 jnp.asarray(True),
             )
@@ -618,7 +617,7 @@ class PreparedMPMDynamics(StrictModule, NonTrainableState):
             dtype=dtype,
         )
         return MPMGridState(
-            scalar, vector, vector, vector, vector, vector, scalar.astype(bool)
+            scalar, vector, vector, vector, vector, vector, scalar.astype("bool")
         )
 
     def _empty_diagnostics(self, state: MPMRuntimeState, route_state) -> MPMDiagnostics:

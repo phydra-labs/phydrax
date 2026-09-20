@@ -257,19 +257,22 @@ line-length = 90
 exclude = [".*"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I001", "TID251"]
-ignore = ["E402", "E721", "E731", "E741", "F722", "F841"]
-fixable = ["I001", "F401"]
+select = ["E", "F", "I001", "RUF100", "TID251"]
+ignore = ["E402", "E501", "E721", "E731", "E741", "F722"]
+fixable = ["F401", "F841", "I001", "RUF100"]
 
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "opt_einsum".msg = "Use phydrax.ein; direct upstream imports are substrate-owner only."
 "jax.numpy.einsum".msg = "Use phydrax.ein.contract for package contractions."
 "jax.numpy.interp".msg = "Use phydrax interpolation with explicit support and bounds."
 "jax.scipy.sparse.linalg".msg = "Use phydrax.linalg iterative solvers and status evidence."
+"equinox.Module".msg = "Use phydrax._strict.StrictModule for Phydrax-owned modules."
 
 [tool.ruff.lint.per-file-ignores]
+"phydrax/_strict.py" = ["TID251"]
 "phydrax/ein/__init__.py" = ["TID251"]
-"phydrax/tensor_network/**/*.py" = ["TID251"]
+"phydrax/tensor_network/_contraction.py" = ["TID251"]
+"phydrax/tensor_network/_schedule.py" = ["TID251"]
 "benchmarks/**/*.py" = ["TID251"]
 "tests/**/*.py" = ["TID251"]
 "tools/**/*.py" = ["TID251"]
@@ -280,7 +283,7 @@ lines-after-imports = 2
 order-by-type = false
 
 [tool.ruff.lint.pycodestyle]
-max-line-length = 120
+max-line-length = 90
 
 [tool.pytest.ini_options]
 addopts = "--import-mode=importlib"

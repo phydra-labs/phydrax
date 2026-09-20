@@ -323,7 +323,7 @@ class PreparedMultigroupDiffusion(StrictModule, NonTrainableState):
 
     @property
     def cell_count(self) -> int:
-        return int(self.cell_volume_m3.size)
+        return self.cell_volume_m3.size
 
     def solve_fixed_source(
         self, source_m3_s: ArrayLike, /

@@ -63,7 +63,7 @@ def _labels(problem, plan, *, valid=None, control=False):
         value_standard_errors=jnp.full((3, 1), 0.1),
         control_targets=controls,
         control_standard_errors=(jnp.full((3, 1, 1), 0.2) if control else None),
-        valid=jnp.ones((3,), dtype=bool) if valid is None else valid,
+        valid=jnp.ones((3,), dtype="bool") if valid is None else valid,
         control_valid=(jnp.asarray([True, True, False]) if control else None),
         sample_weights=jnp.asarray([1.0, 2.0, 1.0]),
         source_path_count=8,
@@ -153,7 +153,7 @@ def test_control_targets_can_train_against_value_autodiff():
 def test_zero_valid_mass_and_provenance_mismatch_fail_early():
     problem = _problem()
     plan = _plan()
-    invalid = _labels(problem, plan, valid=jnp.zeros((3,), dtype=bool))
+    invalid = _labels(problem, plan, valid=jnp.zeros((3,), dtype="bool"))
     objective = FeynmanKacRegressionTerm(
         problem,
         plan,

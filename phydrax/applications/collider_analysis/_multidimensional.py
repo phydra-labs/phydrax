@@ -32,7 +32,7 @@ class MultiHistogramPlan(StrictModule, NonTrainableState):
         axis_names: Sequence[str],
         unit_ids: Sequence[str],
     ):
-        edges_ = tuple(np.asarray(value, dtype=float) for value in edges)
+        edges_ = tuple(np.asarray(value, dtype=np.float64) for value in edges)
         names = tuple(str(value).strip() for value in axis_names)
         units = tuple(str(value).strip() for value in unit_ids)
         if (
@@ -54,7 +54,7 @@ class MultiHistogramPlan(StrictModule, NonTrainableState):
         self.edges = tuple(jnp.asarray(value) for value in edges_)
         self.axis_names = names
         self.unit_ids = units
-        self.bin_shape = tuple(int(value.size - 1) for value in edges_)
+        self.bin_shape = tuple(value.size - 1 for value in edges_)
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "multidimensional-histogram-plan",
@@ -93,9 +93,9 @@ def fill_multidimensional_histogram(
     ):
         raise ValueError("Coordinates and weights must align with histogram dimensions.")
     active_ = (
-        jnp.ones(weights_.shape, dtype=bool)
+        jnp.ones(weights_.shape, dtype=jnp.bool_)
         if active is None
-        else jnp.asarray(active, dtype=bool)
+        else jnp.asarray(active, dtype=jnp.bool_)
     )
     if active_.shape != weights_.shape:
         raise ValueError("active must align with histogram entries.")
@@ -108,13 +108,13 @@ def fill_multidimensional_histogram(
         in_range &= (index >= 0) & (index < plan.bin_shape[axis])
         bin_indices.append(jnp.clip(index, 0, plan.bin_shape[axis] - 1))
     strides = tuple(
-        int(np.prod(plan.bin_shape[axis + 1 :], dtype=int))
+        int(np.prod(plan.bin_shape[axis + 1 :], dtype=np.int64))
         for axis in range(len(plan.bin_shape))
     )
     flat_index = sum(
         index * stride for index, stride in zip(bin_indices, strides, strict=True)
     )
-    flat_count = int(np.prod(plan.bin_shape, dtype=int))
+    flat_count = int(np.prod(plan.bin_shape, dtype=np.int64))
     membership = (
         jax.nn.one_hot(flat_index, flat_count, dtype=weights_.dtype) * in_range[:, None]
     )

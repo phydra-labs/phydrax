@@ -167,14 +167,14 @@ the paper's fast Table 2 values are `x_0 = 0.05 um`, `nu = 3.4`, and
 The units also cannot be inferred from the filenames. Paper Eq. 4 adds
 **half the signed full-sarcomere velocity** to each distortion rate;
 negative velocity denotes shortening and positive velocity lengthening.
-At the source boundary, metres convert to micrometres by a factor of
-1,000,000 and metres/second to micrometres/millisecond by 1,000.
-The WSBM file instead declares nanometre distortions and a
-nanometre/millisecond velocity. Table 2's dimensionless
+At the source boundary, meters convert to micrometers by a factor of
+1,000,000 and meters/second to micrometers/millisecond by 1,000.
+The WSBM file instead declares nanometer distortions and a
+nanometer/millisecond velocity. Table 2's dimensionless
 distortion-dependence coefficient can be used consistently by writing
 Eq. 8 as `g_0 = g_bar * exp(theta * ((x_2 - x_0) / (1 um))**2)`.
-This makes the source's numerical micrometre convention explicit; its
-value must not silently be reused with unscaled SI or nanometre states.
+This makes the source's numerical micrometer convention explicit; its
+value must not silently be reused with unscaled SI or nanometer states.
 
 Alternate source searches covered the complete trees of archived OpenDiHu
 at `b444344cf7ed313b26aaa75dd18b5f5933f721b8`, current OpenDiHu at

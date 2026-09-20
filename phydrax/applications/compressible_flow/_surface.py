@@ -115,7 +115,7 @@ class CompressibleSurfacePatchPlan(StrictModule, NonTrainableState):
     ):
         axis_ = int(axis)
         name_ = str(name)
-        mask_ = None if mask is None else jnp.asarray(mask, dtype=bool)
+        mask_ = None if mask is None else jnp.asarray(mask, dtype=jnp.bool_)
         if axis_ < 0 or side not in ("lower", "upper") or not name_:
             raise ValueError("Surface patch axis, side, and name are required.")
         if mask_ is not None and mask_.ndim == 0:
@@ -224,7 +224,7 @@ class CompressibleSurfaceObservationPlan(StrictModule, NonTrainableState):
     ) -> CompressibleSurfacePatchObservation:
         trace = self.dynamics.boundary_trace(time, state, patch.axis, patch.side, args)
         mask = (
-            jnp.ones(trace.face_measure.shape, dtype=bool)
+            jnp.ones(trace.face_measure.shape, dtype=jnp.bool_)
             if patch.mask is None
             else jnp.broadcast_to(patch.mask, trace.face_measure.shape)
         )

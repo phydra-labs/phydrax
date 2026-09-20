@@ -70,7 +70,7 @@ def test_covariance_recipe_families_produce_immutable_spd_geometry(recipe):
 
 def test_weighted_covariance_uses_effective_denominator_masks_and_case_axes():
     features = jnp.stack((_DATA, 2.0 * _DATA), axis=0)
-    feature_mask = jnp.ones_like(features, dtype=bool).at[:, 2, 1].set(False)
+    feature_mask = jnp.ones_like(features, dtype="bool").at[:, 2, 1].set(False)
     sample_weight = jnp.array([1.0, 2.0, 50.0, 2.0, 1.0, 1.0])
     result = WeightedCovariance(correction=1.0, regularization=0.0).fit_batch(
         MLBatch(

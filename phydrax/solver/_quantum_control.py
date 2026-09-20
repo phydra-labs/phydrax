@@ -160,7 +160,7 @@ class LinearQuantumControlTransfer(StrictModule):
         if jnp.issubdtype(value.dtype, jnp.complexfloating):
             raise TypeError("Control transfer matrices must be real.")
         if not jnp.issubdtype(value.dtype, jnp.inexact):
-            value = value.astype(float)
+            value = value.astype("float64")
         finite = jnp.all(jnp.isfinite(value))
         identifier = (
             canonical_fingerprint(
@@ -178,8 +178,8 @@ class LinearQuantumControlTransfer(StrictModule):
         self.matrix = value
         self.finite = finite
         self.valid = finite
-        self.line_count = int(value.shape[0])
-        self.term_count = int(value.shape[1])
+        self.line_count = value.shape[0]
+        self.term_count = value.shape[1]
         self.transfer_id = identifier
 
 
@@ -270,7 +270,7 @@ def sample_quantum_control_schedule(
         raise ValueError("time_grid must have shape (interval_count + 1,).")
     if jnp.issubdtype(times.dtype, jnp.complexfloating):
         raise TypeError("time_grid must be real.")
-    times = times.astype(jnp.result_type(times, float))
+    times = times.astype(jnp.result_type(times, jnp.float64))
     intervals = jnp.diff(times)
     positive = jnp.all(intervals > 0.0)
     sample_times = 0.5 * (times[:-1] + times[1:])

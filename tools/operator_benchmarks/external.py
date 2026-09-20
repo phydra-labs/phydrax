@@ -225,8 +225,7 @@ def select_benchmark_superior_external(
         )
         if candidate_degradation > maximum_robustness_ratio * native_degradation:
             reasons.append(
-                f"degrades more severely under shift for "
-                f"{(result.scenario, result.evaluation)}"
+                f"degrades more severely under shift for {(result.scenario, result.evaluation)}"
             )
             robustness_passed = False
     expected_regimes = set(native_by_regime)

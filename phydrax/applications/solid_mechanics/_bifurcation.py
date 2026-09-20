@@ -189,8 +189,7 @@ class MechanicsBifurcationDetector(StrictModule):
                 )
             if not conservative_verified:
                 raise ValueError(
-                    "Static buckling interpretations require verified conservative "
-                    "mechanics."
+                    "Static buckling interpretations require verified conservative mechanics."
                 )
             if (
                 static_interpretation == "static-buckling"
@@ -221,13 +220,11 @@ class MechanicsBifurcationDetector(StrictModule):
         else:
             if dynamic_stability is not None:
                 raise ValueError(
-                    "A dynamic stability contract cannot replace static bifurcation "
-                    "evidence."
+                    "A dynamic stability contract cannot replace static bifurcation evidence."
                 )
             if not isinstance(static_stability, PhysicalStaticStabilityProblem):
                 raise ValueError(
-                    "Static bifurcation classification requires a "
-                    "PhysicalStaticStabilityProblem."
+                    "Static bifurcation classification requires a PhysicalStaticStabilityProblem."
                 )
             stability = static_stability
             space = stability.physical_space
@@ -705,8 +702,7 @@ def switch_mechanics_branch(
         "transcritical",
     ):
         raise ValueError(
-            "Mechanics branch switching requires certified pitchfork or "
-            "transcritical evidence."
+            "Mechanics branch switching requires certified pitchfork or transcritical evidence."
         )
     if record.physical_mode is None:
         raise ValueError("Mechanics branch switching requires a physical mode.")
@@ -950,7 +946,7 @@ class ImperfectionStudy(StrictModule):
             for record in records_
         ):
             raise ValueError("records must align one-for-one with amplitudes.")
-        resolved = jnp.asarray(limit_resolved, dtype=bool)
+        resolved = jnp.asarray(limit_resolved, dtype=jnp.bool_)
         if resolved.shape != ():
             raise ValueError("limit_resolved must be one scalar boolean.")
         identifier = (
@@ -1059,7 +1055,7 @@ class EnergyBarrierEvidence(StrictModule):
             or path_limit < 0.0
         ):
             raise ValueError("Barrier tolerances must be finite and non-negative.")
-        admissible_ = jnp.asarray(admissible, dtype=bool)
+        admissible_ = jnp.asarray(admissible, dtype=jnp.bool_)
         if admissible_.shape != ():
             raise ValueError("admissible must be one scalar boolean.")
         provenance = _identifier(

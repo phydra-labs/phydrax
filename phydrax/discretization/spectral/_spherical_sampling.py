@@ -85,12 +85,12 @@ class SphericalSamplePlan(StrictModule, NonTrainableState):
             raise ValueError("Spherical sample points must have nonempty shape (n, 3).")
         if jnp.iscomplexobj(points_):
             raise TypeError("Spherical sample points must be real.")
-        points_ = points_.astype(float)
-        count = int(points_.shape[0])
+        points_ = points_.astype("float64")
+        count = points_.shape[0]
         mask = (
-            jnp.ones((count,), dtype=bool)
+            jnp.ones((count,), dtype=jnp.bool_)
             if active_mask is None
-            else jnp.asarray(active_mask, dtype=bool)
+            else jnp.asarray(active_mask, dtype=jnp.bool_)
         )
         if mask.shape != (count,):
             raise ValueError("active_mask must have shape (sample_capacity,).")
@@ -193,7 +193,7 @@ class SphericalSamplePlan(StrictModule, NonTrainableState):
 
     @property
     def sample_capacity(self) -> int:
-        return int(self.points.shape[0])
+        return self.points.shape[0]
 
     def prepare(
         self, discretization: SphericalSpectralDiscretization, /
@@ -247,7 +247,7 @@ class PreparedSphericalSampleOperator(StrictModule, NonTrainableState):
             raise TypeError("plan must be a SphericalSamplePlan.")
         if not isinstance(discretization, SphericalSpectralDiscretization):
             raise TypeError("discretization must be spherical spectral.")
-        mask = np.asarray(plan.active_mask, dtype=bool)
+        mask = np.asarray(plan.active_mask, dtype=np.bool_)
         active_count = int(np.count_nonzero(mask))
         if active_count == 0:
             raise ValueError("At least one spherical sample must be active.")
@@ -257,7 +257,9 @@ class PreparedSphericalSampleOperator(StrictModule, NonTrainableState):
             declared_points = radius * declared_points
         safe_points = np.where(mask[:, None], declared_points, [0.0, 0.0, radius])
         norms = np.linalg.norm(safe_points, axis=1)
-        radial_tolerance = max(plan.rank_tolerance * radius, 64.0 * np.finfo(float).eps)
+        radial_tolerance = max(
+            plan.rank_tolerance * radius, 64.0 * np.finfo(np.float64).eps
+        )
         if not np.all(np.isfinite(safe_points[mask])) or np.any(
             np.abs(norms[mask] - radius) > radial_tolerance
         ):
@@ -271,12 +273,12 @@ class PreparedSphericalSampleOperator(StrictModule, NonTrainableState):
         )
         design = _independent_design(full_design, discretization)
         design = jnp.where(plan.active_mask[:, None], design, 0.0)
-        mode_count = int(design.shape[1])
+        mode_count = design.shape[1]
         if plan.tikhonov == 0.0 and active_count < mode_count:
             raise ValueError(
                 "Exact spherical fitting requires at least as many active samples as modes."
             )
-        design_bytes = int(design.nbytes)
+        design_bytes = design.nbytes
         factor_bytes = int(
             design.dtype.itemsize
             * (design.size + min(design.shape) ** 2 + min(design.shape))
@@ -562,7 +564,7 @@ def _healpix_points(nside: int, ordering: HealpixOrdering, /) -> np.ndarray:
         for position in range(1, count + 1):
             phi = (position - 0.5) * math.pi / (2.0 * ring)
             points.append(_unit_point(z, phi))
-    return np.asarray(points, dtype=float)
+    return np.asarray(points, dtype=np.float64)
 
 
 def _healpix_nested_points(nside: int, /) -> np.ndarray:
@@ -595,7 +597,7 @@ def _healpix_nested_points(nside: int, /) -> np.ndarray:
             jp += 4 * nr
         phi = (jp - 0.5 * (shift + 1)) * math.pi / (2.0 * nr)
         points.append(_unit_point(z, phi))
-    return np.asarray(points, dtype=float)
+    return np.asarray(points, dtype=np.float64)
 
 
 def _compact_bits(value: int, /) -> int:

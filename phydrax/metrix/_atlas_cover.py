@@ -45,7 +45,7 @@ class ChartSupport(StrictModule):
         points = jnp.asarray(coordinates)
         if points.shape[-1:] != (self.chart.dimension,):
             raise ValueError("Support coordinates must match the chart dimension.")
-        result = jnp.asarray(self.predicate(points), dtype=bool)
+        result = jnp.asarray(self.predicate(points), dtype=jnp.bool_)
         if result.shape != points.shape[:-1]:
             raise ValueError("Support predicate must preserve coordinate leading axes.")
         return result
@@ -85,7 +85,7 @@ class AtlasOverlap(StrictModule):
 
     def contains(self, coordinates: ArrayLike, /) -> Array:
         points = jnp.asarray(coordinates)
-        result = jnp.asarray(self.source_support(points), dtype=bool)
+        result = jnp.asarray(self.source_support(points), dtype=jnp.bool_)
         if result.shape != points.shape[:-1]:
             raise ValueError("Overlap predicate must preserve coordinate leading axes.")
         return result

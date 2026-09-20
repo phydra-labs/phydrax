@@ -20,7 +20,7 @@ from ._state_geometry import AbstractStateGeometry
 
 
 def _shape(value: Sequence[int], owner: str, /) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if any(size <= 0 for size in shape):
         raise ValueError(f"{owner} dimensions must be positive.")
     return shape

@@ -75,14 +75,14 @@ def component_transfer_payload_bytes(
     /,
 ) -> bytes:
     """Return the canonical bytes governed by a component-transfer manifest."""
-    scales = np.asarray(scale_factors, dtype=float).reshape((-1,))
-    wavenumbers_ = np.asarray(wavenumbers, dtype=float).reshape((-1,))
+    scales = np.asarray(scale_factors, dtype=np.float64).reshape((-1,))
+    wavenumbers_ = np.asarray(wavenumbers, dtype=np.float64).reshape((-1,))
     values = np.asarray(transfer_values)
     if np.iscomplexobj(values):
         raise TypeError("Component transfer matrices must be real-valued.")
     dtype = np.result_type(scales.dtype, wavenumbers_.dtype, values.dtype)
     return _canonical_array_payload(
-        "component-transfer-matrix-v1",
+        "component-transfer-matrix",
         (
             scales.astype(dtype, copy=False),
             wavenumbers_.astype(dtype, copy=False),
@@ -106,7 +106,7 @@ def imported_complex_field_payload_bytes(
     if scale.shape != () or mass.shape != ():
         raise ValueError("Imported scale factor and declared mass must be scalars.")
     return _canonical_array_payload(
-        "imported-complex-wave-field-v1",
+        "imported-complex-wave-field",
         (field, scale, mass),
     )
 
@@ -201,8 +201,7 @@ def _mass_current_unit(
 ) -> UnitDefinition:
     return derived_unit(
         (
-            f"{scale.mass_unit.symbol}/"
-            f"({scale.length_unit.symbol}^{dimension - 1}*{scale.time_unit.symbol})"
+            f"{scale.mass_unit.symbol}/({scale.length_unit.symbol}^{dimension - 1}*{scale.time_unit.symbol})"
         ),
         (
             (scale.mass_unit, 1),
@@ -372,7 +371,8 @@ def _semantic_coordinate_layout(
         for axis in discretization.axes
     )
     nyquist = tuple(
-        np.asarray(axis.modes.nyquist_mask, dtype=bool) for axis in discretization.axes
+        np.asarray(axis.modes.nyquist_mask, dtype=np.bool_)
+        for axis in discretization.axes
     )
     component_count = len(components)
     identifiers: list[str] = []
@@ -669,8 +669,8 @@ class ComponentTransferMatrixProduct(StrictModule):
             for unit in units
         ):
             raise ValueError("Component transfer units and cosmology scale disagree.")
-        scales_host = np.asarray(scale_factors, dtype=float).reshape((-1,))
-        wavenumbers_host = np.asarray(wavenumbers, dtype=float).reshape((-1,))
+        scales_host = np.asarray(scale_factors, dtype=np.float64).reshape((-1,))
+        wavenumbers_host = np.asarray(wavenumbers, dtype=np.float64).reshape((-1,))
         values_host = np.asarray(transfer_values)
         if np.iscomplexobj(values_host):
             raise TypeError("Component transfer matrices must be real-valued.")
@@ -806,8 +806,7 @@ class ComponentTransferMatrixProduct(StrictModule):
         right_unit = self.component_units[right_index]
         return derived_unit(
             (
-                f"{left_unit.symbol}*{right_unit.symbol}*"
-                f"{self.scale.length_unit.symbol}^{self.spatial_dimension}"
+                f"{left_unit.symbol}*{right_unit.symbol}*{self.scale.length_unit.symbol}^{self.spatial_dimension}"
             ),
             (
                 (left_unit, 1),
@@ -1004,7 +1003,7 @@ class MixedInitialConditionPlan(StrictModule, NonTrainableState):
         current_mass = float(
             np.sum(
                 np.asarray(particle_lpt.particles.safe_masses)[
-                    np.asarray(particle_lpt.particles.active_mask, dtype=bool)
+                    np.asarray(particle_lpt.particles.active_mask, dtype=np.bool_)
                 ]
             )
         )

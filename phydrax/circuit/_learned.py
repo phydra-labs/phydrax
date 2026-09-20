@@ -48,8 +48,8 @@ class MonotoneLearnedConductanceLaw(AbstractImplicitCircuitLaw):
     ):
         if not callable(model):
             raise TypeError("model must be callable.")
-        minimum = jnp.asarray(minimum_conductance, dtype=float)
-        probes = jnp.asarray(probe_voltages, dtype=float)
+        minimum = jnp.asarray(minimum_conductance, dtype=jnp.float64)
+        probes = jnp.asarray(probe_voltages, dtype=jnp.float64)
         if (
             minimum.shape != ()
             or bool(~jnp.isfinite(minimum))

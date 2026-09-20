@@ -111,7 +111,7 @@ def _prepare_h1_virtual_element_projections(
         )
     )
     local_points = jnp.zeros((cells, local_dofs, 2), dtype=cell_points.dtype)
-    local_point_valid = jnp.zeros((cells, local_dofs), dtype=bool)
+    local_point_valid = jnp.zeros((cells, local_dofs), dtype=jnp.bool_)
     local_points = local_points.at[:, :arity].set(geometry.vertices)
     local_point_valid = local_point_valid.at[:, :arity].set(True)
     edge_width = element.edge_interior_dof_count
@@ -131,7 +131,7 @@ def _prepare_h1_virtual_element_projections(
 
     moment_indices = total_degree_multiindices(2, degree - 2) if degree >= 2 else ()
     exponent_to_polynomial = {
-        tuple(int(value) for value in exponent): index
+        tuple(exponent): index
         for index, exponent in enumerate(np.asarray(basis.exponents))
     }
     if moment_indices:
@@ -310,7 +310,7 @@ def _polynomial_differential(
     family: str,
     /,
 ) -> Array:
-    cells = int(geometry.vertices.shape[0])
+    cells = geometry.vertices.shape[0]
     polynomial_count = basis.feature_count
     differential_count = differential_basis.feature_count
     result = jnp.zeros(
@@ -318,11 +318,11 @@ def _polynomial_differential(
         dtype=geometry.vertices.dtype,
     )
     target = {
-        tuple(int(value) for value in exponent): index
+        tuple(exponent): index
         for index, exponent in enumerate(np.asarray(differential_basis.exponents))
     }
     for alpha, exponent_array in enumerate(np.asarray(basis.exponents)):
-        exponent = tuple(int(value) for value in exponent_array)
+        exponent = tuple(exponent_array)
         for component in range(2):
             if family == "ConformingHdiv":
                 axis = component
@@ -448,11 +448,11 @@ def _prepare_vector_virtual_element_projections(
         ].set(scalar_mass)
     l2_rhs = ein.contract("cab,cbj->caj", mass_gram, preliminary_coefficients)
     exponent_to_differential = {
-        tuple(int(value) for value in exponent): index
+        tuple(exponent): index
         for index, exponent in enumerate(np.asarray(differential_basis.exponents))
     }
     for alpha, exponent_array in enumerate(np.asarray(basis.exponents)):
-        exponent = tuple(int(value) for value in exponent_array)
+        exponent = tuple(exponent_array)
         if exponent not in exponent_to_differential:
             continue
         beta = exponent_to_differential[exponent]
@@ -493,11 +493,11 @@ def _prepare_vector_virtual_element_projections(
         ].set(boundary_functionals)
 
     exponent_to_differential = {
-        tuple(int(value) for value in exponent): index
+        tuple(exponent): index
         for index, exponent in enumerate(np.asarray(differential_basis.exponents))
     }
     for alpha, exponent_array in enumerate(np.asarray(differential_basis.exponents)):
-        exponent = tuple(int(value) for value in exponent_array)
+        exponent = tuple(exponent_array)
         for axis in range(2):
             power = exponent[axis]
             if not power:
@@ -594,7 +594,7 @@ def _prepare_vector_virtual_element_projections(
         l2_dof_projector=l2_dof,
         differential_coefficients=differential_coefficients,
         local_points=jnp.zeros((cells, local_dofs, 2), dtype=cell_points.dtype),
-        local_point_valid=jnp.zeros((cells, local_dofs), dtype=bool),
+        local_point_valid=jnp.zeros((cells, local_dofs), dtype=jnp.bool_),
         evidence=evidence,
         projection_id=canonical_fingerprint(
             {
@@ -680,7 +680,7 @@ def _prepare_discontinuous_l2_virtual_element_projections(
             (cells, 0, local_dofs), dtype=cell_points.dtype
         ),
         local_points=jnp.zeros((cells, local_dofs, 2), dtype=cell_points.dtype),
-        local_point_valid=jnp.zeros((cells, local_dofs), dtype=bool),
+        local_point_valid=jnp.zeros((cells, local_dofs), dtype=jnp.bool_),
         evidence=evidence,
         projection_id=canonical_fingerprint(
             {

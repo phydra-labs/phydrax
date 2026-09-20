@@ -17,8 +17,8 @@ from phydrax.operators.quantum._analytic_continuation import (
     maximum_entropy_continuation,
     pade_continuation,
     plan_pade_continuation,
-    prepare_pade_continuation,
     plan_scalar_fermionic_maximum_entropy,
+    prepare_pade_continuation,
     prepare_scalar_fermionic_maximum_entropy,
     sparse_continuation,
     spectral_grid,
@@ -32,8 +32,8 @@ from phydrax.operators.quantum._thermal_green import (
     dlr_to_matsubara,
     dyson_solve,
     evaluate_dlr_matsubara,
-    evaluate_fermionic_thermal_channel,
     evaluate_dlr_tau,
+    evaluate_fermionic_thermal_channel,
     evaluate_lehmann_matsubara,
     evaluate_matsubara_tail,
     extract_self_energy,
@@ -187,10 +187,7 @@ def test_scalar_dyson_solve_and_self_energy_extraction_close_the_identity():
     assert jnp.all(solved.evidence.valid)
     assert jnp.allclose(solved.green.values, expected)
     assert jnp.all(extracted.evidence.valid)
-    assert jnp.allclose(
-        extracted.self_energy.values, sigma_values, rtol=1e-6, atol=1e-7
-    )
-
+    assert jnp.allclose(extracted.self_energy.values, sigma_values, rtol=1e-6, atol=1e-7)
 
 
 def test_retarded_spectral_physicality_and_sector_channels_keep_invariants_separate():
@@ -239,6 +236,7 @@ def test_scalar_maxent_profile_refuses_matrix_continuation():
     )
     with pytest.raises(ValueError, match="excludes matrix"):
         prepare_scalar_fermionic_maximum_entropy(plan, matrix_samples)
+
 
 def test_hubbard_atom_lehmann_sum_has_two_poles_and_unit_spectral_weight():
     interaction = 4.0
@@ -290,7 +288,7 @@ def test_pade_recovers_a_single_pole_and_reports_rank_failure():
     assert jnp.all(result.spectral_density >= 0.0)
 
     constant = MatsubaraGreenFunction(
-        beta, labels, jnp.ones_like(frequency, dtype=complex)
+        beta, labels, jnp.ones_like(frequency, dtype="complex128")
     )
     failed = prepare_pade_continuation(
         plan_pade_continuation(labels.size, numerator_degree=3, denominator_degree=3),

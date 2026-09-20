@@ -4,6 +4,8 @@
 
 """Immutable physical plane fields and scalar wave-optics actions."""
 
+from importlib import import_module
+
 from ._angular_spectrum import (
     AngularSpectrumEvidence,
     AngularSpectrumPlan,
@@ -12,7 +14,6 @@ from ._angular_spectrum import (
     PreparedAngularSpectrum,
     propagate_angular_spectrum,
 )
-from ._atmosphere import *  # noqa: F403
 from ._atmosphere import __all__ as _atmosphere_all
 from ._coherence import coherent_mode_intensity
 from ._coupled_envelope import (
@@ -105,7 +106,6 @@ from ._fresnel import (
     PreparedDirectFresnel,
     propagate_direct_fresnel,
 )
-from ._imaging import *  # noqa: F403
 from ._imaging import __all__ as _imaging_all
 from ._material_response import (
     DelayedRamanResponsePlan,
@@ -141,7 +141,6 @@ from ._nonlinear_response import (
     PulseResponseLedger,
 )
 from ._pulse_time import PulseTimeSpace, PulseTimeTopology
-from ._pupil import *  # noqa: F403
 from ._pupil import __all__ as _pupil_all
 from ._pupil_adapter import (
     PupilFieldAdapterEvidence,
@@ -149,7 +148,6 @@ from ._pupil_adapter import (
     PupilToScalarFieldResult,
     sequential_pupil_to_scalar_field,
 )
-from ._statistical_ao import *  # noqa: F403
 from ._statistical_ao import __all__ as _statistical_ao_all
 from ._thin import JonesThinTransmission, ScalarThinTransmission, thin_lens
 from ._unidirectional import (
@@ -161,6 +159,23 @@ from ._unidirectional import (
     UnidirectionalPropagationResult,
     UnidirectionalPropagationStatus,
 )
+
+
+_FACADE_EXPORT_MODULES = ("._atmosphere", "._imaging", "._pupil", "._statistical_ao")
+
+
+def __getattr__(name: str):
+    for module_name in reversed(_FACADE_EXPORT_MODULES):
+        module = import_module(module_name, __package__)
+        if name in module.__all__:
+            value = getattr(module, name)
+            globals()[name] = value
+            return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
 
 
 __all__ = [

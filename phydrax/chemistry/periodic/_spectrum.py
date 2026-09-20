@@ -101,7 +101,7 @@ class PeriodicSpectrumResult(StrictModule, NonTrainableState):
         self.metric_residuals = metric
         self.overlap_minimum_eigenvalues = jnp.asarray(overlap_minimum_eigenvalues)
         self.overlap_condition_numbers = jnp.asarray(overlap_condition_numbers)
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.energy_unit = energy_unit
         self.cell_id = str(cell_id)
         self.basis_id = str(basis_id)
@@ -159,7 +159,7 @@ class PeriodicSpectrumPlan(StrictModule, NonTrainableState):
         tolerance = float(residual_tolerance)
         if count <= 0 or count > orbitals:
             raise ValueError("band_count must lie within the orbital dimension.")
-        if int(support.fractional_points.shape[0]) * count > int(maximum_eigenpairs):
+        if support.fractional_points.shape[0] * count > int(maximum_eigenpairs):
             raise PeriodicResourceError("Periodic eigensolve exceeds maximum_eigenpairs.")
         if not isfinite(tolerance) or tolerance <= 0.0:
             raise ValueError("residual_tolerance must be positive finite.")
@@ -301,7 +301,7 @@ class ChebyshevMomentPlan(StrictModule, NonTrainableState):
         lower = float(lower_bound)
         upper = float(upper_bound)
         applications = (
-            int(mesh.fractional_points.shape[0])
+            mesh.fractional_points.shape[0]
             * pencil.plan.basis.orbital_count
             * max(order_ - 1, 0)
         )

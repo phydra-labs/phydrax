@@ -228,7 +228,7 @@ def _features(source, measurements=None):
                 measurement,
                 environment,
                 scalars,
-                feature_definition_id="transparent-v1",
+                feature_definition_id="transparent",
                 requested_use=_FEATURE_USE,
             )
         )
@@ -524,7 +524,7 @@ def test_double_campaign_rejects_rekeyed_components_and_locked_family_leakage(
         )
 
 
-def test_model_selection_rejects_relabelled_hyperparameters_and_cross_campaign_fit(
+def test_model_selection_rejects_relabeled_hyperparameters_and_cross_campaign_fit(
     tmp_path,
 ):
     source = _source(tmp_path)
@@ -723,7 +723,7 @@ def test_stability_requires_measurement_identifiability_and_feature_admission(tm
         calibration,
         environment,
         denied_scalars,
-        feature_definition_id="transparent-v1",
+        feature_definition_id="transparent",
         requested_use=non_training_use,
     )
     with pytest.raises(PermissionError, match="training-use-not-permitted"):

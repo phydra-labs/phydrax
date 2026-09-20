@@ -40,9 +40,7 @@ def _source_terms(
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Evaluate the pinned source equations without Phydrax/JAX operations."""
     u_slow = slow_twitch_ratio * np.sin(0.5 * np.pi * excitation)
-    u_fast = (1.0 - slow_twitch_ratio) * (
-        1.0 - np.cos(0.5 * np.pi * excitation)
-    )
+    u_fast = (1.0 - slow_twitch_ratio) * (1.0 - np.cos(0.5 * np.pi * excitation))
     denominator = u_slow + u_fast
     recruited_slow = np.ones_like(denominator)
     np.divide(u_slow, denominator, out=recruited_slow, where=denominator > 0.0)
@@ -63,14 +61,15 @@ def _source_terms(
 
     alpha_fast = 153.0 / maximum_velocity
     alpha_slow = 100.0 / (maximum_velocity / 2.5)
-    concentric_sdot = aerobic_factor * np.square(activity) * (
-        recruited_slow
-        * np.minimum(-alpha_slow * normalized_velocity, 100.0)
-        - alpha_fast * normalized_velocity * (1.0 - recruited_slow)
+    concentric_sdot = (
+        aerobic_factor
+        * np.square(activity)
+        * (
+            recruited_slow * np.minimum(-alpha_slow * normalized_velocity, 100.0)
+            - alpha_fast * normalized_velocity * (1.0 - recruited_slow)
+        )
     )
-    eccentric_sdot = (
-        aerobic_factor * activity * 4.0 * alpha_slow * normalized_velocity
-    )
+    eccentric_sdot = aerobic_factor * activity * 4.0 * alpha_slow * normalized_velocity
     sdot = np.where(normalized_velocity <= 0.0, concentric_sdot, eccentric_sdot)
     sdot = np.where(normalized_length > 1.0, sdot * force_length, sdot)
 
@@ -81,9 +80,7 @@ def _source_terms(
     heat_before_floor = amdot + sdot
     floor_active = heat_before_floor < minimum_heat_rate
     specific_total = np.maximum(heat_before_floor, minimum_heat_rate) + wdot
-    specific_total = np.where(
-        correction_active & ~floor_active, 0.0, specific_total
-    )
+    specific_total = np.where(correction_active & ~floor_active, 0.0, specific_total)
     total = mass * specific_total
     return amdot, sdot, wdot, total
 
@@ -119,9 +116,7 @@ def qualify() -> dict[str, object]:
         fiber_velocity,
     )
     force[-1] = (
-        mass[-1]
-        * (unloaded_amdot[-1] + unloaded_sdot[-1] + 20.0)
-        / fiber_velocity[-1]
+        mass[-1] * (unloaded_amdot[-1] + unloaded_sdot[-1] + 20.0) / fiber_velocity[-1]
     )
     expected_amdot, expected_sdot, expected_wdot, expected_total = _source_terms(
         mass,
@@ -155,9 +150,7 @@ def qualify() -> dict[str, object]:
     )
 
     observed_terms = {
-        "AMdot_W_per_kg": np.asarray(
-            result.activation_maintenance_heat_W_per_kg
-        ),
+        "AMdot_W_per_kg": np.asarray(result.activation_maintenance_heat_W_per_kg),
         "Sdot_W_per_kg": np.asarray(result.shortening_lengthening_heat_W_per_kg),
         "Wdot_W_per_kg": np.asarray(result.mechanical_work_W_per_kg),
         "total_W": np.asarray(result.muscle_metabolic_power_W),
@@ -177,9 +170,7 @@ def qualify() -> dict[str, object]:
     time = jnp.asarray((0.0, 0.5, 1.0))
     trace = jnp.stack((result.muscle_metabolic_power_W,) * 3)
     energy = integrate_metabolic_energy_joule(time, trace)
-    integration_error = float(
-        jnp.max(jnp.abs(energy - result.muscle_metabolic_power_W))
-    )
+    integration_error = float(jnp.max(jnp.abs(energy - result.muscle_metabolic_power_W)))
     passed = (
         bool(result.evidence.successful)
         and result.mechanical_work_W_per_kg[0] > 0.0

@@ -527,7 +527,7 @@ def test_amr_time_varying_coarse_trace_drives_stages_ledgers_and_reflux(monkeypa
     for time, incoming, outgoing, start, end, owned, t0, t1 in records:
         fraction = float((time - t0) / (t1 - t0))
         expected = (1.0 - fraction) * start + fraction * end
-        owned = owned.astype(bool)
+        owned = owned.astype("bool")
         np.testing.assert_allclose(
             outgoing[~owned], expected[~owned], rtol=1.0e-11, atol=1.0e-12
         )

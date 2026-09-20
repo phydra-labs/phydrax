@@ -151,7 +151,7 @@ def _witness_case():
         1,
         np.asarray([[0.0, 1.0]]),
         np.asarray([-1.0]),
-        np.asarray([[-1.0, 1.0], [1.0, 1.0]], dtype=complex),
+        np.asarray([[-1.0, 1.0], [1.0, 1.0]], dtype="complex128"),
         np.asarray([0.0, 0.0]),
     )
     passed = witness.dimension == 1 and witness.degree == 2

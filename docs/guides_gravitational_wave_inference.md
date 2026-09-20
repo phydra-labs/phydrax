@@ -239,7 +239,7 @@ The general UQ layer owns cross-event operations:
   `SelectionInjectionSet`; `PoissonPopulationPosteriorTerm` additionally owns a
   population-rate term; and
 - `SimulationCalibrationPlan` records component paths, tie policy, histogram bins,
-  minimum valid cases, and multiple-testing correction. Failed analyses remain in the
+  minimum valid cases, and multiple-testing correction. Failed analyzes remain in the
   result by case ID instead of disappearing from rank statistics.
 
 These operations require a shared physical population parameterization. Event

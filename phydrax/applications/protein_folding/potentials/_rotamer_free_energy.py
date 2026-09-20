@@ -66,7 +66,7 @@ def _finite_array(value: ArrayLike, name: str) -> Array:
         or not np.all(np.isfinite(host))
     ):
         raise ValueError(f"{name} must contain finite real values.")
-    return jnp.asarray(host, dtype=float)
+    return jnp.asarray(host, dtype=jnp.float64)
 
 
 def _admit(source, commercial_use, redistribution, training_use, export):
@@ -146,7 +146,7 @@ class RotamerGeometryPlan(StrictModule):
         self.local_sites = sites
         self.source = source
         self.units = units
-        self.cardinalities = tuple(int(value.shape[0]) for value in sites)
+        self.cardinalities = tuple(value.shape[0] for value in sites)
         self.minimum_frame_length = threshold
         self.geometry_id = canonical_fingerprint(
             {
@@ -227,7 +227,7 @@ class RotamerParameterPlan(StrictModule):
         widths = tuple(_finite_array(value, "pair_widths") for value in pair_widths)
         if len(amplitudes) != len(pairs) or len(widths) != len(pairs):
             raise ValueError("Every fixed pair requires amplitude and width tables.")
-        cards = tuple(int(value.size) for value in unary)
+        cards = tuple(value.size for value in unary)
         for (i, j), amplitude, width in zip(pairs, amplitudes, widths):
             if (
                 amplitude.shape != (cards[i], cards[j])
@@ -335,7 +335,7 @@ class RotamerFreeEnergyTerm(AbstractAtomisticEnergyTerm):
                 "Sampling temperature differs from the fixed effective model; revalidate it."
             )
         ids = np.asarray(attribution_atom_ids)
-        weights = np.asarray(attribution_weights, dtype=float)
+        weights = np.asarray(attribution_weights, dtype=np.float64)
         if (
             ids.ndim != 1
             or ids.size == 0
@@ -443,7 +443,7 @@ class PreparedRotamerFreeEnergyTerm(AbstractPreparedAtomisticEnergyTerm):
         frame_rows = np.asarray(
             [[rows[int(key)] for key in row] for row in frame_ids], dtype=np.int32
         )
-        attribution = np.zeros((system.capacity,), dtype=float)
+        attribution = np.zeros((system.capacity,), dtype=np.float64)
         attribution[[rows[int(key)] for key in attribution_ids]] = np.asarray(
             plan.attribution_weights
         )

@@ -48,15 +48,14 @@ def _validated_matrix(
     if np.iscomplexobj(host):
         raise TypeError("Metric-isometry matrices must be real-valued.")
     if not np.issubdtype(host.dtype, np.floating):
-        host = host.astype(float)
+        host = host.astype("float64")
     if np.any(~np.isfinite(host)):
         raise ValueError("Metric-isometry matrix must be finite.")
     metric = np.diag(np.asarray(algebra.diagonal, dtype=host.dtype))
     defect = float(np.max(np.abs(host.T @ metric @ host - metric)))
     if defect > tolerance_:
         raise ValueError(
-            f"Matrix does not preserve Clifford metric; defect {defect} exceeds "
-            f"tolerance {tolerance_}."
+            f"Matrix does not preserve Clifford metric; defect {defect} exceeds tolerance {tolerance_}."
         )
     determinant = float(np.linalg.det(host))
     if not math.isfinite(determinant) or abs(determinant) <= tolerance_:
@@ -98,7 +97,7 @@ class MetricIsometryAction(StrictModule, NonTrainableState):
         self.tolerance = tolerance_
         self.action_id = canonical_fingerprint(
             {
-                "kind": "metric-isometry-action-v1",
+                "kind": "metric-isometry-action",
                 "algebra": algebra.algebra_id,
                 "matrix": host.tolist(),
                 "tolerance": tolerance_,
@@ -151,7 +150,7 @@ class MetricIsometryAuditSet(StrictModule, NonTrainableState):
         self.actions = resolved
         self.audit_set_id = canonical_fingerprint(
             {
-                "kind": "metric-isometry-audit-set-v1",
+                "kind": "metric-isometry-audit-set",
                 "algebra": algebra.algebra_id,
                 "actions": [action.action_id for action in resolved],
             }
@@ -191,7 +190,7 @@ class FiniteMetricIsometryGroup(StrictModule, NonTrainableState):
         host = np.stack(validated, axis=0)
         identity = np.eye(algebra.dimension, dtype=host.dtype)
         pairwise = np.max(np.abs(host[:, None, :, :] - host[None, :, :, :]), axis=(2, 3))
-        duplicate_mask = (pairwise <= tolerance_) & ~np.eye(host.shape[0], dtype=bool)
+        duplicate_mask = (pairwise <= tolerance_) & ~np.eye(host.shape[0], dtype=np.bool_)
         if np.any(duplicate_mask):
             raise ValueError("Finite metric-isometry group matrices must be unique.")
         identity_index = _matrix_index(host, identity, tolerance_)
@@ -221,7 +220,7 @@ class FiniteMetricIsometryGroup(StrictModule, NonTrainableState):
         self.tolerance = tolerance_
         self.group_id = canonical_fingerprint(
             {
-                "kind": "finite-metric-isometry-group-v1",
+                "kind": "finite-metric-isometry-group",
                 "algebra": algebra.algebra_id,
                 "matrices": host.tolist(),
                 "table": [list(row) for row in table],
@@ -233,7 +232,7 @@ class FiniteMetricIsometryGroup(StrictModule, NonTrainableState):
 
     @property
     def order(self) -> int:
-        return int(self.matrices.shape[0])
+        return self.matrices.shape[0]
 
     def action(self, index: int, /) -> MetricIsometryAction:
         index_ = int(index)

@@ -125,8 +125,7 @@ class IdealGasReferenceHelmholtzTerm(AbstractMolarHelmholtzTerm):
             np.arange(schema.species_count),
         ):
             raise ValueError(
-                "Ideal gas mixture thermodynamics requires one species occurrence "
-                "per component in catalog order."
+                "Ideal gas mixture thermodynamics requires one species occurrence per component in catalog order."
             )
         phase = schema.phase_specs[int(np.asarray(schema.phase_ids)[0])]
         if phase.standard_pressure is None:

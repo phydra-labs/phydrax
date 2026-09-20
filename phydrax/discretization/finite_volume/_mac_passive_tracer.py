@@ -260,7 +260,7 @@ class PreparedMACPassiveTracerMacCormack(StrictModule, NonTrainableState):
         width_components = []
         for axis, structured_axis in enumerate(grid.structured_axes):
             shape = [1] * dimension
-            shape[axis] = int(structured_axis.interval_widths.size)
+            shape[axis] = structured_axis.interval_widths.size
             width_components.append(
                 jnp.broadcast_to(
                     jnp.asarray(structured_axis.interval_widths, dtype=dtype).reshape(

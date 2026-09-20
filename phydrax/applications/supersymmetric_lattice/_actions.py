@@ -57,7 +57,7 @@ class TwistedSYMPlan(StrictModule):
         lattice_spacing: float = 1.0,
         maximum_field_elements: int = 10_000_000,
     ):
-        shape = tuple(int(size) for size in lattice_shape)
+        shape = tuple(lattice_shape)
         rank = int(matrix_rank)
         coupling_ = float(coupling)
         spacing = float(lattice_spacing)
@@ -73,8 +73,7 @@ class TwistedSYMPlan(StrictModule):
         required = 2 * prod(shape) * len(shape) * rank * rank
         if maximum < 1 or required > maximum:
             raise ValueError(
-                f"Twisted-SYM links require {required} scalar elements; capacity is "
-                f"{maximum}."
+                f"Twisted-SYM links require {required} scalar elements; capacity is {maximum}."
             )
         self.lattice_shape = shape
         self.matrix_rank = rank

@@ -93,10 +93,10 @@ def _subset_domain(base: IntegrationDomain, rows: np.ndarray, /) -> IntegrationD
         base.support_id,
         base.entity_set_id,
         owner_cells=np.asarray(base.owner_cells)[rows],
-        neighbour_cells=np.asarray(base.neighbour_cells)[rows],
+        neighbor_cells=np.asarray(base.neighbor_cells)[rows],
         owner_local_entities=np.asarray(base.owner_local_entities)[rows],
-        neighbour_local_entities=np.asarray(base.neighbour_local_entities)[rows],
-        neighbour_trace_permutations=np.asarray(base.neighbour_trace_permutations)[rows],
+        neighbor_local_entities=np.asarray(base.neighbor_local_entities)[rows],
+        neighbor_trace_permutations=np.asarray(base.neighbor_trace_permutations)[rows],
         periodic_face_mask=np.asarray(base.periodic_face_mask)[rows],
         selection_id=base.selection_id,
     )
@@ -283,7 +283,7 @@ class ExplicitPolygonH1Discretization(AbstractPreparedLocalDiscretization):
         self.default_runtime = self._runtime(mesh.coordinates, version)
         layout = EntityDofLayout(
             mesh.topology.entity_sets[0].entity_set_id,
-            int(mesh.coordinates.shape[0]),
+            mesh.coordinates.shape[0],
             dof_map.global_dof_count,
             component_shape=plan.field.component_shape,
         )
@@ -472,7 +472,7 @@ class ExplicitPolygonH1Discretization(AbstractPreparedLocalDiscretization):
         if selection.entity_set_id != base.entity_set_id:
             raise ValueError("Selection does not match the requested polygon domain.")
         rows = np.flatnonzero(
-            np.asarray(selection.mask, dtype=bool)[np.asarray(base.entity_indices)]
+            np.asarray(selection.mask, dtype=np.bool_)[np.asarray(base.entity_indices)]
         )
         return _subset_domain(base, rows)
 

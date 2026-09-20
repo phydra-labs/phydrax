@@ -115,8 +115,7 @@ def prepare_causal_signature_policy(
         augmented_dimension=dimension,
         feature_size=feature_size,
         prepared_id=(
-            f"prepared-causal-{spec.feature_kind}:{spec.spec_id}:"
-            f"dimension={dimension}:depth={spec.depth}"
+            f"prepared-causal-{spec.feature_kind}:{spec.spec_id}:dimension={dimension}:depth={spec.depth}"
         ),
     )
 
@@ -154,7 +153,7 @@ class SignaturePolicySampleSet(StrictModule):
             )
         if jnp.issubdtype(history.dtype, jnp.complexfloating):
             raise TypeError("histories must be real-valued.")
-        history = history.astype(jnp.result_type(history, float))
+        history = history.astype(jnp.result_type(history, jnp.float64))
         num_paths, max_knots, dimension = map(int, history.shape)
         time_values = jnp.asarray(times)
         if time_values.shape == (max_knots,):
@@ -165,7 +164,7 @@ class SignaturePolicySampleSet(StrictModule):
             )
         if jnp.issubdtype(time_values.dtype, jnp.complexfloating):
             raise TypeError("times must be real-valued.")
-        time_values = time_values.astype(jnp.result_type(time_values, float))
+        time_values = time_values.astype(jnp.result_type(time_values, jnp.float64))
         length_values = jnp.asarray(lengths)
         if length_values.shape != (num_paths,) or not jnp.issubdtype(
             length_values.dtype, jnp.integer
@@ -264,12 +263,12 @@ class CausalSignaturePolicy(StrictModule):
         if bool(jnp.any(lower > upper)):
             raise ValueError("action lower bounds cannot exceed upper bounds.")
         self.prepared = prepared
-        self.weights = matrix.astype(jnp.result_type(matrix, float))
-        self.bias = offset.astype(jnp.result_type(offset, float))
-        self.action_lower_bounds = lower.astype(jnp.result_type(lower, float))
-        self.action_upper_bounds = upper.astype(jnp.result_type(upper, float))
+        self.weights = matrix.astype(jnp.result_type(matrix, jnp.float64))
+        self.bias = offset.astype(jnp.result_type(offset, jnp.float64))
+        self.action_lower_bounds = lower.astype(jnp.result_type(lower, jnp.float64))
+        self.action_upper_bounds = upper.astype(jnp.result_type(upper, jnp.float64))
         self.training_independence_labels = tuple(
-            int(value) for value in np.asarray(training_sample.independence_labels)
+            np.asarray(training_sample.independence_labels)
         )
         self.training_realization_ids = training_sample.realization_ids
         self.policy_id = _identifier(policy_id, "policy_id")
@@ -378,13 +377,10 @@ def evaluate_causal_signature_policy(
             raise ValueError(
                 "A training evaluation must use the policy's declared training paths."
             )
-        training_labels = tuple(
-            int(value) for value in np.asarray(sample.independence_labels)
-        )
+        training_labels = tuple(np.asarray(sample.independence_labels))
         if training_labels != policy.training_independence_labels:
             raise ValueError(
-                "A training evaluation must preserve the policy's training "
-                "independence labels."
+                "A training evaluation must preserve the policy's training independence labels."
             )
     actions = jnp.stack(
         tuple(

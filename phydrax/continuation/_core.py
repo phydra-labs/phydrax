@@ -26,7 +26,7 @@ from .._iteration import (
     IterationSession,
     IterationSessionState,
 )
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._tree_math import (
     tree_add_scaled as _tree_add_scaled,
     tree_allfinite as _tree_allfinite,
@@ -145,10 +145,10 @@ class ContinuationIterationMetrics(StrictModule):
         self.corrector_status = jnp.asarray(candidate.corrector_status, dtype=jnp.int32)
         self.tangent_status = jnp.asarray(candidate.tangent_status, dtype=jnp.int32)
         self.retry_index = jnp.asarray(candidate.retry_index, dtype=jnp.int32)
-        self.numerical_accepted = jnp.asarray(step.numerical_accepted, dtype=bool)
-        self.accepted = jnp.asarray(step.accepted, dtype=bool)
-        self.committed = jnp.asarray(step.committed, dtype=bool)
-        self.rolled_back = jnp.asarray(step.rolled_back, dtype=bool)
+        self.numerical_accepted = jnp.asarray(step.numerical_accepted, dtype=jnp.bool_)
+        self.accepted = jnp.asarray(step.accepted, dtype=jnp.bool_)
+        self.committed = jnp.asarray(step.committed, dtype=jnp.bool_)
+        self.rolled_back = jnp.asarray(step.rolled_back, dtype=jnp.bool_)
 
 
 def _continuation_iteration_record(
@@ -193,10 +193,10 @@ class ContinuationCurveProblem(StrictModule):
     manifold.
     """
 
-    coordinate_lower: AbstractAttribute[float]
+    coordinate_lower: eqx.AbstractVar[float]
     __strict_abstract__ = True
-    coordinate_upper: AbstractAttribute[float]
-    problem_id: AbstractAttribute[str]
+    coordinate_upper: eqx.AbstractVar[float]
+    problem_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def residual(
@@ -602,8 +602,7 @@ class ParameterPathContinuationProblem(ContinuationCurveProblem):
         )
         if jax.tree.structure(parameters) != jax.tree.structure(self.parameter_template):
             raise ValueError(
-                "Physical parameter path and template must have the same PyTree "
-                "structure."
+                "Physical parameter path and template must have the same PyTree structure."
             )
         for value, template in zip(
             jax.tree.leaves(parameters),
@@ -739,7 +738,7 @@ class StabilityEvidence(StrictModule):
         pair_tolerance: float,
     ):
         values = jnp.asarray(eigenvalues)
-        mask = jnp.asarray(mode_mask, dtype=bool)
+        mask = jnp.asarray(mode_mask, dtype=jnp.bool_)
         if values.ndim != 1 or mask.shape != values.shape or not values.size:
             raise ValueError(
                 "Stability eigenvalues and mode_mask must be non-empty rank-one arrays."
@@ -780,9 +779,9 @@ class StabilityEvidence(StrictModule):
 class AbstractStabilityAnalyzer(StrictModule):
     """Explicit spectral analysis policy for continuation equilibria."""
 
-    analyzer_id: AbstractAttribute[str]
-    zero_tolerance: AbstractAttribute[float]
-    pair_tolerance: AbstractAttribute[float]
+    analyzer_id: eqx.AbstractVar[str]
+    zero_tolerance: eqx.AbstractVar[float]
+    pair_tolerance: eqx.AbstractVar[float]
 
     @abc.abstractmethod
     def analyze(
@@ -940,7 +939,7 @@ class DenseSchurStabilityAnalyzer(AbstractStabilityAnalyzer):
         result = eigen.schur_eigensolve(spectral_problem, policy=self.policy)
         return _build_stability_evidence(
             result.eigenvalues,
-            jnp.ones(result.eigenvalues.shape, dtype=bool),
+            jnp.ones(result.eigenvalues.shape, dtype=jnp.bool_),
             source_success=result.status == int(eigen.SchurSolveStatus.SUCCESS),
             source_status=result.status,
             analyzer_id=self.analyzer_id,
@@ -1109,8 +1108,7 @@ class GeneralKrylovStabilityAnalyzer(AbstractStabilityAnalyzer):
             )
         if policy_.failure.mode != "status":
             raise ValueError(
-                "General Krylov stability requires failure mode 'status' so spectral "
-                "failures remain explicit."
+                "General Krylov stability requires failure mode 'status' so spectral failures remain explicit."
             )
         if not isfinite(zero) or not isfinite(pair) or zero < 0.0 or pair < 0.0:
             raise ValueError("Stability tolerances must be finite and non-negative.")
@@ -1202,7 +1200,7 @@ def _build_stability_evidence(
     values = jnp.asarray(eigenvalues)
     complex_dtype = jnp.result_type(values.dtype, jnp.complex64)
     values = values.astype(complex_dtype)
-    mask = jnp.asarray(mode_mask, dtype=bool)
+    mask = jnp.asarray(mode_mask, dtype=jnp.bool_)
     finite = jnp.any(mask) & jnp.all(jnp.where(mask, jnp.isfinite(values), True))
     real_parts = jnp.real(values)
     leading_index = jnp.argmax(jnp.where(mask, real_parts, -jnp.inf))
@@ -1217,7 +1215,7 @@ def _build_stability_evidence(
     pair_scale = pair_tolerance * (1.0 + jnp.abs(values[:, None]))
     pair_matches = jnp.abs(values[:, None] - jnp.conj(values)[None, :]) <= pair_scale
     pair_matches = pair_matches & mask[:, None] & mask[None, :]
-    pair_matches = pair_matches & ~jnp.eye(values.size, dtype=bool)
+    pair_matches = pair_matches & ~jnp.eye(values.size, dtype=jnp.bool_)
     has_pair = jnp.any(pair_matches, axis=1)
     complex_modes = mask & (jnp.abs(jnp.imag(values)) > pair_tolerance)
     paired_positive_modes = complex_modes & (jnp.imag(values) > 0.0) & has_pair
@@ -1665,7 +1663,7 @@ class BranchSeed(StrictModule):
 class AbstractBranchSwitchHook(StrictModule):
     """Hook that turns diagnosed branch events into explicit continuation seeds."""
 
-    hook_id: AbstractAttribute[str]
+    hook_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def propose(
@@ -1709,7 +1707,7 @@ class CallableBranchSwitchHook(AbstractBranchSwitchHook):
 class AbstractBranchMonitor(StrictModule):
     """Hook observing accepted points without changing continuation state."""
 
-    monitor_id: AbstractAttribute[str]
+    monitor_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def observe(
@@ -1758,18 +1756,18 @@ class CallableBranchMonitor(AbstractBranchMonitor):
 class AbstractContinuationMethod(StrictModule):
     """Immutable continuation method and adaptive corrector policy."""
 
-    corrector: AbstractAttribute[AbstractNonlinearMethod]
-    termination: AbstractAttribute[NonlinearTermination]
-    derivative_policy: AbstractAttribute[ImplicitRootDerivativePolicy]
-    initial_step: AbstractAttribute[float]
-    minimum_step: AbstractAttribute[float]
-    maximum_step: AbstractAttribute[float]
-    growth: AbstractAttribute[float]
-    contraction: AbstractAttribute[float]
-    coordinate_scale: AbstractAttribute[float]
-    target_corrector_steps: AbstractAttribute[int]
-    maximum_retries: AbstractAttribute[int]
-    direction: AbstractAttribute[int]
+    corrector: eqx.AbstractVar[AbstractNonlinearMethod]
+    termination: eqx.AbstractVar[NonlinearTermination]
+    derivative_policy: eqx.AbstractVar[ImplicitRootDerivativePolicy]
+    initial_step: eqx.AbstractVar[float]
+    minimum_step: eqx.AbstractVar[float]
+    maximum_step: eqx.AbstractVar[float]
+    growth: eqx.AbstractVar[float]
+    contraction: eqx.AbstractVar[float]
+    coordinate_scale: eqx.AbstractVar[float]
+    target_corrector_steps: eqx.AbstractVar[int]
+    maximum_retries: eqx.AbstractVar[int]
+    direction: eqx.AbstractVar[int]
 
     @property
     @abc.abstractmethod
@@ -2952,8 +2950,7 @@ def _resolve_continuation_adapter(
         problem = value.continuation_problem
         if not isinstance(problem, ContinuationCurveProblem):
             raise TypeError(
-                "Continuation adapter continuation_problem must be a "
-                "ContinuationCurveProblem."
+                "Continuation adapter continuation_problem must be a ContinuationCurveProblem."
             )
         return problem, value
     if isinstance(value, ContinuationCurveProblem):
@@ -3118,8 +3115,7 @@ class PreparedContinuation(StrictModule):
         if isinstance(adapter, CallableContinuationAdapter):
             if application_state is not None and not adapter.supports_opaque_state:
                 raise ValueError(
-                    "Opaque application state requires a complete continuation "
-                    "transaction callback bundle."
+                    "Opaque application state requires a complete continuation transaction callback bundle."
                 )
         application_id = adapter.application_state_identity(application_state, args)
         if not application_id:

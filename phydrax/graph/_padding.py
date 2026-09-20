@@ -17,7 +17,7 @@ def _tree_leading_size(tree: Any, /) -> int | None:
     leaves = jtu.tree_leaves(tree)
     if not leaves:
         return None
-    return int(jnp.asarray(leaves[0]).shape[0])
+    return jnp.asarray(leaves[0]).shape[0]
 
 
 def _pad_tree_leading(tree: Any, pad_amount: int, /) -> Any:
@@ -51,7 +51,7 @@ def _total_nodes(graph: GraphIR, /) -> int:
 
 def _total_edges(graph: GraphIR, /) -> int:
     if graph.senders is not None:
-        return int(graph.senders.shape[0])
+        return graph.senders.shape[0]
     n = _tree_leading_size(graph.edges)
     if n is not None:
         return n
@@ -59,7 +59,7 @@ def _total_edges(graph: GraphIR, /) -> int:
 
 
 def _graph_count(graph: GraphIR, /) -> int:
-    return int(graph.n_node.shape[0])
+    return graph.n_node.shape[0]
 
 
 def _mask_from_padding_length(*, padding_length: int, full_length: int) -> jnp.ndarray:
@@ -160,7 +160,7 @@ def pad_with_graphs(
 
 def get_number_of_padding_with_graphs_graphs(padded_graph: GraphIR) -> int:
     if padded_graph.graph_mask is not None:
-        graph_mask = np.asarray(padded_graph.graph_mask, dtype=bool)
+        graph_mask = np.asarray(padded_graph.graph_mask, dtype=np.bool_)
         return int(graph_mask.shape[0] - graph_mask.sum())
 
     n_node = np.asarray(padded_graph.n_node)
@@ -175,7 +175,7 @@ def get_number_of_padding_with_graphs_graphs(padded_graph: GraphIR) -> int:
 
 def get_number_of_padding_with_graphs_nodes(padded_graph: GraphIR) -> int:
     if padded_graph.node_mask is not None:
-        node_mask = np.asarray(padded_graph.node_mask, dtype=bool)
+        node_mask = np.asarray(padded_graph.node_mask, dtype=np.bool_)
         return int(node_mask.shape[0] - node_mask.sum())
 
     n_padding_graph = get_number_of_padding_with_graphs_graphs(padded_graph)
@@ -184,7 +184,7 @@ def get_number_of_padding_with_graphs_nodes(padded_graph: GraphIR) -> int:
 
 def get_number_of_padding_with_graphs_edges(padded_graph: GraphIR) -> int:
     if padded_graph.edge_mask is not None:
-        edge_mask = np.asarray(padded_graph.edge_mask, dtype=bool)
+        edge_mask = np.asarray(padded_graph.edge_mask, dtype=np.bool_)
         return int(edge_mask.shape[0] - edge_mask.sum())
 
     n_padding_graph = get_number_of_padding_with_graphs_graphs(padded_graph)
@@ -215,7 +215,7 @@ def unpad_with_graphs(padded_graph: GraphIR) -> GraphIR:
         edges=_trim_tree_leading(padded_graph.edges, real_edges),
         senders=senders,
         receivers=receivers,
-        globals=_trim_tree_leading(padded_graph.globals, int(n_node.shape[0])),
+        globals=_trim_tree_leading(padded_graph.globals, n_node.shape[0]),
         n_node=n_node,
         n_edge=n_edge,
         validate=True,
@@ -253,7 +253,7 @@ def get_graph_padding_mask(padded_graph: GraphIR) -> jnp.ndarray:
         return padded_graph.graph_mask
 
     n_padding_graph = get_number_of_padding_with_graphs_graphs(padded_graph)
-    total_num_graphs = int(padded_graph.n_node.shape[0])
+    total_num_graphs = padded_graph.n_node.shape[0]
     return _mask_from_padding_length(
         padding_length=n_padding_graph,
         full_length=total_num_graphs,
@@ -346,8 +346,7 @@ def dynamically_batch(
                 "n_graph": valid_batch_size[2],
             }
             raise RuntimeError(
-                "Found graph bigger than batch size. "
-                f"Valid Batch Size: {batch_size}, Graph Size: {graph_size}"
+                f"Found graph bigger than batch size. Valid Batch Size: {batch_size}, Graph Size: {graph_size}"
             )
 
         if not accumulated_graphs:

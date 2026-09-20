@@ -172,8 +172,7 @@ class AbsorbingWaveBoundaryPolicy(StrictModule, NonTrainableState):
         return eqx.error_if(
             attenuation,
             invalid,
-            "Absorbing coordinates, bounds, and action factor must be finite, "
-            "with strictly increasing bounds.",
+            "Absorbing coordinates, bounds, and action factor must be finite, with strictly increasing bounds.",
         )
 
     def apply(

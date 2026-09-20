@@ -166,7 +166,7 @@ class MinkowskiInitialData(StrictModule, NonTrainableState):
             metric,
             extrinsic,
             jnp.ones(leading, dtype=dtype),
-            jnp.ones(leading, dtype=bool),
+            jnp.ones(leading, dtype=jnp.bool_),
             self.data_id,
         )
 
@@ -188,7 +188,7 @@ class IsotropicSchwarzschildInitialData(StrictModule, NonTrainableState):
         excision_radius: float = 0.0,
     ):
         mass_host = float(np.asarray(mass))
-        center_host = np.asarray(center, dtype=float)
+        center_host = np.asarray(center, dtype=np.float64)
         excision = float(excision_radius)
         if not isfinite(mass_host) or mass_host <= 0.0:
             raise ValueError("Schwarzschild mass must be finite and positive.")
@@ -213,7 +213,9 @@ class IsotropicSchwarzschildInitialData(StrictModule, NonTrainableState):
         offset = points - self.center.astype(points.dtype)
         radius = jnp.sqrt(ein.contract("...i,...i->...", offset, offset))
         horizon = 0.5 * self.mass.astype(points.dtype)
-        lower = jnp.maximum(jnp.asarray(self.excision_radius, dtype=points.dtype), horizon)
+        lower = jnp.maximum(
+            jnp.asarray(self.excision_radius, dtype=points.dtype), horizon
+        )
         domain = radius > lower
         safe_radius = jnp.where(domain, radius, jnp.asarray(1.0, dtype=points.dtype))
         ratio = horizon / safe_radius
@@ -258,10 +260,10 @@ class KerrSchildInitialData(StrictModule, NonTrainableState):
         excision_radius: float = 0.0,
     ):
         mass_host = float(np.asarray(mass))
-        spin_host = np.asarray(spin, dtype=float)
+        spin_host = np.asarray(spin, dtype=np.float64)
         if spin_host.shape == ():
             spin_host = np.asarray((0.0, 0.0, float(spin_host)))
-        center_host = np.asarray(center, dtype=float)
+        center_host = np.asarray(center, dtype=np.float64)
         excision = float(excision_radius)
         if not isfinite(mass_host) or mass_host <= 0.0:
             raise ValueError("Kerr mass must be finite and positive.")
@@ -398,18 +400,14 @@ def adm_constraint_diagnostics(
         extrinsic = data.extrinsic_curvature
         trace = ein.contract("ij,ij->", inverse, extrinsic)
         raised = ein.contract("ik,jl,kl->ij", inverse, inverse, extrinsic)
-        hamiltonian = scalar + trace**2 - ein.contract(
-            "ij,ij->", extrinsic, raised
-        )
+        hamiltonian = scalar + trace**2 - ein.contract("ij,ij->", extrinsic, raised)
 
         def trace_reversed(query):
             metric_q = metric_map(query)
             inverse_q = inverse_small_linear(_SMALL_3, metric_q).value
             extrinsic_q = extrinsic_map(query)
             trace_q = ein.contract("ij,ij->", inverse_q, extrinsic_q)
-            raised_q = ein.contract(
-                "ik,jl,kl->ij", inverse_q, inverse_q, extrinsic_q
-            )
+            raised_q = ein.contract("ik,jl,kl->ij", inverse_q, inverse_q, extrinsic_q)
             return raised_q - trace_q * inverse_q
 
         tensor = trace_reversed(point)
@@ -491,15 +489,19 @@ def adm_charge_diagnostics(
         )
         mass_density = ein.contract("i,i->", mass_vector, normal)
         inverse_result = inverse_small_linear(_SMALL_3, metric)
-        trace = ein.contract(
-            "ij,ij->", inverse_result.value, data.extrinsic_curvature
-        )
+        trace = ein.contract("ij,ij->", inverse_result.value, data.extrinsic_curvature)
         momentum_density = ein.contract(
             "ij,j->i", data.extrinsic_curvature - trace * metric, normal
         )
         angular_density = jnp.cross(point - origin, momentum_density)
         valid = data.domain_valid & inverse_result.successful
-        return mass_density, momentum_density, angular_density, valid, data.status.derivative_valid
+        return (
+            mass_density,
+            momentum_density,
+            angular_density,
+            valid,
+            data.status.derivative_valid,
+        )
 
     mass_density, momentum_density, angular_density, domain, derivative = jax.vmap(
         integrands
@@ -510,16 +512,13 @@ def adm_charge_diagnostics(
     normal_norms = jnp.sqrt(ein.contract("qi,qi->q", normals, normals))
     normalization_defect = jnp.max(jnp.abs(normal_norms - 1.0))
     total_area = jnp.sum(weights)
-    closure_defect = (
-        jnp.sqrt(
-            ein.contract(
-                "i,i->",
-                ein.contract("q,qi->i", weights, normals),
-                ein.contract("q,qi->i", weights, normals),
-            )
+    closure_defect = jnp.sqrt(
+        ein.contract(
+            "i,i->",
+            ein.contract("q,qi->i", weights, normals),
+            ein.contract("q,qi->i", weights, normals),
         )
-        / jnp.where(total_area > 0.0, total_area, 1.0)
-    )
+    ) / jnp.where(total_area > 0.0, total_area, 1.0)
     finite = (
         jnp.all(jnp.isfinite(points))
         & jnp.all(jnp.isfinite(normals))
@@ -557,7 +556,7 @@ def adm_charge_diagnostics(
             {
                 "kind": "adm-charge-quadrature",
                 "surface_id": identifier,
-                "point_count": int(points.shape[0]),
+                "point_count": points.shape[0],
                 "surface_tolerance": tolerance,
             }
         ),
@@ -569,7 +568,7 @@ def _coordinates(value: ArrayLike, /) -> Array:
     if points.shape == () or points.shape[-1] != 3:
         raise ValueError("Initial-data coordinates must have trailing shape (3,).")
     if not jnp.issubdtype(points.dtype, jnp.floating):
-        points = points.astype(float)
+        points = points.astype("float64")
     return points
 
 
@@ -621,7 +620,7 @@ def _package_initial_data(
         extrinsic,
         conformal_factor,
         determinant,
-        jnp.asarray(domain_valid, dtype=bool),
+        jnp.asarray(domain_valid, dtype=jnp.bool_),
         ScientificStatus(
             status_value,
             finite,
@@ -648,7 +647,9 @@ def _kerr_spatial_fields(point, mass, spin, center):
     radius_squared_cartesian = ein.contract("i,i->", position, position)
     spin_squared = ein.contract("i,i->", spin, spin)
     spin_dot_position = ein.contract("i,i->", spin, position)
-    discriminant = (radius_squared_cartesian - spin_squared) ** 2 + 4.0 * spin_dot_position**2
+    discriminant = (
+        radius_squared_cartesian - spin_squared
+    ) ** 2 + 4.0 * spin_dot_position**2
     radius_squared = 0.5 * (
         radius_squared_cartesian - spin_squared + jnp.sqrt(jnp.maximum(discriminant, 0.0))
     )
@@ -688,7 +689,5 @@ def _kerr_schild_point(point, mass, spin, center):
     covariant_shift = jnp.swapaxes(shift_derivative, -1, -2) - ein.contract(
         "kij,k->ij", christoffel, shift_covector
     )
-    extrinsic = (covariant_shift + jnp.swapaxes(covariant_shift, -1, -2)) / (
-        2.0 * lapse
-    )
+    extrinsic = (covariant_shift + jnp.swapaxes(covariant_shift, -1, -2)) / (2.0 * lapse)
     return lapse, shift, metric, extrinsic, radius

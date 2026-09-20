@@ -195,11 +195,11 @@ class ReporterCalibration(StrictModule, NonTrainableState):
     ):
         if not isinstance(campaign, ScientificCampaign):
             raise TypeError("campaign must be a ScientificCampaign.")
-        gain_ = jnp.asarray(gain, dtype=float)
-        background_ = jnp.asarray(background, dtype=float)
-        delay = jnp.asarray(delay_parameters, dtype=float)
+        gain_ = jnp.asarray(gain, dtype=jnp.float64)
+        background_ = jnp.asarray(background, dtype=jnp.float64)
+        delay = jnp.asarray(delay_parameters, dtype=jnp.float64)
         if gain_.shape != () or background_.shape != ():
-            raise ValueError("Reporter v1 requires scalar gain and background.")
+            raise ValueError("Reporter canonical requires scalar gain and background.")
         if not bool(jnp.isfinite(gain_)) or float(gain_) <= 0.0:
             raise ValueError("Reporter gain must be finite and positive.")
         if not bool(jnp.isfinite(background_)):
@@ -241,8 +241,10 @@ class ReporterCalibration(StrictModule, NonTrainableState):
                 "Reporter calibration manifests must exactly match calibration cases."
             )
         manifests = tuple(sorted(manifest_by_id))
-        covariance_ = None if covariance is None else jnp.asarray(covariance, dtype=float)
-        parameter_count = 2 + int(delay.size)
+        covariance_ = (
+            None if covariance is None else jnp.asarray(covariance, dtype=jnp.float64)
+        )
+        parameter_count = 2 + delay.size
         if covariance_ is not None:
             if covariance_.shape != (parameter_count, parameter_count):
                 raise ValueError(
@@ -373,8 +375,8 @@ class ReporterObservationModel(StrictModule, NonTrainableState):
     def mean_intensity(
         self, time_seconds: ArrayLike, product_molar: ArrayLike, /
     ) -> Array:
-        time = jnp.asarray(time_seconds, dtype=float)
-        product = jnp.asarray(product_molar, dtype=float)
+        time = jnp.asarray(time_seconds, dtype=jnp.float64)
+        product = jnp.asarray(product_molar, dtype=jnp.float64)
         if time.ndim != 1 or product.shape != time.shape:
             raise ValueError(
                 "Reporter input requires aligned one-dimensional time/product arrays."
@@ -401,7 +403,7 @@ class ReporterObservationModel(StrictModule, NonTrainableState):
             raise ValueError("Trace reporter identity is outside this calibration.")
         if trace.intensity_unit_id != self.intensity_unit_id:
             raise ValueError("Trace intensity unit is outside this observation model.")
-        product = jnp.asarray(product_molar, dtype=float)
+        product = jnp.asarray(product_molar, dtype=jnp.float64)
         if product.shape != trace.time_seconds.shape:
             raise ValueError(
                 "Product prediction must align exactly to the raw trace clock."
@@ -421,7 +423,7 @@ class ReporterObservationModel(StrictModule, NonTrainableState):
                 raise ValueError(
                     "Use posterior model draws or a model covariance, never both."
                 )
-            draws = jnp.asarray(model_intensity_draws, dtype=float)
+            draws = jnp.asarray(model_intensity_draws, dtype=jnp.float64)
             if draws.ndim != 2 or draws.shape[0] < 2 or draws.shape[1:] != mean.shape:
                 raise ValueError(
                     "Model intensity draws require at least two aligned posterior draws."
@@ -442,8 +444,10 @@ class ReporterObservationModel(StrictModule, NonTrainableState):
                 raise ValueError(
                     "Model covariance propagation requires covariance and sensitivity."
                 )
-            model_sensitivity = jnp.asarray(model_intensity_sensitivity, dtype=float)
-            model_covariance = jnp.asarray(model_parameter_covariance, dtype=float)
+            model_sensitivity = jnp.asarray(
+                model_intensity_sensitivity, dtype=jnp.float64
+            )
+            model_covariance = jnp.asarray(model_parameter_covariance, dtype=jnp.float64)
             if (
                 model_sensitivity.ndim != 2
                 or model_sensitivity.shape[0] != mean.size
@@ -464,7 +468,7 @@ class ReporterObservationModel(StrictModule, NonTrainableState):
 
         reporter_covariance = self.calibration.covariance
         if reporter_covariance is not None:
-            delay_count = int(self.calibration.delay_parameters.size)
+            delay_count = self.calibration.delay_parameters.size
             parameters = jnp.concatenate(
                 (
                     self.calibration.background.reshape((1,)),
@@ -505,7 +509,7 @@ class ReporterObservationModel(StrictModule, NonTrainableState):
         epistemic_variance = jnp.zeros_like(mean)
         if sensitivity_parts:
             sensitivity = jnp.concatenate(tuple(sensitivity_parts), axis=1)
-            dimensions = tuple(int(value.shape[0]) for value in covariance_parts)
+            dimensions = tuple(value.shape[0] for value in covariance_parts)
             covariance = jnp.zeros(
                 (sum(dimensions), sum(dimensions)), dtype=sensitivity.dtype
             )
@@ -690,7 +694,7 @@ class EffectiveDisplacementRateModel(StrictModule, NonTrainableState):
         reasons = self.support_reasons(trace)
         if reasons:
             raise ValueError(";".join(reasons))
-        values = jnp.asarray(parameters, dtype=float)
+        values = jnp.asarray(parameters, dtype=jnp.float64)
         if values.shape != (1,):
             raise ValueError("Effective fitted parameters must have shape (1,).")
         rate = values[0]
@@ -832,7 +836,7 @@ class MechanisticDisplacementRateModel(StrictModule, NonTrainableState):
         reasons = self.support_reasons(trace)
         if reasons:
             raise ValueError(";".join(reasons))
-        values = jnp.asarray(parameters, dtype=float)
+        values = jnp.asarray(parameters, dtype=jnp.float64)
         if values.shape != (1,):
             raise ValueError("Mechanistic fitted parameters must have shape (1,).")
         generator = self.base_generator * values[0]
@@ -960,11 +964,12 @@ class SecondaryKineticParameterPlan:
                 "Kinetic parameter mapping must exactly match the parameter plan."
             )
         result = tuple(
-            jnp.asarray(parameters[name], dtype=float) for name in self.parameter_names
+            jnp.asarray(parameters[name], dtype=jnp.float64)
+            for name in self.parameter_names
         )
         if any(value.shape != () for value in result):
             raise ValueError(
-                "Kinetic parameter plan v1 requires scalar parameter values."
+                "Kinetic parameter plan canonical requires scalar parameter values."
             )
         return result
 
@@ -1339,7 +1344,7 @@ class PreparedMechanisticDisplacementInference(StrictModule, NonTrainableState):
         if state_capacity <= 0 or channel_capacity <= 0:
             raise ValueError("Mechanistic capacities must be positive.")
         initial_index = int(prepared.encode(initial_state)[0])
-        mask = jnp.asarray(product_target.mask, dtype=bool)
+        mask = jnp.asarray(product_target.mask, dtype=jnp.bool_)
         if (
             mask.shape != (len(prepared.states),)
             or not bool(jnp.any(mask))
@@ -1577,7 +1582,9 @@ def _posterior_summary(
         )
     names = prepared.parameter_plan.parameter_names
     if len(names) != 1:
-        raise ValueError("Strand-displacement fit v1 requires exactly one parameter.")
+        raise ValueError(
+            "Strand-displacement fit canonical requires exactly one parameter."
+        )
     covariance = None
     draws = None
     if isinstance(result, MAPResult):
@@ -1587,12 +1594,12 @@ def _posterior_summary(
         method = "map"
     elif isinstance(result, LaplaceResult):
         physical = result.map_parameters
-        covariance = jnp.asarray(result.physical_covariance(), dtype=float)
+        covariance = jnp.asarray(result.physical_covariance(), dtype=jnp.float64)
         method = "laplace"
     else:
         if not isinstance(result.samples, Mapping) or set(result.samples) != set(names):
             raise ValueError("MCMC samples do not match the kinetic parameter plan.")
-        sample = jnp.asarray(result.samples[names[0]], dtype=float)
+        sample = jnp.asarray(result.samples[names[0]], dtype=jnp.float64)
         if sample.ndim < 1:
             raise ValueError("MCMC result must retain a posterior draw axis.")
         draws = sample.reshape((-1, 1))
@@ -1604,7 +1611,9 @@ def _posterior_summary(
     if not isinstance(physical, Mapping) or set(physical) != set(names):
         raise ValueError("Posterior parameters do not match the kinetic parameter plan.")
     parameters = jnp.stack(
-        tuple(jnp.asarray(physical[name], dtype=float).reshape(()) for name in names)
+        tuple(
+            jnp.asarray(physical[name], dtype=jnp.float64).reshape(()) for name in names
+        )
     )
     if (
         bool(jnp.any(~jnp.isfinite(parameters) | (parameters <= 0.0)))
@@ -1796,7 +1805,7 @@ class StrandDisplacementModelFit(StrictModule, NonTrainableState):
         )
         scores: list[float] = []
         score_ids: list[str] = []
-        observation_count = sum(int(trace.time_seconds.size) for trace in selection)
+        observation_count = sum(trace.time_seconds.size for trace in selection)
         for (prepared, _), candidate_id, summary in zip(
             values, candidate_ids, summaries, strict=True
         ):

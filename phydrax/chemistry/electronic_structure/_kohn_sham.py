@@ -129,7 +129,7 @@ class StaticPolarizabilityResult(StrictModule, NonTrainableState):
         self.symmetry_residual = jnp.asarray(
             symmetry_residual, dtype=tensor_.dtype
         ).reshape(())
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         if not isinstance(unit, UnitDefinition):
             raise TypeError("unit must be UnitDefinition.")
         self.unit = unit
@@ -403,7 +403,7 @@ class NativeLDAPlan(StrictModule, NonTrainableState):
         state = self.solve_atomic_units(coordinate * length_to_bohr)
         all_converged = bool(state.converged)
         forces = jnp.zeros_like(coordinate)
-        for atom in range(int(coordinate.shape[0])):
+        for atom in range(coordinate.shape[0]):
             for component in range(3):
                 displacement = (
                     jnp.zeros_like(coordinate)

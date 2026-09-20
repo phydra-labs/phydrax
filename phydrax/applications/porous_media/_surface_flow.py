@@ -36,7 +36,7 @@ class UnstructuredShallowWaterPlan(StrictModule, NonTrainableState):
     cell_areas_m2: Array
     bed_elevation_m: Array
     edge_owner: Array
-    edge_neighbour: Array
+    edge_neighbor: Array
     edge_outward_normal: Array
     edge_length_m: Array
     boundary_kind: Array
@@ -52,7 +52,7 @@ class UnstructuredShallowWaterPlan(StrictModule, NonTrainableState):
         cell_areas_m2: ArrayLike,
         bed_elevation_m: ArrayLike,
         edge_owner: ArrayLike,
-        edge_neighbour: ArrayLike,
+        edge_neighbor: ArrayLike,
         edge_outward_normal: ArrayLike,
         edge_length_m: ArrayLike,
         /,
@@ -63,25 +63,25 @@ class UnstructuredShallowWaterPlan(StrictModule, NonTrainableState):
         gravity_m_s2: float = 9.80665,
     ):
         area, bed = (
-            np.asarray(cell_areas_m2, dtype=float),
-            np.asarray(bed_elevation_m, dtype=float),
+            np.asarray(cell_areas_m2, dtype=np.float64),
+            np.asarray(bed_elevation_m, dtype=np.float64),
         )
-        owner, neighbour = np.asarray(edge_owner), np.asarray(edge_neighbour)
+        owner, neighbor = np.asarray(edge_owner), np.asarray(edge_neighbor)
         normal, length = (
-            np.asarray(edge_outward_normal, dtype=float),
-            np.asarray(edge_length_m, dtype=float),
+            np.asarray(edge_outward_normal, dtype=np.float64),
+            np.asarray(edge_length_m, dtype=np.float64),
         )
         cells, edges = area.size, owner.size
         kind = (
-            np.where(neighbour < 0, 1, 0).astype(np.int32)
+            np.where(neighbor < 0, 1, 0).astype(np.int32)
             if boundary_kind is None
             else np.asarray(boundary_kind)
         )
         boundary_depth = np.broadcast_to(
-            np.asarray(boundary_depth_m, dtype=float), (edges,)
+            np.asarray(boundary_depth_m, dtype=np.float64), (edges,)
         )
         boundary_velocity = np.broadcast_to(
-            np.asarray(boundary_velocity_m_s, dtype=float), (edges, 2)
+            np.asarray(boundary_velocity_m_s, dtype=np.float64), (edges, 2)
         )
         gravity = float(gravity_m_s2)
         if (
@@ -89,17 +89,17 @@ class UnstructuredShallowWaterPlan(StrictModule, NonTrainableState):
             or bed.shape != area.shape
             or cells == 0
             or owner.ndim != 1
-            or neighbour.shape != owner.shape
+            or neighbor.shape != owner.shape
             or normal.shape != (edges, 2)
             or length.shape != (edges,)
             or kind.shape != (edges,)
             or not np.issubdtype(owner.dtype, np.integer)
-            or not np.issubdtype(neighbour.dtype, np.integer)
+            or not np.issubdtype(neighbor.dtype, np.integer)
             or not np.issubdtype(kind.dtype, np.integer)
             or np.any(owner < 0)
             or np.any(owner >= cells)
-            or np.any(neighbour >= cells)
-            or np.any(neighbour == owner)
+            or np.any(neighbor >= cells)
+            or np.any(neighbor == owner)
             or np.any(~np.isfinite(area))
             or np.any(area <= 0)
             or np.any(~np.isfinite(bed))
@@ -107,8 +107,8 @@ class UnstructuredShallowWaterPlan(StrictModule, NonTrainableState):
             or not np.allclose(np.sum(normal**2, axis=1), 1.0)
             or np.any(~np.isfinite(length))
             or np.any(length <= 0)
-            or np.any((neighbour >= 0) & (kind != 0))
-            or np.any((neighbour < 0) & ~np.isin(kind, (1, 2, 3)))
+            or np.any((neighbor >= 0) & (kind != 0))
+            or np.any((neighbor < 0) & ~np.isin(kind, (1, 2, 3)))
             or np.any(~np.isfinite(boundary_depth))
             or np.any(boundary_depth < 0)
             or np.any(~np.isfinite(boundary_velocity))
@@ -117,7 +117,7 @@ class UnstructuredShallowWaterPlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("Unstructured surface geometry/boundary data are invalid.")
         self.cell_areas_m2, self.bed_elevation_m = jnp.asarray(area), jnp.asarray(bed)
-        self.edge_owner, self.edge_neighbour = jnp.asarray(owner), jnp.asarray(neighbour)
+        self.edge_owner, self.edge_neighbor = jnp.asarray(owner), jnp.asarray(neighbor)
         self.edge_outward_normal, self.edge_length_m = (
             jnp.asarray(normal),
             jnp.asarray(length),
@@ -134,7 +134,7 @@ class UnstructuredShallowWaterPlan(StrictModule, NonTrainableState):
                 "cell_areas_m2": area,
                 "bed_elevation_m": bed,
                 "edge_owner": owner,
-                "edge_neighbour": neighbour,
+                "edge_neighbor": neighbor,
                 "edge_outward_normal": normal,
                 "edge_length_m": length,
                 "boundary_kind": kind,
@@ -168,10 +168,10 @@ class UnstructuredShallowWaterPlan(StrictModule, NonTrainableState):
             1.0,
         )
         owner = self.edge_owner
-        interior = self.edge_neighbour >= 0
-        neighbour = jnp.where(interior, self.edge_neighbour, owner)
-        left_depth, right_depth = depth[owner], depth[neighbour]
-        left_velocity, right_velocity = velocity[owner], velocity[neighbour]
+        interior = self.edge_neighbor >= 0
+        neighbor = jnp.where(interior, self.edge_neighbor, owner)
+        left_depth, right_depth = depth[owner], depth[neighbor]
+        left_velocity, right_velocity = velocity[owner], velocity[neighbor]
         wall = self.boundary_kind == 1
         outflow = self.boundary_kind == 2
         inflow = self.boundary_kind == 3
@@ -187,7 +187,7 @@ class UnstructuredShallowWaterPlan(StrictModule, NonTrainableState):
         right_depth = jnp.where((wall | outflow), left_depth, right_depth)
         right_depth = jnp.where(inflow, self.boundary_depth_m, right_depth)
         left_bed = self.bed_elevation_m[owner]
-        right_bed = self.bed_elevation_m[neighbour]
+        right_bed = self.bed_elevation_m[neighbor]
         right_bed = jnp.where(interior, right_bed, left_bed)
         interface_bed = jnp.maximum(left_bed, right_bed)
         left_star = jnp.maximum(0.0, left_depth + left_bed - interface_bed)
@@ -200,7 +200,7 @@ class UnstructuredShallowWaterPlan(StrictModule, NonTrainableState):
             left_velocity,
             right_velocity,
             interior,
-            neighbour,
+            neighbor,
         )
 
     def _fluxes(self, state: SurfaceFlowState):
@@ -212,7 +212,7 @@ class UnstructuredShallowWaterPlan(StrictModule, NonTrainableState):
             left_velocity,
             right_velocity,
             interior,
-            neighbour,
+            neighbor,
         ) = self._edge_states(state)
         normal = self.edge_outward_normal
         left_normal = jnp.sum(left_velocity * normal, axis=1)
@@ -254,8 +254,8 @@ class UnstructuredShallowWaterPlan(StrictModule, NonTrainableState):
             0.5 * self.gravity_m_s2 * (right_depth**2 - right**2) * self.edge_length_m
         )[:, None] * normal
         owner_flux = common.at[:, 1:].add(left_correction)
-        neighbour_flux = (-common).at[:, 1:].add(-right_correction)
-        return owner_flux, neighbour_flux, interior, neighbour
+        neighbor_flux = (-common).at[:, 1:].add(-right_correction)
+        return owner_flux, neighbor_flux, interior, neighbor
 
     def step(
         self,
@@ -282,11 +282,11 @@ class UnstructuredShallowWaterPlan(StrictModule, NonTrainableState):
             | jnp.any(~jnp.isfinite(infiltration)),
             "Surface timestep/rainfall/infiltration must be finite and physical.",
         )
-        owner_flux, neighbour_flux, interior, neighbour = self._fluxes(state)
+        owner_flux, neighbor_flux, interior, neighbor = self._fluxes(state)
         outgoing = jnp.zeros((self.cell_count,))
         outgoing = outgoing.at[self.edge_owner].add(jnp.maximum(owner_flux[:, 0], 0.0))
-        outgoing = outgoing.at[neighbour].add(
-            jnp.where(interior, jnp.maximum(neighbour_flux[:, 0], 0.0), 0.0)
+        outgoing = outgoing.at[neighbor].add(
+            jnp.where(interior, jnp.maximum(neighbor_flux[:, 0], 0.0), 0.0)
         )
         available_rate = (
             state.water_volume_m3 / dt + rain * self.cell_areas_m2 - infiltration
@@ -298,18 +298,18 @@ class UnstructuredShallowWaterPlan(StrictModule, NonTrainableState):
         )
         scale = jnp.minimum(1.0, available_rate / jnp.where(outgoing > 0, outgoing, 1.0))
         owner_scale = jnp.where(owner_flux[:, 0] > 0, scale[self.edge_owner], 1.0)
-        neighbour_scale = jnp.where(
-            interior & (neighbour_flux[:, 0] > 0), scale[neighbour], 1.0
+        neighbor_scale = jnp.where(
+            interior & (neighbor_flux[:, 0] > 0), scale[neighbor], 1.0
         )
-        edge_scale = jnp.minimum(owner_scale, neighbour_scale)
-        owner_flux, neighbour_flux = (
+        edge_scale = jnp.minimum(owner_scale, neighbor_scale)
+        owner_flux, neighbor_flux = (
             owner_flux * edge_scale[:, None],
-            neighbour_flux * edge_scale[:, None],
+            neighbor_flux * edge_scale[:, None],
         )
         content_rate = jnp.zeros((self.cell_count, 3))
         content_rate = content_rate.at[self.edge_owner].add(owner_flux)
-        content_rate = content_rate.at[neighbour].add(
-            jnp.where(interior[:, None], neighbour_flux, 0.0)
+        content_rate = content_rate.at[neighbor].add(
+            jnp.where(interior[:, None], neighbor_flux, 0.0)
         )
         source_volume = rain * self.cell_areas_m2 - infiltration
         volume = state.water_volume_m3 + dt * (source_volume - content_rate[:, 0])
@@ -326,7 +326,7 @@ class UnstructuredShallowWaterPlan(StrictModule, NonTrainableState):
         )
         balance = jnp.sum(volume - state.water_volume_m3) - dt * (
             jnp.sum(source_volume)
-            - jnp.sum(jnp.where(self.edge_neighbour < 0, owner_flux[:, 0], 0.0))
+            - jnp.sum(jnp.where(self.edge_neighbor < 0, owner_flux[:, 0], 0.0))
         )
         limited = jnp.any(edge_scale < 1.0)
         return SurfaceFlowStepResult(

@@ -62,9 +62,11 @@ class MetricInnerProductEvidence(StrictModule, NonTrainableState):
         if not str(evidence_id):
             raise ValueError("evidence_id must be nonempty.")
         leading_shape = values_.shape[:-2]
-        domain = jnp.broadcast_to(jnp.asarray(domain_valid, dtype=bool), leading_shape)
+        domain = jnp.broadcast_to(
+            jnp.asarray(domain_valid, dtype=jnp.bool_), leading_shape
+        )
         derivative = jnp.broadcast_to(
-            jnp.asarray(derivative_valid, dtype=bool), leading_shape
+            jnp.asarray(derivative_valid, dtype=jnp.bool_), leading_shape
         )
         residuals = values_ - expected_
         maximum = jnp.max(jnp.abs(residuals), axis=(-2, -1))
@@ -214,11 +216,11 @@ class OrthonormalTetrad(StrictModule, NonTrainableState):
         self.orientation = jnp.asarray(orientation)
         self.orientation_residual = jnp.asarray(orientation_residual)
         self.time_direction_residual = jnp.asarray(time_direction_residual)
-        self.finite = jnp.asarray(finite, dtype=bool)
-        self.domain_valid = jnp.asarray(domain_valid, dtype=bool)
-        self.physically_valid = jnp.asarray(physically_valid, dtype=bool)
-        self.qualified = jnp.asarray(qualified, dtype=bool)
-        self.derivative_valid = jnp.asarray(derivative_valid, dtype=bool)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
+        self.domain_valid = jnp.asarray(domain_valid, dtype=jnp.bool_)
+        self.physically_valid = jnp.asarray(physically_valid, dtype=jnp.bool_)
+        self.qualified = jnp.asarray(qualified, dtype=jnp.bool_)
+        self.derivative_valid = jnp.asarray(derivative_valid, dtype=jnp.bool_)
         self.tetrad_id = str(tetrad_id)
 
     @property
@@ -282,11 +284,11 @@ class PrincipalNullTetrad(StrictModule, NonTrainableState):
         self.inner_products = inner_products
         self.convention = convention
         self.domain = domain
-        self.finite = jnp.asarray(finite, dtype=bool)
-        self.domain_valid = jnp.asarray(domain_valid, dtype=bool)
-        self.physically_valid = jnp.asarray(physically_valid, dtype=bool)
-        self.qualified = jnp.asarray(qualified, dtype=bool)
-        self.derivative_valid = jnp.asarray(derivative_valid, dtype=bool)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
+        self.domain_valid = jnp.asarray(domain_valid, dtype=jnp.bool_)
+        self.physically_valid = jnp.asarray(physically_valid, dtype=jnp.bool_)
+        self.qualified = jnp.asarray(qualified, dtype=jnp.bool_)
+        self.derivative_valid = jnp.asarray(derivative_valid, dtype=jnp.bool_)
         self.tetrad_id = str(tetrad_id)
 
     @property
@@ -338,9 +340,11 @@ class TetradParallelTransportEvidence(StrictModule, NonTrainableState):
         if not str(evidence_id):
             raise ValueError("evidence_id must be nonempty.")
         leading_shape = residuals_.shape[:-2]
-        domain = jnp.broadcast_to(jnp.asarray(domain_valid, dtype=bool), leading_shape)
+        domain = jnp.broadcast_to(
+            jnp.asarray(domain_valid, dtype=jnp.bool_), leading_shape
+        )
         derivative = jnp.broadcast_to(
-            jnp.asarray(derivative_valid, dtype=bool), leading_shape
+            jnp.asarray(derivative_valid, dtype=jnp.bool_), leading_shape
         )
         finite = jnp.all(jnp.isfinite(residuals_), axis=(-2, -1))
         maximum = jnp.max(jnp.abs(residuals_), axis=(-2, -1))
@@ -497,7 +501,7 @@ def stationary_axial_inner_product_evidence(
     cross = ein.contract("...i,...ij,...j->...", stationary, matrix, axial)
     axial_norm = ein.contract("...i,...ij,...j->...", axial, matrix, axial)
     evidence_id = _identifier(
-        "stationary-axial-inner-products-v1",
+        "stationary-axial-inner-products",
         metric,
         (time_axis_, axial_axis_),
         source_id,
@@ -538,7 +542,7 @@ def metric_inner_product_evidence(
     )
     values = ein.contract("...ai,...ij,...bj->...ab", vectors_, matrix, vectors_)
     evidence_id = _identifier(
-        "metric-inner-product-evidence-v1",
+        "metric-inner-product-evidence",
         metric,
         (vectors_.shape[-2],),
         source_id,
@@ -634,7 +638,7 @@ def _orthonormal_tetrad_from_matrix(
         derivative_valid=domain.derivative_valid & derivative_valid,
         tolerance=tolerance,
         evidence_id=canonical_fingerprint(
-            {"kind": "orthonormal-tetrad-inner-products-v1", "tetrad": tetrad_id}
+            {"kind": "orthonormal-tetrad-inner-products", "tetrad": tetrad_id}
         ),
     )
     dual = ein.contract("ab,...bi,...ij->...aj", target, vectors, matrix)
@@ -660,7 +664,7 @@ def _orthonormal_tetrad_from_matrix(
     physical = finite & domain.physically_valid & causal & oriented & future_directed
     qualified = physical & inner_products.qualified
     derivative = jnp.broadcast_to(
-        jnp.asarray(derivative_valid, dtype=bool), leading_shape
+        jnp.asarray(derivative_valid, dtype=jnp.bool_), leading_shape
     )
     return OrthonormalTetrad(
         vectors,
@@ -705,7 +709,7 @@ def orthonormal_tetrad(
         raise ValueError("Orthonormal tetrad vectors must have trailing shape (4, 4).")
     leading_shape = jnp.broadcast_shapes(matrix.shape[:-2], vectors_.shape[:-2])
     tetrad_id = _identifier(
-        "orthonormal-tetrad-v1",
+        "orthonormal-tetrad",
         metric,
         (time_axis_,),
         source_id,
@@ -718,7 +722,7 @@ def orthonormal_tetrad(
             extra_valid=True,
             boundary_tolerance=0.0,
             domain_id=canonical_fingerprint(
-                {"kind": "orthonormal-tetrad-domain-v1", "tetrad": tetrad_id}
+                {"kind": "orthonormal-tetrad-domain", "tetrad": tetrad_id}
             ),
         )
     else:
@@ -833,7 +837,7 @@ def zamo_observer_tetrad(
         & jnp.isfinite(domain_margin)
     )
     tetrad_id = _identifier(
-        "zamo-observer-tetrad-v1",
+        "zamo-observer-tetrad",
         metric,
         axes,
         source_id,
@@ -845,7 +849,7 @@ def zamo_observer_tetrad(
         extra_valid=finite_input & (domain_margin > 0.0),
         boundary_tolerance=jnp.sqrt(jnp.finfo(dtype).eps),
         domain_id=canonical_fingerprint(
-            {"kind": "zamo-observer-domain-v1", "tetrad": tetrad_id}
+            {"kind": "zamo-observer-domain", "tetrad": tetrad_id}
         ),
     )
     vectors = jnp.where(domain.physically_valid[..., None, None], vectors, 0.0)
@@ -963,7 +967,7 @@ def kerr_principal_null_tetrad(
     axis_margin = jnp.abs(sine)
     domain_margin = jnp.minimum(radial_margin, jnp.minimum(sigma_margin, axis_margin))
     tetrad_id = _identifier(
-        "kerr-principal-null-tetrad-v1",
+        "kerr-principal-null-tetrad",
         metric,
         axes,
         source_id,
@@ -975,7 +979,7 @@ def kerr_principal_null_tetrad(
         extra_valid=parameter_valid & denominator_valid & (domain_margin > 0.0),
         boundary_tolerance=jnp.sqrt(jnp.finfo(matrix.dtype).eps),
         domain_id=canonical_fingerprint(
-            {"kind": "kerr-principal-null-domain-v1", "tetrad": tetrad_id}
+            {"kind": "kerr-principal-null-domain", "tetrad": tetrad_id}
         ),
     )
     vectors = jnp.where(domain.physically_valid[..., None, None], vectors, 0.0)
@@ -999,7 +1003,7 @@ def kerr_principal_null_tetrad(
         derivative_valid=domain.derivative_valid,
         tolerance=tolerance,
         evidence_id=canonical_fingerprint(
-            {"kind": "principal-null-inner-products-v1", "tetrad": tetrad_id}
+            {"kind": "principal-null-inner-products", "tetrad": tetrad_id}
         ),
     )
     dual = ein.contract("ab,...bi,...ij->...aj", expected, vectors, matrix_complex)
@@ -1181,9 +1185,7 @@ def tetrad_parallel_transport_evidence(
         metric, tetrad_field, points, direction
     )
     domain, derivative = _tetrad_field_status(tetrad_field, points)
-    evidence_id = _identifier(
-        "tetrad-parallel-transport-evidence-v1", metric, (), source_id
-    )
+    evidence_id = _identifier("tetrad-parallel-transport-evidence", metric, (), source_id)
     return TetradParallelTransportEvidence(
         residuals,
         domain_valid=domain,

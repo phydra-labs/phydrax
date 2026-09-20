@@ -22,9 +22,9 @@ from dataclasses import asdict
 from pathlib import Path
 
 import numpy as np
+from phydrax.interchange.energy_runtime import pin_energy_executable
 
 from phydrax.interchange.dafoam import pin_dafoam_runtime, run_dafoam
-from phydrax.interchange.energy_runtime import pin_energy_executable
 from phydrax.interchange.xfoil import run_xfoil_polar, XFOILOperatingPoint
 
 
@@ -59,7 +59,7 @@ def _foam(name: str, body: str, cls: str = "dictionary") -> bytes:
 
 def _mesh_files(surface, radial_cells=48, radius=20.0, span=0.1):
     """Explicit outward-oriented, one-cell-span annular hexahedral OpenFOAM mesh."""
-    surface = np.asarray(surface, dtype=float)
+    surface = np.asarray(surface, dtype="float64")
     n = len(surface)
     center = np.array([0.5, 0.0])
     directions = surface - center
@@ -142,7 +142,7 @@ def _mesh_files(surface, radial_cells=48, radius=20.0, span=0.1):
         ),
         "faces": ("faceList", ["4(" + " ".join(map(str, f[0])) + ")" for f in ordered]),
         "owner": ("labelList", [str(f[1]) for f in ordered]),
-        "neighbour": ("labelList", [str(f[2]) for f in internal]),
+        "neighbor": ("labelList", [str(f[2]) for f in internal]),
         "boundary": ("polyBoundaryMesh", boundary),
     }
     return {
@@ -176,8 +176,7 @@ def naca0012_dafoam_case(half_panels: int = 64, radial_cells: int = 48):
         "relaxationFactors { fields { p 0.3; } equations { U 0.7; nuTilda 0.7; } }\n",
         "constant/transportProperties": "transportModel Newtonian; nu [0 2 -1 0 0 0 0] 1e-5;\n",
         "constant/turbulenceProperties": (
-            "simulationType RAS; RAS { RASModel SpalartAllmaras; "
-            "turbulence on; printCoeffs off; }\n"
+            "simulationType RAS; RAS { RASModel SpalartAllmaras; turbulence on; printCoeffs off; }\n"
         ),
     }
     files.update(

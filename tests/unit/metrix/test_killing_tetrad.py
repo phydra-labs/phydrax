@@ -237,7 +237,7 @@ def test_kerr_principal_null_tetrad_normalization_and_dual(metric_signature, spi
         atol=3e-12,
     )
 
-    vector = jnp.asarray((0.4, -0.3, 0.2, 0.7), dtype=complex)
+    vector = jnp.asarray((0.4, -0.3, 0.2, 0.7), dtype="complex128")
     components = tetrad_project_vector(tetrad, vector)
     assert jnp.allclose(tetrad_reconstruct_vector(tetrad, components), vector, atol=3e-12)
 
@@ -264,7 +264,7 @@ def test_principal_null_tetrad_has_exact_schwarzschild_limit_and_domain_mask():
     )
     assert jnp.allclose(
         tetrad.polarization,
-        jnp.asarray((0.0, 0.0, 1.0, 1j / jnp.sin(polar)), dtype=complex)
+        jnp.asarray((0.0, 0.0, 1.0, 1j / jnp.sin(polar)), dtype="complex128")
         / (jnp.sqrt(2.0) * radius),
         atol=2e-12,
     )

@@ -31,7 +31,7 @@ def _paths():
     return MonteCarloPathBatch(
         jnp.array([0.0, 0.5, 1.0]),
         values,
-        jnp.ones((4, 3), dtype=bool),
+        jnp.ones((4, 3), dtype="bool"),
         path_id="deterministic-paths",
     )
 

@@ -48,9 +48,9 @@ class FermiSurfacePlan(StrictModule, NonTrainableState):
         channel_labels: tuple[str, ...],
         /,
     ):
-        velocity = np.asarray(velocities, dtype=float)
-        weight = np.asarray(weights, dtype=float)
-        factors = np.asarray(form_factors, dtype=complex)
+        velocity = np.asarray(velocities, dtype=np.float64)
+        weight = np.asarray(weights, dtype=np.float64)
+        factors = np.asarray(form_factors, dtype=np.complex128)
         labels = tuple(str(value).strip() for value in channel_labels)
         if (
             velocity.ndim != 2
@@ -86,7 +86,7 @@ class FermiSurfacePlan(StrictModule, NonTrainableState):
 
     @property
     def trajectory_count(self) -> int:
-        return int(self.velocities.shape[0])
+        return self.velocities.shape[0]
 
     @property
     def channel_count(self) -> int:
@@ -116,7 +116,7 @@ class MatsubaraQuadraturePlan(StrictModule, NonTrainableState):
 
     @property
     def frequency_count(self) -> int:
-        return int(self.frequencies.size)
+        return self.frequencies.size
 
 
 class RiccatiTrajectoryEvidence(StrictModule):
@@ -155,7 +155,7 @@ class RiccatiTrajectoryPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(fermi_surface, FermiSurfacePlan):
             raise TypeError("fermi_surface must be FermiSurfacePlan.")
-        lengths = np.asarray(segment_lengths, dtype=float)
+        lengths = np.asarray(segment_lengths, dtype=np.float64)
         coupling, tolerance_ = float(vector_potential_coupling), float(tolerance)
         if (
             lengths.ndim != 2
@@ -184,7 +184,7 @@ class RiccatiTrajectoryPlan(StrictModule, NonTrainableState):
 
     @property
     def segment_count(self) -> int:
-        return int(self.segment_lengths.shape[1])
+        return self.segment_lengths.shape[1]
 
     @staticmethod
     def _bulk_coherence(gap, frequency):
@@ -312,7 +312,7 @@ class QuasiclassicalSuperconductivityPlan(StrictModule, NonTrainableState):
             raise TypeError(
                 "Quasiclassical plan requires trajectory and Matsubara plans."
             )
-        coupling = np.asarray(coupling_matrix, dtype=float)
+        coupling = np.asarray(coupling_matrix, dtype=np.float64)
         count = trajectories.fermi_surface.channel_count
         damping_, tolerance_ = float(damping), float(tolerance)
         iterations_ = int(iterations)
@@ -474,7 +474,7 @@ class RetardedSpectroscopyPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(equilibrium, QuasiclassicalSuperconductivityPlan):
             raise TypeError("equilibrium must be QuasiclassicalSuperconductivityPlan.")
-        energy = np.asarray(energies, dtype=float)
+        energy = np.asarray(energies, dtype=np.float64)
         broadening_ = float(broadening)
         if (
             energy.ndim != 1

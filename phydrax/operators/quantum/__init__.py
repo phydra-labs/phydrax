@@ -4,6 +4,8 @@
 
 """Quantum operator algebra and closed/open-system evolution residuals."""
 
+from importlib import import_module
+
 from . import gaussian, lattice
 from ._algebra import (
     anticommutator,
@@ -19,7 +21,6 @@ from ._amplitude import (
     LogAmplitude,
     sampling_log_weight,
 )
-from ._analytic_continuation import *  # noqa: F403
 from ._analytic_continuation import __all__ as _analytic_continuation_all
 from ._bath_decomposition import (
     drude_lorentz_matsubara,
@@ -89,9 +90,7 @@ from ._electronic_advanced import (
     StochasticElectronicKineticPolicy,
     StochasticKineticEstimate,
 )
-from ._electronic_transport import *  # noqa: F403
 from ._electronic_transport import __all__ as _electronic_transport_all
-from ._fermionic_fock import *  # noqa: F403
 from ._fermionic_fock import __all__ as _fermionic_fock_all
 from ._fock import (
     BosonicFockSpace,
@@ -107,11 +106,8 @@ from ._gate_metrics import (
     GateQualityResult,
     unitary_gate_quality,
 )
-from ._gauge_constraints import *  # noqa: F403
 from ._gauge_constraints import __all__ as _gauge_constraints_all
-from ._gauge_link_hilbert import *  # noqa: F403
 from ._gauge_link_hilbert import __all__ as _gauge_link_hilbert_all
-from ._impurity import *  # noqa: F403
 from ._impurity import __all__ as _impurity_all
 from ._information import (
     density_fidelity,
@@ -126,7 +122,6 @@ from ._local import (
     LocalOperatorEstimate,
     LocalOperatorStatus,
 )
-from ._magnetism import *  # noqa: F403
 from ._magnetism import __all__ as _magnetism_all
 from ._mode_reduction import (
     compare_mode_resolutions,
@@ -180,7 +175,6 @@ from ._parameterized import (
     QuantumProgramInstruction,
     QuantumProgramTemplate,
 )
-from ._periodic_electronic import *  # noqa: F403
 from ._periodic_electronic import __all__ as _periodic_electronic_all
 from ._propagation import (
     apply_local_kraus_to_density,
@@ -200,7 +194,6 @@ from ._pseudomode import (
     ReactionCoordinateMapping,
 )
 from ._register import HilbertRegisterLayout
-from ._spin_wave import *  # noqa: F403
 from ._spin_wave import __all__ as _spin_wave_all
 from ._states import (
     density_expectation,
@@ -219,15 +212,42 @@ from ._subspaces import (
     QuantumSubspaceEvidence,
     restrict_quantum_subspace,
 )
-from ._superconductivity import *  # noqa: F403
 from ._superconductivity import __all__ as _superconductivity_all
 from ._symmetry import FiniteSignedPermutationSymmetry, SymmetryProjectedAmplitude
-from ._thermal_green import *  # noqa: F403
 from ._thermal_green import __all__ as _thermal_green_all
-from ._two_particle_green import *  # noqa: F403
 from ._two_particle_green import __all__ as _two_particle_green_all
-from .lattice import *  # noqa: F403
 from .lattice import __all__ as _lattice_all
+
+
+_FACADE_EXPORT_MODULES = (
+    "._analytic_continuation",
+    "._electronic_transport",
+    "._fermionic_fock",
+    "._gauge_constraints",
+    "._gauge_link_hilbert",
+    "._impurity",
+    "._magnetism",
+    "._periodic_electronic",
+    "._spin_wave",
+    "._superconductivity",
+    "._thermal_green",
+    "._two_particle_green",
+    ".lattice",
+)
+
+
+def __getattr__(name: str):
+    for module_name in reversed(_FACADE_EXPORT_MODULES):
+        module = import_module(module_name, __package__)
+        if name in module.__all__:
+            value = getattr(module, name)
+            globals()[name] = value
+            return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
 
 
 __all__ = [

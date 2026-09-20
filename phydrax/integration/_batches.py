@@ -150,16 +150,16 @@ class MappedIntegrationBatch(StrictModule):
         cell: str = "mapped",
         provenance: str = "mapped",
     ):
-        reference = jnp.asarray(reference_points, dtype=float)
-        weights_ = jnp.asarray(weights, dtype=float).reshape((-1,))
+        reference = jnp.asarray(reference_points, dtype=jnp.float64)
+        weights_ = jnp.asarray(weights, dtype=jnp.float64).reshape((-1,))
         if reference.ndim < 2 or reference.shape[0] != weights_.shape[0]:
             raise ValueError(
                 "Mapped reference points and weights must share a point axis."
             )
         mask_ = (
-            jnp.ones(weights_.shape, dtype=bool)
+            jnp.ones(weights_.shape, dtype=jnp.bool_)
             if mask is None
-            else jnp.asarray(mask, dtype=bool).reshape(weights_.shape)
+            else jnp.asarray(mask, dtype=jnp.bool_).reshape(weights_.shape)
         )
         self.reference_points = reference
         self.points = points
@@ -226,13 +226,15 @@ class WeightedSampleBatch(StrictModule):
                             "mask dimensions must be present in log_weights."
                         )
                     mask = cx.AxisArray(
-                        jnp.asarray(mask.broadcast_like(log_weights).data, dtype=bool),
+                        jnp.asarray(
+                            mask.broadcast_like(log_weights).data, dtype=jnp.bool_
+                        ),
                         dims=log_weights.dims,
                     )
                 else:
                     mask = cx.AxisArray(
                         jnp.broadcast_to(
-                            jnp.asarray(mask, dtype=bool), log_weights.shape
+                            jnp.asarray(mask, dtype=jnp.bool_), log_weights.shape
                         ),
                         dims=log_weights.dims,
                     )
@@ -261,7 +263,7 @@ class WeightedSampleBatch(StrictModule):
             for axis in axes:
                 sample_count *= int(log_weights.named_shape[axis])
         else:
-            log_weights_ = jnp.asarray(log_weights, dtype=float)
+            log_weights_ = jnp.asarray(log_weights, dtype=jnp.float64)
             if log_weights_.ndim < 1:
                 raise ValueError("Weighted samples require at least one weight axis.")
             if not all(isinstance(axis, int) for axis in raw_axes):
@@ -278,7 +280,7 @@ class WeightedSampleBatch(StrictModule):
             if mask is not None:
                 mask_data = mask.data if isinstance(mask, cx.AxisArray) else mask
                 mask = jnp.broadcast_to(
-                    jnp.asarray(mask_data, dtype=bool), log_weights_.shape
+                    jnp.asarray(mask_data, dtype=jnp.bool_), log_weights_.shape
                 )
             if ancestry_ids is not None:
                 ancestry_data = (
@@ -292,7 +294,7 @@ class WeightedSampleBatch(StrictModule):
                 )
             sample_count = 1
             for axis in axes:
-                sample_count *= int(log_weights_.shape[axis])
+                sample_count *= log_weights_.shape[axis]
 
         def identifiers(value: Array | None, name: str) -> Array | None:
             if value is None:
@@ -311,12 +313,12 @@ class WeightedSampleBatch(StrictModule):
         if target_mass is None:
             self.target_mass = None
         else:
-            mass = jnp.asarray(target_mass, dtype=float)
+            mass = jnp.asarray(target_mass, dtype=jnp.float64)
             if bool(jnp.any(~jnp.isfinite(mass) | (mass <= 0.0))):
                 raise ValueError("target_mass must be finite and strictly positive.")
             self.target_mass = mass
         self.support_valid = (
-            None if support_valid is None else jnp.asarray(support_valid, dtype=bool)
+            None if support_valid is None else jnp.asarray(support_valid, dtype=jnp.bool_)
         )
         self.stratum_ids = identifiers(stratum_ids, "stratum_ids")
         self.pair_ids = identifiers(pair_ids, "pair_ids")
@@ -336,7 +338,7 @@ class WeightedSampleBatch(StrictModule):
         else:
             axes = cast(tuple[int, ...], self.sample_axes)
             for axis in axes:
-                count *= int(self.log_weights.shape[axis])
+                count *= self.log_weights.shape[axis]
         return count
 
 

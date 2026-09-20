@@ -43,8 +43,7 @@ class GeophysicalResourcePolicy(StrictModule, NonTrainableState):
         maximum_steps: int,
     ):
         values = tuple(
-            int(value)
-            for value in (
+            (
                 maximum_device_bytes,
                 maximum_checkpoint_bytes,
                 maximum_sources,

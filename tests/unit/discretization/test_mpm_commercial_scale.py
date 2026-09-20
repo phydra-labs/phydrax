@@ -21,7 +21,7 @@ def test_three_field_contact_solves_simultaneously_with_essential_rows():
         tolerance=1e-8,
     )
     graph = plan.build_graph(mass, gradients)
-    essential = jnp.zeros_like(velocity, dtype=bool).at[1, 0, 1].set(True)
+    essential = jnp.zeros_like(velocity, dtype="bool").at[1, 0, 1].set(True)
     values = jnp.zeros_like(velocity)
     result = plan.solve(
         mass,

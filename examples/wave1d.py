@@ -247,7 +247,7 @@ def _(jax, jnp, jr, phx):
         x_flat = xx.reshape((-1,))
         t_flat = tt.reshape((-1,))
         point_eval = jax.jit(
-            jax.vmap(lambda x_i, t_i: u.func(jnp.asarray([x_i], dtype=float), t_i))
+            jax.vmap(lambda x_i, t_i: u.func(jnp.asarray([x_i], dtype="float64"), t_i))
         )
         u_pred = point_eval(x_flat, t_flat).reshape((int(nx), int(nt)))
         u_true = u_exact(xx, tt)
@@ -265,15 +265,17 @@ def _(jax, jnp, jr, phx):
         t_line = jnp.linspace(t_min, t_max, 256)
         x_line = jnp.linspace(x_min, x_max, 256)
 
-        left = jax.vmap(lambda t_i: u.func(jnp.asarray([x_min], dtype=float), t_i))(
+        left = jax.vmap(lambda t_i: u.func(jnp.asarray([x_min], dtype="float64"), t_i))(
             t_line
         )
-        right = jax.vmap(lambda t_i: u.func(jnp.asarray([x_max], dtype=float), t_i))(
+        right = jax.vmap(lambda t_i: u.func(jnp.asarray([x_max], dtype="float64"), t_i))(
             t_line
         )
-        u0 = jax.vmap(lambda x_i: u.func(jnp.asarray([x_i], dtype=float), t_min))(x_line)
+        u0 = jax.vmap(lambda x_i: u.func(jnp.asarray([x_i], dtype="float64"), t_min))(
+            x_line
+        )
         ut = phx.operators.dt(u, var="t")
-        ut0 = jax.vmap(lambda x_i: ut.func(jnp.asarray([x_i], dtype=float), t_min))(
+        ut0 = jax.vmap(lambda x_i: ut.func(jnp.asarray([x_i], dtype="float64"), t_min))(
             x_line
         )
 
@@ -516,10 +518,7 @@ def _(diag_stats, mo, train_stats):
         - max IC slope error: `{diag_stats["max_ut0_error"]:.3e}`
         """
         if train_stats is not None:
-            msg += (
-                f"\n- loss (init → final): `{train_stats['init_loss']:.3e}` → "
-                f"`{train_stats['final_loss']:.3e}`"
-            )
+            msg += f"\n- loss (init → final): `{train_stats['init_loss']:.3e}` → `{train_stats['final_loss']:.3e}`"
         diagnostics_panel = mo.md(msg)
     diagnostics_panel
     return

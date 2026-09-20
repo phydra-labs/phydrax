@@ -66,7 +66,7 @@ class StateSpaceWindowPlan(StrictModule):
         lower = jnp.maximum(0, indices - target + 1)
         upper = jnp.minimum(indices, starts - 1)
         counts = jnp.maximum(0, upper - lower + 1)
-        inclusion = counts.astype(float) / float(starts)
+        inclusion = counts.astype("float64") / float(starts)
         self.inclusion_probability = inclusion
         self.num_steps = steps
         self.target_length = target
@@ -170,7 +170,7 @@ class BufferedStateSpaceVariationalResult(StrictModule):
 
     @property
     def num_draws(self) -> int:
-        return int(self.log_model.shape[0])
+        return self.log_model.shape[0]
 
 
 def fit_buffered_state_space_variational(
@@ -325,7 +325,7 @@ def fit_buffered_state_space_variational(
         context_end=jnp.asarray(context_ends, dtype=jnp.int32),
         elbo=jnp.asarray(elbo_history),
         gradient_norm=jnp.asarray(gradient_history),
-        finite=jnp.asarray(finite_history, dtype=bool),
+        finite=jnp.asarray(finite_history, dtype=jnp.bool_),
     )
     return BufferedStateSpaceVariationalResult(
         problem=problem,

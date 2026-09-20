@@ -80,7 +80,7 @@ class BodyFrameTransportState(StrictModule, NonTrainableState):
         *,
         frame_id: str,
     ):
-        position = jnp.asarray(position_m, dtype=float)
+        position = jnp.asarray(position_m, dtype=jnp.float64)
         velocity = jnp.asarray(velocity_m_s, dtype=position.dtype)
         frame = str(frame_id)
         if position.shape != (3,) or velocity.shape != (3,):
@@ -103,7 +103,7 @@ class BodyFrameTransportState(StrictModule, NonTrainableState):
     def from_packed(
         cls, values: ArrayLike, /, *, frame_id: str
     ) -> BodyFrameTransportState:
-        packed = jnp.asarray(values, dtype=float)
+        packed = jnp.asarray(values, dtype=jnp.float64)
         if packed.shape != (6,):
             raise ValueError("Packed transport state must have shape (6,).")
         return cls(packed[:3], packed[3:], frame_id=frame_id)
@@ -196,7 +196,7 @@ class ProfiledElasticJumpProcess(AbstractJumpProcess):
             raise TypeError("scattering must be an ElasticScatteringTable.")
         if profile.target_ids != scattering.target_ids:
             raise ValueError("Profile and scattering target axes must match exactly.")
-        mass = np.asarray(projectile_mass_kg, dtype=float)
+        mass = np.asarray(projectile_mass_kg, dtype=np.float64)
         if mass.shape != () or not np.isfinite(mass) or mass <= 0.0:
             raise ValueError("projectile_mass_kg must be finite and positive.")
         self.profile = profile
@@ -302,7 +302,7 @@ def transport_collision_evidence(
     states = jnp.asarray(pre_states)
     channels_ = jnp.asarray(channels, dtype=jnp.int32)
     marks_ = jnp.asarray(marks)
-    valid_ = jnp.asarray(valid, dtype=bool)
+    valid_ = jnp.asarray(valid, dtype=jnp.bool_)
     if (
         states.shape[-1:] != (6,)
         or marks_.shape != states.shape
@@ -365,23 +365,25 @@ def transport_path_evidence(
 ) -> TransportPathEvidence:
     jump = jnp.asarray(jump_status, dtype=jnp.int32)
     event_count = jnp.asarray(deterministic_event_count, dtype=jnp.int32)
-    capacity = jnp.asarray(deterministic_capacity_exceeded, dtype=bool)
-    finite_ = jnp.asarray(finite, dtype=bool)
+    capacity = jnp.asarray(deterministic_capacity_exceeded, dtype=jnp.bool_)
+    finite_ = jnp.asarray(finite, dtype=jnp.bool_)
     initial = (
-        jnp.ones_like(finite_, dtype=bool)
+        jnp.ones_like(finite_, dtype=jnp.bool_)
         if initial_valid is None
-        else jnp.broadcast_to(jnp.asarray(initial_valid, dtype=bool), finite_.shape)
+        else jnp.broadcast_to(jnp.asarray(initial_valid, dtype=jnp.bool_), finite_.shape)
     )
     solver_ok = (
-        jnp.ones_like(finite_, dtype=bool)
+        jnp.ones_like(finite_, dtype=jnp.bool_)
         if solver_successful is None
-        else jnp.broadcast_to(jnp.asarray(solver_successful, dtype=bool), finite_.shape)
+        else jnp.broadcast_to(
+            jnp.asarray(solver_successful, dtype=jnp.bool_), finite_.shape
+        )
     )
     collision_ok = (
-        jnp.ones_like(finite_, dtype=bool)
+        jnp.ones_like(finite_, dtype=jnp.bool_)
         if collision_invariants_valid is None
         else jnp.broadcast_to(
-            jnp.asarray(collision_invariants_valid, dtype=bool), finite_.shape
+            jnp.asarray(collision_invariants_valid, dtype=jnp.bool_), finite_.shape
         )
     )
     status = jnp.where(
@@ -465,7 +467,7 @@ def jump_differential_problem(
     t1_s: float,
 ) -> JumpDifferentialProblem:
     """Build the continuous radial-gravity component for guarded jump transport."""
-    state = jnp.asarray(initial_state, dtype=float)
+    state = jnp.asarray(initial_state, dtype=jnp.float64)
     if state.shape != (6,):
         raise ValueError("initial_state must have packed shape (6,).")
     differential = DifferentialProblem(
@@ -479,7 +481,7 @@ def jump_differential_problem(
 
 def transparent_state(state: ArrayLike, elapsed_s: ArrayLike, /) -> Array:
     """Exact force-free propagation, used for transparent-path qualification."""
-    packed = jnp.asarray(state, dtype=float)
+    packed = jnp.asarray(state, dtype=jnp.float64)
     elapsed = jnp.asarray(elapsed_s, dtype=packed.dtype).reshape(())
     if packed.shape != (6,):
         raise ValueError("Transparent propagation requires packed shape (6,).")

@@ -119,7 +119,7 @@ def test_full_sphere_and_exchange_quotient_have_one_physical_normalization():
         speeds,
         jnp.asarray((-1.0, -0.25, 0.0, 0.5, 1.0)),
         jnp.full((2, 5), 8.0 / (4.0 * jnp.pi)),
-        identical_particle_convention="labelled-full-sphere",
+        identical_particle_convention="labeled-full-sphere",
     )
     quotient = _kernel(
         species,
@@ -156,7 +156,7 @@ def test_screening_azimuth_and_speed_table_support_fail_closed():
         cosines,
         values,
         azimuths=azimuths,
-        identical_particle_convention="labelled-full-sphere",
+        identical_particle_convention="labeled-full-sphere",
         screening_convention="hard-angular-cutoff",
         minimum_scattering_angle=cutoff,
     )
@@ -182,7 +182,7 @@ def test_inverse_cdf_sampling_reproduces_angular_moments():
         jnp.asarray((0.0, 2.0)),
         cosines,
         values,
-        identical_particle_convention="labelled-full-sphere",
+        identical_particle_convention="labeled-full-sphere",
     )
     keys = jr.split(jr.key(11), 20_000)
     samples = jax.jit(jax.vmap(lambda key: kernel.sample_angles(key, 1.0)))(keys)
@@ -207,7 +207,7 @@ def test_small_angle_split_has_no_gap_or_overlap_and_reconstructs_every_moment()
         jnp.asarray((1.0, 2.0)),
         cosines,
         differential,
-        identical_particle_convention="labelled-full-sphere",
+        identical_particle_convention="labeled-full-sphere",
     )
     split = SmallAngleSplitPlan(kernel, 0.75)
     evidence = split.moments(jnp.asarray((1.0, 1.5, 2.0)))
@@ -252,7 +252,7 @@ def test_reference_rights_denial_and_table_substitution_fail_closed():
             speeds,
             cosines,
             differential,
-            identical_particle_convention="labelled-full-sphere",
+            identical_particle_convention="labeled-full-sphere",
         )
     denied = _source_kwargs(
         speeds,
@@ -269,7 +269,7 @@ def test_reference_rights_denial_and_table_substitution_fail_closed():
             cosines,
             differential,
             **denied,
-            identical_particle_convention="labelled-full-sphere",
+            identical_particle_convention="labeled-full-sphere",
         )
 
     admitted = _source_kwargs(speeds, cosines, differential)
@@ -280,7 +280,7 @@ def test_reference_rights_denial_and_table_substitution_fail_closed():
         cosines,
         differential,
         **admitted,
-        identical_particle_convention="labelled-full-sphere",
+        identical_particle_convention="labeled-full-sphere",
     )
     noncommercial = TwoBodyDifferentialKernelPlan(
         species,
@@ -289,7 +289,7 @@ def test_reference_rights_denial_and_table_substitution_fail_closed():
         cosines,
         differential,
         **_source_kwargs(speeds, cosines, differential, request_commercial=False),
-        identical_particle_convention="labelled-full-sphere",
+        identical_particle_convention="labeled-full-sphere",
     )
     assert commercial.reference_manifest.manifest_id == (
         noncommercial.reference_manifest.manifest_id
@@ -304,7 +304,7 @@ def test_reference_rights_denial_and_table_substitution_fail_closed():
             cosines,
             differential.at[1, 1].set(2.0),
             **admitted,
-            identical_particle_convention="labelled-full-sphere",
+            identical_particle_convention="labeled-full-sphere",
         )
 
 
@@ -318,14 +318,14 @@ def test_inverse_cdf_is_scale_invariant_and_rejects_bounds_outside_support():
         speeds,
         cosines,
         jnp.broadcast_to(shape[None, :], (2, cosines.size)),
-        identical_particle_convention="labelled-full-sphere",
+        identical_particle_convention="labeled-full-sphere",
     )
     tiny = _kernel(
         species,
         speeds,
         cosines,
         jnp.broadcast_to((1.0e-280 * shape)[None, :], (2, cosines.size)),
-        identical_particle_convention="labelled-full-sphere",
+        identical_particle_convention="labeled-full-sphere",
     )
     keys = jr.split(jr.key(23), 256)
     ordinary_samples = jax.vmap(lambda key: ordinary.sample_angles(key, 1.0))(keys)
@@ -347,7 +347,7 @@ def test_inverse_cdf_is_scale_invariant_and_rejects_bounds_outside_support():
             speeds,
             cosines,
             varying,
-            identical_particle_convention="labelled-full-sphere",
+            identical_particle_convention="labeled-full-sphere",
             unbounded_speed=True,
         )
 

@@ -145,7 +145,7 @@
     },
     "multiphysics_moments": {
       "passed": true,
-      "recolouring_closure_residual": 1.3877787807814457e-17,
+      "recoloring_closure_residual": 1.3877787807814457e-17,
       "species_moment_residual": 1.1102230246251565e-16,
       "thermal_moment_residual": 2.220446049250313e-16,
       "tolerance": 2e-13

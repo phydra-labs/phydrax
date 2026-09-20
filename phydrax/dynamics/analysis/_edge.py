@@ -76,16 +76,15 @@ def recurrence_seed_candidates(
     available_pairs = available_pairs * (available_pairs + 1) // 2
     if selected_count > available_pairs:
         raise ValueError("count exceeds the temporally separated pair capacity.")
-    flattened_size = int(states.shape[-1])
+    flattened_size = states.shape[-1]
     pair_count = trajectory.capacity**2
-    real_itemsize = int(jnp.empty((), dtype=states.dtype).real.dtype.itemsize)
+    real_itemsize = jnp.empty((), dtype=states.dtype).real.dtype.itemsize
     required_bytes = pair_count * (
-        flattened_size * int(states.dtype.itemsize) + 4 * real_itemsize + 16
+        flattened_size * states.dtype.itemsize + 4 * real_itemsize + 16
     )
     if required_bytes > maximum_bytes:
         raise ValueError(
-            f"Recurrence distances require {required_bytes} bytes; "
-            f"maximum_pair_bytes={maximum_bytes}."
+            f"Recurrence distances require {required_bytes} bytes; maximum_pair_bytes={maximum_bytes}."
         )
     differences = states[:, None, :] - states[None, :, :]
     distances = (
@@ -149,8 +148,8 @@ class EdgeTrackingProblem(StrictModule):
         raw_target = jnp.asarray(target_coordinate)
         if jnp.iscomplexobj(raw_source) or jnp.iscomplexobj(raw_target):
             raise TypeError("Edge-tracking coordinates must be real.")
-        source = raw_source.astype(float)
-        target = raw_target.astype(float)
+        source = raw_source.astype("float64")
+        target = raw_target.astype("float64")
         if (
             source.shape != ()
             or target.shape != ()

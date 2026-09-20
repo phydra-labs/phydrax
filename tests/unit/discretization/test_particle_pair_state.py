@@ -71,9 +71,9 @@ def test_pair_remap_reports_duplicates_and_accepts_empty_relations():
     )
     empty = phx.discretization.match_particle_pair_keys(
         jnp.zeros((0, 5), dtype=jnp.int64),
-        jnp.zeros((0,), dtype=bool),
+        jnp.zeros((0,), dtype="bool"),
         jnp.zeros((0, 5), dtype=jnp.int64),
-        jnp.zeros((0,), dtype=bool),
+        jnp.zeros((0,), dtype="bool"),
     )
 
     assert not duplicate.successful

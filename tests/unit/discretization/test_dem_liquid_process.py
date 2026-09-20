@@ -155,7 +155,7 @@ def test_barrier_reservoir_allocation_is_permutation_independent_and_balanced():
     barriers = jnp.asarray((0, 0), dtype=jnp.int32)
     request = jnp.asarray((1.0, 1.0))
     minimum = jnp.zeros((2,))
-    births = jnp.ones((2,), dtype=bool)
+    births = jnp.ones((2,), dtype="bool")
     allocation = process.allocate_barriers(
         state,
         particle,

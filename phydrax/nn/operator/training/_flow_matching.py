@@ -57,7 +57,7 @@ class OperatorFlowMatchingMetric(AbstractFlowMatchingMetric, NonTrainableState):
         resolved_id = (
             canonical_fingerprint(
                 {
-                    "kind": "operator-flow-matching-metric-v1",
+                    "kind": "operator-flow-matching-metric",
                     "query": query.geometry_fingerprint(),
                     "channels": output_spec.channels,
                     "component_names": list(output_spec.component_names),
@@ -93,8 +93,7 @@ class OperatorFlowMatchingMetric(AbstractFlowMatchingMetric, NonTrainableState):
             == self.event_shape
         ):
             raise ValueError(
-                f"Operator flow-matching values must have fixed event shape "
-                f"{self.event_shape}."
+                f"Operator flow-matching values must have fixed event shape {self.event_shape}."
             )
         self.precision.validate_coordinates(state)
         residual = self.precision.accumulation(

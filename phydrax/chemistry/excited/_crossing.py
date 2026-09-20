@@ -17,7 +17,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import DenseLinearOperator, OperatorProperties
 from ...linalg.eigen import DenseEigh, Eigenproblem, eigensolve, EigenSolvePolicy
@@ -71,7 +71,7 @@ class TwoStateSurfaceEvaluation(StrictModule, NonTrainableState):
         self.energies = energy
         self.gradients = gradient
         self.energy_weighted_coupling = coupling
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.state_ids = states
         self.provider_id = provider
         self.result_id = canonical_fingerprint(
@@ -92,7 +92,7 @@ class TwoStateSurfaceEvaluation(StrictModule, NonTrainableState):
 
 
 class AbstractTwoStateSurfaceProvider(StrictModule, NonTrainableState):
-    provider_id: AbstractAttribute[str]
+    provider_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def evaluate(self, positions: ArrayLike, /) -> TwoStateSurfaceEvaluation:
@@ -213,7 +213,7 @@ class CrossingOptimizationResult(StrictModule, NonTrainableState):
         self.branching = branching
         self.trajectory = trajectory_
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32).reshape(())
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.plan_id = str(plan_id)
         self.provider_id = str(provider_id)
         self.result_id = canonical_fingerprint(

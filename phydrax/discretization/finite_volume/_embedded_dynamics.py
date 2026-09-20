@@ -93,17 +93,17 @@ def _physical_stage_block(
         raise ValueError("Physical face-block IDs index outside embedded apertures.")
 
     source_owners = np.asarray(block.owner_cells)
-    source_neighbours = np.asarray(block.neighbour_cells)
-    active_cells = np.asarray(metrics.active_fluid_cells, dtype=bool)
+    source_neighbors = np.asarray(block.neighbor_cells)
+    active_cells = np.asarray(metrics.active_fluid_cells, dtype=np.bool_)
     aperture = np.asarray(metrics.face_open_fraction)[source_face_ids]
-    internal = source_neighbours >= 0
-    safe_neighbours = np.where(internal, source_neighbours, 0)
+    internal = source_neighbors >= 0
+    safe_neighbors = np.where(internal, source_neighbors, 0)
     route_active = (
-        np.asarray(block.active_mask, dtype=bool)
+        np.asarray(block.active_mask, dtype=np.bool_)
         & (aperture > 0.0)
         & (np.asarray(block.face_measures) * aperture > 0.0)
         & active_cells[source_owners]
-        & (~internal | active_cells[safe_neighbours])
+        & (~internal | active_cells[safe_neighbors])
     )
     route_rows = np.flatnonzero(route_active).astype(np.int32)
     if route_rows.size == 0:
@@ -113,7 +113,7 @@ def _physical_stage_block(
     route_indices = jnp.asarray(route_rows, dtype=jnp.int32)
     face_ids = jnp.asarray(compacted_face_ids, dtype=jnp.int32)
     owners = jnp.asarray(block.owner_cells, dtype=jnp.int32)[route_indices]
-    neighbours = jnp.asarray(block.neighbour_cells, dtype=jnp.int32)[route_indices]
+    neighbors = jnp.asarray(block.neighbor_cells, dtype=jnp.int32)[route_indices]
     policy_ids = jnp.asarray(block.boundary_patch_ids, dtype=jnp.int32)[route_indices]
     compact_aperture = metrics.face_open_fraction[face_ids]
     measures = metrics.open_face_measures[face_ids]
@@ -147,7 +147,7 @@ def _physical_stage_block(
         (open_centers - gauss_offset, open_centers + gauss_offset),
         axis=1,
     )
-    partial_mask = jnp.asarray(partial, dtype=bool)
+    partial_mask = jnp.asarray(partial, dtype=jnp.bool_)
     source_centers = block.face_centers[route_indices]
     centers = jnp.where(
         partial_mask[:, None],
@@ -167,13 +167,13 @@ def _physical_stage_block(
         source_weights.shape,
     )
     weights = jnp.where(partial_mask[:, None], open_weights, source_weights)
-    active_mask = jnp.ones((route_rows.size,), dtype=bool)
+    active_mask = jnp.ones((route_rows.size,), dtype=jnp.bool_)
     spatial_shape = tuple(centers.shape)
     quadrature_shape = tuple(weights.shape)
     layout = FiniteVolumeStageFaceLayout(
         face_ids=face_ids,
         owner_cells=owners,
-        neighbour_cells=neighbours,
+        neighbor_cells=neighbors,
         active_mask=active_mask,
         boundary_policy_ids=policy_ids,
         boundary_policy_count=len(discretization.boundary_patch_names),
@@ -188,7 +188,7 @@ def _physical_stage_block(
                 "block_index": block_index,
                 "face_ids": array_tree_fingerprint(face_ids),
                 "owner_cells": array_tree_fingerprint(owners),
-                "neighbour_cells": array_tree_fingerprint(neighbours),
+                "neighbor_cells": array_tree_fingerprint(neighbors),
                 "boundary_policy_ids": array_tree_fingerprint(policy_ids),
                 "boundary_policy_count": len(discretization.boundary_patch_names),
                 "active_mask": array_tree_fingerprint(active_mask),
@@ -219,8 +219,8 @@ def _cut_stage_block(
     /,
 ) -> FiniteVolumeStageFaceBlock | None:
     active = (
-        np.asarray(metrics.cut_face_active, dtype=bool)
-        & np.asarray(metrics.active_fluid_cells, dtype=bool)
+        np.asarray(metrics.cut_face_active, dtype=np.bool_)
+        & np.asarray(metrics.active_fluid_cells, dtype=np.bool_)
         & (np.asarray(metrics.cut_face_measures) > 0.0)
     )
     route_rows = np.flatnonzero(active).astype(np.int32)
@@ -232,19 +232,19 @@ def _cut_stage_block(
     route_indices = jnp.asarray(route_rows, dtype=jnp.int32)
     face_ids = jnp.asarray(cut_face_start + route_rows, dtype=jnp.int32)
     owners = route_indices
-    neighbours = jnp.full((route_rows.size,), -1, dtype=jnp.int32)
+    neighbors = jnp.full((route_rows.size,), -1, dtype=jnp.int32)
     compact_policy_ids = jnp.asarray(policy_ids, dtype=jnp.int32)[route_indices]
     measures = metrics.cut_face_measures[route_indices]
     centers = metrics.cut_face_centers[route_indices]
     normals = metrics.cut_face_normals[route_indices]
     weights = measures[:, None]
-    active_mask = jnp.ones((route_rows.size,), dtype=bool)
+    active_mask = jnp.ones((route_rows.size,), dtype=jnp.bool_)
     spatial_shape = tuple(centers.shape)
     quadrature_shape = tuple(weights.shape)
     layout = FiniteVolumeStageFaceLayout(
         face_ids=face_ids,
         owner_cells=owners,
-        neighbour_cells=neighbours,
+        neighbor_cells=neighbors,
         active_mask=active_mask,
         boundary_policy_ids=compact_policy_ids,
         boundary_policy_count=len(boundary_set.boundaries),
@@ -259,7 +259,7 @@ def _cut_stage_block(
                 "boundary_set": boundary_set.boundary_set_id,
                 "face_ids": array_tree_fingerprint(face_ids),
                 "owner_cells": array_tree_fingerprint(owners),
-                "neighbour_cells": array_tree_fingerprint(neighbours),
+                "neighbor_cells": array_tree_fingerprint(neighbors),
                 "boundary_policy_ids": array_tree_fingerprint(compact_policy_ids),
                 "boundary_policy_count": len(boundary_set.boundaries),
                 "active_mask": array_tree_fingerprint(active_mask),
@@ -291,15 +291,15 @@ def _translated_evidence(
         embedded.aperture_closure_defect > embedded.aperture_closure_tolerance
     ).astype(jnp.int32)
     owners = jnp.asarray(discretization.owner_cells, dtype=jnp.int32)
-    neighbours = jnp.asarray(discretization.neighbour_cells, dtype=jnp.int32)
+    neighbors = jnp.asarray(discretization.neighbor_cells, dtype=jnp.int32)
     aperture_failure_by_cell = jnp.zeros(
         (discretization.cell_count,),
         dtype=jnp.int32,
     )
     aperture_failure_by_cell = aperture_failure_by_cell.at[owners].max(aperture_failed)
-    internal = neighbours >= 0
-    safe_neighbours = jnp.where(internal, neighbours, 0)
-    aperture_failure_by_cell = aperture_failure_by_cell.at[safe_neighbours].max(
+    internal = neighbors >= 0
+    safe_neighbors = jnp.where(internal, neighbors, 0)
+    aperture_failure_by_cell = aperture_failure_by_cell.at[safe_neighbors].max(
         jnp.where(internal, aperture_failed, 0)
     )
     aperture_defect = aperture_failure_by_cell.astype(metrics.fluid_cell_volumes.dtype)
@@ -412,7 +412,7 @@ def lower_embedded_stage_metrics(
         boundary_set,
         topology_epoch_id,
         policy_ids,
-        int(discretization.face_measures.size),
+        discretization.face_measures.size,
     )
     stage_blocks = physical_blocks if cut_block is None else (*physical_blocks, cut_block)
     original_cell_centers = jnp.asarray(
@@ -444,9 +444,7 @@ def lower_embedded_stage_metrics(
                 {
                     "face_ids": array_tree_fingerprint(block.layout.face_ids),
                     "owner_cells": array_tree_fingerprint(block.layout.owner_cells),
-                    "neighbour_cells": array_tree_fingerprint(
-                        block.layout.neighbour_cells
-                    ),
+                    "neighbor_cells": array_tree_fingerprint(block.layout.neighbor_cells),
                     "active_mask": array_tree_fingerprint(block.layout.active_mask),
                     "boundary_policy_ids": array_tree_fingerprint(
                         block.layout.boundary_policy_ids

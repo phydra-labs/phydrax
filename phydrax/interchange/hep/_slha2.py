@@ -64,14 +64,14 @@ def _block_matrix(block: SLHABlock, imaginary: SLHABlock | None, /) -> np.ndarra
     entries = tuple(value for value in block.entries if len(value.indices) == 2)
     if not entries:
         raise ValueError(f"SLHA2 block {block.name} has no matrix entries.")
-    rows = max(value.indices[0] for value in entries)
-    columns = max(value.indices[1] for value in entries)
+    rows = max(int(value.indices[0]) for value in entries)
+    columns = max(int(value.indices[1]) for value in entries)
     if rows < 1 or columns < 1:
         raise ValueError("SLHA2 matrix indices are one-based positive integers.")
     matrix = np.zeros((rows, columns), dtype=np.complex128)
     seen: set[tuple[int, int]] = set()
     for entry in entries:
-        row, column = entry.indices
+        row, column = (int(index) for index in entry.indices)
         if (row, column) in seen:
             raise ValueError("SLHA2 matrix contains a duplicate entry.")
         seen.add((row, column))
@@ -80,7 +80,7 @@ def _block_matrix(block: SLHABlock, imaginary: SLHABlock | None, /) -> np.ndarra
         for entry in imaginary.entries:
             if len(entry.indices) != 2:
                 raise ValueError("Imaginary SLHA2 matrix blocks require two indices.")
-            row, column = entry.indices
+            row, column = (int(index) for index in entry.indices)
             if row > rows or column > columns:
                 raise ValueError("Imaginary SLHA2 matrix entry leaves its real matrix.")
             matrix[row - 1, column - 1] += 1j * entry.value
@@ -134,7 +134,7 @@ def interpret_slha2(
         raise ValueError("SLHA2 requires one unscaled MASS block.")
     masses = tuple(
         sorted(
-            (entry.indices[0], entry.value)
+            (int(entry.indices[0]), entry.value)
             for entry in mass_blocks[0].entries
             if len(entry.indices) == 1
         )
@@ -175,7 +175,7 @@ def interpret_slha2(
             raise ValueError("QNUMBERS headers require exactly one PDG identifier.")
         pdg = int(block.header_arguments[0])
         values = {
-            entry.indices[0]: round(entry.value)
+            int(entry.indices[0]): round(entry.value)
             for entry in block.entries
             if len(entry.indices) == 1
         }
@@ -198,9 +198,9 @@ def interpret_slha2(
             continue
         for entry in block.entries:
             message = entry.comment or entry.raw_value
-            if entry.indices and entry.indices[0] == 3:
+            if entry.indices and int(entry.indices[0]) == 3:
                 warnings.append(message)
-            elif entry.indices and entry.indices[0] == 4:
+            elif entry.indices and int(entry.indices[0]) == 4:
                 errors.append(message)
     if any(
         value.name in mixing and value.unitarity_residual > unitarity_tolerance

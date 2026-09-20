@@ -198,9 +198,9 @@ class WeightedEventStream(StrictModule):
         if weights_.shape != (momenta_.shape[0],):
             raise ValueError("Event weights must align with stream capacity.")
         active_ = (
-            jnp.ones(weights_.shape, dtype=bool)
+            jnp.ones(weights_.shape, dtype=jnp.bool_)
             if active is None
-            else jnp.asarray(active, dtype=bool)
+            else jnp.asarray(active, dtype=jnp.bool_)
         )
         if active_.shape != weights_.shape or not provenance:
             raise ValueError("Event activity/provenance declaration is invalid.")

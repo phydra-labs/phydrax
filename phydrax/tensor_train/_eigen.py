@@ -48,7 +48,7 @@ class BlockTensorTrainEigenPlan(StrictModule):
         inverse_shift: float,
         max_dense_entries: int,
     ):
-        modes = tuple(int(size) for size in mode_sizes)
+        modes = tuple(mode_sizes)
         block = int(block_size)
         iteration_count = int(iterations)
         rank = int(max_rank)

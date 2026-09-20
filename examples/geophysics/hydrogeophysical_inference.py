@@ -42,7 +42,7 @@ def _electrical(mesh):
 
 def main() -> None:
     mesh, finite_volume = _geometry()
-    exterior = np.flatnonzero(np.asarray(finite_volume.neighbour_cells) < 0)
+    exterior = np.flatnonzero(np.asarray(finite_volume.neighbor_cells) < 0)
     porosity = jnp.asarray((0.3, 0.4))
     water = phx.applications.porous_media.RichardsPlan(
         finite_volume,

@@ -126,7 +126,7 @@ class PreparedChromatinAtomisticCoupling(StrictModule, NonTrainableState):
         if chromatin.plan.site_count != plan.site_particle_ids.size:
             raise ValueError("Chromatin site count and particle mapping differ.")
         particle_ids = np.asarray(atomistic.system.plan.particle_ids, dtype=np.int64)
-        active = np.asarray(atomistic.system.active_mask, dtype=bool)
+        active = np.asarray(atomistic.system.active_mask, dtype=np.bool_)
         slot_by_id = {int(value): index for index, value in enumerate(particle_ids)}
         requested = np.asarray(plan.site_particle_ids, dtype=np.int64)
         if any(int(value) not in slot_by_id for value in requested):

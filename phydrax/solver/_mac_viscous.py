@@ -449,7 +449,7 @@ class MACHelmholtzSolvePlan(StrictModule, NonTrainableState):
             grid_axis = momentum.operators.discretization.grid.structured_axes[
                 hybrid_line_axis
             ]
-            count = int(grid_axis.interval_widths.size)
+            count = grid_axis.interval_widths.size
             if hybrid_line_axis == component and not grid_axis.periodic:
                 count -= 1
             hybrid_eligible = count >= 1 and (not grid_axis.periodic or count >= 3)
@@ -1086,8 +1086,7 @@ class MACIMEXEulerMethod(StrictModule, NonTrainableState):
         if implicit_les:
             if solve_method not in ("auto", "iterative") or hybrid_line_axis is not None:
                 raise ValueError(
-                    "Frozen MAC algebraic LES supports only the iterative momentum "
-                    "and composite-pressure routes."
+                    "Frozen MAC algebraic LES supports only the iterative momentum and composite-pressure routes."
                 )
             policy = _variable_viscosity_policy(
                 tolerance_, maximum_iterations, linear_policy
@@ -1496,8 +1495,7 @@ def _g_stability_ledger(
         defect,
         finite,
         accepted & finite & (defect <= tolerance),
-        "inner(BDF2(u[n+1],u[n],u[n-1]),u[n+1])="
-        "G(u[n+1],u[n])-G(u[n],u[n-1])+one-quarter-norm(second-difference)^2",
+        "inner(BDF2(u[n+1],u[n],u[n-1]),u[n+1])=G(u[n+1],u[n])-G(u[n],u[n-1])+one-quarter-norm(second-difference)^2",
     )
 
 

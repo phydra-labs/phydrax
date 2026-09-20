@@ -363,7 +363,7 @@ def _single_evaluation(
     finite = jnp.all(jnp.isfinite(force))
     if potential is not None:
         finite = finite & jnp.all(jnp.isfinite(potential))
-    valid = measure.valid & finite & jnp.asarray(additional_validity, dtype=bool)
+    valid = measure.valid & finite & jnp.asarray(additional_validity, dtype=jnp.bool_)
     return MechanicalLoadEvaluation(
         total_force_density=force,
         component_force_densities=(force,),

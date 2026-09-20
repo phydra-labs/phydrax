@@ -66,13 +66,13 @@ class LocalTestSpace(StrictModule, NonTrainableState):
     ):
         if not isinstance(component, DomainComponent):
             raise TypeError("component must be a DomainComponent.")
-        basis = np.asarray(basis_values, dtype=float)
+        basis = np.asarray(basis_values, dtype=np.float64)
         if basis.ndim != 2 or basis.shape[0] <= 0 or basis.shape[1] <= 0:
             raise ValueError("basis_values must have shape (points, modes).")
         weights_ = (
-            np.full((basis.shape[0],), 1.0 / basis.shape[0], dtype=float)
+            np.full((basis.shape[0],), 1.0 / basis.shape[0], dtype=np.float64)
             if weights is None
-            else np.asarray(weights, dtype=float)
+            else np.asarray(weights, dtype=np.float64)
         )
         if weights_.shape != (basis.shape[0],):
             raise ValueError("weights must contain one quadrature weight per point.")
@@ -128,7 +128,7 @@ class LocalizedResidualNorm(AbstractScalarTerm):
             raise TypeError("test_space must be a LocalTestSpace.")
         if not condition.on.domain.same_support(test_space.component.domain):
             raise ValueError("Condition and local test space must share one domain.")
-        scale_ = jnp.asarray(scale, dtype=float).reshape(())
+        scale_ = jnp.asarray(scale, dtype=jnp.float64).reshape(())
         if not bool(jnp.isfinite(scale_)) or float(scale_) < 0.0:
             raise ValueError("scale must be finite and non-negative.")
         self.condition = condition
@@ -176,7 +176,7 @@ def polynomial_test_space(
     order_ = int(order)
     if order_ < 0:
         raise ValueError("order must be non-negative.")
-    coordinate = np.asarray(coordinate_values, dtype=float).reshape((-1,))
+    coordinate = np.asarray(coordinate_values, dtype=np.float64).reshape((-1,))
     if np.any(coordinate < -1.0) or np.any(coordinate > 1.0):
         raise ValueError("Polynomial test coordinates must lie in [-1, 1].")
     basis = np.polynomial.legendre.legvander(coordinate, order_)

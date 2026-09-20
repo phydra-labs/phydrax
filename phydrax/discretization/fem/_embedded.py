@@ -40,9 +40,9 @@ class EmbeddedQuadrature(StrictModule, NonTrainableState):
     ):
         if not isinstance(domain, IntegrationDomain) or domain.kind != "cell":
             raise ValueError("Embedded quadrature requires a cell IntegrationDomain.")
-        points = np.asarray(reference_points, dtype=float)
-        weights = np.asarray(reference_weights, dtype=float)
-        valid_ = np.asarray(valid, dtype=bool)
+        points = np.asarray(reference_points, dtype=np.float64)
+        weights = np.asarray(reference_weights, dtype=np.float64)
+        valid_ = np.asarray(valid, dtype=np.bool_)
         if (
             points.ndim != 3
             or weights.shape != points.shape[:2]
@@ -98,7 +98,7 @@ class FiniteElementEnrichment(StrictModule, NonTrainableState):
         *,
         enrichment_id: str,
     ):
-        active = np.asarray(active_cells, dtype=bool)
+        active = np.asarray(active_cells, dtype=np.bool_)
         count = int(local_enrichment_count)
         identifier = str(enrichment_id)
         if not callable(evaluator) or active.ndim != 1 or count <= 0 or not identifier:

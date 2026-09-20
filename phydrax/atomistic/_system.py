@@ -91,16 +91,16 @@ class AtomisticSystemPlan(StrictModule, NonTrainableState):
             raise TypeError("coordinate_dtype must be a real floating dtype.")
         mass = mass.astype(dtype, copy=False)
         active = (
-            np.ones(ids.shape, dtype=bool)
+            np.ones(ids.shape, dtype=np.bool_)
             if active_mask is None
-            else np.asarray(active_mask, dtype=bool)
+            else np.asarray(active_mask, dtype=np.bool_)
         )
         if active.shape != ids.shape or not np.any(active):
             raise ValueError("active_mask must select at least one particle.")
         elements = (
             active.copy()
             if element_mask is None
-            else np.asarray(element_mask, dtype=bool)
+            else np.asarray(element_mask, dtype=np.bool_)
         )
         if elements.shape != ids.shape or np.any(elements & ~active):
             raise ValueError("element_mask must be a subset of active_mask.")
@@ -111,7 +111,9 @@ class AtomisticSystemPlan(StrictModule, NonTrainableState):
         if np.any(~np.isfinite(mass[active])) or np.any(mass[active] <= 0.0):
             raise ValueError("Active masses must be finite and positive.")
         mobile = (
-            active.copy() if mobile_mask is None else np.asarray(mobile_mask, dtype=bool)
+            active.copy()
+            if mobile_mask is None
+            else np.asarray(mobile_mask, dtype=np.bool_)
         )
         if mobile.shape != ids.shape or np.any(mobile & ~active):
             raise ValueError("mobile_mask must be a subset of active_mask.")
@@ -292,10 +294,7 @@ class PreparedAtomisticSystem(StrictModule, NonTrainableState):
         inverse = jnp.where(plan.active_mask, 1.0 / plan.masses, 0.0)
         mobile_count = int(np.count_nonzero(np.asarray(plan.mobile_mask)))
         molecule_labels = tuple(
-            int(value)
-            for value in np.unique(
-                np.asarray(plan.molecule_ids)[np.asarray(plan.active_mask)]
-            )
+            np.unique(np.asarray(plan.molecule_ids)[np.asarray(plan.active_mask)])
         )
         degrees = 3 * mobile_count - topology.constraint_count
         if degrees <= 0:

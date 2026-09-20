@@ -338,7 +338,7 @@ class OperatorDependencySupport:
             ):
                 raise ValueError("Dependency axes must be strictly ordered and uniform.")
             scales.append(float(np.mean(spacing)))
-            periodic_sizes.append(int(nodes.size) if axis.periodic else None)
+            periodic_sizes.append(nodes.size if axis.periodic else None)
         return self.rescaled(scales).saturated_periodic(periodic_sizes)
 
 

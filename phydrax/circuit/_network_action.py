@@ -516,7 +516,7 @@ def solve_scattering_action(
         else WaveExcitation(excitation)
     )
     incident_external = _ordered_excitation(prepared, excitation_)
-    rhs_count = int(incident_external.shape[-1])
+    rhs_count = incident_external.shape[-1]
     rhs_bytes = (
         3 * prepared.plan.cost.channels * rhs_count * jnp.dtype(jnp.complex128).itemsize
     )

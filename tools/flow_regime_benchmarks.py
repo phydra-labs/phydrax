@@ -78,13 +78,13 @@ def main() -> None:
         jnp.zeros((capacity,)),
         jnp.ones((capacity,)),
         jnp.zeros((capacity,), dtype=jnp.int32),
-        jnp.ones((capacity,), dtype=bool),
+        jnp.ones((capacity,), dtype="bool"),
         jnp.zeros((capacity,), dtype=jnp.int32),
     )
     event_count = 1024
     first = jnp.arange(event_count, dtype=jnp.int32) % capacity
     second = (first + 1) % capacity
-    valid = jnp.ones((event_count,), dtype=bool)
+    valid = jnp.ones((event_count,), dtype="bool")
     uniforms = jax.random.uniform(jax.random.key(2), (event_count, 3))
     majorant = jnp.full((event_count,), 100.0)
     collision_call = eqx.filter_jit(collision.collide)

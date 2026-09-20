@@ -21,7 +21,7 @@ class _ComplexParameters(eqx.Module):
 
 def _collocation_poisson_solution(source):
     values = np.asarray(source)
-    size = int(values.shape[-1])
+    size = values.shape[-1]
     forcing = values**2 - np.mean(values**2, axis=(-2, -1), keepdims=True)
     frequency = 2.0 * np.pi * np.fft.fftfreq(size, d=1.0 / size)
     frequency_x, frequency_y = np.meshgrid(frequency, frequency, indexing="ij")

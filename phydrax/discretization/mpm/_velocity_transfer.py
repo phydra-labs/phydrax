@@ -12,17 +12,17 @@ import numpy as np
 from jaxtyping import Array
 
 from ..._fingerprint import canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._transfer import APICGatherResult, gather_apic
 
 
 class AbstractMPMVelocityTransferPlan(StrictModule, NonTrainableState):
-    transfer_name: AbstractAttribute[str]
-    requires_affine_state: AbstractAttribute[bool]
-    uses_grid_delta: AbstractAttribute[bool]
-    maximum_condition: AbstractAttribute[float]
-    plan_id: AbstractAttribute[str]
+    transfer_name: eqx.AbstractVar[str]
+    requires_affine_state: eqx.AbstractVar[bool]
+    uses_grid_delta: eqx.AbstractVar[bool]
+    maximum_condition: eqx.AbstractVar[float]
+    plan_id: eqx.AbstractVar[str]
 
 
 class APICTransferPlan(AbstractMPMVelocityTransferPlan):
@@ -111,8 +111,8 @@ class PICFLIPTransferPlan(AbstractMPMVelocityTransferPlan):
 
 
 class AbstractMPMAdvectionPlan(StrictModule, NonTrainableState):
-    advection_name: AbstractAttribute[str]
-    plan_id: AbstractAttribute[str]
+    advection_name: eqx.AbstractVar[str]
+    plan_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def velocity(
@@ -192,7 +192,7 @@ def apply_velocity_transfer(
         raise TypeError("transfer must be AbstractMPMVelocityTransferPlan.")
     if not isinstance(advection, AbstractMPMAdvectionPlan):
         raise TypeError("advection must be AbstractMPMAdvectionPlan.")
-    dimension = int(grid_velocity_after.shape[-1])
+    dimension = grid_velocity_after.shape[-1]
     after: APICGatherResult = gather_apic(
         routes,
         grid_velocity_after.reshape((-1, dimension)),

@@ -80,12 +80,12 @@ def _initial_basis(
     seed: int,
     /,
 ) -> Array:
-    dimension = int(state.size)
+    dimension = state.size
     if supplied is None:
         matrix = jax.random.normal(
             jax.random.PRNGKey(int(seed)),
             (dimension, rank),
-            dtype=jnp.result_type(state, float),
+            dtype=jnp.result_type(state, jnp.float64),
         )
     else:
         matrix = jnp.asarray(supplied)
@@ -410,7 +410,7 @@ def covariant_directions(
     growth = jnp.stack(tuple(growth_values), axis=0)
     errors = jnp.stack(tuple(error_values), axis=0)
     convergence_drift = jnp.stack(tuple(drift_values), axis=0)
-    direction_valid = jnp.asarray(validity_values, dtype=bool)
+    direction_valid = jnp.asarray(validity_values, dtype=jnp.bool_)
     finite_errors = jnp.where(direction_valid[:, None], errors, jnp.nan)
     finite_drift = jnp.where(direction_valid[:, None], convergence_drift, jnp.nan)
     maximum_error = jnp.nanmax(finite_errors)

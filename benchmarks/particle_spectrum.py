@@ -56,7 +56,7 @@ def benchmark_case(integration_steps: int):
             "boundary_residual": float(jnp.linalg.norm(result.residual)),
             "terminal_parameter_error": float(jnp.abs(result.trajectory[-1, 0] - 3.0)),
         },
-        "newton_steps": int(result.accepted_steps.shape[0]),
+        "newton_steps": result.accepted_steps.shape[0],
         "successful": bool(result.converged and result.finite),
     }
 

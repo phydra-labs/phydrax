@@ -15,7 +15,7 @@ from phydrax.applications.skeletal_muscle.fibers import (
 
 
 def main() -> None:
-    target = jnp.zeros((1, 1, 5), dtype=bool).at[0, 0, 0].set(True)
+    target = jnp.zeros((1, 1, 5), dtype="bool").at[0, 0, 0].set(True)
     stimulus = PrescribedFiberStimulusSchedule(
         jnp.asarray([0.0]),
         jnp.asarray([0.05]),

@@ -57,8 +57,8 @@ def test_prepared_sampling_affine_fields_and_exact_transpose():
 @pytest.mark.parametrize("dimensions", [2, 3])
 def test_monopole_volume_rate_scaling_and_axis_symmetry(dimensions):
     grid = AcousticGrid((7,) * dimensions, (0.5,) * dimensions)
-    centre = [1.5] * dimensions
-    acquisition = SeismicAcquisition(grid, [centre], [centre])
+    center = [1.5] * dimensions
+    acquisition = SeismicAcquisition(grid, [center], [center])
     plan = ConstantDensityAcousticPlan(grid, 0.05, 3, 2.0, 3.0)
     initial = plan.initial_state()
     state = plan.step(initial, 2.0, acquisition, jnp.asarray([0.7]))
@@ -72,15 +72,15 @@ def test_monopole_volume_rate_scaling_and_axis_symmetry(dimensions):
         rtol=2e-6,
     )
     propagated = plan.step(state, 2.0, acquisition, jnp.asarray([0.0])).pressure
-    neighbours = []
+    neighbors = []
     for axis in range(dimensions):
         for sign in (-1, 1):
             index = [3] * dimensions
             index[axis] += sign
-            neighbours.append(propagated[tuple(index)])
-    assert float(neighbours[0]) > 0
+            neighbors.append(propagated[tuple(index)])
+    assert float(neighbors[0]) > 0
     np.testing.assert_allclose(
-        neighbours, jnp.full((2 * dimensions,), neighbours[0]), rtol=2e-6
+        neighbors, jnp.full((2 * dimensions,), neighbors[0]), rtol=2e-6
     )
 
 
@@ -251,7 +251,7 @@ def test_split_damping_reduces_late_box_energy_without_perfect_pml_claim():
 def test_masked_native_pressure_likelihood_gradient_and_time_transpose():
     plan, acquisition, rates = _survey()
     true = plan.simulate(1.35, acquisition, rates)
-    active = np.ones(true.traces.values.shape, dtype=bool)
+    active = np.ones(true.traces.values.shape, dtype="bool")
     active[0, 7:10] = False
     observed = SampledSeries(
         true.traces.support,

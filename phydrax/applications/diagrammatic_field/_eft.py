@@ -212,7 +212,7 @@ class WilsonCoefficientState(StrictModule, NonTrainableState):
         self.statistical_covariance = covariance
         self.scale = jnp.asarray(scale).reshape(())
         self.statistical_uncertainty_available = jnp.asarray(
-            statistical_uncertainty_available, dtype=bool
+            statistical_uncertainty_available, dtype=jnp.bool_
         ).reshape(())
         self.basis_id = str(basis_id)
 
@@ -251,7 +251,7 @@ class EFTMatchingPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(basis, EFTOperatorBasis):
             raise TypeError("basis must be an EFTOperatorBasis.")
-        matrix = np.asarray(matching_matrix, dtype=complex)
+        matrix = np.asarray(matching_matrix, dtype=np.complex128)
         maximum = int(maximum_matrix_elements)
         if matrix.shape != (basis.size, basis.size):
             raise ValueError("matching_matrix must be square with the EFT basis size.")
@@ -417,7 +417,7 @@ class RGFlowPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(basis, EFTOperatorBasis):
             raise TypeError("basis must be an EFTOperatorBasis.")
-        gamma = np.asarray(anomalous_dimension, dtype=complex)
+        gamma = np.asarray(anomalous_dimension, dtype=np.complex128)
         maximum = int(maximum_steps)
         if gamma.shape != (basis.size, basis.size) or not np.all(np.isfinite(gamma)):
             raise ValueError("anomalous_dimension must be a finite basis-square matrix.")
@@ -609,7 +609,7 @@ class EFTObservablePlan(StrictModule, NonTrainableState):
             raise TypeError(
                 "EFT observable plans require a basis and power-counting rule."
             )
-        elements = np.asarray(matrix_elements, dtype=complex)
+        elements = np.asarray(matrix_elements, dtype=np.complex128)
         power = int(first_omitted_power)
         coefficient_scale = float(omitted_coefficient_scale)
         if elements.shape != (basis.size,) or not np.all(np.isfinite(elements)):

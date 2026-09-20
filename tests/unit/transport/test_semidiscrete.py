@@ -15,13 +15,13 @@ import phydrax.axes as cx
 
 def _finite(points, weights, *, normalized=True, mask=None, provenance="atoms"):
     return phx.integration.discrete(
-        jnp.asarray(points, dtype=float),
-        cx.AxisArray(jnp.asarray(weights, dtype=float), dims=("atom",)),
+        jnp.asarray(points, dtype="float64"),
+        cx.AxisArray(jnp.asarray(weights, dtype="float64"), dims=("atom",)),
         axes="atom",
         mask=(
             None
             if mask is None
-            else cx.AxisArray(jnp.asarray(mask, dtype=bool), dims=("atom",))
+            else cx.AxisArray(jnp.asarray(mask, dtype="bool"), dims=("atom",))
         ),
         normalized=normalized,
         provenance=provenance,

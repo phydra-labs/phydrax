@@ -58,7 +58,7 @@ def condition_gaussian_moments(
         raise ValueError(
             "Predicted Gaussian moments must contain one vector and square covariance."
         )
-    observation_size = int(observed_mean.size)
+    observation_size = observed_mean.size
     if (
         value.shape != (observation_size,)
         or observed_covariance.shape != (observation_size, observation_size)
@@ -66,9 +66,9 @@ def condition_gaussian_moments(
     ):
         raise ValueError("Observation and cross-covariance shapes are incompatible.")
     active_mask = (
-        jnp.ones((observation_size,), dtype=bool)
+        jnp.ones((observation_size,), dtype=jnp.bool_)
         if mask is None
-        else jnp.asarray(mask, dtype=bool).reshape((observation_size,))
+        else jnp.asarray(mask, dtype=jnp.bool_).reshape((observation_size,))
     )
     regularization = float(covariance_regularization)
     tolerance = float(rank_tolerance)
@@ -92,7 +92,7 @@ def condition_gaussian_moments(
         initial=0.0,
     )
     operands_valid = (
-        jnp.asarray(moments_valid, dtype=bool)
+        jnp.asarray(moments_valid, dtype=jnp.bool_)
         & (predicted_hermitian_defect <= tolerance)
         & (observation_hermitian_defect <= tolerance)
         & jnp.all(jnp.isfinite(mean))

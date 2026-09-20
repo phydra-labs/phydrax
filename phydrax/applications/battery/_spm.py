@@ -38,7 +38,7 @@ def _scalar(value: ArrayLike, name: str, /) -> Array:
     if array.shape != () or jnp.issubdtype(array.dtype, jnp.complexfloating):
         raise ValueError(f"{name} must be one real scalar.")
     if not jnp.issubdtype(array.dtype, jnp.inexact):
-        array = array.astype(float)
+        array = array.astype("float64")
     return array
 
 
@@ -58,8 +58,7 @@ def _property_law(
         or value.coordinate_unit != expected_coordinate_unit
     ):
         raise ValueError(
-            f"{name} must use the {coordinate!r} coordinate in "
-            f"{expected_coordinate_unit!r}."
+            f"{name} must use the {coordinate!r} coordinate in {expected_coordinate_unit!r}."
         )
     if value.value_unit != value_unit:
         raise ValueError(f"{name} must use value unit {value_unit!r}.")
@@ -80,13 +79,11 @@ def _solid_diffusivity_law(
     }
     if value.coordinate not in coordinate_units:
         raise ValueError(
-            f"{name} must use temperature, stoichiometry, or "
-            "solid_lithium_concentration coordinates."
+            f"{name} must use temperature, stoichiometry, or solid_lithium_concentration coordinates."
         )
     if value.coordinate_unit != coordinate_units[value.coordinate]:
         raise ValueError(
-            f"{name} coordinate {value.coordinate!r} must use unit "
-            f"{coordinate_units[value.coordinate]!r}."
+            f"{name} coordinate {value.coordinate!r} must use unit {coordinate_units[value.coordinate]!r}."
         )
     if value.value_unit != "m2/s":
         raise ValueError(f"{name} must use value unit 'm2/s'.")
@@ -388,8 +385,7 @@ class SpmParameters(StrictModule):
         area = eqx.error_if(
             area,
             ~capacity_valid,
-            "SPM electrode capacities are neither balanced nor consistent with the "
-            "declared limiting electrode.",
+            "SPM electrode capacities are neither balanced nor consistent with the declared limiting electrode.",
         )
         area = eqx.error_if(
             area,
@@ -481,7 +477,7 @@ class SpmState(StrictModule):
             positive.dtype, jnp.complexfloating
         ):
             raise TypeError("SPM amount states must be real-valued.")
-        dtype = jnp.result_type(negative, positive, float)
+        dtype = jnp.result_type(negative, positive, jnp.float64)
         self.negative_amount_mol = negative.astype(dtype)
         self.positive_amount_mol = positive.astype(dtype)
 
@@ -1366,7 +1362,7 @@ class PrescribedCurrentSpmAdapter(StrictModule, NonTrainableState):
         states = native_solution.states
         if not isinstance(states, SpmState):
             raise TypeError("SPM native solution states must be SpmState.")
-        valid = jnp.asarray(native_solution.valid, dtype=bool)
+        valid = jnp.asarray(native_solution.valid, dtype=jnp.bool_)
         valid_count = jnp.sum(valid.astype(jnp.int32))
         final_index = jnp.maximum(valid_count - 1, 0)
         initial_negative = jnp.sum(states.negative_amount_mol[0])

@@ -42,7 +42,7 @@ from phydrax.uq import (
 
 def _tetra_mesh():
     return phx.discretization.CellMesh.from_tetrahedra(
-        np.asarray(((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)), dtype=float),
+        np.asarray(((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)), dtype="float64"),
         np.asarray(((0, 1, 2, 3),)),
     )
 
@@ -124,7 +124,7 @@ def test_tetrahedral_hcurl_exact_sequence_and_positive_actions():
     vertex = jnp.asarray((0.3, -0.2, 1.1, 0.7))
     edge_gradient = space.gradient(vertex)
     np.testing.assert_allclose(space.discrete_curl(edge_gradient), 0.0, atol=1e-14)
-    edge = jnp.arange(space.edge_count, dtype=float) + 1
+    edge = jnp.arange(space.edge_count, dtype="float64") + 1
     np.testing.assert_allclose(
         space.discrete_divergence(space.discrete_curl(edge)), 0.0, atol=1e-14
     )
@@ -203,7 +203,9 @@ def test_covariance_actions_variable_projection_and_priors_match_dense_reference
     np.testing.assert_allclose(
         temporal.standardized_difference([[0.0], [2.0], [6.0]]), 1.0
     )
-    cross = CrossGradientPrior(np.asarray([[[1, 0], [0, 1]]], dtype=float), [1.0], 2, 1.0)
+    cross = CrossGradientPrior(
+        np.asarray([[[1, 0], [0, 1]]], dtype="float64"), [1.0], 2, 1.0
+    )
     np.testing.assert_allclose(cross.log_prob([1.0, 0.0], [2.0, 0.0]), 0.0)
 
 
@@ -234,12 +236,12 @@ def test_stochastic_design_never_materializes_identity_and_is_differentiable():
         factory,
         jnp.asarray(0.0),
         jax.random.key(4),
-        precision_factory_id="diagonal-exp-precision-v1",
+        precision_factory_id="diagonal-exp-precision",
         parameter_dimension=dimension,
         probe_count=16,
         criterion="a-optimal",
         linear_policy=policy,
-        linear_policy_id="dense-lu-v1",
+        linear_policy_id="dense-lu",
     )
     result = design.evaluate(jnp.asarray(0.1))
     assert result.successful
@@ -266,7 +268,7 @@ def test_stochastic_design_never_materializes_identity_and_is_differentiable():
         identity_factory,
         jnp.asarray(0.0),
         jax.random.key(5),
-        precision_factory_id="identity-precision-v1",
+        precision_factory_id="identity-precision",
         parameter_dimension=dimension,
         probe_count=8,
         criterion="d-optimal",
@@ -275,7 +277,7 @@ def test_stochastic_design_never_materializes_identity_and_is_differentiable():
         identity_factory,
         jnp.asarray(0.0),
         jax.random.key(6),
-        precision_factory_id="identity-precision-v1",
+        precision_factory_id="identity-precision",
         parameter_dimension=dimension,
         probe_count=8,
         criterion="e-optimal",

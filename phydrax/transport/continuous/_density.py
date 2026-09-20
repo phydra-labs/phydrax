@@ -65,7 +65,7 @@ def _validate_density_transport(transport: ContinuousTransport, /) -> Any:
     return evolution
 
 
-class _ExactAugmentedField(eqx.Module):
+class _ExactAugmentedField(StrictModule):
     transport: ContinuousTransport
     reverse: bool = eqx.field(static=True)
     event_shape: tuple[int, ...] = eqx.field(static=True)
@@ -103,7 +103,7 @@ class _ExactAugmentedField(eqx.Module):
         )
 
 
-class _StochasticAugmentedField(eqx.Module):
+class _StochasticAugmentedField(StrictModule):
     transport: ContinuousTransport
     probe_key: Array
     policy: StochasticTracePolicy
@@ -255,7 +255,7 @@ class ContinuousFlowDensityResult(StrictModule):
         probe_distribution: str,
         flow_id: str,
     ):
-        events = tuple(int(size) for size in event_shape)
+        events = tuple(event_shape)
         data = jnp.asarray(data_state)
         base = jnp.asarray(base_state, dtype=data.dtype)
         if data.shape != base.shape:
@@ -265,7 +265,7 @@ class ContinuousFlowDensityResult(StrictModule):
         volume = jnp.asarray(log_volume)
         density = jnp.asarray(log_prob)
         error = jnp.asarray(standard_error)
-        validity = jnp.asarray(valid, dtype=bool)
+        validity = jnp.asarray(valid, dtype=jnp.bool_)
         statuses = jnp.asarray(status, dtype=jnp.int32)
         backend = jnp.asarray(backend_status)
         accepted = jnp.asarray(accepted_steps, dtype=jnp.int32)
@@ -333,7 +333,7 @@ def _base_contains(law: AbstractProbabilityLaw, states: Array, event_shape, /) -
     count = prod(leading) if leading else 1
     flat = states.reshape((count,) + tuple(event_shape))
     values = jax.vmap(law.contains)(flat)
-    return jnp.asarray(values, dtype=bool).reshape(leading)
+    return jnp.asarray(values, dtype=jnp.bool_).reshape(leading)
 
 
 def _exact_density_batch(
@@ -420,7 +420,7 @@ class ContinuousFlowLaw(AbstractProbabilityLaw):
         resolved_id = (
             canonical_fingerprint(
                 {
-                    "kind": "exact-continuous-flow-law-v1",
+                    "kind": "exact-continuous-flow-law",
                     "transport_id": transport.transport_id,
                     "max_exact_dimension": limit,
                 }
@@ -465,7 +465,7 @@ class ContinuousFlowLaw(AbstractProbabilityLaw):
         key: Key[Array, ""],
         sample_shape: tuple[int, ...] = (),
     ) -> tuple[Array, Array]:
-        samples = tuple(int(size) for size in sample_shape)
+        samples = tuple(sample_shape)
         if any(size <= 0 for size in samples):
             raise ValueError("sample_shape dimensions must be positive.")
         base = jnp.asarray(self.transport.source_law.sample(key, samples))
@@ -559,7 +559,7 @@ def estimate_continuous_flow_log_prob(
     density = base_density + correction
     flow_id = canonical_fingerprint(
         {
-            "kind": "stochastic-continuous-flow-density-v1",
+            "kind": "stochastic-continuous-flow-density",
             "transport_id": transport.transport_id,
             "num_probes": resolved.num_probes,
             "distribution": resolved.distribution,

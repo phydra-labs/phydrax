@@ -238,7 +238,7 @@ class PreparedEwaldReferencePotential(AbstractPreparedAtomisticEnergyTerm):
                 for value in product(range(-extent, extent + 1), repeat=3)
                 if value != (0, 0, 0)
             ],
-            dtype=float,
+            dtype=np.float64,
         )
         self.plan = plan
         self.system = system
@@ -286,7 +286,7 @@ class PreparedEwaldReferencePotential(AbstractPreparedAtomisticEnergyTerm):
         self_energy = -constant * self.plan.alpha / jnp.sqrt(jnp.pi) * jnp.sum(charges**2)
         exception_indices = self.system.topology.exception_indices
         correction = jnp.zeros((), dtype=context.positions.dtype)
-        if int(exception_indices.shape[0]):
+        if exception_indices.shape[0]:
             displacement = (
                 context.positions[exception_indices[:, 0]]
                 - context.positions[exception_indices[:, 1]]
@@ -376,7 +376,7 @@ class ParticleMeshEwaldPotential(AbstractAtomisticEnergyTerm, NonTrainableState)
     ):
         alpha_ = float(alpha)
         cutoff = float(real_cutoff)
-        shape = tuple(int(value) for value in grid_shape)
+        shape = tuple(grid_shape)
         degree = int(spline_degree)
         tolerance = float(charge_tolerance)
         identifier = str(name).strip()
@@ -545,7 +545,7 @@ class PreparedParticleMeshEwaldPotential(AbstractPreparedAtomisticEnergyTerm):
         self_energy = -constant * self.plan.alpha / jnp.sqrt(jnp.pi) * jnp.sum(charges**2)
         exception_indices = self.system.topology.exception_indices
         correction = jnp.zeros((), dtype=context.positions.dtype)
-        if int(exception_indices.shape[0]):
+        if exception_indices.shape[0]:
             displacement = (
                 context.positions[exception_indices[:, 0]]
                 - context.positions[exception_indices[:, 1]]

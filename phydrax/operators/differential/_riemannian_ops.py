@@ -175,8 +175,7 @@ class _RiemannianDivCallable(StrictModule):
         )
         if values.shape[-1:] != (self.dimension,):
             raise ValueError(
-                "Riemannian divergence requires vector trailing dimension "
-                f"{self.dimension}; got {values.shape}."
+                f"Riemannian divergence requires vector trailing dimension {self.dimension}; got {values.shape}."
             )
         derivative = jnp.asarray(
             self.derivative.func(
@@ -300,8 +299,7 @@ class _RiemannianDivTensorCallable(StrictModule):
         expected = (self.dimension, self.dimension, self.dimension)
         if derivative.shape[-3:] != expected:
             raise ValueError(
-                "Riemannian tensor divergence requires derivative trailing shape "
-                f"{expected}; got {derivative.shape}."
+                f"Riemannian tensor divergence requires derivative trailing shape {expected}; got {derivative.shape}."
             )
         return jnp.trace(derivative, axis1=-2, axis2=-1)
 

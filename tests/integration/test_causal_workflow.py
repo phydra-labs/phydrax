@@ -41,7 +41,7 @@ def test_causal_interventions_use_native_uq_batch_selection():
         expected_utility=jnp.asarray([0.1, 0.8]),
         estimator_standard_error=jnp.zeros((2,)),
         estimator_bias_bound=jnp.zeros((2,)),
-        valid=jnp.ones((2,), dtype=bool),
+        valid=jnp.ones((2,), dtype="bool"),
         candidates=tuple(candidate.candidate for candidate in candidates),
         model_ids=("finite-scm",),
         utility_target="parameter",

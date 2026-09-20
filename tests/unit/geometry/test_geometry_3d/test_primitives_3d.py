@@ -146,7 +146,7 @@ def test_boundary_normals_sphere():
             [0.0, 0.0, 1.0],
             [0.0, 0.0, -1.0],
         ],
-        dtype=float,
+        dtype="float64",
     )
     normals = s._boundary_normals(pts)
     expected = jnp.array(

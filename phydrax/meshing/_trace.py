@@ -75,7 +75,7 @@ class MeshingDiagnostic(StrictModule, NonTrainableState):
         text = str(message).strip()
         if not text:
             raise ValueError("Meshing diagnostic message must be non-empty.")
-        identifiers = tuple(int(value) for value in entity_ids)
+        identifiers = tuple(entity_ids)
         points = tuple(
             tuple(float(component) for component in point) for point in locations
         )

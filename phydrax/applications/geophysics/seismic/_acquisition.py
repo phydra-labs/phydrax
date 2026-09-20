@@ -28,9 +28,9 @@ if TYPE_CHECKING:
 
 
 class AcousticGrid(StrictModule, NonTrainableState):
-    """Static pressure-cell grid, normalized to metres at construction.
+    """Static pressure-cell grid, normalized to meters at construction.
 
-    ``origin`` is the centre of cell zero, not its lower corner. Two-dimensional
+    ``origin`` is the center of cell zero, not its lower corner. Two-dimensional
     grids describe translationally invariant, per-unit-thickness line-source
     acoustics, not a slice with three-dimensional geometric spreading.
     """
@@ -51,7 +51,7 @@ class AcousticGrid(StrictModule, NonTrainableState):
         length_unit: UnitDefinition = METER,
         coordinate_metadata: GeospatialContract | None = None,
     ):
-        shape_ = tuple(int(size) for size in shape)
+        shape_ = tuple(shape)
         if len(shape_) not in (2, 3) or any(size < 2 for size in shape_):
             raise ValueError(
                 "Acoustic grids require two or three axes with at least two cells."
@@ -102,7 +102,7 @@ class AcousticGrid(StrictModule, NonTrainableState):
 
     def axis_nodes(self) -> tuple[Array, ...]:
         return tuple(
-            origin + spacing * jnp.arange(size, dtype=float)
+            origin + spacing * jnp.arange(size, dtype=jnp.float64)
             for size, spacing, origin in zip(
                 self.shape, self.spacing, self.origin, strict=True
             )
@@ -131,7 +131,7 @@ class PreparedAcousticSampling(StrictModule, NonTrainableState):
         *,
         length_unit: UnitDefinition = METER,
     ):
-        points = np.asarray(positions, dtype=float) * float(
+        points = np.asarray(positions, dtype=np.float64) * float(
             conversion_factor(length_unit, METER)
         )
         if points.ndim != 2 or points.shape[1] != grid.dimensions or points.shape[0] == 0:
@@ -144,7 +144,7 @@ class PreparedAcousticSampling(StrictModule, NonTrainableState):
             or np.any(points > upper)
         ):
             raise ValueError(
-                "Acoustic sample positions must lie within pressure-cell centres."
+                "Acoustic sample positions must lie within pressure-cell centers."
             )
         self.positions = jnp.asarray(points)
         self.stencil = rectilinear_stencil(
@@ -170,7 +170,7 @@ class PreparedAcousticSampling(StrictModule, NonTrainableState):
         return apply_gather_stencil(values.reshape((-1,)), self.stencil).values
 
     def transpose(self, values: ArrayLike, /) -> Array:
-        values_ = jnp.asarray(values, dtype=float)
+        values_ = jnp.asarray(values, dtype=jnp.float64)
         if values_.shape != (self.count,):
             raise ValueError("Acoustic transpose requires one coefficient per sample.")
         return jax.linear_transpose(

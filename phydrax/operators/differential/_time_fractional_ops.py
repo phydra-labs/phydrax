@@ -21,7 +21,7 @@ from ._domain_ops import _unwrap_factor
 def _time_start(u: DomainFunction, time_var: str) -> jax.Array:
     factor = _unwrap_factor(u.domain.factor(time_var))
     if isinstance(factor, AbstractScalarDomain):
-        return jnp.asarray(factor.fixed("start"), dtype=float)
+        return jnp.asarray(factor.fixed("start"), dtype=jnp.float64)
     raise TypeError(f"time_var {time_var!r} is not a scalar domain label.")
 
 
@@ -127,8 +127,8 @@ def caputo_time_fractional(
             from scipy.special import roots_jacobi
 
             raw_nodes, raw_weights = roots_jacobi(count, -a, 0.0)
-            nodes = (jnp.asarray(raw_nodes, dtype=float) + 1.0) / 2.0
-            weights = jnp.asarray(raw_weights, dtype=float) * (2.0 ** (a - 1.0))
+            nodes = (jnp.asarray(raw_nodes, dtype=jnp.float64) + 1.0) / 2.0
+            weights = jnp.asarray(raw_weights, dtype=jnp.float64) * (2.0 ** (a - 1.0))
         else:
             nodes, weights = causal_reference_rule(
                 GaussLegendreRule(count),
@@ -139,7 +139,7 @@ def caputo_time_fractional(
             evaluation_key = DOC_KEY0 if key is None else key
             if time_position is None:
                 return jnp.zeros_like(u.func(*args, key=evaluation_key, **kwargs))
-            target_time = jnp.asarray(args[time_position], dtype=float).reshape(())
+            target_time = jnp.asarray(args[time_position], dtype=jnp.float64).reshape(())
             duration = jnp.maximum(target_time - t0, 0.0)
 
             def positive(_):
@@ -178,8 +178,8 @@ def caputo_time_fractional(
         from scipy.special import roots_jacobi
 
         raw_nodes, raw_weights = roots_jacobi(count, 1.0 - a, 0.0)
-        nodes = (jnp.asarray(raw_nodes, dtype=float) + 1.0) / 2.0
-        weights = jnp.asarray(raw_weights, dtype=float) * (2.0 ** (a - 2.0))
+        nodes = (jnp.asarray(raw_nodes, dtype=jnp.float64) + 1.0) / 2.0
+        weights = jnp.asarray(raw_weights, dtype=jnp.float64) * (2.0 ** (a - 2.0))
     else:
         nodes, weights = causal_reference_rule(
             GaussLegendreRule(count),
@@ -190,7 +190,7 @@ def caputo_time_fractional(
         evaluation_key = DOC_KEY0 if key is None else key
         if time_position is None:
             return jnp.zeros_like(u.func(*args, key=evaluation_key, **kwargs))
-        target_time = jnp.asarray(args[time_position], dtype=float).reshape(())
+        target_time = jnp.asarray(args[time_position], dtype=jnp.float64).reshape(())
         duration = jnp.maximum(target_time - t0, 0.0)
 
         def positive(_):

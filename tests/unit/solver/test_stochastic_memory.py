@@ -19,7 +19,7 @@ def test_volterra_left_convolution_recovers_deterministic_integral_equation():
     assert solution.states.shape == (101, 1)
     assert jnp.all(solution.successful)
     assert jnp.allclose(solution.states[-1, 0], jnp.exp(rate), atol=1.3e-3)
-    assert solution.solver_id == "solver:volterra:left-convolution-euler:v1"
+    assert solution.solver_id == "solver:volterra:left-convolution-euler"
     assert solution.resolved_method == "explicit-left-convolution"
     assert solution.stats["num_accepted_steps"] == 100
 
@@ -84,7 +84,7 @@ def test_delay_solver_interpolates_causal_history_and_resolved_states():
     assert solution.states.shape == (81, 1)
     assert jnp.all(solution.successful)
     assert jnp.max(jnp.abs(solution.states[:, 0] - exact)) < 2.1e-3
-    assert solution.solver_id == "solver:diffrax-delay:Euler:retarded-v1"
+    assert solution.solver_id == "solver:diffrax-delay:Euler:retarded"
     assert solution.resolved_method == "Euler:causal-retarded-method-of-steps"
     assert solution.stats["num_rejected_steps"] == 0
 

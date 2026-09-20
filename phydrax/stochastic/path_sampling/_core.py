@@ -102,7 +102,7 @@ class StateRegionPlan(StrictModule, NonTrainableState):
         lower_, upper_ = jnp.asarray(lower), jnp.asarray(upper)
         identity = region_id or canonical_fingerprint(
             {
-                "kind": "half-open-state-region-v1",
+                "kind": "half-open-state-region",
                 "lower": array_tree_fingerprint(lower_),
                 "upper": array_tree_fingerprint(upper_),
             }
@@ -153,7 +153,7 @@ class StateRegionPlan(StrictModule, NonTrainableState):
             children=(self, other),
             region_id=canonical_fingerprint(
                 {
-                    "kind": f"state-region-{kind}-v1",
+                    "kind": f"state-region-{kind}",
                     "left": self.region_id,
                     "right": other.region_id,
                 }
@@ -174,7 +174,7 @@ class StateRegionPlan(StrictModule, NonTrainableState):
             kind="not",
             children=(self,),
             region_id=canonical_fingerprint(
-                {"kind": "state-region-not-v1", "child": self.region_id}
+                {"kind": "state-region-not", "child": self.region_id}
             ),
         )
 
@@ -204,7 +204,7 @@ class PathBuffer(StrictModule, NonTrainableState):
         if not jnp.issubdtype(times_.dtype, jnp.floating):
             raise TypeError("PathBuffer times must have a floating dtype.")
         length_ = jnp.asarray(length, dtype=jnp.int32)
-        mask_ = jnp.asarray(mask, dtype=bool)
+        mask_ = jnp.asarray(mask, dtype=jnp.bool_)
         direction_ = jnp.asarray(direction, dtype=jnp.int8)
         lineage_ = jnp.asarray(lineage, dtype=jnp.int32)
         if positions_.ndim < 2 or positions_.shape[0] <= 0:
@@ -344,7 +344,7 @@ def path_trajectory_id(path: PathBuffer, /) -> str:
         raise TypeError("path must be PathBuffer.")
     return canonical_fingerprint(
         {
-            "kind": "path-trajectory-v1",
+            "kind": "path-trajectory",
             "positions": array_tree_fingerprint(path.positions),
             "times": array_tree_fingerprint(path.times),
             "length": int(path.length),
@@ -380,10 +380,10 @@ class PathLineageLog(StrictModule, NonTrainableState):
         parent_ = jnp.asarray(parent, dtype=jnp.uint32)
         candidate_ = jnp.asarray(candidate, dtype=jnp.uint32)
         committed_ = jnp.asarray(committed, dtype=jnp.uint32)
-        accepted_ = jnp.asarray(accepted, dtype=bool)
-        mask_ = jnp.asarray(mask, dtype=bool)
+        accepted_ = jnp.asarray(accepted, dtype=jnp.bool_)
+        mask_ = jnp.asarray(mask, dtype=jnp.bool_)
         count_ = jnp.asarray(count, dtype=jnp.int32)
-        overflowed_ = jnp.asarray(overflowed, dtype=bool)
+        overflowed_ = jnp.asarray(overflowed, dtype=jnp.bool_)
         if parent_.ndim != 1 or parent_.shape[0] <= 0:
             raise ValueError("Lineage arrays must have one positive capacity.")
         shape = parent_.shape
@@ -410,7 +410,7 @@ class PathLineageLog(StrictModule, NonTrainableState):
         if count <= 0:
             raise ValueError("Lineage capacity must be positive.")
         integers = jnp.zeros((count,), dtype=jnp.uint32)
-        booleans = jnp.zeros((count,), dtype=bool)
+        booleans = jnp.zeros((count,), dtype=jnp.bool_)
         return cls(
             integers,
             integers,
@@ -466,7 +466,7 @@ class PathLineageLog(StrictModule, NonTrainableState):
         index = jnp.minimum(self.count, self.capacity - 1)
         parent_ = jnp.asarray(parent, dtype=jnp.uint32)
         candidate_ = jnp.asarray(candidate, dtype=jnp.uint32)
-        accepted_ = jnp.asarray(accepted, dtype=bool)
+        accepted_ = jnp.asarray(accepted, dtype=jnp.bool_)
         committed_ = jnp.where(accepted_, candidate_, parent_)
         return PathLineageLog(
             self.parent.at[index].set(jnp.where(available, parent_, self.parent[index])),

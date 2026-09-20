@@ -109,7 +109,7 @@ class FiniteExperimentalDesignProblem(StrictModule):
         context_ = {} if context is None else dict(context)
         if any(not isinstance(name, str) or not name for name in context_):
             raise ValueError("context keys must be non-empty strings.")
-        mask = None if design_mask is None else jnp.asarray(design_mask, dtype=bool)
+        mask = None if design_mask is None else jnp.asarray(design_mask, dtype=jnp.bool_)
         if mask is not None and mask.shape != (designs.size,):
             raise ValueError("design_mask must have one entry per design flat index.")
         self.parameters = parameters
@@ -168,7 +168,7 @@ class FiniteDesignBelief(StrictModule):
         if values.shape != (parameters.size,):
             raise ValueError("log_masses must have one entry per parameter flat index.")
         if parameter_mask is not None:
-            mask = jnp.asarray(parameter_mask, dtype=bool)
+            mask = jnp.asarray(parameter_mask, dtype=jnp.bool_)
             if mask.shape != values.shape:
                 raise ValueError("parameter_mask must match log_masses.")
             values = jnp.where(mask, values, -jnp.inf)

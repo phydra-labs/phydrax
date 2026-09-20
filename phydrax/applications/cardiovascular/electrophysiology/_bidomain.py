@@ -80,11 +80,11 @@ class HeartTorsoBidomainRoute(StrictModule, NonTrainableState):
     ):
         node_ids = np.asarray(torso_node_ids, dtype=np.int64)
         element_ids = np.asarray(torso_element_ids, dtype=np.int64)
-        nodes = np.asarray(torso_nodes_mm, dtype=float)
+        nodes = np.asarray(torso_nodes_mm, dtype=np.float64)
         elements = np.asarray(torso_elements, dtype=np.int32)
         identifiers = np.asarray(interface_ids, dtype=np.int64)
         pairs = np.asarray(interface_node_pairs, dtype=np.int32)
-        conductance = np.asarray(interface_conductance_mS, dtype=float)
+        conductance = np.asarray(interface_conductance_mS, dtype=np.float64)
         _validate_mesh_ids(node_ids, element_ids, nodes, elements, "torso")
         dimension = nodes.shape[1]
         tensors = _conductivity_field(
@@ -171,7 +171,7 @@ class BidomainFEMPlan(StrictModule, NonTrainableState):
             raise TypeError("route must be a heart-only or heart--torso bidomain route.")
         node_ids = np.asarray(heart_node_ids, dtype=np.int64)
         element_ids = np.asarray(heart_element_ids, dtype=np.int64)
-        nodes = np.asarray(heart_nodes_mm, dtype=float)
+        nodes = np.asarray(heart_nodes_mm, dtype=np.float64)
         elements = np.asarray(heart_elements, dtype=np.int32)
         _validate_mesh_ids(node_ids, element_ids, nodes, elements, "heart")
         dimension = nodes.shape[1]
@@ -262,12 +262,12 @@ class PreparedBidomainFEM(StrictModule, NonTrainableState):
 
     @property
     def heart_node_count(self) -> int:
-        return int(self.plan.heart_node_ids.shape[0])
+        return self.plan.heart_node_ids.shape[0]
 
     @property
     def torso_node_count(self) -> int:
         if isinstance(self.plan.route, HeartTorsoBidomainRoute):
-            return int(self.plan.route.torso_node_ids.shape[0])
+            return self.plan.route.torso_node_ids.shape[0]
         return 0
 
     @property
@@ -402,7 +402,7 @@ def _conductivity_field(
     dimension: int,
     name: str,
 ) -> np.ndarray:
-    tensors = np.asarray(values, dtype=float)
+    tensors = np.asarray(values, dtype=np.float64)
     if tensors.shape == (dimension, dimension):
         tensors = np.broadcast_to(tensors, (element_count, dimension, dimension)).copy()
     if tensors.shape != (element_count, dimension, dimension):
@@ -532,7 +532,7 @@ def prepare_bidomain_fem(plan: BidomainFEMPlan, /) -> PreparedBidomainFEM:
     system = np.zeros((field_size, field_size), dtype=heart_nodes.dtype)
     vm_slice = slice(0, heart_count)
     extracellular_slice = slice(heart_count, 2 * heart_count)
-    torso_slice = slice(2 * heart_count, 2 * heart_count + torso_count)
+    slice(2 * heart_count, 2 * heart_count + torso_count)
     gauge_index = field_size - 1
     system[vm_slice, vm_slice] = vm_block
     system[vm_slice, extracellular_slice] = intracellular

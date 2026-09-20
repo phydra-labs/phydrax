@@ -20,7 +20,7 @@ class FlowObservablePlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, harmonics: Sequence[int], /):
-        harmonics_ = tuple(int(value) for value in harmonics)
+        harmonics_ = tuple(harmonics)
         if (
             not harmonics_
             or any(value < 1 for value in harmonics_)
@@ -54,7 +54,7 @@ def compute_flow_observables(
         raise TypeError("plan must be FlowObservablePlan.")
     phi_ = jnp.asarray(phi)
     weights_ = jnp.asarray(weights, dtype=phi_.dtype)
-    active_ = jnp.asarray(active, dtype=bool)
+    active_ = jnp.asarray(active, dtype=jnp.bool_)
     if phi_.ndim != 2 or weights_.shape != phi_.shape or active_.shape != phi_.shape:
         raise ValueError(
             "Flow angles, weights, and activity must have shape (event, particle)."

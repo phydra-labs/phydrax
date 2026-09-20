@@ -68,8 +68,7 @@ def _prepare_chain_positions(
             expected_shape = (chains, *reference_leaf.shape)
             if position_leaf.shape != expected_shape:
                 raise ValueError(
-                    "Every initial_positions leaf must have shape "
-                    f"{expected_shape}; received {position_leaf.shape}."
+                    f"Every initial_positions leaf must have shape {expected_shape}; received {position_leaf.shape}."
                 )
         return reference, jax.tree_util.tree_map(jnp.asarray, initial_positions)
 
@@ -88,8 +87,7 @@ def _prepare_chain_positions(
             raise TypeError("Every initial_position leaf must be an inexact array.")
         if position_leaf.shape != reference_leaf.shape:
             raise ValueError(
-                "Every initial_position leaf must have shape "
-                f"{reference_leaf.shape}; received {position_leaf.shape}."
+                f"Every initial_position leaf must have shape {reference_leaf.shape}; received {position_leaf.shape}."
             )
     arrays = jax.tree_util.tree_map(jnp.asarray, position)
     return arrays, jax.tree_util.tree_map(
@@ -115,7 +113,7 @@ def _unstack_tree(tree, count: int):
 
 
 def _tree_nbytes(tree: PyTree[Any], /) -> int:
-    return sum(int(jnp.asarray(leaf).nbytes) for leaf in jax.tree_util.tree_leaves(tree))
+    return sum(jnp.asarray(leaf).nbytes for leaf in jax.tree_util.tree_leaves(tree))
 
 
 __all__ = ["ChainMethod", "NUTSChainMethod"]

@@ -16,7 +16,7 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._les_closures import (
     AlgebraicLESInputs,
@@ -71,7 +71,7 @@ class DynamicLESProvenance(StrictModule, NonTrainableState):
         ratio_array = jnp.asarray(test_filter_ratio)
         if isinstance(ratio_array, jax.core.Tracer):
             raise TypeError("The test-filter ratio must be concrete provenance metadata.")
-        ratio = np.asarray(ratio_array, dtype=float)
+        ratio = np.asarray(ratio_array, dtype=np.float64)
         if ratio.shape == ():
             ratio = np.repeat(ratio[None], 3)
         if ratio.shape != (3,):
@@ -267,9 +267,9 @@ class DynamicLESResult(StrictModule):
 class AbstractDynamicLESAveraging(StrictModule):
     """Pure averaging policy for the numerator and denominator separately."""
 
-    name: AbstractAttribute[str]
-    differentiation: AbstractAttribute[_Differentiation]
-    averaging_id: AbstractAttribute[str]
+    name: eqx.AbstractVar[str]
+    differentiation: eqx.AbstractVar[_Differentiation]
+    averaging_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def average(
@@ -384,7 +384,7 @@ class LocalKernelDynamicLESAveraging(AbstractDynamicLESAveraging, NonTrainableSt
         array = jnp.asarray(kernel_weights)
         if isinstance(array, jax.core.Tracer):
             raise TypeError("Local averaging kernel weights must be concrete.")
-        weights = np.asarray(array, dtype=float)
+        weights = np.asarray(array, dtype=np.float64)
         if weights.ndim != 3:
             raise ValueError("Local averaging kernel weights must be three-dimensional.")
         if any(size <= 0 or size % 2 == 0 for size in weights.shape):
@@ -400,7 +400,7 @@ class LocalKernelDynamicLESAveraging(AbstractDynamicLESAveraging, NonTrainableSt
             for plane in normalized
         )
         self.kernel_weights = nested
-        self.kernel_shape = tuple(int(size) for size in weights.shape)
+        self.kernel_shape = tuple(weights.shape)
         self.name = "local-periodic-kernel"
         self.differentiation = "smooth"
         self.averaging_id = _policy_id(
@@ -526,9 +526,9 @@ class LagrangianDynamicLESAveraging(AbstractDynamicLESAveraging, NonTrainableSta
 class AbstractDenominatorRegularization(StrictModule):
     """Policy for making the averaged Germano denominator usable."""
 
-    name: AbstractAttribute[str]
-    differentiation: AbstractAttribute[_Differentiation]
-    regularization_id: AbstractAttribute[str]
+    name: eqx.AbstractVar[str]
+    differentiation: eqx.AbstractVar[_Differentiation]
+    regularization_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def apply(
@@ -607,9 +607,9 @@ class AdditiveDenominatorRegularization(
 class AbstractBackscatterPolicy(StrictModule):
     """Explicit policy applied to the unconstrained dynamic coefficient."""
 
-    name: AbstractAttribute[str]
-    differentiation: AbstractAttribute[_Differentiation]
-    backscatter_id: AbstractAttribute[str]
+    name: eqx.AbstractVar[str]
+    differentiation: eqx.AbstractVar[_Differentiation]
+    backscatter_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def apply(self, coefficient: Array, /) -> tuple[Array, Array, Array]:
@@ -796,13 +796,13 @@ class PreparedDynamicSmagorinskyPlan(StrictModule, NonTrainableState):
         dtype = jnp.result_type(
             inputs.leonard_tensor,
             inputs.modeled_tensor,
-            float,
+            jnp.float64,
         )
         continuation_id = self._continuation_id(shape)
         return LagrangianDynamicLESState(
             jnp.zeros(shape, dtype=dtype),
             jnp.zeros(shape, dtype=dtype),
-            jnp.zeros(shape, dtype=bool),
+            jnp.zeros(shape, dtype=jnp.bool_),
             jnp.asarray(0, dtype=jnp.int32),
             jnp.asarray(0, dtype=jnp.int32),
             continuation_id,
@@ -904,7 +904,7 @@ class PreparedDynamicSmagorinskyPlan(StrictModule, NonTrainableState):
 def _inexact_array(value: ArrayLike, /) -> Array:
     array = jnp.asarray(value)
     if not jnp.issubdtype(array.dtype, jnp.inexact):
-        array = array.astype(jnp.result_type(array, float))
+        array = array.astype(jnp.result_type(array, jnp.float64))
     return array
 
 

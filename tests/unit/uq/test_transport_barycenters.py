@@ -13,8 +13,8 @@ import phydrax.axes as cx
 
 def _measure(points, weights, *, provenance="uq-barycenter"):
     return phx.integration.discrete(
-        jnp.asarray(points, dtype=float),
-        cx.AxisArray(jnp.asarray(weights, dtype=float), dims=("atom",)),
+        jnp.asarray(points, dtype="float64"),
+        cx.AxisArray(jnp.asarray(weights, dtype="float64"), dims=("atom",)),
         axes="atom",
         normalized=True,
         provenance=provenance,

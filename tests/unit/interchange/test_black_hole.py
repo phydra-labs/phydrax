@@ -113,7 +113,7 @@ def test_neutral_mappings_bind_all_five_artifact_semantics(tmp_path: Path):
             map_numeric_model_artifact,
             {
                 "source_format": "safetensors",
-                "architecture_id": "architecture:surrogate-v2",
+                "architecture_id": "architecture:surrogate",
                 "input_schema_id": "schema:black-hole-parameters",
                 "output_schema_id": "schema:waveform-coefficients",
                 "precision_id": "precision:float32",

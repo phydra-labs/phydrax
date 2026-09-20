@@ -68,10 +68,10 @@ class AffineNormalizer:
         if self.channel_axis is None:
             return ()
         axis = int(self.channel_axis) % array.ndim
-        if self.mean.ndim != 1 or int(self.mean.shape[0]) != int(array.shape[axis]):
+        if self.mean.ndim != 1 or self.mean.shape[0] != array.shape[axis]:
             raise ValueError("Normalizer channel statistics do not match the array.")
         shape = [1] * array.ndim
-        shape[axis] = int(self.mean.shape[0])
+        shape[axis] = self.mean.shape[0]
         return tuple(shape)
 
     def normalize(self, value: Any, /) -> Array:
@@ -119,7 +119,7 @@ def _fit_arrays(
     selected_weights: list[np.ndarray] = []
     for index, (value, mask) in enumerate(zip(arrays, masks, strict=True)):
         array = np.asarray(value)
-        valid = np.asarray(mask, dtype=bool)
+        valid = np.asarray(mask, dtype=np.bool_)
         weight: np.ndarray | None = None
         if weights is not None:
             weight = np.asarray(weights[index])
@@ -212,9 +212,9 @@ def _quadrature_fit_weights(
     quadrature = np.asarray(samples.quadrature(case_shape=case_shape))
     if np.any(~np.isfinite(quadrature)) or np.any(quadrature < 0.0):
         raise ValueError("Quadrature weights must be finite and nonnegative.")
-    mask = np.asarray(samples.mask_array(case_shape=case_shape), dtype=bool)
+    mask = np.asarray(samples.mask_array(case_shape=case_shape), dtype=np.bool_)
     weights = np.where(mask, quadrature, 0.0)
-    sample_count = int(np.prod(samples.sample_shape, dtype=int))
+    sample_count = int(np.prod(samples.sample_shape, dtype=np.int64))
     per_case = weights.reshape(case_shape + (sample_count,))
     measure = np.sum(per_case, axis=-1, keepdims=True)
     if np.any(~np.isfinite(measure)) or np.any(measure <= 0.0):
@@ -693,8 +693,7 @@ def fit_operator_normalization(
                 for field in target_batches[1:]
             ):
                 raise ValueError(
-                    f"Classification target field {canonical_name!r} changed its "
-                    "output spec."
+                    f"Classification target field {canonical_name!r} changed its output spec."
                 )
             continue
         query_name = first_target.query_name

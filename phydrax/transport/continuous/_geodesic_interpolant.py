@@ -36,8 +36,8 @@ class GeodesicEndpointInterpolant(AbstractEndpointInterpolant):
     ):
         if not isinstance(geometry, AbstractGeodesicManifold):
             raise TypeError("geometry must be an AbstractGeodesicManifold.")
-        source = jnp.asarray(source_coordinate, dtype=float).reshape(())
-        target = jnp.asarray(target_coordinate, dtype=float).reshape(())
+        source = jnp.asarray(source_coordinate, dtype=jnp.float64).reshape(())
+        target = jnp.asarray(target_coordinate, dtype=jnp.float64).reshape(())
         if not bool(jnp.isfinite(source) & jnp.isfinite(target) & (target > source)):
             raise ValueError(
                 "Geodesic interpolant coordinates must be finite and ordered."
@@ -45,7 +45,7 @@ class GeodesicEndpointInterpolant(AbstractEndpointInterpolant):
         identifier = (
             canonical_fingerprint(
                 {
-                    "kind": "geodesic-endpoint-interpolant-v1",
+                    "kind": "geodesic-endpoint-interpolant",
                     "geometry": geometry.manifold_id,
                     "source_coordinate": float(source),
                     "target_coordinate": float(target),

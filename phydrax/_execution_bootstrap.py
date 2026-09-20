@@ -51,8 +51,7 @@ class RuntimeBootstrap:
         )
         if any(explicit) and not all(explicit):
             raise ValueError(
-                "coordinator_address, num_processes, and process_id must be "
-                "provided together"
+                "coordinator_address, num_processes, and process_id must be provided together"
             )
         selection_count = sum(
             (
@@ -63,8 +62,7 @@ class RuntimeBootstrap:
         )
         if selection_count > 1:
             raise ValueError(
-                "explicit coordinator configuration, cluster_detection_method, "
-                "and autodetect are mutually exclusive"
+                "explicit coordinator configuration, cluster_detection_method, and autodetect are mutually exclusive"
             )
         if self.num_processes is not None and self.num_processes < 1:
             raise ValueError("num_processes must be positive")
@@ -111,8 +109,7 @@ class RuntimeBootstrap:
         if any(value is not None for value in explicit_values):
             if not all(value is not None for value in explicit_values):
                 raise ValueError(
-                    "PHYDRAX_COORDINATOR_ADDRESS, PHYDRAX_NUM_PROCESSES, and "
-                    "PHYDRAX_PROCESS_ID must be set together"
+                    "PHYDRAX_COORDINATOR_ADDRESS, PHYDRAX_NUM_PROCESSES, and PHYDRAX_PROCESS_ID must be set together"
                 )
             parsed_device_ids = None
             if local_device_ids:

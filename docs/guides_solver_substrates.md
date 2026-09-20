@@ -470,7 +470,7 @@ selects buffered, properly nested blocks on the host and returns atomic capacity
 status, evidence, epoch semantics, and canonical slot routes. Field-specific
 `BlockFieldTopologyTransition` values conservatively move componentwise cell
 averages between epochs. `PreparedFDAMRHierarchy` executes source-classified
-cell-centred FillPatch routes and leaves physical boundary values and solver time
+cell-centered FillPatch routes and leaves physical boundary values and solver time
 advancement with the caller. `AMREntityTransferPlan` remains the explicit seam for
 future non-cell entity support.
 

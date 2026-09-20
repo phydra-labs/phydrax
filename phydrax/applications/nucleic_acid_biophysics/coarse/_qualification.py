@@ -11,6 +11,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+import phydrax.ein as ein
+
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ....qualification import (
     QualificationEvidence,
@@ -100,10 +102,10 @@ class NucleotideMechanicalResponseData:
             raise ValueError(
                 "Mechanical rows require unique cases and aligned unit/condition IDs."
             )
-        baseline = np.asarray(baseline_response, dtype=float)
-        sensitivities = np.asarray(parameter_sensitivities, dtype=float)
-        observed = np.asarray(observed_response, dtype=float)
-        errors = np.asarray(standard_errors, dtype=float)
+        baseline = np.asarray(baseline_response, dtype=np.float64)
+        sensitivities = np.asarray(parameter_sensitivities, dtype=np.float64)
+        observed = np.asarray(observed_response, dtype=np.float64)
+        errors = np.asarray(standard_errors, dtype=np.float64)
         if (
             baseline.shape != (n, 2)
             or observed.shape != baseline.shape
@@ -457,7 +459,7 @@ def fit_restricted_nucleotide_mechanics(
     )
     offsets, _, _, _ = np.linalg.lstsq(design, target, rcond=relative_rank_tolerance)
     locked_sensitivity = np.asarray(locked.parameter_sensitivities)[..., selected]
-    locked_prediction = np.asarray(locked.baseline_response) + np.einsum(
+    locked_prediction = np.asarray(locked.baseline_response) + ein.contract(
         "rop,p->ro", locked_sensitivity, offsets
     )
     parameter_covariance = None
@@ -469,7 +471,7 @@ def fit_restricted_nucleotide_mechanics(
             information, np.eye(len(selected), dtype=information.dtype)
         )
         if np.all(np.isfinite(covariance)):
-            prediction_variance = np.einsum(
+            prediction_variance = ein.contract(
                 "rop,pq,roq->ro",
                 locked_sensitivity,
                 covariance,

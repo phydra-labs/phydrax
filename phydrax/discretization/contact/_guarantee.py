@@ -62,8 +62,8 @@ class ContactGuaranteeEvidence(StrictModule):
     ):
         level_ = jnp.asarray(int(level), dtype=jnp.int32)
         required = jnp.asarray(int(required_level), dtype=jnp.int32)
-        finite_ = jnp.asarray(finite, dtype=bool)
-        complete = jnp.asarray(work_complete, dtype=bool)
+        finite_ = jnp.asarray(finite, dtype=jnp.bool_)
+        complete = jnp.asarray(work_complete, dtype=jnp.bool_)
         failure = jnp.asarray(failure_code, dtype=jnp.int32)
         margin_ = jnp.asarray(margin)
         if any(

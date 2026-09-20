@@ -65,10 +65,10 @@ def _fixed_field(factor: Any, selector: Any, /) -> cx.AxisArray:
             value = selector.value
         else:
             raise TypeError("Non-integrated scalar factors must be fixed.")
-        return cx.AxisArray(jnp.asarray(value, dtype=float).reshape(()), dims=())
+        return cx.AxisArray(jnp.asarray(value, dtype=jnp.float64).reshape(()), dims=())
     if isinstance(factor, AbstractGeometry) and isinstance(selector, Fixed):
         return cx.AxisArray(
-            jnp.asarray(selector.value, dtype=float).reshape((factor.spatial_dim,)),
+            jnp.asarray(selector.value, dtype=jnp.float64).reshape((factor.spatial_dim,)),
             dims=(None,),
         )
     raise TypeError("Non-integrated adaptive factors must be fixed scalars or geometry.")
@@ -93,8 +93,7 @@ def _resolve_interval(
         )
         if len(free) != 1:
             raise ValueError(
-                "Adaptive integration requires exactly one interior label; "
-                "all remaining labels must be fixed."
+                "Adaptive integration requires exactly one interior label; all remaining labels must be fixed."
             )
         variable_ = free[0]
     else:
@@ -138,7 +137,7 @@ class DomainAdaptiveIntegrand(StrictModule):
     precision: IntegrationPrecisionPolicy
 
     def field(self, coordinate: Array, /) -> cx.AxisArray:
-        coordinate_ = jnp.asarray(coordinate, dtype=float)
+        coordinate_ = jnp.asarray(coordinate, dtype=jnp.float64)
         if self.geometry_variable:
             variable = cx.AxisArray(coordinate_.reshape((1, 1)), dims=(self.axis, None))
         else:

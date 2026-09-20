@@ -23,6 +23,7 @@ from .._array_archive import (
     read_array_archive,
     write_array_archive,
 )
+from .._validation import canonical_identifier as _canonical_identifier
 
 
 BEMArchiveRecordKind: TypeAlias = Literal["plan", "result"]
@@ -153,12 +154,6 @@ class BEMResultArchiveRecord:
 
 
 BEMArrayArchiveRecord: TypeAlias = BEMPlanArchiveRecord | BEMResultArchiveRecord
-
-
-def _canonical_identifier(value: str, name: str, /) -> str:
-    if not isinstance(value, str) or not value or value != value.strip():
-        raise ValueError(f"{name} must be a non-empty stripped string.")
-    return value
 
 
 def _normalized_metadata(metadata: Mapping[str, Any], /) -> dict[str, Any]:
@@ -642,7 +637,7 @@ def fused_bem_result_archive_record(
     metadata = {
         "action_id": result.action_id,
         "transpose": result.transpose,
-        "rhs_count": int(result.column_status.size),
+        "rhs_count": result.column_status.size,
         "status_semantics": {
             "0": "success",
             "1": "nonfinite_input",

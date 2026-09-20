@@ -7,6 +7,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
+from phydrax._strict import StrictModule
+
 from ._graph import ensure_graph
 from ._ir import GraphIR
 from ._kernels import segment_sum
@@ -40,7 +42,7 @@ def _repeat_globals_for_entities(
     arr = _as_2d("globals", globals_)
     real_length = int(jnp.asarray(counts).sum())
     repeated = jnp.repeat(arr, counts, axis=0, total_repeat_length=real_length)
-    pad = int(total_length) - int(repeated.shape[0])
+    pad = int(total_length) - repeated.shape[0]
     if pad <= 0:
         return repeated
     return jnp.concatenate(
@@ -49,7 +51,7 @@ def _repeat_globals_for_entities(
     )
 
 
-class RowMLP(eqx.Module):
+class RowMLP(StrictModule):
     """Apply an MLP independently to rows of a rank-2 array."""
 
     layers: tuple[eqx.nn.Linear, ...]
@@ -97,7 +99,7 @@ class RowMLP(eqx.Module):
         return jax.vmap(apply_one)(x)
 
 
-class MeshGraphNetBlock(eqx.Module):
+class MeshGraphNetBlock(StrictModule):
     """Residual message-passing block used by MeshGraphNet-style simulators."""
 
     edge_mlp: RowMLP
@@ -157,11 +159,11 @@ class MeshGraphNetBlock(eqx.Module):
             glob_edge = _repeat_globals_for_entities(
                 graph.globals,
                 graph.n_edge,
-                int(senders.shape[0]),
+                senders.shape[0],
             )
             if glob_edge is None:
                 glob_edge = jnp.zeros(
-                    (int(senders.shape[0]), self.global_size),
+                    (senders.shape[0], self.global_size),
                     dtype=nodes.dtype,
                 )
 
@@ -172,17 +174,17 @@ class MeshGraphNetBlock(eqx.Module):
         edges = edges + edge_delta if self.use_edge_residual else edge_delta
         edges = _mask_array(edges, graph.edge_mask)
 
-        recv_aggr = segment_sum(edges, receivers, int(nodes.shape[0]))
+        recv_aggr = segment_sum(edges, receivers, nodes.shape[0])
         glob_node = None
         if self.global_size > 0:
             glob_node = _repeat_globals_for_entities(
                 graph.globals,
                 graph.n_node,
-                int(nodes.shape[0]),
+                nodes.shape[0],
             )
             if glob_node is None:
                 glob_node = jnp.zeros(
-                    (int(nodes.shape[0]), self.global_size),
+                    (nodes.shape[0], self.global_size),
                     dtype=nodes.dtype,
                 )
         node_inputs = [nodes, recv_aggr]
@@ -195,7 +197,7 @@ class MeshGraphNetBlock(eqx.Module):
         return graph.replace(nodes=nodes, edges=edges, validate=False)
 
 
-class MeshGraphNet(eqx.Module):
+class MeshGraphNet(StrictModule):
     """Encoder-processor-decoder graph simulator architecture.
 
     This is the canonical mesh-simulation pattern: encode node and edge

@@ -7,10 +7,10 @@ import jax.numpy as jnp
 import numpy as np
 
 from phydrax._physical import DimensionalScaleContract, RelativityScaleContract
-from phydrax.equations._relativistic_radiation import GRGreyM1RadiationSystem
+from phydrax.equations._relativistic_radiation import GRGrayM1RadiationSystem
 from phydrax.equations._relativistic_radiation_interaction import (
-    ConstantGRGreyOpacityPlan,
-    GRGreyRadiationInteractionPlan,
+    ConstantGRGrayOpacityPlan,
+    GRGrayRadiationInteractionPlan,
 )
 from phydrax.metrix._adm_exchange import ADMGridGeometry
 from phydrax.metrix._spacetime_conventions import RelativityConvention
@@ -56,7 +56,7 @@ def test_gr_m1_closure_recovers_diffusion_and_streaming_limits_under_jit():
     scale = _scale()
     convention = RelativityConvention.canonical()
     geometry = _geometry(scale, convention)
-    system = GRGreyM1RadiationSystem(scale, convention, reduced_light_speed=1.0)
+    system = GRGrayM1RadiationSystem(scale, convention, reduced_light_speed=1.0)
 
     pressure, reduced, qualified = jax.jit(
         lambda energy, flux: (
@@ -85,7 +85,7 @@ def test_gr_m1_characteristics_follow_lapse_shift_light_cone():
     scale = _scale()
     convention = RelativityConvention.canonical()
     geometry = _geometry(scale, convention, alpha=0.5, shift=(0.1, 0.0, 0.0))
-    system = GRGreyM1RadiationSystem(scale, convention, reduced_light_speed=1.0)
+    system = GRGrayM1RadiationSystem(scale, convention, reduced_light_speed=1.0)
 
     lower, upper = system.coordinate_characteristic_bounds(
         jnp.asarray((1.0, 0.0, 0.0)), geometry
@@ -99,15 +99,15 @@ def test_gr_radiation_matter_exchange_is_balanced_and_exposes_optical_limits():
     scale = _scale()
     convention = RelativityConvention.canonical()
     geometry = _geometry(scale, convention)
-    system = GRGreyM1RadiationSystem(scale, convention)
-    thin = GRGreyRadiationInteractionPlan(
+    system = GRGrayM1RadiationSystem(scale, convention)
+    thin = GRGrayRadiationInteractionPlan(
         system,
-        ConstantGRGreyOpacityPlan(),
+        ConstantGRGrayOpacityPlan(),
         radiation_constant=1.0,
     )
-    coupled = GRGreyRadiationInteractionPlan(
+    coupled = GRGrayRadiationInteractionPlan(
         system,
-        ConstantGRGreyOpacityPlan(
+        ConstantGRGrayOpacityPlan(
             planck_absorption=2.0,
             scattering=3.0,
         ),
@@ -144,14 +144,14 @@ def test_reduced_transport_speed_does_not_change_physical_frame_or_adm_momentum(
     scale = _nonunit_scale()
     convention = RelativityConvention.canonical()
     geometry = _geometry(scale, convention)
-    system = GRGreyM1RadiationSystem(
+    system = GRGrayM1RadiationSystem(
         scale,
         convention,
         reduced_light_speed=1.0,
     )
-    interaction = GRGreyRadiationInteractionPlan(
+    interaction = GRGrayRadiationInteractionPlan(
         system,
-        ConstantGRGreyOpacityPlan(
+        ConstantGRGrayOpacityPlan(
             planck_absorption=2.0,
             scattering=3.0,
         ),

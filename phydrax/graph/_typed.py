@@ -8,6 +8,7 @@ import jax.numpy as jnp
 import numpy as np
 
 import phydrax.ein as ein
+from phydrax._strict import StrictModule
 
 from ._graph import ensure_graph
 from ._ir import GraphIR
@@ -34,7 +35,7 @@ def _mapping_type_ids(payload: Any, type_key: str, kind: str, /) -> jnp.ndarray:
     if type_key not in payload:
         raise KeyError(f"Graph {kind} payload does not contain type key {type_key!r}.")
     arr = jnp.asarray(payload[type_key])
-    if arr.ndim == 2 and int(arr.shape[1]) == 1:
+    if arr.ndim == 2 and arr.shape[1] == 1:
         arr = arr[:, 0]
     if arr.ndim != 1:
         raise ValueError(
@@ -142,8 +143,7 @@ def _node_features(graph: GraphIR, input_key: str | None, /) -> jnp.ndarray:
     if input_key is None:
         if isinstance(graph.nodes, Mapping):
             raise TypeError(
-                "mapping-valued graph nodes require input_key for "
-                "RelationalGraphConvolution."
+                "mapping-valued graph nodes require input_key for RelationalGraphConvolution."
             )
         return _as_2d("nodes", graph.nodes)
     if not isinstance(graph.nodes, Mapping):
@@ -181,7 +181,7 @@ def _edge_weights(graph: GraphIR, edge_weight_key: str | None, /) -> jnp.ndarray
     if graph.senders is None:
         raise ValueError("RelationalGraphConvolution requires explicit edges.")
     if edge_weight_key is None:
-        out = jnp.ones((graph.senders.shape[0],), dtype=float)
+        out = jnp.ones((graph.senders.shape[0],), dtype=jnp.float64)
     else:
         if not isinstance(graph.edges, Mapping):
             raise TypeError("edge_weight_key requires mapping-valued graph edges.")
@@ -189,8 +189,8 @@ def _edge_weights(graph: GraphIR, edge_weight_key: str | None, /) -> jnp.ndarray
             raise KeyError(
                 f"Graph edges do not contain edge_weight_key {edge_weight_key!r}."
             )
-        out = jnp.asarray(graph.edges[edge_weight_key], dtype=float)
-        if out.ndim == 2 and int(out.shape[1]) == 1:
+        out = jnp.asarray(graph.edges[edge_weight_key], dtype=jnp.float64)
+        if out.ndim == 2 and out.shape[1] == 1:
             out = out[:, 0]
         if out.ndim != 1:
             raise ValueError("edge weights must have shape (n_edge,) or (n_edge, 1).")
@@ -226,7 +226,7 @@ def _mask_nodes(nodes: jnp.ndarray, mask: jnp.ndarray | None, /) -> jnp.ndarray:
     return nodes * mask.astype(nodes.dtype)[:, None]
 
 
-class RelationalGraphConvolution(eqx.Module):
+class RelationalGraphConvolution(StrictModule):
     """Relation-specific graph convolution for typed/heterogeneous graphs.
 
     Edge type ids choose a relation weight for each message. Relation weights may
@@ -256,16 +256,16 @@ class RelationalGraphConvolution(eqx.Module):
         flow: GraphFlow = "source_to_target",
         normalize: bool = False,
     ):
-        weights = jnp.asarray(relation_weights, dtype=float)
+        weights = jnp.asarray(relation_weights, dtype=jnp.float64)
         if weights.ndim not in (1, 2, 3):
             raise ValueError(
                 "relation_weights must have shape (R,), (R, F), or (R, F, O)."
             )
-        if int(weights.shape[0]) <= 0:
+        if weights.shape[0] <= 0:
             raise ValueError("relation_weights must contain at least one relation.")
         self.relation_weights = weights
         self.self_weight = (
-            None if self_weight is None else jnp.asarray(self_weight, dtype=float)
+            None if self_weight is None else jnp.asarray(self_weight, dtype=jnp.float64)
         )
         self.edge_type_key = str(edge_type_key)
         self.edge_weight_key = edge_weight_key
@@ -282,18 +282,18 @@ class RelationalGraphConvolution(eqx.Module):
 
         edge_scale = _edge_weights(graph, self.edge_weight_key)
         if self.normalize:
-            n = int(nodes.shape[0])
+            n = nodes.shape[0]
             keys = edge_types * n + target
             degree = segment_sum(
                 edge_scale,
                 keys,
-                int(self.relation_weights.shape[0]) * n,
+                self.relation_weights.shape[0] * n,
             )[keys]
             edge_scale = jnp.where(degree > 0, edge_scale / degree, 0.0)
 
         messages = _relation_transform(nodes[source], self.relation_weights[edge_types])
         messages = messages * edge_scale[:, None]
-        out = segment_sum(messages, target, int(nodes.shape[0]))
+        out = segment_sum(messages, target, nodes.shape[0])
         if self.self_weight is not None:
             out = out + _self_transform(nodes, self.self_weight)
         out = _mask_nodes(out, graph.node_mask)

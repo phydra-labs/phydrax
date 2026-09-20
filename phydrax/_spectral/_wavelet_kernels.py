@@ -163,7 +163,7 @@ def _dwt_row(
     boundary: WaveletBoundary,
     /,
 ) -> tuple[Array, Array]:
-    filter_length = int(low_filter.shape[0])
+    filter_length = low_filter.shape[0]
     if boundary == "periodization":
         if values.shape[0] % 2:
             values = jnp.concatenate((values, values[-1:]))
@@ -210,8 +210,8 @@ def _upsample_convolve(values: Array, filter_: Array, /) -> Array:
 
 
 def _upsample_convolve_periodic(values: Array, filter_: Array, /) -> Array:
-    filter_length = int(filter_.shape[0])
-    output_length = 2 * int(values.shape[0])
+    filter_length = filter_.shape[0]
+    output_length = 2 * values.shape[0]
     upsampled = jnp.zeros((output_length,), dtype=values.dtype).at[::2].set(values)
     convolved = jnp.convolve(
         jnp.pad(upsampled, (filter_length - 1, filter_length - 1), mode="wrap"),

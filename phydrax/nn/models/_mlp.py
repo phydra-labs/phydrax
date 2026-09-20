@@ -142,8 +142,8 @@ class MLP(_AbstractBaseModel, KFACLayoutProvider):
 
         in_size_c = _canonical_size(in_size)
         out_size_c = _canonical_size(out_size)
-        in_shape = _get_value_shape(in_size_c)
-        out_shape = _get_value_shape(out_size_c)
+        _get_value_shape(in_size_c)
+        _get_value_shape(out_size_c)
 
         final_act_fn = _identity if final_activation is None else final_activation
         need_proj = bool(skip_connection)
@@ -209,7 +209,7 @@ class MLP(_AbstractBaseModel, KFACLayoutProvider):
             )
 
         self.layers = tuple(layers)
-        hidden_output_sizes = tuple(int(size) for size in hidden_sizes_list)
+        hidden_output_sizes = tuple(hidden_sizes_list)
         dropout_probabilities = _dropout_probabilities(dropout, len(hidden_output_sizes))
         self.dropouts = tuple(
             Dropout(size, p=probability, mode=dropout_mode)

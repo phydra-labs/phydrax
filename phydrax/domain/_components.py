@@ -17,7 +17,6 @@ from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._sampling import (
     derive_key,
-    DESIGN_ALGORITHM_VERSION,
     design_capabilities,
     design_name,
     materialize_design,
@@ -81,7 +80,7 @@ class _NormalCallable(StrictModule):
 
     def __call__(self, x: Array, /, *, key=None, **kwargs: Any) -> Array:
         del key, kwargs
-        pts_in = jnp.asarray(x, dtype=float)
+        pts_in = jnp.asarray(x, dtype=jnp.float64)
         d = int(self.geom.spatial_dim)
         if pts_in.ndim == 0:
             if d != 1:
@@ -99,8 +98,8 @@ class _NormalCallable(StrictModule):
                 raise ValueError("Expected a geometry point with shape (..., dim).")
             pts = pts_in.reshape((-1, d))
 
-        n = jnp.asarray(self.geom._boundary_normals(pts), dtype=float)
-        eps = jnp.finfo(float).eps
+        n = jnp.asarray(self.geom._boundary_normals(pts), dtype=jnp.float64)
+        eps = jnp.finfo(jnp.float64).eps
         nrm = jnp.linalg.norm(n, axis=-1, keepdims=True) + eps
         n = n / nrm
         if pts_in.ndim == 0:
@@ -119,7 +118,7 @@ class _SdfCallable(StrictModule):
         d = int(self.geom.spatial_dim)
 
         if isinstance(x, tuple):
-            coords = tuple(jnp.asarray(c, dtype=float).reshape((-1,)) for c in x)
+            coords = tuple(jnp.asarray(c, dtype=jnp.float64).reshape((-1,)) for c in x)
             if len(coords) != d:
                 raise ValueError(
                     f"coord-separable sdf expects {d} coordinate arrays, got {len(coords)}."
@@ -127,21 +126,23 @@ class _SdfCallable(StrictModule):
             grid = broadcasted_grid(coords)
             pts = grid.reshape((-1, d))
             sdf = self.geom.adf(pts)
-            return jnp.asarray(sdf, dtype=float).reshape(grid.shape[:-1])
+            return jnp.asarray(sdf, dtype=jnp.float64).reshape(grid.shape[:-1])
 
-        pts_in = jnp.asarray(x, dtype=float)
+        pts_in = jnp.asarray(x, dtype=jnp.float64)
         if pts_in.ndim == 0:
             if d != 1:
                 raise ValueError("Expected a geometry point with shape (..., dim).")
-            return jnp.asarray(self.geom.adf(pts_in.reshape(())), dtype=float).reshape(())
+            return jnp.asarray(
+                self.geom.adf(pts_in.reshape(())), dtype=jnp.float64
+            ).reshape(())
         if pts_in.ndim == 1:
-            return jnp.asarray(self.geom.adf(pts_in), dtype=float)
+            return jnp.asarray(self.geom.adf(pts_in), dtype=jnp.float64)
 
         if pts_in.shape[-1] != d:
             raise ValueError("Expected a geometry point with shape (..., dim).")
         pts = pts_in.reshape((-1, d))
         sdf = self.geom.adf(pts)
-        return jnp.asarray(sdf, dtype=float).reshape(pts_in.shape[:-1])
+        return jnp.asarray(sdf, dtype=jnp.float64).reshape(pts_in.shape[:-1])
 
 
 class _EnforcementGateCallable(StrictModule):
@@ -166,29 +167,30 @@ class _EnforcementGateCallable(StrictModule):
     def __call__(self, x: Any, /, *, key=None, **kwargs: Any) -> Array:
         del key, kwargs
         if isinstance(x, tuple):
-            coords = tuple(jnp.asarray(c, dtype=float).reshape((-1,)) for c in x)
+            coords = tuple(jnp.asarray(c, dtype=jnp.float64).reshape((-1,)) for c in x)
             if len(coords) != self.dim:
                 raise ValueError(
-                    "coord-separable enforcement gate expects "
-                    f"{self.dim} coordinate arrays, got {len(coords)}."
+                    f"coord-separable enforcement gate expects {self.dim} coordinate arrays, got {len(coords)}."
                 )
             grid = broadcasted_grid(coords)
             points = grid.reshape((-1, self.dim))
             values = self.gate(points)
-            return jnp.asarray(values, dtype=float).reshape(grid.shape[:-1])
+            return jnp.asarray(values, dtype=jnp.float64).reshape(grid.shape[:-1])
 
-        points_in = jnp.asarray(x, dtype=float)
+        points_in = jnp.asarray(x, dtype=jnp.float64)
         if points_in.ndim == 0:
             if self.dim != 1:
                 raise ValueError("Expected a geometry point with shape (..., dim).")
-            return jnp.asarray(self.gate(points_in.reshape(())), dtype=float).reshape(())
+            return jnp.asarray(
+                self.gate(points_in.reshape(())), dtype=jnp.float64
+            ).reshape(())
         if points_in.ndim == 1:
-            return jnp.asarray(self.gate(points_in), dtype=float)
+            return jnp.asarray(self.gate(points_in), dtype=jnp.float64)
         if points_in.shape[-1] != self.dim:
             raise ValueError("Expected a geometry point with shape (..., dim).")
         points = points_in.reshape((-1, self.dim))
         values = self.gate(points)
-        return jnp.asarray(values, dtype=float).reshape(points_in.shape[:-1])
+        return jnp.asarray(values, dtype=jnp.float64).reshape(points_in.shape[:-1])
 
 
 def _sample_geometry(
@@ -201,7 +203,7 @@ def _sample_geometry(
 ) -> Array:
     if isinstance(component, Interior):
         return jnp.asarray(
-            geom.sample_interior(num_points, sampler=sampler, key=key), dtype=float
+            geom.sample_interior(num_points, sampler=sampler, key=key), dtype=jnp.float64
         )
     if isinstance(component, Boundary):
         if component.tags is not None or component.entity_ids is not None:
@@ -215,12 +217,11 @@ def _sample_geometry(
             )
             return sample_boundary_atlas(atlas, num_points, key=key).points
         return jnp.asarray(
-            geom.sample_boundary(num_points, sampler=sampler, key=key), dtype=float
+            geom.sample_boundary(num_points, sampler=sampler, key=key), dtype=jnp.float64
         )
     if isinstance(component, Fixed):
         raise ValueError(
-            "Fixed(x) is not supported for geometries in sampling; "
-            "use a unary DomainFunction mask instead."
+            "Fixed(x) is not supported for geometries in sampling; use a unary DomainFunction mask instead."
         )
     raise TypeError(f"Unsupported geometry component {type(component).__name__}.")
 
@@ -234,13 +235,15 @@ def _sample_scalar(
     key: Key[Array, ""],
 ) -> Array:
     if isinstance(component, Interior):
-        return jnp.asarray(dom.sample(num_points, sampler=sampler, key=key), dtype=float)
+        return jnp.asarray(
+            dom.sample(num_points, sampler=sampler, key=key), dtype=jnp.float64
+        )
     if isinstance(component, FixedStart):
-        return jnp.asarray(dom.fixed("start"), dtype=float)
+        return jnp.asarray(dom.fixed("start"), dtype=jnp.float64)
     if isinstance(component, FixedEnd):
-        return jnp.asarray(dom.fixed("end"), dtype=float)
+        return jnp.asarray(dom.fixed("end"), dtype=jnp.float64)
     if isinstance(component, Fixed):
-        return jnp.asarray(component.value, dtype=float).reshape(())
+        return jnp.asarray(component.value, dtype=jnp.float64).reshape(())
     if isinstance(component, Boundary):
         # Boundary on scalar domains is a discrete set of two endpoints. We sample
         # from this set; measure semantics treat this as counting measure with mass 2.
@@ -254,11 +257,11 @@ def _sample_scalar(
 
 def _explicit_point_array(domain: Domain, label: str, value: ArrayLike, /) -> Array:
     factor = domain.factor(label)
-    array = jnp.asarray(value, dtype=float)
+    array = jnp.asarray(value, dtype=jnp.float64)
     if isinstance(factor, AbstractGeometry):
         if array.ndim == 1:
             array = array.reshape((-1, 1) if int(factor.spatial_dim) == 1 else (1, -1))
-        if array.ndim != 2 or int(array.shape[1]) != int(factor.spatial_dim):
+        if array.ndim != 2 or array.shape[1] != int(factor.spatial_dim):
             raise ValueError(
                 f"Geometry coordinates for {label!r} must have shape "
                 f"(num_points, {factor.spatial_dim}), got {array.shape}."
@@ -269,15 +272,13 @@ def _explicit_point_array(domain: Domain, label: str, value: ArrayLike, /) -> Ar
             return array.reshape((1,))
         if array.ndim == 1:
             return array
-        if array.ndim == 2 and int(array.shape[1]) == 1:
+        if array.ndim == 2 and array.shape[1] == 1:
             return array[:, 0]
         raise ValueError(
-            f"Scalar coordinates for {label!r} must have shape (num_points,), "
-            f"got {array.shape}."
+            f"Scalar coordinates for {label!r} must have shape (num_points,), got {array.shape}."
         )
     raise TypeError(
-        f"Explicit points do not support factor {type(factor).__name__} "
-        f"for label {label!r}."
+        f"Explicit points do not support factor {type(factor).__name__} for label {label!r}."
     )
 
 
@@ -287,13 +288,12 @@ def _split_explicit_points(
     coordinates: ArrayLike,
     /,
 ) -> frozendict[str, Array]:
-    stacked = jnp.asarray(coordinates, dtype=float)
+    stacked = jnp.asarray(coordinates, dtype=jnp.float64)
     if stacked.ndim == 1:
         stacked = stacked.reshape((1, -1))
     if stacked.ndim != 2:
         raise ValueError(
-            "Stacked coordinates must have shape (num_points, coordinate_dim), "
-            f"got {stacked.shape}."
+            f"Stacked coordinates must have shape (num_points, coordinate_dim), got {stacked.shape}."
         )
 
     widths: list[int] = []
@@ -305,11 +305,10 @@ def _split_explicit_points(
             widths.append(1)
         else:
             raise TypeError(
-                f"Explicit points do not support factor {type(factor).__name__} "
-                f"for label {label!r}."
+                f"Explicit points do not support factor {type(factor).__name__} for label {label!r}."
             )
     total = sum(widths)
-    if int(stacked.shape[1]) != total:
+    if stacked.shape[1] != total:
         raise ValueError(
             f"Stacked coordinates require coordinate_dim={total}, got {stacked.shape[1]}."
         )
@@ -389,8 +388,7 @@ class DomainComponent(StrictModule):
         )
         if unknown:
             raise KeyError(
-                f"SelectionSpec contains labels {unknown} outside domain "
-                f"{self.domain.labels}."
+                f"SelectionSpec contains labels {unknown} outside domain {self.domain.labels}."
             )
         self.factor_components = tuple(
             factor.bind_component(
@@ -546,8 +544,7 @@ class DomainComponent(StrictModule):
         for block in structure_out.blocks:
             if graph_label in block and len(block) != 1:
                 raise ValueError(
-                    "GraphDomain labels must be sampled in singleton SampleLayout "
-                    f"blocks; got {block!r}."
+                    f"GraphDomain labels must be sampled in singleton SampleLayout blocks; got {block!r}."
                 )
 
         if isinstance(num_points, int):
@@ -561,7 +558,7 @@ class DomainComponent(StrictModule):
                 raise ValueError(
                     f"num_points must have length {len(structure_out.blocks)} to match blocks."
                 )
-            num_points_by_block = tuple(int(n) for n in num_points)
+            num_points_by_block = tuple(num_points)
 
         label_to_block_index = {
             lbl: i for i, block in enumerate(structure_out.blocks) for lbl in block
@@ -605,15 +602,15 @@ class DomainComponent(StrictModule):
                         val = factor.fixed("end")
                     else:
                         assert isinstance(comp, Fixed)
-                        val = jnp.asarray(comp.value, dtype=float).reshape(())
+                        val = jnp.asarray(comp.value, dtype=jnp.float64).reshape(())
                     points[lbl] = _as_field(
-                        jnp.asarray(val, dtype=float).reshape(()), dims=()
+                        jnp.asarray(val, dtype=jnp.float64).reshape(()), dims=()
                     )
                     continue
 
                 if isinstance(factor, AbstractGeometry):
                     assert isinstance(comp, Fixed)
-                    val = jnp.asarray(comp.value, dtype=float).reshape(
+                    val = jnp.asarray(comp.value, dtype=jnp.float64).reshape(
                         (factor.spatial_dim,)
                     )
                     points[lbl] = _as_field(val, dims=(None,))
@@ -695,7 +692,7 @@ class DomainComponent(StrictModule):
                 raise KeyError(f"Unknown explicit coordinate labels {unknown!r}.")
             raw = frozendict(
                 {
-                    label: jnp.asarray(value, dtype=float)
+                    label: jnp.asarray(value, dtype=jnp.float64)
                     for label, value in coordinates.items()
                 }
             )
@@ -719,9 +716,11 @@ class DomainComponent(StrictModule):
                         value = factor.fixed("end")
                     else:
                         assert isinstance(selection, Fixed)
-                        value = jnp.asarray(selection.value, dtype=float).reshape(())
+                        value = jnp.asarray(selection.value, dtype=jnp.float64).reshape(
+                            ()
+                        )
                     points[label] = cx.AxisArray(
-                        jnp.asarray(value, dtype=float).reshape(()),
+                        jnp.asarray(value, dtype=jnp.float64).reshape(()),
                         dims=(),
                     )
                     continue
@@ -730,25 +729,23 @@ class DomainComponent(StrictModule):
                         raise TypeError(
                             f"Fixed geometry label {label!r} requires Fixed(...)."
                         )
-                    value = jnp.asarray(selection.value, dtype=float).reshape(
+                    value = jnp.asarray(selection.value, dtype=jnp.float64).reshape(
                         (int(factor.spatial_dim),)
                     )
                     points[label] = cx.AxisArray(value, dims=(None,))
                     continue
                 raise TypeError(
-                    f"Explicit points do not support fixed factor "
-                    f"{type(factor).__name__} for label {label!r}."
+                    f"Explicit points do not support fixed factor {type(factor).__name__} for label {label!r}."
                 )
 
             if label not in raw:
                 raise KeyError(
-                    f"Missing explicit coordinates for free label {label!r}; "
-                    f"expected {free_labels!r}."
+                    f"Missing explicit coordinates for free label {label!r}; expected {free_labels!r}."
                 )
             if axis is None:
                 raise RuntimeError("Free explicit coordinates require a sampling axis.")
             value = _explicit_point_array(self.domain, label, raw[label])
-            count = int(value.shape[0])
+            count = value.shape[0]
             if point_count is None:
                 point_count = count
             elif count != point_count:
@@ -902,7 +899,7 @@ class DomainComponent(StrictModule):
                 raise ValueError(
                     f"num_points must have length {len(structure.blocks)} to match blocks."
                 )
-            num_points_by_block = tuple(int(n) for n in num_points)
+            num_points_by_block = tuple(num_points)
 
         label_to_block_index: dict[str, int] = {}
         for i, block in enumerate(structure.blocks):
@@ -949,7 +946,6 @@ class DomainComponent(StrictModule):
             address = SampleAddress(
                 "domain",
                 "paired-block",
-                algorithm_version=DESIGN_ALGORITHM_VERSION,
                 target=block,
                 role=sampler_name,
             )
@@ -979,15 +975,15 @@ class DomainComponent(StrictModule):
                         val = factor.fixed("end")
                     else:
                         assert isinstance(comp, Fixed)
-                        val = jnp.asarray(comp.value, dtype=float).reshape(())
+                        val = jnp.asarray(comp.value, dtype=jnp.float64).reshape(())
                     points[lbl] = _as_field(
-                        jnp.asarray(val, dtype=float).reshape(()), dims=()
+                        jnp.asarray(val, dtype=jnp.float64).reshape(()), dims=()
                     )
                     continue
 
                 if isinstance(factor, AbstractGeometry):
                     assert isinstance(comp, Fixed)
-                    val = jnp.asarray(comp.value, dtype=float).reshape(
+                    val = jnp.asarray(comp.value, dtype=jnp.float64).reshape(
                         (factor.spatial_dim,)
                     )
                     points[lbl] = _as_field(val, dims=(None,))
@@ -1006,13 +1002,13 @@ class DomainComponent(StrictModule):
             if lbl in transported:
                 samples = transported[lbl]
                 if isinstance(factor, AbstractGeometry):
-                    arr = jnp.asarray(samples, dtype=float)
+                    arr = jnp.asarray(samples, dtype=jnp.float64)
                     if arr.ndim == 1:
                         arr = arr.reshape((-1, 1))
                     points[lbl] = _as_field(arr, dims=(axis, None))
                     continue
                 if isinstance(factor, AbstractScalarDomain):
-                    arr = jnp.asarray(samples, dtype=float).reshape((-1,))
+                    arr = jnp.asarray(samples, dtype=jnp.float64).reshape((-1,))
                     points[lbl] = _as_field(arr, dims=(axis,))
                     continue
                 if isinstance(factor, DatasetDomain):
@@ -1086,8 +1082,7 @@ class DomainComponent(StrictModule):
         )
         if unknown:
             raise KeyError(
-                f"GridSampling contains labels {unknown!r} outside domain "
-                f"{self.domain.labels!r}."
+                f"GridSampling contains labels {unknown!r} outside domain {self.domain.labels!r}."
             )
 
         if isinstance(self.domain, TrajectoryDatasetDomain):
@@ -1119,8 +1114,7 @@ class DomainComponent(StrictModule):
         if dense_sampling is None:
             if dense_labels:
                 raise ValueError(
-                    "GridSampling.dense is required for non-grid labels "
-                    f"{dense_labels!r}."
+                    f"GridSampling.dense is required for non-grid labels {dense_labels!r}."
                 )
             num_points: NumPoints = ()
             dense_structure_in = SampleLayout(())
@@ -1145,7 +1139,7 @@ class DomainComponent(StrictModule):
                     )
                 num_points_by_block = (int(num_points),)
         else:
-            num_points_by_block = tuple(int(n) for n in num_points)
+            num_points_by_block = tuple(num_points)
             if len(num_points_by_block) != len(dense_structure_out.blocks):
                 raise ValueError(
                     f"PointSampling.count must have length {len(dense_structure_out.blocks)} "
@@ -1189,15 +1183,15 @@ class DomainComponent(StrictModule):
                         val = factor.fixed("end")
                     else:
                         assert isinstance(comp, Fixed)
-                        val = jnp.asarray(comp.value, dtype=float).reshape(())
+                        val = jnp.asarray(comp.value, dtype=jnp.float64).reshape(())
                     points[lbl] = _as_field(
-                        jnp.asarray(val, dtype=float).reshape(()), dims=()
+                        jnp.asarray(val, dtype=jnp.float64).reshape(()), dims=()
                     )
                     continue
 
                 if isinstance(factor, AbstractGeometry):
                     assert isinstance(comp, Fixed)
-                    val = jnp.asarray(comp.value, dtype=float).reshape(
+                    val = jnp.asarray(comp.value, dtype=jnp.float64).reshape(
                         (factor.spatial_dim,)
                     )
                     points[lbl] = _as_field(val, dims=(None,))
@@ -1264,7 +1258,7 @@ class DomainComponent(StrictModule):
                             raise ValueError(
                                 f"coord_separable[{lbl!r}] must have length {var_dim}."
                             )
-                        bounds = jnp.asarray(factor.mesh_bounds, dtype=float)
+                        bounds = jnp.asarray(factor.mesh_bounds, dtype=jnp.float64)
                         coords = []
                         for i, spec in enumerate(axis_specs):
                             disc = spec.materialize(bounds[0, i], bounds[1, i])
@@ -1284,7 +1278,7 @@ class DomainComponent(StrictModule):
                                 disc = axis_discretization_by_axis[axis_name]
                                 if disc.quad_weights is not None:
                                     base_weights.append(
-                                        jnp.asarray(disc.quad_weights, dtype=float)
+                                        jnp.asarray(disc.quad_weights, dtype=jnp.float64)
                                     )
                                 else:
                                     length = bounds[1, i] - bounds[0, i]
@@ -1292,7 +1286,7 @@ class DomainComponent(StrictModule):
                                         jnp.full(
                                             coord.shape,
                                             length / float(coord.shape[0]),
-                                            dtype=float,
+                                            dtype=jnp.float64,
                                         )
                                     )
                             geometry_order = n_spec.cut_cell_order
@@ -1309,7 +1303,7 @@ class DomainComponent(StrictModule):
                             grid = broadcasted_grid(coords_tuple)
                             pts = grid.reshape((-1, var_dim))
                             where_mask = jax.vmap(where_fn)(pts).reshape(grid.shape[:-1])
-                            mask_arr = mask_arr & jnp.asarray(where_mask, dtype=bool)
+                            mask_arr = mask_arr & jnp.asarray(where_mask, dtype=jnp.bool_)
 
                         coords_out = coords_tuple
                         mask = mask_arr
@@ -1332,12 +1326,14 @@ class DomainComponent(StrictModule):
                             raise ValueError(
                                 f"coord_separable[{lbl!r}] must have length 1."
                             )
-                        start = jnp.asarray(factor.fixed("start"), dtype=float).reshape(
+                        start = jnp.asarray(
+                            factor.fixed("start"), dtype=jnp.float64
+                        ).reshape(())
+                        end = jnp.asarray(factor.fixed("end"), dtype=jnp.float64).reshape(
                             ()
                         )
-                        end = jnp.asarray(factor.fixed("end"), dtype=float).reshape(())
                         disc = axis_specs[0].materialize(start, end)
-                        coord = jnp.asarray(disc.nodes, dtype=float).reshape((-1,))
+                        coord = jnp.asarray(disc.nodes, dtype=jnp.float64).reshape((-1,))
                         axis_name = _axis_name_for_coord(lbl, 0)
                         axis_discretization_by_axis[axis_name] = disc
                     else:
@@ -1354,14 +1350,14 @@ class DomainComponent(StrictModule):
                                 sampler=sampler,
                                 key=coord_key_by_label[lbl],
                             ),
-                            dtype=float,
+                            dtype=jnp.float64,
                         ).reshape((-1,))
                     if where_fn is not None:
-                        mask = jnp.asarray(jax.vmap(where_fn)(coord), dtype=bool).reshape(
-                            (-1,)
-                        )
+                        mask = jnp.asarray(
+                            jax.vmap(where_fn)(coord), dtype=jnp.bool_
+                        ).reshape((-1,))
                     else:
-                        mask = jnp.ones((coord.shape[0],), dtype=bool)
+                        mask = jnp.ones((coord.shape[0],), dtype=jnp.bool_)
                     coords_out = (coord,)
 
                 if len(coords_out) != var_dim:
@@ -1372,13 +1368,12 @@ class DomainComponent(StrictModule):
 
                 coord_axes: list[jax.Array] = []
                 for c in coords_out:
-                    arr = jnp.asarray(c, dtype=float)
+                    arr = jnp.asarray(c, dtype=jnp.float64)
                     if arr.ndim == 2 and arr.shape[1] == 1:
                         arr = arr.reshape((-1,))
                     if arr.ndim != 1:
                         raise ValueError(
-                            "coord-separable coordinate arrays must be 1D; got shape "
-                            f"{arr.shape} for label {lbl!r}."
+                            f"coord-separable coordinate arrays must be 1D; got shape {arr.shape} for label {lbl!r}."
                         )
                     coord_axes.append(arr)
 
@@ -1391,7 +1386,7 @@ class DomainComponent(StrictModule):
                 )
                 coord_axes_by_label[lbl] = axis_names
 
-                mask_arr = jnp.asarray(mask, dtype=bool)
+                mask_arr = jnp.asarray(mask, dtype=jnp.bool_)
                 coord_mask_by_label[lbl] = cx.AxisArray(mask_arr, dims=axis_names)
                 if geometry_weight_arr is not None:
                     coord_geometry_weight_by_label[lbl] = cx.AxisArray(
@@ -1492,7 +1487,7 @@ class DomainComponent(StrictModule):
                 "normals(var=...) requires points[var] to be a phydrax.axes.AxisArray of geometry coordinates."
             )
 
-        pts = jnp.asarray(x.data, dtype=float)
+        pts = jnp.asarray(x.data, dtype=jnp.float64)
         if pts.ndim == 1:
             pts = pts.reshape((1, -1))
         if pts.ndim != 2:
@@ -1500,8 +1495,8 @@ class DomainComponent(StrictModule):
                 f"Expected geometry points to be rank-2 array, got shape {pts.shape}."
             )
 
-        n = jnp.asarray(factor._boundary_normals(pts), dtype=float)
-        eps = jnp.finfo(float).eps
+        n = jnp.asarray(factor._boundary_normals(pts), dtype=jnp.float64)
+        eps = jnp.finfo(jnp.float64).eps
         nrm = jnp.linalg.norm(n, axis=-1, keepdims=True) + eps
         n_unit = n / nrm
         return cx.AxisArray(n_unit, dims=x.dims)
@@ -1579,16 +1574,14 @@ class DomainComponent(StrictModule):
         component = self.spec.selection_for(var)
         if not isinstance(component, Boundary):
             raise ValueError(
-                "DomainComponent.enforcement_gate is only defined for Boundary() "
-                "components."
+                "DomainComponent.enforcement_gate is only defined for Boundary() components."
             )
 
         factor = self.domain.factor(var)
 
         if not isinstance(factor, AbstractGeometry):
             raise TypeError(
-                "enforcement_gate(var=...) requires a geometry label, "
-                f"got {type(factor).__name__}."
+                f"enforcement_gate(var=...) requires a geometry label, got {type(factor).__name__}."
             )
 
         return DomainFunction(
@@ -1692,14 +1685,12 @@ class ComponentSum(StrictModule):
         if isinstance(sampling, PointSampling):
             if not isinstance(sampling.count, int):
                 raise ValueError(
-                    "ComponentSum requires an integer total count or one "
-                    "PointSampling per term."
+                    "ComponentSum requires an integer total count or one PointSampling per term."
                 )
             total = sampling.count
             if total < num_terms * min_points_per_term:
                 raise ValueError(
-                    "PointSampling.count is too small to allocate at least "
-                    f"{min_points_per_term} point(s) per term."
+                    f"PointSampling.count is too small to allocate at least {min_points_per_term} point(s) per term."
                 )
             counts = [min_points_per_term] * num_terms
             for index in range(total - num_terms * min_points_per_term):

@@ -84,9 +84,9 @@ class SignedHermitianSpectralCoordinates(AbstractRealCoordinateMap, NonTrainable
         partners_host = np.asarray(conjugate_indices, dtype=np.int64).reshape((-1,))
         signs_host = np.asarray(conjugate_signs).reshape((-1,))
         valid_host = (
-            np.ones((mode_size,), dtype=bool)
+            np.ones((mode_size,), dtype=np.bool_)
             if valid_mask is None
-            else np.asarray(valid_mask, dtype=bool).reshape((-1,))
+            else np.asarray(valid_mask, dtype=np.bool_).reshape((-1,))
         )
         if (
             partners_host.shape != (mode_size,)
@@ -118,7 +118,7 @@ class SignedHermitianSpectralCoordinates(AbstractRealCoordinateMap, NonTrainable
         fixed = flat_indices[valid & (partners == flat_indices)]
         representatives = flat_indices[valid & (flat_indices < partners)]
         pair_partners = partners[representatives]
-        coordinate_size = int(fixed.size + 2 * representatives.size)
+        coordinate_size = fixed.size + 2 * representatives.size
         if coordinate_size > maximum:
             raise ValueError(
                 "Signed-Hermitian coordinates exceed maximum_coordinate_size."
@@ -132,7 +132,7 @@ class SignedHermitianSpectralCoordinates(AbstractRealCoordinateMap, NonTrainable
         coordinate_dtype = jnp.empty((), dtype=dtype).real.dtype
         identifier = canonical_fingerprint(
             {
-                "kind": "signed-hermitian-spectral-coordinates-v1",
+                "kind": "signed-hermitian-spectral-coordinates",
                 "layout": identifier_,
                 "mode_shape": list(modes),
                 "component_shape": list(components),
@@ -162,7 +162,7 @@ class SignedHermitianSpectralCoordinates(AbstractRealCoordinateMap, NonTrainable
             source_shape=state_shape,
             coordinate_shape=(coordinate_size,),
             norm_relation="isometry",
-            projection_kind="masked-signed-hermitian-orthogonal-v1",
+            projection_kind="masked-signed-hermitian-orthogonal",
             map_id=identifier,
         )
         self.source_space = source_space
@@ -170,7 +170,7 @@ class SignedHermitianSpectralCoordinates(AbstractRealCoordinateMap, NonTrainable
         self.evidence = evidence
         self.conjugate_indices = jnp.asarray(partners, dtype=jnp.int32)
         self.conjugate_signs = jnp.asarray(signs, dtype=jnp.int8)
-        self.valid_mask = jnp.asarray(valid, dtype=bool)
+        self.valid_mask = jnp.asarray(valid, dtype=jnp.bool_)
         self.fixed_indices = jnp.asarray(fixed, dtype=jnp.int32)
         self.fixed_signs = jnp.asarray(signs[fixed], dtype=jnp.int8)
         self.representative_indices = jnp.asarray(representatives, dtype=jnp.int32)
@@ -183,8 +183,8 @@ class SignedHermitianSpectralCoordinates(AbstractRealCoordinateMap, NonTrainable
         self.reality_tolerance = tolerance
         self.full_state_bytes = mode_size * component_count * dtype.itemsize
         self.coordinate_state_bytes = coordinate_size * coordinate_dtype.itemsize
-        self.fixed_mode_count = int(fixed.size)
-        self.conjugate_pair_count = int(representatives.size)
+        self.fixed_mode_count = fixed.size
+        self.conjugate_pair_count = representatives.size
         self.coordinate_id = identifier
 
     def validate_state(self, state: ArrayLike, /) -> Array:

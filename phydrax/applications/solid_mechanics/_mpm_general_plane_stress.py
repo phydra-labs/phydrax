@@ -30,7 +30,7 @@ class MPMMaterialOrientation(StrictModule, NonTrainableState):
     orientation_id: str = eqx.field(static=True)
 
     def __init__(self, rotation: ArrayLike, /, *, tolerance: float = 1.0e-10):
-        value = np.asarray(rotation, dtype=float)
+        value = np.asarray(rotation, dtype=np.float64)
         if value.shape != (3, 3) or np.any(~np.isfinite(value)):
             raise ValueError("Material orientation must be one finite 3x3 rotation.")
         defect = np.linalg.norm(value.T @ value - np.eye(3))

@@ -20,7 +20,7 @@ def _pair(value: int | Sequence[int], /, *, name: str, minimum: int) -> tuple[in
     if isinstance(value, int):
         result = (int(value), int(value))
     else:
-        result = tuple(int(item) for item in value)
+        result = tuple(value)
     if len(result) != 2 or any(item < minimum for item in result):
         raise ValueError(f"{name} must contain two integers >= {minimum}.")
     return result
@@ -53,7 +53,7 @@ def prepare_window_grid(
         raise ValueError("window_size cannot exceed image_shape.")
     spacing = tuple(window[axis] - overlap_[axis] for axis in range(2))
     starts = tuple(
-        jnp.arange(0, shape[axis] - window[axis] + 1, spacing[axis], dtype=float)
+        jnp.arange(0, shape[axis] - window[axis] + 1, spacing[axis], dtype=jnp.float64)
         for axis in range(2)
     )
     row, column = jnp.meshgrid(
@@ -62,8 +62,8 @@ def prepare_window_grid(
         indexing="ij",
     )
     centers = jnp.stack((row, column), axis=-1)
-    grid_shape = (int(centers.shape[0]), int(centers.shape[1]))
-    active = jnp.ones(grid_shape, dtype=bool)
+    grid_shape = (centers.shape[0], centers.shape[1])
+    active = jnp.ones(grid_shape, dtype=jnp.bool_)
     grid_id = canonical_fingerprint(
         {
             "kind": "piv-window-grid-2d",
@@ -92,14 +92,14 @@ def window_sample_coordinates(
         for axis in range(2)
     )
     rows, columns = jnp.meshgrid(
-        jnp.arange(size[0], dtype=float) - 0.5 * (size[0] - 1),
-        jnp.arange(size[1], dtype=float) - 0.5 * (size[1] - 1),
+        jnp.arange(size[0], dtype=jnp.float64) - 0.5 * (size[0] - 1),
+        jnp.arange(size[1], dtype=jnp.float64) - 0.5 * (size[1] - 1),
         indexing="ij",
     )
     offsets = jnp.stack((rows, columns), axis=-1)
     centers = grid.centers_rc.reshape((-1, 2))
     if center_shift_rc is not None:
-        shift = jnp.asarray(center_shift_rc, dtype=float)
+        shift = jnp.asarray(center_shift_rc, dtype=jnp.float64)
         if shift.shape == grid.grid_shape + (2,):
             shift = shift.reshape((-1, 2))
         if shift.shape != centers.shape:

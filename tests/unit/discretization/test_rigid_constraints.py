@@ -27,7 +27,9 @@ def _prepared_bodies(count=3, *, fixed_mask=None, dimension=3):
         else jnp.stack(tuple(jnp.eye(3) for _ in range(count)))
     )
     fixed = (
-        jnp.zeros((count,), dtype=bool) if fixed_mask is None else jnp.asarray(fixed_mask)
+        jnp.zeros((count,), dtype="bool")
+        if fixed_mask is None
+        else jnp.asarray(fixed_mask)
     )
     bodies = phx.discretization.RigidBodySetPlan(
         jnp.zeros((count,), dtype=jnp.int32),

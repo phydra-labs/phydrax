@@ -99,7 +99,7 @@ def test_joint_design_preserves_finite_dataset_rows():
     )
 
     unit = Sobol(2, scramble=False).random(8)
-    indices = np.floor(4 * unit[:, 0]).astype(int)
+    indices = np.floor(4 * unit[:, 0]).astype("int64")
 
     assert np.array_equal(
         batch["data"]["value"].data,

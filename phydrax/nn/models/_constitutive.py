@@ -118,8 +118,7 @@ class PolyconvexPotential(StrictModule):
             raise TypeError("potential must be an InputConvexNetwork.")
         if convex_potential.in_size != self.minors.lifted_size:
             raise ValueError(
-                f"potential input size must be {self.minors.lifted_size} in "
-                f"dimension {self.minors.dimension}."
+                f"potential input size must be {self.minors.lifted_size} in dimension {self.minors.dimension}."
             )
         self.potential = convex_potential
 
@@ -136,7 +135,7 @@ class PolyconvexPotential(StrictModule):
     ) -> Array:
         """Evaluate the convex outer potential directly in lifted minor coordinates."""
         coordinates = jnp.asarray(lifted_minors)
-        if coordinates.ndim < 1 or int(coordinates.shape[-1]) != self.minors.lifted_size:
+        if coordinates.ndim < 1 or coordinates.shape[-1] != self.minors.lifted_size:
             raise ValueError(
                 f"lifted_minors must end in width {self.minors.lifted_size}."
             )

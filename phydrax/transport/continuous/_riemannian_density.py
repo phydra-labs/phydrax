@@ -63,7 +63,7 @@ class RiemannianContinuousFlowLaw(AbstractProbabilityLaw):
             raise ValueError("Initial manifold tangent/measure evidence is invalid.")
         resolved_id = flow_id or canonical_fingerprint(
             {
-                "kind": "riemannian-continuous-flow-law-v1",
+                "kind": "riemannian-continuous-flow-law",
                 "transport": transport.transport_id,
                 "geometry": manifold.manifold_id,
                 "max_exact_dimension": max_exact_dimension,

@@ -150,14 +150,14 @@ class DistributedMortonNeighborQueryPlan(StrictModule):
         if targets.shape != target_shape:
             raise ValueError(f"target_points must have shape {target_shape}.")
         source_valid = (
-            jnp.ones((self.source_capacity,), dtype=bool)
+            jnp.ones((self.source_capacity,), dtype=jnp.bool_)
             if source_mask is None
-            else jnp.asarray(source_mask, dtype=bool)
+            else jnp.asarray(source_mask, dtype=jnp.bool_)
         )
         target_valid = (
-            jnp.ones((self.target_capacity,), dtype=bool)
+            jnp.ones((self.target_capacity,), dtype=jnp.bool_)
             if target_mask is None
-            else jnp.asarray(target_mask, dtype=bool)
+            else jnp.asarray(target_mask, dtype=jnp.bool_)
         )
         if source_valid.shape != (self.source_capacity,):
             raise ValueError("source_mask must match source_capacity.")
@@ -283,7 +283,7 @@ class DistributedMortonNeighborQueryPlan(StrictModule):
                 & (ordered_ids[1:] == ordered_ids[:-1])
             )
             local_complete = local.evidence.successful.astype(jnp.int32)
-            complete = provider.minimum(local_complete).astype(bool) & stable_ids_unique
+            complete = provider.minimum(local_complete).astype("bool") & stable_ids_unique
             maximum_local_candidates = provider.maximum(
                 local.evidence.required_candidates
             )
@@ -334,7 +334,7 @@ class DistributedMortonNeighborQueryPlan(StrictModule):
                 (local.evidence.finite & local.evidence.topology_successful).astype(
                     jnp.int32
                 )
-            ).astype(bool)
+            ).astype("bool")
             successful = complete & finite
             return (
                 local_output_indices,

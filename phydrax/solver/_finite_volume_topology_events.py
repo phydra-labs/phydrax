@@ -161,11 +161,6 @@ def _strict_archive_record(
     return value
 
 
-def _archive_schema(value: Any, name: str, /) -> None:
-    if isinstance(value, bool) or not isinstance(value, int) or value != 1:
-        raise ValueError(f"Unsupported {name} archive schema.")
-
-
 class FiniteVolumeTopologyArtifacts(StrictModule, NonTrainableState):
     """Immutable finite-volume preparation artifacts keyed to one topology epoch."""
 
@@ -204,7 +199,6 @@ class FiniteVolumeTopologyArtifacts(StrictModule, NonTrainableState):
         self.artifacts_id = canonical_fingerprint(
             {
                 "kind": "finite-volume-topology-artifacts",
-                "schema_version": 1,
                 "epoch_id": epoch.epoch_id,
                 "prepared_id": prepared,
                 "topology_artifact_id": topology_artifact,
@@ -217,7 +211,6 @@ class FiniteVolumeTopologyArtifacts(StrictModule, NonTrainableState):
         """Return the complete finite JSON record used by restart archives."""
 
         return {
-            "schema_version": 1,
             "epoch_id": self.epoch_id,
             "prepared_id": self.prepared_id,
             "topology_artifact_id": self.topology_artifact_id,
@@ -241,7 +234,6 @@ class FiniteVolumeTopologyArtifacts(StrictModule, NonTrainableState):
             record,
             frozenset(
                 (
-                    "schema_version",
                     "epoch_id",
                     "prepared_id",
                     "topology_artifact_id",
@@ -252,7 +244,6 @@ class FiniteVolumeTopologyArtifacts(StrictModule, NonTrainableState):
             ),
             "Topology artifacts",
         )
-        _archive_schema(payload["schema_version"], "topology artifacts")
         archived_epoch_id = _required_identifier(payload["epoch_id"], "epoch_id")
         if archived_epoch_id != epoch.epoch_id:
             raise ValueError("Topology artifacts archive epoch key changed.")
@@ -309,7 +300,6 @@ class FiniteVolumeTopologyEventRequest(StrictModule, NonTrainableState):
         self.request_id = canonical_fingerprint(
             {
                 "kind": "finite-volume-topology-event-request",
-                "schema_version": 1,
                 "event_kind": int(event_kind),
                 "input_epoch_id": input_epoch,
                 "requested_spec_id": requested_spec,
@@ -380,7 +370,6 @@ class FiniteVolumeTopologyEvent(StrictModule, NonTrainableState):
         self.event_id = canonical_fingerprint(
             {
                 "kind": "finite-volume-topology-event",
-                "schema_version": 1,
                 "sequence": sequence_,
                 "accepted_step": accepted_step_,
                 "time": float(time_).hex(),
@@ -398,7 +387,6 @@ class FiniteVolumeTopologyEvent(StrictModule, NonTrainableState):
         """Return the complete finite JSON record used by restart archives."""
 
         return {
-            "schema_version": 1,
             "sequence": self.sequence,
             "accepted_step": self.accepted_step,
             "time_hex": float(self.time).hex(),
@@ -420,7 +408,6 @@ class FiniteVolumeTopologyEvent(StrictModule, NonTrainableState):
             record,
             frozenset(
                 (
-                    "schema_version",
                     "sequence",
                     "accepted_step",
                     "time_hex",
@@ -436,7 +423,6 @@ class FiniteVolumeTopologyEvent(StrictModule, NonTrainableState):
             ),
             "Topology event",
         )
-        _archive_schema(payload["schema_version"], "topology event")
         time_hex = payload["time_hex"]
         if not isinstance(time_hex, str):
             raise TypeError("Topology event archive time_hex must be a string.")
@@ -704,7 +690,6 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
 
         count = int(np.asarray(self.count))
         return {
-            "schema_version": 1,
             "capacity": self.capacity,
             "journal_id": self.journal_id,
             "current_epoch_id": self.current_epoch_id,
@@ -735,7 +720,6 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
             record,
             frozenset(
                 (
-                    "schema_version",
                     "capacity",
                     "journal_id",
                     "current_epoch_id",
@@ -751,7 +735,6 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
             ),
             "Topology event journal",
         )
-        _archive_schema(payload["schema_version"], "topology event journal")
         capacity = payload["capacity"]
         if (
             isinstance(capacity, bool)
@@ -938,9 +921,6 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
         times = np.asarray(self.times)
         historical_tip = epoch_ids[0]
         committed_count = 0
-        previous_state: TopologyEventState | None = None
-        previous_result: str | None = None
-        previous_input: str | None = None
         previous_step = -1
         previous_time = np.nan
         for index in range(count):
@@ -1009,9 +989,6 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
                     raise ValueError(
                         "Failed topology event input epoch does not match the historical tip."
                     )
-            previous_state = state
-            previous_result = result
-            previous_input = input_epoch
             previous_step = int(accepted_steps[index])
             previous_time = float(times[index])
         if pending_input_epochs and pending_input_epochs[0] != self.current_epoch_id:
@@ -1039,7 +1016,6 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
         return canonical_fingerprint(
             {
                 "kind": "finite-volume-topology-event-journal",
-                "schema_version": 1,
                 "capacity": self.capacity,
                 "current_epoch_id": self.current_epoch_id,
                 "epoch_ids": [epoch.epoch_id for epoch in self.epoch_table],
@@ -1613,7 +1589,7 @@ def _active_content_valid(content: Any, expected_mask: Any = _MISSING, /) -> boo
         if np.any(~np.isfinite(volume_array)):
             return False
         if active is not _MISSING:
-            active_array = np.asarray(active, dtype=bool)
+            active_array = np.asarray(active, dtype=np.bool_)
             if active_array.shape != volume_array.shape:
                 return False
             if np.any(active_array & (volume_array <= 0.0)):
@@ -1631,7 +1607,7 @@ def _active_content_valid(content: Any, expected_mask: Any = _MISSING, /) -> boo
                     return False
     if expected_mask is not _MISSING and active is not _MISSING:
         if not np.array_equal(
-            np.asarray(active, dtype=bool), np.asarray(expected_mask, dtype=bool)
+            np.asarray(active, dtype=np.bool_), np.asarray(expected_mask, dtype=np.bool_)
         ):
             return False
     return True

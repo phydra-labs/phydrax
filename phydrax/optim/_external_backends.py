@@ -134,7 +134,7 @@ class SciPyMinimize(AbstractMinimizationMethod):
             (objective, _), gradient = problem.value_and_gradient(point, args)
             return (
                 float(objective),
-                np.asarray(ravel_pytree(gradient)[0], dtype=float),
+                np.asarray(ravel_pytree(gradient)[0], dtype=np.float64),
             )
 
         bounds = None

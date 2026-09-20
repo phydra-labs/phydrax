@@ -69,7 +69,7 @@ def test_vorocrust_porous_qualification_certifies_consumed_geometry_not_tpfa():
             (1, 1, 1),
             (0, 1, 1),
         ),
-        dtype=float,
+        dtype="float64",
     )
     cells = (
         (

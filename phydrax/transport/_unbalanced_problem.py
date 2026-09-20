@@ -62,8 +62,12 @@ class UnbalancedTransportProblem(StrictModule):
             raise ValueError(
                 "Source and target features must have equal size for a ground cost."
             )
-        source_penalty = jnp.asarray(source_marginal_penalty, dtype=float).reshape(())
-        target_penalty = jnp.asarray(target_marginal_penalty, dtype=float).reshape(())
+        source_penalty = jnp.asarray(source_marginal_penalty, dtype=jnp.float64).reshape(
+            ()
+        )
+        target_penalty = jnp.asarray(target_marginal_penalty, dtype=jnp.float64).reshape(
+            ()
+        )
         source_penalty = eqx.error_if(
             source_penalty,
             ~jnp.isfinite(source_penalty) | (source_penalty <= 0.0),

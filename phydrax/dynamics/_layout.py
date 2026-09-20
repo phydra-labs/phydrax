@@ -20,7 +20,7 @@ InputRole: TypeAlias = Literal["control", "forcing", "parameter"]
 
 
 def _shape(value: Sequence[int], owner: str, /) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if any(size <= 0 for size in shape):
         raise ValueError(f"{owner} dimensions must be positive.")
     return shape
@@ -220,13 +220,11 @@ class InputLayout(StrictModule):
                 resolved_role_values.append("parameter")
             else:
                 raise ValueError(
-                    "roles must assign 'control', 'forcing', or 'parameter' "
-                    "to every component."
+                    "roles must assign 'control', 'forcing', or 'parameter' to every component."
                 )
         if len(resolved_role_values) != count:
             raise ValueError(
-                "roles must assign 'control', 'forcing', or 'parameter' "
-                "to every component."
+                "roles must assign 'control', 'forcing', or 'parameter' to every component."
             )
         resolved_roles = tuple(resolved_role_values)
         self.shape = resolved_shape

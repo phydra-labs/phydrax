@@ -203,7 +203,7 @@ def test_case_loader_retains_shared_fixed_grid_for_physical_task_evaluation():
 
 def test_case_loader_does_not_collapse_explicit_case_geometry_even_when_values_match():
     for mask, expected in (
-        (jnp.ones((2, 3), dtype=bool), jnp.asarray([2.0, 5.0])),
+        (jnp.ones((2, 3), dtype="bool"), jnp.asarray([2.0, 5.0])),
         (
             jnp.asarray([[True, False, True], [True, True, False]]),
             jnp.asarray([1.0, 3.5]),
@@ -260,7 +260,7 @@ def test_per_case_deeponet_uses_case_specific_source_and_query_geometry():
         latent_size=1,
     )
 
-    prediction = model.predict(batch)
+    prediction = model.evaluate(batch)
     output = prediction.field("output")
     assert output.values.shape == (2, 2)
     assert output.spec.channels == "scalar"

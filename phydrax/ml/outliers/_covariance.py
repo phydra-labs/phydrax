@@ -36,7 +36,7 @@ def _regularize_covariance(
     shrinkage: float,
     ridge: float,
 ) -> tuple[Array, Array, Array, Array]:
-    features = int(covariance.shape[-1])
+    features = covariance.shape[-1]
     trace_scale = jnp.maximum(
         jnp.real(jnp.trace(covariance)) / features, jnp.finfo(covariance.real.dtype).eps
     )
@@ -93,7 +93,7 @@ class CovarianceOutlierModel(AbstractArrayModel):
         self.threshold = jnp.asarray(threshold)
         self.log_determinant = jnp.asarray(log_determinant)
         self.case_shape = tuple(case_shape)
-        self.in_size = int(location_.shape[-1])
+        self.in_size = location_.shape[-1]
         self.out_size = "scalar"
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
@@ -124,7 +124,7 @@ class CovarianceOutlierModel(AbstractArrayModel):
         threshold = self.threshold.reshape(
             self.case_shape + (1,) * (scores.ndim - len(self.case_shape))
         )
-        scale = jnp.maximum(jnp.asarray(temperature), jnp.finfo(float).tiny)
+        scale = jnp.maximum(jnp.asarray(temperature), jnp.finfo(jnp.float64).tiny)
         return jax.nn.sigmoid((scores - threshold) / scale)
 
 
@@ -187,7 +187,7 @@ class CovarianceOutlierRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             objective=jnp.sum(jnp.where(active, weights * scores, 0.0), axis=-1)
-            / jnp.maximum(jnp.sum(weights, axis=-1), jnp.finfo(float).tiny),
+            / jnp.maximum(jnp.sum(weights, axis=-1), jnp.finfo(jnp.float64).tiny),
             iterations=1,
             effective_samples=effective,
             threshold=threshold,
@@ -253,7 +253,7 @@ class EllipticEnvelopeModel(AbstractArrayModel):
         self.precision = jnp.asarray(precision)
         self.threshold = jnp.asarray(threshold)
         self.case_shape = tuple(case_shape)
-        self.in_size = int(location_.shape[-1])
+        self.in_size = location_.shape[-1]
         self.out_size = "scalar"
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
@@ -285,7 +285,7 @@ class EllipticEnvelopeModel(AbstractArrayModel):
         )
         return jax.nn.sigmoid(
             (scores - threshold)
-            / jnp.maximum(jnp.asarray(temperature), jnp.finfo(float).tiny)
+            / jnp.maximum(jnp.asarray(temperature), jnp.finfo(jnp.float64).tiny)
         )
 
 
@@ -313,7 +313,7 @@ def _robust_covariance_one(
         )
         delta = jnp.linalg.norm(next_location - current_location) + jnp.linalg.norm(
             next_precision - current_precision
-        ) / jnp.maximum(jnp.linalg.norm(current_precision), jnp.finfo(float).tiny)
+        ) / jnp.maximum(jnp.linalg.norm(current_precision), jnp.finfo(jnp.float64).tiny)
         return next_location, next_precision, next_rank, next_condition, delta
 
     location, precision, rank, condition, delta = jax.lax.fori_loop(
@@ -325,7 +325,7 @@ def _robust_covariance_one(
     scores = _mahalanobis_one(x, location, precision)
     objective = jnp.sum(
         base_weights * jnp.log1p(scores / (tuning * tuning))
-    ) / jnp.maximum(jnp.sum(base_weights), jnp.finfo(float).tiny)
+    ) / jnp.maximum(jnp.sum(base_weights), jnp.finfo(jnp.float64).tiny)
     return location, precision, scores, rank, condition, delta, objective
 
 

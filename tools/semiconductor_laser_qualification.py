@@ -33,7 +33,7 @@ def _coupled_mode_cases() -> dict[str, object]:
             jnp.linspace(0.0, 1.0, 17),
             1.0e15,
             jnp.full((16,), 0.3),
-            jnp.zeros((16,), dtype=complex),
+            jnp.zeros((16,), dtype="complex128"),
             jnp.full((16,), 0.2),
             reference_propagation_constant=0.7,
         )
@@ -146,8 +146,8 @@ def _laser_cases() -> dict[str, object]:
     density = threshold.threshold_carrier_pair_density
     initial = TravelingWaveSemiconductorLaserState(
         jnp.full((prepared.section_count,), density),
-        jnp.zeros((prepared.section_count,), dtype=complex),
-        jnp.zeros((prepared.section_count,), dtype=complex),
+        jnp.zeros((prepared.section_count,), dtype="complex128"),
+        jnp.zeros((prepared.section_count,), dtype="complex128"),
     )
     inputs = TravelingWaveLaserInput(threshold.threshold_injection_current, 300.0)
     deterministic = simulate_traveling_wave_laser(prepared, initial, inputs)

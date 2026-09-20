@@ -211,7 +211,7 @@ class _TupleCandidates(StrictModule):
 def _capacity(detections: ParticleDetections, /) -> int:
     if detections.positions_rc.ndim != 2 or detections.positions_rc.shape[-1] != 2:
         raise ValueError("ParticleDetections.positions_rc must have shape (capacity, 2).")
-    capacity = int(detections.positions_rc.shape[0])
+    capacity = detections.positions_rc.shape[0]
     if detections.covariance_rc.shape != (capacity, 2, 2):
         raise ValueError("ParticleDetections.covariance_rc has an incompatible shape.")
     for name, value in (
@@ -268,15 +268,15 @@ def associate_two_view(
     ):
         raise TypeError("Both detection sets must be ParticleDetections.")
     da, db = _capacity(detections_a), _capacity(detections_b)
-    valid_a = jnp.asarray(detections_a.valid, dtype=bool)
-    valid_b = jnp.asarray(detections_b.valid, dtype=bool)
+    valid_a = jnp.asarray(detections_a.valid, dtype=jnp.bool_)
+    valid_b = jnp.asarray(detections_b.valid, dtype=jnp.bool_)
     oa, ra = jnp.asarray(origins_a), jnp.asarray(directions_a)
     ob, rb = jnp.asarray(origins_b), jnp.asarray(directions_b)
     if oa.shape != (da, 3) or ra.shape != (da, 3):
         raise ValueError("View-a rays must have shape (capacity_a, 3).")
     if ob.shape != (db, 3) or rb.shape != (db, 3):
         raise ValueError("View-b rays must have shape (capacity_b, 3).")
-    dtype = jnp.result_type(oa, ra, ob, rb, float)
+    dtype = jnp.result_type(oa, ra, ob, rb, jnp.float64)
     oa, ra, ob, rb = (jnp.asarray(value, dtype=dtype) for value in (oa, ra, ob, rb))
     distance, geometry_valid = _ray_distance(oa, ra, ob, rb, plan.parallel_tolerance)
     variance = 1.0 + plan.covariance_scale * (
@@ -300,7 +300,7 @@ def associate_two_view(
     )
     dimension = da + db
     costs = jnp.zeros((dimension, dimension), dtype=dtype)
-    allowed = jnp.zeros((dimension, dimension), dtype=bool)
+    allowed = jnp.zeros((dimension, dimension), dtype=jnp.bool_)
     costs = costs.at[:da, :db].set(jnp.where(pair_valid, pair_cost, 0.0))
     allowed = allowed.at[:da, :db].set(pair_valid)
     a_index = jnp.arange(da, dtype=jnp.int32)
@@ -341,7 +341,7 @@ def associate_two_view(
         & jnp.isfinite(ordered[:, 1])
         & ((ordered[:, 1] - ordered[:, 0]) <= plan.ambiguity_margin)
         if db > 1
-        else jnp.zeros((da,), dtype=bool)
+        else jnp.zeros((da,), dtype=jnp.bool_)
     )
     status = jnp.where(
         assignment.valid,
@@ -390,7 +390,7 @@ def _camera_rays(
     for camera_index, camera in enumerate(rig.cameras):
         result = pixels_to_rays(camera, detections[camera_index].positions_rc)
         detected = (
-            jnp.asarray(detections[camera_index].valid, dtype=bool)
+            jnp.asarray(detections[camera_index].valid, dtype=jnp.bool_)
             & rig.camera_valid[camera_index]
         )
         ray_valid = detected & result.valid
@@ -444,7 +444,7 @@ def _enumerate_candidates(
             indices = indices.at[:, second_camera].set(grid_b)
             origins = jnp.zeros((count, camera_count, 3), dtype=ray_origins.dtype)
             directions = jnp.zeros_like(origins)
-            valid = jnp.zeros((count, camera_count), dtype=bool)
+            valid = jnp.zeros((count, camera_count), dtype=jnp.bool_)
             weights = jnp.zeros((count, camera_count), dtype=ray_weights.dtype)
             origins = origins.at[:, first_camera].set(ray_origins[first_camera, grid_a])
             origins = origins.at[:, second_camera].set(ray_origins[second_camera, grid_b])
@@ -519,7 +519,7 @@ def _enumerate_candidates(
     candidate_ray_valid = jnp.concatenate(ray_valid_pool, axis=0)
     candidate_weights = jnp.concatenate(weight_pool, axis=0)
     candidate_count = jnp.sum(valid, dtype=jnp.int32)
-    take = min(plan.candidate_capacity, int(scores.shape[0]))
+    take = min(plan.candidate_capacity, scores.shape[0])
     selected_scores, selected_indices = jax.lax.top_k(
         jnp.where(valid, scores, -jnp.inf), take
     )
@@ -543,7 +543,9 @@ def _enumerate_candidates(
             jnp.concatenate(
                 (arrays[2], jnp.zeros((padding, camera_count, 3), dtype=directions.dtype))
             ),
-            jnp.concatenate((arrays[3], jnp.zeros((padding, camera_count), dtype=bool))),
+            jnp.concatenate(
+                (arrays[3], jnp.zeros((padding, camera_count), dtype=jnp.bool_))
+            ),
             jnp.concatenate(
                 (
                     arrays[4],
@@ -555,7 +557,7 @@ def _enumerate_candidates(
             (selected_scores, jnp.zeros((padding,), dtype=scores.dtype))
         )
         selected_valid = jnp.concatenate(
-            (selected_valid, jnp.zeros((padding,), dtype=bool))
+            (selected_valid, jnp.zeros((padding,), dtype=jnp.bool_))
         )
     (
         selected_detection_indices,
@@ -569,7 +571,7 @@ def _enumerate_candidates(
     )
     selected_scores = jnp.where(selected_valid, selected_scores, 0.0)
     incidence = jnp.zeros(
-        (plan.candidate_capacity, camera_count * detection_capacity), dtype=bool
+        (plan.candidate_capacity, camera_count * detection_capacity), dtype=jnp.bool_
     )
     for camera in range(camera_count):
         detection_index = selected_detection_indices[:, camera]
@@ -577,14 +579,14 @@ def _enumerate_candidates(
             detection_index, 0, detection_capacity - 1
         )
         incidence = incidence | (
-            jax.nn.one_hot(resource, camera_count * detection_capacity, dtype=bool)
+            jax.nn.one_hot(resource, camera_count * detection_capacity, dtype=jnp.bool_)
             & (detection_index >= 0)[:, None]
         )
     conflict = (
         contract("kr,lr->kl", incidence.astype(jnp.int32), incidence.astype(jnp.int32))
         > 0
     )
-    conflict = conflict & ~jnp.eye(plan.candidate_capacity, dtype=bool)
+    conflict = conflict & ~jnp.eye(plan.candidate_capacity, dtype=jnp.bool_)
     conflict_count = jnp.sum(
         jnp.triu(conflict & selected_valid[:, None] & selected_valid[None, :], k=1),
         dtype=jnp.int32,

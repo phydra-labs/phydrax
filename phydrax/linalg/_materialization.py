@@ -48,8 +48,7 @@ def materialize(operator, policy: MaterializationPolicy, /) -> Array:
     entries = prod(operator.batch_shape) * operator.source.size * operator.target.size
     if entries > policy.max_entries:
         raise LinearCapabilityError(
-            f"Dense materialization requires {entries} entries, exceeding "
-            f"the policy limit {policy.max_entries}."
+            f"Dense materialization requires {entries} entries, exceeding the policy limit {policy.max_entries}."
         )
     expected = operator.batch_shape + (operator.target.size, operator.source.size)
     target_dtypes = [spec.dtype for spec in jax.tree.leaves(operator.target.structure())]
@@ -57,8 +56,7 @@ def materialize(operator, policy: MaterializationPolicy, /) -> Array:
     required_bytes = entries * expected_dtype.itemsize
     if required_bytes > policy.max_bytes:
         raise LinearCapabilityError(
-            f"Dense materialization requires {required_bytes} bytes, exceeding "
-            f"the policy limit {policy.max_bytes}."
+            f"Dense materialization requires {required_bytes} bytes, exceeding the policy limit {policy.max_bytes}."
         )
     matrix = jnp.asarray(operator._materialize())
     if matrix.shape != expected or matrix.dtype != expected_dtype:
@@ -68,8 +66,7 @@ def materialize(operator, policy: MaterializationPolicy, /) -> Array:
         )
     if matrix.nbytes > policy.max_bytes:
         raise LinearCapabilityError(
-            f"Dense materialization produced {matrix.nbytes} bytes, exceeding "
-            f"the policy limit {policy.max_bytes}."
+            f"Dense materialization produced {matrix.nbytes} bytes, exceeding the policy limit {policy.max_bytes}."
         )
     return matrix
 

@@ -57,7 +57,7 @@ def _identifier(value: str, name: str, /) -> str:
 def _shape(value: Sequence[int], /) -> tuple[int, ...]:
     if isinstance(value, (str, bytes)):
         raise TypeError("shape must be a sequence of dimensions.")
-    resolved = tuple(int(size) for size in value)
+    resolved = tuple(value)
     if any(size <= 0 for size in resolved):
         raise ValueError("Parameter shape entries must be positive.")
     return resolved
@@ -81,10 +81,10 @@ class CardiacParameterSupport(StrictModule, NonTrainableState):
     ):
         shape_ = _shape(shape)
         lower_ = jax.lax.stop_gradient(
-            jnp.broadcast_to(jnp.asarray(lower, dtype=float), shape_)
+            jnp.broadcast_to(jnp.asarray(lower, dtype=jnp.float64), shape_)
         )
         upper_ = jax.lax.stop_gradient(
-            jnp.broadcast_to(jnp.asarray(upper, dtype=float), shape_)
+            jnp.broadcast_to(jnp.asarray(upper, dtype=jnp.float64), shape_)
         )
         if bool(jnp.any(jnp.isnan(lower_))) or bool(jnp.any(jnp.isnan(upper_))):
             raise ValueError("Parameter support bounds cannot be NaN.")
@@ -119,7 +119,7 @@ class CardiacParameterSupport(StrictModule, NonTrainableState):
         )
 
     def validate(self, value: ArrayLike, /) -> Array:
-        array = jnp.asarray(value, dtype=float)
+        array = jnp.asarray(value, dtype=jnp.float64)
         if array.shape != self.shape:
             raise ValueError(
                 f"Parameter value must have shape {self.shape}; got {array.shape}."

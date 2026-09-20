@@ -62,7 +62,7 @@ def _zero_constraint(velocity, mass, dimension):
         jnp.zeros((), dtype=velocity.dtype),
         jnp.zeros((), dtype=velocity.dtype),
         jnp.asarray(jnp.inf, dtype=velocity.dtype),
-        jnp.zeros(mass.shape, dtype=bool),
+        jnp.zeros(mass.shape, dtype=jnp.bool_),
         jnp.zeros(mass.shape, dtype=jnp.int32),
         jnp.asarray(True),
     )

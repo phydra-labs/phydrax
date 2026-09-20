@@ -85,7 +85,7 @@ class FiniteFusionCategory(StrictModule):
         fusion = fusion_input.astype(np.int32)
         if np.any((fusion < 0) | (fusion > 1)):
             raise ValueError("This finite anyon runtime is multiplicity-free.")
-        dimensions = np.asarray(quantum_dimensions, dtype=float)
+        dimensions = np.asarray(quantum_dimensions, dtype=np.float64)
         if dimensions.shape != (count,) or not np.all(np.isfinite(dimensions)):
             raise ValueError(
                 "quantum_dimensions must provide one finite value per label."
@@ -121,7 +121,7 @@ class FiniteFusionCategory(StrictModule):
             raise ValueError("Fusion multiplicities violate associativity.")
         if dimension_residual > tolerance:
             raise ValueError("Quantum dimensions do not realize the fusion rules.")
-        f_support = np.zeros_like(f_data, dtype=bool)
+        f_support = np.zeros_like(f_data, dtype=np.bool_)
         for first in range(count):
             for second in range(count):
                 for third in range(count):
@@ -139,7 +139,7 @@ class FiniteFusionCategory(StrictModule):
                                 ] = True
         if np.any(np.abs(f_data[~f_support]) > tolerance):
             raise ValueError("F data are nonzero outside admissible fusion channels.")
-        supported_r = fusion.astype(bool)
+        supported_r = fusion.astype("bool")
         if np.any(np.abs(r_data[~supported_r]) > tolerance):
             raise ValueError("R data are nonzero outside admissible fusion channels.")
         r_unitarity = float(np.max(np.abs(np.abs(r_data[supported_r]) - 1.0)))
@@ -483,7 +483,7 @@ class StringNetPlan(StrictModule):
         if not bool(np.asarray(category.coherence.coherent)):
             raise ValueError("String-net lowering requires coherent F/R data.")
         edges = int(edge_count)
-        vertices_ = tuple(tuple(int(edge) for edge in vertex) for vertex in vertices)
+        vertices_ = tuple(tuple(vertex) for vertex in vertices)
         boundaries = tuple(
             tuple((int(edge), int(orientation)) for edge, orientation in boundary)
             for boundary in plaquette_boundaries
@@ -523,8 +523,7 @@ class StringNetPlan(StrictModule):
         )
         if dense_count > maximum_operators:
             raise ValueError(
-                f"String-net lowering requires {dense_count} dense elements; "
-                f"capacity is {maximum_operators}."
+                f"String-net lowering requires {dense_count} dense elements; capacity is {maximum_operators}."
             )
         self.category = category
         self.edge_count = edges
@@ -612,7 +611,7 @@ def prepare_string_net_hamiltonian(
     for incoming_left, incoming_right, outgoing in plan.vertices:
         valid = fusion[
             basis[:, incoming_left], basis[:, incoming_right], basis[:, outgoing]
-        ].astype(float)
+        ].astype("float64")
         vertices.append(np.diag(valid).astype(np.complex128))
     vertex_array = (
         np.stack(vertices)
@@ -629,8 +628,7 @@ def prepare_string_net_hamiltonian(
         )
         if not native_category and plan.plaquette_boundaries:
             raise ValueError(
-                "Non-pointed or nontrivially-associated categories require explicit "
-                "full-boundary loop_operators."
+                "Non-pointed or nontrivially-associated categories require explicit full-boundary loop_operators."
             )
         local_loops = np.swapaxes(fusion, 1, 2).astype(np.complex128)
         loops = (
@@ -754,7 +752,7 @@ class AnyonicTensorBlock(StrictModule):
         if data_.ndim != len(charges_):
             raise ValueError("Anyonic block rank must equal its charge-label count.")
         if not jnp.issubdtype(data_.dtype, jnp.inexact):
-            data_ = data_.astype(float)
+            data_ = data_.astype("float64")
         self.charges = charges_
         self.data = data_
 
@@ -776,7 +774,7 @@ class AnyonicTensor(StrictModule):
     ):
         if not isinstance(category, FiniteFusionCategory):
             raise TypeError("category must be FiniteFusionCategory.")
-        orientations_ = tuple(int(value) for value in orientations)
+        orientations_ = tuple(orientations)
         blocks_ = tuple(blocks)
         if any(value not in (-1, 1) for value in orientations_):
             raise ValueError("Anyonic tensor orientations must be +1 or -1.")
@@ -802,7 +800,7 @@ class AnyonicTensor(StrictModule):
                 "blocks": tuple(
                     {
                         "charges": block.charges,
-                        "shape": tuple(int(size) for size in block.data.shape),
+                        "shape": tuple(block.data.shape),
                         "dtype": str(block.data.dtype),
                     }
                     for block in blocks_

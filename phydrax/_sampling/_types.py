@@ -32,8 +32,6 @@ SUPPORTED_DESIGNS: tuple[DesignName, ...] = (
     "sobol_scrambled",
 )
 
-DESIGN_ALGORITHM_VERSION = 1
-
 
 class IIDDesign(StrictModule):
     """Independent random points in a unit cube."""
@@ -208,8 +206,8 @@ def design_name(design: DesignLike, /) -> DesignName:
 
 
 def design_signature(design: DesignLike, /) -> str:
-    """Return the replay-relevant identity of a reference design."""
-    return f"{design_name(design)}:v{DESIGN_ALGORITHM_VERSION}"
+    """Return the replay-relevant semantic identity of a reference design."""
+    return design_name(design)
 
 
 def design_capabilities(design: DesignLike, /) -> DesignCapabilities:
@@ -255,7 +253,6 @@ def design_capabilities(design: DesignLike, /) -> DesignCapabilities:
 
 __all__ = [
     "AntitheticDesign",
-    "DESIGN_ALGORITHM_VERSION",
     "DesignCapabilities",
     "DesignLike",
     "DesignName",

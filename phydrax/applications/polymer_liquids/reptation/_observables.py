@@ -98,7 +98,7 @@ def reptation_observables(
         raise ValueError("Reptation observables require unwrapped coordinates.")
     positions = jnp.asarray(unwrapped_positions)
     indices = jnp.asarray(chain_indices, dtype=jnp.int32)
-    mask = jnp.asarray(chain_mask, dtype=bool)
+    mask = jnp.asarray(chain_mask, dtype=jnp.bool_)
     lags_host = np.asarray(lag_steps, dtype=np.int32)
     if positions.ndim != 3 or positions.shape[-1] != 3:
         raise ValueError("unwrapped_positions must have shape (frames, particles, 3).")

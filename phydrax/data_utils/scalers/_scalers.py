@@ -18,7 +18,7 @@ _CanonicalAxis = int | tuple[int, ...] | None
 def _canonical_axis(axis: AxisLike, /) -> _CanonicalAxis:
     if axis is None or isinstance(axis, int):
         return axis
-    return tuple(int(ax) for ax in axis)
+    return tuple(axis)
 
 
 def _keepdims(axis: _CanonicalAxis, /) -> bool:
@@ -53,19 +53,19 @@ class AffineScaler(_AbstractScaler):
         - `alpha`: Multiplicative scale applied after normalization.
         - `beta`: Additive offset applied after scaling.
         """
-        self.reference_value = jnp.asarray(reference_value, dtype=float)
-        self.scale_value = jnp.asarray(scale_value, dtype=float)
-        self.alpha = jnp.asarray(alpha, dtype=float)
-        self.beta = jnp.asarray(beta, dtype=float)
+        self.reference_value = jnp.asarray(reference_value, dtype=jnp.float64)
+        self.scale_value = jnp.asarray(scale_value, dtype=jnp.float64)
+        self.alpha = jnp.asarray(alpha, dtype=jnp.float64)
+        self.beta = jnp.asarray(beta, dtype=jnp.float64)
 
     def transform(self, x: ArrayLike) -> Array:
-        x_arr = jnp.asarray(x, dtype=float)
+        x_arr = jnp.asarray(x, dtype=jnp.float64)
         return (
             self.alpha * ((x_arr - self.reference_value) / self.scale_value) + self.beta
         )
 
     def inverse_transform(self, x: ArrayLike) -> Array:
-        x_arr = jnp.asarray(x, dtype=float)
+        x_arr = jnp.asarray(x, dtype=jnp.float64)
         return (
             self.scale_value * ((x_arr - self.beta) / self.alpha) + self.reference_value
         )
@@ -94,7 +94,7 @@ class MinMaxScaler(_AbstractScalerSpecifier):
         - `max`: Upper bound of the transformed range.
         - `axis`: Axis or axes over which statistics are computed.
         """
-        x_arr = jnp.asarray(x, dtype=float)
+        x_arr = jnp.asarray(x, dtype=jnp.float64)
         axis_c = _canonical_axis(axis)
         keepdims = _keepdims(axis_c)
 
@@ -103,8 +103,8 @@ class MinMaxScaler(_AbstractScalerSpecifier):
         x_range = x_max - x_min
         x_range = jnp.where(x_range == 0.0, _EPSILON, x_range)
 
-        scale_min = jnp.asarray(min, dtype=float)
-        scale_max = jnp.asarray(max, dtype=float)
+        scale_min = jnp.asarray(min, dtype=jnp.float64)
+        scale_max = jnp.asarray(max, dtype=jnp.float64)
         scale_range = scale_max - scale_min
         if bool(jnp.any(scale_range == 0.0)):
             raise ValueError("MinMaxScaler requires `min` and `max` to differ.")
@@ -136,7 +136,7 @@ class MaxAbsScaler(_AbstractScalerSpecifier):
         - `x`: Reference data used to infer the scale.
         - `axis`: Axis or axes over which statistics are computed.
         """
-        x_arr = jnp.asarray(x, dtype=float)
+        x_arr = jnp.asarray(x, dtype=jnp.float64)
         axis_c = _canonical_axis(axis)
         x_max_abs = jnp.max(jnp.abs(x_arr), axis=axis_c, keepdims=_keepdims(axis_c))
         x_max_abs = jnp.where(x_max_abs == 0.0, _EPSILON, x_max_abs)
@@ -163,7 +163,7 @@ class StdScaler(_AbstractScalerSpecifier):
         - `x`: Reference data used to infer mean and standard deviation.
         - `axis`: Axis or axes over which statistics are computed.
         """
-        x_arr = jnp.asarray(x, dtype=float)
+        x_arr = jnp.asarray(x, dtype=jnp.float64)
         axis_c = _canonical_axis(axis)
         keepdims = _keepdims(axis_c)
         x_mean = jnp.mean(x_arr, axis=axis_c, keepdims=keepdims)
@@ -194,7 +194,7 @@ class NormScaler(_AbstractScalerSpecifier):
         - `ord`: Norm order forwarded to `jax.numpy.linalg.norm`.
         - `axis`: Axis or axes over which the norm is computed.
         """
-        x_arr = jnp.asarray(x, dtype=float)
+        x_arr = jnp.asarray(x, dtype=jnp.float64)
         axis_c = _canonical_axis(axis)
         norm = jnp.linalg.norm(x_arr, ord=ord, axis=axis_c, keepdims=_keepdims(axis_c))
         norm = jnp.where(norm == 0.0, _EPSILON, norm)

@@ -76,7 +76,7 @@ def test_piecewise_linear_fit_respects_irregular_masked_samples_and_knot_sides()
 def test_causal_backward_hermite_uses_backward_slopes_and_is_c1_at_knots():
     times = jnp.asarray([0.0, 1.0, 3.0])
     values = jnp.asarray([0.0, 1.0, 5.0])
-    mask = jnp.ones((3,), dtype=bool)
+    mask = jnp.ones((3,), dtype="bool")
     path, diagnostics = phx.solver.CausalBackwardHermiteDrivingPath.fit(
         times,
         values,
@@ -102,7 +102,7 @@ def test_causal_backward_hermite_uses_backward_slopes_and_is_c1_at_knots():
 def test_offline_natural_cubic_has_hand_computed_value_derivative_and_increment():
     times = jnp.asarray([0.0, 1.0, 2.0, 3.0])
     values = jnp.asarray([0.0, 1.0, 0.0, 1.0])
-    mask = jnp.ones((4,), dtype=bool)
+    mask = jnp.ones((4,), dtype="bool")
     path, diagnostics = phx.solver.OfflineCubicDrivingPath.fit(
         times,
         values,
@@ -159,8 +159,8 @@ def test_fixed_bspline_has_exact_one_sided_derivatives_and_coefficient_gradients
 def test_sample_fits_reject_nonprefix_partial_insufficient_and_duplicate_inputs():
     times = jnp.asarray([0.0, 1.0, 2.0, 3.0])
     values = jnp.arange(8.0).reshape((4, 2))
-    valid = jnp.ones((4,), dtype=bool)
-    full_value_valid = jnp.ones(values.shape, dtype=bool)
+    valid = jnp.ones((4,), dtype="bool")
+    full_value_valid = jnp.ones(values.shape, dtype="bool")
 
     with pytest.raises(ValueError, match="time_mask must be a prefix"):
         phx.solver.PiecewiseLinearDrivingPath.fit(
@@ -230,8 +230,8 @@ def test_sampled_and_fixed_bspline_paths_reject_zero_sized_payload_dimensions():
         phx.solver.PiecewiseLinearDrivingPath(
             jnp.asarray([0.0, 1.0]),
             jnp.empty((2, 0)),
-            time_mask=jnp.ones((2,), dtype=bool),
-            value_mask=jnp.ones((2,), dtype=bool),
+            time_mask=jnp.ones((2,), dtype="bool"),
+            value_mask=jnp.ones((2,), dtype="bool"),
             path_id="invalid:empty-sampled-payload",
         )
 

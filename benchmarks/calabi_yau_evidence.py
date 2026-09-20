@@ -57,8 +57,8 @@ def benchmark_case(line_count: int):
     return {
         "axes": {
             "line_count": line_count,
-            "training_samples": int(training.problem.samples.valid.shape[0]),
-            "heldout_samples": int(heldout.problem.samples.valid.shape[0]),
+            "training_samples": training.problem.samples.valid.shape[0],
+            "heldout_samples": heldout.problem.samples.valid.shape[0],
             "batch_count": plan.batch_count,
         },
         "ids": {

@@ -67,9 +67,9 @@ class CameraIntrinsics(StrictModule):
         image_shape: tuple[int, int] | None = None,
         skew: Any = 0.0,
     ):
-        focal_host = np.asarray(focal_length, dtype=float)
-        principal_host = np.asarray(principal_point, dtype=float)
-        skew_host = np.asarray(skew, dtype=float)
+        focal_host = np.asarray(focal_length, dtype=np.float64)
+        principal_host = np.asarray(principal_point, dtype=np.float64)
+        skew_host = np.asarray(skew, dtype=np.float64)
         if focal_host.shape != (2,) or principal_host.shape != (2,):
             raise ValueError("focal_length and principal_point must have shape (2,).")
         if skew_host.shape != ():
@@ -85,7 +85,7 @@ class CameraIntrinsics(StrictModule):
         if image_shape is None:
             resolved_shape = None
         else:
-            resolved_shape = tuple(int(value) for value in image_shape)
+            resolved_shape = tuple(image_shape)
             if len(resolved_shape) != 2 or any(value <= 0 for value in resolved_shape):
                 raise ValueError("image_shape must contain two positive dimensions.")
         self.focal_length = jnp.asarray(focal_host)
@@ -105,8 +105,8 @@ class BrownConradyDistortion(StrictModule):
         radial: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
         tangential: ArrayLike | tuple[float, float] = (0.0, 0.0),
     ):
-        radial_host = np.asarray(radial, dtype=float)
-        tangential_host = np.asarray(tangential, dtype=float)
+        radial_host = np.asarray(radial, dtype=np.float64)
+        tangential_host = np.asarray(tangential, dtype=np.float64)
         if radial_host.shape != (3,) or tangential_host.shape != (2,):
             raise ValueError("radial and tangential must have shapes (3,) and (2,).")
         if not np.all(np.isfinite(radial_host)) or not np.all(
@@ -407,7 +407,7 @@ def project_points(
     if jnp.issubdtype(points_.dtype, jnp.complexfloating):
         raise TypeError("Physical points must be real-valued.")
     if not jnp.issubdtype(points_.dtype, jnp.inexact):
-        points_ = points_.astype(float)
+        points_ = points_.astype("float64")
     camera_points = camera.pose.frame.inverse_apply(points_)
     depth = camera_points[..., 2]
     finite = jnp.all(jnp.isfinite(points_), axis=-1) & jnp.all(
@@ -423,7 +423,7 @@ def project_points(
         (camera_points[..., 0] / safe_depth, camera_points[..., 1] / safe_depth),
         axis=-1,
     )
-    refraction_valid = jnp.ones(depth.shape, dtype=bool)
+    refraction_valid = jnp.ones(depth.shape, dtype=jnp.bool_)
     refraction_status = jnp.full(
         depth.shape,
         int(ProjectionStatus.SUCCESS),
@@ -484,13 +484,13 @@ def pixels_to_rays(
     if jnp.issubdtype(pixels_.dtype, jnp.complexfloating):
         raise TypeError("Pixel coordinates must be real-valued.")
     if not jnp.issubdtype(pixels_.dtype, jnp.inexact):
-        pixels_ = pixels_.astype(float)
+        pixels_ = pixels_.astype("float64")
     finite = jnp.all(jnp.isfinite(pixels_), axis=-1)
     inside = _inside_image(camera.intrinsics, pixels_)
     target = _pixels_to_distorted_normalized(camera.intrinsics, pixels_)
     normalized = target
     iterations = jnp.zeros(target.shape[:-1], dtype=jnp.int32)
-    linear_valid = jnp.ones(target.shape[:-1], dtype=bool)
+    linear_valid = jnp.ones(target.shape[:-1], dtype=jnp.bool_)
     plan = SmallLinearSolvePlan(
         2,
         singular_tolerance=1e-12,
@@ -524,7 +524,7 @@ def pixels_to_rays(
         camera.pose.frame.translation.astype(direction_camera.dtype),
         directions.shape,
     )
-    refraction_valid = jnp.ones(finite.shape, dtype=bool)
+    refraction_valid = jnp.ones(finite.shape, dtype=jnp.bool_)
     refraction_status = jnp.full(
         finite.shape,
         int(RayStatus.SUCCESS),

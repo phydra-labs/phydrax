@@ -52,10 +52,12 @@ def qualification():
     h2_system = phx.atomistic.AtomisticSystemPlan.from_structure(
         h2, units, molecule_ids=[0, 0]
     )
-    basis = phx.operators.quantum.gaussian.GaussianBasisPlan.from_contracted_s([11, 17],
-    [_EXPONENTS, _EXPONENTS],
-    [_COEFFICIENTS, _COEFFICIENTS],
-    source_id="sto-3g-hydrogen-qualification",).prepare(h2_system)
+    basis = phx.operators.quantum.gaussian.GaussianBasisPlan.from_contracted_s(
+        [11, 17],
+        [_EXPONENTS, _EXPONENTS],
+        [_COEFFICIENTS, _COEFFICIENTS],
+        source_id="sto-3g-hydrogen-qualification",
+    ).prepare(h2_system)
     rhf = phx.chemistry.NativeRHFPlan(
         h2_system,
         basis,
@@ -83,9 +85,7 @@ def qualification():
         area_tolerance=1.0e-3,
     ).evaluate(manifold)
 
-    water_positions = np.asarray(
-        [[0.0, 0.0, 0.0], [0.95, 0.0, 0.0], [-0.24, 0.92, 0.0]]
-    )
+    water_positions = np.asarray([[0.0, 0.0, 0.0], [0.95, 0.0, 0.0], [-0.24, 0.92, 0.0]])
     water = phx.atomistic.AtomicStructure(
         [8, 1, 1],
         water_positions,
@@ -193,9 +193,7 @@ def qualification():
     )
     periodic = phx.chemistry.NativePeriodicSCFPlan(
         periodic_cell,
-        phx.discretization.ReciprocalMeshPlan.monkhorst_pack(
-            periodic_cell, (1, 1, 1)
-        ),
+        phx.discretization.ReciprocalMeshPlan.monkhorst_pack(periodic_cell, (1, 1, 1)),
         phx.chemistry.PeriodicElectronicSectorPlan(2.0),
         periodic_pencil,
         periodic_mean_field,

@@ -334,7 +334,7 @@ def _check_array_bounds(
             raise TensorNetworkArchiveSecurityError(
                 f"archive array {name!r} rank exceeds capacity"
             )
-        elements = int(array.size)
+        elements = array.size
         payload_bytes = array_payload_byte_count(array)
         if elements > limits.maximum_array_elements:
             raise TensorNetworkArchiveSecurityError(

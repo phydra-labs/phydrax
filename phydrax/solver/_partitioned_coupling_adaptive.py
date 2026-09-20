@@ -72,7 +72,7 @@ class AdaptiveCouplingWindowPolicy(StrictModule, NonTrainableState):
         minimum_factor_ = float(minimum_factor)
         maximum_factor_ = float(maximum_factor)
         attempts = int(maximum_attempts)
-        statuses = tuple(int(value) for value in retryable_statuses)
+        statuses = tuple(retryable_statuses)
         if (
             not all(
                 isfinite(value)
@@ -446,7 +446,7 @@ class CouplingTopologyRequest(StrictModule):
         status: ArrayLike = 0,
         /,
     ):
-        requested_ = jnp.asarray(requested, dtype=bool).reshape(())
+        requested_ = jnp.asarray(requested, dtype=jnp.bool_).reshape(())
         participant = jnp.asarray(participant_epoch_codes, dtype=jnp.int32)
         capacities = jnp.asarray(waveform_required_samples, dtype=jnp.int32)
         topology = jnp.asarray(topology_code, dtype=jnp.int32).reshape(())

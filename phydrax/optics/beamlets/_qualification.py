@@ -48,7 +48,7 @@ class NineRayTraceSamples(StrictModule, NonTrainableState):
             raise ValueError("Nine-ray phase-space arrays must have shape (..., 9, 4).")
         if steps.shape != inputs.shape[:-2] + (4,):
             raise ValueError("perturbation_steps must have shape (..., 4).")
-        valid_ = jnp.broadcast_to(jnp.asarray(valid, dtype=bool), inputs.shape[:-2])
+        valid_ = jnp.broadcast_to(jnp.asarray(valid, dtype=jnp.bool_), inputs.shape[:-2])
         self.input_phase_space = inputs
         self.output_phase_space = outputs
         self.perturbation_steps = steps
@@ -136,8 +136,8 @@ def qualify_nine_ray_differential_map(
     )
     central_error = jnp.sqrt(jnp.sum(central_difference * central_difference, axis=-1))
     observed_order = jnp.full(absolute_error.shape, jnp.nan, dtype=absolute_error.dtype)
-    refined_valid = jnp.ones(absolute_error.shape, dtype=bool)
-    refined_finite = jnp.ones(absolute_error.shape, dtype=bool)
+    refined_valid = jnp.ones(absolute_error.shape, dtype=jnp.bool_)
+    refined_finite = jnp.ones(absolute_error.shape, dtype=jnp.bool_)
     if refined_samples is not None:
         if not isinstance(refined_samples, NineRayTraceSamples):
             raise TypeError("refined_samples must be NineRayTraceSamples or None.")
@@ -199,7 +199,7 @@ def qualify_nine_ray_differential_map(
         & (input_error <= stencil_tolerance)
         & (central_error <= stencil_tolerance)
     )
-    map_valid = jnp.asarray(differential_map.valid, dtype=bool)
+    map_valid = jnp.asarray(differential_map.valid, dtype=jnp.bool_)
     valid = finite & stencil_valid & map_valid
     status = jnp.where(
         ~finite,

@@ -15,6 +15,7 @@ import jax.random as jr
 from jaxtyping import Array, Key
 
 import phydrax.ein as ein
+from phydrax._strict import StrictModule
 
 from ...._doc import DOC_KEY0
 from ....graph._multigraph import query_target_features
@@ -75,8 +76,8 @@ def _optional_feature_array(
 def _mask_array(value: Any | None, coordinates: Array, /) -> Array:
     shape = coordinates.shape[:-1]
     if value is None:
-        return jnp.ones(shape, dtype=bool)
-    mask = jnp.asarray(value, dtype=bool)
+        return jnp.ones(shape, dtype=jnp.bool_)
+    mask = jnp.asarray(value, dtype=jnp.bool_)
     if mask.shape != shape:
         raise ValueError(f"Point mask must have shape {shape}; got {mask.shape}.")
     return mask
@@ -85,7 +86,7 @@ def _mask_array(value: Any | None, coordinates: Array, /) -> Array:
 def _measure_array(value: Any | None, coordinates: Array, /) -> Array | None:
     if value is None:
         return None
-    measure = jnp.asarray(value, dtype=float)
+    measure = jnp.asarray(value, dtype=jnp.float64)
     if measure.shape != coordinates.shape[:-1]:
         raise ValueError(
             f"Source measure must have shape {coordinates.shape[:-1]}; got {measure.shape}."
@@ -95,12 +96,12 @@ def _measure_array(value: Any | None, coordinates: Array, /) -> Array | None:
 
 def _apply_rows(model: Any, values: Array, key: EvalKey, /) -> Array:
     leading = values.shape[:-1]
-    flattened = values.reshape((-1, int(values.shape[-1])))
+    flattened = values.reshape((-1, values.shape[-1]))
     output = jax.vmap(lambda row: model(row, key=key))(flattened)
-    return jnp.asarray(output).reshape(leading + (int(jnp.asarray(output).shape[-1]),))
+    return jnp.asarray(output).reshape(leading + (jnp.asarray(output).shape[-1],))
 
 
-class _EdgeKernel(eqx.Module):
+class _EdgeKernel(StrictModule):
     model: MLP
 
     def __call__(self, edges, sent_nodes, received_nodes, globals_):
@@ -113,7 +114,7 @@ class _EdgeKernel(eqx.Module):
         return _apply_rows(self.model, features, None)
 
 
-class GraphKernelTransfer(eqx.Module):
+class GraphKernelTransfer(StrictModule):
     """Learned measure-aware graph integral between two point sets."""
 
     source_lift: MLP
@@ -208,12 +209,9 @@ class GraphKernelTransfer(eqx.Module):
         target_features: Any | None = None,
         key: EvalKey = None,
     ) -> Array:
-        source = jnp.asarray(source_coordinates, dtype=float)
-        target = jnp.asarray(target_coordinates, dtype=float)
-        if (
-            int(source.shape[-1]) != self.coord_dim
-            or int(target.shape[-1]) != self.coord_dim
-        ):
+        source = jnp.asarray(source_coordinates, dtype=jnp.float64)
+        target = jnp.asarray(target_coordinates, dtype=jnp.float64)
+        if source.shape[-1] != self.coord_dim or target.shape[-1] != self.coord_dim:
             raise ValueError(
                 "Source and target coordinate dimensions must match coord_dim."
             )
@@ -263,11 +261,11 @@ class GraphKernelTransfer(eqx.Module):
             target_node_type=query.target_type,
         )
         output = query_target_features(operator(query.graph), query, "transfer")
-        case_shape = tuple(int(size) for size in target.shape[:-2])
-        return output.reshape(case_shape + (int(target.shape[-2]), self.out_channels))
+        case_shape = tuple(target.shape[:-2])
+        return output.reshape(case_shape + (target.shape[-2], self.out_channels))
 
 
-class _MultiheadLogits(eqx.Module):
+class _MultiheadLogits(StrictModule):
     edge_bias: MLP
     heads: int = eqx.field(static=True)
     head_dim: int = eqx.field(static=True)
@@ -289,7 +287,7 @@ class _MultiheadLogits(eqx.Module):
         return logits + bias
 
 
-class _AttentionOutput(eqx.Module):
+class _AttentionOutput(StrictModule):
     projection: Linear
 
     def __call__(self, nodes, aggregated, globals_):
@@ -297,7 +295,7 @@ class _AttentionOutput(eqx.Module):
         return self.projection(aggregated)
 
 
-class GraphAttentionTransfer(eqx.Module):
+class GraphAttentionTransfer(StrictModule):
     """Quadrature-aware multihead attention between point sets."""
 
     source_lift: MLP
@@ -430,12 +428,9 @@ class GraphAttentionTransfer(eqx.Module):
         target_features: Any | None = None,
         key: EvalKey = None,
     ) -> Array:
-        source = jnp.asarray(source_coordinates, dtype=float)
-        target = jnp.asarray(target_coordinates, dtype=float)
-        if (
-            int(source.shape[-1]) != self.coord_dim
-            or int(target.shape[-1]) != self.coord_dim
-        ):
+        source = jnp.asarray(source_coordinates, dtype=jnp.float64)
+        target = jnp.asarray(target_coordinates, dtype=jnp.float64)
+        if source.shape[-1] != self.coord_dim or target.shape[-1] != self.coord_dim:
             raise ValueError(
                 "Source and target coordinate dimensions must match coord_dim."
             )
@@ -486,11 +481,11 @@ class GraphAttentionTransfer(eqx.Module):
             target_node_type=query.target_type,
         )
         output = query_target_features(operator(query.graph), query, "transfer")
-        case_shape = tuple(int(size) for size in target.shape[:-2])
-        return output.reshape(case_shape + (int(target.shape[-2]), self.out_channels))
+        case_shape = tuple(target.shape[:-2])
+        return output.reshape(case_shape + (target.shape[-2], self.out_channels))
 
 
-class GeometryMomentEmbedding(eqx.Module):
+class GeometryMomentEmbedding(StrictModule):
     """Measure-weighted, dimensionless local neighborhood statistics."""
 
     coord_dim: int = eqx.field(static=True)
@@ -523,7 +518,7 @@ class GeometryMomentEmbedding(eqx.Module):
         source_measure: Array,
         /,
     ) -> Array:
-        measure = jnp.asarray(source_measure, dtype=float)
+        measure = jnp.asarray(source_measure, dtype=jnp.float64)
         if measure.ndim != 2:
             raise ValueError(
                 "GeometryMomentEmbedding source_measure must have shape (case, source)."
@@ -565,7 +560,7 @@ class GeometryMomentEmbedding(eqx.Module):
         )
 
 
-class MultiscaleGraphTransfer(eqx.Module):
+class MultiscaleGraphTransfer(StrictModule):
     """Fuse several graph transfers using multiscale geometry statistics."""
 
     transfers: tuple[GraphKernelTransfer | GraphAttentionTransfer, ...]
@@ -662,14 +657,14 @@ class MultiscaleGraphTransfer(eqx.Module):
     ) -> Array:
         cases = prod(source_coordinates.shape[:-2]) if source_coordinates.ndim > 2 else 1
         source = source_coordinates.reshape(
-            (cases, int(source_coordinates.shape[-2]), int(source_coordinates.shape[-1]))
+            (cases, source_coordinates.shape[-2], source_coordinates.shape[-1])
         )
         target = target_coordinates.reshape(
-            (cases, int(target_coordinates.shape[-2]), int(target_coordinates.shape[-1]))
+            (cases, target_coordinates.shape[-2], target_coordinates.shape[-1])
         )
-        measure = source_measure.reshape((cases, int(source_measure.shape[-1])))
-        source_valid = source_mask.reshape((cases, int(source_mask.shape[-1])))
-        target_valid = target_mask.reshape((cases, int(target_mask.shape[-1])))
+        measure = source_measure.reshape((cases, source_measure.shape[-1]))
+        source_valid = source_mask.reshape((cases, source_mask.shape[-1]))
+        target_valid = target_mask.reshape((cases, target_mask.shape[-1]))
         features = []
         for transfer, embedding in zip(self.transfers, self.embeddings, strict=True):
             neighborhood = query_neighbors(
@@ -698,8 +693,8 @@ class MultiscaleGraphTransfer(eqx.Module):
     ) -> Array:
         if self.gate is None:
             raise ValueError("scale_weights is only available for gated fusion.")
-        source = jnp.asarray(source_coordinates, dtype=float)
-        target = jnp.asarray(target_coordinates, dtype=float)
+        source = jnp.asarray(source_coordinates, dtype=jnp.float64)
+        target = jnp.asarray(target_coordinates, dtype=jnp.float64)
         measure = _measure_array(source_measure, source)
         if measure is None:
             raise ValueError("Multiscale geometry requires source_measure.")
@@ -725,8 +720,8 @@ class MultiscaleGraphTransfer(eqx.Module):
         target_features: Any | None = None,
         key: EvalKey = None,
     ) -> Array:
-        source = jnp.asarray(source_coordinates, dtype=float)
-        target = jnp.asarray(target_coordinates, dtype=float)
+        source = jnp.asarray(source_coordinates, dtype=jnp.float64)
+        target = jnp.asarray(target_coordinates, dtype=jnp.float64)
         measure = _measure_array(source_measure, source)
         if measure is None:
             raise ValueError("Multiscale graph transfer requires source_measure.")

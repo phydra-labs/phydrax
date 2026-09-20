@@ -82,7 +82,7 @@ class D2V17PeriodicTransportPlan(StrictModule, NonTrainableState):
             or quadrature.transport_kind != "integer_lattice"
         ):
             raise ValueError("Exact periodic pull transport requires certified D2V17.")
-        shape = tuple(int(value) for value in spatial_shape)
+        shape = tuple(spatial_shape)
         spacing = tuple(float(value) for value in cell_spacing)
         step = float(time_step)
         if len(shape) != 2 or any(value <= 0 for value in shape):
@@ -93,7 +93,7 @@ class D2V17PeriodicTransportPlan(StrictModule, NonTrainableState):
             raise ValueError("cell_spacing must contain two finite positive values.")
         if not isfinite(step) or step <= 0.0:
             raise ValueError("time_step must be finite and positive.")
-        velocities = np.asarray(quadrature.velocities, dtype=float)
+        velocities = np.asarray(quadrature.velocities, dtype=np.float64)
         scaled = velocities * step / np.asarray(spacing)[None, :]
         rounded = np.rint(scaled)
         tolerance = (
@@ -103,7 +103,7 @@ class D2V17PeriodicTransportPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "D2V17 pull transport requires velocity*time_step/cell_spacing to be integer."
             )
-        offsets = tuple(tuple(int(value) for value in row) for row in rounded)
+        offsets = tuple(tuple(row) for row in rounded)
         reach = tuple(max(abs(row[axis]) for row in offsets) for axis in range(2))
         if any(shape[axis] <= 2 * reach[axis] for axis in range(2)):
             raise ValueError(

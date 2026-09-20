@@ -147,8 +147,7 @@ class IdealValenciaGRMHDSystem(StrictModule, NonTrainableState):
             or convention_.extrinsic_curvature_sign != -1
         ):
             raise ValueError(
-                "Valencia GRMHD requires mostly-plus signature and "
-                "K_ij = -1/2 L_n gamma_ij."
+                "Valencia GRMHD requires mostly-plus signature and K_ij = -1/2 L_n gamma_ij."
             )
         density = float(density_floor)
         pressure = float(pressure_floor)
@@ -1198,7 +1197,7 @@ class IdealValenciaGRMHDSystem(StrictModule, NonTrainableState):
 
         if not isinstance(source_geometry, ValenciaGeometrySource):
             raise TypeError("source_geometry must be ValenciaGeometrySource.")
-        geometry = self._geometry(source_geometry.geometry, projection.leading_shape)
+        self._geometry(source_geometry.geometry, projection.leading_shape)
         momentum_source, energy_source = valencia_geometric_source_from_projection(
             projection, source_geometry, self.convention
         )

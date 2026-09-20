@@ -74,14 +74,12 @@ class MagneticResonanceResourcePolicy(StrictModule):
         value = int(dimension)
         if value > self.maximum_hilbert_dimension:
             raise ValueError(
-                f"Hilbert dimension D={value} exceeds maximum_hilbert_dimension="
-                f"{self.maximum_hilbert_dimension}."
+                f"Hilbert dimension D={value} exceeds maximum_hilbert_dimension={self.maximum_hilbert_dimension}."
             )
         entries = value * value
         if entries > self.maximum_density_elements:
             raise ValueError(
-                f"Density storage D^2={entries} exceeds maximum_density_elements="
-                f"{self.maximum_density_elements}."
+                f"Density storage D^2={entries} exceeds maximum_density_elements={self.maximum_density_elements}."
             )
 
 

@@ -219,7 +219,7 @@ The result includes:
 
 The implicit value is a local point-to-plane reconstruction, not an exact SDF.
 Unoriented surfels cannot produce signed support. Opposing normals mark a voxel
-conflicting rather than cancelling into false certainty. Geometry leaving its
+conflicting rather than canceling into false certainty. Geometry leaving its
 prepared padding envelope marks routes stale.
 
 The initial route builder requires nonperiodic voxel axes. Periodic image

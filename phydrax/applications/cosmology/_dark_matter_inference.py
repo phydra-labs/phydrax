@@ -76,12 +76,12 @@ def _parameter_vector(
     if array.shape != (size,):
         raise ValueError(f"{name} must have shape {(size,)}.")
     if not eqx.is_inexact_array(array):
-        array = array.astype(float)
+        array = array.astype("float64")
     return array
 
 
 def _scalar_flag(value: ArrayLike, name: str, /) -> Array:
-    flag = jnp.asarray(value, dtype=bool)
+    flag = jnp.asarray(value, dtype=jnp.bool_)
     if flag.shape != ():
         raise ValueError(f"{name} must be scalar.")
     return jax.lax.stop_gradient(flag)
@@ -391,7 +391,7 @@ class FixedTapeStochasticEvaluation(StrictModule):
     ):
         value = jnp.asarray(values)
         scores = jnp.asarray(score, dtype=value.real.dtype)
-        active_ = jnp.asarray(active, dtype=bool).reshape((-1,))
+        active_ = jnp.asarray(active, dtype=jnp.bool_).reshape((-1,))
         if (
             value.ndim != 2
             or not eqx.is_inexact_array(value)
@@ -405,7 +405,7 @@ class FixedTapeStochasticEvaluation(StrictModule):
         if active_.shape != (value.shape[0],):
             raise ValueError("Fixed-tape active mask must match draw count.")
         masks = tuple(
-            jnp.asarray(item, dtype=bool).reshape((-1,))
+            jnp.asarray(item, dtype=jnp.bool_).reshape((-1,))
             for item in (event_occurred, reaction_occurred, topology_changed)
         )
         if any(mask.shape != active_.shape for mask in masks):
@@ -509,7 +509,7 @@ class FixedTapeStochasticSensitivityPlan(StrictModule, NonTrainableState):
             raise TypeError("evaluator must be callable.")
         parameters = _positive_integer(parameter_count, "parameter_count")
         outputs = _positive_integer(output_count, "output_count")
-        weights_host = np.asarray(draw_weights, dtype=float).reshape((-1,))
+        weights_host = np.asarray(draw_weights, dtype=np.float64).reshape((-1,))
         if (
             weights_host.size < 2
             or np.any(~np.isfinite(weights_host))
@@ -539,7 +539,7 @@ class FixedTapeStochasticSensitivityPlan(StrictModule, NonTrainableState):
         self.draw_weights = jax.lax.stop_gradient(jnp.asarray(weights_host))
         self.parameter_count = parameters
         self.output_count = outputs
-        self.draw_count = int(weights_host.size)
+        self.draw_count = weights_host.size
         self.minimum_effective_sample_size = minimum
         self.bias_absolute_tolerance = absolute
         self.bias_standard_error_multiplier = multiplier
@@ -927,7 +927,7 @@ class ExternalDarkMatterEmulatorProduct(StrictModule, NonTrainableState):
         training_use: bool = False,
         export: bool = False,
     ):
-        location_ = jnp.asarray(location, dtype=float).reshape((-1,))
+        location_ = jnp.asarray(location, dtype=jnp.float64).reshape((-1,))
         scale_ = jnp.asarray(scale, dtype=location_.dtype).reshape((-1,))
         if location_.shape != scale_.shape:
             raise ValueError("External emulator location and scale must align.")
@@ -1014,7 +1014,7 @@ class DarkMatterErrorBudget(StrictModule, NonTrainableState):
             raise ValueError("Error-budget component names must be unique.")
         arrays = tuple(
             jax.lax.stop_gradient(
-                jnp.asarray(components[name], dtype=float).reshape((-1,))
+                jnp.asarray(components[name], dtype=jnp.float64).reshape((-1,))
             )
             for name in names
         )
@@ -1153,8 +1153,7 @@ class DarkMatterDiscrepancyPlan(StrictModule, NonTrainableState):
         if provenance.source_kind == "external":
             if not isinstance(prediction_source, ConstantExternalDarkMatterProduct):
                 raise ValueError(
-                    "External discrepancy predictions require a governed "
-                    "ConstantExternalDarkMatterProduct source."
+                    "External discrepancy predictions require a governed ConstantExternalDarkMatterProduct source."
                 )
             if (
                 prediction_source.provenance.provenance_id != provenance.provenance_id
@@ -1380,8 +1379,7 @@ class DarkMatterEmulatorCalibrationPlan(StrictModule, NonTrainableState):
             raise TypeError("provenance must be CosmologyProductProvenance.")
         if provenance.source_kind == "external":
             raise ValueError(
-                "External emulator calibration requires fit_external with a "
-                "governed source."
+                "External emulator calibration requires fit_external with a governed source."
             )
         return self._fit(
             location,
@@ -1412,8 +1410,7 @@ class DarkMatterEmulatorCalibrationPlan(StrictModule, NonTrainableState):
             raise TypeError("reference must be ConstantExternalDarkMatterProduct.")
         if emulator.coordinates.contract_id != reference.coordinates.contract_id:
             raise ValueError(
-                "External emulator and calibration reference coordinate/unit "
-                "contracts disagree."
+                "External emulator and calibration reference coordinate/unit contracts disagree."
             )
         if not bool(emulator.successful):
             raise ValueError("External emulator source evidence is unsuccessful.")
@@ -1463,14 +1460,14 @@ class DarkMatterEmulatorCalibrationPlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("External emulator provenance identity changed.")
         split = _identifier(split_id, "split_id")
-        center = jnp.asarray(location, dtype=float).reshape((-1,))
+        center = jnp.asarray(location, dtype=jnp.float64).reshape((-1,))
         scale = jnp.asarray(raw_scale, dtype=center.dtype).reshape((-1,))
         if center.shape != reference.values.shape or scale.shape != center.shape:
             raise ValueError("Emulator location, scale, and reference must align.")
         active = (
-            jnp.ones(center.shape, dtype=bool)
+            jnp.ones(center.shape, dtype=jnp.bool_)
             if mask is None
-            else jnp.asarray(mask, dtype=bool).reshape((-1,))
+            else jnp.asarray(mask, dtype=jnp.bool_).reshape((-1,))
         )
         weight_array = (
             jnp.ones(center.shape, dtype=center.dtype)

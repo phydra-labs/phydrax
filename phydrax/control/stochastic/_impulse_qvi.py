@@ -16,6 +16,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from ..._interpolation import linear_interpolate
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...dynamics._grid import TimeGrid
@@ -46,7 +47,7 @@ def _finite_real_array(value: ArrayLike, owner: str, /) -> np.ndarray:
     array = np.asarray(value)
     if np.issubdtype(array.dtype, np.complexfloating):
         raise TypeError(f"{owner} must be real-valued.")
-    array = np.asarray(array, dtype=float)
+    array = np.asarray(array, dtype=np.float64)
     if not np.all(np.isfinite(array)):
         raise ValueError(f"{owner} must be finite.")
     return array
@@ -127,21 +128,18 @@ class BoundedImpulseQVIProblem(StrictModule, NonTrainableState):
         boundary = _finite_real_array(boundary_values, "boundary_values")
         if terminal.shape != (spatial_grid.num_points,):
             raise ValueError(
-                "terminal_values must have shape "
-                f"({spatial_grid.num_points},); got {terminal.shape}."
+                f"terminal_values must have shape ({spatial_grid.num_points},); got {terminal.shape}."
             )
         if boundary.shape != (time_grid.num_times, 2):
             raise ValueError(
-                "boundary_values must have shape "
-                f"({time_grid.num_times}, 2); got {boundary.shape}."
+                f"boundary_values must have shape ({time_grid.num_times}, 2); got {boundary.shape}."
             )
         tolerance = _nonnegative(corner_tolerance, "corner_tolerance")
         if float(np.max(np.abs(boundary[-1] - terminal[[0, -1]]))) > tolerance:
             raise ValueError(
-                "Terminal values and final-time boundary data are incompatible at "
-                "the interval corners."
+                "Terminal values and final-time boundary data are incompatible at the interval corners."
             )
-        dtype = jnp.result_type(continuation, impulses, terminal, boundary, float)
+        dtype = jnp.result_type(continuation, impulses, terminal, boundary, jnp.float64)
         self.spatial_grid = spatial_grid
         self.time_grid = time_grid
         self.continuation_actions = jnp.asarray(continuation, dtype=dtype)
@@ -287,21 +285,21 @@ def _coefficients(
     problem: BoundedImpulseQVIProblem,
     /,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, float, float]:
-    times = np.asarray(problem.time_grid.times, dtype=float)
-    points = np.asarray(problem.spatial_grid.points, dtype=float)
-    continuation_actions = np.asarray(problem.continuation_actions, dtype=float)
-    impulse_actions = np.asarray(problem.impulse_actions, dtype=float)
+    times = np.asarray(problem.time_grid.times, dtype=np.float64)
+    points = np.asarray(problem.spatial_grid.points, dtype=np.float64)
+    continuation_actions = np.asarray(problem.continuation_actions, dtype=np.float64)
+    impulse_actions = np.asarray(problem.impulse_actions, dtype=np.float64)
     continuation_shape = (
         times.size - 1,
         points.size - 2,
         continuation_actions.size,
     )
     impulse_shape = (times.size - 1, points.size - 2, impulse_actions.size)
-    drift = np.empty(continuation_shape, dtype=float)
-    variance = np.empty(continuation_shape, dtype=float)
-    running_cost = np.empty(continuation_shape, dtype=float)
-    post_state = np.empty(impulse_shape, dtype=float)
-    impulse_cost = np.empty(impulse_shape, dtype=float)
+    drift = np.empty(continuation_shape, dtype=np.float64)
+    variance = np.empty(continuation_shape, dtype=np.float64)
+    running_cost = np.empty(continuation_shape, dtype=np.float64)
+    post_state = np.empty(impulse_shape, dtype=np.float64)
+    impulse_cost = np.empty(impulse_shape, dtype=np.float64)
     maximum_courant = 0.0
     minimum_margin = 1.0
     dx = problem.spatial_grid.spacing
@@ -353,15 +351,13 @@ def _coefficients(
                 )
                 if not problem.allow_negative_intervention_cost and cost < 0.0:
                     raise ValueError(
-                        "intervention_cost must be nonnegative unless the explicit "
-                        "reward convention is enabled."
+                        "intervention_cost must be nonnegative unless the explicit reward convention is enabled."
                     )
                 post_state[step, point_index, action_index] = mapped
                 impulse_cost[step, point_index, action_index] = cost
-    if minimum_margin < -32.0 * np.finfo(float).eps:
+    if minimum_margin < -32.0 * np.finfo(np.float64).eps:
         raise ValueError(
-            "The declared time and spatial grids violate the explicit monotone "
-            "upwind-diffusion step condition."
+            "The declared time and spatial grids violate the explicit monotone upwind-diffusion step condition."
         )
     return (
         drift,
@@ -405,18 +401,18 @@ def _solve_raw(problem: BoundedImpulseQVIProblem, /) -> _RawQVI:
         maximum_courant,
         minimum_margin,
     ) = _coefficients(problem)
-    times = np.asarray(problem.time_grid.times, dtype=float)
-    points = np.asarray(problem.spatial_grid.points, dtype=float)
-    boundary = np.asarray(problem.boundary_values, dtype=float)
-    terminal = np.asarray(problem.terminal_values, dtype=float)
+    times = np.asarray(problem.time_grid.times, dtype=np.float64)
+    points = np.asarray(problem.spatial_grid.points, dtype=np.float64)
+    boundary = np.asarray(problem.boundary_values, dtype=np.float64)
+    terminal = np.asarray(problem.terminal_values, dtype=np.float64)
     shape = (times.size, points.size)
     decision_shape = (times.size - 1, points.size)
-    values = np.empty(shape, dtype=float)
-    continuation_values = np.empty(decision_shape, dtype=float)
-    intervention_values = np.empty(decision_shape, dtype=float)
+    values = np.empty(shape, dtype=np.float64)
+    continuation_values = np.empty(decision_shape, dtype=np.float64)
+    intervention_values = np.empty(decision_shape, dtype=np.float64)
     continuation_selectors = np.full(decision_shape, -1, dtype=np.int32)
     intervention_selectors = np.full(decision_shape, -1, dtype=np.int32)
-    intervention_region = np.zeros(decision_shape, dtype=bool)
+    intervention_region = np.zeros(decision_shape, dtype=np.bool_)
     values[-1] = terminal
     for step in range(times.size - 2, -1, -1):
         duration = times[step + 1] - times[step]
@@ -431,19 +427,23 @@ def _solve_raw(problem: BoundedImpulseQVIProblem, /) -> _RawQVI:
         selected_hamiltonian = np.take_along_axis(
             hamiltonian, continuation_selector[:, None], axis=-1
         )[:, 0]
-        continuation = np.empty((points.size,), dtype=float)
+        continuation = np.empty((points.size,), dtype=np.float64)
         continuation[1:-1] = values[step + 1, 1:-1] + duration * selected_hamiltonian
         continuation[0] = boundary[step, 0]
         continuation[-1] = boundary[step, 1]
         candidates = impulse_cost[step] + np.stack(
             [
-                np.interp(post_state[step, :, action], points, continuation)
+                np.asarray(
+                    linear_interpolate(
+                        points, continuation, post_state[step, :, action], bounds="clip"
+                    ).values
+                )
                 for action in range(problem.impulse_actions.size)
             ],
             axis=-1,
         )
         intervention_selector = np.argmin(candidates, axis=-1)
-        intervention = np.empty((points.size,), dtype=float)
+        intervention = np.empty((points.size,), dtype=np.float64)
         intervention[1:-1] = np.take_along_axis(
             candidates, intervention_selector[:, None], axis=-1
         )[:, 0]
@@ -491,10 +491,13 @@ def _solve_raw(problem: BoundedImpulseQVIProblem, /) -> _RawQVI:
         )
         candidates = impulse_cost[step] + np.stack(
             [
-                np.interp(
-                    post_state[step, :, action],
-                    points,
-                    continuation_values[step],
+                np.asarray(
+                    linear_interpolate(
+                        points,
+                        continuation_values[step],
+                        post_state[step, :, action],
+                        bounds="clip",
+                    ).values
                 )
                 for action in range(problem.impulse_actions.size)
             ],
@@ -543,8 +546,8 @@ def _solve_raw(problem: BoundedImpulseQVIProblem, /) -> _RawQVI:
 
 
 def _refined_problem(problem: BoundedImpulseQVIProblem, /) -> BoundedImpulseQVIProblem:
-    coarse_times = np.asarray(problem.time_grid.times, dtype=float)
-    fractions = np.arange(4, dtype=float) / 4.0
+    coarse_times = np.asarray(problem.time_grid.times, dtype=np.float64)
+    fractions = np.arange(4, dtype=np.float64) / 4.0
     refined_times = np.concatenate(
         tuple(
             coarse_times[index]
@@ -558,17 +561,25 @@ def _refined_problem(problem: BoundedImpulseQVIProblem, /) -> BoundedImpulseQVIP
         problem.spatial_grid.upper_bound,
         2 * (problem.spatial_grid.num_points - 1) + 1,
     )
-    coarse_points = np.asarray(problem.spatial_grid.points, dtype=float)
-    refined_points = np.asarray(refined_grid.points, dtype=float)
-    terminal = np.interp(
-        refined_points, coarse_points, np.asarray(problem.terminal_values, dtype=float)
+    coarse_points = np.asarray(problem.spatial_grid.points, dtype=np.float64)
+    refined_points = np.asarray(refined_grid.points, dtype=np.float64)
+    terminal = np.asarray(
+        linear_interpolate(
+            coarse_points,
+            np.asarray(problem.terminal_values, dtype=np.float64),
+            refined_points,
+            bounds="clip",
+        ).values
     )
     boundary = np.column_stack(
         tuple(
-            np.interp(
-                refined_times,
-                coarse_times,
-                np.asarray(problem.boundary_values, dtype=float)[:, side],
+            np.asarray(
+                linear_interpolate(
+                    coarse_times,
+                    np.asarray(problem.boundary_values, dtype=np.float64)[:, side],
+                    refined_times,
+                    bounds="clip",
+                ).values
             )
             for side in range(2)
         )

@@ -15,7 +15,10 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
-from ..._spectral._nufft import NUFFTPlan, PreparedNUFFT
+from ..._spectral._nonuniform_fourier import (
+    NonuniformFourierPlan,
+    PreparedNonuniformFourier,
+)
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...linalg import (
@@ -29,7 +32,6 @@ from ...linalg import (
 )
 
 
-FourierFitMethod = Literal["direct", "nufft"]
 FourierWeightPolicy = Literal["uniform", "explicit"]
 
 
@@ -72,17 +74,23 @@ def fourier_type2(
     coefficients: Array,
     /,
     *,
-    method: FourierFitMethod,
-    tolerance: float,
+    query_chunk_size: int | None,
 ) -> Array:
-    """Apply the current-convention finite Fourier synthesis operator."""
-    if method == "direct":
+    """Apply the current-convention exact finite Fourier synthesis operator."""
+    if query_chunk_size is None:
         return _direct_type2(phases, coefficients)
-    dimension = int(phases.shape[-1])
-    plan = NUFFTPlan(
-        coefficients.shape[:dimension], 2, sign=1, tolerance=tolerance, method="chunked"
+    dimension = phases.shape[-1]
+    plan = NonuniformFourierPlan(
+        coefficients.shape[:dimension],
+        2,
+        sign=1,
+        route="chunked",
+        chunk_size=query_chunk_size,
     )
-    return PreparedNUFFT(plan, dtype=phases.dtype).type2(phases, coefficients)
+    return PreparedNonuniformFourier(plan, dtype=phases.dtype).type2(
+        phases,
+        coefficients,
+    )
 
 
 def fourier_type1(
@@ -91,14 +99,19 @@ def fourier_type1(
     mode_shape: tuple[int, ...],
     /,
     *,
-    method: FourierFitMethod,
-    tolerance: float,
+    query_chunk_size: int | None,
 ) -> Array:
     """Apply the normalization-paired algebraic transpose of Type-2 synthesis."""
-    if method == "direct":
+    if query_chunk_size is None:
         return _direct_type1(phases, values, mode_shape)
-    plan = NUFFTPlan(mode_shape, 1, sign=1, tolerance=tolerance, method="chunked")
-    return PreparedNUFFT(plan, dtype=phases.dtype).type1(phases, values)
+    plan = NonuniformFourierPlan(
+        mode_shape,
+        1,
+        sign=1,
+        route="chunked",
+        chunk_size=query_chunk_size,
+    )
+    return PreparedNonuniformFourier(plan, dtype=phases.dtype).type1(phases, values)
 
 
 class FourierScatteredFitPlan(StrictModule):
@@ -107,8 +120,7 @@ class FourierScatteredFitPlan(StrictModule):
     mode_shape: tuple[int, ...] = eqx.field(static=True)
     periods: tuple[float, ...] = eqx.field(static=True)
     origins: tuple[float, ...] = eqx.field(static=True)
-    method: FourierFitMethod = eqx.field(static=True)
-    tolerance: float = eqx.field(static=True)
+    solve_tolerance: float = eqx.field(static=True)
     weight_policy: FourierWeightPolicy = eqx.field(static=True)
     regularization: float = eqx.field(static=True)
     linear_policy: LinearSolvePolicy | None
@@ -121,14 +133,13 @@ class FourierScatteredFitPlan(StrictModule):
         /,
         *,
         origins: Sequence[float] | None = None,
-        method: FourierFitMethod = "direct",
-        tolerance: float = 1.0e-10,
+        solve_tolerance: float = 1.0e-10,
         weight_policy: FourierWeightPolicy = "uniform",
         regularization: float = 0.0,
         linear_policy: LinearSolvePolicy | None = None,
         query_chunk_size: int | None = None,
     ):
-        shape = tuple(int(size) for size in mode_shape)
+        shape = tuple(mode_shape)
         period_values = tuple(float(value) for value in periods)
         origin_values = (
             (0.0,) * len(shape)
@@ -143,14 +154,10 @@ class FourierScatteredFitPlan(StrictModule):
             raise ValueError("Fourier periods must be finite and positive.")
         if any(not isfinite(value) for value in origin_values):
             raise ValueError("Fourier origins must be finite.")
-        if method not in ("direct", "nufft"):
-            raise ValueError("method must be 'direct' or 'nufft'.")
-        if method == "nufft" and len(shape) > 3:
-            raise ValueError("NUFFT fitting supports one through three dimensions.")
-        tolerance_ = float(tolerance)
+        solve_tolerance_ = float(solve_tolerance)
         regularization_ = float(regularization)
-        if not isfinite(tolerance_) or tolerance_ <= 0.0:
-            raise ValueError("Fourier tolerance must be finite and positive.")
+        if not isfinite(solve_tolerance_) or solve_tolerance_ <= 0.0:
+            raise ValueError("solve_tolerance must be finite and positive.")
         if not isfinite(regularization_) or regularization_ < 0.0:
             raise ValueError("regularization must be finite and nonnegative.")
         if weight_policy not in ("uniform", "explicit"):
@@ -163,8 +170,7 @@ class FourierScatteredFitPlan(StrictModule):
         self.mode_shape = shape
         self.periods = period_values
         self.origins = origin_values
-        self.method = method
-        self.tolerance = tolerance_
+        self.solve_tolerance = solve_tolerance_
         self.weight_policy = weight_policy
         self.regularization = regularization_
         self.linear_policy = linear_policy
@@ -179,8 +185,7 @@ class FourierFitDiagnostics(StrictModule, NonTrainableState):
     iterations: Array
     sample_count: int = eqx.field(static=True)
     mode_count: int = eqx.field(static=True)
-    method: FourierFitMethod = eqx.field(static=True)
-    tolerance: float = eqx.field(static=True)
+    solve_tolerance: float = eqx.field(static=True)
 
 
 class FourierInterpolant(StrictModule):
@@ -188,8 +193,6 @@ class FourierInterpolant(StrictModule):
     origins: Array
     periods: Array
     source_mode_shape: tuple[int, ...] = eqx.field(static=True)
-    method: FourierFitMethod = eqx.field(static=True)
-    tolerance: float = eqx.field(static=True)
     query_chunk_size: int | None = eqx.field(static=True)
 
     def __call__(self, coordinates: ArrayLike, /) -> Array:
@@ -214,8 +217,7 @@ class FourierInterpolant(StrictModule):
             lambda coefficients: fourier_type2(
                 phases,
                 coefficients,
-                method=self.method,
-                tolerance=self.tolerance,
+                query_chunk_size=self.query_chunk_size,
             ),
             in_axes=-1,
             out_axes=-1,
@@ -246,7 +248,7 @@ def fit_fourier_scattered(
         raise TypeError("Scattered Fourier coordinates must be real inexact arrays.")
     if bool(jnp.any(~jnp.isfinite(points))) or bool(jnp.any(~jnp.isfinite(data))):
         raise ValueError("Scattered Fourier coordinates and values must be finite.")
-    sample_count = int(points.shape[0])
+    sample_count = points.shape[0]
     mode_count = prod(plan.mode_shape)
     if sample_count == 0:
         raise ValueError("Scattered Fourier fitting requires at least one sample.")
@@ -278,8 +280,7 @@ def fit_fourier_scattered(
         lambda coefficients: fourier_type2(
             phases,
             coefficients,
-            method=plan.method,
-            tolerance=plan.tolerance,
+            query_chunk_size=plan.query_chunk_size,
         ),
         source=source,
         target=target,
@@ -287,10 +288,9 @@ def fit_fourier_scattered(
             phases,
             sample_values,
             plan.mode_shape,
-            method=plan.method,
-            tolerance=plan.tolerance,
+            query_chunk_size=plan.query_chunk_size,
         ),
-        operator_id=f"fourier-scattered-{plan.method}-{'x'.join(map(str, plan.mode_shape))}",
+        operator_id=f"fourier-scattered-{'x'.join(map(str, plan.mode_shape))}",
     )
     regularizer = None
     if plan.regularization > 0.0:
@@ -310,16 +310,16 @@ def fit_fourier_scattered(
     policy = plan.linear_policy or LinearSolvePolicy(
         LSMR(damping=0.0),
         tolerance=TolerancePolicy(
-            relative=plan.tolerance,
-            absolute=plan.tolerance,
+            relative=plan.solve_tolerance,
+            absolute=plan.solve_tolerance,
             max_steps=max(32, 4 * mode_count),
         ),
     )
-    payload_shape = tuple(int(size) for size in data.shape[1:])
+    payload_shape = tuple(data.shape[1:])
     flattened = data.reshape((sample_count, -1)).astype(complex_dtype)
     results = tuple(
         solve(problem, flattened[:, index], policy=policy)
-        for index in range(int(flattened.shape[1]))
+        for index in range(flattened.shape[1])
     )
     coefficients = jnp.stack(tuple(result.value for result in results), axis=-1).reshape(
         (*plan.mode_shape, *payload_shape)
@@ -336,16 +336,13 @@ def fit_fourier_scattered(
         iterations=jnp.stack(tuple(result.diagnostics.iterations for result in results)),
         sample_count=sample_count,
         mode_count=mode_count,
-        method=plan.method,
-        tolerance=plan.tolerance,
+        solve_tolerance=plan.solve_tolerance,
     )
     interpolant = FourierInterpolant(
         coefficients=coefficients,
         origins=origins,
         periods=periods,
         source_mode_shape=plan.mode_shape,
-        method=plan.method,
-        tolerance=plan.tolerance,
         query_chunk_size=plan.query_chunk_size,
     )
     return interpolant, diagnostics
@@ -353,7 +350,6 @@ def fit_fourier_scattered(
 
 __all__ = [
     "FourierFitDiagnostics",
-    "FourierFitMethod",
     "FourierInterpolant",
     "FourierScatteredFitPlan",
     "FourierWeightPolicy",

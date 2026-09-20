@@ -33,15 +33,14 @@ class GeometryMeasurePartition(StrictModule):
         *,
         kind: Literal["segment", "triangle"],
     ):
-        vertices_ = jnp.asarray(vertices, dtype=float)
-        measures_ = jnp.asarray(measures, dtype=float).reshape((-1,))
+        vertices_ = jnp.asarray(vertices, dtype=jnp.float64)
+        measures_ = jnp.asarray(measures, dtype=jnp.float64).reshape((-1,))
         simplex_size = 2 if kind == "segment" else 3
-        if vertices_.ndim != 3 or int(vertices_.shape[1]) != simplex_size:
+        if vertices_.ndim != 3 or vertices_.shape[1] != simplex_size:
             raise ValueError(
-                f"{kind!r} partition vertices must have shape "
-                f"(num_strata, {simplex_size}, spatial_dim)."
+                f"{kind!r} partition vertices must have shape (num_strata, {simplex_size}, spatial_dim)."
             )
-        if int(vertices_.shape[0]) == 0:
+        if vertices_.shape[0] == 0:
             raise ValueError(
                 "Geometry measure partitions must contain at least one stratum."
             )
@@ -55,7 +54,7 @@ class GeometryMeasurePartition(StrictModule):
 
     @property
     def num_strata(self) -> int:
-        return int(self.measures.shape[0])
+        return self.measures.shape[0]
 
     @property
     def total_measure(self) -> Array:
@@ -85,15 +84,14 @@ class GeometryMeasurePartition(StrictModule):
             raise ValueError("minimum_per_stratum must be non-negative.")
         if n < minimum * self.num_strata:
             raise ValueError(
-                f"num_points={n} cannot allocate minimum_per_stratum={minimum} "
-                f"across {self.num_strata} strata."
+                f"num_points={n} cannot allocate minimum_per_stratum={minimum} across {self.num_strata} strata."
             )
 
         target_mass = self.measures / self.total_measure
         if stratum_weights is None:
             allocation_mass = target_mass
         else:
-            weights = jnp.asarray(stratum_weights, dtype=float).reshape((-1,))
+            weights = jnp.asarray(stratum_weights, dtype=jnp.float64).reshape((-1,))
             if weights.shape != self.measures.shape:
                 raise ValueError("stratum_weights must have shape (num_strata,).")
             weights = jnp.maximum(jnp.nan_to_num(weights, nan=0.0), 0.0)
@@ -177,8 +175,8 @@ class BoundaryAtlasPartition(StrictModule):
             raise ValueError(
                 "BoundaryAtlasPartition supports reference dimensions one and two."
             )
-        reference = jnp.asarray(reference_host, dtype=float)
-        reference_weights = jnp.asarray(reference_weights_host, dtype=float)
+        reference = jnp.asarray(reference_host, dtype=jnp.float64)
+        reference_weights = jnp.asarray(reference_weights_host, dtype=jnp.float64)
         chart_indices = jnp.broadcast_to(
             jnp.arange(atlas.num_charts, dtype=jnp.int32)[:, None],
             (atlas.num_charts, reference.shape[0]),
@@ -233,7 +231,7 @@ class BoundaryAtlasPartition(StrictModule):
         if stratum_weights is None:
             allocation_mass = target_mass
         else:
-            weights = jnp.asarray(stratum_weights, dtype=float).reshape((-1,))
+            weights = jnp.asarray(stratum_weights, dtype=jnp.float64).reshape((-1,))
             if weights.shape != self.measures.shape:
                 raise ValueError("stratum_weights must have shape (num_strata,).")
             weighted = target_mass * jnp.maximum(jnp.nan_to_num(weights, nan=0.0), 0.0)

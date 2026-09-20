@@ -133,7 +133,6 @@ def write_particle_qualification_artifact(
 ) -> None:
     destination = Path(path)
     payload = {
-        "schema_version": 1,
         "artifact_id": artifact.artifact_id,
         "method_id": artifact.method_id,
         "code_version": artifact.code_version,

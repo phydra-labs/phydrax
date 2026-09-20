@@ -62,7 +62,7 @@ class TrajectoryStateTimeSamples(StrictModule):
 
     @property
     def sample_shape(self) -> tuple[int, ...]:
-        return tuple(int(size) for size in self.log_weights.shape)
+        return tuple(self.log_weights.shape)
 
     @property
     def num_nodes(self) -> int:
@@ -135,21 +135,23 @@ def trajectory_state_time_samples(
     weight_dims = leading_axes + (trajectory.time_axis,)
     times = cx.AxisArray(times_array, dims=weight_dims)
     if log_weights is None:
-        weights = cx.AxisArray(jnp.zeros(times.shape, dtype=float), dims=weight_dims)
+        weights = cx.AxisArray(
+            jnp.zeros(times.shape, dtype=jnp.float64), dims=weight_dims
+        )
     elif isinstance(log_weights, cx.AxisArray):
         if log_weights.dims != weight_dims or log_weights.shape != times.shape:
             raise ValueError("log_weights field must match trajectory state-time axes.")
         weights = log_weights
     else:
-        array = jnp.asarray(log_weights, dtype=float)
+        array = jnp.asarray(log_weights, dtype=jnp.float64)
         if array.shape != times.shape:
             raise ValueError("log_weights must match the trajectory leading/time shape.")
         weights = cx.AxisArray(array, dims=weight_dims)
-    weight_values = jnp.asarray(weights.data, dtype=float)
+    weight_values = jnp.asarray(weights.data, dtype=jnp.float64)
     if bool(jnp.any(~jnp.isfinite(weight_values))):
         raise ValueError("log_weights must be finite.")
 
-    leading_shape = tuple(int(size) for size in times.shape[:-1])
+    leading_shape = tuple(times.shape[:-1])
     path_count = 1
     for size in leading_shape:
         path_count *= size

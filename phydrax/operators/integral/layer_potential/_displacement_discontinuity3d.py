@@ -53,7 +53,7 @@ class PreparedDisplacementDiscontinuity3D(StrictModule, NonTrainableState):
 
 
 def _space(vertices, faces):
-    points = np.asarray(vertices, dtype=float)
+    points = np.asarray(vertices, dtype=np.float64)
     triangles = np.asarray(faces, dtype=np.int32)
     if (
         points.ndim != 2
@@ -133,7 +133,7 @@ def prepare_displacement_discontinuity_3d(
         )
         / doubled[:, None, None]
     )
-    scalar = np.empty((space.face_count, space.face_count), dtype=float)
+    scalar = np.empty((space.face_count, space.face_count), dtype=np.float64)
     for target in range(space.face_count):
         for source in range(space.face_count):
             if target == source:
@@ -147,7 +147,7 @@ def prepare_displacement_discontinuity_3d(
                     areas[target] * areas[source] / (4.0 * pi * radius)
                 )
     vertex_count = space.vertex_count
-    scalar_w = np.zeros((vertex_count, vertex_count), dtype=float)
+    scalar_w = np.zeros((vertex_count, vertex_count), dtype=np.float64)
     for target in range(space.face_count):
         for source in range(space.face_count):
             local = scalar[target, source] * (gradients[target] @ gradients[source].T)

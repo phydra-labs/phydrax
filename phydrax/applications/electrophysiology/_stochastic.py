@@ -41,7 +41,7 @@ class MarkovChannelPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, generator_per_ms: Array, compartment_count: int, /):
-        generator_host = np.asarray(generator_per_ms, dtype=float)
+        generator_host = np.asarray(generator_per_ms, dtype=np.float64)
         if (
             generator_host.ndim != 2
             or generator_host.shape[0] != generator_host.shape[1]
@@ -67,7 +67,7 @@ class MarkovChannelPlan(StrictModule, NonTrainableState):
         self.state_count = generator_host.shape[0]
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "electrophysiology-markov-channel-v1",
+                "kind": "electrophysiology-markov-channel",
                 "generator_per_ms": generator_host.tolist(),
                 "compartment_count": compartment_count,
                 "units_id": ELECTROPHYSIOLOGY_UNITS.units_id,
@@ -94,7 +94,7 @@ class PreparedMarkovChannel(StrictModule, NonTrainableState):
         self.dt_ms = dt_ms
         self.runtime_id = canonical_fingerprint(
             {
-                "kind": "prepared-electrophysiology-markov-channel-v1",
+                "kind": "prepared-electrophysiology-markov-channel",
                 "plan": plan.plan_id,
                 "dt_ms": dt_ms,
             }

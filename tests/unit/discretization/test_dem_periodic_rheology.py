@@ -120,8 +120,8 @@ def test_mixed_stress_strain_control_uses_periodic_contact_stress():
     with pytest.raises(ValueError, match="disjoint"):
         phx.discretization.DEMPeriodicCellControlPlan(
             jnp.zeros((2, 2)),
-            strain_rate_mask=jnp.eye(2, dtype=bool),
-            stress_mask=jnp.eye(2, dtype=bool),
+            strain_rate_mask=jnp.eye(2, dtype="bool"),
+            stress_mask=jnp.eye(2, dtype="bool"),
             stress_compliance=jnp.ones((2, 2)),
         )
 

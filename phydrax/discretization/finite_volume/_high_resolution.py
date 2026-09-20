@@ -374,7 +374,7 @@ class NonuniformWENOReconstructionPlan(StrictModule, NonTrainableState):
         power: int = 2,
         cutoff: float = 1e-6,
     ):
-        edges = np.asarray(cell_edges, dtype=float).reshape((-1,))
+        edges = np.asarray(cell_edges, dtype=np.float64).reshape((-1,))
         if (
             edges.size < 7
             or np.any(~np.isfinite(edges))

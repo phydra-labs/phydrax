@@ -26,7 +26,7 @@ def test_corotational_beam_is_objective_under_large_rigid_rotation():
     reference_positions = jnp.asarray(((0.0, 0.0), (1.0, 0.0)))
     reference = mn.MemberReferenceState(structure, reference_positions)
     dofs = mn.MemberDOFLayout(
-        structure, rotation_constrained=jnp.ones((2, 1), dtype=bool)
+        structure, rotation_constrained=jnp.ones((2, 1), dtype="bool")
     )
     definition = mn.MemberNetworkDefinition(
         structure, reference, _beam_properties(1), dofs
@@ -89,7 +89,7 @@ def test_discrete_rod_bending_and_twist_energy_detect_deformation():
     positions = jnp.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0), (2.0, 0.0, 0.0)))
     reference = mn.MemberReferenceState(structure, positions)
     dofs = mn.MemberDOFLayout(
-        structure, rotation_constrained=jnp.ones((3, 3), dtype=bool)
+        structure, rotation_constrained=jnp.ones((3, 3), dtype="bool")
     )
     definition = mn.MemberNetworkDefinition(
         structure, reference, _beam_properties(2), dofs
@@ -122,7 +122,7 @@ def test_hinge_bending_energy_is_zero_at_rest_and_positive_when_folded():
     )
     reference = mn.MemberReferenceState(structure, positions)
     dofs = mn.MemberDOFLayout(
-        structure, rotation_constrained=jnp.ones((4, 3), dtype=bool)
+        structure, rotation_constrained=jnp.ones((4, 3), dtype="bool")
     )
     definition = mn.MemberNetworkDefinition(
         structure, reference, _beam_properties(5), dofs

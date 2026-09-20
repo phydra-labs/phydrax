@@ -412,16 +412,16 @@ def parse_matpower(
     *,
     limits: PowerParserLimits = _DEFAULT_LIMITS,
 ) -> PowerCaseAdaptation:
-    """Parse a numeric MATPOWER v2 function-case without executing any source.
+    """Parse a numeric MATPOWER canonical function-case without executing any source.
 
     Only version/baseMVA/bus/gen/branch/gencost assignments are accepted. Active
     PQ capability curves, ramp/participation controls, angle-difference limits,
     piecewise/reactive costs, startup/shutdown costs and isolated buses fail.
     RATE_A is the continuous MVA limit; B/C ratings and area/zone labels are
     explicitly reported as discarded non-operating metadata. Frequency is 60 Hz
-    because MATPOWER v2 carries no frequency (also recorded in the report).
+    because MATPOWER canonical carries no frequency (also recorded in the report).
     """
-    ctx = _Import("MATPOWER-v2", (text,), limits)
+    ctx = _Import("MATPOWER", (text,), limits)
     if "%{" in text or "%}" in text:
         ctx.fail(
             "/source",
@@ -492,7 +492,9 @@ def parse_matpower(
     controls: dict[str, BusControl] = {}
     for row in fields["bus"]:
         if len(row) != 13:
-            ctx.fail("/mpc/bus", "Exactly 13 unsolved v2 bus columns are supported.")
+            ctx.fail(
+                "/mpc/bus", "Exactly 13 unsolved canonical bus columns are supported."
+            )
         bid = str(ctx.integer(row[0], "/mpc/bus/id"))
         kind = ctx.integer(row[1], f"/bus/{bid}/type")
         if kind not in (1, 2, 3):
@@ -551,7 +553,7 @@ def parse_matpower(
     for index, row in enumerate(gen_rows):
         path = f"/mpc/gen/{index}"
         if len(row) not in (10, 21):
-            ctx.fail(path, "Expected 10 or 21 unsolved v2 generator columns.")
+            ctx.fail(path, "Expected 10 or 21 unsolved canonical generator columns.")
         active = ctx.flag(row[7], path)
         if active and any(row[10:]):
             ctx.fail(
@@ -582,7 +584,7 @@ def parse_matpower(
     for index, row in enumerate(fields["branch"]):
         path = f"/mpc/branch/{index}"
         if len(row) != 13:
-            ctx.fail(path, "Exactly 13 unsolved v2 branch columns are supported.")
+            ctx.fail(path, "Exactly 13 unsolved canonical branch columns are supported.")
         active = ctx.flag(row[10], path)
         if active and not (
             (row[11] == 0 and row[12] == 0) or (row[11] <= -360 and row[12] >= 360)

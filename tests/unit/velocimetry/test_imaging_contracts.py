@@ -24,7 +24,7 @@ def test_image_contracts_preserve_row_column_components_and_masks():
     field = DenseDisplacementField2D(
         positions,
         jnp.broadcast_to(jnp.asarray([1.0, -2.0]), positions.shape),
-        jnp.ones((3, 4), dtype=bool),
+        jnp.ones((3, 4), dtype="bool"),
         geometry_id=geometry.geometry_id,
     )
 
@@ -48,5 +48,5 @@ def test_backward_warp_has_declared_row_down_column_right_sign():
     warped = backward_warp(image, displacement, fill_value=-1.0)
 
     assert jnp.array_equal(warped.values[:, 1:], image[:, :-1])
-    assert jnp.array_equal(warped.valid[:, 0], jnp.zeros((5,), dtype=bool))
+    assert jnp.array_equal(warped.valid[:, 0], jnp.zeros((5,), dtype="bool"))
     assert jnp.array_equal(warped.values[:, 0], -jnp.ones((5,)))

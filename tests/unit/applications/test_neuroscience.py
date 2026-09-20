@@ -192,7 +192,7 @@ def test_delayed_bold_parameter_gradient_and_masked_fit_failure_boundary():
 
     true = jnp.asarray(0.6)
     truth = predict(true)
-    active = jnp.ones(truth.bold.values.shape, dtype=bool).at[2, 0].set(False)
+    active = jnp.ones(truth.bold.values.shape, dtype="bool").at[2, 0].set(False)
     observed = ns.BOLDObservation.from_samples(
         truth.region_ids,
         times,

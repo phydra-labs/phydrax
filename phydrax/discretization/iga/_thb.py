@@ -35,8 +35,8 @@ class THBLevel(StrictModule, NonTrainableState):
     ):
         level_ = int(level)
         basis = str(basis_id)
-        cells = np.asarray(cell_active, dtype=bool)
-        functions = np.asarray(function_active, dtype=bool)
+        cells = np.asarray(cell_active, dtype=np.bool_)
+        functions = np.asarray(function_active, dtype=np.bool_)
         if level_ < 0 or not basis or cells.ndim != 1 or functions.ndim != 1:
             raise ValueError("THB levels require nonnegative identity and rank-1 masks.")
         if cells.size == 0 or functions.size == 0 or not np.any(cells):
@@ -57,7 +57,7 @@ class THBLevel(StrictModule, NonTrainableState):
 
     @property
     def function_count(self) -> int:
-        return int(self.function_active.size)
+        return self.function_active.size
 
 
 class THBBasisCertificate(StrictModule, NonTrainableState):
@@ -130,7 +130,7 @@ class THBHierarchy(StrictModule, NonTrainableState):
         /,
     ):
         levels_ = tuple(levels)
-        matrices = tuple(np.asarray(value, dtype=float) for value in prolongations)
+        matrices = tuple(np.asarray(value, dtype=np.float64) for value in prolongations)
         if not levels_ or tuple(level.level for level in levels_) != tuple(
             range(len(levels_))
         ):
@@ -173,11 +173,11 @@ class THBHierarchy(StrictModule, NonTrainableState):
         for index, (level, representation) in enumerate(
             zip(self.levels, self.finest_representations, strict=True)
         ):
-            active = np.flatnonzero(np.asarray(level.function_active, dtype=bool))
+            active = np.flatnonzero(np.asarray(level.function_active, dtype=np.bool_))
             block = np.asarray(representation)[:, active]
             if index < finest_active_level:
                 fine_active = np.asarray(
-                    self.levels[index + 1].function_active, dtype=bool
+                    self.levels[index + 1].function_active, dtype=np.bool_
                 )
                 if fine_active.size == block.shape[0]:
                     block = block.copy()

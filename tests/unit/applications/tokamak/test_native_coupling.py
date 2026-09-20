@@ -36,7 +36,7 @@ def test_free_boundary_step_couples_circuit_boundary_and_equilibrium():
         np.asarray([[1.0]]), np.asarray([[0.1]]), ("pf",)
     ).prepare()
     response_values = np.zeros(
-        (equilibrium.z_m.size, equilibrium.r_m.size, 1), dtype=float
+        (equilibrium.z_m.size, equilibrium.r_m.size, 1), dtype="float64"
     )
     response = phx.applications.tokamak.AxisymmetricCoilResponsePlan(
         response_values,

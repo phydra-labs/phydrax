@@ -72,7 +72,7 @@ class CliffordProductEvidence(StrictModule, NonTrainableState):
         self.resource_evidence = resource_evidence
         self.evidence_id = canonical_fingerprint(
             {
-                "kind": "clifford-product-evidence-v1",
+                "kind": "clifford-product-evidence",
                 "algebra": identifiers[0],
                 "left": identifiers[1],
                 "right": identifiers[2],

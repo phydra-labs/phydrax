@@ -413,15 +413,14 @@ def main() -> None:
                     "workload": case.workload,
                     "status": "resource-limit",
                     "reason": (
-                        f"size^2={case.size * case.size} exceeds explicit "
-                        f"max_native_pairs={arguments.max_native_pairs}"
+                        f"size^2={case.size * case.size} exceeds explicit max_native_pairs={arguments.max_native_pairs}"
                     ),
                 }
             )
             continue
         records.append(_record(case, configuration, seed=arguments.seed))
     report = {
-        "schema": "phydrax.fast-order-benchmark.v1",
+        "schema": "phydrax.fast-order-benchmark",
         "configuration": {
             "backends": list(arguments.backends),
             "operations": list(arguments.operations),

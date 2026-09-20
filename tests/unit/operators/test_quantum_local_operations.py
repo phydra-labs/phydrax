@@ -30,7 +30,7 @@ def test_hilbert_register_layout_preserves_explicit_factor_order():
 
 def test_local_unitary_matches_global_embedding_and_target_order():
     layout = Q.HilbertRegisterLayout(("a", "b", "c"), (2, 3, 2))
-    state = jnp.arange(1, 13, dtype=float).astype(jnp.complex128)
+    state = jnp.arange(1, 13, dtype="float64").astype(jnp.complex128)
     state = state / jnp.linalg.norm(state)
 
     local_c = Q.apply_local_unitary_to_state(layout, X, ("c",), state)
@@ -119,7 +119,7 @@ def test_local_operations_reject_ambiguous_shapes_and_dtypes():
         Q.apply_local_unitary_to_state(layout, X, ("b",), state)
     with pytest.raises(ValueError, match="unique"):
         Q.apply_local_unitary_to_state(
-            layout, jnp.eye(4, dtype=complex), ("a", "a"), state
+            layout, jnp.eye(4, dtype="complex128"), ("a", "a"), state
         )
     with pytest.raises(TypeError, match="dtypes must match"):
         Q.apply_local_unitary_to_state(
@@ -131,10 +131,10 @@ def test_local_operations_reject_ambiguous_shapes_and_dtypes():
     with pytest.raises(TypeError, match="complex"):
         Q.LocalUnitaryOperation(jnp.eye(2), ("a",))
     with pytest.raises(ValueError, match="K, dT, dT"):
-        Q.LocalKrausChannelOperation(jnp.eye(2, dtype=complex), ("a",))
+        Q.LocalKrausChannelOperation(jnp.eye(2, dtype="complex128"), ("a",))
     with pytest.raises(ValueError, match="density-matrix"):
         Q.QuantumProgram(
             layout,
-            (Q.LocalKrausChannelOperation(jnp.eye(2, dtype=complex)[None], ("a",)),),
+            (Q.LocalKrausChannelOperation(jnp.eye(2, dtype="complex128")[None], ("a",)),),
             state_kind="state-vector",
         )

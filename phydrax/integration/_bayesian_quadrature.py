@@ -96,8 +96,7 @@ class GaussianKernelMean(AbstractKernelMean):
             isinstance(kernel, ScaleKernel) and isinstance(kernel.kernel, ScaleKernel)
         ):
             raise TypeError(
-                "GaussianKernelMean supports SquaredExponentialKernel, optionally "
-                "wrapped once in ScaleKernel."
+                "GaussianKernelMean supports SquaredExponentialKernel, optionally wrapped once in ScaleKernel."
             )
         dimension = 1
         if base.length_scale.ndim == 1 and base.length_scale.shape[0] not in (
@@ -138,7 +137,7 @@ class GaussianKernelMean(AbstractKernelMean):
     def _design(self, points: ArrayLike, name: str, /) -> Array:
         values = jnp.asarray(points)
         if not jnp.issubdtype(values.dtype, jnp.inexact):
-            values = values.astype(float)
+            values = values.astype("float64")
         if self.dimension == 1 and values.ndim == 1:
             values = values[:, None]
         if values.ndim != 2 or values.shape[1] != self.dimension:
@@ -270,8 +269,7 @@ class BayesianQuadraturePlan(StrictModule):
                 )
             if design.layout is not None:
                 raise ValueError(
-                    "Bayesian quadrature owns its scalar probability sample layout; "
-                    "PointSampling.layout must be None."
+                    "Bayesian quadrature owns its scalar probability sample layout; PointSampling.layout must be None."
                 )
             design_count = design.count
         elif isinstance(design, FixedBayesianQuadratureDesign):
@@ -280,8 +278,7 @@ class BayesianQuadraturePlan(StrictModule):
             design_count = design.total_count
         else:
             raise TypeError(
-                "design must be PointSampling, FixedBayesianQuadratureDesign, or "
-                "SequentialBayesianQuadratureDesign."
+                "design must be PointSampling, FixedBayesianQuadratureDesign, or SequentialBayesianQuadratureDesign."
             )
         limit = int(max_points)
         if limit < 1:
@@ -291,8 +288,8 @@ class BayesianQuadraturePlan(StrictModule):
                 f"Bayesian quadrature design has {design_count} points, exceeding "
                 f"max_points={limit}; no kernel matrix was allocated."
             )
-        noise = jnp.asarray(observation_noise, dtype=float)
-        regularization = jnp.asarray(solve_regularization, dtype=float)
+        noise = jnp.asarray(observation_noise, dtype=jnp.float64)
+        regularization = jnp.asarray(solve_regularization, dtype=jnp.float64)
         if noise.ndim != 0 or regularization.ndim != 0:
             raise ValueError("Observation noise and solve regularization must be scalar.")
         self.observation_noise = eqx.error_if(
@@ -325,13 +322,11 @@ class BayesianQuadraturePlan(StrictModule):
             or policy.rank.relative_cutoff is not None
         ):
             raise ValueError(
-                "Bayesian quadrature DenseCholesky does not accept preconditioning, "
-                "recycling, or a rank cutoff."
+                "Bayesian quadrature DenseCholesky does not accept preconditioning, recycling, or a rank cutoff."
             )
         if policy.failure.mode != "status":
             raise ValueError(
-                "Bayesian quadrature requires solve failure='status' to retain child "
-                "solve evidence."
+                "Bayesian quadrature requires solve failure='status' to retain child solve evidence."
             )
         self.kernel_mean = kernel_mean
         self.design = design
@@ -527,8 +522,7 @@ def materialize_bayesian_quadrature(
         or gram_workspace_bytes > resources.workspace_bytes
     ):
         raise ValueError(
-            "Bayesian quadrature kernel system exceeds the dense solve resource "
-            "budget; no kernel matrix was allocated."
+            "Bayesian quadrature kernel system exceeds the dense solve resource budget; no kernel matrix was allocated."
         )
     kernel_matrix = policy.accumulation(
         plan.kernel_mean.matrix(evaluation_design, evaluation_design)

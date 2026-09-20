@@ -12,11 +12,11 @@ class _LinearField(eqx.Module):
     shift: jnp.ndarray
 
     def __init__(self, matrix, shift=None):
-        self.matrix = jnp.asarray(matrix, dtype=float)
+        self.matrix = jnp.asarray(matrix, dtype="float64")
         self.shift = (
             jnp.zeros((self.matrix.shape[0],))
             if shift is None
-            else jnp.asarray(shift, dtype=float)
+            else jnp.asarray(shift, dtype="float64")
         )
 
     def __call__(self, time, state, args):
@@ -25,14 +25,14 @@ class _LinearField(eqx.Module):
 
 
 def _normal(location, covariance):
-    location = jnp.asarray(location, dtype=float)
-    family = phx.uq.MultivariateNormalFamily(int(location.shape[0]))
+    location = jnp.asarray(location, dtype="float64")
+    family = phx.uq.MultivariateNormalFamily(location.shape[0])
     return family.law_from_location_covariance(location, covariance)
 
 
 def _flow(matrix, *, shift=None, max_exact_dimension=32):
-    matrix = jnp.asarray(matrix, dtype=float)
-    dimension = int(matrix.shape[0])
+    matrix = jnp.asarray(matrix, dtype="float64")
+    dimension = matrix.shape[0]
     system = phx.dynamics.ContinuousSystem(
         _LinearField(matrix, shift),
         state_layout=phx.dynamics.StateLayout((dimension,)),

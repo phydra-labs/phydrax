@@ -72,7 +72,7 @@ class CompiledChannelFlowDynamics(StrictModule):
         state_shape = stokes_plan.discretization.modal_shape + (3,)
         identifier = canonical_fingerprint(
             {
-                "kind": "compiled-channel-flow-v2",
+                "kind": "compiled-channel-flow",
                 "problem": problem.problem_id,
                 "stokes_plan": stokes_plan.plan_id,
                 "spatial_method": spatial_method.prepared_id,

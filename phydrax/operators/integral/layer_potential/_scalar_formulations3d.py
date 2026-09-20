@@ -256,7 +256,7 @@ def _metadata(
     )
     formulation_id = canonical_fingerprint(
         {
-            "kind": "scalar-boundary-formulation-3d-v1",
+            "kind": "scalar-boundary-formulation-3d",
             "assembly": report.report_id,
             "name": name,
             "side": side,
@@ -371,10 +371,7 @@ def scalar_exterior_dirichlet_formulation_3d(
         raise ValueError("Exterior Dirichlet representation is invalid.")
     risk = None
     if prepared.kernel.family == "laplace" and representation == "double-layer":
-        risk = (
-            "raw-exterior-Laplace-double-layer-has-a-componentwise-constant-"
-            "density-nullspace;-use-single-layer"
-        )
+        risk = "raw-exterior-Laplace-double-layer-has-a-componentwise-constant-density-nullspace;-use-single-layer"
     metadata = _metadata(
         prepared,
         operator=operator,
@@ -415,7 +412,7 @@ def scalar_interior_neumann_formulation_3d(
             prepared.component_count,
             operator_id=canonical_fingerprint(
                 {
-                    "kind": "laplace-interior-Neumann-component-gauge-3d-v1",
+                    "kind": "laplace-interior-Neumann-component-gauge-3d",
                     "assembly": prepared.assembly_report.report_id,
                 }
             ),

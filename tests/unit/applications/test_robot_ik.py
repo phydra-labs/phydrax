@@ -22,9 +22,7 @@ from phydrax.discretization.particle._reduced_articulation import (
 
 
 def _quaternion_z(angle):
-    return jnp.asarray(
-        (jnp.cos(0.5 * angle), 0.0, 0.0, jnp.sin(0.5 * angle))
-    )
+    return jnp.asarray((jnp.cos(0.5 * angle), 0.0, 0.0, jnp.sin(0.5 * angle)))
 
 
 def _one_joint_articulation(kind):
@@ -164,9 +162,7 @@ def test_prismatic_target_and_joint_bounds_are_respected():
         task_id="slider-beyond-limit",
     )
     bounds = phx.optim.Bounds(jnp.asarray((-0.1,)), jnp.asarray((0.3,)))
-    bounded_result = FrameInverseKinematicsPlan(
-        articulation, (beyond_limit,)
-    ).solve(
+    bounded_result = FrameInverseKinematicsPlan(articulation, (beyond_limit,)).solve(
         jnp.zeros((1,)),
         method=phx.optim.BoundedLevenbergMarquardt(),
         termination=_termination(),
@@ -211,9 +207,7 @@ def test_conflicting_tasks_report_residual_without_false_success():
 def test_pose_residual_is_invariant_to_target_quaternion_sign():
     articulation = _one_joint_articulation("hinge")
     target_angle = jnp.asarray(0.7)
-    target_position = jnp.asarray(
-        (jnp.cos(target_angle), jnp.sin(target_angle), 0.0)
-    )
+    target_position = jnp.asarray((jnp.cos(target_angle), jnp.sin(target_angle), 0.0))
     quaternion = _quaternion_z(target_angle)
     positive = FramePoseTask(
         101,

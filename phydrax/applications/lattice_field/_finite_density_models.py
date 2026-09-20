@@ -45,9 +45,9 @@ class HRGSpectrum(StrictModule, NonTrainableState):
         checksum: str,
         interaction_prescription: str = "ideal-boltzmann",
     ):
-        masses_ = np.asarray(masses, dtype=float)
-        degeneracies_ = np.asarray(degeneracies, dtype=float)
-        charges_ = np.asarray(charges, dtype=float)
+        masses_ = np.asarray(masses, dtype=np.float64)
+        degeneracies_ = np.asarray(degeneracies, dtype=np.float64)
+        charges_ = np.asarray(charges, dtype=np.float64)
         if (
             masses_.ndim != 1
             or masses_.size < 1
@@ -56,9 +56,9 @@ class HRGSpectrum(StrictModule, NonTrainableState):
         ):
             raise ValueError("HRG spectrum arrays have incompatible shapes.")
         active_ = (
-            np.ones(masses_.shape, dtype=bool)
+            np.ones(masses_.shape, dtype=np.bool_)
             if active is None
-            else np.asarray(active, dtype=bool)
+            else np.asarray(active, dtype=np.bool_)
         )
         if (
             active_.shape != masses_.shape
@@ -182,10 +182,10 @@ class FiniteDensityProviderGrid(StrictModule, NonTrainableState):
         provider_release: str,
         checksum: str,
     ):
-        temperatures_ = np.asarray(temperatures, dtype=float)
-        baryon = np.asarray(baryon_chemical_potentials, dtype=float)
-        regular = np.asarray(regular_pressure_over_temperature4, dtype=float)
-        singular = np.asarray(singular_pressure_over_temperature4, dtype=float)
+        temperatures_ = np.asarray(temperatures, dtype=np.float64)
+        baryon = np.asarray(baryon_chemical_potentials, dtype=np.float64)
+        regular = np.asarray(regular_pressure_over_temperature4, dtype=np.float64)
+        singular = np.asarray(singular_pressure_over_temperature4, dtype=np.float64)
         if (
             temperatures_.ndim != 1
             or baryon.ndim != 1
@@ -199,9 +199,9 @@ class FiniteDensityProviderGrid(StrictModule, NonTrainableState):
         if regular.shape != expected or singular.shape != expected:
             raise ValueError("Provider pressure components must align with grid axes.")
         valid_ = (
-            np.ones(expected, dtype=bool)
+            np.ones(expected, dtype=np.bool_)
             if valid is None
-            else np.asarray(valid, dtype=bool)
+            else np.asarray(valid, dtype=np.bool_)
         )
         if (
             valid_.shape != expected

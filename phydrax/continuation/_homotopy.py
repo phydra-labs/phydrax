@@ -52,7 +52,7 @@ class HomotopyEndpointCertificate(StrictModule):
         self.start_residual_norm = jnp.asarray(start_residual_norm)
         self.target_residual_norm = jnp.asarray(target_residual_norm)
         self.tolerance = jnp.asarray(tolerance)
-        self.finite = jnp.asarray(finite, dtype=bool)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
 
     @property

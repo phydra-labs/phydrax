@@ -31,7 +31,7 @@ def gravothermal_calibration_payload(
 ) -> bytes:
     """Return the exact governed bytes for one gravothermal calibration table."""
 
-    faces = np.asarray(radial_faces, dtype=float)
+    faces = np.asarray(radial_faces, dtype=np.float64)
     coupling = float(gravitational_constant)
     cross_section = float(cross_section_per_mass)
     calibration = float(conductivity_calibration)
@@ -211,7 +211,7 @@ class GravothermalSIDMPlan(StrictModule, NonTrainableState):
         training_use: bool,
         export: bool,
     ):
-        faces = np.asarray(radial_faces, dtype=float)
+        faces = np.asarray(radial_faces, dtype=np.float64)
         if (
             faces.ndim != 1
             or faces.size < 4
@@ -295,8 +295,7 @@ class GravothermalSIDMPlan(StrictModule, NonTrainableState):
             not in calibration_artifact.parent_artifact_ids
         ):
             raise ValueError(
-                "Gravothermal calibration envelope and manifest identity, digest, "
-                "license, or lineage disagree."
+                "Gravothermal calibration envelope and manifest identity, digest, license, or lineage disagree."
             )
         inner = faces[:-1]
         outer = faces[1:]
@@ -354,7 +353,7 @@ class GravothermalSIDMPlan(StrictModule, NonTrainableState):
 
     @property
     def shell_count(self) -> int:
-        return int(self.radial_centers.size)
+        return self.radial_centers.size
 
     def _gravitational_binding_energy(self, faces: Array, shell_mass: Array, /) -> Array:
         inner = faces[:-1]
@@ -634,8 +633,7 @@ class GravothermalSIDMPlan(StrictModule, NonTrainableState):
             or state.radial_faces.shape != (self.shell_count + 1,)
         ):
             raise ValueError(
-                f"Gravothermal shell fields must have shape {expected} and "
-                "radial_faces one additional entry."
+                f"Gravothermal shell fields must have shape {expected} and radial_faces one additional entry."
             )
 
     def _finite_positive(self, state: GravothermalSIDMState) -> Array:

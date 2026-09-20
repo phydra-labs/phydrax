@@ -51,7 +51,7 @@ def _scalar_key(value: Key[Array, ""], /) -> Array:
 
 
 def _samples(value: Sequence[int], /) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if any(size <= 0 for size in shape):
         raise ValueError("sample_shape dimensions must be positive.")
     return shape
@@ -151,7 +151,7 @@ def _dense_sampler(
         raise ValueError("fractional Gaussian grid covariance is not semidefinite.")
     eigenvalues = np.maximum(eigenvalues, 0.0)
     factor = jnp.asarray(eigenvectors * np.sqrt(eigenvalues)[None, :])
-    return _DenseFractionalGaussianSampler(factor, int(nodes.size))
+    return _DenseFractionalGaussianSampler(factor, nodes.size)
 
 
 def _uniform_step(nodes: np.ndarray, /) -> float | None:
@@ -180,7 +180,7 @@ def _davies_harte_sampler(
     step: float,
     /,
 ) -> tuple[_DaviesHarteFractionalGaussianSampler | None, str | None]:
-    num_times = int(nodes.size)
+    num_times = nodes.size
     num_increments = num_times - 1
     lags = np.arange(num_increments + 1, dtype=np.float64)
     power = 2.0 * process.hurst
@@ -206,8 +206,7 @@ def _davies_harte_sampler(
         return None, "Davies-Harte embedding spectrum must be finite."
     if np.any(spectrum < -tolerance):
         return None, (
-            "Davies-Harte embedding spectrum is not positive semidefinite "
-            "at the grid dtype and scale."
+            "Davies-Harte embedding spectrum is not positive semidefinite at the grid dtype and scale."
         )
     spectrum = np.maximum(spectrum, 0.0)
     factor = jnp.asarray(np.sqrt(spectrum), dtype=nodes.dtype)
@@ -239,8 +238,7 @@ def _sampling_strategy(
     if method == "davies-harte":
         if not exact_reference:
             raise ValueError(
-                "Davies-Harte sampling requires grid[0] to equal reference_time "
-                "exactly after dtype materialization."
+                "Davies-Harte sampling requires grid[0] to equal reference_time exactly after dtype materialization."
             )
         if step is None:
             raise ValueError("Davies-Harte sampling requires an increasing uniform grid.")
@@ -258,7 +256,7 @@ def _sampling_strategy(
         )
     if step is None:
         return _dense_sampler(process, nodes), "dense", "auto:dense-nonuniform-grid"
-    num_increments = int(nodes.size) - 1
+    num_increments = nodes.size - 1
     if num_increments < _AUTO_DAVIES_HARTE_MIN_INCREMENTS:
         return _dense_sampler(process, nodes), "dense", "auto:dense-small-grid"
     sampler, error = _davies_harte_sampler(process, nodes, nodes_host, step)
@@ -296,21 +294,21 @@ class FractionalGaussianProcess(StrictModule):
         exponent = float(hurst)
         if not isfinite(exponent) or not 0.0 < exponent < 1.0:
             raise ValueError("hurst must be finite and lie strictly between 0 and 1.")
-        scale_value = jnp.asarray(scale, dtype=float)
+        scale_value = jnp.asarray(scale, dtype=jnp.float64)
         if scale_value.ndim > 1:
             raise ValueError("scale must be scalar or a rank-1 component vector.")
         if scale_value.ndim == 0:
             resolved_dimension = 1 if dimension is None else int(dimension)
             scale_value = jnp.broadcast_to(scale_value, (resolved_dimension,))
         else:
-            resolved_dimension = int(scale_value.size)
+            resolved_dimension = scale_value.size
             if dimension is not None and int(dimension) != resolved_dimension:
                 raise ValueError("dimension must match the scale vector length.")
         if resolved_dimension <= 0:
             raise ValueError("dimension must be positive.")
         if bool(jnp.any(~jnp.isfinite(scale_value))) or bool(jnp.any(scale_value <= 0.0)):
             raise ValueError("scale values must be finite and positive.")
-        drift_value = jnp.asarray(drift, dtype=float)
+        drift_value = jnp.asarray(drift, dtype=jnp.float64)
         if drift_value.ndim == 0:
             drift_value = jnp.broadcast_to(drift_value, (resolved_dimension,))
         if drift_value.shape != (resolved_dimension,):
@@ -338,8 +336,8 @@ class FractionalGaussianProcess(StrictModule):
 
     def time_covariance(self, left: ArrayLike, right: ArrayLike, /) -> Array:
         """Unscaled scalar fractional-Brownian covariance under broadcasting."""
-        first = jnp.asarray(left, dtype=float)
-        second = jnp.asarray(right, dtype=float)
+        first = jnp.asarray(left, dtype=jnp.float64)
+        second = jnp.asarray(right, dtype=jnp.float64)
         power = 2.0 * self.hurst
         return 0.5 * (
             jnp.abs(first - self.reference_time) ** power
@@ -353,7 +351,7 @@ class FractionalGaussianProcess(StrictModule):
         return base[..., None, None] * jnp.diag(self.scale**2)
 
     def mean(self, times: ArrayLike, /) -> Array:
-        values = jnp.asarray(times, dtype=float)
+        values = jnp.asarray(times, dtype=jnp.float64)
         return (values - self.reference_time)[..., None] * self.drift
 
     def increment_covariance(
@@ -412,8 +410,8 @@ class FractionalGaussianRealization(StrictModule):
         if not isinstance(process, FractionalGaussianProcess):
             raise TypeError("process must be a FractionalGaussianProcess.")
         key = _scalar_key(root_key)
-        nodes = jnp.asarray(grid, dtype=float)
-        if nodes.ndim != 1 or int(nodes.size) < 2:
+        nodes = jnp.asarray(grid, dtype=jnp.float64)
+        if nodes.ndim != 1 or nodes.size < 2:
             raise ValueError("grid must be a rank-1 array with at least two nodes.")
         nodes_host = np.asarray(jax.device_get(nodes))
         if np.any(~np.isfinite(nodes_host)) or np.any(np.diff(nodes_host) <= 0.0):
@@ -511,7 +509,7 @@ class FractionalGaussianRealization(StrictModule):
     def values(self) -> Array:
         """Path values with shape ``sample_shape + (num_times, dimension)``."""
         keys = self.path_keys.reshape((-1,) + tuple(self.root_key.shape))
-        num_times = int(self.grid.size)
+        num_times = self.grid.size
         centered = (
             self._sampler.sample_paths(
                 keys,
@@ -532,7 +530,7 @@ class FractionalGaussianRealization(StrictModule):
         *,
         interpolation: FractionalGaussianInterpolation = "grid",
     ) -> Array:
-        query = jnp.asarray(times, dtype=float)
+        query = jnp.asarray(times, dtype=jnp.float64)
         if query.size == 0 or bool(jnp.any(~jnp.isfinite(query))):
             raise ValueError("query times must be non-empty and finite.")
         if bool(jnp.any(query < self.support[0]) | jnp.any(query > self.support[1])):
@@ -541,7 +539,7 @@ class FractionalGaussianRealization(StrictModule):
             raise ValueError("interpolation must be 'grid' or 'linear'.")
         if interpolation == "grid":
             indices = jnp.searchsorted(self.grid, query)
-            indices = jnp.clip(indices, 0, int(self.grid.size) - 1)
+            indices = jnp.clip(indices, 0, self.grid.size - 1)
             if not bool(jnp.all(self.grid[indices] == query)):
                 raise ValueError(
                     "Grid interpolation requires every query time to be a grid node."
@@ -549,7 +547,7 @@ class FractionalGaussianRealization(StrictModule):
             return jnp.take(self.values, indices, axis=len(self.sample_shape))
         flat_query = query.reshape((-1,))
         paths = self.values.reshape(
-            (self.num_paths, int(self.grid.size), self.process.dimension)
+            (self.num_paths, self.grid.size, self.process.dimension)
         )
         interpolated = linear_interpolate(
             self.grid,
@@ -569,8 +567,8 @@ class FractionalGaussianRealization(StrictModule):
         *,
         interpolation: FractionalGaussianInterpolation = "grid",
     ) -> Array:
-        start = jnp.asarray(starts, dtype=float)
-        end = jnp.asarray(ends, dtype=float)
+        start = jnp.asarray(starts, dtype=jnp.float64)
+        end = jnp.asarray(ends, dtype=jnp.float64)
         if start.shape != end.shape:
             raise ValueError("increment bounds must have matching shapes.")
         if bool(jnp.any(end < start)):
@@ -604,7 +602,7 @@ class FractionalGaussianRealization(StrictModule):
         record = _TrajectoryRecord(
             self.grid,
             values,
-            state_shape=(int(values.shape[-1]),),
+            state_shape=(values.shape[-1],),
             realization_shape=self.sample_shape,
             valid=valid,
             realizations=(self,),

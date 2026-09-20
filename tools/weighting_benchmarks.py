@@ -54,7 +54,7 @@ def _sparse_operator(size: int, moments: int):
     )
     return phx.sparse.SparseLinearMap(
         relation,
-        jnp.ones((size,), dtype=float),
+        jnp.ones((size,), dtype="float64"),
     )
 
 
@@ -64,8 +64,8 @@ def _problem(size: int, moments: int, execution: str, target_kind: str, seed: in
         if execution == "dense"
         else _sparse_operator(size, moments)
     )
-    prior_logits = -0.1 * jnp.sin(jnp.arange(size, dtype=float) * 0.017)
-    known_dual = 0.15 * jnp.cos(jnp.arange(moments, dtype=float) * 0.31)
+    prior_logits = -0.1 * jnp.sin(jnp.arange(size, dtype="float64") * 0.017)
+    known_dual = 0.15 * jnp.cos(jnp.arange(moments, dtype="float64") * 0.31)
     known_weights = jax.nn.softmax(
         prior_logits + moment_map.transpose_mv(known_dual)
         if not isinstance(moment_map, jax.Array)
@@ -122,7 +122,7 @@ def _nearby_problem(problem, target_kind: str):
 
 def _bytes(tree) -> int:
     return sum(
-        int(leaf.size * leaf.dtype.itemsize)
+        leaf.size * leaf.dtype.itemsize
         for leaf in jax.tree.leaves(tree)
         if isinstance(leaf, jax.Array)
     )

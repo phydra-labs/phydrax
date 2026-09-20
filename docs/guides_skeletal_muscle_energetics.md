@@ -55,7 +55,7 @@ field**, not a built-in human muscle case. The caller must supply a complete
 and purpose for equations, geometry, regions, properties, perfusion, initial
 conditions, boundaries, source projection, retention, and validation. The bundle
 records the fixed reference coordinate frame; lengths are m and volumetric blood
-perfusion is explicitly 1/s. A URI or a property catalogue alone is not a qualified
+perfusion is explicitly 1/s. A URI or a property catalog alone is not a qualified
 physiological case.
 
 The equation is tissue storage minus scalar conduction = retained heat plus

@@ -49,7 +49,7 @@ def descriptor_frequency_response(
 ) -> DescriptorFrequencyResponse:
     if not isinstance(system, LinearDescriptorSystem):
         raise TypeError("system must be LinearDescriptorSystem.")
-    omega = jnp.asarray(angular_frequency, dtype=float)
+    omega = jnp.asarray(angular_frequency, dtype=jnp.float64)
     case_shape = system.batch_shape + omega.shape
     mass = jnp.broadcast_to(
         system.mass_matrix.reshape(

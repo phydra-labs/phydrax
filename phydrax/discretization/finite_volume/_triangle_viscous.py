@@ -59,17 +59,17 @@ class TriangleViscousFluxPlan(StrictModule, NonTrainableState):
         temperature_gradient = self.gradient.gradient(temperature)
         conserved_gradient = self.gradient.gradient(value)
         owner = discretization.owner_cells
-        neighbour = discretization.neighbour_cells
-        safe_neighbour = jnp.maximum(neighbour, 0)
-        interior = neighbour >= 0
+        neighbor = discretization.neighbor_cells
+        safe_neighbor = jnp.maximum(neighbor, 0)
+        interior = neighbor >= 0
         area_vectors = discretization.area_vectors.astype(value.dtype)
         face_measures = discretization.face_measures.astype(value.dtype)
         cell_centers = discretization.cell_centers.astype(value.dtype)
         face_centers = discretization.face_centers.astype(value.dtype)
         normal = area_vectors / face_measures[:, None]
         owner_center = cell_centers[owner]
-        neighbour_center = cell_centers[safe_neighbour]
-        connector = neighbour_center - owner_center
+        neighbor_center = cell_centers[safe_neighbor]
+        connector = neighbor_center - owner_center
         projected_distance = jnp.sum(connector * normal, axis=-1)
         projected_distance = eqx.error_if(
             jnp.where(interior, projected_distance, 1.0),
@@ -77,14 +77,14 @@ class TriangleViscousFluxPlan(StrictModule, NonTrainableState):
             "Triangle viscous interior face has nonpositive normal projection.",
         )
         average_velocity_gradient = 0.5 * (
-            velocity_gradient[owner] + velocity_gradient[safe_neighbour]
+            velocity_gradient[owner] + velocity_gradient[safe_neighbor]
         )
         average_temperature_gradient = 0.5 * (
-            temperature_gradient[owner] + temperature_gradient[safe_neighbour]
+            temperature_gradient[owner] + temperature_gradient[safe_neighbor]
         )
         tangential_connector = connector - projected_distance[:, None] * normal
         normal_velocity_derivative = (
-            velocity[safe_neighbour]
+            velocity[safe_neighbor]
             - velocity[owner]
             - ein.contract(
                 "fij,fj->fi",
@@ -93,7 +93,7 @@ class TriangleViscousFluxPlan(StrictModule, NonTrainableState):
             )
         ) / projected_distance[:, None]
         normal_temperature_derivative = (
-            temperature[safe_neighbour]
+            temperature[safe_neighbor]
             - temperature[owner]
             - jnp.sum(
                 average_temperature_gradient * tangential_connector,
@@ -116,17 +116,17 @@ class TriangleViscousFluxPlan(StrictModule, NonTrainableState):
             + (normal_temperature_derivative - current_temperature_normal)[:, None]
             * normal
         )
-        velocity_face = 0.5 * (velocity[owner] + velocity[safe_neighbour])
+        velocity_face = 0.5 * (velocity[owner] + velocity[safe_neighbor])
         viscosity_face = 0.5 * (
             transport.dynamic_viscosity[owner]
-            + transport.dynamic_viscosity[safe_neighbour]
+            + transport.dynamic_viscosity[safe_neighbor]
         )
         bulk_face = 0.5 * (
-            transport.bulk_viscosity[owner] + transport.bulk_viscosity[safe_neighbour]
+            transport.bulk_viscosity[owner] + transport.bulk_viscosity[safe_neighbor]
         )
         conductivity_face = 0.5 * (
             transport.thermal_conductivity[owner]
-            + transport.thermal_conductivity[safe_neighbour]
+            + transport.thermal_conductivity[safe_neighbor]
         )
         boundary_mask = ~interior
         for patch_id, policy in enumerate(boundaries.boundaries):
@@ -277,9 +277,9 @@ class TriangleViscousFluxPlan(StrictModule, NonTrainableState):
         integrated = flux * face_measures[:, None]
         residual = jnp.zeros_like(state)
         residual = residual.at[discretization.owner_cells].add(integrated)
-        neighbour = discretization.neighbour_cells
-        residual = residual.at[jnp.maximum(neighbour, 0)].add(
-            jnp.where((neighbour >= 0)[:, None], -integrated, 0.0)
+        neighbor = discretization.neighbor_cells
+        residual = residual.at[jnp.maximum(neighbor, 0)].add(
+            jnp.where((neighbor >= 0)[:, None], -integrated, 0.0)
         )
         return residual / cell_volumes[:, None]
 
@@ -302,18 +302,18 @@ class TriangleViscousFluxPlan(StrictModule, NonTrainableState):
         momentum_diffusivity = transport.dynamic_viscosity / density
         thermal_diffusivity = transport.thermal_conductivity / (density * heat_capacity)
         owner = discretization.owner_cells
-        neighbour = discretization.neighbour_cells
-        safe_neighbour = jnp.maximum(neighbour, 0)
-        interior = neighbour >= 0
+        neighbor = discretization.neighbor_cells
+        safe_neighbor = jnp.maximum(neighbor, 0)
+        interior = neighbor >= 0
         area_vectors = discretization.area_vectors.astype(state.dtype)
         face_measures = discretization.face_measures.astype(state.dtype)
         cell_centers = discretization.cell_centers.astype(state.dtype)
         face_centers = discretization.face_centers.astype(state.dtype)
         cell_volumes = discretization.cell_volumes.astype(state.dtype)
         normal = area_vectors / face_measures[:, None]
-        owner_to_neighbour = cell_centers[safe_neighbour] - cell_centers[owner]
+        owner_to_neighbor = cell_centers[safe_neighbor] - cell_centers[owner]
         owner_to_face = face_centers - cell_centers[owner]
-        interior_projection = jnp.sum(owner_to_neighbour * normal, axis=-1)
+        interior_projection = jnp.sum(owner_to_neighbor * normal, axis=-1)
         boundary_projection = 2.0 * jnp.sum(owner_to_face * normal, axis=-1)
         distance = jnp.where(interior, interior_projection, boundary_projection)
         distance = eqx.error_if(
@@ -323,12 +323,12 @@ class TriangleViscousFluxPlan(StrictModule, NonTrainableState):
         )
         momentum_face = jnp.where(
             interior,
-            0.5 * (momentum_diffusivity[owner] + momentum_diffusivity[safe_neighbour]),
+            0.5 * (momentum_diffusivity[owner] + momentum_diffusivity[safe_neighbor]),
             momentum_diffusivity[owner],
         )
         thermal_face = jnp.where(
             interior,
-            0.5 * (thermal_diffusivity[owner] + thermal_diffusivity[safe_neighbour]),
+            0.5 * (thermal_diffusivity[owner] + thermal_diffusivity[safe_neighbor]),
             thermal_diffusivity[owner],
         )
         momentum_weight = 2.0 * face_measures * momentum_face / distance
@@ -337,10 +337,10 @@ class TriangleViscousFluxPlan(StrictModule, NonTrainableState):
         thermal_rate = jnp.zeros_like(momentum_rate)
         momentum_rate = momentum_rate.at[owner].add(momentum_weight)
         thermal_rate = thermal_rate.at[owner].add(thermal_weight)
-        momentum_rate = momentum_rate.at[safe_neighbour].add(
+        momentum_rate = momentum_rate.at[safe_neighbor].add(
             jnp.where(interior, momentum_weight, 0.0)
         )
-        thermal_rate = thermal_rate.at[safe_neighbour].add(
+        thermal_rate = thermal_rate.at[safe_neighbor].add(
             jnp.where(interior, thermal_weight, 0.0)
         )
         momentum_rate /= cell_volumes

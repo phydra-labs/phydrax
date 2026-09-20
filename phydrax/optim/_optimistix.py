@@ -13,10 +13,12 @@ import optimistix as optx
 from jaxtyping import PyTree
 
 from .._frozendict import frozendict
+from .._tree_math import (
+    tree_allfinite as _tree_allfinite,
+    validate_real_inexact_tree as _validate_real_inexact_tree,
+)
 from ._iterative._base import AbstractMinimizationMethod
 from ._iterative._types import (
-    _tree_allfinite,
-    _validate_real_inexact_tree,
     MinimizationProblem,
     MinimizationResult,
     OptimizationCapabilities,
@@ -30,20 +32,20 @@ from ._iterative._types import (
 class OptimistixMethod(AbstractMinimizationMethod):
     """Explicit adapter for a verified public Optimistix minimizer instance."""
 
-    solver: optx.AbstractMinimiser
+    solver: optx.AbstractMinimizer
     adjoint: optx.AbstractAdjoint
     options: frozendict[str, Any]
 
     def __init__(
         self,
-        solver: optx.AbstractMinimiser,
+        solver: optx.AbstractMinimizer,
         /,
         *,
         adjoint: optx.AbstractAdjoint | None = None,
         options: Mapping[str, Any] | None = None,
     ):
-        if not isinstance(solver, optx.AbstractMinimiser):
-            raise TypeError("solver must be an optimistix.AbstractMinimiser.")
+        if not isinstance(solver, optx.AbstractMinimizer):
+            raise TypeError("solver must be an optimistix.AbstractMinimizer.")
         adjoint_ = optx.ImplicitAdjoint() if adjoint is None else adjoint
         if not isinstance(adjoint_, optx.AbstractAdjoint):
             raise TypeError("adjoint must be an optimistix.AbstractAdjoint or None.")
@@ -82,8 +84,7 @@ class OptimistixMethod(AbstractMinimizationMethod):
             raise TypeError("termination must be an OptimizationTermination.")
         if problem.bounds is not None or problem.constraints:
             raise ValueError(
-                "OptimistixMethod does not translate Phydrax bounds or constraints; "
-                "use a native constrained method."
+                "OptimistixMethod does not translate Phydrax bounds or constraints; use a native constrained method."
             )
         parameters = _validate_real_inexact_tree(
             initial_parameters,
@@ -127,7 +128,7 @@ class OptimistixMethod(AbstractMinimizationMethod):
             )
 
         def run_backend(_):
-            solution = optx.minimise(
+            solution = optx.minimize(
                 problem.objective,
                 self.solver,
                 parameters,

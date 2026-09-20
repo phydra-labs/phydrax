@@ -48,10 +48,10 @@ class ContactInterfacePlan(StrictModule, NonTrainableState):
     ):
         plus_index = np.asarray(plus_indices)
         minus_index = np.asarray(minus_indices)
-        plus_weight = np.asarray(plus_weights, dtype=float)
-        minus_weight = np.asarray(minus_weights, dtype=float)
-        normal = np.asarray(reference_normal, dtype=float)
-        measure = np.asarray(quadrature_weight, dtype=float)
+        plus_weight = np.asarray(plus_weights, dtype=np.float64)
+        minus_weight = np.asarray(minus_weights, dtype=np.float64)
+        normal = np.asarray(reference_normal, dtype=np.float64)
+        measure = np.asarray(quadrature_weight, dtype=np.float64)
         plus_count = int(plus_node_count)
         minus_count = int(minus_node_count)
         if (
@@ -78,9 +78,9 @@ class ContactInterfacePlan(StrictModule, NonTrainableState):
         if measure.shape != (capacity,):
             raise ValueError("Interface quadrature weights require capacity shape.")
         active = (
-            np.ones((capacity,), dtype=bool)
+            np.ones((capacity,), dtype=np.bool_)
             if valid is None
-            else np.asarray(valid, dtype=bool)
+            else np.asarray(valid, dtype=np.bool_)
         )
         if active.shape != (capacity,):
             raise ValueError("Interface valid mask requires capacity shape.")
@@ -128,7 +128,7 @@ class ContactInterfacePlan(StrictModule, NonTrainableState):
         self.valid = jnp.asarray(active)
         self.plus_node_count = plus_count
         self.minus_node_count = minus_count
-        self.ambient_dimension = int(normal.shape[1])
+        self.ambient_dimension = normal.shape[1]
         self.interface_id = canonical_fingerprint(
             {
                 "kind": "contact-interface-plan",
@@ -145,7 +145,7 @@ class ContactInterfacePlan(StrictModule, NonTrainableState):
 
     @property
     def capacity(self) -> int:
-        return int(self.valid.size)
+        return self.valid.size
 
 
 class ContactInterfaceKinematics(StrictModule):

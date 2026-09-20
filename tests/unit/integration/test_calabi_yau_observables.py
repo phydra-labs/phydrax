@@ -95,7 +95,7 @@ def _measure():
         pivot_indices=(1, 0, 1, 1),
         polynomial_residuals=jnp.zeros((4,)),
         smoothness_margins=jnp.ones((4,)),
-        valid=jnp.ones((4,), dtype=bool),
+        valid=jnp.ones((4,), dtype="bool"),
         line_ids=(0, 1, 2, 3),
         root_ids=(0, 0, 0, 0),
     )

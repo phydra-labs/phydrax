@@ -94,10 +94,14 @@ class ElectrostaticPICPlan(StrictModule, NonTrainableState):
         ):
             raise TypeError("transfers must contain prepared PIC cochain transfers.")
         if any(value.bridge.bridge_id != field.bridge.bridge_id for value in values):
-            raise ValueError("PIC transfers and electrostatic field must share one bridge.")
+            raise ValueError(
+                "PIC transfers and electrostatic field must share one bridge."
+            )
         support_ids = [value.species.particles.support.support_id for value in values]
         if len(set(support_ids)) != len(support_ids):
-            raise ValueError("Each electrostatic PIC species requires a distinct particle support.")
+            raise ValueError(
+                "Each electrostatic PIC species requires a distinct particle support."
+            )
         pusher_ = RelativisticBorisPlan() if pusher is None else pusher
         if not isinstance(pusher_, RelativisticBorisPlan):
             raise TypeError("pusher must be RelativisticBorisPlan or None.")
@@ -108,7 +112,9 @@ class ElectrostaticPICPlan(StrictModule, NonTrainableState):
         background = (
             jnp.zeros((n0,), dtype=field.bridge.cochain.hodge_stars[0].dtype)
             if background_charge is None
-            else jnp.asarray(background_charge, dtype=field.bridge.cochain.hodge_stars[0].dtype)
+            else jnp.asarray(
+                background_charge, dtype=field.bridge.cochain.hodge_stars[0].dtype
+            )
         )
         if background.shape != (n0,):
             raise ValueError("background_charge must be a degree-zero cochain.")
@@ -178,7 +184,10 @@ class ElectrostaticPICPlan(StrictModule, NonTrainableState):
         c2 = self.pusher.speed_of_light**2
         value = eqx.error_if(
             value,
-            jnp.any(transfer.species.particles.active_mask & (~jnp.isfinite(speed2) | (speed2 >= c2))),
+            jnp.any(
+                transfer.species.particles.active_mask
+                & (~jnp.isfinite(speed2) | (speed2 >= c2))
+            ),
             "Initial PIC velocity must be finite and subluminal.",
         )
         gamma = 1.0 / jnp.sqrt(1.0 - speed2 / c2)
@@ -217,7 +226,9 @@ class ElectrostaticPICPlan(StrictModule, NonTrainableState):
             )
         )
         charge_defect = jnp.max(
-            jnp.stack(tuple(value.balance.maximum_absolute_balance_defect for value in deposits)),
+            jnp.stack(
+                tuple(value.balance.maximum_absolute_balance_defect for value in deposits)
+            ),
             initial=0.0,
         )
         return charge, field, gathered, transfer_successful, charge_defect
@@ -235,19 +246,25 @@ class ElectrostaticPICPlan(StrictModule, NonTrainableState):
         if len(position_values) != len(self.transfers) or len(velocity_values) != len(
             self.transfers
         ):
-            raise ValueError("One position and velocity array is required per PIC species.")
+            raise ValueError(
+                "One position and velocity array is required per PIC species."
+            )
         particles = []
         for transfer, position, velocity in zip(
             self.transfers, position_values, velocity_values, strict=True
         ):
-            position_ = jnp.asarray(position, dtype=transfer.species.particles.safe_masses.dtype)
+            position_ = jnp.asarray(
+                position, dtype=transfer.species.particles.safe_masses.dtype
+            )
             expected = (transfer.species.capacity, transfer.species.spatial_dimension)
             if position_.shape != expected:
                 raise ValueError(f"PIC position must have shape {expected}.")
             position_ = jnp.where(
                 transfer.species.particles.active_mask[:, None], position_, 0.0
             )
-            particles.append(PICParticleState(position_, self._proper_velocity(velocity, transfer)))
+            particles.append(
+                PICParticleState(position_, self._proper_velocity(velocity, transfer))
+            )
         particle_tuple = tuple(particles)
         charge, field, _, transfer_successful, _ = self._charge_and_field(particle_tuple)
         state = ElectrostaticPICState(
@@ -260,11 +277,15 @@ class ElectrostaticPICPlan(StrictModule, NonTrainableState):
             jnp.asarray(int(PICRunStatus.SUCCESS), dtype=jnp.int32),
         )
         return jax.tree.map(
-            lambda value: eqx.error_if(
-                value, ~transfer_successful | ~field.successful, "PIC initialization failed."
-            )
-            if eqx.is_array(value)
-            else value,
+            lambda value: (
+                eqx.error_if(
+                    value,
+                    ~transfer_successful | ~field.successful,
+                    "PIC initialization failed.",
+                )
+                if eqx.is_array(value)
+                else value
+            ),
             state,
         )
 
@@ -305,7 +326,10 @@ class ElectrostaticPICPlan(StrictModule, NonTrainableState):
         pusher_success = jnp.asarray(True)
         maximum_fraction = jnp.asarray(0.0, dtype=dt.dtype)
         widths = jnp.asarray(
-            [jnp.min(axis.interval_widths) for axis in self.field.bridge.grid.structured_axes],
+            [
+                jnp.min(axis.interval_widths)
+                for axis in self.field.bridge.grid.structured_axes
+            ],
             dtype=dt.dtype,
         )
         for transfer, particle, electric in zip(
@@ -333,8 +357,8 @@ class ElectrostaticPICPlan(StrictModule, NonTrainableState):
             half_states.append(half)
             drifted.append(PICParticleState(position, half.proper_velocity))
         drifted_tuple = tuple(drifted)
-        charge, field, next_electric, transfer_success, charge_defect = self._charge_and_field(
-            drifted_tuple, initial_potential=state.potential
+        charge, field, next_electric, transfer_success, charge_defect = (
+            self._charge_and_field(drifted_tuple, initial_potential=state.potential)
         )
         final_particles = []
         for transfer, particle, electric in zip(
@@ -350,7 +374,9 @@ class ElectrostaticPICPlan(StrictModule, NonTrainableState):
                 0.5 * dt,
             )
             pusher_success = pusher_success & final.successful
-            final_particles.append(PICParticleState(particle.position, final.proper_velocity))
+            final_particles.append(
+                PICParticleState(particle.position, final.proper_velocity)
+            )
         final_tuple = tuple(final_particles)
         previous_total = self._kinetic_energy(state.particles) + 0.5 * jnp.real(
             self.field.bridge.cochain.space(1).vector_space.inner(
@@ -375,18 +401,21 @@ class ElectrostaticPICPlan(StrictModule, NonTrainableState):
                 )
             )
         )
-        finite = (
-            jnp.isfinite(dt)
-            & (dt > 0.0)
-            & particle_finite
-            & jnp.isfinite(total)
-        )
+        finite = jnp.isfinite(dt) & (dt > 0.0) & particle_finite & jnp.isfinite(total)
         stable = maximum_fraction <= self.maximum_displacement_fraction
-        successful = transfer_success & field.successful & pusher_success & finite & stable
+        successful = (
+            transfer_success & field.successful & pusher_success & finite & stable
+        )
         reason = jnp.asarray(int(PICRejectionReason.NONE), dtype=jnp.int32)
-        reason = jnp.where(transfer_success, reason, reason | int(PICRejectionReason.ROUTE))
-        reason = jnp.where(field.successful, reason, reason | int(PICRejectionReason.FIELD))
-        reason = jnp.where(pusher_success, reason, reason | int(PICRejectionReason.PUSHER))
+        reason = jnp.where(
+            transfer_success, reason, reason | int(PICRejectionReason.ROUTE)
+        )
+        reason = jnp.where(
+            field.successful, reason, reason | int(PICRejectionReason.FIELD)
+        )
+        reason = jnp.where(
+            pusher_success, reason, reason | int(PICRejectionReason.PUSHER)
+        )
         reason = jnp.where(stable, reason, reason | int(PICRejectionReason.DISPLACEMENT))
         reason = jnp.where(finite, reason, reason | int(PICRejectionReason.NONFINITE))
         candidate = ElectrostaticPICState(
@@ -396,7 +425,9 @@ class ElectrostaticPICPlan(StrictModule, NonTrainableState):
             field.electric,
             state.time + dt,
             state.accepted_step + jnp.asarray(1, dtype=jnp.int32),
-            jnp.where(successful, int(PICRunStatus.SUCCESS), int(PICRunStatus.INVALID_STATE)).astype(jnp.int32),
+            jnp.where(
+                successful, int(PICRunStatus.SUCCESS), int(PICRunStatus.INVALID_STATE)
+            ).astype(jnp.int32),
         )
         accepted = jax.tree.map(
             lambda proposed, current: jnp.where(successful, proposed, current),
@@ -416,7 +447,9 @@ class ElectrostaticPICPlan(StrictModule, NonTrainableState):
             successful,
             reason,
         )
-        return ElectrostaticPICStepResult(candidate, accepted, diagnostics, field, successful)
+        return ElectrostaticPICStepResult(
+            candidate, accepted, diagnostics, field, successful
+        )
 
 
 class ElectrostaticPICFixedStepMethod(AbstractFixedStepMethod, NonTrainableState):
@@ -446,7 +479,9 @@ class ElectrostaticPICFixedStepMethod(AbstractFixedStepMethod, NonTrainableState
             result.candidate_state,
             result.accepted_state,
             result.successful,
-            jnp.maximum(result.diagnostics.poisson_residual, result.diagnostics.gauss_defect),
+            jnp.maximum(
+                result.diagnostics.poisson_residual, result.diagnostics.gauss_defect
+            ),
             result.field.linear.diagnostics.iterations,
             result.field.linear.diagnostics.iterations,
             jnp.asarray(False),

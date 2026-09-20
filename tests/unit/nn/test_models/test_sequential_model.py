@@ -47,7 +47,7 @@ def test_sequential_single_stage_matches_wrapped_model():
         key=jr.key(0),
     )
     model = Sequential((mlp,))
-    x = jnp.asarray([0.1, -0.3], dtype=float)
+    x = jnp.asarray([0.1, -0.3], dtype="float64")
     y_ref = mlp(x, key=jr.key(3))
     y_seq = model(x, key=jr.key(3))
     assert y_seq.shape == ()

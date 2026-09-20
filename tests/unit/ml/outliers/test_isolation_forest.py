@@ -135,7 +135,7 @@ def test_isolation_forest_preserves_case_axes_masks_weights_and_frozen_execution
     targets = jnp.stack(
         (jnp.sum(features, axis=-1), jnp.prod(features, axis=-1)), axis=-1
     )
-    feature_mask = jnp.ones_like(features, dtype=bool).at[:, 2, 1].set(False)
+    feature_mask = jnp.ones_like(features, dtype="bool").at[:, 2, 1].set(False)
     sample_mask = jnp.array([True, True, True, True, True, True, False])
     weights = jnp.array([1.0, 1.5, 7.0, 0.8, 1.3, 1.1, 9.0])
     recipe = IsolationForestRecipe(n_estimators=3, max_depth=2, contamination=0.2)

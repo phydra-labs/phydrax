@@ -14,7 +14,7 @@ from jaxtyping import Array, ArrayLike
 from phydrax.ein import contract
 
 from ..._fingerprint import canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._advanced import PedrizzettiRelaxationPlan3D, ReformulatedVPMPlan3D
 from ._source import VortexSourceState
@@ -32,9 +32,9 @@ class VortexFormulationRate(StrictModule):
 
 
 class AbstractVortexFormulation(StrictModule, NonTrainableState):
-    dimension: AbstractAttribute[int]
-    requires_dynamic_core: AbstractAttribute[bool]
-    formulation_id: AbstractAttribute[str]
+    dimension: eqx.AbstractVar[int]
+    requires_dynamic_core: eqx.AbstractVar[bool]
+    formulation_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def rate(
@@ -297,7 +297,7 @@ class BaroclinicVortexFormulation(StrictModule, NonTrainableState):
         gravity_ = (
             jnp.zeros((dimension_,))
             if gravity is None
-            else jnp.asarray(gravity, dtype=float)
+            else jnp.asarray(gravity, dtype=jnp.float64)
         )
         if gravity_.shape != (dimension_,):
             raise ValueError("Baroclinic gravity must match dimension.")

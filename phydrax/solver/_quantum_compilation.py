@@ -238,8 +238,7 @@ def compile_quantum_program(
         raise TypeError("topology/policy types are invalid.")
     if len(program.layout.wire_ids) != len(topology.physical_wire_ids):
         raise ValueError(
-            "Compilation requires an explicit one-to-one logical/physical layout; "
-            "ancilla insertion is never implicit."
+            "Compilation requires an explicit one-to-one logical/physical layout; ancilla insertion is never implicit."
         )
     if any(dimension != 2 for dimension in program.layout.local_dimensions):
         raise ValueError(

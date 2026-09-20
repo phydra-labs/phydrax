@@ -77,14 +77,14 @@ class MomentumVertexGridFlowPlan(StrictModule, NonTrainableState):
         angular_order: int = 16,
         maximum_grid_entries: int = 1_000_000,
     ):
-        momentum = np.asarray(momentum_nodes, dtype=float)
+        momentum = np.asarray(momentum_nodes, dtype=np.float64)
         order = int(angular_order)
         capacity = int(maximum_grid_entries)
         if not isinstance(regulator, Regulator) or not isinstance(
             radial, ThresholdQuadraturePlan
         ):
             raise TypeError("Vertex-grid flow requires regulator and radial plans.")
-        required = int(momentum.size) * radial.quadrature_order * order
+        required = momentum.size * radial.quadrature_order * order
         if (
             momentum.ndim != 1
             or momentum.size < 3

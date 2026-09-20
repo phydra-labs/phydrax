@@ -62,10 +62,10 @@ class VortexPanelFlowPlan2D(StrictModule, NonTrainableState):
     ):
         if not isinstance(geometry, FlowPanelGeometry2D):
             raise TypeError("geometry must be FlowPanelGeometry2D.")
-        count = int(geometry.length.size)
+        count = geometry.length.size
         trailing = None
         if trailing_edge_panels is not None:
-            trailing = tuple(int(value) for value in trailing_edge_panels)
+            trailing = tuple(trailing_edge_panels)
             if (
                 len(trailing) != 2
                 or trailing[0] == trailing[1]
@@ -131,7 +131,7 @@ class VortexPanelFlowPlan2D(StrictModule, NonTrainableState):
                 jnp.zeros_like(geometry.length).at[first].set(1.0).at[second].set(1.0)
             )
             closure_rhs = jnp.asarray(0.0, dtype=rhs.dtype)
-        row = int(geometry.length.size - 1)
+        row = geometry.length.size - 1
         constrained_matrix = matrix.at[row].set(closure)
         constrained_rhs = rhs.at[row].set(closure_rhs)
         linear = solve_linear(

@@ -31,7 +31,7 @@ def test_constant_structured_index_preserves_straight_hamiltonian_rays():
 
 
 def test_tetrahedral_field_and_curved_schlieren_retain_route_evidence():
-    vertices = np.asarray(((0, 0, 0), (2, 0, 0), (0, 2, 0), (0, 0, 2)), dtype=float)
+    vertices = np.asarray(((0, 0, 0), (2, 0, 0), (0, 2, 0), (0, 0, 2)), dtype="float64")
     field = phx.optics.geometric.TetrahedralRefractiveIndexField(
         vertices,
         np.asarray(((0, 1, 2, 3),)),

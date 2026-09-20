@@ -124,8 +124,7 @@ class PreparedThermochemistryProcess(AbstractPreparedBalanceLawProcess):
             ),
         ):
             raise TypeError(
-                "Continuum thermochemistry requires a canonical homogeneous mixture "
-                "Euler or Navier-Stokes system."
+                "Continuum thermochemistry requires a canonical homogeneous mixture Euler or Navier-Stokes system."
             )
         system = transport.dynamics.system
         if not isinstance(system.thermodynamics.residual, ZeroResidualHelmholtzTerm):

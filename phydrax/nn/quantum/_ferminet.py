@@ -278,7 +278,7 @@ def _polynomial_determinant(matrix: Array, /) -> Array:
     """Determinant from Newton identities, including derivatives at singularity."""
     if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
         raise ValueError("matrix must be square.")
-    size = int(matrix.shape[0])
+    size = matrix.shape[0]
     power = jnp.eye(size, dtype=matrix.dtype)
     traces = []
     for _ in range(size):
@@ -311,8 +311,7 @@ def _scaled_determinant_factors(
         or raw_orbitals.shape[-2] != raw_orbitals.shape[-1]
     ):
         raise ValueError(
-            "raw_orbitals and log_envelope must be matching determinant batches "
-            "of square matrices."
+            "raw_orbitals and log_envelope must be matching determinant batches of square matrices."
         )
     _, raw_nonzero, raw_log_magnitude = _signed_log_components(raw_orbitals)
     combined_log_magnitude = jnp.where(
@@ -538,14 +537,13 @@ class FermiNet(StrictModule):
             raise ValueError("spin_up_count must lie between zero and electron_count.")
         if hidden <= 0 or pair_hidden <= 0 or layers <= 0 or determinants <= 0:
             raise ValueError(
-                "hidden_features, pair_features, layer_count, and "
-                "determinant_count must be positive."
+                "hidden_features, pair_features, layer_count, and determinant_count must be positive."
             )
         if not math.isfinite(minimum_decay) or minimum_decay <= 0.0:
             raise ValueError("minimum_envelope_decay must be finite and positive.")
         dtype = real_precision_dtype_name(compute_dtype)
         minimum_decay = max(minimum_decay, float(jnp.finfo(jnp.dtype(dtype)).tiny))
-        atom_capacity = int(nuclei.atomic_numbers.shape[0])
+        atom_capacity = nuclei.atomic_numbers.shape[0]
         one_input = 2 * atom_capacity + 2
         pair_input = 2
         keys = jr.split(key, 2 * layers + 6)
@@ -657,7 +655,7 @@ class FermiNet(StrictModule):
             * length_factor
         )
         electron_nuclear = jnp.where(active[None, :], electron_nuclear, 0.0)
-        identity = jnp.eye(self.configuration.electron_count, dtype=bool)
+        identity = jnp.eye(self.configuration.electron_count, dtype=jnp.bool_)
         electron_pair_squared = jnp.sum(
             (coordinate[:, None, :] - coordinate[None, :, :]) ** 2,
             axis=-1,
@@ -671,7 +669,7 @@ class FermiNet(StrictModule):
     def _aggregate(self, one: Array, pair: Array, /) -> Array:
         labels = self.configuration.spin_labels
         electrons = self.configuration.electron_count
-        identity = jnp.eye(electrons, dtype=bool)
+        identity = jnp.eye(electrons, dtype=jnp.bool_)
         up = labels == 0
         down = labels == 1
         up_count = jnp.maximum(jnp.sum(up), 1)
@@ -704,8 +702,7 @@ class FermiNet(StrictModule):
     def _single(self, electrons: Array, /) -> LogAmplitude:
         if electrons.shape != self.configuration_shape:
             raise ValueError(
-                "FermiNet configurations must have shape "
-                f"{self.configuration_shape}; got {electrons.shape}."
+                f"FermiNet configurations must have shape {self.configuration_shape}; got {electrons.shape}."
             )
         electron_nuclear, electron_pair = self._distances(electrons)
         active = self.nuclei.active_mask
@@ -758,12 +755,11 @@ class FermiNet(StrictModule):
             or tuple(coordinate.shape[-2:]) != self.configuration_shape
         ):
             raise ValueError(
-                "FermiNet inputs must end in shape "
-                f"{self.configuration_shape}; got {coordinate.shape}."
+                f"FermiNet inputs must end in shape {self.configuration_shape}; got {coordinate.shape}."
             )
         if coordinate.ndim == 2:
             return self._single(coordinate)
-        batch_shape = tuple(int(size) for size in coordinate.shape[:-2])
+        batch_shape = tuple(coordinate.shape[:-2])
         flat_count = math.prod(batch_shape)
         values = jax.vmap(self._single)(
             coordinate.reshape((flat_count,) + self.configuration_shape)

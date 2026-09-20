@@ -64,7 +64,7 @@ class DeepSplittingSolution(StrictModule):
     ):
         if not isinstance(problem, BSDEProblem):
             raise TypeError("problem must be a BSDEProblem.")
-        time_values = jnp.asarray(times, dtype=float)
+        time_values = jnp.asarray(times, dtype=jnp.float64)
         if time_values.ndim != 1 or time_values.shape[0] < 2:
             raise ValueError("Deep splitting times must contain at least two nodes.")
         if bool(jnp.any(~jnp.isfinite(time_values))) or bool(
@@ -72,7 +72,7 @@ class DeepSplittingSolution(StrictModule):
         ):
             raise ValueError("Deep splitting times must be finite and increasing.")
         slice_values = tuple(slices)
-        if len(slice_values) != int(time_values.shape[0]) - 1:
+        if len(slice_values) != time_values.shape[0] - 1:
             raise ValueError("Deep splitting requires one learned slice per interval.")
         if any(not isinstance(value, DomainFunction) for value in slice_values):
             raise TypeError("Deep splitting slices must be DomainFunction objects.")
@@ -326,7 +326,7 @@ def solve_deep_splitting(
     times = (
         jnp.asarray(held_out_paths.times)
         if time_grid is None
-        else jnp.asarray(time_grid, dtype=float)
+        else jnp.asarray(time_grid, dtype=jnp.float64)
     )
     if times.ndim != 1 or times.shape[0] < 2:
         raise ValueError("time_grid must be one-dimensional with at least two nodes.")
@@ -342,7 +342,7 @@ def solve_deep_splitting(
         )
         _require_time_grid(training_paths, times)
 
-    num_steps = int(times.shape[0]) - 1
+    num_steps = times.shape[0] - 1
     slice_models: list[DomainFunction | None] = [None] * num_steps
     slice_diagnostics: list[DeepSplittingRegressionDiagnostics | None] = [
         None

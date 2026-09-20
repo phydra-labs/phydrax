@@ -65,14 +65,14 @@ class NoncompactFeatureProposal(StrictModule, NonTrainableState):
         proposal_id: str,
         proposal_scale: float,
     ):
-        frequency_array = jnp.asarray(frequencies, dtype=float)
-        direction_array = jnp.asarray(directions, dtype=float)
-        phase_array = jnp.asarray(phases, dtype=float)
-        log_density = jnp.asarray(log_proposal_density, dtype=float)
-        if frequency_array.ndim != 2 or int(frequency_array.shape[0]) == 0:
+        frequency_array = jnp.asarray(frequencies, dtype=jnp.float64)
+        direction_array = jnp.asarray(directions, dtype=jnp.float64)
+        phase_array = jnp.asarray(phases, dtype=jnp.float64)
+        log_density = jnp.asarray(log_proposal_density, dtype=jnp.float64)
+        if frequency_array.ndim != 2 or frequency_array.shape[0] == 0:
             raise ValueError("frequencies must have shape (sample, spectral_rank).")
-        sample_count = int(frequency_array.shape[0])
-        if int(direction_array.shape[0]) != sample_count:
+        sample_count = frequency_array.shape[0]
+        if direction_array.shape[0] != sample_count:
             raise ValueError("directions must have one entry per spectral sample.")
         if phase_array.shape != (sample_count,) or log_density.shape != (sample_count,):
             raise ValueError("phases and proposal densities must align with samples.")
@@ -100,7 +100,7 @@ class NoncompactFeatureProposal(StrictModule, NonTrainableState):
         self.proposal_id = proposal_id
         self.proposal_scale = float(proposal_scale)
         self.sample_count = sample_count
-        self.spectral_rank = int(frequency_array.shape[1])
+        self.spectral_rank = frequency_array.shape[1]
 
     def prefix(self, sample_count: int, /) -> NoncompactFeatureProposal:
         """Return a nested fixed-noise prefix without drawing new randomness."""
@@ -150,10 +150,10 @@ class ImportanceFeatureDiagnostics(StrictModule):
         *,
         finite_importance_variance: ArrayLike = True,
     ):
-        log_weights = jnp.asarray(log_importance_weights, dtype=float)
-        if log_weights.ndim != 1 or int(log_weights.shape[0]) == 0:
+        log_weights = jnp.asarray(log_importance_weights, dtype=jnp.float64)
+        if log_weights.ndim != 1 or log_weights.shape[0] == 0:
             raise ValueError("log_importance_weights must be a nonempty vector.")
-        finite_variance = jnp.asarray(finite_importance_variance, dtype=bool)
+        finite_variance = jnp.asarray(finite_importance_variance, dtype=jnp.bool_)
         if finite_variance.ndim != 0:
             raise ValueError("finite_importance_variance must be scalar.")
         log_weights = eqx.error_if(
@@ -167,7 +167,7 @@ class ImportanceFeatureDiagnostics(StrictModule):
         shifted = jnp.exp(log_weights - maximum)
         shifted_total = jnp.sum(shifted)
         normalized = shifted / shifted_total
-        sample_count = int(log_weights.shape[0])
+        sample_count = log_weights.shape[0]
         log_normalizer = maximum + jnp.log(shifted_total) - math.log(float(sample_count))
         if sample_count == 1:
             sample_standard_error = jnp.asarray(jnp.inf, dtype=log_weights.dtype)
@@ -195,7 +195,7 @@ class ImportanceFeatureDiagnostics(StrictModule):
 
 
 def _multivariate_cauchy_log_density(frequencies: Array, scale: float, /) -> Array:
-    rank = int(frequencies.shape[1])
+    rank = frequencies.shape[1]
     squared_radius = jnp.sum(frequencies * frequencies, axis=-1)
     return (
         math.lgamma(0.5 * (rank + 1))
@@ -300,7 +300,7 @@ def spd_feature_proposal(
 
 
 def _positive_parameter(value: ArrayLike, name: str, /) -> Array:
-    array = jnp.asarray(value, dtype=float)
+    array = jnp.asarray(value, dtype=jnp.float64)
     if array.ndim != 0:
         raise ValueError(f"{name} must be scalar.")
     return eqx.error_if(
@@ -353,7 +353,7 @@ def _hyperbolic_log_plancherel_density(
 
 
 def _spd_log_plancherel_density(frequencies: Array, /) -> Array:
-    rank = int(frequencies.shape[1])
+    rank = frequencies.shape[1]
     row, column = np.triu_indices(rank, k=1)
     differences = jnp.abs(frequencies[:, row] - frequencies[:, column])
     return jnp.sum(
@@ -363,10 +363,10 @@ def _spd_log_plancherel_density(frequencies: Array, /) -> Array:
 
 
 def _hyperbolic_points(points: ArrayLike, dimension: int, /) -> Array:
-    array = jnp.asarray(points, dtype=float)
+    array = jnp.asarray(points, dtype=jnp.float64)
     if array.ndim == 1:
         array = array[None, :]
-    if array.ndim != 2 or int(array.shape[1]) != dimension + 1:
+    if array.ndim != 2 or array.shape[1] != dimension + 1:
         raise ValueError(f"Hyperboloid points must have trailing size {dimension + 1}.")
     lorentz_norm = -(array[:, 0] ** 2) + jnp.sum(array[:, 1:] ** 2, axis=-1)
     return eqx.error_if(
@@ -399,7 +399,7 @@ class HyperbolicRandomFeatureKernel(AbstractFiniteFeatureKernel):
             raise TypeError("proposal must be a hyperbolic NoncompactFeatureProposal.")
         if proposal.directions.ndim != 2:
             raise ValueError("Hyperbolic proposal directions must be rank two.")
-        dimension = int(proposal.directions.shape[1])
+        dimension = proposal.directions.shape[1]
         if proposal.geometry_id != f"hyperbolic-H{dimension}":
             raise ValueError(
                 "Hyperbolic proposal geometry ID disagrees with its dimension."
@@ -498,12 +498,12 @@ class HyperbolicRandomFeatureKernel(AbstractFiniteFeatureKernel):
 
 
 def _spd_points(points: ArrayLike, dimension: int, /) -> Array:
-    array = jnp.asarray(points, dtype=float)
+    array = jnp.asarray(points, dtype=jnp.float64)
     if array.shape == (dimension, dimension):
         array = array[None, :, :]
-    elif array.ndim == 1 and int(array.size) == dimension * dimension:
+    elif array.ndim == 1 and array.size == dimension * dimension:
         array = array.reshape((1, dimension, dimension))
-    elif array.ndim == 2 and int(array.shape[1]) == dimension * dimension:
+    elif array.ndim == 2 and array.shape[1] == dimension * dimension:
         array = array.reshape((array.shape[0], dimension, dimension))
     if array.ndim != 3 or tuple(array.shape[1:]) != (dimension, dimension):
         raise ValueError("SPD points must be square matrices or flattened matrices.")
@@ -536,7 +536,7 @@ class SPDRandomFeatureKernel(AbstractFiniteFeatureKernel):
             proposal, NoncompactFeatureProposal
         ) or not proposal.geometry_id.startswith("spd-SPD"):
             raise TypeError("proposal must be an SPD NoncompactFeatureProposal.")
-        dimension = int(proposal.frequencies.shape[1])
+        dimension = proposal.frequencies.shape[1]
         if proposal.geometry_id != f"spd-SPD{dimension}":
             raise ValueError("SPD proposal geometry ID disagrees with its spectral rank.")
         if dimension < 2 or proposal.directions.shape[1:] != (dimension, dimension):
@@ -558,7 +558,7 @@ class SPDRandomFeatureKernel(AbstractFiniteFeatureKernel):
         self.matrix_dimension = dimension
 
     def _log_importance_weights(self) -> Array:
-        rank_indices = jnp.arange(self.matrix_dimension, dtype=float)
+        rank_indices = jnp.arange(self.matrix_dimension, dtype=jnp.float64)
         rho = 0.25 * (self.matrix_dimension - 1.0 - 2.0 * rank_indices)
         eigenvalues = jnp.sum(self.proposal.frequencies**2, axis=-1) + jnp.sum(rho * rho)
         spectral_dimension = 0.5 * self.matrix_dimension * (self.matrix_dimension + 1)
@@ -591,7 +591,7 @@ class SPDRandomFeatureKernel(AbstractFiniteFeatureKernel):
     def features(self, points: ArrayLike, /) -> Array:
         point_design = _spd_points(points, self.matrix_dimension)
         coordinates = self._horospherical_coordinates(point_design)
-        rank_indices = jnp.arange(self.matrix_dimension, dtype=float)
+        rank_indices = jnp.arange(self.matrix_dimension, dtype=jnp.float64)
         rho = 0.25 * (self.matrix_dimension - 1.0 - 2.0 * rank_indices)
         envelope = jnp.exp(-ein.contract("pmr,r->pm", coordinates, rho))
         phase = (

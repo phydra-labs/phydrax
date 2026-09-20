@@ -32,7 +32,7 @@ def test_z2_gauss_sector_uses_binary_edge_basis_and_constraint_rank():
     np.testing.assert_array_equal(sector.subspace.basis_indices, [0, 7])
     np.testing.assert_array_equal(
         phx.applications.lattice_field.z2_gauss_eigenvalues(model, occupations),
-        np.ones((2, 3), dtype=int),
+        np.ones((2, 3), dtype="int64"),
     )
 
 

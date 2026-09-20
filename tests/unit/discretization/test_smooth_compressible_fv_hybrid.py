@@ -420,10 +420,10 @@ def test_dynamic_ownership_hysteresis_dwell_shock_and_dilation_are_deterministic
         finite_volume_stencil_radius=(1, 0),
         kinetic_reach=(1, 0),
     )
-    initial = jnp.zeros((5, 5), dtype=bool).at[2, 2].set(True)
+    initial = jnp.zeros((5, 5), dtype="bool").at[2, 2].set(True)
     state = plan.initialize(initial)
     score = jnp.zeros((5, 5)).at[2, 2].set(0.5)
-    shock = jnp.zeros((5, 5), dtype=bool).at[0, 0].set(True)
+    shock = jnp.zeros((5, 5), dtype="bool").at[0, 0].set(True)
 
     first = plan.propose(state, score, shock)
     second = plan.propose(state, score, shock)
@@ -460,7 +460,7 @@ def test_dynamic_ownership_hysteresis_dwell_shock_and_dilation_are_deterministic
     blocked_decision = blocked.propose(
         blocked_state.ownership,
         jnp.zeros((5, 5)),
-        jnp.zeros((5, 5), dtype=bool),
+        jnp.zeros((5, 5), dtype="bool"),
     )
     assert bool(blocked_decision.finite_volume_owned[2, 2])
 
@@ -478,7 +478,7 @@ def test_dynamic_bidirectional_migration_is_exact_and_history_checkpoints():
         finite_volume_stencil_radius=(0, 0),
         kinetic_reach=(0, 0),
     )
-    owned = jnp.zeros((5, 5), dtype=bool).at[1, 1].set(True)
+    owned = jnp.zeros((5, 5), dtype="bool").at[1, 1].set(True)
     kinetic = _kinetic_state(_spatial(method))
     perturbed_conserved = _conserved().at[0].set(1.1).at[-1].set(1.35)
     perturbed_equilibrium = _kinetic_state(_spatial(method), perturbed_conserved)
@@ -492,7 +492,7 @@ def test_dynamic_bidirectional_migration_is_exact_and_history_checkpoints():
     )
     state = _dynamic_state(plan, owned, kinetic=kinetic)
     score = jnp.full((5, 5), 0.5).at[1, 1].set(0.0).at[3, 3].set(1.0)
-    decision = plan.propose(state.ownership, score, jnp.zeros((5, 5), dtype=bool))
+    decision = plan.propose(state.ownership, score, jnp.zeros((5, 5), dtype="bool"))
 
     deferred = plan.migrate(state, decision, jnp.asarray(False))
     assert not bool(deferred.evidence.accepted)
@@ -532,13 +532,13 @@ def test_dynamic_failed_fv_to_kinetic_lift_rolls_back_all_fields_and_history():
         finite_volume_stencil_radius=(0, 0),
         kinetic_reach=(0, 0),
     )
-    owned = jnp.zeros((5, 5), dtype=bool).at[2, 2].set(True)
+    owned = jnp.zeros((5, 5), dtype="bool").at[2, 2].set(True)
     finite_volume = jnp.broadcast_to(_conserved(), (5, 5, 4))
     unsupported = jnp.asarray((1.0, 0.3, 0.0, 1.4))
     finite_volume = finite_volume.at[2, 2].set(unsupported)
     state = _dynamic_state(plan, owned, finite_volume=finite_volume)
     score = jnp.full((5, 5), 0.5).at[2, 2].set(0.0)
-    decision = plan.propose(state.ownership, score, jnp.zeros((5, 5), dtype=bool))
+    decision = plan.propose(state.ownership, score, jnp.zeros((5, 5), dtype="bool"))
 
     result = plan.migrate(state, decision, jnp.asarray(True))
 

@@ -38,7 +38,7 @@ class HilbertRegisterLayout(StrictModule):
         /,
     ):
         ids = tuple(str(wire_id) for wire_id in wire_ids)
-        dimensions = tuple(int(dimension) for dimension in local_dimensions)
+        dimensions = tuple(local_dimensions)
         if not ids:
             raise ValueError("Hilbert register must contain at least one wire.")
         if len(ids) != len(dimensions):

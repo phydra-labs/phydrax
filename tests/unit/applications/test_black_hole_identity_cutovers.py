@@ -41,13 +41,13 @@ def test_schwarzschild_1pn_identity_binds_parameters_and_scale_contract():
     baseline = astro.Schwarzschild1PNForce(4.0, context, speed_of_light=10.0)
     changed_mu = astro.Schwarzschild1PNForce(5.0, context, speed_of_light=10.0)
     changed_light = astro.Schwarzschild1PNForce(4.0, context, speed_of_light=11.0)
-    kilometre_scale = astro.AstrodynamicsScaleContract(
+    kilometer_scale = astro.AstrodynamicsScaleContract(
         phx.units.KILOMETER,
         phx.units.KILOGRAM,
         phx.units.SECOND,
     )
     changed_scale = astro.Schwarzschild1PNForce(
-        4.0, _astrodynamics_context(kilometre_scale), speed_of_light=10.0
+        4.0, _astrodynamics_context(kilometer_scale), speed_of_light=10.0
     )
 
     assert (

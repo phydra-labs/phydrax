@@ -20,7 +20,7 @@ def run() -> dict[str, object]:
     de_rham_seconds = perf_counter() - start
     marker = phx.solver.RelaxedHPMarking(3, 0.1)
     weights = marker.weights(
-        jnp.asarray((1.0, 4.0, 2.0, 3.0)), jnp.ones((4,), dtype=bool)
+        jnp.asarray((1.0, 4.0, 2.0, 3.0)), jnp.ones((4,), dtype="bool")
     )
     result = {
         "de_rham": {

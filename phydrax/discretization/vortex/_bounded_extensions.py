@@ -66,8 +66,8 @@ class EquilibriumWallVortexClosurePlan(StrictModule, NonTrainableState):
     ):
         density_ = float(density)
         viscosity = float(kinematic_viscosity)
-        height = np.asarray(wall_sample_height, dtype=float)
-        measure = np.asarray(wall_measure, dtype=float)
+        height = np.asarray(wall_sample_height, dtype=np.float64)
+        measure = np.asarray(wall_measure, dtype=np.float64)
         roughness = float(roughness_height)
         iterations = int(root_iterations)
         tolerance = float(root_tolerance)
@@ -285,7 +285,7 @@ class VortexLoadRecoveryPlan(StrictModule, NonTrainableState):
         safety_factor: float = 1.25,
         consistency_tolerance: float = 0.25,
     ):
-        values = np.asarray(resolutions, dtype=float)
+        values = np.asarray(resolutions, dtype=np.float64)
         order = float(formal_order)
         safety = float(safety_factor)
         tolerance = float(consistency_tolerance)
@@ -327,7 +327,7 @@ class VortexLoadRecoveryPlan(StrictModule, NonTrainableState):
     ) -> VortexLoadRecoveryResult:
         pressure = jnp.asarray(pressure_loads)
         impulse = jnp.asarray(impulse_loads, dtype=pressure.dtype)
-        count = int(self.resolutions.size)
+        count = self.resolutions.size
         if (
             pressure.ndim != 2
             or pressure.shape != impulse.shape
@@ -362,7 +362,7 @@ class VortexLoadRecoveryPlan(StrictModule, NonTrainableState):
         impulse_defect_ = jnp.asarray(impulse_defect, dtype=pressure.dtype)
         time_defect = jnp.asarray(time_stencil_defect, dtype=pressure.dtype)
         panel = jnp.asarray(panel_residual, dtype=pressure.dtype)
-        topology = jnp.asarray(topology_correspondence, dtype=bool)
+        topology = jnp.asarray(topology_correspondence, dtype=jnp.bool_)
         finite = (
             jnp.all(jnp.isfinite(pressure))
             & jnp.all(jnp.isfinite(impulse))
@@ -469,10 +469,10 @@ class CompressibleVortexAugmentationPlan(StrictModule, NonTrainableState):
         maximum_mach: float,
         projection_tolerance: float = 1.0e-8,
     ):
-        solenoidal = np.asarray(solenoidal_projection, dtype=float)
-        dilatational = np.asarray(dilatational_projection, dtype=float)
-        divergence = np.asarray(divergence_operator, dtype=float)
-        curl = np.asarray(curl_operator, dtype=float)
+        solenoidal = np.asarray(solenoidal_projection, dtype=np.float64)
+        dilatational = np.asarray(dilatational_projection, dtype=np.float64)
+        divergence = np.asarray(divergence_operator, dtype=np.float64)
+        curl = np.asarray(curl_operator, dtype=np.float64)
         if (
             solenoidal.ndim != 2
             or solenoidal.shape[0] != solenoidal.shape[1]

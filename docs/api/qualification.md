@@ -18,7 +18,7 @@ The global dispositions are `internal`, `research`, `candidate`, `released`, and
 PYTHONPATH=. python tools/generate_capability_inventory.py
 ```
 
-The generated `docs/data/capabilities.json` and [capability inventory](capabilities.md) are derived views and confer no release or licence claim.
+The generated `docs/data/capabilities.json` and [capability inventory](capabilities.md) are derived views and confer no release or license claim.
 
 ::: phydrax.qualification.CapabilityDeclaration
 

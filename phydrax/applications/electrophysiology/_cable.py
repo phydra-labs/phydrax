@@ -84,7 +84,7 @@ class CableSolverPlan(StrictModule, NonTrainableState):
         self.residual_tolerance = tolerance
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "electrophysiology-cable-solver-v1",
+                "kind": "electrophysiology-cable-solver",
                 "dt_ms": step,
                 "scheme": scheme,
                 "residual_tolerance": tolerance,
@@ -124,7 +124,7 @@ class PreparedCableSolver(StrictModule, NonTrainableState):
         self.theta = 1.0 if plan.scheme == "backward-euler" else 0.5
         self.runtime_id = canonical_fingerprint(
             {
-                "kind": "prepared-electrophysiology-cable-v1",
+                "kind": "prepared-electrophysiology-cable",
                 "plan": plan.plan_id,
                 "morphology": morphology.runtime_id,
                 "program": program.program_id,
@@ -235,7 +235,9 @@ def zero_cable_inputs(runtime: PreparedCableSolver, /, *, dtype=None) -> CableSt
     count = runtime.morphology.plan.compartment_count
     resolved_dtype = runtime.morphology.capacitance_nF.dtype if dtype is None else dtype
     zeros = jnp.zeros((count,), dtype=resolved_dtype)
-    return CableStepInputs(zeros, zeros, zeros, jnp.zeros((count,), dtype=bool), zeros)
+    return CableStepInputs(
+        zeros, zeros, zeros, jnp.zeros((count,), dtype=jnp.bool_), zeros
+    )
 
 
 def assemble_cable_system(

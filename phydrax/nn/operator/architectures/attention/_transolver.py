@@ -88,8 +88,8 @@ class _PhysicsSliceTokenizer(StrictModule):
 
         _, indices = jax.lax.top_k(logits, self.top_k)
         selected = jnp.sum(
-            jnn.one_hot(indices, self.num_slices, dtype=bool), axis=-2
-        ).astype(bool)
+            jnn.one_hot(indices, self.num_slices, dtype=jnp.bool_), axis=-2
+        ).astype("bool")
         restricted_logits = jnp.where(
             selected,
             logits,
@@ -108,12 +108,12 @@ class _PhysicsSliceTokenizer(StrictModule):
         /,
     ) -> tuple[Array, Array, Array]:
         array = jnp.asarray(features)
-        if array.ndim != 3 or int(array.shape[-1]) != self.channels:
+        if array.ndim != 3 or array.shape[-1] != self.channels:
             raise ValueError(
                 "Physics slice tokenization expects (cases, points, channels)."
             )
         weights = jnp.asarray(quadrature)
-        valid = jnp.asarray(mask, dtype=bool)
+        valid = jnp.asarray(mask, dtype=jnp.bool_)
         if weights.shape != array.shape[:2] or valid.shape != array.shape[:2]:
             raise ValueError("Slice quadrature and masks must match physical points.")
 
@@ -215,8 +215,7 @@ class Transolver(AbstractEncodedOperatorModel):
         if head_dim is None:
             if self.width % self.num_heads != 0:
                 raise ValueError(
-                    "Transolver width must be divisible by num_heads when "
-                    "head_dim is not supplied."
+                    "Transolver width must be divisible by num_heads when head_dim is not supplied."
                 )
             resolved_head_dim = self.width // self.num_heads
         else:
@@ -297,10 +296,9 @@ class Transolver(AbstractEncodedOperatorModel):
         source = self._source(batch)
         values = _flatten_function_values(source, batch.case_shape, self.in_channels)
         coordinates, quadrature, source_mask = _flatten_geometry(source, batch.case_shape)
-        if int(coordinates.shape[-1]) != self.coord_dim:
+        if coordinates.shape[-1] != self.coord_dim:
             raise ValueError(
-                f"Transolver expected coordinate dimension {self.coord_dim}; "
-                f"got {coordinates.shape[-1]}."
+                f"Transolver expected coordinate dimension {self.coord_dim}; got {coordinates.shape[-1]}."
             )
 
         cases = prod(batch.case_shape) if batch.case_shape else 1
@@ -352,10 +350,9 @@ class Transolver(AbstractEncodedOperatorModel):
     ) -> Array:
         del key
         coordinates = query.coordinates_array(case_shape=state.case_shape, flatten=True)
-        if int(coordinates.shape[-1]) != self.coord_dim:
+        if coordinates.shape[-1] != self.coord_dim:
             raise ValueError(
-                f"Transolver expected query coordinate dimension {self.coord_dim}; "
-                f"got {coordinates.shape[-1]}."
+                f"Transolver expected query coordinate dimension {self.coord_dim}; got {coordinates.shape[-1]}."
             )
         cases = prod(state.case_shape) if state.case_shape else 1
         query_count = prod(query.sample_shape)

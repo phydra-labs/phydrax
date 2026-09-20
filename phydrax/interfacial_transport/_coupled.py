@@ -48,10 +48,10 @@ class CoupledBulkSurfaceTransport:
         *,
         tolerance: float = 1e-10,
     ) -> CoupledBulkSurfaceTransport:
-        volumes = np.asarray(bulk_volumes_m3, dtype=float)
-        areas = np.asarray(surface_areas_m2, dtype=float)
-        generator = np.asarray(surface_transport_generator_s_inv, dtype=float)
-        coupling = np.asarray(bulk_from_surface, dtype=float)
+        volumes = np.asarray(bulk_volumes_m3, dtype=np.float64)
+        areas = np.asarray(surface_areas_m2, dtype=np.float64)
+        generator = np.asarray(surface_transport_generator_s_inv, dtype=np.float64)
+        coupling = np.asarray(bulk_from_surface, dtype=np.float64)
         if volumes.ndim != 1 or volumes.size == 0 or np.any(volumes <= 0):
             raise ValueError("Bulk control volumes must be a positive vector.")
         if areas.ndim != 1 or areas.size == 0 or np.any(areas <= 0):

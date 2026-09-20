@@ -13,7 +13,6 @@ from benchmarks._runtime import DurationDistribution
 from phydrax._fingerprint import canonical_fingerprint
 
 
-SCHEMA_VERSION = "advanced-solvers/v3"
 ROW_STATUSES = frozenset({"success", "nonconverged", "skipped"})
 TIMING_PHASES = (
     "setup",
@@ -53,14 +52,9 @@ def validate_report(report: Mapping[str, Any], /) -> None:
     """Validate the stable report schema and all cross-row evidence invariants."""
     _require_keys(
         report,
-        ("schema_version", "environment", "campaign", "rows"),
+        ("environment", "campaign", "rows"),
         path="report",
     )
-    if report["schema_version"] != SCHEMA_VERSION:
-        raise SchemaError(
-            f"report.schema_version must be {SCHEMA_VERSION!r}; "
-            f"received {report['schema_version']!r}"
-        )
     environment = _mapping(report["environment"], "report.environment")
     _validate_environment(environment, "report.environment")
     campaign = _mapping(report["campaign"], "report.campaign")
@@ -136,7 +130,6 @@ def validate_row(row: Mapping[str, Any], /, *, path: str = "row") -> None:
     _require_keys(
         row,
         (
-            "schema_version",
             "environment",
             "case_id",
             "problem",
@@ -154,8 +147,6 @@ def validate_row(row: Mapping[str, Any], /, *, path: str = "row") -> None:
         ),
         path=path,
     )
-    if row["schema_version"] != SCHEMA_VERSION:
-        raise SchemaError(f"{path}.schema_version must be {SCHEMA_VERSION!r}")
     _nonempty_string(row["case_id"], f"{path}.case_id")
     _validate_environment(
         _mapping(row["environment"], f"{path}.environment"), f"{path}.environment"
@@ -610,7 +601,6 @@ def row_identity(row: Mapping[str, Any], /) -> str:
     implementation = _mapping(row["implementation"], "row.implementation")
     return canonical_fingerprint(
         {
-            "schema_version": row["schema_version"],
             "case_id": row["case_id"],
             "problem_fingerprint": problem["fingerprint"],
             "adapter": implementation["adapter"],
@@ -776,7 +766,6 @@ def _nonnegative_integer(value: Any, path: str) -> None:
 
 __all__ = [
     "ROW_STATUSES",
-    "SCHEMA_VERSION",
     "TIMING_PHASES",
     "SchemaError",
     "empty_distribution",

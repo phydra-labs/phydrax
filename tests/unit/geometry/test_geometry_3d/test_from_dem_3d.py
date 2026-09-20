@@ -27,7 +27,7 @@ def test_geometry3d_from_dem_basic():
     assert geom.reconstruction_report.watertight
 
     # Bounds are finite and consistent
-    bounds = np.asarray(geom.bounds, dtype=float)
+    bounds = np.asarray(geom.bounds, dtype="float64")
     assert bounds.shape == (2, 3)
     (xmin, ymin, zmin), (xmax, ymax, zmax) = bounds
     assert xmin < xmax and ymin < ymax and zmin < zmax

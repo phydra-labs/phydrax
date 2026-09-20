@@ -682,9 +682,9 @@ class TwoTemperatureMixtureNavierStokesSystem(
             maximum_thermal_iterations=maximum_thermal_iterations,
         )
         values = (
-            np.zeros(inviscid.mode_count, dtype=float)
+            np.zeros(inviscid.mode_count, dtype=np.float64)
             if mode_diffusivities is None
-            else np.asarray(mode_diffusivities, dtype=float)
+            else np.asarray(mode_diffusivities, dtype=np.float64)
         )
         if (
             values.shape != (inviscid.mode_count,)

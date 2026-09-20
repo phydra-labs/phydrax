@@ -355,15 +355,15 @@ def _model_distribution(
     /,
 ) -> tuple[Array, Array]:
     count = prod(model_shape) if model_shape else 1
-    weight_dtype = dtype if np.issubdtype(dtype, np.inexact) else np.dtype(float)
+    weight_dtype = dtype if np.issubdtype(dtype, np.inexact) else np.dtype(np.float64)
     if support_mask is None:
         support = (
-            jnp.ones((count,), dtype=bool)
+            jnp.ones((count,), dtype=jnp.bool_)
             if weights is None
             else jnp.asarray(weights).reshape((count,)) > 0.0
         )
     else:
-        support_values = jnp.asarray(support_mask, dtype=bool)
+        support_values = jnp.asarray(support_mask, dtype=jnp.bool_)
         if tuple(support_values.shape) not in ((count,), model_shape):
             raise ValueError(
                 "model_support must have flattened model shape "
@@ -388,8 +388,7 @@ def _model_distribution(
             raise ValueError("model_weights must be finite and non-negative.")
         if bool(jnp.any(jnp.where(support, values <= 0.0, values != 0.0))):
             raise ValueError(
-                "Supported models require positive weight and unsupported models "
-                "require exactly zero weight."
+                "Supported models require positive weight and unsupported models require exactly zero weight."
             )
     total = jnp.sum(values)
     if not bool(total > 0.0):
@@ -523,8 +522,7 @@ def plan_sampling_mpc(
             binding_id = str(realization_binding_id)
         if not binding_id:
             raise ValueError(
-                "A custom realization_binding requires a non-empty "
-                "realization_binding_id."
+                "A custom realization_binding requires a non-empty realization_binding_id."
             )
         model_shape = (realizations.count,)
         model_count = realizations.count
@@ -613,7 +611,7 @@ def initialize_sampling_mpc(
     if jnp.issubdtype(mean.dtype, jnp.complexfloating):
         raise TypeError("nominal_controls must be real-valued.")
     if not jnp.issubdtype(mean.dtype, jnp.inexact):
-        mean = mean.astype(float)
+        mean = mean.astype("float64")
     deviation = jnp.asarray(standard_deviation, dtype=mean.dtype)
     deviation_shape = tuple(deviation.shape)
     padding = len(plan.parameter_shape) - len(deviation_shape)
@@ -973,7 +971,7 @@ def solve_sampling_mpc(
         realization_indices,
     ) = _realization_inputs(plan, key_, state.solve_count)
     shifted = shift_sampling_mpc_state(plan, state)
-    use_shift = jnp.asarray(warm_start, dtype=bool).reshape(())
+    use_shift = jnp.asarray(warm_start, dtype=jnp.bool_).reshape(())
     initial_mean = jnp.where(use_shift, shifted.mean, state.mean)
     initial_deviation = jnp.where(
         use_shift, shifted.standard_deviation, state.standard_deviation

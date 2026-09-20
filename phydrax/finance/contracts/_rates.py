@@ -133,7 +133,7 @@ class ResolvedRateSchedule(StrictModule):
         expected = (schedule.capacity,)
         if start.shape != expected or end.shape != expected or payment.shape != expected:
             raise ValueError("Resolved curve-time arrays must match schedule capacity.")
-        mask = np.asarray(schedule.valid, dtype=bool)
+        mask = np.asarray(schedule.valid, dtype=np.bool_)
         for name, values in (
             ("accrual_start_times", start),
             ("accrual_end_times", end),
@@ -166,10 +166,10 @@ class ResolvedRateSchedule(StrictModule):
     ) -> ResolvedRateSchedule:
         if not isinstance(schedule, ResolvedSchedule):
             raise TypeError("schedule must be a ResolvedSchedule.")
-        mask = np.asarray(schedule.valid, dtype=bool)
+        mask = np.asarray(schedule.valid, dtype=np.bool_)
 
         def converted(ordinals: Array) -> Array:
-            values = np.zeros((schedule.capacity,), dtype=float)
+            values = np.zeros((schedule.capacity,), dtype=np.float64)
             source = np.asarray(ordinals)
             for index in np.flatnonzero(mask):
                 values[index] = _signed_year_fraction(
@@ -233,10 +233,10 @@ class DeterministicCashflowReplay(StrictModule):
         payment = jnp.asarray(payment_ordinals, dtype=jnp.int32)
         times = jnp.asarray(payment_times)
         amounts_ = jnp.asarray(amounts)
-        valid = jnp.asarray(valid_mask, dtype=bool)
-        known = jnp.asarray(known_mask, dtype=bool)
-        projected = jnp.asarray(projected_mask, dtype=bool)
-        notional = jnp.asarray(notional_exchange_mask, dtype=bool)
+        valid = jnp.asarray(valid_mask, dtype=jnp.bool_)
+        known = jnp.asarray(known_mask, dtype=jnp.bool_)
+        projected = jnp.asarray(projected_mask, dtype=jnp.bool_)
+        notional = jnp.asarray(notional_exchange_mask, dtype=jnp.bool_)
         discounts = jnp.asarray(discount_factors)
         shape = amounts_.shape
         arrays = (payment, times, valid, known, projected, notional, discounts)
@@ -337,7 +337,7 @@ def _known_batch(
     obligation_ids: tuple[str, ...],
     /,
 ) -> CashflowBatch:
-    mask = np.asarray(valid, dtype=bool)
+    mask = np.asarray(valid, dtype=np.bool_)
     ordinals = np.asarray(payment_ordinals)[mask]
     amount_values = np.asarray(amounts)[mask]
     dates = tuple(FinanceDate(int(value)) for value in ordinals)
@@ -360,7 +360,7 @@ def _combine_known(*batches: CashflowBatch) -> CashflowBatch:
     currencies: list[Currency] = []
     identifiers: list[str] = []
     for batch in batches:
-        mask = np.asarray(batch.valid_mask, dtype=bool)
+        mask = np.asarray(batch.valid_mask, dtype=np.bool_)
         for index in np.flatnonzero(mask):
             dates.append(FinanceDate(int(np.asarray(batch.payment_ordinals)[index])))
             amounts.append(float(np.asarray(batch.amounts)[index]))
@@ -427,8 +427,8 @@ def _leg_layout(
     shape = (capacity + 2,)
     payment = jnp.zeros(shape, dtype=jnp.int32)
     times = jnp.zeros(shape)
-    valid = jnp.zeros(shape, dtype=bool)
-    notional = jnp.zeros(shape, dtype=bool)
+    valid = jnp.zeros(shape, dtype=jnp.bool_)
+    notional = jnp.zeros(shape, dtype=jnp.bool_)
     payment = payment.at[1 : capacity + 1].set(schedule.schedule.payment_dates)
     times = times.at[1 : capacity + 1].set(schedule.payment_times)
     valid = valid.at[1 : capacity + 1].set(schedule.future_payment_mask)
@@ -677,11 +677,11 @@ class ResolvedFloatingLeg(AbstractResolvedContract):
         if type(exchange_initial) is not bool or type(exchange_final) is not bool:
             raise TypeError("Notional-exchange flags must be bool values.")
         values = jnp.asarray(fixing_values)
-        mask = jnp.asarray(fixing_mask, dtype=bool)
+        mask = jnp.asarray(fixing_mask, dtype=jnp.bool_)
         expected = (schedule.schedule.capacity,)
         if values.shape != expected or mask.shape != expected:
             raise ValueError("Fixing arrays must match the resolved schedule capacity.")
-        active = np.asarray(schedule.schedule.valid, dtype=bool)
+        active = np.asarray(schedule.schedule.valid, dtype=np.bool_)
         values_np = np.asarray(values)
         mask_np = np.asarray(mask)
         if np.any(mask_np & ~active):
@@ -915,7 +915,7 @@ class ResolvedDeposit(AbstractResolvedContract):
     ) -> tuple[Array, Array, Array, Array, tuple[Currency, ...], tuple[str, ...]]:
         start_valid = self.schedule.accrual_start_times[0] >= 0.0
         end_valid = self.schedule.payment_times[0] >= 0.0
-        valid = jnp.asarray((start_valid, end_valid), dtype=bool)
+        valid = jnp.asarray((start_valid, end_valid), dtype=jnp.bool_)
         payment = jnp.asarray(
             (
                 jnp.where(start_valid, self.schedule.schedule.accrual_start_dates[0], 0),
@@ -1082,7 +1082,7 @@ class ResolvedForwardRateAgreement(AbstractResolvedContract):
         return (
             jnp.asarray((jnp.where(valid, ordinal, 0),), dtype=jnp.int32),
             jnp.asarray((jnp.where(valid, time, 0.0),)),
-            jnp.asarray((valid,), dtype=bool),
+            jnp.asarray((valid,), dtype=jnp.bool_),
         )
 
     @property
@@ -1250,7 +1250,7 @@ class ResolvedInterestRateFuture(AbstractResolvedContract):
         )
 
     def cashflow_replay(self, curves: CurveSet, /) -> DeterministicCashflowReplay:
-        valid = jnp.asarray((self.schedule.payment_times[0] >= 0.0,), dtype=bool)
+        valid = jnp.asarray((self.schedule.payment_times[0] >= 0.0,), dtype=jnp.bool_)
         payment = jnp.asarray(
             (jnp.where(valid[0], self.schedule.schedule.payment_dates[0], 0),),
             dtype=jnp.int32,
@@ -1332,8 +1332,8 @@ class ResolvedInflationLeg(AbstractResolvedContract):
         observation_end = jnp.asarray(observation_end_times)
         start_values = jnp.asarray(start_index_values)
         end_values = jnp.asarray(end_index_values)
-        start_mask = jnp.asarray(start_fixing_mask, dtype=bool)
-        end_mask = jnp.asarray(end_fixing_mask, dtype=bool)
+        start_mask = jnp.asarray(start_fixing_mask, dtype=jnp.bool_)
+        end_mask = jnp.asarray(end_fixing_mask, dtype=jnp.bool_)
         arrays = (
             observation_start,
             observation_end,
@@ -1346,7 +1346,7 @@ class ResolvedInflationLeg(AbstractResolvedContract):
             raise ValueError(
                 "Inflation observation/fixing arrays must match schedule capacity."
             )
-        active = np.asarray(schedule.schedule.valid, dtype=bool)
+        active = np.asarray(schedule.schedule.valid, dtype=np.bool_)
         obs_start_np = np.asarray(observation_start)
         obs_end_np = np.asarray(observation_end)
         start_np = np.asarray(start_values)

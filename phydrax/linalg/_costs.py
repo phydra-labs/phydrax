@@ -13,7 +13,7 @@ from .._strict import StrictModule
 def _array_tree_storage_bytes(value: object, /) -> int:
     """Count distinct resident array buffers once within one immutable artifact."""
     arrays = {id(leaf): leaf for leaf in jax.tree.leaves(value) if eqx.is_array(leaf)}
-    return sum(int(array.size * array.dtype.itemsize) for array in arrays.values())
+    return sum(array.size * array.dtype.itemsize for array in arrays.values())
 
 
 class PreconditionerCostEstimate(StrictModule):
@@ -42,8 +42,7 @@ class PreconditionerCostEstimate(StrictModule):
         if not component_ or not reason_:
             raise ValueError("Preconditioner cost strings must be non-empty.")
         integers = tuple(
-            int(value)
-            for value in (
+            (
                 storage_bytes,
                 preparation_workspace_bytes,
                 apply_workspace_bytes_per_rhs,
@@ -145,8 +144,7 @@ class LinearCostEstimate(StrictModule):
         if any(not value for value in strings):
             raise ValueError("Cost-estimate strings must be non-empty.")
         integers = tuple(
-            int(value)
-            for value in (
+            (
                 existing_storage_bytes,
                 additional_matrix_bytes,
                 factorization_bytes,

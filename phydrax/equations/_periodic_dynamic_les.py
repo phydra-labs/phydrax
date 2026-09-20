@@ -135,8 +135,7 @@ class PreparedPeriodicFourierTestFilter(StrictModule, NonTrainableState):
                 )
             if test_axis.physical_count >= resolved_axis.physical_count:
                 raise ValueError(
-                    "Every test-filter Fourier axis must be strictly coarser than "
-                    "the resolved axis."
+                    "Every test-filter Fourier axis must be strictly coarser than the resolved axis."
                 )
 
         test_grid_filter = plan.grid_filter_plan.prepare(test_discretization)
@@ -154,10 +153,10 @@ class PreparedPeriodicFourierTestFilter(StrictModule, NonTrainableState):
         )
         retained_mask = (jnp.abs(candidate) > 0.0) & resolved_filter.live_mask
         resolved_widths = np.asarray(
-            resolved_filter.filter_scale.directional_widths, dtype=float
+            resolved_filter.filter_scale.directional_widths, dtype=np.float64
         )
         test_widths = np.asarray(
-            test_grid_filter.filter_scale.directional_widths, dtype=float
+            test_grid_filter.filter_scale.directional_widths, dtype=np.float64
         )
         ratio = tuple(float(value) for value in test_widths / resolved_widths)
 

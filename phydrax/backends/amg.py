@@ -524,9 +524,7 @@ def prepare_amgx(
                 resource.destroy()
         _release_amgx_module(module)
         raise
-    matrix_bytes = int(
-        storage.values.nbytes + storage.indices.nbytes + storage.indptr.nbytes
-    )
+    matrix_bytes = storage.values.nbytes + storage.indices.nbytes + storage.indptr.nbytes
     return PreparedAmgX(
         problem=problem,
         plan=plan,
@@ -581,7 +579,7 @@ def _pack_rhs(space: Any, value: PyTree[Any], /):
         event_shape = tuple(specification.shape)
         if array.shape[: len(event_shape)] != event_shape:
             raise ValueError("Right-hand-side leaves must begin with their space shape.")
-        suffix = tuple(int(size) for size in array.shape[len(event_shape) :])
+        suffix = tuple(array.shape[len(event_shape) :])
         if rhs_shape is None:
             rhs_shape = suffix
         elif rhs_shape != suffix:
@@ -808,7 +806,7 @@ def solve_amgx(
         if len(iteration_values) != rhs.shape[1]
         else jnp.asarray(iteration_values, dtype=jnp.int32).reshape(rhs_shape or ())
     )
-    bytes_per_columns = int(rhs.nbytes)
+    bytes_per_columns = rhs.nbytes
     return AMGSolveResult(
         value=_unpack_rhs(coordinates, rhs_shape, treedef, specifications),
         status=status,

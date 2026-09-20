@@ -74,7 +74,7 @@ state = phx.velocimetry.tracking.initialize_stb(
     prepared,
     jnp.zeros((1, 3)),
     jnp.zeros((1,)),
-    jnp.zeros((1,), dtype=bool),
+    jnp.zeros((1,), dtype="bool"),
     first_track_id=100,
 )
 truth_position = jnp.asarray([[0.1, 0.0, 6.0]])

@@ -89,7 +89,7 @@ class CompositionDiagnostics(StrictModule):
         self.child_valid = tuple(result.valid for result in results_)
         self.child_status = tuple(result.status for result in results_)
         self.gradient_contracts = tuple(result.gradient_contract for result in results_)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
 
 
@@ -159,8 +159,7 @@ def _validate_model_input(
     expected = _feature_width(model.in_size, role="Model input")
     if expected != int(feature_count):
         raise ValueError(
-            f"Fitted model expects {expected} features but the composed batch has "
-            f"{feature_count}."
+            f"Fitted model expects {expected} features but the composed batch has {feature_count}."
         )
     if isinstance(model, SchemaTransformModel) and schema is not None:
         declared = model.input_schema
@@ -199,7 +198,7 @@ def _prepare_input(values: Any, in_size: Any, /) -> Any:
     if in_size == "scalar":
         if array.ndim == 0:
             return array
-        if int(array.shape[-1]) != 1:
+        if array.shape[-1] != 1:
             raise ValueError("Scalar model input requires a singleton feature axis.")
         return jnp.squeeze(array, axis=-1)
     return array
@@ -215,11 +214,11 @@ def _call_pointwise(
     array = jnp.asarray(values)
     if array.ndim < 1:
         raise ValueError("Pointwise feature transforms require a feature axis.")
-    width = int(array.shape[-1])
+    width = array.shape[-1]
     _validate_model_input(model, width)
-    leading = tuple(int(size) for size in array.shape[:-1])
+    leading = tuple(array.shape[:-1])
     flat = array.reshape((-1, width))
-    count = int(flat.shape[0])
+    count = flat.shape[0]
     if key is None:
         mapped = jax.vmap(
             lambda row: model(_prepare_input(row, model.in_size), key=None)
@@ -245,16 +244,15 @@ def _call_blockwise_cases(
     if isinstance(values, SparseFeatures):
         if case_shape:
             raise TypeError(
-                "Case-vmapped blockwise sparse transforms are unsupported; no dense "
-                "fallback is performed."
+                "Case-vmapped blockwise sparse transforms are unsupported; no dense fallback is performed."
             )
         return model(_prepare_input(values, model.in_size), key=key)
     array = jnp.asarray(values)
     if not case_shape:
         return model(_prepare_input(array, model.in_size), key=key)
-    sample_count, width = int(array.shape[-2]), int(array.shape[-1])
+    sample_count, width = array.shape[-2], array.shape[-1]
     flat = array.reshape((-1, sample_count, width))
-    count = int(flat.shape[0])
+    count = flat.shape[0]
     if key is None:
         mapped = jax.vmap(
             lambda block: model(_prepare_input(block, model.in_size), key=None)
@@ -291,7 +289,7 @@ def _canonical_feature_output(
     if out_size == "scalar" and tuple(array.shape) == leading_shape:
         array = jnp.expand_dims(array, axis=-1)
     expected = leading_shape + (width,)
-    if tuple(int(size) for size in array.shape) != expected:
+    if tuple(array.shape) != expected:
         raise ValueError(
             "Feature transform must preserve case/sample axes and return one feature "
             f"axis of width {width}; got {array.shape}, expected {expected}."
@@ -360,8 +358,7 @@ def _transform_batch(
     if binding.batch_mode == "pointwise":
         if isinstance(batch.features, SparseFeatures):
             raise TypeError(
-                "Pointwise transforms of SparseFeatures are unsupported; no dense "
-                "fallback is performed."
+                "Pointwise transforms of SparseFeatures are unsupported; no dense fallback is performed."
             )
         output = _call_pointwise(model, batch.features, key=key)
     else:
@@ -388,9 +385,7 @@ def _transform_values(
     composed_blockwise: bool,
 ) -> FeatureArray:
     width = (
-        values.feature_count
-        if isinstance(values, SparseFeatures)
-        else int(values.shape[-1])
+        values.feature_count if isinstance(values, SparseFeatures) else values.shape[-1]
     )
     _validate_model_input(model, width, schema=input_schema)
     binding = model.input_binding()
@@ -410,14 +405,13 @@ def _transform_values(
     if isinstance(values, SparseFeatures):
         if binding.batch_mode != "blockwise":
             raise TypeError(
-                "Pointwise transforms of SparseFeatures are unsupported; no dense "
-                "fallback is performed."
+                "Pointwise transforms of SparseFeatures are unsupported; no dense fallback is performed."
             )
         output = model(values, key=key)
         leading = values.case_shape + (values.sample_count,)
     else:
         array = jnp.asarray(values)
-        leading = tuple(int(size) for size in array.shape[:-1])
+        leading = tuple(array.shape[:-1])
         if composed_blockwise and binding.batch_mode == "pointwise":
             output = _call_pointwise(model, array, key=key)
         else:
@@ -436,9 +430,7 @@ def _predict_values(
     composed_blockwise: bool,
 ) -> Any:
     width = (
-        values.feature_count
-        if isinstance(values, SparseFeatures)
-        else int(values.shape[-1])
+        values.feature_count if isinstance(values, SparseFeatures) else values.shape[-1]
     )
     _validate_model_input(model, width)
     binding = model.input_binding()
@@ -449,8 +441,7 @@ def _predict_values(
     if isinstance(values, SparseFeatures):
         if binding.batch_mode != "blockwise":
             raise TypeError(
-                "Pointwise prediction from SparseFeatures is unsupported; no dense "
-                "fallback is performed."
+                "Pointwise prediction from SparseFeatures is unsupported; no dense fallback is performed."
             )
         return model(values, key=key)
     array = jnp.asarray(values)
@@ -509,8 +500,7 @@ def _combine_results(
                 conditions.append(condition)
     if fit_mode == "stopped" and any(mode != "stopped" for mode in modes):
         conditions.append(
-            "Child fits use different differentiation modes; the composite fit mode "
-            "is conservatively declared stopped."
+            "Child fits use different differentiation modes; the composite fit mode is conservatively declared stopped."
         )
     contract = GradientContract(
         prediction_inputs=minimum_level(lambda contract: contract.prediction_inputs),
@@ -525,7 +515,11 @@ def _combine_results(
         nondifferentiable_outputs=tuple(nondifferentiable),
         conditions=tuple(conditions),
     )
-    return jnp.asarray(valid, dtype=bool), jnp.asarray(status, dtype=jnp.int32), contract
+    return (
+        jnp.asarray(valid, dtype=jnp.bool_),
+        jnp.asarray(status, dtype=jnp.int32),
+        contract,
+    )
 
 
 def _prefixed_schema(name: str, schema: FeatureSchema, /) -> FeatureSchema:
@@ -608,8 +602,7 @@ def _join_feature_batches(
     sparse = tuple(isinstance(batch.features, SparseFeatures) for _, batch in entries)
     if any(sparse) and not all(sparse):
         raise TypeError(
-            "Joining sparse and dense feature blocks is unsupported; no implicit "
-            "densification is performed."
+            "Joining sparse and dense feature blocks is unsupported; no implicit densification is performed."
         )
     schema = _join_schemas(tuple((name, batch.feature_schema) for name, batch in entries))
     if all(sparse):
@@ -635,18 +628,15 @@ def _join_feature_values(named: Sequence[tuple[str, FeatureArray]], /) -> Featur
     sparse = tuple(isinstance(values, SparseFeatures) for _, values in entries)
     if any(sparse) and not all(sparse):
         raise TypeError(
-            "Joining sparse and dense feature blocks is unsupported; no implicit "
-            "densification is performed."
+            "Joining sparse and dense feature blocks is unsupported; no implicit densification is performed."
         )
     if all(sparse):
         return _join_sparse(
             _require_sparse_blocks(tuple(values for _, values in entries))
         )
     arrays = tuple(jnp.asarray(values) for _, values in entries)
-    leading = tuple(int(size) for size in arrays[0].shape[:-1])
-    if any(
-        tuple(int(size) for size in array.shape[:-1]) != leading for array in arrays[1:]
-    ):
+    leading = tuple(arrays[0].shape[:-1])
+    if any(tuple(array.shape[:-1]) != leading for array in arrays[1:]):
         raise ValueError("Feature blocks must preserve the same leading axes.")
     return jnp.concatenate(arrays, axis=-1)
 

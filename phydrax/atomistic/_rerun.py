@@ -73,14 +73,14 @@ class AtomisticRerunPlan(StrictModule):
             )
         if not isinstance(neighborhood, AbstractPreparedParticleNeighborhood):
             raise TypeError("neighborhood must be a prepared particle neighborhood.")
-        groups = tuple(int(value) for value in force_groups)
+        groups = tuple(force_groups)
         if any(value < 0 for value in groups):
             raise ValueError("Rerun force groups must be non-negative.")
         if isinstance(potential, PreparedControlledHamiltonian):
             states = (
                 tuple(range(potential.plan.schedule.state_count))
                 if state_indices is None
-                else tuple(int(value) for value in state_indices)
+                else tuple(state_indices)
             )
             if not states or any(
                 value < 0 or value >= potential.plan.schedule.state_count

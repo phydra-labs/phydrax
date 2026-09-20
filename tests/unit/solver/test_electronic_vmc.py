@@ -37,7 +37,7 @@ class _FailedLocalOperator(phx.operators.AbstractLocalQuantumOperator):
         shape = configurations.shape[:-2]
         return phx.operators.LocalOperatorEstimate(
             jnp.zeros(shape),
-            jnp.ones(shape, dtype=bool),
+            jnp.ones(shape, dtype="bool"),
             jnp.full(
                 shape,
                 int(phx.operators.LocalOperatorStatus.SINGULAR_CONFIGURATION),

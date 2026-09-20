@@ -99,8 +99,8 @@ def validate_source_coverage(ledger: SourceAbsorptionLedger, /) -> tuple[str, ..
             errors.append(f"unpinned-source:{source.source_id}")
         if source.archive_digest in unresolved:
             errors.append(f"unresolved-source-tree:{source.source_id}")
-        if source.licence_digest in unresolved:
-            errors.append(f"unresolved-source-licence:{source.source_id}")
+        if source.license_digest in unresolved:
+            errors.append(f"unresolved-source-license:{source.source_id}")
         if len(source.relevant_documents) < 2:
             errors.append(f"unreviewed-source-documents:{source.source_id}")
         if source.review_status is SourceReview.UNREVIEWED:

@@ -9,6 +9,8 @@ import jax
 import jax.numpy as jnp
 import jax.tree_util as jtu
 
+from phydrax._strict import StrictModule
+
 from ._graph import ensure_graph, GraphIR
 from ._kernels import segment_softmax, segment_sum
 
@@ -24,7 +26,7 @@ def _tree_leading_size(tree: ArrayTree) -> int:
     leaves = jtu.tree_leaves(tree)
     if not leaves:
         raise ValueError("Feature tree must contain at least one array leaf.")
-    return int(jnp.asarray(leaves[0]).shape[0])
+    return jnp.asarray(leaves[0]).shape[0]
 
 
 def _tree_repeat(
@@ -45,7 +47,7 @@ def _tree_segment(
     return jtu.tree_map(lambda x: aggregate_fn(x, segment_ids, num_segments), tree)
 
 
-class GraphNetwork(eqx.Module):
+class GraphNetwork(StrictModule):
     """Graph network block over `GraphIR`."""
 
     update_edge_fn: Callable | None
@@ -105,7 +107,7 @@ class GraphNetwork(eqx.Module):
         n_edge = graph.n_edge
 
         sum_n_node = _tree_leading_size(nodes)
-        sum_n_edge = int(senders.shape[0])
+        sum_n_edge = senders.shape[0]
 
         if self.update_edge_fn is not None:
             sent = _tree_index(nodes, senders)
@@ -158,7 +160,7 @@ class GraphNetwork(eqx.Module):
             nodes = self.update_node_fn(nodes, sent_aggr, recv_aggr, glob_node)
 
         if self.update_global_fn is not None:
-            n_graph = int(n_node.shape[0])
+            n_graph = n_node.shape[0]
             graph_idx = jnp.arange(n_graph, dtype=jnp.int32)
             node_gr_idx = jnp.repeat(
                 graph_idx,
@@ -192,7 +194,7 @@ class GraphNetwork(eqx.Module):
         return graph.replace(nodes=nodes, edges=edges, globals=globals_, validate=False)
 
 
-class InteractionNetwork(eqx.Module):
+class InteractionNetwork(StrictModule):
     """Interaction network convenience wrapper."""
 
     update_edge_fn: Callable
@@ -239,7 +241,7 @@ class InteractionNetwork(eqx.Module):
         return net(graph)
 
 
-class RelationNetwork(eqx.Module):
+class RelationNetwork(StrictModule):
     """Relation network convenience wrapper."""
 
     update_edge_fn: Callable
@@ -275,7 +277,7 @@ class RelationNetwork(eqx.Module):
         return net(graph)
 
 
-class DeepSets(eqx.Module):
+class DeepSets(StrictModule):
     """DeepSets convenience wrapper."""
 
     update_node_fn: Callable
@@ -311,7 +313,7 @@ class DeepSets(eqx.Module):
         return net(graph)
 
 
-class GraphNetGAT(eqx.Module):
+class GraphNetGAT(StrictModule):
     """GraphNetwork with attention required."""
 
     update_edge_fn: Callable
@@ -339,8 +341,7 @@ class GraphNetGAT(eqx.Module):
     ):
         if attention_logit_fn is None or attention_reduce_fn is None:
             raise ValueError(
-                "`None` value not supported for `attention_logit_fn` or "
-                "`attention_reduce_fn` in GraphNetGAT."
+                "`None` value not supported for `attention_logit_fn` or `attention_reduce_fn` in GraphNetGAT."
             )
         self.update_edge_fn = update_edge_fn
         self.update_node_fn = update_node_fn
@@ -367,7 +368,7 @@ class GraphNetGAT(eqx.Module):
         return net(graph)
 
 
-class GAT(eqx.Module):
+class GAT(StrictModule):
     """Graph attention network layer over `GraphIR`."""
 
     attention_query_fn: Callable
@@ -422,7 +423,7 @@ class GAT(eqx.Module):
         return graph.replace(nodes=updated_nodes, validate=False)
 
 
-class GraphConvolution(eqx.Module):
+class GraphConvolution(StrictModule):
     """Graph convolution layer over `GraphIR`."""
 
     update_node_fn: Callable
@@ -507,7 +508,7 @@ class GraphConvolution(eqx.Module):
         return graph.replace(nodes=nodes, validate=False)
 
 
-class GraphMapFeatures(eqx.Module):
+class GraphMapFeatures(StrictModule):
     """Apply independent feature maps to node/edge/global fields."""
 
     embed_edge_fn: Callable | None

@@ -141,7 +141,7 @@ def solve_weighted_least_squares(
     """Solve batched weighted affine regression through an augmented SVD."""
     x = jnp.asarray(design)
     y = jnp.asarray(target)
-    w = jnp.asarray(weights, dtype=float)
+    w = jnp.asarray(weights, dtype=jnp.float64)
     if x.ndim < 2 or w.shape != x.shape[:-1]:
         raise ValueError("design and weights must end in (sample, feature) and sample.")
     sample_shape = x.shape[:-1]
@@ -156,7 +156,7 @@ def solve_weighted_least_squares(
     x_cases = x.reshape((cases, x.shape[-2], x.shape[-1]))
     y_cases = y_flat.reshape((cases, y_flat.shape[-2], y_flat.shape[-1]))
     w_cases = w.reshape((cases, w.shape[-1]))
-    ridge_ = jnp.broadcast_to(jnp.asarray(ridge, dtype=float), case_shape or ())
+    ridge_ = jnp.broadcast_to(jnp.asarray(ridge, dtype=jnp.float64), case_shape or ())
     ridge_cases = ridge_.reshape((cases,))
     cutoff = (
         max(x.shape[-2], x.shape[-1]) * jnp.finfo(x.real.dtype).eps

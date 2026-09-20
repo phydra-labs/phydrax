@@ -53,7 +53,7 @@ def test_sampled_series_supports_pytrees_component_masks_and_edge_values():
     }
     value_valid = {
         "continuous": jnp.asarray([[True, True], [True, False], [True, True]]),
-        "mode": jnp.ones((3,), dtype=bool),
+        "mode": jnp.ones((3,), dtype="bool"),
     }
     series = phx.series.SampledSeries(
         support,

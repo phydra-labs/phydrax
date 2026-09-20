@@ -117,17 +117,17 @@ class _FourierShellBinGeometry(StrictModule, NonTrainableState):
         final_edge_policy: FinalEdgePolicy = "include",
         source_id: str,
     ):
-        magnitude = np.asarray(wavenumber_magnitude, dtype=float)
-        edges = np.asarray(bin_edges, dtype=float).reshape((-1,))
+        magnitude = np.asarray(wavenumber_magnitude, dtype=np.float64)
+        edges = np.asarray(bin_edges, dtype=np.float64).reshape((-1,))
         mask = (
-            np.ones(magnitude.shape, dtype=bool)
+            np.ones(magnitude.shape, dtype=np.bool_)
             if mode_mask is None
-            else np.asarray(mode_mask, dtype=bool)
+            else np.asarray(mode_mask, dtype=np.bool_)
         )
         weights = (
-            np.ones(magnitude.shape, dtype=float)
+            np.ones(magnitude.shape, dtype=np.float64)
             if mode_weights is None
-            else np.asarray(mode_weights, dtype=float)
+            else np.asarray(mode_weights, dtype=np.float64)
         )
         source = str(source_id).strip()
         if (
@@ -160,7 +160,7 @@ class _FourierShellBinGeometry(StrictModule, NonTrainableState):
         )
         stored_count = np.bincount(
             safe_indices.reshape((-1,)),
-            weights=valid.reshape((-1,)).astype(float),
+            weights=valid.reshape((-1,)).astype("float64"),
             minlength=edges.size - 1,
         )
         weighted_k = np.bincount(
@@ -255,9 +255,9 @@ class PeriodicFourierShellPlan(StrictModule, NonTrainableState):
         final_edge_policy: FinalEdgePolicy = "include",
         source_id: str = "periodic-cell-field",
     ):
-        shape = tuple(int(value) for value in source_shape)
+        shape = tuple(source_shape)
         lengths = tuple(float(value) for value in box_lengths)
-        edges = np.asarray(bin_edges, dtype=float).reshape((-1,))
+        edges = np.asarray(bin_edges, dtype=np.float64).reshape((-1,))
         source = str(source_id).strip()
         if (
             len(shape) not in (1, 2, 3)
@@ -286,7 +286,7 @@ class PeriodicFourierShellPlan(StrictModule, NonTrainableState):
         grids = np.meshgrid(*frequencies, indexing="ij")
         magnitude = np.sqrt(sum(component**2 for component in grids))
         transformed_shape = magnitude.shape
-        mode_mask = np.ones(transformed_shape, dtype=bool)
+        mode_mask = np.ones(transformed_shape, dtype=np.bool_)
         if dc_policy == "exclude":
             mode_mask &= magnitude > 0.0
         last_indices = np.arange(transformed_shape[-1])

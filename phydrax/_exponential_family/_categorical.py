@@ -51,10 +51,9 @@ class CategoricalFamily(_AbstractAnalyticExponentialFamily):
         values = jnp.asarray(logits)
         if jnp.issubdtype(values.dtype, jnp.complexfloating):
             raise TypeError("Categorical logits must be real-valued.")
-        if values.ndim == 0 or int(values.shape[-1]) != self.num_categories:
+        if values.ndim == 0 or values.shape[-1] != self.num_categories:
             raise ValueError(
-                "Categorical full logits must end in num_categories="
-                f"{self.num_categories}; got {values.shape}."
+                f"Categorical full logits must end in num_categories={self.num_categories}; got {values.shape}."
             )
         values = values.astype(jnp.result_type(values, 0.0))
         return self.natural(values[..., :-1] - values[..., -1, None])
@@ -86,8 +85,8 @@ class CategoricalFamily(_AbstractAnalyticExponentialFamily):
         return _natural_domain_result(
             self.signature,
             values,
-            interior=jnp.ones(shape, dtype=bool),
-            boundary=jnp.zeros(shape, dtype=bool),
+            interior=jnp.ones(shape, dtype=jnp.bool_),
+            boundary=jnp.zeros(shape, dtype=jnp.bool_),
         )
 
     def _mean_domain(self, values: Array, /) -> ExponentialFamilyDomainResult:
@@ -117,7 +116,7 @@ class CategoricalFamily(_AbstractAnalyticExponentialFamily):
         return StatisticBatch(one_hot[..., :-1], valid, self.signature)
 
     def _log_base_density(self, value: ArrayLike, /) -> Array:
-        return jnp.zeros_like(jnp.asarray(value, dtype=float))
+        return jnp.zeros_like(jnp.asarray(value, dtype=jnp.float64))
 
     def _log_normalizer(self, natural_values: Array, /) -> Array:
         logits = jnp.concatenate(

@@ -106,7 +106,7 @@ class MappedMortarEvidence(StrictModule, NonTrainableState):
     """Physical trace agreement and finite measure for one mortar."""
 
     maximum_owner_mismatch: Array
-    maximum_neighbour_mismatch: Array
+    maximum_neighbor_mismatch: Array
     minimum_measure: Array
     tolerance: float = eqx.field(static=True)
     valid: Array
@@ -115,29 +115,29 @@ class MappedMortarEvidence(StrictModule, NonTrainableState):
     def __init__(
         self,
         maximum_owner_mismatch: ArrayLike,
-        maximum_neighbour_mismatch: ArrayLike,
+        maximum_neighbor_mismatch: ArrayLike,
         minimum_measure: ArrayLike,
         tolerance: float,
         /,
     ):
         tolerance_ = float(tolerance)
         owner = jnp.asarray(maximum_owner_mismatch)
-        neighbour = jnp.asarray(maximum_neighbour_mismatch)
+        neighbor = jnp.asarray(maximum_neighbor_mismatch)
         measure = jnp.asarray(minimum_measure)
-        if owner.shape != () or neighbour.shape != () or measure.shape != ():
+        if owner.shape != () or neighbor.shape != () or measure.shape != ():
             raise ValueError("Mapped mortar evidence values must be scalar.")
         if not np.isfinite(tolerance_) or tolerance_ <= 0.0:
             raise ValueError("Mapped mortar tolerance must be positive and finite.")
         valid = (
             jnp.isfinite(owner)
-            & jnp.isfinite(neighbour)
+            & jnp.isfinite(neighbor)
             & jnp.isfinite(measure)
             & (owner <= tolerance_)
-            & (neighbour <= tolerance_)
+            & (neighbor <= tolerance_)
             & (measure > 0.0)
         )
         self.maximum_owner_mismatch = owner
-        self.maximum_neighbour_mismatch = neighbour
+        self.maximum_neighbor_mismatch = neighbor
         self.minimum_measure = measure
         self.tolerance = tolerance_
         self.valid = valid
@@ -156,20 +156,20 @@ class MappedMortarGeometry(StrictModule):
     quadrature_weights: Array
     weighted_area_vectors: Array
     owner_reference_points: Array
-    neighbour_reference_points: Array
+    neighbor_reference_points: Array
     evidence: MappedMortarEvidence
     mortar_id: str = eqx.field(static=True)
     owner_patch_id: str = eqx.field(static=True)
-    neighbour_patch_id: str = eqx.field(static=True)
+    neighbor_patch_id: str = eqx.field(static=True)
 
 
 class MappedMortarPlan(StrictModule, NonTrainableState):
     """Explicit common-surface contract for two nonconforming patch charts."""
 
     owner_patch_id: str = eqx.field(static=True)
-    neighbour_patch_id: str = eqx.field(static=True)
+    neighbor_patch_id: str = eqx.field(static=True)
     owner_reference_map: ReferenceTraceMap = eqx.field(static=True)
-    neighbour_reference_map: ReferenceTraceMap = eqx.field(static=True)
+    neighbor_reference_map: ReferenceTraceMap = eqx.field(static=True)
     surface_map: SurfaceMap = eqx.field(static=True)
     parameter_bounds: tuple[tuple[float, float], ...] = eqx.field(static=True)
     quadrature_order: int = eqx.field(static=True)
@@ -180,9 +180,9 @@ class MappedMortarPlan(StrictModule, NonTrainableState):
     def __init__(
         self,
         owner_patch_id: str,
-        neighbour_patch_id: str,
+        neighbor_patch_id: str,
         owner_reference_map: ReferenceTraceMap,
-        neighbour_reference_map: ReferenceTraceMap,
+        neighbor_reference_map: ReferenceTraceMap,
         surface_map: SurfaceMap,
         parameter_bounds: Sequence[Sequence[float]],
         /,
@@ -192,17 +192,17 @@ class MappedMortarPlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-10,
     ):
         owner = str(owner_patch_id)
-        neighbour = str(neighbour_patch_id)
+        neighbor = str(neighbor_patch_id)
         bounds = tuple(tuple(float(value) for value in pair) for pair in parameter_bounds)
         order = int(quadrature_order)
         orientation_ = int(orientation)
         tolerance_ = float(tolerance)
         if (
             not owner
-            or not neighbour
-            or owner == neighbour
+            or not neighbor
+            or owner == neighbor
             or not callable(owner_reference_map)
-            or not callable(neighbour_reference_map)
+            or not callable(neighbor_reference_map)
             or not callable(surface_map)
             or not bounds
             or any(
@@ -221,9 +221,9 @@ class MappedMortarPlan(StrictModule, NonTrainableState):
                 "Mapped mortar chart, bounds, orientation, or tolerance is invalid."
             )
         self.owner_patch_id = owner
-        self.neighbour_patch_id = neighbour
+        self.neighbor_patch_id = neighbor
         self.owner_reference_map = owner_reference_map
-        self.neighbour_reference_map = neighbour_reference_map
+        self.neighbor_reference_map = neighbor_reference_map
         self.surface_map = surface_map
         self.parameter_bounds = bounds
         self.quadrature_order = order
@@ -233,7 +233,7 @@ class MappedMortarPlan(StrictModule, NonTrainableState):
             {
                 "kind": "mapped-patch-mortar",
                 "owner": owner,
-                "neighbour": neighbour,
+                "neighbor": neighbor,
                 "bounds": bounds,
                 "quadrature_order": order,
                 "orientation": orientation_,
@@ -261,9 +261,9 @@ class MappedMortarPlan(StrictModule, NonTrainableState):
         axis_weights = [
             0.5 * (upper - lower) * weights for lower, upper in self.parameter_bounds
         ]
-        parameters = np.asarray(tuple(product(*axis_nodes)), dtype=float)
+        parameters = np.asarray(tuple(product(*axis_nodes)), dtype=np.float64)
         quadrature_weights = np.asarray(
-            [prod(values) for values in product(*axis_weights)], dtype=float
+            [prod(values) for values in product(*axis_weights)], dtype=np.float64
         )
 
         def surface(parameter):
@@ -272,7 +272,7 @@ class MappedMortarPlan(StrictModule, NonTrainableState):
         parameter_array = jnp.asarray(parameters)
         points = jax.vmap(surface)(parameter_array)
         jacobians = jax.vmap(jax.jacfwd(surface))(parameter_array)
-        spatial_dimension = int(points.shape[-1])
+        spatial_dimension = points.shape[-1]
         parameter_dimension = len(self.parameter_bounds)
         if spatial_dimension == 3 and parameter_dimension == 2:
             area = jnp.cross(jacobians[:, :, 0], jacobians[:, :, 1])
@@ -289,24 +289,24 @@ class MappedMortarPlan(StrictModule, NonTrainableState):
                 self.owner_reference_map(parameter, time_, args)
             )
         )(parameter_array)
-        neighbour_reference = jax.vmap(
+        neighbor_reference = jax.vmap(
             lambda parameter: jnp.asarray(
-                self.neighbour_reference_map(parameter, time_, args)
+                self.neighbor_reference_map(parameter, time_, args)
             )
         )(parameter_array)
         owner_points = jax.vmap(
             lambda reference: maps.evaluate(self.owner_patch_id, reference, time_, args)
         )(owner_reference)
-        neighbour_points = jax.vmap(
+        neighbor_points = jax.vmap(
             lambda reference: maps.evaluate(
-                self.neighbour_patch_id, reference, time_, args
+                self.neighbor_patch_id, reference, time_, args
             )
-        )(neighbour_reference)
+        )(neighbor_reference)
         owner_mismatch = jnp.max(jnp.linalg.norm(owner_points - points, axis=-1))
-        neighbour_mismatch = jnp.max(jnp.linalg.norm(neighbour_points - points, axis=-1))
+        neighbor_mismatch = jnp.max(jnp.linalg.norm(neighbor_points - points, axis=-1))
         evidence = MappedMortarEvidence(
             owner_mismatch,
-            neighbour_mismatch,
+            neighbor_mismatch,
             jnp.min(measure),
             self.tolerance,
         )
@@ -315,11 +315,11 @@ class MappedMortarPlan(StrictModule, NonTrainableState):
             quadrature_weights=jnp.asarray(quadrature_weights) * measure,
             weighted_area_vectors=weighted_area,
             owner_reference_points=owner_reference,
-            neighbour_reference_points=neighbour_reference,
+            neighbor_reference_points=neighbor_reference,
             evidence=evidence,
             mortar_id=self.mortar_id,
             owner_patch_id=self.owner_patch_id,
-            neighbour_patch_id=self.neighbour_patch_id,
+            neighbor_patch_id=self.neighbor_patch_id,
         )
 
 
@@ -420,8 +420,10 @@ class CanonicalMappedGeometryPlan(StrictModule, NonTrainableState):
         active_indices = tuple(
             tuple(
                 tuple(
-                    tuple(int(value) for value in index)
-                    for index in np.argwhere(np.asarray(bucket.cell_active, dtype=bool))
+                    tuple(index)
+                    for index in np.argwhere(
+                        np.asarray(bucket.cell_active, dtype=np.bool_)
+                    )
                 )
                 for bucket in level.buckets
             )
@@ -488,14 +490,14 @@ class CanonicalMappedGeometryPlan(StrictModule, NonTrainableState):
         center = jnp.sum(points * weighted_jacobian[:, None], axis=0) / volume
 
         face_parameters = np.asarray(
-            tuple(product(*((unit_nodes,) * max(0, dimension - 1)))), dtype=float
+            tuple(product(*((unit_nodes,) * max(0, dimension - 1)))), dtype=np.float64
         ).reshape((-1, max(0, dimension - 1)))
         face_reference_weight = np.asarray(
             [
                 prod(values)
                 for values in product(*((unit_weights,) * max(0, dimension - 1)))
             ],
-            dtype=float,
+            dtype=np.float64,
         )
         face_point_blocks = []
         face_area_blocks = []
@@ -509,7 +511,7 @@ class CanonicalMappedGeometryPlan(StrictModule, NonTrainableState):
             )
             for side in (0, 1):
                 reference_values = np.zeros(
-                    (face_parameters.shape[0], dimension), dtype=float
+                    (face_parameters.shape[0], dimension), dtype=np.float64
                 )
                 reference_values[:, axis] = float(side)
                 for local_axis, global_axis in enumerate(tangential):
@@ -595,7 +597,7 @@ class CanonicalMappedGeometryPlan(StrictModule, NonTrainableState):
         revision_ = jnp.asarray(revision)
         if time_.shape != () or revision_.shape != () or revision_.dtype.kind not in "iu":
             raise ValueError("Mapped geometry time/revision must be scalar.")
-        lower_bounds = np.asarray(self.reference_lower_bounds, dtype=float)
+        lower_bounds = np.asarray(self.reference_lower_bounds, dtype=np.float64)
         level_volumes = []
         level_centers = []
         level_rates = []
@@ -607,7 +609,7 @@ class CanonicalMappedGeometryPlan(StrictModule, NonTrainableState):
         level_gcl = []
         valid_terms = []
         for level_index, level in enumerate(self.hierarchy.levels):
-            spacing = np.asarray(level.spacing, dtype=float)
+            spacing = np.asarray(level.spacing, dtype=np.float64)
             bucket_volumes = []
             bucket_centers = []
             bucket_rates = []
@@ -642,8 +644,8 @@ class CanonicalMappedGeometryPlan(StrictModule, NonTrainableState):
                             "Static mapped active index lost its patch box."
                         )
                     reference_lower = lower_bounds + spacing * (
-                        np.asarray(box.lower, dtype=float)
-                        + np.asarray(local, dtype=float)
+                        np.asarray(box.lower, dtype=np.float64)
+                        + np.asarray(local, dtype=np.float64)
                     )
                     (
                         volume,
@@ -724,7 +726,7 @@ class CanonicalMappedGeometryPlan(StrictModule, NonTrainableState):
 
 
 class MappedMortarFluxResult(StrictModule):
-    """Integrated owner-to-neighbour mortar flux and conservative scatter."""
+    """Integrated owner-to-neighbor mortar flux and conservative scatter."""
 
     integrated_flux: Array
     content_rate: Array
@@ -739,7 +741,7 @@ class MappedMortarFluxPlan(StrictModule, NonTrainableState):
 
     geometry: MappedMortarGeometry
     owner_cell: int = eqx.field(static=True)
-    neighbour_cell: int = eqx.field(static=True)
+    neighbor_cell: int = eqx.field(static=True)
     cell_count: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
@@ -747,32 +749,32 @@ class MappedMortarFluxPlan(StrictModule, NonTrainableState):
         self,
         geometry: MappedMortarGeometry,
         owner_cell: int,
-        neighbour_cell: int,
+        neighbor_cell: int,
         cell_count: int,
         /,
     ):
         owner = int(owner_cell)
-        neighbour = int(neighbour_cell)
+        neighbor = int(neighbor_cell)
         count = int(cell_count)
         if (
             not isinstance(geometry, MappedMortarGeometry)
             or owner < 0
-            or neighbour < 0
+            or neighbor < 0
             or owner >= count
-            or neighbour >= count
-            or owner == neighbour
+            or neighbor >= count
+            or owner == neighbor
         ):
             raise ValueError("Mapped mortar flux routes are invalid.")
         self.geometry = geometry
         self.owner_cell = owner
-        self.neighbour_cell = neighbour
+        self.neighbor_cell = neighbor
         self.cell_count = count
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "mapped-mortar-flux-plan",
                 "mortar": geometry.mortar_id,
                 "owner": owner,
-                "neighbour": neighbour,
+                "neighbor": neighbor,
                 "cell_count": count,
             }
         )
@@ -782,7 +784,7 @@ class MappedMortarFluxPlan(StrictModule, NonTrainableState):
         system: Any,
         numerical_flux: Any,
         owner_trace: ArrayLike,
-        neighbour_trace: ArrayLike,
+        neighbor_trace: ArrayLike,
         args: Any = None,
         /,
     ) -> MappedMortarFluxResult:
@@ -791,15 +793,15 @@ class MappedMortarFluxPlan(StrictModule, NonTrainableState):
         if not isinstance(numerical_flux, AbstractArbitraryNormalNumericalFluxPlan):
             raise TypeError("Mapped mortars require arbitrary-normal numerical flux.")
         owner = jnp.asarray(owner_trace)
-        neighbour = jnp.asarray(neighbour_trace, dtype=owner.dtype)
-        quadrature_count = int(self.geometry.quadrature_weights.size)
+        neighbor = jnp.asarray(neighbor_trace, dtype=owner.dtype)
+        quadrature_count = self.geometry.quadrature_weights.size
         component_count = int(system.component_count)
         expected = (quadrature_count, component_count)
         if owner.shape == (component_count,):
             owner = jnp.broadcast_to(owner, expected)
-        if neighbour.shape == (component_count,):
-            neighbour = jnp.broadcast_to(neighbour, expected)
-        if owner.shape != expected or neighbour.shape != expected:
+        if neighbor.shape == (component_count,):
+            neighbor = jnp.broadcast_to(neighbor, expected)
+        if owner.shape != expected or neighbor.shape != expected:
             raise ValueError(
                 "Mapped mortar traces must provide one state per quadrature point."
             )
@@ -809,7 +811,7 @@ class MappedMortarFluxPlan(StrictModule, NonTrainableState):
         flux = numerical_flux.normal_face_flux(
             system,
             owner,
-            neighbour,
+            neighbor,
             normals,
             args,
         )
@@ -818,7 +820,7 @@ class MappedMortarFluxPlan(StrictModule, NonTrainableState):
             (self.cell_count, component_count), dtype=integrated.dtype
         )
         content_rate = content_rate.at[self.owner_cell].add(-integrated)
-        content_rate = content_rate.at[self.neighbour_cell].add(integrated)
+        content_rate = content_rate.at[self.neighbor_cell].add(integrated)
         defect = jnp.sum(content_rate, axis=0)
         successful = (
             self.geometry.evidence.valid

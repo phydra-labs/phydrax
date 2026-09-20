@@ -64,7 +64,7 @@ def test_source_ledger_pins_and_reviews_every_reference():
         source.revision not in ("unpinned", "unresolved") for source in ledger.sources
     )
     assert all(source.archive_digest != "unresolved" for source in ledger.sources)
-    assert all(source.licence_digest != "unresolved" for source in ledger.sources)
+    assert all(source.license_digest != "unresolved" for source in ledger.sources)
     assert all(len(source.relevant_documents) >= 2 for source in ledger.sources)
 
 

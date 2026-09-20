@@ -36,7 +36,7 @@ class _RealPolynomialResidual(StrictModule):
         self.equation_coordinates = equation_coordinates
         self.operator_id = canonical_fingerprint(
             {
-                "kind": "real-polynomial-residual-v1",
+                "kind": "real-polynomial-residual",
                 "system": system.system_id,
                 "variables": variable_coordinates.coordinate_id,
                 "equations": equation_coordinates.coordinate_id,
@@ -123,7 +123,7 @@ class ComplexPolynomialRootLowering(StrictModule):
         )
         identifier = canonical_fingerprint(
             {
-                "kind": "complex-polynomial-root-lowering-v1",
+                "kind": "complex-polynomial-root-lowering",
                 "system": system.system_id,
                 "variable_coordinates": variable_coordinates.coordinate_id,
                 "equation_coordinates": equation_coordinates.coordinate_id,

@@ -80,9 +80,7 @@ class LaplaceSingleLayerDP0GalerkinPolicy3D(StrictModule, NonTrainableState):
         precision: IntegrationPrecisionPolicy | None = None,
         dense_oracle: MaterializationPolicy | None = None,
     ):
-        orders = tuple(
-            int(value) for value in (regular_order, singular_order, near_order)
-        )
+        orders = tuple((regular_order, singular_order, near_order))
         if any(value < 2 for value in orders):
             raise ValueError("Galerkin quadrature orders must be at least two.")
         ratio = float(near_ratio)
@@ -125,7 +123,7 @@ class LaplaceSingleLayerDP0GalerkinPolicy3D(StrictModule, NonTrainableState):
         self.dense_oracle = dense_oracle
         self.policy_id = canonical_fingerprint(
             {
-                "kind": "laplace-single-layer-dp0-galerkin-policy-3d-v1",
+                "kind": "laplace-single-layer-dp0-galerkin-policy-3d",
                 "orders": orders,
                 "near_ratio": ratio,
                 "near_max_depth": depth,
@@ -196,8 +194,8 @@ class _LaplaceDP0WeakOperator3D(_AbstractCostedLinearOperator):
         self.pair_data = pair_data
         self.target_block_size = int(target_block_size)
         self.source_block_size = int(source_block_size)
-        self.face_count = int(space.size)
-        quadrature_count = int(pair_data.regular_points.shape[1])
+        self.face_count = space.size
+        quadrature_count = pair_data.regular_points.shape[1]
         itemsize = np.dtype(pair_data.regular_points.dtype).itemsize
         self.action_workspace_bytes = int(
             itemsize
@@ -416,15 +414,14 @@ def prepare_laplace_single_layer_dp0_3d(
     if not isinstance(region, MeshRegion):
         raise TypeError("[geometry] 3D Galerkin preparation requires a MeshRegion.")
     triangle_mesh = region.triangle_mesh
-    face_count = int(triangle_mesh.faces.shape[0])
+    face_count = triangle_mesh.faces.shape[0]
     dense_bytes = 0
     if selected.dense_oracle is not None:
         entries = face_count * face_count
         dense_bytes = entries * np.dtype(jnp.float64).itemsize
         if entries > selected.dense_oracle.max_entries:
             raise LinearCapabilityError(
-                "[dense-oracle-entries] Requested Galerkin dense oracle exceeds "
-                "max_entries."
+                "[dense-oracle-entries] Requested Galerkin dense oracle exceeds max_entries."
             )
         if dense_bytes > selected.dense_oracle.max_bytes:
             raise LinearCapabilityError(
@@ -446,8 +443,7 @@ def prepare_laplace_single_layer_dp0_3d(
     )
     if minimum_workspace > selected.max_preparation_workspace_bytes:
         raise ValueError(
-            "[preparation-bytes] Surface pair preparation exceeds its "
-            "workspace-byte budget."
+            "[preparation-bytes] Surface pair preparation exceeds its workspace-byte budget."
         )
     minimum_resident = _resident_byte_estimate(
         face_count,
@@ -516,7 +512,7 @@ def prepare_laplace_single_layer_dp0_3d(
     space = binding.discretization.field_spaces[0].vector_space
     weak_id = canonical_fingerprint(
         {
-            "kind": "laplace-single-layer-dp0-weak-3d-v1",
+            "kind": "laplace-single-layer-dp0-weak-3d",
             "binding": binding.binding_id,
             "policy": selected.policy_id,
         }
@@ -541,7 +537,7 @@ def prepare_laplace_single_layer_dp0_3d(
         strong_diagonal,
         operator_id=canonical_fingerprint(
             {
-                "kind": "laplace-single-layer-dp0-strong-3d-v1",
+                "kind": "laplace-single-layer-dp0-strong-3d",
                 "weak": weak.operator_id,
                 "gram": array_tree_fingerprint(binding.face_areas),
             }
@@ -572,7 +568,7 @@ def prepare_laplace_single_layer_dp0_3d(
         component_count=binding.component_count,
         pair_counts=pair_data.counts,
         pair_class_names=_PAIR_CLASS_NAMES,
-        exception_count=int(pair_data.targets.shape[0]),
+        exception_count=pair_data.targets.shape[0],
         maximum_errors=pair_data.maximum_errors,
         pair_class_tolerances=pair_data.maximum_tolerances,
         pair_class_supported=pair_data.supported,
@@ -590,7 +586,7 @@ def prepare_laplace_single_layer_dp0_3d(
         accuracy_supported=finite & jnp.all(pair_data.supported),
         report_id=canonical_fingerprint(
             {
-                "kind": "laplace-single-layer-dp0-assembly-report-3d-v1",
+                "kind": "laplace-single-layer-dp0-assembly-report-3d",
                 "binding": binding.binding_id,
                 "policy": selected.policy_id,
                 "pair_counts": pair_data.counts,

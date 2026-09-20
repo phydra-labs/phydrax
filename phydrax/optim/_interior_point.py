@@ -95,17 +95,17 @@ def _canonical_structured_multipliers(
     nonfixed_upper_x = np.flatnonzero(upper_x & ~fixed_x)
     fixed_x_indices = np.flatnonzero(fixed_x)
 
-    equality_count = int(equality_indices.size)
-    lower_constraint_count = int(lower_indices.size)
-    upper_constraint_count = int(upper_indices.size)
+    equality_count = equality_indices.size
+    lower_constraint_count = lower_indices.size
+    upper_constraint_count = upper_indices.size
     equality_values = certificate.equality_multipliers
     inequality_values = certificate.inequality_multipliers
-    expected_equalities = equality_count + int(fixed_x_indices.size)
+    expected_equalities = equality_count + fixed_x_indices.size
     expected_inequalities = (
         lower_constraint_count
-        + int(nonfixed_lower_x.size)
+        + nonfixed_lower_x.size
         + upper_constraint_count
-        + int(nonfixed_upper_x.size)
+        + nonfixed_upper_x.size
     )
     if equality_values.shape != (expected_equalities,):
         raise ValueError("Interior-point equality multiplier layout changed.")
@@ -128,10 +128,8 @@ def _canonical_structured_multipliers(
     cursor = 0
     lower_constraint_values = inequality_values[cursor : cursor + lower_constraint_count]
     cursor += lower_constraint_count
-    lower_variable_values = inequality_values[
-        cursor : cursor + int(nonfixed_lower_x.size)
-    ]
-    cursor += int(nonfixed_lower_x.size)
+    lower_variable_values = inequality_values[cursor : cursor + nonfixed_lower_x.size]
+    cursor += nonfixed_lower_x.size
     upper_constraint_values = inequality_values[cursor : cursor + upper_constraint_count]
     cursor += upper_constraint_count
     upper_variable_values = inequality_values[cursor:]

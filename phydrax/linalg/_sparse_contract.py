@@ -46,7 +46,7 @@ class SparseStorage(StrictModule):
         values_ = jnp.asarray(values)
         indices_ = jnp.asarray(indices)
         indptr_ = jnp.asarray(indptr)
-        shape_values = tuple(int(size) for size in shape)
+        shape_values = tuple(shape)
         if len(shape_values) != 2 or any(size < 0 for size in shape_values):
             raise ValueError("Sparse storage shape must contain nonnegative dimensions.")
         shape_ = (shape_values[0], shape_values[1])
@@ -58,7 +58,7 @@ class SparseStorage(StrictModule):
             raise ValueError(
                 "Sparse values must end in the one-dimensional CSR index capacity."
             )
-        nnz = int(indices_.shape[0])
+        nnz = indices_.shape[0]
         if indptr_.shape != (shape_[0] + 1,):
             raise ValueError("CSR indptr length must equal the row count plus one.")
         if not jnp.issubdtype(values_.dtype, jnp.inexact):
@@ -69,14 +69,14 @@ class SparseStorage(StrictModule):
             raise TypeError("Sparse indices and indptr must use integer dtypes.")
         if indices_.dtype != indptr_.dtype:
             raise TypeError("Sparse indices and indptr must use the same dtype.")
-        width = int(indices_.dtype.itemsize * 8)
+        width = indices_.dtype.itemsize * 8
         if width not in (32, 64):
             raise TypeError("Sparse index width must be 32 or 64 bits.")
         self.values = values_
         self.indices = indices_
         self.indptr = indptr_
         self.shape = shape_
-        self.batch_shape = tuple(int(size) for size in values_.shape[:-1])
+        self.batch_shape = tuple(values_.shape[:-1])
         self.nnz = nnz
         self.format = "csr"
         self.index_width = width

@@ -38,7 +38,7 @@ def run(
     response = SpectralResponseProduct(
         grid,
         values,
-        np.ones(grid_points, dtype=bool),
+        np.ones(grid_points, dtype="bool"),
         units.ELECTRONVOLT,
         units.ONE,
         tuple(f"channel[{index}]" for index in range(channels)),

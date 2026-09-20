@@ -127,7 +127,7 @@ def _identifier(value: str | None, payload: object, prefix: str, /) -> str:
 
 def _inexact(value: ArrayLike, /) -> Array:
     array = jnp.asarray(value)
-    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype(float)
+    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype("float64")
 
 
 def _method_identity(method: NewtonKrylov | NewtonTrustRegion, /) -> tuple[str, ...]:
@@ -231,8 +231,8 @@ class DAEAdaptivePolicy(StrictModule):
     ):
         relative = _inexact(relative_tolerance)
         absolute = _inexact(absolute_tolerance)
-        relative_host = np.asarray(relative, dtype=float)
-        absolute_host = np.asarray(absolute, dtype=float)
+        relative_host = np.asarray(relative, dtype=np.float64)
+        absolute_host = np.asarray(absolute, dtype=np.float64)
         if (
             not np.all(np.isfinite(relative_host))
             or not np.all(np.isfinite(absolute_host))
@@ -292,8 +292,7 @@ class DAEAdaptivePolicy(StrictModule):
         if not 0.0 < nonlinear_shrink < 1.0:
             raise ValueError("nonlinear_failure_shrink must lie in (0, 1).")
         capacities = tuple(
-            int(value)
-            for value in (
+            (
                 maximum_accepted_steps,
                 maximum_attempts,
                 maximum_consecutive_rejections,
@@ -381,8 +380,7 @@ class DAEReplayPolicy(StrictModule):
             raise ValueError("Full replay does not accept chunk planning inputs.")
         if checkpointing == "chunked" and (chunk is None) == (budget is None):
             raise ValueError(
-                "Chunked replay requires exactly one of chunk_size or "
-                "memory_budget_bytes."
+                "Chunked replay requires exactly one of chunk_size or memory_budget_bytes."
             )
         self.checkpointing = checkpointing
         self.chunk_size = chunk
@@ -592,7 +590,7 @@ class DifferentialAlgebraicProblem(StrictModule):
         )
         state = eqx.error_if(
             state,
-            ~jnp.asarray(system.state_geometry.contains(state), dtype=bool),
+            ~jnp.asarray(system.state_geometry.contains(state), dtype=jnp.bool_),
             "DAE initial state is outside its state geometry.",
         )
         if initialization == "structural":
@@ -725,7 +723,7 @@ class DAESolvePlan(StrictModule):
                     "endpoint theta form; implicit midpoint is provided by "
                     "GaussLegendreIRK."
                 )
-        durations = np.asarray(time_grid.durations, dtype=float)
+        durations = np.asarray(time_grid.durations, dtype=np.float64)
         if (
             isinstance(policy.method, BDFMethod)
             and policy.adaptive is None
@@ -764,9 +762,7 @@ class DAESolvePlan(StrictModule):
             if adaptive is None
             else adaptive.maximum_attempts
         )
-        state_bytes = int(
-            problem.initial_state.size * problem.initial_state.dtype.itemsize
-        )
+        state_bytes = problem.initial_state.size * problem.initial_state.dtype.itemsize
         bytes_per_step = max(8 * state_bytes + 256, 1)
         replay_policy = policy.replay
         if replay_policy.checkpointing == "full":
@@ -791,8 +787,7 @@ class DAESolvePlan(StrictModule):
             )
             if discriminant < 0:
                 raise ValueError(
-                    "Replay memory budget is below the minimum feasible checkpoint "
-                    "footprint."
+                    "Replay memory budget is below the minimum feasible checkpoint footprint."
                 )
             replay_chunk_size = min(
                 accepted_capacity,
@@ -813,8 +808,7 @@ class DAESolvePlan(StrictModule):
                 )
             if replay_memory_bytes > budget:
                 raise ValueError(
-                    "Replay memory budget is below the minimum feasible checkpoint "
-                    "footprint."
+                    "Replay memory budget is below the minimum feasible checkpoint footprint."
                 )
         self.policy = policy
         self.event_plan = event_plan
@@ -1039,7 +1033,7 @@ class DAEStepHistory(StrictModule):
         count: Array,
         save_step_indices: Array,
     ):
-        capacity = int(jnp.asarray(step_sizes).size)
+        capacity = jnp.asarray(step_sizes).size
         shape = (capacity,)
         for values, name in (
             (accepted_times, "accepted_times"),
@@ -1055,7 +1049,7 @@ class DAEStepHistory(StrictModule):
         self.orders = jnp.asarray(orders, dtype=jnp.int32)
         self.error_ratios = jnp.asarray(error_ratios)
         self.source_attempt_indices = jnp.asarray(source_attempt_indices, dtype=jnp.int32)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.count = jnp.asarray(count, dtype=jnp.int32)
         self.save_step_indices = jnp.asarray(save_step_indices, dtype=jnp.int32)
 
@@ -1155,7 +1149,7 @@ class DAEAttemptHistory(StrictModule):
         self.residual_certifications = jnp.asarray(
             residual_certifications, dtype=jnp.int32
         )
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.count = jnp.asarray(count, dtype=jnp.int32)
 
 
@@ -1198,7 +1192,7 @@ class DAERegularityEvidence(StrictModule):
         self.stage_status = jnp.asarray(stage_status, dtype=jnp.int32)
         self.stage_rank = jnp.asarray(stage_rank, dtype=jnp.int32)
         self.stage_condition_estimate = jnp.asarray(stage_condition_estimate)
-        self.stage_valid = jnp.asarray(stage_valid, dtype=bool)
+        self.stage_valid = jnp.asarray(stage_valid, dtype=jnp.bool_)
         self.consistency_operator = str(consistency_operator)
         self.stage_operator = str(stage_operator)
 
@@ -1402,7 +1396,7 @@ class DifferentialAlgebraicSolution(StrictModule):
             raise ValueError("DAE state_rates must have the same shape as states.")
         if rate_valid.shape != validated.states.shape:
             raise ValueError("DAE rate_valid must have the same shape as states.")
-        node_shape = (int(validated.times.size),)
+        node_shape = (validated.times.size,)
         for values, name in (
             (status, "status"),
             (residual_norm, "residual_norm"),
@@ -1431,7 +1425,7 @@ class DifferentialAlgebraicSolution(StrictModule):
         self.states = validated.states
         self.state_rates = jnp.asarray(state_rates)
         self.valid = validated.valid
-        self.rate_valid = jnp.asarray(rate_valid, dtype=bool)
+        self.rate_valid = jnp.asarray(rate_valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.residual_norm = jnp.asarray(residual_norm)
         self.residual_threshold = jnp.asarray(residual_threshold)
@@ -1726,12 +1720,12 @@ def _regularity_status(
     if condition_limit is not None:
         singular = singular | (condition_known & (condition_estimate > condition_limit))
     verified = (
-        jnp.asarray(converged, dtype=bool)
+        jnp.asarray(converged, dtype=jnp.bool_)
         & rank_known
         & (rank == dimension)
         & condition_known
     )
-    estimated = jnp.asarray(converged, dtype=bool) & ~verified
+    estimated = jnp.asarray(converged, dtype=jnp.bool_) & ~verified
     return jnp.where(
         singular,
         int(DAERegularityStatus.NUMERICALLY_SINGULAR),
@@ -1823,7 +1817,7 @@ def _dense_initial_regularity(
         initialization,
         time,
         args,
-        int(prepared.problem.initial_state.size),
+        prepared.problem.initial_state.size,
         prepared.plan.policy.regularity.condition_limit,
     )
 
@@ -2032,7 +2026,7 @@ def _solve_prepared(
             )
             residual_norm = _masked_rms(
                 scaled,
-                jnp.ones(system.state_shape, dtype=bool),
+                jnp.ones(system.state_shape, dtype=jnp.bool_),
             )
             differential_norm = _masked_rms(scaled, differential_equations)
             constraint_norm = _masked_rms(scaled, algebraic_equations)
@@ -2349,7 +2343,7 @@ def _solve_prepared(
                     rank,
                     condition,
                     finite,
-                    int(problem.initial_state.size),
+                    problem.initial_state.size,
                     policy.regularity.condition_limit,
                 )
                 return status, rank, condition, jnp.asarray(True)
@@ -2380,14 +2374,14 @@ def _solve_prepared(
             consistency_condition,
         ) = _initial_regularity(
             initialization,
-            int(problem.initial_state.size),
+            problem.initial_state.size,
             policy.regularity.condition_limit,
         )
         stage_regularity_status = _regularity_status(
             final_linear_rank,
             final_linear_condition,
             final_linear_converged,
-            int(problem.initial_state.size),
+            problem.initial_state.size,
             policy.regularity.condition_limit,
         )
         stage_regularity_rank = final_linear_rank
@@ -2618,7 +2612,7 @@ def _solve_prepared_events_primal(
             consistency_condition,
         ) = _initial_regularity(
             initialization,
-            int(problem.initial_state.size),
+            problem.initial_state.size,
             policy.regularity.condition_limit,
         )
     carry = _FixedDAEEventCarry(
@@ -2632,7 +2626,7 @@ def _solve_prepared_events_primal(
         jnp.asarray(0, dtype=jnp.int32),
         nan_states.at[0].set(initialization.state),
         nan_states.at[0].set(initialization.state_rate),
-        jnp.zeros((node_count,), dtype=bool).at[0].set(initialization.valid),
+        jnp.zeros((node_count,), dtype=jnp.bool_).at[0].set(initialization.valid),
         node_status,
         jnp.full((node_count,), jnp.inf, dtype=dtype)
         .at[0]
@@ -2649,7 +2643,7 @@ def _solve_prepared_events_primal(
         jnp.full((capacity,), jnp.nan, dtype=dtype),
         jnp.full((capacity,), jnp.nan, dtype=dtype),
         jnp.zeros((capacity,), dtype=jnp.int32),
-        jnp.zeros((capacity,), dtype=bool),
+        jnp.zeros((capacity,), dtype=jnp.bool_),
         jnp.full((capacity,), -1, dtype=jnp.int32),
         jnp.full((node_count,), -2, dtype=jnp.int32).at[0].set(-1),
         jnp.full((capacity,), jnp.nan, dtype=dtype),
@@ -2661,7 +2655,7 @@ def _solve_prepared_events_primal(
             dtype=jnp.int32,
         ),
         jnp.zeros((capacity,), dtype=jnp.int32),
-        jnp.zeros((capacity,), dtype=bool),
+        jnp.zeros((capacity,), dtype=jnp.bool_),
         _FixedDAEAttemptDiagnostics(
             *(jnp.zeros((capacity,), dtype=jnp.int32) for _ in range(9))
         ),
@@ -2673,7 +2667,7 @@ def _solve_prepared_events_primal(
             ),
             jnp.full((capacity,), -1, dtype=jnp.int32),
             jnp.full((capacity,), jnp.nan, dtype=dtype),
-            jnp.zeros((capacity,), dtype=bool),
+            jnp.zeros((capacity,), dtype=jnp.bool_),
         ),
         empty_dae_event_result(prepared.events.plan, initialization.state),
         jnp.where(
@@ -2743,9 +2737,9 @@ def _solve_prepared_events_primal(
                 args,
                 inputs=inputs,
             )
-            residual = _masked_rms(scaled, jnp.ones(state_shape, dtype=bool))
-            differential = _masked_rms(scaled, differential_equations)
-            constraint = _masked_rms(scaled, algebraic_equations)
+            residual = _masked_rms(scaled, jnp.ones(state_shape, dtype=jnp.bool_))
+            _masked_rms(scaled, differential_equations)
+            _masked_rms(scaled, algebraic_equations)
             threshold = policy.nonlinear_termination.residual_threshold(
                 nonlinear.diagnostics.initial_residual_norm
             )
@@ -2998,7 +2992,7 @@ def _solve_prepared_events_primal(
                         rank,
                         condition,
                         finite_operator,
-                        int(problem.initial_state.size),
+                        problem.initial_state.size,
                         policy.regularity.condition_limit,
                     )
                     return status, rank, condition, jnp.asarray(True)
@@ -3030,7 +3024,7 @@ def _solve_prepared_events_primal(
                     diagnostics.final_linear_rank,
                     diagnostics.final_linear_condition_estimate,
                     diagnostics.final_linear_converged,
-                    int(problem.initial_state.size),
+                    problem.initial_state.size,
                     policy.regularity.condition_limit,
                 )
                 regularity_rank = diagnostics.final_linear_rank

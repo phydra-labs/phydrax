@@ -30,7 +30,7 @@ class ElectronicCalculationStatus(IntEnum):
     ATOM_ORDER_CHANGED = 5
     UNIT_CONVERSION_FAILED = 6
     BACKEND_FAILED = 7
-    CANCELLED = 8
+    CANCELED = 8
 
 
 class ElectronicEnergyLedger(StrictModule, NonTrainableState):
@@ -106,7 +106,7 @@ class ElectronicConvergenceEvidence(StrictModule, NonTrainableState):
         density_residual: ArrayLike = jnp.nan,
         message: str = "not-reported",
     ):
-        converged_ = jnp.asarray(converged, dtype=bool).reshape(())
+        converged_ = jnp.asarray(converged, dtype=jnp.bool_).reshape(())
         iterations_ = jnp.asarray(iterations, dtype=jnp.int32).reshape(())
         energy_ = jnp.asarray(energy_residual).reshape(())
         density_ = jnp.asarray(density_residual, dtype=energy_.dtype).reshape(())
@@ -154,8 +154,7 @@ class ElectronicWorkEvidence(StrictModule, NonTrainableState):
         property_evaluations: int = 0,
     ):
         values = tuple(
-            int(value)
-            for value in (
+            (
                 energy_evaluations,
                 force_evaluations,
                 hessian_evaluations,
@@ -215,7 +214,7 @@ class ElectronicEvaluationHeader(StrictModule, NonTrainableState):
         artifact_ids: tuple[str, ...] = (),
     ):
         ids = jnp.asarray(stable_particle_ids, dtype=jnp.int64)
-        active = jnp.asarray(active_mask, dtype=bool)
+        active = jnp.asarray(active_mask, dtype=jnp.bool_)
         if ids.ndim != 1 or active.shape != ids.shape:
             raise ValueError(
                 "Header particle IDs and active mask must be aligned vectors."
@@ -496,7 +495,7 @@ def _particle_tensor(
     name: str,
 ) -> Array:
     array = jnp.asarray(value)
-    capacity = int(header.stable_particle_ids.shape[0])
+    capacity = header.stable_particle_ids.shape[0]
     expected = (capacity, 3) if rank == 2 else (capacity, 3, capacity, 3)
     if array.shape != expected:
         raise ValueError(f"{name} must have shape {expected}.")

@@ -279,7 +279,7 @@ class PreparedDistributedGaugeTheory(StrictModule, NonTrainableState):
                 jnp.zeros(
                     (decomposition.site_count, 0, color, color), dtype=values.dtype
                 ),
-                jnp.zeros((decomposition.site_count, 0), dtype=bool),
+                jnp.zeros((decomposition.site_count, 0), dtype=jnp.bool_),
             )
         return jnp.stack(plaquettes, axis=1), jnp.stack(valid, axis=1)
 
@@ -469,7 +469,7 @@ class PreparedDistributedGaugeTheory(StrictModule, NonTrainableState):
             self.capabilities.require("fermion.wilson_dslash", values.dtype)
         if is_block:
             result = self.provider.block_dslash(operator, values, adjoint=adjoint)
-            block_width = int(values.shape[-1])
+            block_width = values.shape[-1]
         elif isinstance(operator, CloverWilsonDiracOperator):
             result = self.provider.clover_dslash(operator, values, adjoint=adjoint)
             block_width = 1
@@ -638,7 +638,7 @@ def prepare_deflation(
         orthogonality_error,
         residual_norms,
         finite,
-        tuple(int(value) for value in operator.source.shape),
+        tuple(operator.source.shape),
         operator.operator_id,
         prepared_id,
     )
@@ -736,7 +736,7 @@ def prepare_sap(
     if required_bytes > plan.maximum_factor_bytes:
         raise ValueError("SAP local factors exceed maximum_factor_bytes.")
     indices = np.zeros((decomposition.partition_count, block_size), dtype=np.int32)
-    valid = np.zeros_like(indices, dtype=bool)
+    valid = np.zeros_like(indices, dtype=np.bool_)
     for part in range(decomposition.partition_count):
         sites = np.asarray(decomposition.owned_global_ids[part])[
             np.asarray(decomposition.owned_valid[part])
@@ -752,7 +752,7 @@ def prepare_sap(
     active_matrix = valid_array[:, :, None] & valid_array[:, None, :]
     blocks = jnp.where(active_matrix, blocks, 0)
     blocks = blocks + jnp.where(
-        ~valid_array[:, :, None] & jnp.eye(block_size, dtype=bool)[None, :, :],
+        ~valid_array[:, :, None] & jnp.eye(block_size, dtype=jnp.bool_)[None, :, :],
         jnp.ones((), dtype=matrix.dtype),
         jnp.zeros((), dtype=matrix.dtype),
     )

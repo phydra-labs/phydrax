@@ -14,7 +14,7 @@ from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..units import ENERGY, LENGTH, TIME, UnitDefinition
-from ._identity import ParticleCatalogueReference, ParticleRole
+from ._identity import ParticleCatalogReference, ParticleRole
 from ._weights import EventWeightSet
 
 
@@ -30,7 +30,7 @@ class ParticleEventStatus(IntEnum):
 class ParticleEventPlan(StrictModule, NonTrainableState):
     """Static event, truth-particle, and vertex capacities plus exact conventions."""
 
-    catalogue: ParticleCatalogueReference
+    catalog: ParticleCatalogReference
     momentum_unit: UnitDefinition
     length_unit: UnitDefinition
     time_unit: UnitDefinition
@@ -44,7 +44,7 @@ class ParticleEventPlan(StrictModule, NonTrainableState):
     def __init__(
         self,
         *,
-        catalogue: ParticleCatalogueReference,
+        catalog: ParticleCatalogReference,
         momentum_unit: UnitDefinition,
         length_unit: UnitDefinition,
         time_unit: UnitDefinition,
@@ -54,8 +54,8 @@ class ParticleEventPlan(StrictModule, NonTrainableState):
         provider_status_namespace: str,
         momentum_order: str = "E,px,py,pz",
     ):
-        if not isinstance(catalogue, ParticleCatalogueReference):
-            raise TypeError("catalogue must be ParticleCatalogueReference.")
+        if not isinstance(catalog, ParticleCatalogReference):
+            raise TypeError("catalog must be ParticleCatalogReference.")
         if (
             not isinstance(momentum_unit, UnitDefinition)
             or momentum_unit.dimension != ENERGY
@@ -75,7 +75,7 @@ class ParticleEventPlan(StrictModule, NonTrainableState):
             raise ValueError("provider_status_namespace must be non-empty.")
         if momentum_order != "E,px,py,pz":
             raise ValueError("Only the explicit E,px,py,pz momentum order is supported.")
-        self.catalogue = catalogue
+        self.catalog = catalog
         self.momentum_unit = momentum_unit
         self.length_unit = length_unit
         self.time_unit = time_unit
@@ -85,7 +85,7 @@ class ParticleEventPlan(StrictModule, NonTrainableState):
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "particle-event-plan",
-                "catalogue": catalogue.catalogue_id,
+                "catalog": catalog.catalog_id,
                 "units": [momentum_unit.unit_id, length_unit.unit_id, time_unit.unit_id],
                 "capacities": list(capacities),
                 "provider_status_namespace": namespace,
@@ -169,13 +169,13 @@ class PreparedParticleEvents(StrictModule, NonTrainableState):
         vertex_capacity = self.plan.vertex_capacity
         event_ids_ = jnp.asarray(event_ids)
         subevent_ids_ = jnp.asarray(subevent_ids)
-        event_active_ = jnp.asarray(event_active, dtype=bool)
+        event_active_ = jnp.asarray(event_active, dtype=jnp.bool_)
         pdg_ids_ = jnp.asarray(pdg_ids, dtype=jnp.int32)
         roles_ = jnp.asarray(roles, dtype=jnp.int32)
         provider_status_ = jnp.asarray(provider_status, dtype=jnp.int32)
         momenta_ = jnp.asarray(momenta)
         rest_energies_ = jnp.asarray(rest_energies, dtype=momenta_.dtype)
-        particle_active_ = jnp.asarray(particle_active, dtype=bool)
+        particle_active_ = jnp.asarray(particle_active, dtype=jnp.bool_)
         mother_indices_ = jnp.asarray(mother_indices, dtype=jnp.int32)
         production_vertex_indices_ = jnp.asarray(
             production_vertex_indices, dtype=jnp.int32
@@ -183,7 +183,7 @@ class PreparedParticleEvents(StrictModule, NonTrainableState):
         end_vertex_indices_ = jnp.asarray(end_vertex_indices, dtype=jnp.int32)
         color_flow_ = jnp.asarray(color_flow, dtype=jnp.int32)
         vertices_ = jnp.asarray(production_vertices, dtype=momenta_.dtype)
-        vertex_active_ = jnp.asarray(vertex_active, dtype=bool)
+        vertex_active_ = jnp.asarray(vertex_active, dtype=jnp.bool_)
         expected_event = (event_capacity,)
         expected_particle = (event_capacity, particle_capacity)
         if (
@@ -235,9 +235,9 @@ class PreparedParticleEvents(StrictModule, NonTrainableState):
         if weights.event_active.shape != event_active_.shape:
             raise ValueError("Weight activity must align with event activity.")
         overflow_ = (
-            jnp.zeros(expected_event, dtype=bool)
+            jnp.zeros(expected_event, dtype=jnp.bool_)
             if overflow is None
-            else jnp.asarray(overflow, dtype=bool)
+            else jnp.asarray(overflow, dtype=jnp.bool_)
         )
         if overflow_.shape != expected_event:
             raise ValueError("overflow must align with event capacity.")
@@ -297,7 +297,7 @@ class PreparedParticleEvents(StrictModule, NonTrainableState):
         )
         same_event = event_ids_[:, None] == event_ids_[None, :]
         same_subevent = subevent_ids_[:, None] == subevent_ids_[None, :]
-        off_diagonal = ~jnp.eye(event_capacity, dtype=bool)
+        off_diagonal = ~jnp.eye(event_capacity, dtype=jnp.bool_)
         duplicates = (
             jnp.any(
                 same_event & same_subevent & off_diagonal & event_active_[None, :], axis=1

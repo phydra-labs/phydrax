@@ -39,7 +39,7 @@ from ._lqg import _all_finite, _covariance_evidence
 
 
 _RESULT_LABEL = "CENTRALIZED_GAUSSIAN_BELIEF_LQG"
-_METHOD_ID = "finite-horizon-centralized-gaussian-belief-lqg-v1"
+_METHOD_ID = "finite-horizon-centralized-gaussian-belief-lqg"
 _PRE_ACTION_TIMING = "pre-action"
 
 
@@ -196,8 +196,8 @@ class CentralizedLQGProblem(StrictModule):
                 "dynamics_matrices must have shape case_shape + (horizon, n, n)."
             )
         cases = tuple(dynamics.shape[:-3])
-        horizon = int(dynamics.shape[-3])
-        state_size = int(dynamics.shape[-1])
+        horizon = dynamics.shape[-3]
+        state_size = dynamics.shape[-1]
         if horizon < 1:
             raise ValueError("CentralizedLQGProblem requires at least one stage.")
         dynamics = _require_shape(
@@ -214,10 +214,9 @@ class CentralizedLQGProblem(StrictModule):
             or controls.shape[-2] != state_size
         ):
             raise ValueError(
-                "control_matrices must have shape case_shape + (horizon, n, m); "
-                f"got {controls.shape}."
+                f"control_matrices must have shape case_shape + (horizon, n, m); got {controls.shape}."
             )
-        control_size = int(controls.shape[-1])
+        control_size = controls.shape[-1]
         if control_size < 1:
             raise ValueError("control_matrices must have a positive control size.")
         controls = _require_shape(
@@ -237,7 +236,7 @@ class CentralizedLQGProblem(StrictModule):
                 "process_noise_factors must have shape case_shape + "
                 f"(horizon, n, process_noise_size); got {factors.shape}."
             )
-        process_noise_size = int(factors.shape[-1])
+        process_noise_size = factors.shape[-1]
         if process_noise_size < 1:
             raise ValueError("process_noise_factors must have a positive noise size.")
         factors = _require_shape(
@@ -279,7 +278,7 @@ class CentralizedLQGProblem(StrictModule):
                 "observation_matrices must have shape case_shape + "
                 f"(horizon, observation_size, n); got {observations.shape}."
             )
-        observation_size = int(observations.shape[-2])
+        observation_size = observations.shape[-2]
         if observation_size < 1:
             raise ValueError(
                 "observation_matrices must have a positive observation size."
@@ -326,7 +325,7 @@ class CentralizedLQGProblem(StrictModule):
             )
             if value is not None
         )
-        dtype = jnp.result_type(*dtype_inputs, float)
+        dtype = jnp.result_type(*dtype_inputs, jnp.float64)
         dynamics_bias_ = (
             _zeros(cases + (horizon, state_size), dtype)
             if dynamics_bias is None
@@ -502,10 +501,9 @@ class BeliefFeedbackPolicy(StrictModule):
         expected_prefix = case_shape + (time_grid.num_steps,)
         if tuple(gain.shape[:-2]) != expected_prefix or gain.shape[-1] != state_size:
             raise ValueError(
-                "feedback_gain must have shape case_shape + "
-                "(horizon, control_size, state_size)."
+                "feedback_gain must have shape case_shape + (horizon, control_size, state_size)."
             )
-        control_size = int(gain.shape[-2])
+        control_size = gain.shape[-2]
         if tuple(bias.shape) != expected_prefix + (control_size,):
             raise ValueError(
                 "feedforward must have shape case_shape + (horizon, control_size)."
@@ -678,7 +676,6 @@ def finite_horizon_centralized_lqg(
     )
 
     cases = problem.case_shape
-    horizon = problem.horizon
     state_size = problem.state_size
     dtype = jnp.result_type(
         problem.dynamics_matrices,
@@ -686,7 +683,7 @@ def finite_horizon_centralized_lqg(
         problem.measurement_covariances,
         problem.initial_belief.mean,
         problem.initial_belief.covariance,
-        float,
+        jnp.float64,
     )
     initial_mean = jnp.broadcast_to(
         problem.initial_belief.mean.astype(dtype), cases + (state_size,)

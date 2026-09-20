@@ -87,10 +87,10 @@ class FixedTopologyBRepRealization(StrictModule):
 
     def __init__(self, *, patches, vertices, faces, atlas, seam_residual):
         self.patches = tuple(patches)
-        self.vertices = jnp.asarray(vertices, dtype=float)
+        self.vertices = jnp.asarray(vertices, dtype=jnp.float64)
         self.faces = jnp.asarray(faces, dtype=jnp.int32)
         self.atlas = atlas
-        self.seam_residual = jnp.asarray(seam_residual, dtype=float).reshape(())
+        self.seam_residual = jnp.asarray(seam_residual, dtype=jnp.float64).reshape(())
 
 
 def _corner_weld_weights(model: BRepModel) -> np.ndarray:
@@ -109,7 +109,7 @@ def _corner_weld_weights(model: BRepModel) -> np.ndarray:
                 vertex_indices.tolist(), face_indices.tolist(), strict=True
             )
         ],
-        dtype=float,
+        dtype=np.float64,
     )
 
 
@@ -136,9 +136,9 @@ def evaluate_fixed_topology_mesh(
     if len(patches) != len(model.patches):
         raise ValueError("patches must preserve the imported face count and ordering.")
     weights = (
-        jnp.asarray(_corner_weld_weights(model), dtype=float)
+        jnp.asarray(_corner_weld_weights(model), dtype=jnp.float64)
         if corner_weights is None
-        else jnp.asarray(corner_weights, dtype=float).reshape((-1,))
+        else jnp.asarray(corner_weights, dtype=jnp.float64).reshape((-1,))
     )
     corners = _evaluate_corners(patches, model)
     vertex_indices = model.mesh_faces.reshape((-1,))
@@ -230,7 +230,7 @@ class FixedTopologyBRepSource(GeometrySource):
                 value_host = np.asarray(value)
                 scale = float(max(np.max(np.abs(value_host), initial=0.0), 1.0))
                 bounds = (
-                    (float(np.finfo(float).eps), None)
+                    (float(np.finfo(np.float64).eps), None)
                     if field == "weights"
                     else (None, None)
                 )
@@ -260,7 +260,7 @@ class _FixedTopologyBRepKernel(GeometryKernel):
     def __init__(self, model, patch_bindings, corner_weights):
         self.model = model
         self.patch_bindings = tuple(patch_bindings)
-        self.corner_weights = jnp.asarray(corner_weights, dtype=float)
+        self.corner_weights = jnp.asarray(corner_weights, dtype=jnp.float64)
 
     @property
     def ambient_dimension(self) -> int:
@@ -337,7 +337,7 @@ class _FixedTopologyBRepKernel(GeometryKernel):
         return realization.vertices[realization.faces]
 
     def _query(self, state: DesignState, points: Array) -> MeshQueryResult:
-        points_ = jnp.asarray(points, dtype=float)
+        points_ = jnp.asarray(points, dtype=jnp.float64)
         leading = points_.shape[:-1]
         flat = points_.reshape((-1, 3))
         triangles = self._triangles(state)
@@ -361,7 +361,7 @@ class _FixedTopologyBRepKernel(GeometryKernel):
         )
 
     def contains(self, state: DesignState, points: Array, /) -> Array:
-        points_ = jnp.asarray(points, dtype=float)
+        points_ = jnp.asarray(points, dtype=jnp.float64)
         triangles = self._triangles(state)
         first = triangles[:, 0] - points_[..., None, :]
         second = triangles[:, 1] - points_[..., None, :]
@@ -401,7 +401,7 @@ class _FixedTopologyBRepKernel(GeometryKernel):
         return self._query(state, points).normal
 
     def closest_point(self, state: DesignState, points: Array, /):
-        points_ = jnp.asarray(points, dtype=float)
+        points_ = jnp.asarray(points, dtype=jnp.float64)
         leading = points_.shape[:-1]
         flat = points_.reshape((-1, 3))
         triangles = self._triangles(state)

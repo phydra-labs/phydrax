@@ -90,11 +90,10 @@ def _precision(payload: dict[str, Any], /) -> FiniteVolumePrecisionPolicy:
     return FiniteVolumePrecisionPolicy(payload["dtype"])
 
 
-def _load_structured_case_v1(payload: dict[str, Any], /) -> PreparedFiniteVolumeCase:
+def _load_structured_case(payload: dict[str, Any], /) -> PreparedFiniteVolumeCase:
     _require_fields(
         payload,
         {
-            "schema_version",
             "name",
             "grid",
             "equation",
@@ -228,13 +227,12 @@ def _load_structured_case_v1(payload: dict[str, Any], /) -> PreparedFiniteVolume
     return PreparedFiniteVolumeCase(case, runtime, discretization, None, "")
 
 
-def _load_unstructured_case_v2(
+def _load_unstructured_case(
     payload: dict[str, Any], source_path: str | Path | None, /
 ) -> PreparedFiniteVolumeCase:
     _require_fields(
         payload,
         {
-            "schema_version",
             "name",
             "mesh",
             "equation",
@@ -353,16 +351,19 @@ def load_finite_volume_case(
     *,
     source_path: str | Path | None = None,
 ) -> PreparedFiniteVolumeCase:
-    """Build an allowlisted structured-v1 or native-unstructured-v2 FV case."""
+    """Build an allowlisted structured or native unstructured FV case."""
 
     if not isinstance(payload, dict):
         raise TypeError("payload must be a case-document mapping.")
-    version = payload.get("schema_version")
-    if version == 1:
-        return _load_structured_case_v1(payload)
-    if version == 2:
-        return _load_unstructured_case_v2(payload, source_path)
-    raise ValueError("Unsupported finite-volume case document schema version.")
+    structured = "grid" in payload
+    unstructured = "mesh" in payload
+    if structured == unstructured:
+        raise ValueError(
+            "Finite-volume case documents require exactly one grid or mesh declaration."
+        )
+    if structured:
+        return _load_structured_case(payload)
+    return _load_unstructured_case(payload, source_path)
 
 
 __all__ = ["PreparedFiniteVolumeCase", "load_finite_volume_case"]

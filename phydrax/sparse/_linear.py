@@ -47,6 +47,8 @@ class LinearAction(Protocol):
 class SparseLinearMap(AbstractSparseLinearOperator):
     """Scalar-coefficient linear action over one immutable sparse relation."""
 
+    _fused_block_action_kind = "fused"
+
     relation: SparseRelation
     coefficients: Array
 
@@ -68,12 +70,11 @@ class SparseLinearMap(AbstractSparseLinearOperator):
             or tuple(values.shape[-route_ndim:]) != relation.route_shape
         ):
             raise ValueError(
-                f"Sparse coefficients must end in route shape {relation.route_shape}; "
-                f"got {values.shape}."
+                f"Sparse coefficients must end in route shape {relation.route_shape}; got {values.shape}."
             )
-        batch = tuple(int(size) for size in values.shape[:-route_ndim])
+        batch = tuple(values.shape[:-route_ndim])
         if not jnp.issubdtype(values.dtype, jnp.inexact):
-            values = values.astype(float)
+            values = values.astype("float64")
         self.relation = relation
         self.coefficients = values
         source = ArraySpace(relation.input_shape, dtype=values.dtype)
@@ -124,10 +125,6 @@ class SparseLinearMap(AbstractSparseLinearOperator):
     @property
     def output_size(self) -> int:
         return prod(self.output_shape) if self.output_shape else 1
-
-    @property
-    def supports_fused_block_action(self) -> bool:
-        return True
 
     def mv(self, vector: Any, /) -> Any:
         """Apply the sparse map while preserving trailing payload dimensions."""
@@ -195,7 +192,7 @@ class SparseLinearMap(AbstractSparseLinearOperator):
             raise ValueError("to_scipy requires an unbatched sparse operator.")
 
         relation, coefficients = self._edge_form()
-        valid = np.asarray(relation.valid, dtype=bool)
+        valid = np.asarray(relation.valid, dtype=np.bool_)
         source = np.asarray(relation.source_indices)[valid]
         target = np.asarray(relation.target_indices)[valid]
         values = np.asarray(coefficients)[valid]
@@ -245,11 +242,10 @@ class SparseCoordinateOperator(AbstractSparseLinearOperator):
         values = jnp.asarray(coefficients)
         if values.shape != relation.route_shape:
             raise ValueError(
-                f"Sparse coefficients must have route shape {relation.route_shape}; "
-                f"got {values.shape}."
+                f"Sparse coefficients must have route shape {relation.route_shape}; got {values.shape}."
             )
         if not jnp.issubdtype(values.dtype, jnp.inexact):
-            values = values.astype(float)
+            values = values.astype("float64")
         accumulation_dtype_ = jnp.dtype(
             values.dtype if accumulation_dtype is None else accumulation_dtype
         )
@@ -398,18 +394,24 @@ class _SparseStoragePlan(StrictModule):
     nnz: int = eqx.field(static=True)
 
     def __init__(self, relation: SparseRelation, /):
-        edge = relation if isinstance(relation, EdgeRelation) else relation.as_edge_relation()
-        valid = np.asarray(edge.valid, dtype=bool).reshape(-1)
+        edge = (
+            relation
+            if isinstance(relation, EdgeRelation)
+            else relation.as_edge_relation()
+        )
+        valid = np.asarray(edge.valid, dtype=np.bool_).reshape(-1)
         source = np.asarray(edge.source_indices).reshape(-1)[valid]
         target = np.asarray(edge.target_indices).reshape(-1)[valid]
         positions = np.flatnonzero(valid)
         order = np.lexsort((source, target))
         source, target, positions = source[order], target[order], positions[order]
         if positions.size:
-            starts = np.concatenate((
-                np.asarray([True]),
-                (source[1:] != source[:-1]) | (target[1:] != target[:-1]),
-            ))
+            starts = np.concatenate(
+                (
+                    np.asarray([True]),
+                    (source[1:] != source[:-1]) | (target[1:] != target[:-1]),
+                )
+            )
             groups = np.cumsum(starts, dtype=np.int64) - 1
             canonical_source, canonical_target = source[starts], target[starts]
             number_groups = int(groups[-1]) + 1
@@ -433,11 +435,17 @@ class _SparseStoragePlan(StrictModule):
         self.route_shape = relation.route_shape
         self.nnz = number_groups
 
-    def apply(self, coefficients: Array, /, *, relation: SparseRelation | None = None) -> SparseStorage:
-        if tuple(coefficients.shape[-len(self.route_shape):]) != self.route_shape:
+    def apply(
+        self, coefficients: Array, /, *, relation: SparseRelation | None = None
+    ) -> SparseStorage:
+        if tuple(coefficients.shape[-len(self.route_shape) :]) != self.route_shape:
             raise ValueError("Sparse storage refresh requires unchanged route shape.")
         if relation is not None:
-            edge = relation if isinstance(relation, EdgeRelation) else relation.as_edge_relation()
+            edge = (
+                relation
+                if isinstance(relation, EdgeRelation)
+                else relation.as_edge_relation()
+            )
             if (
                 relation.route_shape != self.route_shape
                 or (edge.target_size, edge.source_size) != self.shape
@@ -445,15 +453,26 @@ class _SparseStoragePlan(StrictModule):
                 raise ValueError("Sparse storage refresh requires unchanged topology.")
             changed = (
                 jnp.any(edge.valid != self.valid)
-                | jnp.any(jnp.where(self.valid, edge.source_indices != self.source_indices, False))
-                | jnp.any(jnp.where(self.valid, edge.target_indices != self.target_indices, False))
+                | jnp.any(
+                    jnp.where(
+                        self.valid, edge.source_indices != self.source_indices, False
+                    )
+                )
+                | jnp.any(
+                    jnp.where(
+                        self.valid, edge.target_indices != self.target_indices, False
+                    )
+                )
             )
             coefficients = eqx.error_if(
-                coefficients, changed,
+                coefficients,
+                changed,
                 "Traced sparse factorization refresh requires unchanged relation routes.",
             )
-        batch_shape = coefficients.shape[:-len(self.route_shape)]
-        values = jnp.take(coefficients.reshape(batch_shape + (-1,)), self.positions, axis=-1)
+        batch_shape = coefficients.shape[: -len(self.route_shape)]
+        values = jnp.take(
+            coefficients.reshape(batch_shape + (-1,)), self.positions, axis=-1
+        )
         canonical = jnp.zeros(batch_shape + (self.nnz,), dtype=coefficients.dtype)
         canonical = canonical.at[..., self.groups].add(values)
         return SparseStorage(canonical, self.indices, self.indptr, shape=self.shape)

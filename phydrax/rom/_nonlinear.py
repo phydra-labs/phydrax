@@ -15,7 +15,7 @@ from jaxtyping import Array, ArrayLike, PyTree
 from phydrax.ein import contract
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import AbstractVectorSpace, DualSpace
 from ..optim import (
@@ -37,11 +37,11 @@ from ._reduction import TrialTestReduction
 
 
 class AbstractResidualProvider(StrictModule, NonTrainableState):
-    state_space: AbstractAttribute[AbstractVectorSpace]
-    residual_space: AbstractAttribute[AbstractVectorSpace]
-    residual_id: AbstractAttribute[str]
-    support_id: AbstractAttribute[str]
-    geometry_id: AbstractAttribute[str]
+    state_space: eqx.AbstractVar[AbstractVectorSpace]
+    residual_space: eqx.AbstractVar[AbstractVectorSpace]
+    residual_id: eqx.AbstractVar[str]
+    support_id: eqx.AbstractVar[str]
+    geometry_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def residual(
@@ -133,11 +133,11 @@ class FullResidualGalerkin(StrictModule, NonTrainableState):
 
 
 class AbstractStageResidualProvider(StrictModule, NonTrainableState):
-    state_space: AbstractAttribute[AbstractVectorSpace]
-    residual_space: AbstractAttribute[AbstractVectorSpace]
-    residual_id: AbstractAttribute[str]
-    support_id: AbstractAttribute[str]
-    geometry_id: AbstractAttribute[str]
+    state_space: eqx.AbstractVar[AbstractVectorSpace]
+    residual_space: eqx.AbstractVar[AbstractVectorSpace]
+    residual_id: eqx.AbstractVar[str]
+    support_id: eqx.AbstractVar[str]
+    geometry_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def residual(
@@ -273,9 +273,9 @@ class ReducedLSPGProblem(StrictModule, NonTrainableState):
 
 
 class AbstractSampledNonlinearProvider(StrictModule, NonTrainableState):
-    provider_id: AbstractAttribute[str]
-    support_id: AbstractAttribute[str]
-    geometry_id: AbstractAttribute[str]
+    provider_id: eqx.AbstractVar[str]
+    support_id: eqx.AbstractVar[str]
+    geometry_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def evaluate_selected(
@@ -314,7 +314,7 @@ class DEIMArtifact(StrictModule, NonTrainableState):
         ):
             raise ValueError("Sampled nonlinear provider identity mismatch.")
         values = jnp.asarray(provider.evaluate_selected(state, self.node_indices, inputs))
-        if values.shape != (int(self.node_indices.size),):
+        if values.shape != (self.node_indices.size,):
             raise ValueError("Selected nonlinear values must match the DEIM node count.")
         return self.reduced_reconstruction @ values
 
@@ -378,9 +378,9 @@ def prepare_deim(
 
 
 class AbstractSampledStageResidualProvider(StrictModule, NonTrainableState):
-    provider_id: AbstractAttribute[str]
-    support_id: AbstractAttribute[str]
-    geometry_id: AbstractAttribute[str]
+    provider_id: eqx.AbstractVar[str]
+    support_id: eqx.AbstractVar[str]
+    geometry_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def evaluate_selected(
@@ -504,7 +504,7 @@ class GNATLSPGProblem(StrictModule, NonTrainableState):
             context.inputs,
         )
         values = jnp.asarray(sampled)
-        if values.shape != (int(self.gnat.node_indices.size),):
+        if values.shape != (self.gnat.node_indices.size,):
             raise ValueError("Selected GNAT residual must match the sample count.")
         reconstructed = self.gnat.reconstruction_matrix @ values
         return self.lspg.residual_whitener @ reconstructed
@@ -542,7 +542,7 @@ class ThinGNATArtifact(StrictModule, NonTrainableState):
 
     def residual(self, sampled_residual: ArrayLike, /) -> Array:
         value = jnp.asarray(sampled_residual)
-        if value.shape[-1:] != (int(self.node_indices.size),):
+        if value.shape[-1:] != (self.node_indices.size,):
             raise ValueError("Sampled residual must end in the GNAT sample axis.")
         return contract("ks,...s->...k", self.residual_factor, value)
 
@@ -643,10 +643,10 @@ class ECSWArtifact(StrictModule, NonTrainableState):
 
 
 class AbstractElementResidualProvider(StrictModule, NonTrainableState):
-    provider_id: AbstractAttribute[str]
-    reduction_id: AbstractAttribute[str]
-    support_id: AbstractAttribute[str]
-    geometry_id: AbstractAttribute[str]
+    provider_id: eqx.AbstractVar[str]
+    reduction_id: eqx.AbstractVar[str]
+    support_id: eqx.AbstractVar[str]
+    geometry_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def evaluate_elements(
@@ -705,7 +705,7 @@ def prepare_ecsw(
     order = jnp.argsort(candidate)[::-1]
     selected = order[: min(plan.maximum_elements, elements)]
     selected = selected[candidate[selected] > plan.minimum_weight]
-    if int(selected.size) == 0:
+    if selected.size == 0:
         raise ValueError("ECSW selection produced no positive empirical weights.")
     selected_design = design[:, selected]
     selected_initial = candidate[selected]
@@ -795,7 +795,7 @@ def evaluate_ecsw(
         provider.evaluate_elements(state, artifact.element_indices, inputs)
     )
     if contributions.shape != (
-        int(artifact.element_indices.size),
+        artifact.element_indices.size,
         artifact.reduced_rank,
     ):
         raise ValueError("Selected element contributions have an invalid shape.")

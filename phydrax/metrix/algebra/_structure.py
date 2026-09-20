@@ -50,7 +50,7 @@ class AlgebraRationalVector(StrictModule, NonTrainableState):
             raise ValueError("Algebra rational vectors must be non-empty.")
         self.entries = tuple(_pair(value) for value in values)
         self.vector_id = canonical_fingerprint(
-            {"kind": "algebra-rational-vector-v1", "entries": self.entries}
+            {"kind": "algebra-rational-vector", "entries": self.entries}
         )
 
     @property
@@ -70,7 +70,7 @@ class AlgebraRationalMap(StrictModule, NonTrainableState):
             raise ValueError("Algebra rational maps must be non-empty and square.")
         self.rows = tuple(tuple(_pair(value) for value in row) for row in values)
         self.map_id = canonical_fingerprint(
-            {"kind": "algebra-rational-map-v1", "rows": self.rows}
+            {"kind": "algebra-rational-map", "rows": self.rows}
         )
 
     @property
@@ -145,7 +145,7 @@ class AlgebraStructureTable(StrictModule, NonTrainableState):
         self.terms = normalized
         self.table_id = canonical_fingerprint(
             {
-                "kind": "algebra-structure-table-v1",
+                "kind": "algebra-structure-table",
                 "dimension": dimension,
                 "terms": normalized,
             }

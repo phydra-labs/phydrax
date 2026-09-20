@@ -100,7 +100,7 @@ class MeshingScope(StrictModule, NonTrainableState):
             raise TypeError("selection must be EntitySelection.")
         if selection.entity_set_id != entities.entity_set_id:
             raise ValueError("Selection must belong to the supplied entity set.")
-        mask = np.asarray(selection.mask, dtype=bool)
+        mask = np.asarray(selection.mask, dtype=np.bool_)
         if mask.shape != (entities.count,) or not np.array_equal(
             selection.active_mask, entities.active_mask
         ):
@@ -204,7 +204,7 @@ def resolve_mesh_scope(mesh: CellMesh, scope: MeshingScope, /) -> EntitySelectio
     if scope.entity_set_id != entities.entity_set_id:
         raise ValueError("Meshing scope does not match the mesh entity set.")
     entity_ids = np.asarray(entities.entity_ids, dtype=np.int64)
-    active = np.asarray(entities.active_mask, dtype=bool)
+    active = np.asarray(entities.active_mask, dtype=np.bool_)
     requested = np.asarray(scope.entity_ids, dtype=np.int64)
     mask = active & np.isin(entity_ids, requested)
     if np.count_nonzero(mask) != requested.size:

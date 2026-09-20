@@ -130,8 +130,8 @@ def _noise_inputs(
             "dynamics_matrices must have shape case_shape + (horizon, n, n)."
         )
     case_shape = tuple(dynamics.shape[:-3])
-    horizon = int(dynamics.shape[-3])
-    state_size = int(dynamics.shape[-1])
+    horizon = dynamics.shape[-3]
+    state_size = dynamics.shape[-1]
 
     factors = jnp.asarray(process_noise_factors)
     expected_rank = len(case_shape) + 3
@@ -142,10 +142,9 @@ def _noise_inputs(
         or factors.shape[-2] != state_size
     ):
         raise ValueError(
-            "process_noise_factors must have shape case_shape + "
-            f"(horizon, n, noise_size); got {factors.shape}."
+            f"process_noise_factors must have shape case_shape + (horizon, n, noise_size); got {factors.shape}."
         )
-    noise_size = int(factors.shape[-1])
+    noise_size = factors.shape[-1]
     if noise_size < 1:
         raise ValueError("process_noise_factors must have a positive noise_size.")
     factors = _require_shape(
@@ -314,7 +313,7 @@ def finite_horizon_lqg_state_feedback(
         jnp.asarray(dynamics_matrices),
         factors,
         driving_covariances,
-        float,
+        jnp.float64,
     )
     (
         resolved_initial_mean,

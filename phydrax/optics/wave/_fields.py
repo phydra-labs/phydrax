@@ -110,8 +110,7 @@ class PlaneFieldSpace(StrictModule, NonTrainableState):
         required_periodicity = (topology == "periodic-cell",) * 2
         if periodic != required_periodicity:
             raise ValueError(
-                f"{topology!r} requires grid-axis periodicity {required_periodicity}; "
-                f"got {periodic}."
+                f"{topology!r} requires grid-axis periodicity {required_periodicity}; got {periodic}."
             )
         generated = canonical_fingerprint(
             {

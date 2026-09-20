@@ -107,11 +107,11 @@ def ccsds_numeric_records(message: CcsdsMessage, /) -> np.ndarray:
             raise ValueError("CCSDS numeric record is incomplete.")
         rows.append(tuple(float(value) for value in record[1:]))
     if not rows:
-        return np.empty((0, 0), dtype=float)
+        return np.empty((0, 0), dtype=np.float64)
     width = len(rows[0])
     if any(len(row) != width for row in rows):
         raise ValueError("CCSDS numeric records have inconsistent widths.")
-    return np.asarray(rows, dtype=float)
+    return np.asarray(rows, dtype=np.float64)
 
 
 __all__ = [

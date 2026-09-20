@@ -20,7 +20,7 @@ from phydrax.applications.skeletal_muscle.fibers import (
 
 def main():
     nodes = 7
-    mask = jnp.zeros((1, 1, nodes), dtype=bool).at[0, 0, nodes // 2].set(True)
+    mask = jnp.zeros((1, 1, nodes), dtype="bool").at[0, 0, nodes // 2].set(True)
     stimulus = PrescribedFiberStimulusSchedule([0.0], [0.5], [150.0], mask)
     fiber = SkeletalFiberBundlePlan(
         ("fiber-0",), nodes, [12.0], [0.05], stimulus

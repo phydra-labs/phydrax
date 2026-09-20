@@ -103,7 +103,7 @@ class MatchingMergingPlan(StrictModule, NonTrainableState):
     ):
         method = str(method_id).strip()
         shower = str(shower_provider_id).strip()
-        multiplicities_ = tuple(int(value) for value in multiplicities)
+        multiplicities_ = tuple(multiplicities)
         names = tuple(str(value).strip() for value in weight_names)
         scale = float(merging_scale)
         if (

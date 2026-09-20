@@ -114,7 +114,7 @@ Each cell has one observable spike site. Cable detectors, including detectors on
 
 LIF/AdEx thresholds belong to the point model and trigger an explicit voltage reset and absolute refractory deadline. AdEx additionally increments adaptation; adaptation continues during the refractory voltage hold. AdEx's `exponential_threshold_mV` is the exponential-current onset, distinct from the upper spike cutoff `threshold_mV`. LIF integrates constant-input charge analytically, including the zero-conductance limit. AdEx uses a numerical exponential-midpoint segment map; values continued above its cutoff serve root bracketing, not a physical post-spike waveform.
 
-`SpikeSource` emits only its scheduled `external_spikes=(time_ms, cell_id)` events. It is not a physical membrane and cannot be driven to spike by injected current. `neural_voltage` and network recordings include a numeric source placeholder for fixed shape; always use `runtime.physical_voltage_mask` to exclude it from voltage analyses.
+`SpikeSource` emits only its scheduled `external_spikes=(time_ms, cell_id)` events. It is not a physical membrane and cannot be driven to spike by injected current. `neural_voltage` and network recordings include a numeric source placeholder for fixed shape; always use `runtime.physical_voltage_mask` to exclude it from voltage analyzes.
 
 ### A source driving a physical neuron
 

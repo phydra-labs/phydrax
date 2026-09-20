@@ -50,7 +50,7 @@ def gaussian_beamlet_from_resonator_mode(
         raise ValueError("medium_wavenumber must be a real scalar.")
     lagrangian = eqx.error_if(
         mode.lagrangian_state,
-        ~jnp.asarray(mode.valid, dtype=bool),
+        ~jnp.asarray(mode.valid, dtype=jnp.bool_),
         "The resonator mode is not positively certified.",
     )
     frequency = eqx.error_if(

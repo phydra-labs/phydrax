@@ -16,9 +16,12 @@ def _compiled(*, backend="cell", viscosity=0.0):
         jnp.arange(count), jnp.full((count,), spacing), ambient_dimension=1
     ).prepare()
     box = phx.discretization.ParticleBox([0.0], [1.0])
-    method = phx.discretization.WeaklyCompressibleSPHMethodPlan(phx.discretization.WendlandC2SPHKernel(1),
-    1.25 * spacing,
-    density=phx.discretization.ContinuityDensityPlan(), physical_viscosity=phx.discretization.MorrisViscosityPlan(viscosity), )
+    method = phx.discretization.WeaklyCompressibleSPHMethodPlan(
+        phx.discretization.WendlandC2SPHKernel(1),
+        1.25 * spacing,
+        density=phx.discretization.ContinuityDensityPlan(),
+        physical_viscosity=phx.discretization.MorrisViscosityPlan(viscosity),
+    )
     neighborhood = (
         phx.discretization.DenseParticleNeighborhoodPlan(
             count * (count - 1) // 2, box=box
@@ -42,7 +45,7 @@ def _compiled(*, backend="cell", viscosity=0.0):
 
 
 def _initial(amplitude=0.002):
-    position = (jnp.arange(8, dtype=float) + 0.5)[:, None] / 8.0
+    position = (jnp.arange(8, dtype="float64") + 0.5)[:, None] / 8.0
     position = position + amplitude * jnp.sin(2.0 * jnp.pi * position)
     velocity = jnp.zeros_like(position)
     return position, velocity

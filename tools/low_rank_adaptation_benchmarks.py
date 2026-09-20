@@ -22,12 +22,12 @@ from phydrax._trainable import partition_trainable
 
 
 def _array_count(tree: Any, /) -> int:
-    return sum(int(leaf.size) for leaf in jax.tree.leaves(tree) if eqx.is_array(leaf))
+    return sum(leaf.size for leaf in jax.tree.leaves(tree) if eqx.is_array(leaf))
 
 
 def _array_bytes(tree: Any, /) -> int:
     return sum(
-        int(leaf.size * leaf.dtype.itemsize)
+        leaf.size * leaf.dtype.itemsize
         for leaf in jax.tree.leaves(tree)
         if eqx.is_array(leaf)
     )
@@ -149,7 +149,7 @@ def _operator_dataset(*, coefficient: float, cases: int = 8, resolution: int = 8
         jnp.linspace(0.0, 1.0, resolution),
         quadrature_weights=jnp.full((resolution,), 1.0 / resolution),
     )
-    offsets = jnp.arange(cases, dtype=float)[:, None]
+    offsets = jnp.arange(cases, dtype="float64")[:, None]
     values = jnp.sin((offsets + 1.0) * jnp.pi * axis.nodes[None, :])
     return phx.nn.operator.training.operator_dataset_from_arrays(
         {"state": values},

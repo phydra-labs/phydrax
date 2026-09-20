@@ -70,11 +70,11 @@ class OperatorPODFit(StrictModule):
         expected = self.sample_shape + (
             () if self.out_size == "scalar" else (int(self.out_size),)
         )
-        if tuple(int(size) for size in array.shape[-len(expected) :]) != expected:
+        if tuple(array.shape[-len(expected) :]) != expected:
             raise ValueError(
                 f"POD values must end in fitted output layout {expected}; got {array.shape}."
             )
-        leading = tuple(int(size) for size in array.shape[: array.ndim - len(expected)])
+        leading = tuple(array.shape[: array.ndim - len(expected)])
         flat = array.reshape(leading + (-1,))
         mean = self.spatial_mean.reshape((-1,))
         weights = self.physical_weights.reshape((-1,))
@@ -128,7 +128,7 @@ def fit_operator_pod(
     out_count = 1 if field.spec.channels == "scalar" else int(field.spec.channels)
     if field.spec.channels == "scalar":
         values = values[..., None]
-    cases = int(dataset.size)
+    cases = dataset.size
     feature_count = 1
     for size in query.sample_shape:
         feature_count *= int(size)

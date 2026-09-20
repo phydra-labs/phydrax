@@ -184,7 +184,7 @@ def _contact():
             2,
             body_ids=jnp.ones((2,), dtype=jnp.int64),
             material_ids=jnp.zeros((2,), dtype=jnp.int64),
-            static_mask=jnp.ones((2,), dtype=bool),
+            static_mask=jnp.ones((2,), dtype="bool"),
         ),
         minimum_separation=0.2,
     )
@@ -268,7 +268,7 @@ def _fracture():
     passed = (defect < 1.0e-12) & jnp.all(quadrature.tips.radii > 0.0)
     return {
         "passed": bool(passed),
-        "cut_cells": int(topology.cut_cell_ids.size),
+        "cut_cells": topology.cut_cell_ids.size,
         "area_defect": float(defect),
         "minimum_tip_radius": float(jnp.min(quadrature.tips.radii)),
     }
@@ -366,7 +366,7 @@ def _member_network():
         jnp.zeros((1,)),
         jnp.zeros((1,)),
         jnp.zeros((1,)),
-        accepted=jnp.ones((2,), dtype=bool),
+        accepted=jnp.ones((2,), dtype="bool"),
         topology_epoch=jnp.zeros((2,), dtype=jnp.int32),
         contact_epoch=jnp.zeros((2,), dtype=jnp.int32),
         fracture_epoch=jnp.zeros((2,), dtype=jnp.int32),

@@ -120,7 +120,7 @@ class AmgclAdapter(BenchmarkAdapter):
                 "iterations": None,
                 "matvecs": None,
                 "preconditioner_applications": None,
-                "linear_solves": int(rhs.shape[1]),
+                "linear_solves": rhs.shape[1],
                 "nonlinear_evaluations": 0,
                 "jacobian_evaluations": 0,
             },
@@ -155,7 +155,7 @@ def _version_evidence() -> dict[str, str]:
 
 
 def _sparse_bytes(matrix: Any) -> int:
-    return int(matrix.data.nbytes + matrix.indices.nbytes + matrix.indptr.nbytes)
+    return matrix.data.nbytes + matrix.indices.nbytes + matrix.indptr.nbytes
 
 
 __all__ = ["AmgclAdapter"]

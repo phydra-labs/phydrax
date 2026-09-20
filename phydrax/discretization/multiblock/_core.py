@@ -42,11 +42,7 @@ class InterfaceOrientation(StrictModule, NonTrainableState):
         rank = int(trace_rank)
         if rank < 0:
             raise ValueError("Trace rank must be non-negative.")
-        permutation_ = (
-            tuple(range(rank))
-            if permutation is None
-            else tuple(int(value) for value in permutation)
-        )
+        permutation_ = tuple(range(rank)) if permutation is None else tuple(permutation)
         flips_ = (
             (False,) * rank if flips is None else tuple(bool(value) for value in flips)
         )
@@ -279,9 +275,7 @@ class MultiblockGridPlan(StrictModule, NonTrainableState):
         interface.  It is intended for embedded manifolds whose physical
         dimension differs from their logical block dimension.
         """
-        return PreparedMultiblockGrid(
-            self, interface_coordinates=interface_coordinates
-        )
+        return PreparedMultiblockGrid(self, interface_coordinates=interface_coordinates)
 
 
 def _reference_grid(block: PreparedBlock, /) -> PreparedTensorGrid:
@@ -300,7 +294,7 @@ def _physical_coordinates(block: PreparedBlock, /) -> Array:
     components = []
     for axis, coordinates in enumerate(grid.primary_entity_layout.coordinates_by_axis):
         reshape = [1] * dimension
-        reshape[axis] = int(coordinates.size)
+        reshape[axis] = coordinates.size
         components.append(jnp.broadcast_to(coordinates.reshape(reshape), grid.shape))
     return jnp.stack(components, axis=-1)
 
@@ -388,9 +382,7 @@ class PreparedMultiblockGrid(StrictModule, NonTrainableState):
                     raise ValueError(
                         "Supplied physical interface traces have invalid dimensions."
                     )
-            right_trace = interface.orientation.apply(
-                right_trace, trailing_axes=1
-            )
+            right_trace = interface.orientation.apply(right_trace, trailing_axes=1)
             left_shape = left_trace.shape[:-1]
             right_shape = right_trace.shape[:-1]
             if left_shape == right_shape:

@@ -14,7 +14,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ._parameter_geometry import ParameterGeometry
 
 
@@ -89,7 +89,7 @@ class RiemannianStepMetrics(StrictModule):
         self.line_search_accepted = (
             jnp.asarray(False)
             if line_search_accepted is None
-            else jnp.asarray(line_search_accepted, dtype=bool)
+            else jnp.asarray(line_search_accepted, dtype=jnp.bool_)
         )
         self.line_search_reduction = (
             zero if line_search_reduction is None else line_search_reduction
@@ -103,12 +103,12 @@ class RiemannianStepMetrics(StrictModule):
         self.restarted = (
             jnp.asarray(False)
             if restarted is None
-            else jnp.asarray(restarted, dtype=bool)
+            else jnp.asarray(restarted, dtype=jnp.bool_)
         )
         self.pair_accepted = (
             jnp.asarray(False)
             if pair_accepted is None
-            else jnp.asarray(pair_accepted, dtype=bool)
+            else jnp.asarray(pair_accepted, dtype=jnp.bool_)
         )
         self.adaptive_denominator_minimum = (
             zero if adaptive_denominator_minimum is None else adaptive_denominator_minimum
@@ -150,8 +150,8 @@ class RiemannianMomentumState(StrictModule):
 class AbstractRiemannianOptimizer(StrictModule):
     """Nominal optimizer contract whose updates return manifold-valued parameters."""
 
-    optimizer_id: AbstractAttribute[str]
-    parameter_geometry: AbstractAttribute[ParameterGeometry]
+    optimizer_id: eqx.AbstractVar[str]
+    parameter_geometry: eqx.AbstractVar[ParameterGeometry]
 
     @abstractmethod
     def init(self, parameters: PyTree[Any], /) -> Any:

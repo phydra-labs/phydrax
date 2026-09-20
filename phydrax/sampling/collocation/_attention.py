@@ -109,22 +109,22 @@ class ResidualAttentionPopulation(StrictModule):
         self.weight = weight
         self.refresh_count = jnp.asarray(refresh_count, dtype=jnp.int32)
         self.last_refresh = jnp.asarray(last_refresh, dtype=jnp.int32)
-        self.score_mean = jnp.asarray(score_mean, dtype=float)
-        self.score_max = jnp.asarray(score_max, dtype=float)
+        self.score_mean = jnp.asarray(score_mean, dtype=jnp.float64)
+        self.score_max = jnp.asarray(score_max, dtype=jnp.float64)
         self.score_nonfinite_count = jnp.asarray(score_nonfinite_count, dtype=jnp.int32)
         self.effective_sample_size = jnp.asarray(
             size if effective_sample_size is None else effective_sample_size,
-            dtype=float,
+            dtype=jnp.float64,
         )
-        self.entropy = jnp.asarray(entropy, dtype=float)
+        self.entropy = jnp.asarray(entropy, dtype=jnp.float64)
         self.effective_uniform_fraction = jnp.asarray(
-            effective_uniform_fraction, dtype=float
+            effective_uniform_fraction, dtype=jnp.float64
         )
-        self.ess_guard_triggered = jnp.asarray(ess_guard_triggered, dtype=bool)
+        self.ess_guard_triggered = jnp.asarray(ess_guard_triggered, dtype=jnp.bool_)
         self.raw_score = (
-            jnp.zeros((size,), dtype=float)
+            jnp.zeros((size,), dtype=jnp.float64)
             if raw_score is None
-            else jnp.asarray(raw_score, dtype=float)
+            else jnp.asarray(raw_score, dtype=jnp.float64)
         )
         self.point_id = (
             jnp.arange(size, dtype=jnp.int32)
@@ -137,9 +137,9 @@ class ResidualAttentionPopulation(StrictModule):
             else jnp.asarray(age, dtype=jnp.int32)
         )
         self.anchor_mask = (
-            jnp.zeros((size,), dtype=bool)
+            jnp.zeros((size,), dtype=jnp.bool_)
             if anchor_mask is None
-            else jnp.asarray(anchor_mask, dtype=bool)
+            else jnp.asarray(anchor_mask, dtype=jnp.bool_)
         )
         for name, value in (
             ("raw_score", self.raw_score),
@@ -225,11 +225,11 @@ class ResidualAttentionCollocation(AbstractCollocationPolicy):
         if not isfinite(anchor_floor) or not 0.0 < anchor_floor < 1.0:
             raise ValueError("anchor_probability_floor must lie in (0, 1).")
         self.refresh_every = refresh
-        self.decay = jnp.asarray(decay_, dtype=float)
-        self.score_exponent = jnp.asarray(exponent, dtype=float)
-        self.uniform_fraction = jnp.asarray(uniform, dtype=float)
-        self.minimum_ess_fraction = jnp.asarray(minimum_ess, dtype=float)
-        self.epsilon = jnp.asarray(epsilon_, dtype=float)
+        self.decay = jnp.asarray(decay_, dtype=jnp.float64)
+        self.score_exponent = jnp.asarray(exponent, dtype=jnp.float64)
+        self.uniform_fraction = jnp.asarray(uniform, dtype=jnp.float64)
+        self.minimum_ess_fraction = jnp.asarray(minimum_ess, dtype=jnp.float64)
+        self.epsilon = jnp.asarray(epsilon_, dtype=jnp.float64)
         self.candidate_count = candidate_count_
         self.replacement_count = replacement_count_
         self.candidate_sampler = candidate_sampler
@@ -264,10 +264,10 @@ class ResidualAttentionCollocation(AbstractCollocationPolicy):
             )
         anchor_mask = jnp.arange(size) < anchor_count
         probability = cx.AxisArray(
-            jnp.full((size,), 1.0 / size, dtype=float),
+            jnp.full((size,), 1.0 / size, dtype=jnp.float64),
             dims=(axis,),
         )
-        weight = cx.AxisArray(jnp.ones((size,), dtype=float), dims=(axis,))
+        weight = cx.AxisArray(jnp.ones((size,), dtype=jnp.float64), dims=(axis,))
         return ResidualAttentionPopulation(
             batch,
             probability,
@@ -296,20 +296,20 @@ class ResidualAttentionCollocation(AbstractCollocationPolicy):
         /,
     ) -> dict[str, Array]:
         _, size = _single_axis_and_size(population.batch)
-        values = jnp.asarray(population.weight.data, dtype=float)
+        values = jnp.asarray(population.weight.data, dtype=jnp.float64)
         return {
-            "refresh_count": jnp.asarray(population.refresh_count, dtype=float),
-            "last_refresh": jnp.asarray(population.last_refresh, dtype=float),
-            "point_count": jnp.asarray(size, dtype=float),
-            "active_point_count": jnp.asarray(size, dtype=float),
+            "refresh_count": jnp.asarray(population.refresh_count, dtype=jnp.float64),
+            "last_refresh": jnp.asarray(population.last_refresh, dtype=jnp.float64),
+            "point_count": jnp.asarray(size, dtype=jnp.float64),
+            "active_point_count": jnp.asarray(size, dtype=jnp.float64),
             "effective_sample_size": population.effective_sample_size,
             "attention_score_mean": population.score_mean,
-            "mean_age": jnp.mean(population.age.astype(float)),
-            "anchor_count": jnp.sum(population.anchor_mask, dtype=float),
-            "replacement_count": population.replacement_count.astype(float),
-            "candidate_evaluations": population.candidate_evaluations.astype(float),
+            "mean_age": jnp.mean(population.age.astype("float64")),
+            "anchor_count": jnp.sum(population.anchor_mask, dtype=jnp.float64),
+            "replacement_count": population.replacement_count.astype("float64"),
+            "candidate_evaluations": population.candidate_evaluations.astype("float64"),
             "attention_score_nonfinite_count": jnp.asarray(
-                population.score_nonfinite_count, dtype=float
+                population.score_nonfinite_count, dtype=jnp.float64
             ),
             "attention_effective_sample_size": population.effective_sample_size,
             "attention_effective_sample_fraction": (
@@ -323,7 +323,7 @@ class ResidualAttentionCollocation(AbstractCollocationPolicy):
                 population.effective_uniform_fraction
             ),
             "attention_ess_guard_triggered": jnp.asarray(
-                population.ess_guard_triggered, dtype=float
+                population.ess_guard_triggered, dtype=jnp.float64
             ),
         }
 
@@ -353,7 +353,7 @@ class ResidualAttentionCollocation(AbstractCollocationPolicy):
         )
         axis, size = _single_axis_and_size(population.batch)
         _validate_axis_field(score, axis=axis, size=size, name="pointwise score")
-        raw_current = jax.lax.stop_gradient(jnp.asarray(score.data, dtype=float))
+        raw_current = jax.lax.stop_gradient(jnp.asarray(score.data, dtype=jnp.float64))
         current_finite = jnp.isfinite(raw_current)
         safe_current = jnp.nan_to_num(
             jnp.maximum(raw_current, 0.0),
@@ -377,8 +377,7 @@ class ResidualAttentionCollocation(AbstractCollocationPolicy):
             candidate_axis, candidate_size = _single_axis_and_size(candidate_batch)
             if candidate_axis != axis or candidate_size != self.candidate_count:
                 raise ValueError(
-                    "Candidate sampler must return the declared count on the "
-                    "population point axis."
+                    "Candidate sampler must return the declared count on the population point axis."
                 )
             candidate_score = term.pointwise_score(
                 functions,
@@ -392,7 +391,7 @@ class ResidualAttentionCollocation(AbstractCollocationPolicy):
                 name="candidate pointwise score",
             )
             raw_candidate = jax.lax.stop_gradient(
-                jnp.asarray(candidate_score.data, dtype=float)
+                jnp.asarray(candidate_score.data, dtype=jnp.float64)
             )
             candidate_finite = jnp.isfinite(raw_candidate)
             safe_candidate = jnp.nan_to_num(

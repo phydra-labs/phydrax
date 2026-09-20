@@ -194,8 +194,7 @@ def plan_mps_quantum_program(
             and abs(route.target_indices[1] - route.target_indices[0]) != 1
         ):
             raise ValueError(
-                "Non-nearest-neighbor MPS operations require an explicit "
-                "caller-visible SWAP compilation."
+                "Non-nearest-neighbor MPS operations require an explicit caller-visible SWAP compilation."
             )
     maximum_window = 0
     split_count = 0
@@ -222,9 +221,7 @@ def plan_mps_quantum_program(
         split_count += span - 1
     if maximum_window > policy.maximum_workspace_elements:
         raise MemoryError("MPS operation exceeds maximum_workspace_elements.")
-    operation_elements = sum(
-        int(operation.unitary.size) for operation in program.operations
-    )
+    operation_elements = sum(operation.unitary.size for operation in program.operations)
     cost = MPSQuantumProgramCostEstimate(operation_elements, maximum_window, split_count)
     plan_id = canonical_fingerprint(
         {
@@ -370,7 +367,7 @@ def _split_window(state, route, window, policy):
     current = window
     tensors = []
     records = []
-    left_dimension = int(current.shape[0])
+    left_dimension = current.shape[0]
     for dimension in dimensions[:-1]:
         matrix = current.reshape((left_dimension * dimension, -1))
         left, right, evidence = truncated_svd(

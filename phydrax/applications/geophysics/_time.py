@@ -250,7 +250,7 @@ class TemporalSupport:
         if bounds is None:
             resolved = None
         else:
-            values = np.asarray(bounds, dtype=float)
+            values = np.asarray(bounds, dtype=np.float64)
             if (
                 values.ndim != 2
                 or values.shape[1] != 2

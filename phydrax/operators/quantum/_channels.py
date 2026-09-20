@@ -126,7 +126,7 @@ def _complex_matrix(value: ArrayLike, shape: tuple[int, int], role: str) -> Arra
     if array.shape != shape:
         raise ValueError(f"{role} must have shape {shape}; got {array.shape}.")
     if not jnp.issubdtype(array.dtype, jnp.inexact):
-        array = array.astype(float)
+        array = array.astype("float64")
     return array.astype(jnp.result_type(array.dtype, 1j))
 
 
@@ -273,9 +273,9 @@ def finite_cptp_from_kraus(
     operators = operators.astype(jnp.result_type(operators.dtype, 1j))
     capacity, output_dimension, input_dimension = map(int, operators.shape)
     mask = (
-        jnp.ones((capacity,), dtype=bool)
+        jnp.ones((capacity,), dtype=jnp.bool_)
         if active is None
-        else jnp.asarray(active, dtype=bool)
+        else jnp.asarray(active, dtype=jnp.bool_)
     )
     if mask.shape != (capacity,):
         raise ValueError(f"active must have shape ({capacity},); got {mask.shape}.")

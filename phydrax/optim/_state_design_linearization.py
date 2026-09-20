@@ -13,6 +13,10 @@ import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
 from .._strict import StrictModule
+from .._tree_math import (
+    tree_allfinite as _tree_allfinite,
+    validate_real_inexact_tree as _validate_real_inexact_tree,
+)
 from ..linalg import (
     FunctionLinearOperator,
     LinearSolvePolicy,
@@ -21,7 +25,6 @@ from ..linalg import (
     solve as solve_linear,
     transpose,
 )
-from ._iterative._types import _tree_allfinite, _validate_real_inexact_tree
 from ._pde_constrained import (
     _default_adjoint_policy,
     AdjointAcceptanceEvidence,
@@ -237,7 +240,7 @@ def _response_pullback(
         else jnp.all(
             jnp.asarray(
                 point.problem.state_realization(point.state, point.design, point.args),
-                dtype=bool,
+                dtype=jnp.bool_,
             )
         )
     )

@@ -152,7 +152,7 @@ class FiniteVolumeStageFlux(StrictModule):
         /,
     ):
         fluxes = tuple(jnp.asarray(value) for value in replacement_normal_fluxes)
-        masks = tuple(jnp.asarray(value, dtype=bool) for value in replacement_masks)
+        masks = tuple(jnp.asarray(value, dtype=jnp.bool_) for value in replacement_masks)
         interface_flux = jnp.asarray(interface_conservative_flux)
         if not fluxes or len(fluxes) != len(masks):
             raise ValueError(
@@ -487,8 +487,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
             dynamics.method.interface_solver, AbstractWavePropagationPlan
         ):
             raise ValueError(
-                "Wave-propagation dynamics do not expose the face fluxes required "
-                "by PreparedFiniteVolumeRuntime."
+                "Wave-propagation dynamics do not expose the face fluxes required by PreparedFiniteVolumeRuntime."
             )
         if not isinstance(positivity, FluxPositivityPlan):
             raise TypeError("positivity must be FluxPositivityPlan.")
@@ -502,8 +501,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                 )
             if not isinstance(dynamics, PreparedUnstructuredFiniteVolumeDynamics):
                 raise ValueError(
-                    "Stage-state providers are supported only by unstructured "
-                    "finite-volume runtimes."
+                    "Stage-state providers are supported only by unstructured finite-volume runtimes."
                 )
         if stage_flux_provider is not None:
             if not isinstance(stage_flux_provider, FiniteVolumeStageFluxProvider):
@@ -627,8 +625,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                     or stabilization is None
                 ):
                     raise TypeError(
-                        "Prepared embedded coupling requires wall ownership and "
-                        "stabilization."
+                        "Prepared embedded coupling requires wall ownership and stabilization."
                     )
                 embedded_stage_template = lower_embedded_stage_metrics(
                     discretization,
@@ -695,7 +692,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                         dtype=jnp.dtype(dynamics.precision.reduction_dtype),
                     ),
                     face_block.owner_cells,
-                    face_block.neighbour_cells,
+                    face_block.neighbor_cells,
                     face_block.active_mask,
                     face_block.block_id,
                     "static-explicit-face",
@@ -713,10 +710,10 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                 periodic = discretization.grid.structured_axes[axis].periodic
                 if periodic:
                     owners = np.roll(cell_ids, 1, axis=axis)
-                    neighbours = cell_ids
+                    neighbors = cell_ids
                 else:
                     owners = np.empty(face_shape, dtype=np.int32)
-                    neighbours = np.full(face_shape, -1, dtype=np.int32)
+                    neighbors = np.full(face_shape, -1, dtype=np.int32)
                     lower_face: list[slice | int] = [slice(None)] * len(face_shape)
                     upper_face: list[slice | int] = [slice(None)] * len(face_shape)
                     interior_faces = [slice(None)] * len(face_shape)
@@ -730,8 +727,8 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                     owners[tuple(lower_face)] = cell_ids[tuple(lower_face)]
                     owners[tuple(upper_face)] = cell_ids[tuple(upper_face)]
                     owners[tuple(interior_faces)] = cell_ids[tuple(lower_cells)]
-                    neighbours[tuple(interior_faces)] = cell_ids[tuple(upper_cells)]
-                active = owners != neighbours
+                    neighbors[tuple(interior_faces)] = cell_ids[tuple(upper_cells)]
+                active = owners != neighbors
                 block_id = canonical_fingerprint(
                     {
                         "kind": "static-structured-face-route",
@@ -739,7 +736,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                         "axis": axis,
                         "periodic": periodic,
                         "owner_cells": array_tree_fingerprint(owners),
-                        "neighbour_cells": array_tree_fingerprint(neighbours),
+                        "neighbor_cells": array_tree_fingerprint(neighbors),
                     }
                 )
                 templates.append(
@@ -749,7 +746,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                             dtype=jnp.dtype(dynamics.precision.reduction_dtype),
                         ),
                         owners.reshape((-1,)),
-                        neighbours.reshape((-1,)),
+                        neighbors.reshape((-1,)),
                         active.reshape((-1,)),
                         block_id,
                         "static-structured-face",
@@ -1088,8 +1085,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                 base_discretization.vertices,
             ):
                 raise ValueError(
-                    "Motion evaluated at t=0 must match the compiled base geometry "
-                    "within ALE precision evidence."
+                    "Motion evaluated at t=0 must match the compiled base geometry within ALE precision evidence."
                 )
             if not matches_base_geometry(
                 evaluated_discretization.cell_volumes,
@@ -1256,7 +1252,7 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                     speed,
                     state,
                     state,
-                    jnp.ones(layout.shape, dtype=bool),
+                    jnp.ones(layout.shape, dtype=jnp.bool_),
                 )
             )
         return ShallowWaterAcceptedFaceIntegrals(
@@ -1315,11 +1311,11 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
         ) - self.precision.reduction(original_content.conservative_content)
         face_change = jnp.zeros_like(content_change)
         for block in blocks:
-            safe_neighbour = jnp.maximum(block.neighbour_cells, 0)
+            safe_neighbor = jnp.maximum(block.neighbor_cells, 0)
             face_change = face_change.at[block.owner_cells].add(-block.flux_integral)
-            face_change = face_change.at[safe_neighbour].add(
+            face_change = face_change.at[safe_neighbor].add(
                 jnp.where(
-                    (block.neighbour_cells >= 0)[:, None],
+                    (block.neighbor_cells >= 0)[:, None],
                     block.flux_integral,
                     jnp.zeros((), dtype=block.flux_integral.dtype),
                 )
@@ -1988,13 +1984,11 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
 
         if not isinstance(self.dynamics, PreparedFiniteVolumeDynamics):
             raise ValueError(
-                "Prescribed finite-volume replay currently requires stationary "
-                "structured dynamics."
+                "Prescribed finite-volume replay currently requires stationary structured dynamics."
             )
         if self.embedded_redistribution is not None or self.sliding_plan is not None:
             raise ValueError(
-                "Prescribed finite-volume replay does not support embedded or "
-                "sliding topology."
+                "Prescribed finite-volume replay does not support embedded or sliding topology."
             )
         requested = self.precision.decision(jnp.asarray(step_size).reshape(()))
         requested = eqx.error_if(
@@ -2128,9 +2122,9 @@ class PreparedFiniteVolumeRuntime(StrictModule, NonTrainableState):
                     block.layout.active_mask
                     & self.active_cell_mask[block.layout.owner_cells]
                     & (
-                        (block.layout.neighbour_cells < 0)
+                        (block.layout.neighbor_cells < 0)
                         | self.active_cell_mask[
-                            jnp.maximum(block.layout.neighbour_cells, 0)
+                            jnp.maximum(block.layout.neighbor_cells, 0)
                         ]
                     ),
                 )

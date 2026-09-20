@@ -2,12 +2,12 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Analytical labelled A/T CTMC: exact exp(Q t), first hits and native SSA.
+"""Analytical labeled A/T CTMC: exact exp(Q t), first hits and native SSA.
 
 Run with ``python -m benchmarks.nucleic_secondary_kinetics``. This independently
 specified mathematical model measures numerical behavior, not experimental DNA
 kinetics. No third-party parameter tables are bundled or scientific calibration
-claimed. Increase ``--copies`` to test competing labelled binding partners.
+claimed. Increase ``--copies`` to test competing labeled binding partners.
 """
 
 from __future__ import annotations
@@ -63,7 +63,7 @@ def run(*, paths: int, copies: int, capacity: int, repeats: int) -> dict:
         sort_keys=True,
     ).encode()
     manifest = ReferenceArtifactManifest(
-        "independent-analytical-labelled-binding-benchmark",
+        "independent-analytical-labeled-binding-benchmark",
         checksum_algorithm="sha256",
         checksum=hashlib.sha256(content).hexdigest(),
         size_bytes=len(content),
@@ -115,7 +115,7 @@ def run(*, paths: int, copies: int, capacity: int, repeats: int) -> dict:
         sample_shape=(paths,),
         process_id=prepared.process.process_id,
     )
-    start, end = jnp.asarray(0.0, dtype=float), jnp.asarray(duration, dtype=float)
+    start, end = jnp.asarray(0.0, dtype="float64"), jnp.asarray(duration, dtype="float64")
     # Separate native SSA kernel lowering/compilation; execution below still uses
     # the public solver and its event-ledger/status assembly, not a second SSA.
     _, compilation = measure_lower_and_compile(

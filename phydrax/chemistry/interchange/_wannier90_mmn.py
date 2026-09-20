@@ -124,7 +124,7 @@ def read_wannier90_mmn(
     )
     if band_count != context.basis.orbital_count:
         raise ValueError("Wannier90 MMN band count does not match source basis order.")
-    if point_count != int(connectivity.plan.mesh.fractional_points.shape[0]):
+    if point_count != connectivity.plan.mesh.fractional_points.shape[0]:
         raise ValueError("Wannier90 MMN k-point count does not match connectivity.")
     if band_count <= 0 or band_count > int(maximum_bands) or neighbors_per_point <= 0:
         raise PeriodicResourceError(
@@ -146,12 +146,12 @@ def read_wannier90_mmn(
         (
             int(np.asarray(plan.source_indices)[edge]),
             int(np.asarray(plan.target_indices)[edge]),
-            tuple(int(value) for value in np.asarray(plan.reciprocal_shifts)[edge]),
+            tuple(np.asarray(plan.reciprocal_shifts)[edge]),
         ): edge
         for edge in range(connectivity.edge_count)
     }
     overlaps = np.empty((edge_count, band_count, band_count), dtype=np.complex128)
-    covered = np.zeros((edge_count,), dtype=bool)
+    covered = np.zeros((edge_count,), dtype=np.bool_)
     cursor = 2
     for _ in range(edge_count):
         header = lines[cursor].split()
@@ -235,7 +235,7 @@ def write_wannier90_mmn(imported: Wannier90MMNImport, /) -> bytes:
     target = np.asarray(plan.target_indices)
     shifts = np.asarray(plan.reciprocal_shifts)
     overlap = np.asarray(imported.raw_overlaps)
-    point_count = int(plan.mesh.fractional_points.shape[0])
+    point_count = plan.mesh.fractional_points.shape[0]
     counts = np.bincount(source, minlength=point_count)
     if np.any(counts != counts[0]):
         raise ValueError(
@@ -249,8 +249,7 @@ def write_wannier90_mmn(imported: Wannier90MMNImport, /) -> bytes:
         for edge in np.flatnonzero(source == point):
             shift = np.pad(shifts[edge], (0, 3 - shifts.shape[1]))
             lines.append(
-                f"{point + 1:5d} {int(target[edge]) + 1:5d} "
-                f"{int(shift[0]):5d} {int(shift[1]):5d} {int(shift[2]):5d}"
+                f"{point + 1:5d} {int(target[edge]) + 1:5d} {int(shift[0]):5d} {int(shift[1]):5d} {int(shift[2]):5d}"
             )
             for row in range(overlap.shape[1]):
                 for column in range(overlap.shape[2]):

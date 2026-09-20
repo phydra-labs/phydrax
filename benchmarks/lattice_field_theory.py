@@ -54,7 +54,7 @@ def _free_scalar_case(draws: int) -> dict:
         target_id=f"{action.action_id}:free-scalar",
     )
     initial = 0.02 * jnp.reshape(
-        jnp.arange(4 * dimension, dtype=float),
+        jnp.arange(4 * dimension, dtype="float64"),
         (4, dimension),
     )
     state = phx.sampling.initialize_hamiltonian_state(kernel, initial)

@@ -125,9 +125,9 @@ class PreparedPrimitivePathSnapshot(StrictModule, NonTrainableState):
             raise TypeError("layout must be PolymerChainLayoutPlan.")
         identifiers = tuple(str(value).strip() for value in chain_ids)
         indices = np.asarray(layout.particle_indices, dtype=np.int32)
-        mask = np.asarray(layout.chain_mask, dtype=bool)
+        mask = np.asarray(layout.chain_mask, dtype=np.bool_)
         selected = indices[mask]
-        active = np.asarray(dynamics.system.active_mask, dtype=bool)
+        active = np.asarray(dynamics.system.active_mask, dtype=np.bool_)
         if (
             len(identifiers) != indices.shape[0]
             or any(not value for value in identifiers)
@@ -157,7 +157,7 @@ class PreparedPrimitivePathSnapshot(StrictModule, NonTrainableState):
         }
         if actual != set(expected):
             raise ValueError(
-                "Primitive-path v1 requires exactly adjacent open-chain backbone bonds."
+                "Primitive-path canonical requires exactly adjacent open-chain backbone bonds."
             )
         if dynamics.system.topology.angle_indices.shape[0] and any(
             len(set(row)) != 3

@@ -42,13 +42,13 @@ class BlockLevelPlan(StrictModule, NonTrainableState):
         refinement_ratio: int = 2,
     ):
         level_ = int(level)
-        shape = tuple(int(size) for size in block_shape)
+        shape = tuple(block_shape)
         capacity = int(maximum_blocks)
         ratio = int(refinement_ratio)
         halo = (
             (int(halo_width),) * len(shape)
             if isinstance(halo_width, int)
-            else tuple(int(value) for value in halo_width)
+            else tuple(halo_width)
         )
         if (
             level_ < 0
@@ -78,7 +78,7 @@ class BlockLevelPlan(StrictModule, NonTrainableState):
 
 
 class BlockHierarchyPlan(StrictModule, NonTrainableState):
-    """Fixed-block hierarchy bound to one uniform cell-centred tensor geometry.
+    """Fixed-block hierarchy bound to one uniform cell-centered tensor geometry.
 
     The prepared tensor grid is the sole geometry source.  Every finer cell lattice,
     physical spacing, block lattice, and parent/child alignment is derived exactly
@@ -114,7 +114,8 @@ class BlockHierarchyPlan(StrictModule, NonTrainableState):
         if any(axis.primary_entity != "interval" for axis in grid.axes):
             raise ValueError("Block AMR requires an interval-primary tensor grid.")
         widths = tuple(
-            np.asarray(axis.interval_widths, dtype=float) for axis in grid.structured_axes
+            np.asarray(axis.interval_widths, dtype=np.float64)
+            for axis in grid.structured_axes
         )
         if any(
             axis.basis != "uniform" or width.size == 0 or not np.all(width == width[0])
@@ -122,7 +123,7 @@ class BlockHierarchyPlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("Block AMR requires uniform tensor-grid axes.")
 
-        global_shapes: list[tuple[int, ...]] = [tuple(int(size) for size in grid.shape)]
+        global_shapes: list[tuple[int, ...]] = [tuple(grid.shape)]
         spacings: list[tuple[float, ...]] = [tuple(float(width[0]) for width in widths)]
         for coarse in values[:-1]:
             global_shapes.append(
@@ -205,7 +206,7 @@ class BlockHierarchyPlan(StrictModule, NonTrainableState):
         level_ = int(level)
         if level_ < 0 or level_ >= len(self.levels):
             raise ValueError("AMR level is out of range.")
-        logical = tuple(int(value) for value in logical_index)
+        logical = tuple(logical_index)
         lattice = self.block_lattice_shapes[level_]
         if len(logical) != len(lattice) or any(
             value < 0 or value >= extent
@@ -239,7 +240,7 @@ class BlockMetadata(StrictModule, NonTrainableState):
     ):
         if not isinstance(plan, BlockLevelPlan):
             raise TypeError("plan must be a BlockLevelPlan.")
-        mask = np.asarray(active, dtype=bool)
+        mask = np.asarray(active, dtype=np.bool_)
         ids = np.asarray(block_ids, dtype=np.int32)
         parents = np.asarray(parent_ids, dtype=np.int32)
         logical = np.asarray(logical_indices, dtype=np.int32)
@@ -384,15 +385,13 @@ class BlockHierarchyTopology(StrictModule, NonTrainableState):
         ):
             if not isinstance(level_metadata, BlockMetadata):
                 raise TypeError("Topology levels must contain BlockMetadata values.")
-            active = np.asarray(level_metadata.active, dtype=bool)
+            active = np.asarray(level_metadata.active, dtype=np.bool_)
             ids = np.asarray(level_metadata.block_ids, dtype=np.int32)
             logical = np.asarray(level_metadata.logical_indices, dtype=np.int32)
             count = int(np.count_nonzero(active))
             if np.any(active[count:]) or np.any(~active[:count]):
                 raise ValueError("Active AMR slots must be the canonical compact prefix.")
-            active_rows = tuple(
-                tuple(int(value) for value in row) for row in logical[:count]
-            )
+            active_rows = tuple(tuple(row) for row in logical[:count])
             if len(set(active_rows)) != count or any(
                 any(
                     value < 0 or value >= extent
@@ -487,7 +486,7 @@ class BlockHierarchyTopology(StrictModule, NonTrainableState):
                     "AMR neighbor slots must match canonical topology routes."
                 )
             level_interfaces = np.zeros(
-                (level_plan.maximum_blocks, dimension, 2), dtype=bool
+                (level_plan.maximum_blocks, dimension, 2), dtype=np.bool_
             )
             for slot, row in enumerate(active_rows):
                 for axis in range(dimension):
@@ -510,7 +509,7 @@ class BlockHierarchyTopology(StrictModule, NonTrainableState):
         ):
             mask = np.zeros(
                 (level_plan.maximum_blocks,) + level_plan.block_shape,
-                dtype=bool,
+                dtype=np.bool_,
             )
             if level_index + 1 < len(plan.levels):
                 ratio = plan.levels[level_index].refinement_ratio
@@ -601,7 +600,7 @@ class BlockHierarchyTopology(StrictModule, NonTrainableState):
         return self.logical_boxes[level_]
 
     def cell_slot(self, level: int, coordinate: Sequence[int], /) -> int | None:
-        values = tuple(int(value) for value in coordinate)
+        values = tuple(coordinate)
         if level < 0 or level >= len(self.logical_boxes):
             raise ValueError("AMR level is out of range.")
         if len(values) != len(self.plan.grid.shape):

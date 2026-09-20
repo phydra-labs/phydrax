@@ -60,9 +60,8 @@ class FiniteVolumeExecutionSpec(StrictModule, NonTrainableState):
 
 
 class FiniteVolumeCaseSpec(StrictModule, NonTrainableState):
-    """Versioned normalized identity for one prepared FV simulation."""
+    """Canonical normalized identity for one prepared FV simulation."""
 
-    schema_version: int = eqx.field(static=True)
     name: str = eqx.field(static=True)
     runtime_id: str = eqx.field(static=True)
     system_id: str = eqx.field(static=True)
@@ -88,14 +87,10 @@ class FiniteVolumeCaseSpec(StrictModule, NonTrainableState):
         /,
         *,
         precision: FiniteVolumePrecisionPolicy | None = None,
-        schema_version: int = 2,
     ):
         name_ = str(name)
-        version = int(schema_version)
-        if not name_ or version != 2:
-            raise ValueError(
-                "Finite-volume case name must be non-empty and schema version 2."
-            )
+        if not name_:
+            raise ValueError("Finite-volume case name must be non-empty.")
         if not isinstance(runtime, PreparedFiniteVolumeRuntime):
             raise TypeError("runtime must be PreparedFiniteVolumeRuntime.")
         precision_ = runtime.precision if precision is None else precision
@@ -123,7 +118,6 @@ class FiniteVolumeCaseSpec(StrictModule, NonTrainableState):
             vertices = jnp.empty((0, 0))
             vertex_ids = jnp.empty((0,), dtype=jnp.int64)
             cell_ids = jnp.empty((0,), dtype=jnp.int64)
-        self.schema_version = version
         self.name = name_
         self.runtime_id = runtime.runtime_id
         self.system_id = dynamics.system.system_id
@@ -143,7 +137,6 @@ class FiniteVolumeCaseSpec(StrictModule, NonTrainableState):
 
     def to_dict(self, /, *, include_case_id: bool = True) -> dict[str, Any]:
         output = {
-            "schema_version": self.schema_version,
             "name": self.name,
             "runtime_id": self.runtime_id,
             "system_id": self.system_id,
@@ -154,7 +147,7 @@ class FiniteVolumeCaseSpec(StrictModule, NonTrainableState):
                 "kind": self.mesh_kind,
                 "topology_id": self.mesh_topology_id,
                 "geometry_id": self.mesh_geometry_id,
-                "vertex_count": int(self.mesh_vertices.shape[0]),
+                "vertex_count": self.mesh_vertices.shape[0],
                 "cell_count": int(self.state_shape[0]),
             },
             "state_shape": list(self.state_shape),
@@ -179,7 +172,6 @@ class FiniteVolumeCaseSpec(StrictModule, NonTrainableState):
     @staticmethod
     def validate_dict(payload: dict[str, Any], /) -> None:
         required = {
-            "schema_version",
             "name",
             "runtime_id",
             "system_id",
@@ -196,11 +188,8 @@ class FiniteVolumeCaseSpec(StrictModule, NonTrainableState):
         missing = required.difference(payload)
         if unknown or missing:
             raise ValueError(
-                f"Finite-volume case schema has unknown={sorted(unknown)!r}, "
-                f"missing={sorted(missing)!r}."
+                f"Finite-volume case schema has unknown={sorted(unknown)!r}, missing={sorted(missing)!r}."
             )
-        if payload["schema_version"] != 2:
-            raise ValueError("Unsupported finite-volume case schema version.")
         mesh_keys = {
             "kind",
             "topology_id",
@@ -258,7 +247,6 @@ class FiniteVolumeCaseSpec(StrictModule, NonTrainableState):
             runtime,
             execution,
             precision=precision,
-            schema_version=payload["schema_version"],
         )
         if case.to_dict() != payload:
             raise ValueError(

@@ -104,8 +104,8 @@ def _prepared_pmj(*, capacity=4, maximum_distance=2.0, candidate_mask=None):
         graph,
         myocardial,
         pmj_candidate_mask=mask,
-        graph_geometry_id="purkinje-graph-v1",
-        myocardial_geometry_id="myocardial-support-v3",
+        graph_geometry_id="purkinje-graph",
+        myocardial_geometry_id="myocardial-support",
         epoch=epoch,
     )
     return prepared, graph, myocardial, epoch
@@ -226,7 +226,7 @@ def test_pmj_preparation_refuses_capacity_overflow_and_missing_support():
             graph,
             myocardial,
             pmj_candidate_mask=jnp.asarray((True, False, False, False)),
-            myocardial_active_mask=jnp.zeros((4,), dtype=bool),
+            myocardial_active_mask=jnp.zeros((4,), dtype="bool"),
             graph_geometry_id="graph",
             myocardial_geometry_id="myocardium",
             epoch=epoch,
@@ -323,7 +323,7 @@ def _high_order_geometry(cell_kind, *, degree=2):
     plan = cv.anatomy.HighOrderCardiacGeometryPlan(
         mesh,
         coordinate_spec,
-        boundary_role_id="ventricular-boundary-roles-v1",
+        boundary_role_id="ventricular-boundary-roles",
         boundary_profile=profile,
         prepared_epoch=epoch,
     )

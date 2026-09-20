@@ -87,20 +87,17 @@ def _validated_costs(
             raise TypeError(
                 f"cost leaf {_path_name(cost_path)} must use real floating dtype."
             )
-        feature_shape = tuple(int(size) for size in spec.shape)
+        feature_shape = tuple(spec.shape)
         if array.ndim < len(feature_shape) or (
-            feature_shape
-            and tuple(int(size) for size in array.shape[-len(feature_shape) :])
-            != feature_shape
+            feature_shape and tuple(array.shape[-len(feature_shape) :]) != feature_shape
         ):
             raise ValueError(
-                f"cost leaf {_path_name(cost_path)} must end with feature shape "
-                f"{feature_shape}; got {array.shape}."
+                f"cost leaf {_path_name(cost_path)} must end with feature shape {feature_shape}; got {array.shape}."
             )
         leading = (
-            tuple(int(size) for size in array.shape[: -len(feature_shape)])
+            tuple(array.shape[: -len(feature_shape)])
             if feature_shape
-            else tuple(int(size) for size in array.shape)
+            else tuple(array.shape)
         )
         if batch_shape is None:
             batch_shape = leading
@@ -192,7 +189,7 @@ class LinearCombinatorialProblem(StrictModule):
             cost_leaves, feature_leaves, spec_leaves, strict=True
         ):
             feature = jnp.asarray(raw_feature, dtype=cost.dtype)
-            expected = self.batch_shape + tuple(int(size) for size in spec.shape)
+            expected = self.batch_shape + tuple(spec.shape)
             if feature.shape != expected:
                 raise ValueError(
                     f"objective feature shape must be {expected}; got {feature.shape}."

@@ -1,7 +1,7 @@
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-"""Host preparation of physically labelled, fixed-support observations."""
+"""Host preparation of physically labeled, fixed-support observations."""
 
 from __future__ import annotations
 
@@ -140,8 +140,8 @@ def prepare_tensor_observation_operator(
     periodic = {} if periods is None else dict(periods)
     if set(periodic) - set(axes):
         raise ValueError("Periodic axes must belong to the source layout.")
-    nodes = tuple(np.asarray(coordinates[name], dtype=float) for name in axes)
-    targets = tuple(np.asarray(points[name], dtype=float) for name in axes)
+    nodes = tuple(np.asarray(coordinates[name], dtype=np.float64) for name in axes)
+    targets = tuple(np.asarray(points[name], dtype=np.float64) for name in axes)
     count = targets[0].size
     if count == 0 or any(
         value.shape != (count,) or not np.all(np.isfinite(value)) for value in targets
@@ -353,7 +353,7 @@ def prepare_geophysical_observations(
     time_values = (
         time.encode(tuple(str(value) for value in raw_times))
         if raw_times.dtype.kind in ("U", "S", "O")
-        else np.asarray(raw_times, dtype=float)
+        else np.asarray(raw_times, dtype=np.float64)
     )
     if (
         time_values.ndim != 1
@@ -364,14 +364,14 @@ def prepare_geophysical_observations(
         raise ValueError(
             "Observation times must be a finite, strictly increasing vector."
         )
-    raw = np.asarray(values, dtype=float)
+    raw = np.asarray(values, dtype=np.float64)
     shape = (len(time_values),) + operator.transfer.target.vector_space.shape
     if raw.shape != shape:
         raise ValueError(f"Observation values must have exact shape {shape}.")
 
     def mask_array(value, name):
         if value is None:
-            return np.ones(shape, dtype=bool)
+            return np.ones(shape, dtype=np.bool_)
         array = np.asarray(value)
         if array.shape != shape or array.dtype.kind != "b":
             raise ValueError(
@@ -392,7 +392,7 @@ def prepare_geophysical_observations(
     mask = available & accepted
 
     def errors(value, name, positive):
-        array = np.asarray(value, dtype=float)
+        array = np.asarray(value, dtype=np.float64)
         if array.ndim == 0:
             array = np.broadcast_to(array, shape)
         elif array.shape != shape:

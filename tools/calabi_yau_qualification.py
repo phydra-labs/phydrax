@@ -55,7 +55,7 @@ def run_qualification() -> dict[str, object]:
         heldout.problem.samples,
         measure_kind="canonical",
     )
-    sample_count = int(measure.normalized_weights.shape[0])
+    sample_count = measure.normalized_weights.shape[0]
     representatives = jnp.ones((sample_count, 1, 1), dtype=jnp.complex128)
     yukawa_density = jnp.ones((sample_count, 1, 1, 1), dtype=jnp.complex128)
     moduli_plan = phx.integration.CalabiYauModuliObservablePlan(

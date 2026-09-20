@@ -86,7 +86,7 @@ class FiniteElementFieldSpec(StrictModule, NonTrainableState):
         field_name = str(name)
         if not field_name:
             raise ValueError("Finite-element field name must be non-empty.")
-        components = tuple(int(size) for size in component_shape)
+        components = tuple(component_shape)
         if any(size <= 0 for size in components):
             raise ValueError("Field component dimensions must be positive.")
         if isinstance(elements, FiniteElementSpec):
@@ -139,8 +139,7 @@ class FiniteElementFieldSpec(StrictModule, NonTrainableState):
         for block, element in zip(mesh.blocks, resolved, strict=True):
             if block.cell_kind != element.cell_kind:
                 raise ValueError(
-                    f"Element {element.cell_kind!r} is incompatible with block "
-                    f"{block.name!r} ({block.cell_kind!r})."
+                    f"Element {element.cell_kind!r} is incompatible with block {block.name!r} ({block.cell_kind!r})."
                 )
         if len({element.conformity for element in resolved}) != 1:
             raise ValueError("One field must use one conformity across mesh blocks.")
@@ -170,15 +169,13 @@ def _tetrahedral_entity_routes(
     /,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     edge_by_vertices = {
-        tuple(int(value) for value in edge): index
-        for index, edge in enumerate(np.asarray(connectivity.edges))
+        tuple(edge): index for index, edge in enumerate(np.asarray(connectivity.edges))
     }
     face_by_vertices = {
-        tuple(int(value) for value in face): index
-        for index, face in enumerate(np.asarray(connectivity.faces))
+        tuple(face): index for index, face in enumerate(np.asarray(connectivity.faces))
     }
     edge_routes = np.empty((cells.shape[0], len(_TETRAHEDRAL_EDGES)), dtype=np.int32)
-    edge_signs = np.empty_like(edge_routes, dtype=float)
+    edge_signs = np.empty_like(edge_routes, dtype=np.float64)
     face_routes = np.empty((cells.shape[0], len(_TETRAHEDRAL_FACES)), dtype=np.int32)
     for cell, vertices in enumerate(cells):
         for local_edge, (start, stop) in enumerate(_TETRAHEDRAL_EDGES):
@@ -206,7 +203,7 @@ def _tetrahedral_face_dof_positions(
     vertex_dofs = element.entity_dofs[0]
     if any(len(vertex_dofs[vertex]) != 1 for vertex in reference_vertices):
         raise ValueError("H1 nodal vertices require one DOF per vertex.")
-    nodes = np.asarray(element.reference_nodes, dtype=float)
+    nodes = np.asarray(element.reference_nodes, dtype=np.float64)
     corners = nodes[
         np.asarray(
             [vertex_dofs[vertex][0] for vertex in reference_vertices],
@@ -305,7 +302,7 @@ def _hexahedral_face_grid_positions(
     vertex_dofs = element.entity_dofs[0]
     if any(len(vertex_dofs[vertex]) != 1 for vertex in face_vertices):
         raise ValueError("H1 nodal vertices require one DOF per vertex.")
-    nodes = np.asarray(element.reference_nodes, dtype=float)
+    nodes = np.asarray(element.reference_nodes, dtype=np.float64)
     corners = nodes[
         np.asarray(
             [vertex_dofs[vertex][0] for vertex in face_vertices],
@@ -381,14 +378,14 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
         resolved = tuple(elements)
         if len(resolved) != len(mesh.blocks):
             raise ValueError("One finite element is required per mesh block.")
-        components = tuple(int(size) for size in component_shape)
+        components = tuple(component_shape)
         if any(size <= 0 for size in components):
             raise ValueError("DOF component dimensions must be positive.")
         conformities = {element.conformity for element in resolved}
         if len(conformities) != 1:
             raise ValueError("One field must use one conformity across cell blocks.")
         conformity = conformities.pop()
-        vertex_count = int(mesh.coordinates.shape[0])
+        vertex_count = mesh.coordinates.shape[0]
         connectivity = mesh.connectivity
         topological_dimension = mesh.topological_dimension
         entity_dof_counts = (0,) * (topological_dimension + 1)
@@ -416,7 +413,7 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                 )
             if isinstance(connectivity, PolygonalConnectivity):
                 association = "edge"
-                global_count = int(connectivity.edges.shape[0])
+                global_count = connectivity.edges.shape[0]
             elif (
                 isinstance(connectivity, TetrahedralConnectivity) and conformity == "Hdiv"
             ):
@@ -452,7 +449,7 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                 compatible_face_width = next(iter(widths))
                 compatible_cell_width = next(iter(cell_widths_))
                 association = "hdiv_entity"
-                face_dof_count = int(connectivity.faces.shape[0]) * compatible_face_width
+                face_dof_count = connectivity.faces.shape[0] * compatible_face_width
                 total_cell_count = sum(block.cell_count for block in mesh.blocks)
                 cell_dof_count = total_cell_count * compatible_cell_width
                 global_count = face_dof_count + cell_dof_count
@@ -482,18 +479,17 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                     ),
                 ):
                     raise ValueError(
-                        "High-order H1 entity routing requires polygonal, "
-                        "tetrahedral, or hexahedral connectivity."
+                        "High-order H1 entity routing requires polygonal, tetrahedral, or hexahedral connectivity."
                     )
                 association = "entity"
-                edge_count = int(connectivity.edges.shape[0])
+                edge_count = connectivity.edges.shape[0]
                 edge_widths = np.full((edge_count,), -1, dtype=np.int32)
                 total_cell_count = sum(block.cell_count for block in mesh.blocks)
                 cell_widths = np.empty((total_cell_count,), dtype=np.int32)
                 if isinstance(
                     connectivity, (TetrahedralConnectivity, HexahedralConnectivity)
                 ):
-                    face_count = int(connectivity.faces.shape[0])
+                    face_count = connectivity.faces.shape[0]
                     face_widths = np.full((face_count,), -1, dtype=np.int32)
                 if isinstance(connectivity, HexahedralConnectivity):
                     face_shapes = np.full((face_count, 2), -1, dtype=np.int32)
@@ -540,8 +536,7 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                             existing = edge_widths[int(edge)]
                             if existing >= 0 and existing != width:
                                 raise ValueError(
-                                    "Shared H1 edge trace widths are incompatible; "
-                                    "a mortar is required."
+                                    "Shared H1 edge trace widths are incompatible; a mortar is required."
                                 )
                             edge_widths[int(edge)] = width
 
@@ -573,13 +568,10 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                                     block_face_permutations[cell, local_face],
                                     local_shape,
                                 )
-                                existing = tuple(
-                                    int(value) for value in face_shapes[face]
-                                )
+                                existing = tuple(face_shapes[face])
                                 if existing[0] >= 0 and existing != canonical_shape:
                                     raise ValueError(
-                                        "Shared H1 quadrilateral trace shapes are "
-                                        "incompatible; a mortar is required."
+                                        "Shared H1 quadrilateral trace shapes are incompatible; a mortar is required."
                                     )
                                 face_shapes[face] = canonical_shape
                                 if face_widths is None:
@@ -602,8 +594,7 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                                 existing = face_widths[int(face)]
                                 if existing >= 0 and existing != width:
                                     raise ValueError(
-                                        "Shared H1 triangular trace widths are "
-                                        "incompatible; a mortar is required."
+                                        "Shared H1 triangular trace widths are incompatible; a mortar is required."
                                     )
                                 face_widths[int(face)] = width
 
@@ -681,7 +672,7 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                     dtype=np.int32,
                 ).reshape((block.cell_count, width))
                 dof_offset += block.cell_count * width
-                orientation = np.ones_like(local, dtype=float)
+                orientation = np.ones_like(local, dtype=np.float64)
             elif association == "edge":
                 if not isinstance(connectivity, PolygonalConnectivity):
                     raise TypeError(
@@ -693,7 +684,7 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                 ]
                 orientation = np.asarray(
                     connectivity.cell_edge_signs,
-                    dtype=float,
+                    dtype=np.float64,
                 )[
                     cell_offset : cell_offset + block.cell_count,
                     : element.local_dof_count,
@@ -715,7 +706,7 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                     -1,
                     dtype=np.int32,
                 )
-                orientation = np.ones_like(local, dtype=float)
+                orientation = np.ones_like(local, dtype=np.float64)
                 for local_face, face_dofs in enumerate(element.entity_dofs[2]):
                     width = len(face_dofs)
                     if width != compatible_face_width:
@@ -770,9 +761,7 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                 if len(interior_dofs) != compatible_cell_width:
                     raise ValueError("Tetrahedral H(div) cell widths are inconsistent.")
                 if interior_dofs:
-                    face_dof_count = (
-                        int(connectivity.faces.shape[0]) * compatible_face_width
-                    )
+                    face_dof_count = connectivity.faces.shape[0] * compatible_face_width
                     starts = (
                         face_dof_count
                         + (cell_offset + np.arange(block.cell_count))
@@ -825,7 +814,7 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                     ]
                     block_cell_signs = np.asarray(
                         connectivity.cell_edge_signs,
-                        dtype=float,
+                        dtype=np.float64,
                     )[
                         cell_offset : cell_offset + block.cell_count,
                         :local_edge_count,
@@ -889,9 +878,7 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                                 int(vertices[cell, vertex])
                                 for vertex in reference_vertices
                             )
-                            canonical_vertices = tuple(
-                                int(value) for value in canonical_faces[face]
-                            )
+                            canonical_vertices = tuple(canonical_faces[face])
                             positions = _tetrahedral_face_dof_positions(
                                 element,
                                 local_face,
@@ -914,14 +901,14 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                         )
                 if np.any(local < 0):
                     raise ValueError("High-order H1 entity map left unassigned DOFs.")
-                orientation = np.ones_like(local, dtype=float)
+                orientation = np.ones_like(local, dtype=np.float64)
             elif association == "vertex":
                 if element.local_dof_count != vertices.shape[1]:
                     raise ValueError(
                         "Vertex-associated H1 elements require one DOF per vertex."
                     )
                 local = vertices
-                orientation = np.ones_like(local, dtype=float)
+                orientation = np.ones_like(local, dtype=np.float64)
             else:
                 raise ValueError("Unsupported finite-element DOF map.")
             block_dofs.append(jnp.asarray(local))
@@ -934,7 +921,7 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
             for block, element in zip(mesh.blocks, resolved, strict=True)
         )
         if association == "cell":
-            boundary = np.zeros((global_count,), dtype=bool)
+            boundary = np.zeros((global_count,), dtype=np.bool_)
             coordinate_blocks = []
             mesh_coordinates = np.asarray(mesh.coordinates)
             for block, weights_ in zip(mesh.blocks, coordinate_weights, strict=True):
@@ -951,7 +938,7 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
         elif association == "edge":
             if not isinstance(connectivity, PolygonalConnectivity):
                 raise TypeError("Compatible edge map requires polygonal connectivity.")
-            boundary = np.asarray(connectivity.boundary_edges, dtype=bool)
+            boundary = np.asarray(connectivity.boundary_edges, dtype=np.bool_)
             edge_vertices = np.asarray(connectivity.edges, dtype=np.int32)
             dof_coordinates = np.mean(
                 np.asarray(mesh.coordinates)[edge_vertices],
@@ -962,10 +949,10 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                 raise TypeError("Compatible face map requires tetrahedral connectivity.")
             if compatible_face_width is None or compatible_cell_width is None:
                 raise RuntimeError("Compatible H(div) widths were not prepared.")
-            boundary = np.zeros((global_count,), dtype=bool)
-            face_dof_count = int(connectivity.faces.shape[0]) * compatible_face_width
+            boundary = np.zeros((global_count,), dtype=np.bool_)
+            face_dof_count = connectivity.faces.shape[0] * compatible_face_width
             boundary[:face_dof_count] = np.repeat(
-                np.asarray(connectivity.boundary_faces, dtype=bool),
+                np.asarray(connectivity.boundary_faces, dtype=np.bool_),
                 compatible_face_width,
             )
             accumulated = np.zeros(
@@ -995,10 +982,10 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                 raise ValueError("Compatible face coordinates contain unassigned DOFs.")
             dof_coordinates = accumulated / counts[:, None]
         else:
-            boundary = np.zeros((global_count,), dtype=bool)
+            boundary = np.zeros((global_count,), dtype=np.bool_)
             boundary[:vertex_count] = np.asarray(
                 mesh.topology.entity_sets[0].subset("boundary").mask,
-                dtype=bool,
+                dtype=np.bool_,
             )
             if association == "entity":
                 if not isinstance(
@@ -1015,7 +1002,7 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                 if edge_starts is None or edge_widths is None:
                     raise TypeError("High-order H1 edge offsets are unavailable.")
                 for edge in np.flatnonzero(
-                    np.asarray(connectivity.boundary_edges, dtype=bool)
+                    np.asarray(connectivity.boundary_edges, dtype=np.bool_)
                 ):
                     start = int(edge_starts[edge])
                     boundary[start : start + int(edge_widths[edge])] = True
@@ -1025,7 +1012,7 @@ class FiniteElementDofMap(StrictModule, NonTrainableState):
                     if face_starts is None or face_widths is None:
                         raise TypeError("High-order H1 face offsets are unavailable.")
                     for face in np.flatnonzero(
-                        np.asarray(connectivity.boundary_faces, dtype=bool)
+                        np.asarray(connectivity.boundary_faces, dtype=np.bool_)
                     ):
                         start = int(face_starts[face])
                         boundary[start : start + int(face_widths[face])] = True
@@ -1225,27 +1212,27 @@ def _facet_routes(mesh: CellMesh, /) -> tuple[np.ndarray, ...]:
     connectivity = mesh.connectivity
     if isinstance(connectivity, IntervalConnectivity):
         cell_facets = np.asarray(connectivity.cell_vertices, dtype=np.int32)
-        valid = np.ones_like(cell_facets, dtype=bool)
+        valid = np.ones_like(cell_facets, dtype=np.bool_)
         facet_count = connectivity.vertex_count
     elif isinstance(connectivity, PolygonalConnectivity):
         cell_facets = np.asarray(connectivity.cell_edges, dtype=np.int32)
-        valid = np.asarray(connectivity.cell_edge_valid, dtype=bool)
-        facet_count = int(connectivity.edges.shape[0])
+        valid = np.asarray(connectivity.cell_edge_valid, dtype=np.bool_)
+        facet_count = connectivity.edges.shape[0]
     elif isinstance(connectivity, PolyhedralConnectivity):
         return (
             np.asarray(connectivity.face_owner, dtype=np.int32),
-            np.asarray(connectivity.face_neighbour, dtype=np.int32),
+            np.asarray(connectivity.face_neighbor, dtype=np.int32),
             np.asarray(connectivity.face_owner_local, dtype=np.int32),
-            np.asarray(connectivity.face_neighbour_local, dtype=np.int32),
+            np.asarray(connectivity.face_neighbor_local, dtype=np.int32),
         )
     else:
         cell_facets = np.asarray(connectivity.cell_faces, dtype=np.int32)
-        valid = np.ones_like(cell_facets, dtype=bool)
-        facet_count = int(connectivity.faces.shape[0])
+        valid = np.ones_like(cell_facets, dtype=np.bool_)
+        facet_count = connectivity.faces.shape[0]
     owner = np.full((facet_count,), -1, dtype=np.int32)
-    neighbour = np.full((facet_count,), -1, dtype=np.int32)
+    neighbor = np.full((facet_count,), -1, dtype=np.int32)
     owner_local = np.full((facet_count,), -1, dtype=np.int32)
-    neighbour_local = np.full((facet_count,), -1, dtype=np.int32)
+    neighbor_local = np.full((facet_count,), -1, dtype=np.int32)
     for cell in range(cell_facets.shape[0]):
         for local in range(cell_facets.shape[1]):
             if not valid[cell, local]:
@@ -1255,15 +1242,15 @@ def _facet_routes(mesh: CellMesh, /) -> tuple[np.ndarray, ...]:
                 owner[facet] = cell
                 owner_local[facet] = local
             else:
-                neighbour[facet] = cell
-                neighbour_local[facet] = local
+                neighbor[facet] = cell
+                neighbor_local[facet] = local
     if np.any(owner < 0):
         raise ValueError("Every finite-element facet requires an owner cell.")
-    return owner, neighbour, owner_local, neighbour_local
+    return owner, neighbor, owner_local, neighbor_local
 
 
 def _validate_mesh_geometry(mesh: CellMesh, /) -> None:
-    coordinates = np.asarray(mesh.coordinates, dtype=float)
+    coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
     for block in mesh.blocks:
         cells = np.asarray(block.vertices, dtype=np.int32)
         points = coordinates[cells]
@@ -1363,8 +1350,7 @@ def _validate_mixed_prism_tetrahedron_admission(
             for element, canonical in zip(elements, canonical_elements, strict=True)
         ):
             raise ValueError(
-                "Mixed prism/tetrahedron finite elements admit only scalar P1 H1 "
-                "Lagrange fields."
+                "Mixed prism/tetrahedron finite elements admit only scalar P1 H1 Lagrange fields."
             )
     coordinate_elements, coordinate_dofs, coordinate_values = coordinate_spec.resolve(
         mesh
@@ -1529,7 +1515,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
             dof_maps.append(dof_map)
             vector_shape = (dof_map.global_dof_count,) + field.component_shape
             vector_space = ArraySpace(vector_shape)
-            vertex_count = int(mesh.coordinates.shape[0])
+            vertex_count = mesh.coordinates.shape[0]
             conformity = elements[0].conformity
             if dof_map.association == "vertex":
                 layout = EntityDofLayout(
@@ -1650,7 +1636,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
                 "local-to-global DOF routes are fixed",
             ),
             resource_counts={
-                "vertices": int(mesh.coordinates.shape[0]),
+                "vertices": mesh.coordinates.shape[0],
                 "cells": sum(block.cell_count for block in mesh.blocks),
                 "fields": len(plan.fields),
                 "global_dofs": sum(dof_map.global_dof_count for dof_map in dof_maps),
@@ -1664,9 +1650,9 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
             capabilities=plan.capabilities,
             preparation=preparation,
         )
-        owner, neighbour, owner_local, neighbour_local = _facet_routes(mesh)
-        exterior = np.flatnonzero(neighbour < 0)
-        interior = np.flatnonzero(neighbour >= 0)
+        owner, neighbor, owner_local, neighbor_local = _facet_routes(mesh)
+        exterior = np.flatnonzero(neighbor < 0)
+        interior = np.flatnonzero(neighbor >= 0)
         cell_count = sum(block.cell_count for block in mesh.blocks)
         cell_entities = mesh.topology.entity_sets[mesh.topological_dimension]
         facet_entities = mesh.topology.entity_sets[mesh.topological_dimension - 1]
@@ -1695,9 +1681,9 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
             mesh.support.support_id,
             facet_entities.entity_set_id,
             owner_cells=owner[exterior],
-            neighbour_cells=neighbour[exterior],
+            neighbor_cells=neighbor[exterior],
             owner_local_entities=owner_local[exterior],
-            neighbour_local_entities=neighbour_local[exterior],
+            neighbor_local_entities=neighbor_local[exterior],
         )
         self.interior_facet_domain = IntegrationDomain(
             "interior_facet",
@@ -1705,9 +1691,9 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
             mesh.support.support_id,
             facet_entities.entity_set_id,
             owner_cells=owner[interior],
-            neighbour_cells=neighbour[interior],
+            neighbor_cells=neighbor[interior],
             owner_local_entities=owner_local[interior],
-            neighbour_local_entities=neighbour_local[interior],
+            neighbor_local_entities=neighbor_local[interior],
         )
         self.key = plan.key
         self.precision_policy = plan.precision_policy
@@ -1851,9 +1837,9 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
             self.mesh.topological_dimension - 1,
         ):
             raise ValueError("P1 DOFs may be selected only from mesh cells or facets.")
-        entity_mask = np.asarray(selection.mask, dtype=bool)
-        active_mask = np.asarray(selection.active_mask, dtype=bool)
-        expected_active = np.asarray(entities.active_mask, dtype=bool)
+        entity_mask = np.asarray(selection.mask, dtype=np.bool_)
+        active_mask = np.asarray(selection.active_mask, dtype=np.bool_)
+        expected_active = np.asarray(entities.active_mask, dtype=np.bool_)
         if (
             entity_mask.shape != (entities.count,)
             or active_mask.shape != (entities.count,)
@@ -1866,16 +1852,16 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
         for degree in range(dimension, 0, -1):
             incidence = self.mesh.topology.incidences[degree - 1]
             relation = incidence.relation
-            valid = np.asarray(relation.valid, dtype=bool)
+            valid = np.asarray(relation.valid, dtype=np.bool_)
             source = np.asarray(relation.source_indices, dtype=np.int32)
             target = np.asarray(relation.target_indices, dtype=np.int32)
             routes = valid & entity_mask[target]
             lower_entities = self.mesh.topology.entity_sets[degree - 1]
-            lower_mask = np.zeros((lower_entities.count,), dtype=bool)
+            lower_mask = np.zeros((lower_entities.count,), dtype=np.bool_)
             lower_mask[source[routes]] = True
             entity_mask = lower_mask & np.asarray(
                 lower_entities.active_mask,
-                dtype=bool,
+                dtype=np.bool_,
             )
         indices = np.flatnonzero(entity_mask).astype(np.int32)
         if indices.size and int(indices[-1]) >= dof_map.global_dof_count:
@@ -1891,7 +1877,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
         """Project a supported cell/facet selection onto the P1 DOF axis."""
 
         field_index = self._field_index(field_name)
-        mask = np.zeros((self.dof_maps[field_index].global_dof_count,), dtype=bool)
+        mask = np.zeros((self.dof_maps[field_index].global_dof_count,), dtype=np.bool_)
         mask[np.asarray(self.dof_indices(field_name, selection), dtype=np.int32)] = True
         return jnp.asarray(mask)
 
@@ -1921,8 +1907,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
             values = jnp.asarray(function(midpoint, args))
             if values.shape != tangent.shape:
                 raise ValueError(
-                    "Compatible edge projection function must return one vector "
-                    "per edge midpoint."
+                    "Compatible edge projection function must return one vector per edge midpoint."
                 )
             if conformity == "Hcurl":
                 moments = jnp.sum(values * tangent, axis=-1)
@@ -1957,7 +1942,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
             raise TypeError("selection must be EntitySelection or None.")
         if selection.entity_set_id != base.entity_set_id:
             raise ValueError("Entity selection does not match the domain entity set.")
-        entity_mask = np.asarray(selection.mask, dtype=bool)
+        entity_mask = np.asarray(selection.mask, dtype=np.bool_)
         base_entities = np.asarray(base.entity_indices, dtype=np.int32)
         selected_rows = np.flatnonzero(entity_mask[base_entities])
         return IntegrationDomain(
@@ -1966,12 +1951,12 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
             base.support_id,
             base.entity_set_id,
             owner_cells=np.asarray(base.owner_cells)[selected_rows],
-            neighbour_cells=np.asarray(base.neighbour_cells)[selected_rows],
+            neighbor_cells=np.asarray(base.neighbor_cells)[selected_rows],
             owner_local_entities=np.asarray(base.owner_local_entities)[selected_rows],
-            neighbour_local_entities=np.asarray(base.neighbour_local_entities)[
+            neighbor_local_entities=np.asarray(base.neighbor_local_entities)[
                 selected_rows
             ],
-            neighbour_trace_permutations=np.asarray(base.neighbour_trace_permutations)[
+            neighbor_trace_permutations=np.asarray(base.neighbor_trace_permutations)[
                 selected_rows
             ],
             periodic_face_mask=np.asarray(base.periodic_face_mask)[selected_rows],
@@ -2182,8 +2167,7 @@ class FiniteElementDiscretization(AbstractPreparedLocalDiscretization):
             expected = (block.cell_count, width, width)
             if value.shape != expected:
                 raise ValueError(
-                    "Cell operator tensor shape must be "
-                    f"{expected!r}; got {value.shape!r}."
+                    f"Cell operator tensor shape must be {expected!r}; got {value.shape!r}."
                 )
         properties_ = OperatorProperties() if properties is None else properties
         if not isinstance(properties_, OperatorProperties):
@@ -2505,9 +2489,7 @@ def _assemble_local_operator(
     source_parts = []
     target_parts = []
     coefficient_parts = []
-    component_count = (
-        prod(tuple(int(size) for size in component_shape)) if component_shape else 1
-    )
+    component_count = prod(tuple(component_shape)) if component_shape else 1
     for cell_dofs, values in zip(dof_map.cell_dofs, local_values, strict=True):
         indices = np.asarray(cell_dofs, dtype=np.int32)
         width = indices.shape[1]

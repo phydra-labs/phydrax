@@ -199,10 +199,10 @@ def _kinematics_geomechanics():
 def _coupled():
     shape = (6, 6)
     boundary = phx.applications.solid_mechanics.MPMCoupledBoundaryPlan(
-        pressure_mask=jnp.zeros(shape, dtype=bool).at[0].set(True),
+        pressure_mask=jnp.zeros(shape, dtype="bool").at[0].set(True),
         pressure_values=0.0,
         pressure_flux=0.0,
-        temperature_mask=jnp.zeros(shape, dtype=bool).at[-1].set(True),
+        temperature_mask=jnp.zeros(shape, dtype="bool").at[-1].set(True),
         temperature_values=300.0,
         heat_flux=0.0,
     )

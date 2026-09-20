@@ -250,27 +250,30 @@ class PreparedHydrostaticGrid(StrictModule, NonTrainableState):
         boundary_values=None,
     ) -> tuple[Array, Array]:
         boundaries = (
-            ((None, None), (None, None))
-            if boundary_values is None
-            else boundary_values
+            ((None, None), (None, None)) if boundary_values is None else boundary_values
         )
-        x_directional = _face_difference(
-            potential,
-            0,
-            self.periodic[0],
-            boundary_values=boundaries[0],
-        ) / self.x_center_distance[(...,) + (None,) * (potential.ndim - 2)]
-        y_directional = _face_difference(
-            potential,
-            1,
-            self.periodic[1],
-            boundary_values=boundaries[1],
-        ) / self.y_center_distance[(...,) + (None,) * (potential.ndim - 2)]
+        x_directional = (
+            _face_difference(
+                potential,
+                0,
+                self.periodic[0],
+                boundary_values=boundaries[0],
+            )
+            / self.x_center_distance[(...,) + (None,) * (potential.ndim - 2)]
+        )
+        y_directional = (
+            _face_difference(
+                potential,
+                1,
+                self.periodic[1],
+                boundary_values=boundaries[1],
+            )
+            / self.y_center_distance[(...,) + (None,) * (potential.ndim - 2)]
+        )
         x_cell = _cell_neighbor_average(x_directional, 0, self.periodic[0])
         y_cell = _cell_neighbor_average(y_directional, 1, self.periodic[1])
         cross = self.covariant_metric[..., 0, 1] / jnp.sqrt(
-            self.covariant_metric[..., 0, 0]
-            * self.covariant_metric[..., 1, 1]
+            self.covariant_metric[..., 0, 0] * self.covariant_metric[..., 1, 1]
         )
         cross_x = _face_neighbor_average(cross, 0, self.periodic[0])
         cross_y = _face_neighbor_average(cross, 1, self.periodic[1])
@@ -302,9 +305,7 @@ class PreparedHydrostaticGrid(StrictModule, NonTrainableState):
         *,
         boundary_values=None,
     ) -> tuple[Array, Array]:
-        gx, gy = self.surface_gradient(
-            potential, boundary_values=boundary_values
-        )
+        gx, gy = self.surface_gradient(potential, boundary_values=boundary_values)
         return (
             -epoch.x_face_area * gx[..., None],
             -epoch.y_face_area * gy[..., None],
@@ -350,9 +351,7 @@ class PreparedHydrostaticGrid(StrictModule, NonTrainableState):
         *,
         boundary_values=None,
     ) -> tuple[Array, Array]:
-        gx, gy = self.layer_gradient(
-            potential, boundary_values=boundary_values
-        )
+        gx, gy = self.layer_gradient(potential, boundary_values=boundary_values)
         return -epoch.x_face_area * gx, -epoch.y_face_area * gy
 
     def normal_velocity_inner_product(
@@ -372,8 +371,7 @@ class PreparedHydrostaticGrid(StrictModule, NonTrainableState):
         ):
             raise ValueError("Normal velocity components must have equal cell shapes.")
         cross = self.covariant_metric[..., 0, 1] / jnp.sqrt(
-            self.covariant_metric[..., 0, 0]
-            * self.covariant_metric[..., 1, 1]
+            self.covariant_metric[..., 0, 0] * self.covariant_metric[..., 1, 1]
         )
         if u_left.ndim == 3:
             cross = cross[..., None]
@@ -396,8 +394,7 @@ class PreparedHydrostaticGrid(StrictModule, NonTrainableState):
         if u.shape != expected or v.shape != expected:
             raise ValueError("Normal velocity components must have equal cell shapes.")
         cross = self.covariant_metric[..., 0, 1] / jnp.sqrt(
-            self.covariant_metric[..., 0, 0]
-            * self.covariant_metric[..., 1, 1]
+            self.covariant_metric[..., 0, 0] * self.covariant_metric[..., 1, 1]
         )
         f = jnp.asarray(coriolis, dtype=u.dtype)
         if u.ndim == 3:
@@ -427,7 +424,6 @@ class PreparedHydrostaticGrid(StrictModule, NonTrainableState):
             second_scale = second_scale[..., None]
         return first_scale * first, second_scale * second
 
-
     def contravariant_transport(
         self,
         velocity: tuple[ArrayLike, ArrayLike],
@@ -441,11 +437,10 @@ class PreparedHydrostaticGrid(StrictModule, NonTrainableState):
         if normal[0].shape != self.cell_shape:
             raise ValueError("Layer transport requires cell-shaped velocity components.")
         return (
-            epoch.x_face_area
-            * _face_neighbor_average(normal[0], 0, self.periodic[0]),
-            epoch.y_face_area
-            * _face_neighbor_average(normal[1], 1, self.periodic[1]),
+            epoch.x_face_area * _face_neighbor_average(normal[0], 0, self.periodic[0]),
+            epoch.y_face_area * _face_neighbor_average(normal[1], 1, self.periodic[1]),
         )
+
 
 class TensorZHydrostaticGridPlan(StrictModule, NonTrainableState):
     """Prepare Cartesian tensor-z hydrostatic metrics from an FV grid."""
@@ -578,9 +573,9 @@ class LatitudeLongitudeHydrostaticGridPlan(StrictModule, NonTrainableState):
         rotation_rate: float = 7.292115e-5,
         wet_depth: float = 1.0e-6,
     ):
-        lon = jnp.asarray(longitude_faces, dtype=float)
-        lat = jnp.asarray(latitude_faces, dtype=float)
-        z = jnp.asarray(vertical_faces, dtype=float)
+        lon = jnp.asarray(longitude_faces, dtype=jnp.float64)
+        lat = jnp.asarray(latitude_faces, dtype=jnp.float64)
+        z = jnp.asarray(vertical_faces, dtype=jnp.float64)
         if lon.ndim != 1 or lat.ndim != 1 or z.ndim != 1:
             raise ValueError("Latitude-longitude faces must be one-dimensional.")
         if lon.size < 3 or lat.size < 3 or z.size < 3:
@@ -593,7 +588,7 @@ class LatitudeLongitudeHydrostaticGridPlan(StrictModule, NonTrainableState):
             raise ValueError("Hydrostatic coordinate faces must increase strictly.")
         if float(lat[0]) <= -0.5 * np.pi or float(lat[-1]) >= 0.5 * np.pi:
             raise ValueError("Initial latitude-longitude grids must exclude both poles.")
-        depth = jnp.asarray(rest_depth, dtype=float)
+        depth = jnp.asarray(rest_depth, dtype=jnp.float64)
         expected = (lon.size - 1, lat.size - 1)
         if depth.shape != expected or bool(jnp.any(depth < 0.0)):
             raise ValueError(f"rest_depth must have shape {expected} and be nonnegative.")
@@ -695,9 +690,7 @@ class LatitudeLongitudeHydrostaticGridPlan(StrictModule, NonTrainableState):
                     jnp.stack(
                         (
                             jnp.zeros((nx, ny), dtype=area.dtype),
-                            jnp.full(
-                                (nx, ny), 1.0 / self.radius**2, dtype=area.dtype
-                            ),
+                            jnp.full((nx, ny), 1.0 / self.radius**2, dtype=area.dtype),
                         ),
                         axis=-1,
                     ),

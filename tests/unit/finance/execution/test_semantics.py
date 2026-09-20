@@ -93,7 +93,7 @@ def test_submit_partial_fill_cancel_conserves_cash_inventory_and_replays():
         ),
     )
 
-    assert ledger.order_statuses == (OrderStatus.CANCELLED,)
+    assert ledger.order_statuses == (OrderStatus.CANCELED,)
     assert ledger.fill_statuses == (FillStatus.PARTIAL,)
     np.testing.assert_allclose(ledger.remaining_quantities, jnp.asarray([6.0]))
     assert ledger.inventory.quantity == 4.0

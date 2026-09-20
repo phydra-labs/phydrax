@@ -100,9 +100,9 @@ class PVSNetworkFlowPlan:
         if not isinstance(self.network, PreparedMetricNetwork):
             raise TypeError("network must be PreparedMetricNetwork.")
         edge_count = len(self.network.lengths)
-        conductance = np.asarray(self.hydraulic_conductance, dtype=float)
+        conductance = np.asarray(self.hydraulic_conductance, dtype=np.float64)
         indices = np.asarray(self.boundary_node_indices)
-        pressure = np.asarray(self.boundary_pressures, dtype=float)
+        pressure = np.asarray(self.boundary_pressures, dtype=np.float64)
         if (
             conductance.shape != (edge_count,)
             or np.any(~np.isfinite(conductance))
@@ -225,8 +225,8 @@ class FlowTransportSchedule(StrictModule):
     schedule_id: str = eqx.field(static=True)
 
     def __init__(self, sample_times: ArrayLike, volume_flow: ArrayLike, period: float, /):
-        times = np.asarray(sample_times, dtype=float)
-        flow = np.asarray(volume_flow, dtype=float)
+        times = np.asarray(sample_times, dtype=np.float64)
+        flow = np.asarray(volume_flow, dtype=np.float64)
         width = float(period)
         if (
             times.ndim != 1

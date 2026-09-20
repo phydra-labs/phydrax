@@ -28,7 +28,7 @@ def _unit_interval_array(name: str, value: ArrayLike, /) -> np.ndarray:
         and not np.issubdtype(array.dtype, np.complexfloating)
     ):
         raise TypeError(f"{name} must be real-valued.")
-    array = np.asarray(array, dtype=float)
+    array = np.asarray(array, dtype=np.float64)
     if np.any(~np.isfinite(array)) or np.any((array < 0.0) | (array > 1.0)):
         raise ValueError(f"{name} must be finite and lie in [0, 1].")
     return array
@@ -72,7 +72,7 @@ class ConicDensityFilterPlan(StrictModule, NonTrainableState):
             and not np.issubdtype(points_value.dtype, np.complexfloating)
         ):
             raise TypeError("coordinates must be real-valued.")
-        points = np.asarray(points_value, dtype=float)
+        points = np.asarray(points_value, dtype=np.float64)
         if points.ndim != 2 or points.shape[0] == 0 or points.shape[1] == 0:
             raise ValueError("coordinates must have shape (sample_count, dimension).")
         if np.any(~np.isfinite(points)):
@@ -83,17 +83,17 @@ class ConicDensityFilterPlan(StrictModule, NonTrainableState):
             raise ValueError("radius must be finite and non-negative.")
 
         mask_value = np.asarray(design_mask)
-        if mask_value.dtype != np.dtype(bool):
+        if mask_value.dtype != np.dtype(np.bool_):
             raise TypeError("design_mask must have boolean dtype.")
-        mask = np.asarray(mask_value, dtype=bool)
-        sample_count = int(points.shape[0])
+        mask = np.asarray(mask_value, dtype=np.bool_)
+        sample_count = points.shape[0]
         if mask.shape != (sample_count,):
             raise ValueError(
                 f"design_mask must have shape ({sample_count},); got {mask.shape}."
             )
 
         if measures is None:
-            volumes = np.ones((sample_count,), dtype=float)
+            volumes = np.ones((sample_count,), dtype=np.float64)
         else:
             measures_value = np.asarray(measures)
             if not (
@@ -101,7 +101,7 @@ class ConicDensityFilterPlan(StrictModule, NonTrainableState):
                 and not np.issubdtype(measures_value.dtype, np.complexfloating)
             ):
                 raise TypeError("measures must be real-valued.")
-            volumes = np.asarray(measures_value, dtype=float)
+            volumes = np.asarray(measures_value, dtype=np.float64)
             if volumes.shape != (sample_count,):
                 raise ValueError(
                     f"measures must have shape ({sample_count},); got {volumes.shape}."
@@ -110,7 +110,7 @@ class ConicDensityFilterPlan(StrictModule, NonTrainableState):
                 raise ValueError("measures must be finite and strictly positive.")
 
         if fixed_density is None:
-            fixed = np.zeros((sample_count,), dtype=float)
+            fixed = np.zeros((sample_count,), dtype=np.float64)
         else:
             fixed = _unit_interval_array("fixed_density", fixed_density)
             if fixed.shape != (sample_count,):
@@ -145,9 +145,9 @@ class PreparedConicDensityFilter(StrictModule, NonTrainableState):
     def __init__(self, plan: ConicDensityFilterPlan, /):
         if not isinstance(plan, ConicDensityFilterPlan):
             raise TypeError("plan must be a ConicDensityFilterPlan.")
-        points = np.asarray(plan.coordinates, dtype=float)
-        measures = np.asarray(plan.measures, dtype=float)
-        sample_count = int(points.shape[0])
+        points = np.asarray(plan.coordinates, dtype=np.float64)
+        measures = np.asarray(plan.measures, dtype=np.float64)
+        sample_count = points.shape[0]
 
         if plan.radius == 0.0:
             candidate_count = sample_count
@@ -159,7 +159,7 @@ class PreparedConicDensityFilter(StrictModule, NonTrainableState):
                 )
             sources = np.arange(sample_count, dtype=np.int32)
             targets = np.arange(sample_count, dtype=np.int32)
-            coefficients = np.ones((sample_count,), dtype=float)
+            coefficients = np.ones((sample_count,), dtype=np.float64)
         else:
             tree = cKDTree(points)
             counts = np.asarray(
@@ -176,12 +176,12 @@ class PreparedConicDensityFilter(StrictModule, NonTrainableState):
 
             sources_buffer = np.empty((candidate_count,), dtype=np.int32)
             targets_buffer = np.empty((candidate_count,), dtype=np.int32)
-            weights_buffer = np.empty((candidate_count,), dtype=float)
-            row_sums = np.zeros((sample_count,), dtype=float)
+            weights_buffer = np.empty((candidate_count,), dtype=np.float64)
+            row_sums = np.zeros((sample_count,), dtype=np.float64)
             route_count = 0
-            neighbourhoods = tree.query_ball_point(points, plan.radius)
-            for target, neighbours in enumerate(neighbourhoods):
-                for source in sorted(int(index) for index in neighbours):
+            neighborhoods = tree.query_ball_point(points, plan.radius)
+            for target, neighbors in enumerate(neighborhoods):
+                for source in sorted(int(index) for index in neighbors):
                     distance = float(np.linalg.norm(points[target] - points[source]))
                     weight = (plan.radius - distance) * measures[source]
                     if weight > 0.0:
@@ -253,7 +253,7 @@ class TanhDensityProjectionPlan(StrictModule, NonTrainableState):
         eta_ = float(eta_value)
         if not isfinite(eta_) or not 0.0 < eta_ < 1.0:
             raise ValueError("eta must be finite and lie strictly between zero and one.")
-        self.eta = jnp.asarray(eta_, dtype=float)
+        self.eta = jnp.asarray(eta_, dtype=jnp.float64)
 
     def apply(self, filtered_density: ArrayLike, beta: ArrayLike, /) -> Array:
         """Project a density in [0, 1] using a finite positive dynamic ``beta``."""
@@ -345,7 +345,7 @@ def threshold_density(density: ArrayLike, eta: ArrayLike = 0.5, /) -> Array:
         jnp.any(~jnp.isfinite(value) | (value < 0.0) | (value > 1.0)),
         "Density must be finite and lie in [0, 1].",
     )
-    cutoff = jnp.asarray(eta, dtype=jnp.result_type(value, float))
+    cutoff = jnp.asarray(eta, dtype=jnp.result_type(value, jnp.float64))
     if cutoff.shape != ():
         raise ValueError("eta must be a scalar array.")
     cutoff = eqx.error_if(

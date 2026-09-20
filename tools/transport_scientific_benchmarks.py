@@ -109,7 +109,7 @@ def _operator_record(size: int, samples: int, repeats: int):
         case_axes=("case",),
         case_shape=(2,),
     )
-    indices = jnp.arange(samples, dtype=float)[:, None, None]
+    indices = jnp.arange(samples, dtype="float64")[:, None, None]
     base = jnp.sin(2.0 * jnp.pi * nodes)[None, None, :] + 0.03 * indices
     left_values = jnp.broadcast_to(base, (samples, 2, size))
     right_values = left_values + jnp.asarray([0.0, 0.4])[None, :, None]
@@ -175,7 +175,7 @@ def _particle_record(size: int, repeats: int):
 
 def main() -> None:
     arguments = _parser().parse_args()
-    size = 8 if arguments.smoke else int(arguments.size)
+    size = 8 if arguments.smoke else arguments.size
     samples = 6 if arguments.smoke else int(arguments.samples)
     repeats = 1 if arguments.smoke else int(arguments.repeats)
     records = [

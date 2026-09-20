@@ -83,7 +83,7 @@ def _compiled(count=12):
 
 
 def _loss_value(term, model, dataset):
-    prediction = model.predict(dataset.batch)
+    prediction = model.evaluate(dataset.batch)
     context = phx.nn.operator.training.OperatorLossContext(
         prediction,
         dataset.batch,

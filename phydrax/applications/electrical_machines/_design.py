@@ -116,7 +116,7 @@ class MachineAngleStudy(StrictModule):
                 "Angle models must share winding count, radius and angle "
                 "contracts, stack length, and air-gap kinematics."
             )
-        excitation = np.asarray(currents, dtype=float)
+        excitation = np.asarray(currents, dtype=np.float64)
         if excitation.shape == (first.winding_count,):
             excitation = np.broadcast_to(excitation, (len(models), first.winding_count))
         if excitation.shape != (
@@ -127,7 +127,9 @@ class MachineAngleStudy(StrictModule):
                 "Supply finite currents per winding or per angle and winding."
             )
         quadrature = (
-            np.ones(len(models)) if weights is None else np.asarray(weights, dtype=float)
+            np.ones(len(models))
+            if weights is None
+            else np.asarray(weights, dtype=np.float64)
         )
         if (
             quadrature.shape != (len(models),)
@@ -177,7 +179,7 @@ def polar_machine_study(
     **machine_options: Any,
 ) -> MachineAngleStudy:
     """Prepare a genuine rotating polar FEM mesh for every requested angle."""
-    samples = np.asarray(angles, dtype=float)
+    samples = np.asarray(angles, dtype=np.float64)
     if samples.ndim != 1 or samples.size == 0 or not np.all(np.isfinite(samples)):
         raise ValueError("Prescribed rotor angles must be a nonempty finite vector.")
     return MachineAngleStudy(
@@ -267,8 +269,7 @@ def optimize_machine_design(
         or np.any(~np.isfinite(lower) | ~np.isfinite(upper) | (lower >= upper))
     ):
         raise ValueError(
-            "Machine design requires finite positive-width bounds on all three "
-            "coordinates."
+            "Machine design requires finite positive-width bounds on all three coordinates."
         )
     if (
         lower[0] < study.machines[0].radius_bounds[0]
@@ -277,8 +278,7 @@ def optimize_machine_design(
         or lower[2] <= 0
     ):
         raise ValueError(
-            "Design bounds must preserve the machine airgap, remanence, and "
-            "winding domains."
+            "Design bounds must preserve the machine airgap, remanence, and winding domains."
         )
     if not bool(bounds.contains(initial)):
         raise ValueError("Initial machine design must lie inside the supplied bounds.")
@@ -301,8 +301,7 @@ def optimize_machine_design(
         return eqx.error_if(
             value,
             ~evaluated.accepted,
-            "Machine design objective requires accepted field and independent "
-            "torque evidence.",
+            "Machine design objective requires accepted field and independent torque evidence.",
         )
 
     optimization = optimizer.solve(

@@ -88,7 +88,7 @@ class LayeredEarthModel(StrictModule):
         self.horizontal_permittivity_F_m = epsilon_h
         self.vertical_permittivity_F_m = epsilon_v
         self.permeability_H_m = mu
-        self.layer_count = int(horizontal.size)
+        self.layer_count = horizontal.size
         self.model_id = canonical_fingerprint(
             {
                 "kind": "layered-earth-em",
@@ -183,8 +183,8 @@ class DigitalHankelTransformPlan(StrictModule, NonTrainableState):
         order: Literal[0, 1],
         /,
     ):
-        wave = np.asarray(wavenumbers_m_inverse, dtype=float)
-        weights = np.asarray(weights_m_inverse, dtype=float)
+        wave = np.asarray(wavenumbers_m_inverse, dtype=np.float64)
+        weights = np.asarray(weights_m_inverse, dtype=np.float64)
         if (
             wave.ndim != 1
             or wave.size < 4

@@ -63,14 +63,14 @@ class PorousElectrodeSystem:
         transfer_coefficient: float = 0.5,
         tolerance: float = 1e-10,
     ) -> PorousElectrodeSystem:
-        volumes = np.asarray(cell_volumes_m3, dtype=float)
-        transport = np.asarray(species_transport_generators_s_inv, dtype=float)
-        potential = np.asarray(potential_operator_s, dtype=float)
-        stoichiometry = np.asarray(reaction_stoichiometry, dtype=float)
-        area = np.asarray(reaction_area_m2, dtype=float)
-        exchange = np.asarray(exchange_current_density_a_m2, dtype=float)
-        equilibrium = np.asarray(equilibrium_potential_v, dtype=float)
-        temperature = np.asarray(temperature_k, dtype=float)
+        volumes = np.asarray(cell_volumes_m3, dtype=np.float64)
+        transport = np.asarray(species_transport_generators_s_inv, dtype=np.float64)
+        potential = np.asarray(potential_operator_s, dtype=np.float64)
+        stoichiometry = np.asarray(reaction_stoichiometry, dtype=np.float64)
+        area = np.asarray(reaction_area_m2, dtype=np.float64)
+        exchange = np.asarray(exchange_current_density_a_m2, dtype=np.float64)
+        equilibrium = np.asarray(equilibrium_potential_v, dtype=np.float64)
+        temperature = np.asarray(temperature_k, dtype=np.float64)
         cells = volumes.size
         if volumes.ndim != 1 or cells == 0 or np.any(volumes <= 0):
             raise ValueError("Porous-electrode volumes must be a positive vector.")

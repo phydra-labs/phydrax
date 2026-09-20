@@ -104,7 +104,7 @@ def test_cell_actions_and_exact_transposes_use_the_same_basis():
     )[0]
     reference = region.reference_actions[0]
     runtime = space.default_runtime
-    local = jnp.arange(region.entity_indices.size * 4 * 2, dtype=float).reshape(
+    local = jnp.arange(region.entity_indices.size * 4 * 2, dtype="float64").reshape(
         (region.entity_indices.size, 4, 2)
     )
     value_dual = jnp.linspace(

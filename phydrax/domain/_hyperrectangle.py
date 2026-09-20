@@ -11,7 +11,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike, Bool, Float, Key
 
 from .._doc import DOC_KEY0
-from .._sampling import get_sampler_host, seed_from_key
+from .._sampling import host_design_factory, seed_from_key
 from ..discretization._axis import broadcasted_grid
 from ._base import AbstractGeometry, EnforcementGateMethod, GeometryTransitionKind
 from ._structure import _validate_label
@@ -42,8 +42,8 @@ class HyperRectangle(AbstractGeometry):
         *,
         label: str = "x",
     ):
-        lower_arr = jnp.asarray(lower, dtype=float)
-        upper_arr = jnp.asarray(upper, dtype=float)
+        lower_arr = jnp.asarray(lower, dtype=jnp.float64)
+        upper_arr = jnp.asarray(upper, dtype=jnp.float64)
         if lower_arr.ndim != 1 or upper_arr.ndim != 1:
             raise ValueError("HyperRectangle lower/upper must be one-dimensional.")
         if lower_arr.shape != upper_arr.shape:
@@ -51,7 +51,7 @@ class HyperRectangle(AbstractGeometry):
                 "HyperRectangle lower and upper must have matching shapes; "
                 f"got {lower_arr.shape} and {upper_arr.shape}."
             )
-        if int(lower_arr.shape[0]) <= 0:
+        if lower_arr.shape[0] <= 0:
             raise ValueError("HyperRectangle dimension must be positive.")
         if bool(jnp.any(upper_arr <= lower_arr)):
             raise ValueError("HyperRectangle requires upper > lower in every dimension.")
@@ -96,7 +96,7 @@ class HyperRectangle(AbstractGeometry):
 
     @property
     def spatial_dim(self) -> int:
-        return int(self.lower.shape[0])
+        return self.lower.shape[0]
 
     @property
     def interior_transition_kind(self) -> GeometryTransitionKind:
@@ -113,8 +113,8 @@ class HyperRectangle(AbstractGeometry):
     @property
     def boundary_measure_value(self) -> Array:
         widths = self.upper - self.lower
-        if int(widths.shape[0]) == 1:
-            return jnp.asarray(2.0, dtype=float)
+        if widths.shape[0] == 1:
+            return jnp.asarray(2.0, dtype=jnp.float64)
         face_measures = self.volume / widths
         return 2.0 * jnp.sum(face_measures)
 
@@ -129,7 +129,7 @@ class HyperRectangle(AbstractGeometry):
         )
 
     def _points_2d(self, points: ArrayLike, /) -> tuple[Array, bool]:
-        pts = jnp.asarray(points, dtype=float)
+        pts = jnp.asarray(points, dtype=jnp.float64)
         dim = int(self.spatial_dim)
 
         if pts.ndim == 0:
@@ -139,12 +139,12 @@ class HyperRectangle(AbstractGeometry):
 
         if pts.ndim == 1:
             if dim == 1:
-                return pts.reshape((-1, 1)), int(pts.shape[0]) == 1
-            if int(pts.shape[0]) != dim:
+                return pts.reshape((-1, 1)), pts.shape[0] == 1
+            if pts.shape[0] != dim:
                 raise ValueError(f"Expected point with shape ({dim},), got {pts.shape}.")
             return pts.reshape((1, dim)), True
 
-        if pts.ndim == 2 and int(pts.shape[1]) == dim:
+        if pts.ndim == 2 and pts.shape[1] == dim:
             return pts, False
 
         raise ValueError(
@@ -159,15 +159,15 @@ class HyperRectangle(AbstractGeometry):
         sampler: str = "latin_hypercube",
         key: Key[Array, ""] = DOC_KEY0,
     ) -> Array:
-        lower = np.asarray(self.lower, dtype=float)
-        upper = np.asarray(self.upper, dtype=float)
+        lower = np.asarray(self.lower, dtype=np.float64)
+        upper = np.asarray(self.upper, dtype=np.float64)
         dim = int(self.spatial_dim)
         where_fn = where or (lambda _: True)
 
         def _sample_interior_host(num_points, sampler, where_fn, key):
             rng = np.random.default_rng(seed_from_key(key))
-            sampler_fn = get_sampler_host(sampler, dim=dim, seed=rng)
-            sampled = np.empty((0, dim), dtype=float)
+            sampler_fn = host_design_factory(sampler, dimension=dim, seed=rng)
+            sampled = np.empty((0, dim), dtype=np.float64)
 
             while sampled.shape[0] < int(num_points):
                 remaining = int(num_points) - sampled.shape[0]
@@ -175,15 +175,15 @@ class HyperRectangle(AbstractGeometry):
                 points = lower + unit * (upper - lower)
                 if where_fn is not None:
                     mask = np.asarray(
-                        jax.vmap(where_fn)(jnp.asarray(points, dtype=float)),
-                        dtype=bool,
+                        jax.vmap(where_fn)(jnp.asarray(points, dtype=jnp.float64)),
+                        dtype=np.bool_,
                     ).reshape((-1,))
                     points = points[mask]
-                sampled = np.vstack((sampled, np.asarray(points, dtype=float)))
+                sampled = np.vstack((sampled, np.asarray(points, dtype=np.float64)))
 
             return sampled[: int(num_points)]
 
-        zeros = jnp.zeros((int(num_points), dim), dtype=float)
+        zeros = jnp.zeros((int(num_points), dim), dtype=jnp.float64)
         shape_dtype = jax.ShapeDtypeStruct(zeros.shape, zeros.dtype)
         return eqx.filter_pure_callback(
             _sample_interior_host,
@@ -202,14 +202,14 @@ class HyperRectangle(AbstractGeometry):
         sampler: str = "latin_hypercube",
         key: Key[Array, ""] = DOC_KEY0,
     ) -> Array:
-        lower = np.asarray(self.lower, dtype=float)
-        upper = np.asarray(self.upper, dtype=float)
+        lower = np.asarray(self.lower, dtype=np.float64)
+        upper = np.asarray(self.upper, dtype=np.float64)
         widths = upper - lower
         dim = int(self.spatial_dim)
         where_fn = where or (lambda _: True)
 
         if dim == 1:
-            face_probs = np.asarray([0.5, 0.5], dtype=float)
+            face_probs = np.asarray([0.5, 0.5], dtype=np.float64)
         else:
             face_measures = np.prod(widths) / widths
             face_probs = np.repeat(face_measures, 2)
@@ -218,8 +218,8 @@ class HyperRectangle(AbstractGeometry):
         def _sample_boundary_host(num_points, sampler, where_fn, key):
             rng = np.random.default_rng(seed_from_key(key))
             sampler_dim = max(dim - 1, 1)
-            sampler_fn = get_sampler_host(sampler, dim=sampler_dim, seed=rng)
-            sampled = np.empty((0, dim), dtype=float)
+            sampler_fn = host_design_factory(sampler, dimension=sampler_dim, seed=rng)
+            sampled = np.empty((0, dim), dtype=np.float64)
 
             while sampled.shape[0] < int(num_points):
                 remaining = int(num_points) - sampled.shape[0]
@@ -227,7 +227,7 @@ class HyperRectangle(AbstractGeometry):
                 axes = face_ids // 2
                 sides = face_ids % 2
                 unit = sampler_fn(remaining)
-                points = np.empty((remaining, dim), dtype=float)
+                points = np.empty((remaining, dim), dtype=np.float64)
 
                 for row in range(remaining):
                     axis = int(axes[row])
@@ -245,15 +245,15 @@ class HyperRectangle(AbstractGeometry):
 
                 if where_fn is not None:
                     mask = np.asarray(
-                        jax.vmap(where_fn)(jnp.asarray(points, dtype=float)),
-                        dtype=bool,
+                        jax.vmap(where_fn)(jnp.asarray(points, dtype=jnp.float64)),
+                        dtype=np.bool_,
                     ).reshape((-1,))
                     points = points[mask]
-                sampled = np.vstack((sampled, np.asarray(points, dtype=float)))
+                sampled = np.vstack((sampled, np.asarray(points, dtype=np.float64)))
 
             return sampled[: int(num_points)]
 
-        zeros = jnp.zeros((int(num_points), dim), dtype=float)
+        zeros = jnp.zeros((int(num_points), dim), dtype=jnp.float64)
         shape_dtype = jax.ShapeDtypeStruct(zeros.shape, zeros.dtype)
         return eqx.filter_pure_callback(
             _sample_boundary_host,
@@ -276,26 +276,26 @@ class HyperRectangle(AbstractGeometry):
         if isinstance(num_points, int):
             counts = (int(num_points),) * dim
         else:
-            counts = tuple(int(n) for n in num_points)
+            counts = tuple(num_points)
             if len(counts) != dim:
                 raise ValueError(
                     f"HyperRectangle separable sampling expects {dim} counts, got {len(counts)}."
                 )
 
-        lower = np.asarray(self.lower, dtype=float)
-        upper = np.asarray(self.upper, dtype=float)
+        lower = np.asarray(self.lower, dtype=np.float64)
+        upper = np.asarray(self.upper, dtype=np.float64)
 
         def _sample_axes_host(counts, sampler, key):
             rng = np.random.default_rng(seed_from_key(key))
             axes = []
             for i, n in enumerate(counts):
-                sampler_fn = get_sampler_host(sampler, dim=1, seed=rng)
+                sampler_fn = host_design_factory(sampler, dimension=1, seed=rng)
                 unit = sampler_fn(int(n)).reshape((int(n),))
                 axes.append(lower[i] + unit * (upper[i] - lower[i]))
-            return tuple(np.asarray(axis, dtype=float) for axis in axes)
+            return tuple(np.asarray(axis, dtype=np.float64) for axis in axes)
 
         result_shape = tuple(
-            jax.ShapeDtypeStruct((int(n),), np.dtype(float)) for n in counts
+            jax.ShapeDtypeStruct((int(n),), np.dtype(np.float64)) for n in counts
         )
         coords = eqx.filter_pure_callback(
             _sample_axes_host,
@@ -304,15 +304,15 @@ class HyperRectangle(AbstractGeometry):
             key,
             result_shape_dtypes=result_shape,
         )
-        coords = tuple(jnp.asarray(c, dtype=float) for c in coords)
+        coords = tuple(jnp.asarray(c, dtype=jnp.float64) for c in coords)
 
         if where is None:
-            mask = jnp.ones(tuple(counts), dtype=bool)
+            mask = jnp.ones(tuple(counts), dtype=jnp.bool_)
         else:
             grid = broadcasted_grid(coords)
             pts = grid.reshape((-1, dim))
             mask = jax.vmap(where)(pts).reshape(tuple(counts))
-            mask = jnp.asarray(mask, dtype=bool)
+            mask = jnp.asarray(mask, dtype=jnp.bool_)
 
         return coords, mask
 
@@ -331,7 +331,7 @@ class HyperRectangle(AbstractGeometry):
         pts, _ = self._points_2d(points)
         lower_face = jnp.isclose(pts, self.lower)
         upper_face = jnp.isclose(pts, self.upper)
-        raw = upper_face.astype(float) - lower_face.astype(float)
+        raw = upper_face.astype("float64") - lower_face.astype("float64")
         raw_norm = jnp.linalg.norm(raw, axis=-1, keepdims=True)
 
         dist_lower = jnp.abs(pts - self.lower)
@@ -341,12 +341,14 @@ class HyperRectangle(AbstractGeometry):
         dim = int(self.spatial_dim)
         nearest_axis = nearest % dim
         nearest_sign = jnp.where(nearest < dim, -1.0, 1.0)
-        fallback = jax.nn.one_hot(nearest_axis, dim, dtype=float) * nearest_sign[:, None]
+        fallback = (
+            jax.nn.one_hot(nearest_axis, dim, dtype=jnp.float64) * nearest_sign[:, None]
+        )
 
-        safe_raw = raw / jnp.maximum(raw_norm, jnp.finfo(float).eps)
+        safe_raw = raw / jnp.maximum(raw_norm, jnp.finfo(jnp.float64).eps)
         normals = jnp.where(raw_norm > 0.0, safe_raw, fallback)
         norm = jnp.linalg.norm(normals, axis=-1, keepdims=True)
-        return normals / jnp.maximum(norm, jnp.finfo(float).eps)
+        return normals / jnp.maximum(norm, jnp.finfo(jnp.float64).eps)
 
     def _adf(self, points: Array) -> Array:
         pts, single = self._points_2d(points)
@@ -367,7 +369,9 @@ class HyperRectangle(AbstractGeometry):
     ) -> Array:
         pts = self.sample_boundary(int(num_samples), key=key)
         mask = jax.vmap(where)(pts)
-        return jnp.mean(jnp.asarray(mask, dtype=float)) * self.boundary_measure_value
+        return (
+            jnp.mean(jnp.asarray(mask, dtype=jnp.float64)) * self.boundary_measure_value
+        )
 
 
 __all__ = ["HyperRectangle"]

@@ -32,10 +32,9 @@ def path_signature(
     initial knot.
     """
     path = _inexact_array(values)
-    if path.ndim < 2 or int(path.shape[-2]) <= 0 or int(path.shape[-1]) <= 0:
+    if path.ndim < 2 or path.shape[-2] <= 0 or path.shape[-1] <= 0:
         raise ValueError(
-            "values must have shape batch_shape + (num_knots, dimension) "
-            "with nonempty path axes."
+            "values must have shape batch_shape + (num_knots, dimension) with nonempty path axes."
         )
     path = eqx.error_if(
         path,
@@ -102,10 +101,9 @@ def path_logsignature(
 def repeat_last_path_padding(values: ArrayLike, lengths: ArrayLike, /) -> Array:
     """Replace every padded suffix by its final valid path value."""
     path = _inexact_array(values)
-    if path.ndim < 2 or int(path.shape[-2]) <= 0 or int(path.shape[-1]) <= 0:
+    if path.ndim < 2 or path.shape[-2] <= 0 or path.shape[-1] <= 0:
         raise ValueError(
-            "values must have shape batch_shape + (max_knots, dimension) "
-            "with nonempty path axes."
+            "values must have shape batch_shape + (max_knots, dimension) with nonempty path axes."
         )
     length_values = jnp.asarray(lengths)
     batch_shape = path.shape[:-2]
@@ -115,7 +113,7 @@ def repeat_last_path_padding(values: ArrayLike, lengths: ArrayLike, /) -> Array:
         )
     if not jnp.issubdtype(length_values.dtype, jnp.integer):
         raise TypeError("lengths must have an integer dtype.")
-    max_knots = int(path.shape[-2])
+    max_knots = path.shape[-2]
     length_values = eqx.error_if(
         length_values,
         jnp.any((length_values < 1) | (length_values > max_knots)),
@@ -140,13 +138,12 @@ def time_augment_path(
 ) -> Array:
     """Prepend physical time, optionally canonicalizing ragged suffix padding."""
     path = _inexact_array(values)
-    if path.ndim < 2 or int(path.shape[-2]) <= 0 or int(path.shape[-1]) <= 0:
+    if path.ndim < 2 or path.shape[-2] <= 0 or path.shape[-1] <= 0:
         raise ValueError(
-            "values must have shape batch_shape + (num_knots, dimension) "
-            "with nonempty path axes."
+            "values must have shape batch_shape + (num_knots, dimension) with nonempty path axes."
         )
     batch_shape = path.shape[:-2]
-    num_knots = int(path.shape[-2])
+    num_knots = path.shape[-2]
     time_values = _inexact_array(times)
     expected_shape = batch_shape + (num_knots,)
     if time_values.shape == (num_knots,):
@@ -221,7 +218,7 @@ class SignatureFeatures(StrictModule):
 
     def __call__(self, values: ArrayLike, /) -> Array:
         path = jnp.asarray(values)
-        if path.ndim < 2 or int(path.shape[-1]) != self.dimension:
+        if path.ndim < 2 or path.shape[-1] != self.dimension:
             raise ValueError(
                 f"values must end in path shape (num_knots, {self.dimension})."
             )
@@ -246,10 +243,7 @@ class LogSignatureFeatures(StrictModule):
         self.dimension = basis.dimension
         self.depth = basis.depth
         self.stream = bool(stream)
-        self.feature_id = (
-            "LogSignatureFeatures["
-            f"dimension={basis.dimension},depth={basis.depth},stream={self.stream}]"
-        )
+        self.feature_id = f"LogSignatureFeatures[dimension={basis.dimension},depth={basis.depth},stream={self.stream}]"
 
     @property
     def output_size(self) -> int:
@@ -257,7 +251,7 @@ class LogSignatureFeatures(StrictModule):
 
     def __call__(self, values: ArrayLike, /) -> Array:
         path = jnp.asarray(values)
-        if path.ndim < 2 or int(path.shape[-1]) != self.dimension:
+        if path.ndim < 2 or path.shape[-1] != self.dimension:
             raise ValueError(
                 f"values must end in path shape (num_knots, {self.dimension})."
             )

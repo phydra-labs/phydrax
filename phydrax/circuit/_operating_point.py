@@ -125,7 +125,7 @@ def prepare_circuit_operating_point(
     termination: NonlinearTermination | None = None,
 ) -> PreparedCircuitOperatingPoint:
     plan = plan_circuit_operating_point(prepared_dae, input_policy=input_policy)
-    initial = jnp.asarray(initial_state, dtype=float)
+    initial = jnp.asarray(initial_state, dtype=jnp.float64)
     if initial.shape != (prepared_dae.plan.layout.size,):
         raise ValueError("Operating-point initial state has the wrong shape.")
     nonlinear = prepare_nonlinear(
@@ -184,7 +184,7 @@ def circuit_source_continuation_problem(
     input_layout = prepared_dae.system.input_layout
     if input_layout is None:
         raise ValueError("Source continuation requires an input-driven circuit.")
-    values = jnp.asarray(target_inputs, dtype=float)
+    values = jnp.asarray(target_inputs, dtype=jnp.float64)
     if values.shape != input_layout.shape:
         raise ValueError(
             f"target_inputs must have circuit input shape {input_layout.shape}."

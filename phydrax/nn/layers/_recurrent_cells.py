@@ -56,9 +56,9 @@ def _validate_step_shapes(
 ) -> tuple[Array, Array]:
     values = jnp.asarray(inputs)
     hidden = jnp.asarray(state)
-    if values.ndim < 1 or int(values.shape[-1]) != int(input_size):
+    if values.ndim < 1 or values.shape[-1] != int(input_size):
         raise ValueError(f"inputs must end with width {input_size}; got {values.shape}.")
-    if hidden.ndim < 1 or int(hidden.shape[-1]) != int(hidden_size):
+    if hidden.ndim < 1 or hidden.shape[-1] != int(hidden_size):
         raise ValueError(f"state must end with width {hidden_size}; got {hidden.shape}.")
     if values.shape[:-1] != hidden.shape[:-1]:
         raise ValueError("Recurrent inputs and states must share their case shape.")
@@ -771,8 +771,7 @@ class StackedRecurrentCell(AbstractTimeAwareRecurrentCell, AbstractRecurrentOutp
             in_width = _recurrent_cell_input_width(later)
             if out_width is not None and in_width is not None and out_width != in_width:
                 raise ValueError(
-                    "Adjacent recurrent cells have incompatible output/input widths: "
-                    f"{out_width} and {in_width}."
+                    f"Adjacent recurrent cells have incompatible output/input widths: {out_width} and {in_width}."
                 )
         self.cells = resolved
 

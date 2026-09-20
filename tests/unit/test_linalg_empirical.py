@@ -118,4 +118,6 @@ def test_public_fisher_action_uses_uncentered_empirical_geometry():
     assert result.valid
     assert jnp.allclose(result.action, dense @ vector)
     with pytest.raises(TypeError, match="real scores"):
-        phx.uq.fisher_information_action(scores.astype(complex), vector.astype(complex))
+        phx.uq.fisher_information_action(
+            scores.astype("complex128"), vector.astype("complex128")
+        )

@@ -63,7 +63,7 @@ class CellwiseDiffusivity(StrictModule, NonTrainableState):
     diffusivity_id: str = eqx.field(static=True)
 
     def __init__(self, tensor_mm2_per_ms: ArrayLike, /):
-        tensor_host = np.asarray(tensor_mm2_per_ms, dtype=float)
+        tensor_host = np.asarray(tensor_mm2_per_ms, dtype=np.float64)
         if (
             tensor_host.ndim != 3
             or tensor_host.shape[1] != tensor_host.shape[2]
@@ -71,8 +71,7 @@ class CellwiseDiffusivity(StrictModule, NonTrainableState):
             or tensor_host.shape[1] not in (2, 3)
         ):
             raise ValueError(
-                "tensor_mm2_per_ms must have shape (cell_count, dimension, dimension) "
-                "for dimension two or three."
+                "tensor_mm2_per_ms must have shape (cell_count, dimension, dimension) for dimension two or three."
             )
         if not np.all(np.isfinite(tensor_host)):
             raise ValueError("Diffusivity tensors must be finite.")
@@ -113,7 +112,7 @@ class CellwiseDiffusivity(StrictModule, NonTrainableState):
     ) -> CellwiseDiffusivity:
         """Build sign-invariant ``K = d_t I + (d_l-d_t) f f^T`` tensors."""
 
-        fibers = np.asarray(fiber_directions, dtype=float)
+        fibers = np.asarray(fiber_directions, dtype=np.float64)
         if fibers.ndim != 2 or fibers.shape[0] <= 0 or fibers.shape[1] not in (2, 3):
             raise ValueError("fiber_directions must have shape (cell_count, 2 or 3).")
         if not np.all(np.isfinite(fibers)):
@@ -127,10 +126,10 @@ class CellwiseDiffusivity(StrictModule, NonTrainableState):
         unit = unit * np.where(pivot_values < 0.0, -1.0, 1.0)[:, None]
         unit[unit == 0.0] = 0.0
         longitudinal = np.broadcast_to(
-            np.asarray(longitudinal_mm2_per_ms, dtype=float), (fibers.shape[0],)
+            np.asarray(longitudinal_mm2_per_ms, dtype=np.float64), (fibers.shape[0],)
         )
         transverse = np.broadcast_to(
-            np.asarray(transverse_mm2_per_ms, dtype=float), (fibers.shape[0],)
+            np.asarray(transverse_mm2_per_ms, dtype=np.float64), (fibers.shape[0],)
         )
         if (
             not np.all(np.isfinite(longitudinal))
@@ -142,7 +141,7 @@ class CellwiseDiffusivity(StrictModule, NonTrainableState):
                 "Longitudinal and transverse diffusivities must be finite and nonnegative."
             )
         dyads = contract("ci,cj->cij", unit, unit)
-        identity = np.eye(fibers.shape[1], dtype=float)[None, :, :]
+        identity = np.eye(fibers.shape[1], dtype=np.float64)[None, :, :]
         tensor = (
             transverse[:, None, None] * identity
             + (longitudinal - transverse)[:, None, None] * dyads
@@ -168,7 +167,7 @@ class CellStimulusPulse(StrictModule, NonTrainableState):
         amplitude_per_ms: float,
         /,
     ):
-        ids = tuple(int(value) for value in cell_ids)
+        ids = tuple(cell_ids)
         if not ids or len(set(ids)) != len(ids) or any(value < 0 for value in ids):
             raise ValueError("cell_ids must be nonempty, unique, and nonnegative.")
         start = float(start_ms)
@@ -512,7 +511,7 @@ def _local_cell_load(geometry) -> Array:
 def _aligned_step(time_ms: float, dt_ms: float, name: str, /) -> int:
     ratio = time_ms / dt_ms
     nearest = int(round(ratio))
-    tolerance = 64.0 * np.finfo(float).eps * max(abs(ratio), 1.0)
+    tolerance = 64.0 * np.finfo(np.float64).eps * max(abs(ratio), 1.0)
     if abs(ratio - nearest) > tolerance:
         raise ValueError(f"{name} must be aligned to the dt_ms grid.")
     return nearest
@@ -631,10 +630,10 @@ def prepare_phenomenological_monodomain(
     largest = float(np.max(np.asarray(spectrum.eigenvalues)))
     diffusion_limit = (
         float("inf")
-        if largest <= np.finfo(float).eps
+        if largest <= np.finfo(np.float64).eps
         else _SSPRK33_NEGATIVE_REAL_STABILITY_RADIUS / largest
     )
-    tolerance = 64.0 * np.finfo(float).eps * max(diffusion_limit, dt, 1.0)
+    tolerance = 64.0 * np.finfo(np.float64).eps * max(diffusion_limit, dt, 1.0)
     if dt > diffusion_limit + tolerance:
         raise ValueError(
             f"dt_ms={dt} exceeds the SSPRK33 diffusion-only bound {diffusion_limit} ms."
@@ -716,7 +715,7 @@ def initialize_monodomain_state(
     if not isfinite(time) or time < 0.0:
         raise ValueError("time_ms must be finite and nonnegative.")
     expected_time = step_index * runtime.dt_ms
-    tolerance = 64.0 * np.finfo(float).eps * max(time, expected_time, 1.0)
+    tolerance = 64.0 * np.finfo(np.float64).eps * max(time, expected_time, 1.0)
     if abs(time - expected_time) > tolerance:
         raise ValueError("time_ms must equal step_index * dt_ms.")
     return MonodomainState(
@@ -1003,7 +1002,7 @@ def write_monodomain_checkpoint(
     ):
         raise ValueError("Cannot checkpoint invalid serial time or step state.")
     expected_time = int(step) * runtime.dt_ms
-    tolerance = 64.0 * np.finfo(float).eps * max(float(time), expected_time, 1.0)
+    tolerance = 64.0 * np.finfo(np.float64).eps * max(float(time), expected_time, 1.0)
     if abs(float(time) - expected_time) > tolerance:
         raise ValueError("Cannot checkpoint time inconsistent with step_index * dt_ms.")
     arrays = {

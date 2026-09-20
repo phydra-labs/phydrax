@@ -27,7 +27,7 @@ def _prepared(group, kind="heatbath", attempts=128):
     space = MatrixGaugeLinkSpace(topology, group)
     staples = GaugeStaplePlan(space, boundaries)
     colors = jnp.arange(space.num_edges)
-    conflicts = ~jnp.eye(space.num_edges, dtype=bool)
+    conflicts = ~jnp.eye(space.num_edges, dtype="bool")
     name = "u1" if group.dimension == 1 else f"su{group.dimension}"
     plan = GaugeUpdatePlan(
         name,
@@ -91,13 +91,13 @@ def test_invalid_coloring_and_group_combination_fail_during_prepare():
     boundaries = prepare_cell_boundary_paths(topology)
     space = MatrixGaugeLinkSpace(topology, SpecialUnitaryGroup(2))
     staples = GaugeStaplePlan(space, boundaries)
-    conflicts = ~jnp.eye(space.num_edges, dtype=bool)
+    conflicts = ~jnp.eye(space.num_edges, dtype="bool")
 
     with pytest.raises(ValueError, match="sharing a sweep color conflict"):
         prepare_gauge_update(
             GaugeUpdatePlan("su2", coupling=1.0),
             staples,
-            jnp.zeros(space.num_edges, dtype=int),
+            jnp.zeros(space.num_edges, dtype="int64"),
             conflicts,
         )
     with pytest.raises(ValueError, match="link count, coloring"):

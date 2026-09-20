@@ -97,7 +97,9 @@ class ZeroTemperatureResponsePlan(StrictModule):
         if shifted_solve.method != "lanczos":
             raise ValueError("Zero-temperature response requires shifted Lanczos.")
         if shifted_solve.differentiation != "none":
-            raise ValueError("Zero-temperature response is a non-differentiable Krylov workflow.")
+            raise ValueError(
+                "Zero-temperature response is a non-differentiable Krylov workflow."
+            )
         if any(
             value is None
             for value in (
@@ -107,14 +109,15 @@ class ZeroTemperatureResponsePlan(StrictModule):
             )
         ):
             raise ValueError(
-                "Zero-temperature response requires explicit shifted-solve "
-                "resource limits."
+                "Zero-temperature response requires explicit shifted-solve resource limits."
             )
         if values.size > point_limit:
             raise ValueError("Frequency grid exceeds maximum_frequency_points.")
-        required_bytes = values.size * (
-            3 * np.dtype(np.complex128).itemsize + 5 * np.dtype(np.float64).itemsize
-        ) + moments * np.dtype(np.complex128).itemsize
+        required_bytes = (
+            values.size
+            * (3 * np.dtype(np.complex128).itemsize + 5 * np.dtype(np.float64).itemsize)
+            + moments * np.dtype(np.complex128).itemsize
+        )
         if required_bytes > byte_limit:
             raise ValueError("Response result exceeds maximum_result_bytes.")
         if required_window is not None:
@@ -211,7 +214,9 @@ class FiniteTemperatureResponsePlan(StrictModule):
             or np.any(~np.isfinite(frequencies_))
             or np.any(~np.isfinite(window_))
         ):
-            raise ValueError("Finite-temperature grids/window have invalid shapes or values.")
+            raise ValueError(
+                "Finite-temperature grids/window have invalid shapes or values."
+            )
         if np.any(np.diff(times_) <= 0.0) or np.any(np.diff(frequencies_) <= 0.0):
             raise ValueError("Time and frequency grids must be strictly increasing.")
         if not np.allclose(times_, -times_[::-1], rtol=0.0, atol=1e-13):
@@ -237,7 +242,9 @@ class FiniteTemperatureResponsePlan(StrictModule):
         if matrix_function.method != "lanczos":
             raise ValueError("Finite-temperature response requires Lanczos propagation.")
         if matrix_function.differentiation.mode != "none":
-            raise ValueError("Finite-temperature response requires a stopped Krylov AD boundary.")
+            raise ValueError(
+                "Finite-temperature response requires a stopped Krylov AD boundary."
+            )
         required = (
             times_.size * 5 * np.dtype(np.complex128).itemsize
             + frequencies_.size * 4 * np.dtype(np.float64).itemsize

@@ -45,7 +45,7 @@ def _regular_vertex_support(bridge: StructuredCochainBridge, /):
     ]
     for degree, incidence in enumerate(topology.incidences, start=1):
         current = [set() for _ in range(topology.entity_sets[degree].count)]
-        valid = np.asarray(incidence.relation.valid, dtype=bool)
+        valid = np.asarray(incidence.relation.valid, dtype=np.bool_)
         lower = np.asarray(incidence.relation.source_indices)[valid]
         upper = np.asarray(incidence.relation.target_indices)[valid]
         for lower_cell, upper_cell in zip(lower, upper, strict=True):

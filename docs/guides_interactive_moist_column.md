@@ -10,7 +10,7 @@ fluxes and bulk sensible/water exchange.
 
 The column has unit horizontal area and fixed cell volumes, ordered **top to
 bottom**; the surface is index `-1`. Thus a layer volume in m³/m² is also its
-thickness in metres. State inventories are:
+thickness in meters. State inventories are:
 
 - `dry_mass`, `vapor_mass`, `cloud_liquid_mass`, `cloud_ice_mass`, `rain_mass`,
   and `snow_mass`, each in kg/m²;
@@ -47,13 +47,13 @@ from phydrax.applications.atmosphere import (
     InteractiveMoistColumnPlan,
 )
 
-# Illustrative grey coefficients, not measured/calibrated optical data.
+# Illustrative gray coefficients, not measured/calibrated optical data.
 optics = ColumnOpticalProperties(
     shortwave_absorption=(1e-5, 0.002, 0.04, 0.03),
     shortwave_scattering=(0.0, 0.0, 60.0, 30.0),
     longwave_absorption=(1e-4, 0.08, 50.0, 25.0),
     shortwave_asymmetry=(0.0, 0.0, 0.85, 0.7),
-    reference_id="illustrative-grey-column",
+    reference_id="illustrative-gray-column",
 )
 plan = InteractiveMoistColumnPlan(
     radiation=ColumnRadiationPlan(optics),
@@ -164,7 +164,7 @@ unstable buoyancy, and suppresses the added diffusivity under stable Richardson
 number. `background_diffusivity` remains an explicit independently imposed
 floor; setting it and `mixing_length` to zero disables mixing.
 
-The diffusivity divided by adjacent-centre distance gives two equal opposite
+The diffusivity divided by adjacent-center distance gives two equal opposite
 parcel-volume exchanges. These exchange **every species**, including dry mass,
 and donor total enthalpy; their paired cell increments telescope exactly. The
 species donor-volume CFL is strengthened by the largest gas `cp/cv` ratio.
@@ -176,7 +176,7 @@ temperature instead of assuming a CFL alone guarantees admissibility.
 ledger is in K² m. This is a closure variance-destruction diagnostic, **not** a
 measured entropy-production rate or an energy source. Likewise
 `fall_potential_power` reports the gravitational energy implied by terminal
-mass transfer over cell-centre distances (a half-cell distance at the surface).
+mass transfer over cell-center distances (a half-cell distance at the surface).
 That mechanical energy is explicitly outside the modeled caloric budget. It is
 not silently reintroduced as drag heat or claimed to close mechanical energy.
 

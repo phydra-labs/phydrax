@@ -334,7 +334,7 @@ def _integration_evaluations(term):
     batch = source.realization.batch
     if not isinstance(batch, phx.integration.PointIntegrationBatch):
         raise TypeError("Campaign terms must use point integration batches.")
-    return int(batch.weights.data.size)
+    return batch.weights.data.size
 
 
 def _diagnostic_float(diagnostics, name):
@@ -351,7 +351,7 @@ def _run_one(args):
         seed=args.seed,
     )
     initial_parameters, _ = ravel_pytree(solver.trainable_functions())
-    if args.optimizer == "exact-ggn" and int(initial_parameters.size) > 512:
+    if args.optimizer == "exact-ggn" and initial_parameters.size > 512:
         raise ValueError(
             "The explicit exact-GGN baseline is limited to at most 512 parameters."
         )
@@ -472,7 +472,7 @@ def _run_one(args):
         "final_loss": final_loss,
         "relative_loss": final_loss / max(initial_loss, 1e-30),
         "wall_time_seconds": elapsed,
-        "parameter_count": int(parameters.size),
+        "parameter_count": parameters.size,
         "peak_device_memory_bytes": _peak_device_memory_bytes(),
         "first_step_wall_time_seconds": first_step_time,
         "steady_step_wall_time_seconds": steady_step_time,

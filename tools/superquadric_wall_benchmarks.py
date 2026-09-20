@@ -30,7 +30,7 @@ print(
             "passed": bool(warm["result"].successful & latest["result"].successful),
             "median_seconds": statistics.median(durations),
             "minimum_seconds": min(durations),
-            "candidate_count": int(response.geometry.geometry.valid.shape[0]),
+            "candidate_count": response.geometry.geometry.valid.shape[0],
             "witness_residual": float(response.geometry.witness_residual.max()),
         },
         indent=2,

@@ -166,10 +166,12 @@ def import_velocity_field(
         raise ValueError(
             "Velocity fields must have shape (declared cell, representation dimension)."
         )
-    mask = np.ones(raw.shape, dtype=bool) if valid is None else np.asarray(valid)
+    mask = np.ones(raw.shape, dtype=np.bool_) if valid is None else np.asarray(valid)
     if mask.shape != raw.shape or mask.dtype != bool or np.any(~np.isfinite(raw[mask])):
         raise ValueError("Velocity validity must preserve a finite active field.")
-    errors = None if standard_errors is None else np.asarray(standard_errors, dtype=float)
+    errors = (
+        None if standard_errors is None else np.asarray(standard_errors, dtype=np.float64)
+    )
     if errors is not None and (
         errors.shape != raw.shape
         or np.any(~np.isfinite(errors[mask]))

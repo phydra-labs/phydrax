@@ -346,7 +346,7 @@ def test_continuation_unloaded_reference_recovery_and_checkpoint(tmp_path) -> No
         return ForwardContinuationResult(
             coordinates,
             jnp.zeros_like(load_factors),
-            jnp.ones_like(load_factors, dtype=bool),
+            jnp.ones_like(load_factors, dtype="bool"),
         )
 
     plan = UnloadedReferenceRecoveryPlan(

@@ -22,7 +22,7 @@ def _nonempty_identifier(value: str, /, *, name: str) -> str:
 
 
 def _component_shape(value: Array, /) -> tuple[int, ...]:
-    return tuple(int(size) for size in value.shape[1:])
+    return tuple(value.shape[1:])
 
 
 def _reduction_value(
@@ -88,8 +88,7 @@ class FiniteVolumeConservativeContentState(StrictModule):
         precision.validate_state(content)
         if jnp.dtype(volumes.dtype).name != precision.reduction_dtype:
             raise TypeError(
-                "Effective cell volume dtype does not match finite-volume "
-                "reduction precision."
+                "Effective cell volume dtype does not match finite-volume reduction precision."
             )
         if jnp.dtype(time_.dtype).name != precision.reduction_dtype:
             raise TypeError(
@@ -97,14 +96,13 @@ class FiniteVolumeConservativeContentState(StrictModule):
             )
         if content.ndim < 2 or any(size <= 0 for size in content.shape):
             raise ValueError(
-                "conservative_content must have shape (cells, *component_shape) "
-                "with non-empty cell and component axes."
+                "conservative_content must have shape (cells, *component_shape) with non-empty cell and component axes."
             )
         if volumes.shape != (content.shape[0],):
             raise ValueError(
                 "effective_cell_volumes must have exact shape (cell_count,)."
             )
-        active = _active_cell_mask(active_cell_mask, cell_count=int(content.shape[0]))
+        active = _active_cell_mask(active_cell_mask, cell_count=content.shape[0])
         if time_.shape != ():
             raise ValueError("time must be scalar.")
         volumes = eqx.error_if(
@@ -173,14 +171,13 @@ class FiniteVolumeConservativeContentState(StrictModule):
         volumes = _reduction_value(precision, effective_cell_volumes)
         if average.ndim < 2 or any(size <= 0 for size in average.shape):
             raise ValueError(
-                "cell_average must have shape (cells, *component_shape) with "
-                "non-empty cell and component axes."
+                "cell_average must have shape (cells, *component_shape) with non-empty cell and component axes."
             )
         if volumes.shape != (average.shape[0],):
             raise ValueError(
                 "effective_cell_volumes must have exact shape (cell_count,)."
             )
-        active = _active_cell_mask(active_cell_mask, cell_count=int(average.shape[0]))
+        active = _active_cell_mask(active_cell_mask, cell_count=average.shape[0])
         trailing = (1,) * (average.ndim - 1)
         active_values = active.reshape((-1,) + trailing)
         reduction_average = precision.reduction(average)
@@ -207,7 +204,7 @@ class FiniteVolumeConservativeContentState(StrictModule):
 
     @property
     def cell_count(self) -> int:
-        return int(self.conservative_content.shape[0])
+        return self.conservative_content.shape[0]
 
     @property
     def component_shape(self) -> tuple[int, ...]:
@@ -240,8 +237,7 @@ class FiniteVolumeConservativeContentState(StrictModule):
         content = jnp.asarray(conservative_content)
         if content.shape != self.conservative_content.shape:
             raise ValueError(
-                "Replacement conservative_content must preserve exact cell and "
-                "component shapes."
+                "Replacement conservative_content must preserve exact cell and component shapes."
             )
         return FiniteVolumeConservativeContentState(
             content,
@@ -381,15 +377,13 @@ def apply_stage_rate_euler_update(
         value is not None for value in target_geometry_fields
     ):
         raise ValueError(
-            "target_cell_volumes, target_geometry_version, and "
-            "target_evidence_version must be supplied together."
+            "target_cell_volumes, target_geometry_version, and target_evidence_version must be supplied together."
         )
 
     content_rate = ledger.scatter_content_rate()
     if content_rate.shape != state.conservative_content.shape:
         raise ValueError(
-            "Scattered stage content rate must match the exact state cell and "
-            "component shapes."
+            "Scattered stage content rate must match the exact state cell and component shapes."
         )
     content_rate = eqx.error_if(
         content_rate,

@@ -151,7 +151,9 @@ class DissipativePointDiffusion(StrictModule, NonTrainableState):
         /,
     ):
         count = discretization.state_shape[0]
-        coefficient = jnp.broadcast_to(jnp.asarray(diffusivity, dtype=float), (count,))
+        coefficient = jnp.broadcast_to(
+            jnp.asarray(diffusivity, dtype=jnp.float64), (count,)
+        )
         coefficient = eqx.error_if(
             coefficient,
             jnp.any(~jnp.isfinite(coefficient)) | jnp.any(coefficient <= 0.0),
@@ -219,7 +221,7 @@ def solve_point_cloud_poisson(
     if not isinstance(boundary, PointBoundaryPlan):
         raise TypeError("boundary must be PointBoundaryPlan.")
     count = discretization.state_shape[0]
-    dtype = jnp.result_type(source, boundary.values, float)
+    dtype = jnp.result_type(source, boundary.values, jnp.float64)
     source_ = jnp.asarray(source, dtype=dtype)
     if source_.shape != (count,) or boundary.values.shape != (count,):
         raise ValueError("Point Poisson source/boundary values must match point count.")
@@ -337,8 +339,7 @@ class PointConormalInterface(StrictModule):
             | jnp.any(~jnp.isfinite(jump_))
         ):
             raise ValueError(
-                "Point interface diffusivities must be finite and positive and "
-                "jumps must be finite."
+                "Point interface diffusivities must be finite and positive and jumps must be finite."
             )
         self.left_indices = left
         self.right_indices = right
@@ -376,8 +377,7 @@ class DistributedPointPartition(StrictModule, NonTrainableState):
             or not np.issubdtype(owners_host.dtype, np.signedinteger)
         ):
             raise ValueError(
-                "Distributed point owners must be a signed-integer vector and "
-                "partition_count must be positive."
+                "Distributed point owners must be a signed-integer vector and partition_count must be positive."
             )
         owners_ = jnp.asarray(owners_host, dtype=jnp.int32)
         if bool(jnp.any((owners_ < 0) | (owners_ >= count))):

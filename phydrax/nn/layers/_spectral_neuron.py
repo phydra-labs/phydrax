@@ -41,13 +41,13 @@ def _fingerprint_float(value: float, /) -> float | str:
 
 
 def _diagonal_matrix(diagonal: Array, /) -> Array:
-    dimension = int(diagonal.shape[-1])
+    dimension = diagonal.shape[-1]
     identity = jnp.eye(dimension, dtype=diagonal.dtype)
     return diagonal[..., :, None] * identity
 
 
 def _pack_diagonal_factor(diagonal: Array, /) -> Array:
-    dimension = int(diagonal.shape[-1])
+    dimension = diagonal.shape[-1]
     factor = _diagonal_matrix(jnp.sqrt(diagonal))
     rows, columns = jnp.tril_indices(dimension)
     return factor[..., rows, columns]
@@ -202,8 +202,7 @@ class SpectralNeuron(_AbstractBaseModel):
             )
         if any(mode not in _MONOTONICITY_MODES for mode in modes):
             raise ValueError(
-                "SpectralNeuron monotonicity entries must be 'free', "
-                "'increasing', or 'decreasing'."
+                "SpectralNeuron monotonicity entries must be 'free', 'increasing', or 'decreasing'."
             )
         canonical_modes = tuple(modes)
         free_indices = tuple(

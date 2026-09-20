@@ -20,7 +20,7 @@ def main() -> None:
         ),
         tetrahedra=np.asarray(((0, 1, 2, 3), (0, 2, 1, 4))),
     ).prepare()
-    exterior = np.flatnonzero(np.asarray(discretization.neighbour_cells) < 0)
+    exterior = np.flatnonzero(np.asarray(discretization.neighbor_cells) < 0)
     boundaries = phx.applications.porous_media.PorousBoundaryConditions(
         discretization,
         pressure_Pa={int(face): -2.0e4 for face in exterior},

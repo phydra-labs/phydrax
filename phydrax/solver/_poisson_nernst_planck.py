@@ -141,9 +141,7 @@ class PoissonNernstPlanckPlan(StrictModule, NonTrainableState):
         # SG already discretizes ideal diffusion. Remove log(c) from the
         # drift input while retaining electrical and excess chemical forces.
         # Species reference concentrations contribute only a constant offset.
-        ideal_chemical = jnp.log(
-            jnp.where(concentration > 0.0, concentration, 1.0)
-        )
+        ideal_chemical = jnp.log(jnp.where(concentration > 0.0, concentration, 1.0))
         flux = self.flux.evaluate(
             concentration,
             dimensionless_electrochemical - ideal_chemical,

@@ -52,7 +52,7 @@ def _segments_intersect(a, b, c, d, tolerance: float, /) -> bool:
 def _validate_simple_polygon(points: np.ndarray, /) -> None:
     count = points.shape[0]
     scale = max(float(np.max(np.abs(points))), 1.0)
-    tolerance = 128.0 * np.finfo(float).eps * scale * scale
+    tolerance = 128.0 * np.finfo(np.float64).eps * scale * scale
     if _signed_area2(points) <= tolerance:
         raise ValueError("Polygon cells must be counter-clockwise with positive area.")
     edges = np.roll(points, -1, axis=0) - points
@@ -79,7 +79,7 @@ def _validate_simple_polygon(points: np.ndarray, /) -> None:
 def _remove_collinear(points: np.ndarray, indices: list[int], /) -> list[int]:
     changed = True
     scale = max(float(np.max(np.abs(points))), 1.0)
-    tolerance = 128.0 * np.finfo(float).eps * scale * scale
+    tolerance = 128.0 * np.finfo(np.float64).eps * scale * scale
     result = list(indices)
     while changed and len(result) > 3:
         changed = False
@@ -109,7 +109,7 @@ def _ear_clip(points: np.ndarray, /) -> tuple[tuple[int, int, int], ...]:
     remaining = _remove_collinear(points, list(range(points.shape[0])))
     triangles: list[tuple[int, int, int]] = []
     scale = max(float(np.max(np.abs(points))), 1.0)
-    tolerance = 128.0 * np.finfo(float).eps * scale * scale
+    tolerance = 128.0 * np.finfo(np.float64).eps * scale * scale
     while len(remaining) > 3:
         clipped = False
         for position in range(len(remaining)):
@@ -280,7 +280,7 @@ def prepare_polygon_triangulation(
     *,
     policy: PolygonAdmissibilityPolicy | None = None,
 ) -> PolygonTriangulation:
-    points = np.asarray(coordinates, dtype=float)
+    points = np.asarray(coordinates, dtype=np.float64)
     cells_ = np.asarray(cells, dtype=np.int32)
     if points.ndim != 2 or points.shape[1] != 2:
         raise ValueError("Polygon coordinates must have shape (vertices, 2).")
@@ -289,9 +289,9 @@ def prepare_polygon_triangulation(
     selected = points[cells_]
     capacity = cells_.shape[1] - 2
     triangles = np.zeros((cells_.shape[0], capacity, 3), dtype=np.int32)
-    valid = np.zeros((cells_.shape[0], capacity), dtype=bool)
-    witness_weights = np.zeros((cells_.shape[0], cells_.shape[1]), dtype=float)
-    star_margins = np.zeros((cells_.shape[0],), dtype=float)
+    valid = np.zeros((cells_.shape[0], capacity), dtype=np.bool_)
+    witness_weights = np.zeros((cells_.shape[0], cells_.shape[1]), dtype=np.float64)
+    star_margins = np.zeros((cells_.shape[0],), dtype=np.float64)
     policy_ = PolygonAdmissibilityPolicy() if policy is None else policy
     for cell, polygon in enumerate(selected):
         _validate_simple_polygon(polygon)
@@ -462,7 +462,7 @@ def polygon_cubature(
                 "geometry": geometry.geometry_id,
                 "degree": degree_,
                 "rule": type(data).__name__,
-                "point_count": int(points.shape[1] * points.shape[2]),
+                "point_count": points.shape[1] * points.shape[2],
             }
         ),
     )

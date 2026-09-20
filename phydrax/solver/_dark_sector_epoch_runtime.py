@@ -246,7 +246,7 @@ class DarkSectorEpochPlan(StrictModule, NonTrainableState):
             shapes=shapes,
             dtypes={
                 "content_ids": np.dtype(np.uint32),
-                "mask": np.dtype(bool),
+                "mask": np.dtype(np.bool_),
                 "status": np.dtype(np.int8),
                 "values": np.dtype(precision),
             },
@@ -408,7 +408,7 @@ class DarkSectorEpochState(StrictModule):
             width = plan.width(name)
             ids_ = jnp.asarray(ids, dtype=jnp.uint32)
             values_ = jnp.asarray(values, dtype=jnp.dtype(plan.precision_id))
-            mask_ = jnp.asarray(mask, dtype=bool)
+            mask_ = jnp.asarray(mask, dtype=jnp.bool_)
             status_ = jnp.asarray(pool_status, dtype=jnp.int8)
             if ids_.shape != (capacity, 8):
                 raise ValueError(f"{name}_ids must have shape ({capacity}, 8).")
@@ -570,7 +570,7 @@ def empty_dark_sector_epoch_state(
         pools[f"{name}_values"] = jnp.zeros(
             (capacity, plan.width(name)), dtype=jnp.dtype(plan.precision_id)
         )
-        pools[f"{name}_mask"] = jnp.zeros((capacity,), dtype=bool)
+        pools[f"{name}_mask"] = jnp.zeros((capacity,), dtype=jnp.bool_)
         pools[f"{name}_status"] = jnp.zeros((capacity,), dtype=jnp.int8)
     return DarkSectorEpochState(
         plan,
@@ -654,8 +654,8 @@ def admit_dark_sector_work(
     )
     if statuses.shape != (count,):
         raise ValueError("work_status must align with admitted work.")
-    work_mask = np.asarray(state.work_mask, dtype=bool).copy()
-    frontier_mask = np.asarray(state.frontier_mask, dtype=bool).copy()
+    work_mask = np.asarray(state.work_mask, dtype=np.bool_).copy()
+    frontier_mask = np.asarray(state.frontier_mask, dtype=np.bool_).copy()
     work_free = np.flatnonzero(~work_mask)
     frontier_free = np.flatnonzero(~frontier_mask)
     available = work_free.size + frontier_free.size
@@ -861,10 +861,10 @@ class DarkSectorRunCoordinator:
         arrays = _checkpoint_arrays(record)
         frontier_ids = arrays["frontier_ids"]
         frontier_values = arrays["frontier_values"]
-        frontier_mask = arrays["frontier_mask"].astype(bool, copy=False)
+        frontier_mask = arrays["frontier_mask"].astype("bool", copy=False)
         frontier_status = arrays["frontier_status"]
         active = np.flatnonzero(frontier_mask)
-        count = int(active.size)
+        count = active.size
         if frontier_values.shape[1] != self.plan.work_width:
             raise ValueError(
                 "Deferred frontier width is incompatible with destination plan."
@@ -886,7 +886,7 @@ class DarkSectorRunCoordinator:
                 (self.plan.work_capacity, self.plan.work_width),
                 dtype=self.plan.value_dtype,
             )
-            mask = np.zeros((self.plan.work_capacity,), dtype=bool)
+            mask = np.zeros((self.plan.work_capacity,), dtype=np.bool_)
             status = np.zeros((self.plan.work_capacity,), dtype=np.int8)
             ids[:direct] = frontier_ids[active[:direct]]
             values[:direct] = frontier_values[active[:direct]]
@@ -901,7 +901,7 @@ class DarkSectorRunCoordinator:
                 (self.plan.frontier_capacity, self.plan.frontier_width),
                 dtype=self.plan.value_dtype,
             )
-            mask = np.zeros((self.plan.frontier_capacity,), dtype=bool)
+            mask = np.zeros((self.plan.frontier_capacity,), dtype=np.bool_)
             status = np.zeros((self.plan.frontier_capacity,), dtype=np.int8)
             ids[:deferred] = frontier_ids[active[direct:]]
             values[:deferred] = frontier_values[active[direct:]]
@@ -1094,7 +1094,7 @@ def _pool_name(value: str, /) -> str:
 
 
 def _scalar_bool(value: ArrayLike, role: str, /) -> Array:
-    result = jnp.asarray(value, dtype=bool)
+    result = jnp.asarray(value, dtype=jnp.bool_)
     if result.shape != ():
         raise ValueError(f"{role} must be scalar.")
     return result
@@ -1254,7 +1254,7 @@ def _checkpoint_arrays(record: Mapping[str, object], /) -> dict[str, np.ndarray]
 
 def _active_content_ids(ids: ArrayLike, mask: ArrayLike, /) -> tuple[str, ...]:
     ids_host = np.asarray(ids, dtype=np.uint32)
-    mask_host = np.asarray(mask, dtype=bool)
+    mask_host = np.asarray(mask, dtype=np.bool_)
     if ids_host.shape != (mask_host.size, 8) or mask_host.shape != (ids_host.shape[0],):
         raise ValueError("Content ID masks do not align.")
     identities = tuple(

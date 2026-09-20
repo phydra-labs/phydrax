@@ -366,7 +366,7 @@ def test_native_torsions_keep_termini_and_pucker_phase_degeneracy():
     system = AtomisticSystemPlan(
         ids, [6] * len(ids), [12.0] * len(ids), units, atom_type_ids=[0] * len(ids)
     ).prepare()
-    t = jnp.arange(len(ids), dtype=float)
+    t = jnp.arange(len(ids), dtype="float64")
     positions = jnp.stack((jnp.cos(t), jnp.sin(t), 0.2 * t), axis=-1)
     program = NucleotideTorsionProgram(mapping, system)
     result = program.evaluate(positions)

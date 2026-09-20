@@ -56,10 +56,10 @@ class ModalDecayReport(StrictModule, NonTrainableState):
         self.head_tail_inner_products = jnp.asarray(head_tail_inner_products)
         self.coefficient_envelope = jnp.asarray(coefficient_envelope)
         self.local_log_slopes = jnp.asarray(local_log_slopes)
-        self.rounding_floor_mask = jnp.asarray(rounding_floor_mask, dtype=bool)
-        self.zero_reference_norm = jnp.asarray(zero_reference_norm, dtype=bool)
-        self.finite = jnp.asarray(finite, dtype=bool)
-        self.active_mode_mask = jnp.asarray(active_mode_mask, dtype=bool)
+        self.rounding_floor_mask = jnp.asarray(rounding_floor_mask, dtype=jnp.bool_)
+        self.zero_reference_norm = jnp.asarray(zero_reference_norm, dtype=jnp.bool_)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
+        self.active_mode_mask = jnp.asarray(active_mode_mask, dtype=jnp.bool_)
         self.diagnostics_id = str(diagnostics_id)
         self.prepared_id = str(prepared_id)
 
@@ -111,7 +111,7 @@ class SpectralModalDiagnosticsPlan(StrictModule, NonTrainableState):
             for axis in discretization.axes
         )
         largest = max(discretization.modal_shape)
-        active = np.zeros((len(discretization.axes), largest), dtype=bool)
+        active = np.zeros((len(discretization.axes), largest), dtype=np.bool_)
         for axis, count in enumerate(discretization.modal_shape):
             active[axis, :count] = True
         itemsize = np.dtype(discretization.plan.precision.coefficient_dtype).itemsize
@@ -139,7 +139,9 @@ class SpectralModalDiagnosticsPlan(StrictModule, NonTrainableState):
                 "minimum_tail_modes": minimum,
                 "floor_multiplier": multiplier,
                 "maximum_workspace_bytes": maximum,
-                "tail_masks": [np.asarray(mask).astype(int).tolist() for mask in masks],
+                "tail_masks": [
+                    np.asarray(mask).astype("int64").tolist() for mask in masks
+                ],
             }
         )
 
@@ -272,7 +274,7 @@ def _tail_mask(
     minimum: int,
     /,
 ) -> np.ndarray:
-    count = int(mode_numbers.size)
+    count = mode_numbers.size
     minimum_ = min(minimum, count)
     if family == "fourier":
         magnitudes = np.abs(mode_numbers)
@@ -283,7 +285,7 @@ def _tail_mask(
             mask[selected] = True
         return mask
     start = max(0, count - max(minimum_, int(math.ceil(fraction * count))))
-    mask = np.zeros((count,), dtype=bool)
+    mask = np.zeros((count,), dtype=np.bool_)
     mask[start:] = True
     return mask
 

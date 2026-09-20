@@ -158,7 +158,7 @@ class PermutationLinearOperator(AbstractLinearOperator):
         permutation_ = jnp.asarray(permutation)
         if permutation_.ndim != 1 or not jnp.issubdtype(permutation_.dtype, jnp.integer):
             raise TypeError("permutation must be one integer vector.")
-        size = int(permutation_.size)
+        size = permutation_.size
         permutation_ = _validated_permutation(permutation_, size)
         space_ = _space(size, dtype, space)
         self.source = space_
@@ -223,7 +223,7 @@ class TriangularLinearOperator(AbstractLinearOperator):
         if matrix_.ndim != 2 or matrix_.shape[0] != matrix_.shape[1]:
             raise ValueError("matrix must be one square matrix.")
         if not jnp.issubdtype(matrix_.dtype, jnp.inexact):
-            matrix_ = matrix_.astype(float)
+            matrix_ = matrix_.astype("float64")
         lower_ = bool(lower)
         expected = jnp.tril(matrix_) if lower_ else jnp.triu(matrix_)
         expected = eqx.error_if(
@@ -233,7 +233,7 @@ class TriangularLinearOperator(AbstractLinearOperator):
         )
         if unit_diagonal:
             expected = expected.at[jnp.diag_indices(matrix_.shape[0])].set(1)
-        size = int(matrix_.shape[0])
+        size = matrix_.shape[0]
         space_ = _space(size, matrix_.dtype, space)
         _validate_action_dtype(matrix_.dtype, space_, space_, "triangular matrix")
         rank = size if unit_diagonal else None
@@ -304,11 +304,11 @@ class TridiagonalLinearOperator(AbstractLinearOperator):
             or upper_.shape != (diagonal_.size - 1,)
         ):
             raise ValueError("Tridiagonal storage must have lengths n-1, n, n-1.")
-        dtype = jnp.result_type(lower_, diagonal_, upper_, float)
+        dtype = jnp.result_type(lower_, diagonal_, upper_, jnp.float64)
         lower_, diagonal_, upper_ = (
             value.astype(dtype) for value in (lower_, diagonal_, upper_)
         )
-        size = int(diagonal_.size)
+        size = diagonal_.size
         space_ = _space(size, dtype, space)
         self.source = space_
         self.target = space_
@@ -383,10 +383,10 @@ class BandedLinearOperator(AbstractLinearOperator):
                 "bands must have shape batch_shape + (lower + upper + 1, n)."
             )
         if not jnp.issubdtype(bands_.dtype, jnp.inexact):
-            bands_ = bands_.astype(float)
-        size = int(bands_.shape[-1])
+            bands_ = bands_.astype("float64")
+        size = bands_.shape[-1]
         space_ = _space(size, bands_.dtype, space)
-        batch = tuple(int(value) for value in bands_.shape[:-2])
+        batch = tuple(bands_.shape[:-2])
         if batch and not isinstance(space_, ArraySpace):
             raise ValueError("Batched banded operators require ArraySpace values.")
         self.source = space_
@@ -537,13 +537,12 @@ class LocalBlockDiagonalLinearOperator(AbstractLinearOperator):
         blocks_ = jnp.asarray(blocks)
         if blocks_.ndim != 3:
             raise ValueError(
-                "blocks must have shape "
-                "(num_blocks, output_block_size, input_block_size)."
+                "blocks must have shape (num_blocks, output_block_size, input_block_size)."
             )
-        if any(int(size) < 1 for size in blocks_.shape):
+        if any(size < 1 for size in blocks_.shape):
             raise ValueError("Local block dimensions must be positive.")
         if not jnp.issubdtype(blocks_.dtype, jnp.inexact):
-            blocks_ = blocks_.astype(float)
+            blocks_ = blocks_.astype("float64")
         num_blocks, output_size, input_size = map(int, blocks_.shape)
         source_ = (
             ArraySpace((num_blocks, input_size), dtype=blocks_.dtype)
@@ -798,11 +797,11 @@ class LowRankLinearOperator(AbstractLinearOperator):
         left_, right_ = jnp.asarray(left_factor), jnp.asarray(right_factor)
         if left_.ndim != 2 or right_.ndim != 2 or left_.shape[1] != right_.shape[1]:
             raise ValueError("factors must have shapes (m, r) and (n, r).")
-        dtype = jnp.result_type(left_, right_, float)
+        dtype = jnp.result_type(left_, right_, jnp.float64)
         left_, right_ = left_.astype(dtype), right_.astype(dtype)
-        target_ = _space(int(left_.shape[0]), dtype, target)
-        source_ = _space(int(right_.shape[0]), dtype, source)
-        rank = int(left_.shape[1]) if exact_rank else None
+        target_ = _space(left_.shape[0], dtype, target)
+        source_ = _space(right_.shape[0], dtype, source)
+        rank = left_.shape[1] if exact_rank else None
         self.source = source_
         self.target = target_
         self.left_factor = left_
@@ -868,7 +867,7 @@ class SymmetricLowRankLinearOperator(AbstractLinearOperator):
         if factor_.ndim != 2:
             raise ValueError("factor must have shape (n, r).")
         if not jnp.issubdtype(factor_.dtype, jnp.inexact):
-            factor_ = factor_.astype(float)
+            factor_ = factor_.astype("float64")
         weights_ = (
             jnp.ones((factor_.shape[1],), dtype=factor_.real.dtype)
             if weights is None
@@ -889,12 +888,11 @@ class SymmetricLowRankLinearOperator(AbstractLinearOperator):
             jnp.any(invalid_weights),
             "weights must be finite and satisfy the declared semidefiniteness.",
         )
-        space_ = _space(int(factor_.shape[0]), factor_.dtype, space)
+        space_ = _space(factor_.shape[0], factor_.dtype, space)
         self_adjoint = _has_euclidean_pairing(space_)
         if positive_semidefinite and not self_adjoint:
             raise ValueError(
-                "positive_semidefinite requires a Euclidean pairing for "
-                "SymmetricLowRankLinearOperator."
+                "positive_semidefinite requires a Euclidean pairing for SymmetricLowRankLinearOperator."
             )
         rank = None
         self.source = space_
@@ -1135,7 +1133,7 @@ class BasePlusLowRankLinearOperator(AbstractLinearOperator):
         dtype = _coordinate_dtype(base.source)
         if np.dtype(left.dtype) != dtype or np.dtype(right.dtype) != dtype:
             raise TypeError("Low-rank factor dtype must match the base coordinate dtype.")
-        rank = int(left.shape[1])
+        rank = left.shape[1]
         core_ = jnp.eye(rank, dtype=dtype) if core is None else jnp.asarray(core)
         if core_.shape != (rank, rank) or np.dtype(core_.dtype) != dtype:
             raise ValueError(
@@ -1181,7 +1179,7 @@ class BasePlusLowRankLinearOperator(AbstractLinearOperator):
 
     @property
     def rank(self) -> int:
-        return int(self.left_factor.shape[1])
+        return self.left_factor.shape[1]
 
     def mv(self, vector: PyTree[Any], /) -> PyTree[Array]:
         coordinates = self.source.flatten(vector)
@@ -1234,7 +1232,7 @@ class DiagonalPlusLowRankLinearOperator(AbstractLinearOperator):
             raise ValueError("Expected diagonal (n,) and factors (n, r).")
         if left_.shape[0] != diagonal_.size:
             raise ValueError("Factor rows must match diagonal length.")
-        dtype = jnp.result_type(diagonal_, left_, right_, float)
+        dtype = jnp.result_type(diagonal_, left_, right_, jnp.float64)
         diagonal_, left_, right_ = (
             value.astype(dtype) for value in (diagonal_, left_, right_)
         )
@@ -1245,7 +1243,7 @@ class DiagonalPlusLowRankLinearOperator(AbstractLinearOperator):
                 jnp.any(~jnp.isfinite(diagonal_) | (diagonal_ == 0)),
                 "A certified nonsingular diagonal must be finite and nonzero.",
             )
-        space_ = _space(int(diagonal_.size), dtype, space)
+        space_ = _space(diagonal_.size, dtype, space)
         self.source = space_
         self.target = space_
         self.diagonal = diagonal_
@@ -1395,7 +1393,7 @@ class EmbeddedTensorProductLinearOperator(AbstractLinearOperator):
             raise TypeError("ambient_space must be a TensorProductSpace.")
         if local_operator.batch_shape:
             raise ValueError("local_operator must be unbatched.")
-        axes_ = tuple(int(axis) for axis in axes)
+        axes_ = tuple(axes)
         if not axes_:
             raise ValueError("axes must be nonempty.")
         if len(set(axes_)) != len(axes_):

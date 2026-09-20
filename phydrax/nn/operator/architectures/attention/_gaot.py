@@ -132,7 +132,7 @@ class GAOT(AbstractOperatorModel):
     ):
         if int(coord_dim) not in (2, 3):
             raise ValueError("GAOT supports coord_dim 2 or 3.")
-        shape = tuple(int(size) for size in latent_shape)
+        shape = tuple(latent_shape)
         if len(shape) != int(coord_dim) or any(size <= 1 for size in shape):
             raise ValueError(
                 "latent_shape must match coord_dim and contain dimensions greater than one."
@@ -140,7 +140,7 @@ class GAOT(AbstractOperatorModel):
         patches = (
             (int(patch_shape),) * int(coord_dim)
             if isinstance(patch_shape, int)
-            else tuple(int(size) for size in patch_shape)
+            else tuple(patch_shape)
         )
         if len(patches) != int(coord_dim) or any(size <= 0 for size in patches):
             raise ValueError("patch_shape must give one positive size per dimension.")

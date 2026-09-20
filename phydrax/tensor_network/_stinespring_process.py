@@ -67,7 +67,7 @@ class SequentialStinespringProcess(StrictModule):
         if factor.shape != (composite, composite):
             raise ValueError("Initial Stinespring density factor shape is invalid.")
         values = tuple(jnp.asarray(value) for value in isometries)
-        environments = tuple(int(value) for value in environment_dimensions)
+        environments = tuple(environment_dimensions)
         if len(values) != spec.slot_count or len(environments) != spec.slot_count:
             raise ValueError("One Stinespring isometry/environment is required per slot.")
         for value, environment in zip(values, environments, strict=True):
@@ -112,9 +112,7 @@ class SequentialStinespringProcess(StrictModule):
         )
         density_parameters = composite**2 - 1
         channel_parameters = sum(
-            2 * composite**2 * environment
-            - composite**2
-            - environment**2
+            2 * composite**2 * environment - composite**2 - environment**2
             for environment in self.environment_dimensions
         )
         temporal_memory_gauge = (self.spec.slot_count + 1) * max(

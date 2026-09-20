@@ -77,7 +77,7 @@ class EarthOrientationRecordSet(StrictModule, NonTrainableState):
         /,
     ):
         values = tuple(
-            np.asarray(value, dtype=float)
+            np.asarray(value, dtype=np.float64)
             for value in (
                 relative_utc_seconds,
                 xp_radians,
@@ -98,7 +98,7 @@ class EarthOrientationRecordSet(StrictModule, NonTrainableState):
             or np.any(np.diff(times) <= 0.0)
         ):
             raise ValueError("Earth-orientation arrays must be finite matching vectors.")
-        predicted_host = np.asarray(predicted, dtype=bool)
+        predicted_host = np.asarray(predicted, dtype=np.bool_)
         if predicted_host.shape != times.shape:
             raise ValueError("EOP prediction mask must match time nodes.")
         (
@@ -141,7 +141,7 @@ class EarthOrientationRecordSet(StrictModule, NonTrainableState):
         index = jnp.clip(
             jnp.searchsorted(self.relative_utc_seconds, query, side="right") - 1,
             0,
-            int(self.relative_utc_seconds.size) - 1,
+            self.relative_utc_seconds.size - 1,
         )
         return (*values, self.predicted[index], support & jnp.isfinite(query))
 

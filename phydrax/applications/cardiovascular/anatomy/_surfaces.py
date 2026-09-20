@@ -51,14 +51,14 @@ def _oriented_closed_faces(
     counts = np.asarray(tuple(len(owners) for owners in edge_owners.values()))
     if np.any(counts != 2):
         raise ValueError("A closed chamber surface requires exactly two faces per edge.")
-    neighbours: list[list[tuple[int, bool]]] = [[] for _ in range(faces.shape[0])]
+    neighbors: list[list[tuple[int, bool]]] = [[] for _ in range(faces.shape[0])]
     initial_mismatches = 0
     for owners in edge_owners.values():
         (first_face, first_sign), (second_face, second_sign) = owners
         same = first_sign == second_sign
         initial_mismatches += int(same)
-        neighbours[first_face].append((second_face, same))
-        neighbours[second_face].append((first_face, same))
+        neighbors[first_face].append((second_face, same))
+        neighbors[second_face].append((first_face, same))
     flips = np.full((faces.shape[0],), -1, dtype=np.int8)
     component_count = 0
     for seed in range(faces.shape[0]):
@@ -69,19 +69,19 @@ def _oriented_closed_faces(
         pending = [seed]
         while pending:
             current = pending.pop()
-            for neighbour, relative_flip in neighbours[current]:
+            for neighbor, relative_flip in neighbors[current]:
                 expected = int(flips[current]) ^ int(relative_flip)
-                if flips[neighbour] < 0:
-                    flips[neighbour] = expected
-                    pending.append(neighbour)
-                elif int(flips[neighbour]) != expected:
+                if flips[neighbor] < 0:
+                    flips[neighbor] = expected
+                    pending.append(neighbor)
+                elif int(flips[neighbor]) != expected:
                     raise ValueError("Chamber surface connectivity is not orientable.")
     if component_count != 1:
         raise ValueError(
             f"One chamber surface must be connected; found {component_count} components."
         )
     oriented = faces.copy()
-    oriented[flips.astype(bool), 1:] = oriented[flips.astype(bool), 1:][:, ::-1]
+    oriented[flips.astype("bool"), 1:] = oriented[flips.astype("bool"), 1:][:, ::-1]
     points = coordinates[oriented]
     double_areas = np.linalg.norm(
         np.cross(points[:, 1] - points[:, 0], points[:, 2] - points[:, 0]), axis=-1
@@ -176,10 +176,10 @@ class ChamberSurfaceTopologyEvidence(StrictModule, NonTrainableState):
         self.reference_minimum_double_area = jnp.asarray(
             values["reference_minimum_double_area"]
         )
-        self.closed = jnp.asarray(values["closed"], dtype=bool)
-        self.orientable = jnp.asarray(values["orientable"], dtype=bool)
-        self.outward = jnp.asarray(values["outward"], dtype=bool)
-        self.successful = jnp.asarray(values["successful"], dtype=bool)
+        self.closed = jnp.asarray(values["closed"], dtype=jnp.bool_)
+        self.orientable = jnp.asarray(values["orientable"], dtype=jnp.bool_)
+        self.outward = jnp.asarray(values["outward"], dtype=jnp.bool_)
+        self.successful = jnp.asarray(values["successful"], dtype=jnp.bool_)
 
 
 class ChamberSurfacePlan(StrictModule, NonTrainableState):
@@ -203,7 +203,7 @@ class ChamberSurfacePlan(StrictModule, NonTrainableState):
         geometric_tolerance: float = 0.0,
     ):
         name = _nonempty(chamber_name, "Chamber name")
-        coordinates = np.asarray(reference_coordinates, dtype=float)
+        coordinates = np.asarray(reference_coordinates, dtype=np.float64)
         faces = np.asarray(triangles, dtype=np.int32)
         tolerance = float(geometric_tolerance)
         if coordinates.ndim != 2 or coordinates.shape[0] < 4 or coordinates.shape[1] != 3:
@@ -279,7 +279,7 @@ class ChamberSurfacePlan(StrictModule, NonTrainableState):
         )
 
     def prepare(self, /) -> OrientedChamberSurface:
-        coordinates = np.asarray(self.reference_coordinates, dtype=float)
+        coordinates = np.asarray(self.reference_coordinates, dtype=np.float64)
         triangles = np.asarray(self.triangles, dtype=np.int32)
         oriented, reoriented, mismatches, volume, minimum_area = _oriented_closed_faces(
             triangles, coordinates, self.geometric_tolerance
@@ -336,11 +336,11 @@ class CavityVolumeEvidence(StrictModule, NonTrainableState):
         self.translation_derivative_norm = jnp.asarray(
             values["translation_derivative_norm"]
         )
-        self.finite = jnp.asarray(values["finite"], dtype=bool)
+        self.finite = jnp.asarray(values["finite"], dtype=jnp.bool_)
         self.positive_orientation = jnp.asarray(
-            values["positive_orientation"], dtype=bool
+            values["positive_orientation"], dtype=jnp.bool_
         )
-        self.successful = jnp.asarray(values["successful"], dtype=bool)
+        self.successful = jnp.asarray(values["successful"], dtype=jnp.bool_)
 
 
 class CavityVolumeResult(StrictModule):

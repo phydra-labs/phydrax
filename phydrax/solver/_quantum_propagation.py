@@ -101,9 +101,9 @@ class UnitaryPropagatorProblem(StrictModule):
             raise TypeError(
                 "hermitian_precision must be a HermitianPrecisionPolicy or None."
             )
-        start = jnp.asarray(t0, dtype=float)
-        end = jnp.asarray(t1, dtype=float)
-        hbar_ = temporal_.coefficient(jnp.asarray(hbar, dtype=float))
+        start = jnp.asarray(t0, dtype=jnp.float64)
+        end = jnp.asarray(t1, dtype=jnp.float64)
+        hbar_ = temporal_.coefficient(jnp.asarray(hbar, dtype=jnp.float64))
         if start.shape != () or end.shape != () or hbar_.shape != ():
             raise ValueError("t0, t1, and hbar must be scalar.")
         hbar_ = eqx.error_if(
@@ -112,7 +112,7 @@ class UnitaryPropagatorProblem(StrictModule):
             "hbar must be finite and positive.",
         )
         initial = (
-            jnp.eye(dimension_, dtype=complex)
+            jnp.eye(dimension_, dtype=jnp.complex128)
             if initial_propagator is None
             else jnp.asarray(initial_propagator)
         )
@@ -221,7 +221,7 @@ class UnitaryPropagatorSolution(StrictModule):
             maximum_hamiltonian_hermiticity_residual
         )
         self.valid = (
-            jnp.asarray(differential_solution.valid, dtype=bool)
+            jnp.asarray(differential_solution.valid, dtype=jnp.bool_)
             & jnp.isfinite(self.maximum_unitarity_residual)
             & jnp.isfinite(self.maximum_hamiltonian_hermiticity_residual)
         )

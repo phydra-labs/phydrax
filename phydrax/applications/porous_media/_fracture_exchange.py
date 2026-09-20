@@ -24,7 +24,7 @@ from ...nonlinear import (
 
 
 def _link_values(value, count, name, *, positive=False):
-    values = jnp.asarray(value, dtype=float)
+    values = jnp.asarray(value, dtype=jnp.float64)
     if values.shape not in ((), (count,)):
         raise ValueError(f"{name} must be scalar or one value per exchange link.")
     values = jnp.broadcast_to(values, (count,))
@@ -52,12 +52,12 @@ class ExchangeStep(StrictModule):
 class FractureMatrixExchange(StrictModule):
     """Mixed-dimensional storage on a declared 2D FV fracture and 3D parent mesh.
 
-    The 2D mesh is in metre-valued LOCAL fracture coordinates; its cell measures
+    The 2D mesh is in meter-valued LOCAL fracture coordinates; its cell measures
     are true surface areas, not projected areas. ``origin`` and two orthonormal
     ``tangent_axes`` embed this planar fracture into the matrix Cartesian frame.
-    Apertures and link distances are metres, contact areas m², porosity and
+    Apertures and link distances are meters, contact areas m², porosity and
     saturation dimensionless. A fracture cell stores area*aperture*porosity*S
-    cubic metres of water. Matrix water storage must EXCLUDE separately resolved
+    cubic meters of water. Matrix water storage must EXCLUDE separately resolved
     fracture void volume: this API does not double-count it or infer it from an
     intersection heuristic.
 
@@ -154,8 +154,8 @@ class FractureMatrixExchange(StrictModule):
             pores, jnp.any(pores > 1), "Fracture porosity cannot exceed one."
         )
         origin_, axes = (
-            jnp.asarray(origin, dtype=float),
-            jnp.asarray(tangent_axes, dtype=float),
+            jnp.asarray(origin, dtype=jnp.float64),
+            jnp.asarray(tangent_axes, dtype=jnp.float64),
         )
         if origin_.shape != (3,) or axes.shape != (2, 3):
             raise ValueError(
@@ -164,7 +164,7 @@ class FractureMatrixExchange(StrictModule):
         origin_ = eqx.error_if(
             origin_,
             jnp.any(~jnp.isfinite(origin_)),
-            "Fracture origin must be finite metres.",
+            "Fracture origin must be finite meters.",
         )
         from ...ein import contract
 
@@ -371,14 +371,17 @@ class FractureMatrixExchange(StrictModule):
         full hydraulic solve use ``residual`` with its accepted endpoint volumes.
         """
         oldm, oldf = (
-            jnp.asarray(previous_matrix_inventory, dtype=float),
-            jnp.asarray(previous_fracture_inventory, dtype=float),
+            jnp.asarray(previous_matrix_inventory, dtype=jnp.float64),
+            jnp.asarray(previous_fracture_inventory, dtype=jnp.float64),
         )
         vm, vf = (
-            jnp.asarray(previous_matrix_water_volumes, dtype=float),
-            jnp.asarray(previous_fracture_water_volumes, dtype=float),
+            jnp.asarray(previous_matrix_water_volumes, dtype=jnp.float64),
+            jnp.asarray(previous_fracture_water_volumes, dtype=jnp.float64),
         )
-        q, time = jnp.asarray(water_rates, dtype=float), jnp.asarray(dt, dtype=float)
+        q, time = (
+            jnp.asarray(water_rates, dtype=jnp.float64),
+            jnp.asarray(dt, dtype=jnp.float64),
+        )
         if (
             oldm.ndim != 2
             or oldm.shape[0] != self.matrix_discretization.cell_count

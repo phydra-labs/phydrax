@@ -68,7 +68,7 @@ def _validate_target_chain_capacity(target, count: int, /) -> None:
 
 
 def _bool_scalar(value: Any, /, *, role: str) -> Array:
-    array = jnp.asarray(value, dtype=bool)
+    array = jnp.asarray(value, dtype=jnp.bool_)
     if array.shape != ():
         raise ValueError(f"{role} must return one scalar; got shape {array.shape}.")
     return array
@@ -90,8 +90,8 @@ def _chain_count(positions: PyTree[Any], /) -> int:
     arrays = tuple(jnp.asarray(leaf) for leaf in leaves)
     if any(array.ndim < 1 for array in arrays):
         raise ValueError("Every initial-position leaf needs a leading chain axis.")
-    count = int(arrays[0].shape[0])
-    if count < 1 or any(int(array.shape[0]) != count for array in arrays[1:]):
+    count = arrays[0].shape[0]
+    if count < 1 or any(array.shape[0] != count for array in arrays[1:]):
         raise ValueError(
             "Every initial-position leaf must share one nonempty chain axis."
         )
@@ -104,7 +104,7 @@ def _real_scalar(value: Any, /, *, role: str) -> Array:
         raise ValueError(f"{role} must return one scalar; got shape {array.shape}.")
     if jnp.iscomplexobj(array):
         raise TypeError(f"{role} must be real-valued.")
-    return array.astype(jnp.result_type(array, float))
+    return array.astype(jnp.result_type(array, jnp.float64))
 
 
 def _swap_draw_chain(tree: PyTree[Array], /) -> PyTree[Array]:
@@ -143,18 +143,18 @@ class MarkovState(StrictModule):
             raise TypeError("Markov log targets must be real-valued.")
         caches = jax.tree_util.tree_map(jnp.asarray, cache)
         cache_leaves = jax.tree_util.tree_leaves(caches)
-        if any(leaf.ndim < 1 or int(leaf.shape[0]) != count for leaf in cache_leaves):
+        if any(leaf.ndim < 1 or leaf.shape[0] != count for leaf in cache_leaves):
             raise ValueError("Every target-cache leaf must share the chain axis.")
         declared_valid = (
-            jnp.ones((count,), dtype=bool)
+            jnp.ones((count,), dtype=jnp.bool_)
             if valid is None
-            else jnp.asarray(valid, dtype=bool)
+            else jnp.asarray(valid, dtype=jnp.bool_)
         )
         if declared_valid.shape != (count,):
             raise ValueError(
                 f"valid must have shape ({count},); got {declared_valid.shape}."
             )
-        cache_finite = jnp.ones((count,), dtype=bool)
+        cache_finite = jnp.ones((count,), dtype=jnp.bool_)
         for leaf in cache_leaves:
             axes = tuple(range(1, leaf.ndim))
             finite = jnp.isfinite(leaf)
@@ -179,7 +179,7 @@ class MarkovState(StrictModule):
 
     @property
     def num_chains(self) -> int:
-        return int(self.log_target.shape[0])
+        return self.log_target.shape[0]
 
 
 class MarkovTransitionInfo(StrictModule):
@@ -211,12 +211,12 @@ class MarkovIterationMetrics(StrictModule):
         warmup,
         draw_index,
     ):
-        self.accepted = jnp.asarray(info.accepted, dtype=bool)
+        self.accepted = jnp.asarray(info.accepted, dtype=jnp.bool_)
         self.log_acceptance_ratio = jnp.asarray(info.log_acceptance_ratio)
-        self.proposal_valid = jnp.asarray(info.proposal_valid, dtype=bool)
-        self.target_valid = jnp.asarray(info.target_valid, dtype=bool)
+        self.proposal_valid = jnp.asarray(info.proposal_valid, dtype=jnp.bool_)
+        self.target_valid = jnp.asarray(info.target_valid, dtype=jnp.bool_)
         self.log_target = jnp.asarray(log_target)
-        self.warmup = jnp.asarray(warmup, dtype=bool)
+        self.warmup = jnp.asarray(warmup, dtype=jnp.bool_)
         self.draw_index = jnp.asarray(draw_index, dtype=jnp.int32)
 
 
@@ -294,7 +294,7 @@ class MarkovSampleResult(AbstractChainSampleResult):
         values = jnp.asarray(log_target)
         if values.ndim != 2:
             raise ValueError("log_target must have leading chain and draw axes.")
-        chains, draws = (int(size) for size in values.shape)
+        chains, draws = (size for size in values.shape)
         for leaf in sample_leaves:
             if jnp.asarray(leaf).shape[:2] != (chains, draws):
                 raise ValueError("Every sample leaf must share chain and draw axes.")
@@ -307,8 +307,7 @@ class MarkovSampleResult(AbstractChainSampleResult):
         )
         if any(jnp.asarray(value).shape != evidence_shape for value in evidence):
             raise ValueError(
-                "Transition evidence must have shape "
-                f"{evidence_shape} (chain, draw, transition)."
+                f"Transition evidence must have shape {evidence_shape} (chain, draw, transition)."
             )
         if final_state.num_chains != chains:
             raise ValueError("final_state chain count must match samples.")
@@ -324,10 +323,10 @@ class MarkovSampleResult(AbstractChainSampleResult):
             raise TypeError("iteration_evidence must be IterationEvidence or None.")
         self.samples = samples
         self.log_target = values
-        self.accepted = jnp.asarray(accepted, dtype=bool)
+        self.accepted = jnp.asarray(accepted, dtype=jnp.bool_)
         self.log_acceptance_ratio = jnp.asarray(log_acceptance_ratio)
-        self.proposal_valid = jnp.asarray(proposal_valid, dtype=bool)
-        self.target_valid = jnp.asarray(target_valid, dtype=bool)
+        self.proposal_valid = jnp.asarray(proposal_valid, dtype=jnp.bool_)
+        self.target_valid = jnp.asarray(target_valid, dtype=jnp.bool_)
         self.final_state = final_state
         self.root_key = jnp.asarray(root_key)
         self.kernel_id = kernel_id
@@ -339,11 +338,11 @@ class MarkovSampleResult(AbstractChainSampleResult):
 
     @property
     def num_chains(self) -> int:
-        return int(self.log_target.shape[0])
+        return self.log_target.shape[0]
 
     @property
     def num_draws(self) -> int:
-        return int(self.log_target.shape[1])
+        return self.log_target.shape[1]
 
     @property
     def chain_provenance(self) -> str:
@@ -354,7 +353,7 @@ class MarkovSampleResult(AbstractChainSampleResult):
 
     @property
     def acceptance_rate(self) -> Array:
-        return jnp.mean(self.accepted.astype(float), axis=(1, 2))
+        return jnp.mean(self.accepted.astype("float64"), axis=(1, 2))
 
 
 class MetropolisHastings(StrictModule):

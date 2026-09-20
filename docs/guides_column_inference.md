@@ -20,7 +20,7 @@ JAX_ENABLE_X64=1 PYTHONPATH=. python tools/column_inference_qualification.py
 Both accept `--steps` and `--maximum-steps`. The example additionally accepts
 `--skip-gradient-audit`; the qualification deliberately requires the audit. The
 small deterministic twin uses two fixed-volume, top-to-bottom atmospheric layers,
-prognostic vapor and falling rain, native grey radiation, ventilated surface
+prognostic vapor and falling rain, native gray radiation, ventilated surface
 exchange, conservative interlayer mixing and an interactive liquid slab. Six
 jointly fitted physical parameters are:
 

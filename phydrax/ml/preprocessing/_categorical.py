@@ -121,7 +121,7 @@ class CategoricalDiagnostics(StrictModule):
         input_shape: tuple[int, ...],
         output_shape: tuple[int, ...],
     ):
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.category_weight = jnp.asarray(category_weight)
         self.unknown_weight = jnp.asarray(unknown_weight)
@@ -147,7 +147,7 @@ def _category_bank(schema: CategoricalSchema, dtype) -> tuple[Array, Array]:
         value for categories in schema.categories for value in categories
     )
     category_dtype = jnp.result_type(dtype, *flat_categories)
-    return jnp.asarray(values, dtype=category_dtype), jnp.asarray(valid, dtype=bool)
+    return jnp.asarray(values, dtype=category_dtype), jnp.asarray(valid, dtype=jnp.bool_)
 
 
 def _category_matches(
@@ -246,11 +246,11 @@ class FittedSimpleImputer(AbstractArrayModel):
     def _missing(self, values: Array, mask: Any | None) -> Array:
         missing = jnp.asarray(
             jnp.isnan(values) if self.missing_is_nan else values == self.missing_values,
-            dtype=bool,
+            dtype=jnp.bool_,
         )
         if mask is not None:
             missing = missing | ~jnp.broadcast_to(
-                jnp.asarray(mask, dtype=bool), values.shape
+                jnp.asarray(mask, dtype=jnp.bool_), values.shape
             )
         return missing
 
@@ -328,7 +328,7 @@ class SimpleImputer(AbstractRecipe):
         raw = _dense_batch(batch)
         available = jnp.asarray(
             ~jnp.isnan(raw) if self.missing_is_nan else raw != self.missing_values,
-            dtype=bool,
+            dtype=jnp.bool_,
         )
         x, weights, mass, effective, valid, status = _feature_observations(
             batch, weight_policy=self.weight_policy, extra_mask=available
@@ -449,7 +449,7 @@ class FittedOrdinalEncoder(AbstractArrayModel, NonTrainableState):
         self.in_size = len(input_schema.names)
         self.out_size = len(output_schema.names)
         self.categories = jnp.asarray(categories)
-        self.category_valid = jnp.asarray(category_valid, dtype=bool)
+        self.category_valid = jnp.asarray(category_valid, dtype=jnp.bool_)
         self.unknown_policy = unknown_policy
         self.unknown_value = int(unknown_value)
         self.input_schema = input_schema
@@ -591,7 +591,7 @@ class FittedOneHotEncoder(AbstractArrayModel, NonTrainableState):
         self.in_size = len(input_schema.names)
         self.out_size = len(output_schema.names)
         self.categories = jnp.asarray(categories)
-        self.category_valid = jnp.asarray(category_valid, dtype=bool)
+        self.category_valid = jnp.asarray(category_valid, dtype=jnp.bool_)
         self.offsets = tuple(offsets)
         self.unknown_policy = unknown_policy
         self.input_schema = input_schema
@@ -619,7 +619,7 @@ class FittedOneHotEncoder(AbstractArrayModel, NonTrainableState):
         dtype = (
             values.real.dtype
             if jnp.issubdtype(values.dtype, jnp.inexact)
-            else jnp.dtype(float)
+            else jnp.dtype(jnp.float64)
         )
         return jnp.concatenate(pieces, axis=-1).astype(dtype)
 
@@ -629,7 +629,7 @@ class FittedOneHotEncoder(AbstractArrayModel, NonTrainableState):
     def inverse_transform(self, x: Any, /, *, key: Any = None) -> Array:
         del key
         encoded = _check_features(x, self.out_size)
-        invalid = jnp.zeros(encoded.shape[:-1], dtype=bool)
+        invalid = jnp.zeros(encoded.shape[:-1], dtype=jnp.bool_)
         for feature in range(self.in_size):
             start, stop = self.offsets[feature], self.offsets[feature + 1]
             block = encoded[..., start:stop]
@@ -807,7 +807,7 @@ class TargetEncoder(AbstractRecipe):
         unknown_policy: UnknownPolicy = "fail",
         weight_policy: WeightPolicy = "statistical",
     ):
-        smoothing_ = jnp.asarray(smoothing, dtype=float)
+        smoothing_ = jnp.asarray(smoothing, dtype=jnp.float64)
         if smoothing_.ndim != 0:
             raise ValueError("smoothing must be scalar.")
         smoothing_ = eqx.error_if(

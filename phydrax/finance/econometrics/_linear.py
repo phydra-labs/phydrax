@@ -138,7 +138,7 @@ class CointegrationDefinition(StrictModule):
             raise ValueError("lag_differences must be nonnegative.")
         if deterministic not in ("constant", "none"):
             raise ValueError("deterministic must be 'constant' or 'none'.")
-        critical = jnp.asarray(critical_values, dtype=float)
+        critical = jnp.asarray(critical_values, dtype=jnp.float64)
         if critical.ndim != 1:
             raise ValueError("critical_values must be a vector (possibly empty).")
         critical = eqx.error_if(

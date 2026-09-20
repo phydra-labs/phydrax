@@ -30,11 +30,11 @@ def _noise(
     coupling_id="coupling:shared",
     independence_labels=None,
 ):
-    values = jnp.asarray(increments, dtype=float)
+    values = jnp.asarray(increments, dtype="float64")
     path_count = values.shape[0]
     return PreparedControlledNoise(
         values,
-        valid=(jnp.ones((path_count,), dtype=bool) if validity is None else validity),
+        valid=(jnp.ones((path_count,), dtype="bool") if validity is None else validity),
         realization_ids=(
             tuple(f"realization:{index}" for index in range(path_count))
             if realization_ids is None
@@ -52,7 +52,7 @@ def _noise(
 
 def _problem(*, num_steps=2, stage_cost=None, terminal_cost=None):
     grid = TimeGrid(
-        jnp.arange(num_steps + 1, dtype=float), time_id=f"feedback:{num_steps}:time"
+        jnp.arange(num_steps + 1, dtype="float64"), time_id=f"feedback:{num_steps}:time"
     )
 
     def transition(context, state, action, noise, args):
@@ -131,7 +131,7 @@ def test_realization_replay_ids_and_antithetic_cluster_labels():
     prepared = PreparedControlledNoise.from_realization(
         increments,
         realization,
-        valid=jnp.ones((4,), dtype=bool),
+        valid=jnp.ones((4,), dtype="bool"),
         noise_shape=(1,),
     )
     problem = _problem(num_steps=2)

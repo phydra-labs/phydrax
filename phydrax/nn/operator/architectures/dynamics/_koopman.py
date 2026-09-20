@@ -240,14 +240,11 @@ class KoopmanTemporalOperator(AbstractOperatorModel):
         sample_shape = source.sample_shape
         case_ndim = len(case_shape)
         sample_ndim = len(sample_shape)
-        if tuple(int(size) for size in values.shape[:case_ndim]) != case_shape:
+        if tuple(values.shape[:case_ndim]) != case_shape:
             raise ValueError("Source values do not match OperatorBatch.case_shape.")
-        if (
-            tuple(int(size) for size in values.shape[case_ndim : case_ndim + sample_ndim])
-            != sample_shape
-        ):
+        if tuple(values.shape[case_ndim : case_ndim + sample_ndim]) != sample_shape:
             raise ValueError("Source values do not align with the source tensor grid.")
-        trailing = tuple(int(size) for size in values.shape[case_ndim + sample_ndim :])
+        trailing = tuple(values.shape[case_ndim + sample_ndim :])
         in_count = _get_size(self.in_size)
         if not trailing and in_count == 1:
             values = values[..., None]
@@ -305,7 +302,7 @@ class KoopmanTemporalOperator(AbstractOperatorModel):
         latent_grid_shape = (
             case_shape
             + tuple(
-                int(axis.size) if index == time_index else 1
+                axis.size if index == time_index else 1
                 for index, axis in enumerate(query.axes)
             )
             + (self.latent_size,)

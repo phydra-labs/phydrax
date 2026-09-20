@@ -47,7 +47,7 @@ def test_exact_channel_selection_observation_and_next_design():
     # Design d asks whether the unknown parameter equals d.
     probability = np.stack(
         [np.stack((np.arange(3) != d, np.arange(3) == d), axis=1) for d in range(3)]
-    ).astype(float)
+    ).astype("float64")
     logs = np.full(probability.shape, -np.inf)
     np.log(probability, out=logs, where=probability > 0)
     problem = _table_problem(logs, context={"sensor_temperature": 295.0})

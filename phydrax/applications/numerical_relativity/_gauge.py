@@ -12,7 +12,7 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 from ..._fingerprint import canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._derivatives import FourthOrderDerivatives
 from ._state import Z4cState
@@ -27,7 +27,7 @@ class Z4cGaugeRates(StrictModule):
 class AbstractZ4cGauge(StrictModule, NonTrainableState):
     """Gauge evolution contract evaluated at the same stage as the Z4c RHS."""
 
-    gauge_id: AbstractAttribute[str]
+    gauge_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def rates(
@@ -84,9 +84,7 @@ class HarmonicGauge(AbstractZ4cGauge):
     ) -> Z4cGaugeRates:
         del conformal_connection_rhs
         lapse = derivatives.advect(state.lapse, state.shift) - (
-            self.slicing_speed
-            * state.lapse**2
-            * state.trace_extrinsic_curvature
+            self.slicing_speed * state.lapse**2 * state.trace_extrinsic_curvature
         )
         return Z4cGaugeRates(
             lapse,
@@ -117,7 +115,9 @@ class MovingPunctureGauge(AbstractZ4cGauge):
         shift = float(shift_coefficient)
         damping = float(driver_damping)
         if any(not isfinite(value) or value < 0.0 for value in (slicing, shift, damping)):
-            raise ValueError("Moving-puncture coefficients must be finite and non-negative.")
+            raise ValueError(
+                "Moving-puncture coefficients must be finite and non-negative."
+            )
         if not isinstance(advective, bool):
             raise TypeError("advective must be Boolean.")
         self.slicing_coefficient = slicing
@@ -154,9 +154,7 @@ class MovingPunctureGauge(AbstractZ4cGauge):
             advected_driver = jnp.zeros_like(state.shift_driver)
             advected_connection = jnp.zeros_like(state.conformal_connection)
         lapse = advected_lapse - (
-            self.slicing_coefficient
-            * state.lapse
-            * state.trace_extrinsic_curvature
+            self.slicing_coefficient * state.lapse * state.trace_extrinsic_curvature
         )
         shift = advected_shift + self.shift_coefficient * state.shift_driver
         driver = (

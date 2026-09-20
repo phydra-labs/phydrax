@@ -43,8 +43,8 @@ class MetricValidationReport(StrictModule):
             raise TypeError(
                 "precision_evidence must be PrecisionEvidenceEnvelope or None."
             )
-        self.valid = jnp.asarray(valid, dtype=bool)
-        self.finite = jnp.asarray(finite, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
         self.maximum_asymmetry = jnp.asarray(maximum_asymmetry)
         self.minimum_eigenvalue = jnp.asarray(minimum_eigenvalue)
         self.maximum_condition_number = jnp.asarray(maximum_condition_number)

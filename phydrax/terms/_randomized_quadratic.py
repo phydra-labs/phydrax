@@ -89,7 +89,7 @@ def randomized_squared_mean(
         )
     if event_shape and left.shape[-len(event_shape) :] != event_shape:
         raise ValueError("left trailing dimensions do not match event_shape.")
-    count = int(left.shape[0])
+    count = left.shape[0]
     if count < 2:
         raise ValueError("At least two realizations are required.")
     if mode == "plug_in":

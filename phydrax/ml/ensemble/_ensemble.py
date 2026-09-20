@@ -63,14 +63,14 @@ def _homogeneous_predictions(
     )(ensemble.model, keys)
 
 
-def _normalised_weights(weights: Array, count: int) -> Array:
+def _normalized_weights(weights: Array, count: int) -> Array:
     value = jnp.asarray(weights)
     if value.shape != (count,):
         raise ValueError(f"member_weights must have shape ({count},).")
     if jnp.issubdtype(value.dtype, jnp.complexfloating):
         raise TypeError("member_weights must be real-valued.")
     if not jnp.issubdtype(value.dtype, jnp.inexact):
-        value = value.astype(float)
+        value = value.astype("float64")
     value = eqx.error_if(
         value,
         jnp.any(~jnp.isfinite(value)) | jnp.any(value < 0.0) | (jnp.sum(value) <= 0.0),
@@ -109,7 +109,7 @@ class EnsembleFitDiagnostics(StrictModule):
         method: str,
         auxiliary_status: Any = (),
     ):
-        self.member_valid = jnp.asarray(member_valid, dtype=bool)
+        self.member_valid = jnp.asarray(member_valid, dtype=jnp.bool_)
         self.member_status = jnp.asarray(member_status, dtype=jnp.int32)
         self.auxiliary_status = jnp.asarray(auxiliary_status, dtype=jnp.int32)
         self.method = str(method)
@@ -137,7 +137,7 @@ class HomogeneousEnsembleModel(AbstractArrayModel):
         in_size, out_size = _model_sizes(values)
         self.ensemble = HomogeneousFunctionEnsemble.from_members(values)
         weights = jnp.ones((len(values),)) if member_weights is None else member_weights
-        self.member_weights = _normalised_weights(jnp.asarray(weights), len(values))
+        self.member_weights = _normalized_weights(jnp.asarray(weights), len(values))
         self.in_size = in_size
         self.out_size = out_size
 
@@ -174,7 +174,7 @@ class HeterogeneousEnsembleModel(AbstractArrayModel):
         in_size, out_size = _model_sizes(values)
         self.ensemble = HeterogeneousFunctionEnsemble(values)
         weights = jnp.ones((len(values),)) if member_weights is None else member_weights
-        self.member_weights = _normalised_weights(jnp.asarray(weights), len(values))
+        self.member_weights = _normalized_weights(jnp.asarray(weights), len(values))
         self.in_size = in_size
         self.out_size = out_size
 
@@ -207,7 +207,7 @@ class SoftVotingModel(AbstractArrayModel):
         self.in_size, self.out_size = _model_sizes(values)
         self.ensemble = HeterogeneousFunctionEnsemble(values)
         raw = jnp.ones((len(values),)) if member_weights is None else member_weights
-        self.member_weights = _normalised_weights(jnp.asarray(raw), len(values))
+        self.member_weights = _normalized_weights(jnp.asarray(raw), len(values))
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         return _weighted_mean(
@@ -519,7 +519,7 @@ class SoftVotingRecipe(AbstractRecipe):
             )
         self.recipes = values
         raw = jnp.ones((len(values),)) if member_weights is None else member_weights
-        self.member_weights = _normalised_weights(jnp.asarray(raw), len(values))
+        self.member_weights = _normalized_weights(jnp.asarray(raw), len(values))
 
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
         root = _require_key(key, "SoftVotingRecipe")

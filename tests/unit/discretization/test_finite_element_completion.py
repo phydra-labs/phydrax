@@ -362,7 +362,7 @@ def test_adaptivity_embedding_partition_and_io_contracts(tmp_path):
         discretization.cell_domain,
         jnp.zeros((4, 2, 2)),
         jnp.full((4, 2), 0.125),
-        jnp.ones((4, 2), dtype=bool),
+        jnp.ones((4, 2), dtype="bool"),
         classification_version="level-set-0",
     )
     enrichment = phx.discretization.FiniteElementEnrichment(

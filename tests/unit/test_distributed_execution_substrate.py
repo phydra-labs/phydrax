@@ -396,7 +396,7 @@ def test_distributed_block_krylov_preserves_per_rhs_evidence() -> None:
         (3,),
         operator_id="five-identity",
     )
-    pairing = DistributedPairing(jnp.ones((3,), dtype=bool))
+    pairing = DistributedPairing(jnp.ones((3,), dtype="bool"))
     right = jnp.asarray([[5.0, 10.0], [10.0, -5.0], [15.0, 20.0]])
 
     result = solve_distributed_block_krylov(

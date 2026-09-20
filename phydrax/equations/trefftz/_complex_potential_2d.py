@@ -24,7 +24,7 @@ from ._core import TRIAL_SPACE_CERTIFICATE_KEY, TrialSpaceCertificate
 def _parameter_count(value: Any, /) -> int:
     trainable, _ = partition_trainable(value)
     return sum(
-        int(leaf.size)
+        leaf.size
         for leaf in jax.tree_util.tree_leaves(trainable)
         if eqx.is_inexact_array(leaf)
     )
@@ -92,7 +92,7 @@ class HarmonicPotential2D(AbstractArrayModel):
             raise ValueError("Harmonic potential requires one input and a valid branch.")
         representation_id = canonical_fingerprint(
             {
-                "kind": "harmonic-holomorphic-potential-2d-v1",
+                "kind": "harmonic-holomorphic-potential-2d",
                 "holomorphic": certificate.certificate_id,
                 "branch": branch_,
             }
@@ -155,7 +155,7 @@ class BiharmonicPotential2D(AbstractArrayModel):
             raise ValueError("Biharmonic potential requires two distinct valid branches.")
         representation_id = canonical_fingerprint(
             {
-                "kind": "goursat-holomorphic-potential-2d-v1",
+                "kind": "goursat-holomorphic-potential-2d",
                 "holomorphic": holomorphic.certificate_id,
                 "phi_branch": phi,
                 "psi_branch": psi,
@@ -237,7 +237,7 @@ class PlaneIsotropicMaterial(StrictModule, NonTrainableState):
         self.hypothesis = hypothesis
         self.material_id = canonical_fingerprint(
             {
-                "kind": "plane-isotropic-material-v1",
+                "kind": "plane-isotropic-material",
                 "lambda": lambda_value,
                 "mu": mu_value,
                 "hypothesis": hypothesis,
@@ -290,7 +290,7 @@ class PlaneElasticityPotential2D(AbstractArrayModel):
         output_size = 5 if output == "mixed" else 3
         representation_id = canonical_fingerprint(
             {
-                "kind": "kolosov-muskhelishvili-potential-2d-v1",
+                "kind": "kolosov-muskhelishvili-potential-2d",
                 "holomorphic": holomorphic.certificate_id,
                 "material": material.material_id,
                 "phi_branch": phi,

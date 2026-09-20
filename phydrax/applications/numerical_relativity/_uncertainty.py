@@ -70,7 +70,7 @@ class NumericalErrorRecord(StrictModule, NonTrainableState):
             )
         bound = jax.lax.stop_gradient(jnp.asarray(bound_host).reshape((-1,)))
         flags = tuple(
-            jnp.asarray(value, dtype=bool)
+            jnp.asarray(value, dtype=jnp.bool_)
             for value in (converged, physically_valid, qualified)
         )
         if any(value.shape != () for value in flags):
@@ -144,16 +144,16 @@ class ModelDiscrepancyRecord(StrictModule, NonTrainableState):
         else:
             factor_host = np.asarray(covariance_factor)
             if np.iscomplexobj(factor_host):
-                raise TypeError("Model discrepancy covariance factors must be real-valued.")
-            factor = jax.lax.stop_gradient(
-                jnp.asarray(factor_host, dtype=mean_.dtype)
-            )
+                raise TypeError(
+                    "Model discrepancy covariance factors must be real-valued."
+                )
+            factor = jax.lax.stop_gradient(jnp.asarray(factor_host, dtype=mean_.dtype))
         if mean_.size == 0 or factor.ndim != 2 or factor.shape[0] != mean_.size:
             raise ValueError(
                 "Discrepancy factor must have one row per nonempty mean value."
             )
         flags = tuple(
-            jnp.asarray(value, dtype=bool)
+            jnp.asarray(value, dtype=jnp.bool_)
             for value in (converged, physically_valid, qualified)
         )
         if any(value.shape != () for value in flags):
@@ -321,9 +321,9 @@ def grhd_recovery_model_evaluation(
     signature = jnp.concatenate(
         (
             jnp.asarray(recovery.status, dtype=jnp.int32).reshape((-1,)),
-            jnp.asarray(
-                recovery.candidates.selected_branch, dtype=jnp.int32
-            ).reshape((-1,)),
+            jnp.asarray(recovery.candidates.selected_branch, dtype=jnp.int32).reshape(
+                (-1,)
+            ),
             jnp.asarray(recovery.atmosphere.applied, dtype=jnp.int32).reshape((-1,)),
         )
     )
@@ -422,16 +422,21 @@ class RelativisticMultifidelityPlan(StrictModule, NonTrainableState):
             full_simulation_correction,
         )
         if any(not isinstance(item, FixedBranchInverseAdapter) for item in components):
-            raise TypeError("Every multifidelity component must be a fixed-branch adapter.")
+            raise TypeError(
+                "Every multifidelity component must be a fixed-branch adapter."
+            )
         if tuple(item.model_kind for item in components) != _MULTIFIDELITY_KINDS:
             raise ValueError(
                 "Multifidelity components must be exact baseline, perturbative, ROM, "
                 "and full-simulation corrections in that order."
             )
-        if len({item.parameter_count for item in components}) != 1 or len(
-            {item.output_count for item in components}
-        ) != 1:
-            raise ValueError("Multifidelity components must share parameter/output shape.")
+        if (
+            len({item.parameter_count for item in components}) != 1
+            or len({item.output_count for item in components}) != 1
+        ):
+            raise ValueError(
+                "Multifidelity components must share parameter/output shape."
+            )
         errors = tuple(numerical_errors)
         if len(errors) != 4 or any(
             item is not None and not isinstance(item, NumericalErrorRecord)
@@ -494,7 +499,9 @@ class RelativisticMultifidelityPlan(StrictModule, NonTrainableState):
             discrepancy_authoritative = self.model_discrepancy.authoritative
         value = native + discrepancy_mean
 
-        error_available = jnp.asarray(all(item is not None for item in self.numerical_errors))
+        error_available = jnp.asarray(
+            all(item is not None for item in self.numerical_errors)
+        )
         error_bounds = [
             jnp.full((self.output_count,), jnp.inf, dtype=native.real.dtype)
             if item is None
@@ -515,9 +522,7 @@ class RelativisticMultifidelityPlan(StrictModule, NonTrainableState):
         term_converged = jnp.stack([item.converged for item in evaluations])
         term_physical = jnp.stack([item.physically_valid for item in evaluations])
         term_qualified = jnp.stack([item.qualified for item in evaluations])
-        term_derivative = jnp.stack(
-            [item.sensitivity_eligible for item in evaluations]
-        )
+        term_derivative = jnp.stack([item.sensitivity_eligible for item in evaluations])
         term_shock_free = jnp.stack([item.shock_free for item in evaluations])
         term_event_free = jnp.stack([item.event_free for item in evaluations])
         term_topology_fixed = jnp.stack([item.topology_fixed for item in evaluations])
@@ -650,9 +655,7 @@ class LearnedClosureCandidate(StrictModule, NonTrainableState):
         differentiation = (
             None
             if differentiation_evidence_id is None
-            else _identifier(
-                differentiation_evidence_id, "differentiation_evidence_id"
-            )
+            else _identifier(differentiation_evidence_id, "differentiation_evidence_id")
         )
         self.model = model
         self.derivative_supported = derivative

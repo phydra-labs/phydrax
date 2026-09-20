@@ -56,7 +56,7 @@ def _trajectory(
     f = jnp.broadcast_to(time + velocity, (count, 2, 3, 17))
     g = jnp.broadcast_to(2.0 * time - velocity, (count, 2, 3, 17))
     U = jnp.broadcast_to(jnp.square(time) + components, (count, 2, 3, 4))
-    validity = np.ones((count,), dtype=bool) if valid is None else valid
+    validity = np.ones((count,), dtype="bool") if valid is None else valid
     return SmoothCompressibleRolloutTrajectory(
         f,
         g,
@@ -155,7 +155,11 @@ def test_complete_parents_are_partitioned_before_any_overlapping_windows():
     assert {
         dataset.partition.assignment_for(sample.sample_id).split
         for sample in dataset.parent_samples
-    } == {"train", "validation", "test"}
+    } == {
+        "train",
+        "validation",
+        "test",
+    }
 
 
 def test_windows_are_contiguous_deterministic_and_reject_bad_anchor_or_horizon():
@@ -266,7 +270,7 @@ def test_native_shapes_dtype_and_bound_identities_are_exact():
             parent.f,
             parent.g,
             parent.U,
-            np.ones((parent.sample_count - 1,), dtype=bool),
+            np.ones((parent.sample_count - 1,), dtype="bool"),
             schema,
             case_id="case",
             trajectory_id="bad-validity",
@@ -294,7 +298,7 @@ def test_native_shapes_dtype_and_bound_identities_are_exact():
 
 
 def test_failed_oracle_parent_is_rejected_whole_and_never_partially_windowed():
-    failed_validity = np.ones((8,), dtype=bool)
+    failed_validity = np.ones((8,), dtype="bool")
     failed_validity[-1] = False
     good = _trajectory(trajectory_id="good", count=8)
     failed = _trajectory(trajectory_id="failed", count=8, valid=failed_validity)

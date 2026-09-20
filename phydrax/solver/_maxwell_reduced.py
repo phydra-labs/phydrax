@@ -67,7 +67,7 @@ class PreparedReducedMaxwellCPML(StrictModule, NonTrainableState):
     ):
         if not isinstance(plan, MaxwellCPMLPlan):
             raise TypeError("plan must be MaxwellCPMLPlan.")
-        shape = tuple(int(value) for value in shape)
+        shape = tuple(shape)
         periodic = tuple(bool(value) for value in periodic)
         dimension = len(shape)
         if (
@@ -153,7 +153,7 @@ class PreparedReducedMaxwellCPML(StrictModule, NonTrainableState):
             }
         )
 
-    def initialize(self, /, *, dtype=float) -> MaxwellCPMLState:
+    def initialize(self, /, *, dtype=jnp.float64) -> MaxwellCPMLState:
         return MaxwellCPMLState(
             tuple(
                 jnp.zeros(term.indices.shape, dtype=dtype) for term in self.electric_terms
@@ -374,8 +374,8 @@ class CompatibleMaxwell2DPlan(StrictModule, NonTrainableState):
             raise ValueError("Reduced Maxwell currently requires uniform axes.")
         spacing = (float(widths[0][0]), float(widths[1][0]))
         shape = (
-            int(grid.structured_axes[0].interval_centers.size),
-            int(grid.structured_axes[1].interval_centers.size),
+            grid.structured_axes[0].interval_centers.size,
+            grid.structured_axes[1].interval_centers.size,
         )
         wave_speed = 1.0 / np.sqrt(epsilon * mu)
         stable = courant / (
@@ -690,7 +690,7 @@ class CompatibleMaxwell1DPlan(StrictModule, NonTrainableState):
             raise ValueError("Reduced 1-D Maxwell parameters/grid are invalid.")
         spacing = float(widths[0])
         stable = courant * spacing * np.sqrt(epsilon * mu)
-        count = int(axis.interval_centers.size)
+        count = axis.interval_centers.size
         prepared_pml = (
             None if pml is None else PreparedReducedMaxwellCPML(pml, (count,), periodic)
         )

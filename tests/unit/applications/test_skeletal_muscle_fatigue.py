@@ -94,4 +94,6 @@ def test_piecewise_constant_update_agrees_with_small_step_limit():
         candidate = prepared.evaluate(refined, 0.7, 0.01)
         refined = commit_liu_brown_yue_2002(candidate, refined)
 
-    np.testing.assert_allclose(_fractions(single), _fractions(refined), rtol=2e-5, atol=2e-6)
+    np.testing.assert_allclose(
+        _fractions(single), _fractions(refined), rtol=2e-5, atol=2e-6
+    )

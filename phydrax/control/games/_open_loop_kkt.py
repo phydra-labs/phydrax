@@ -56,7 +56,7 @@ from ._nonlinear import GameStageCost, GameTerminalCost
 LOCAL_NOMINAL_NASH_STATIONARY = "LOCAL_NOMINAL_NASH_STATIONARY"
 LOCAL_NOMINAL_GNE_STATIONARY = "LOCAL_NOMINAL_GNE_STATIONARY"
 _UNSET = object()
-_METHOD_ID = "control:game:nonlinear-open-loop-private-kkt:single-shooting:v1"
+_METHOD_ID = "control:game:nonlinear-open-loop-private-kkt:single-shooting"
 _STAGE_COST_SEMANTICS = "unweighted-discrete-stage-sum"
 
 
@@ -130,14 +130,13 @@ class NonlinearOpenLoopGameProblem(StrictModule):
         state = jnp.asarray(initial_state)
         if state.ndim < 1 or tuple(state.shape[-1:]) != dynamics.state_shape:
             raise ValueError(
-                "initial_state must have shape case_shape + "
-                f"{dynamics.state_shape}; got {state.shape}."
+                f"initial_state must have shape case_shape + {dynamics.state_shape}; got {state.shape}."
             )
         if jnp.issubdtype(state.dtype, jnp.complexfloating):
             raise TypeError("initial_state must be real-valued.")
         if not jnp.issubdtype(state.dtype, jnp.inexact):
-            state = state.astype(float)
-        cases = tuple(int(size) for size in state.shape[:-1])
+            state = state.astype("float64")
+        cases = tuple(state.shape[:-1])
         if any(size <= 0 for size in cases):
             raise ValueError("case_shape dimensions must be positive.")
 
@@ -325,7 +324,7 @@ def _real_array(value: ArrayLike, name: str, /) -> Array:
     array = jnp.asarray(value)
     if jnp.issubdtype(array.dtype, jnp.complexfloating):
         raise TypeError(f"{name} must be real-valued.")
-    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype(float)
+    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype("float64")
 
 
 def _exact_array(
@@ -347,7 +346,9 @@ def _real_scalar(value: ArrayLike, owner: str, /) -> Array:
         raise ValueError(f"{owner} must return one scalar.")
     if jnp.issubdtype(scalar.dtype, jnp.complexfloating):
         raise TypeError(f"{owner} must return a real scalar.")
-    return scalar if jnp.issubdtype(scalar.dtype, jnp.inexact) else scalar.astype(float)
+    return (
+        scalar if jnp.issubdtype(scalar.dtype, jnp.inexact) else scalar.astype("float64")
+    )
 
 
 def _owned_indices(
@@ -392,8 +393,7 @@ def _multiplier_metadata(
         raise ValueError("Private nonlinear KKT cannot allocate shared multipliers.")
     if len(rows) != constraint_layout.num_residuals or len(set(rows)) != len(rows):
         raise ValueError(
-            "Private multiplier allocation must contain every physical constraint "
-            "residual exactly once."
+            "Private multiplier allocation must contain every physical constraint residual exactly once."
         )
     equality_positions = tuple(i for i, equality in enumerate(equalities) if equality)
     inequality_positions = tuple(
@@ -1035,10 +1035,10 @@ def _feasibility_evidence(
     else:
         dtype = raw.dtype
         maximum_by_block = jnp.zeros(plan.case_shape + (0,), dtype=dtype)
-        block_finite = jnp.ones(plan.case_shape + (0,), dtype=bool)
-        feasible_by_block = jnp.ones(plan.case_shape + (0,), dtype=bool)
-        finite = jnp.ones(plan.case_shape, dtype=bool)
-        feasible = jnp.ones(plan.case_shape, dtype=bool)
+        block_finite = jnp.ones(plan.case_shape + (0,), dtype=jnp.bool_)
+        feasible_by_block = jnp.ones(plan.case_shape + (0,), dtype=jnp.bool_)
+        finite = jnp.ones(plan.case_shape, dtype=jnp.bool_)
+        feasible = jnp.ones(plan.case_shape, dtype=jnp.bool_)
         maximum = jnp.zeros(plan.case_shape, dtype=dtype)
     incidence = plan.constraint_layout.feasibility_incidence.astype(jnp.int32)
     player_valid = (
@@ -1113,7 +1113,7 @@ def _constraint_qualification(
             owners,
             axis=-1,
         )
-        equality = jnp.asarray(tuple(equality_flags), dtype=bool)
+        equality = jnp.asarray(tuple(equality_flags), dtype=jnp.bool_)
         values = jnp.take(raw, rows, axis=-1)
         active = equality | (jnp.abs(values) <= active_tolerance)
         masked = matrix * active[..., :, None]
@@ -1213,7 +1213,7 @@ def solve_prepared_open_loop_game_kkt(
     dynamics_valid = _case_all_finite(controls, case_rank) & _case_all_finite(
         states, case_rank
     )
-    output_finite = jnp.ones(plan.case_shape, dtype=bool)
+    output_finite = jnp.ones(plan.case_shape, dtype=jnp.bool_)
     for value in (
         controls,
         states,

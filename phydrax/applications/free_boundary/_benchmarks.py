@@ -151,11 +151,11 @@ def mullins_sekerka_benchmark(
 ) -> MullinsSekerkaReport:
     """Compare perturbation-mode evolution with linear Mullins–Sekerka theory."""
 
-    prediction = jnp.asarray(predicted_amplitudes, dtype=float)
-    times_ = jnp.asarray(times, dtype=float)
-    modes_ = jnp.asarray(modes, dtype=int)
-    rates = jnp.asarray(growth_rates, dtype=float)
-    initial = jnp.asarray(initial_amplitudes, dtype=float)
+    prediction = jnp.asarray(predicted_amplitudes, dtype=jnp.float64)
+    times_ = jnp.asarray(times, dtype=jnp.float64)
+    modes_ = jnp.asarray(modes, dtype=jnp.int64)
+    rates = jnp.asarray(growth_rates, dtype=jnp.float64)
+    initial = jnp.asarray(initial_amplitudes, dtype=jnp.float64)
     if times_.ndim != 1 or modes_.ndim != 1 or times_.size == 0 or modes_.size == 0:
         raise ValueError("times and modes must be non-empty vectors.")
     if rates.shape != modes_.shape or initial.shape != modes_.shape:
@@ -192,7 +192,7 @@ def topology_event_benchmark(
 
     predicted = jnp.asarray(predicted_component_counts, dtype=jnp.int32)
     reference = jnp.asarray(reference_component_counts, dtype=jnp.int32)
-    times_ = jnp.asarray(times, dtype=float)
+    times_ = jnp.asarray(times, dtype=jnp.float64)
     if predicted.shape != reference.shape or predicted.shape != times_.shape:
         raise ValueError(
             "Topology histories and times must have identical vector shapes."
@@ -211,7 +211,7 @@ def topology_event_benchmark(
         jnp.where(predicted_has == reference_has, 0.0, jnp.inf),
     )
     return TopologyEventReport(
-        component_count_correct=jnp.mean((predicted == reference).astype(float)),
+        component_count_correct=jnp.mean((predicted == reference).astype("float64")),
         event_detected=predicted_has == reference_has,
         event_time_error=time_error,
         event_order_correct=jnp.where(
@@ -242,23 +242,23 @@ def hysing_bubble_benchmark(
 ) -> HysingBubbleReport:
     """Compute the published Hysing area, circularity, centroid, and rise speed."""
 
-    fraction = jnp.asarray(phase_fraction, dtype=float)
-    points = jnp.asarray(coordinates, dtype=float)
-    measures = jnp.asarray(cell_measures, dtype=float)
-    velocity = jnp.asarray(vertical_velocity, dtype=float)
+    fraction = jnp.asarray(phase_fraction, dtype=jnp.float64)
+    points = jnp.asarray(coordinates, dtype=jnp.float64)
+    measures = jnp.asarray(cell_measures, dtype=jnp.float64)
+    velocity = jnp.asarray(vertical_velocity, dtype=jnp.float64)
     if velocity.shape != fraction.shape:
         raise ValueError("vertical_velocity must match phase_fraction.")
     phase = phase_geometry_metrics(fraction, points, measures, mask=mask)
-    contour = jnp.asarray(interface_points, dtype=float)
+    contour = jnp.asarray(interface_points, dtype=jnp.float64)
     if contour.ndim != 2 or contour.shape[0] < 3 or contour.shape[1] != 2:
         raise ValueError("interface_points must contain an ordered closed 2-D contour.")
     edge = jnp.roll(contour, -1, axis=0) - contour
     perimeter = jnp.sum(jnp.sqrt(jnp.sum(edge * edge, axis=-1)))
     circularity = 2.0 * jnp.sqrt(jnp.pi * phase.measure) / perimeter
     active = (
-        jnp.ones_like(fraction, dtype=bool)
+        jnp.ones_like(fraction, dtype=jnp.bool_)
         if mask is None
-        else jnp.asarray(mask, dtype=bool)
+        else jnp.asarray(mask, dtype=jnp.bool_)
     )
     momentum = jnp.sum(jnp.where(active, fraction * measures * velocity, 0.0))
     rise = momentum / jnp.maximum(phase.measure, 1.0e-30)
@@ -289,12 +289,12 @@ def turek_hron_fsi_benchmark(
 ) -> FSIReport:
     """Evaluate Turek–Hron tip, force, and dominant-frequency observables."""
 
-    predicted_tip_ = jnp.asarray(predicted_tip, dtype=float)
-    reference_tip_ = jnp.asarray(reference_tip, dtype=float)
-    predicted_drag_ = jnp.asarray(predicted_drag, dtype=float)
-    reference_drag_ = jnp.asarray(reference_drag, dtype=float)
-    predicted_lift_ = jnp.asarray(predicted_lift, dtype=float)
-    reference_lift_ = jnp.asarray(reference_lift, dtype=float)
+    predicted_tip_ = jnp.asarray(predicted_tip, dtype=jnp.float64)
+    reference_tip_ = jnp.asarray(reference_tip, dtype=jnp.float64)
+    predicted_drag_ = jnp.asarray(predicted_drag, dtype=jnp.float64)
+    reference_drag_ = jnp.asarray(reference_drag, dtype=jnp.float64)
+    predicted_lift_ = jnp.asarray(predicted_lift, dtype=jnp.float64)
+    reference_lift_ = jnp.asarray(reference_lift, dtype=jnp.float64)
     shapes = {
         predicted_tip_.shape,
         reference_tip_.shape,
@@ -334,9 +334,9 @@ def obstacle_complementarity_benchmark(
 ) -> ObstacleComplementarityReport:
     """Keep primal feasibility, dual feasibility, and complementarity separate."""
 
-    value = jnp.asarray(solution, dtype=float)
-    obstacle_ = jnp.asarray(obstacle, dtype=float)
-    dual = jnp.asarray(multiplier, dtype=float)
+    value = jnp.asarray(solution, dtype=jnp.float64)
+    obstacle_ = jnp.asarray(obstacle, dtype=jnp.float64)
+    dual = jnp.asarray(multiplier, dtype=jnp.float64)
     if value.shape != obstacle_.shape or value.shape != dual.shape or value.size == 0:
         raise ValueError("Obstacle solution, obstacle, and multiplier shapes must match.")
     weight = (
@@ -377,10 +377,10 @@ def phase_field_fracture_benchmark(
 ) -> PhaseFieldFractureReport:
     """Evaluate irreversibility, response, energy, and extracted crack geometry."""
 
-    damage = jnp.asarray(damage_history, dtype=float)
-    predicted_curve = jnp.asarray(predicted_load_displacement, dtype=float)
-    reference_curve = jnp.asarray(reference_load_displacement, dtype=float)
-    energy = jnp.asarray(fracture_energy_history, dtype=float)
+    damage = jnp.asarray(damage_history, dtype=jnp.float64)
+    predicted_curve = jnp.asarray(predicted_load_displacement, dtype=jnp.float64)
+    reference_curve = jnp.asarray(reference_load_displacement, dtype=jnp.float64)
+    energy = jnp.asarray(fracture_energy_history, dtype=jnp.float64)
     if damage.ndim < 2 or damage.shape[0] < 2:
         raise ValueError("damage_history requires time and spatial axes.")
     if predicted_curve.shape != reference_curve.shape or predicted_curve.size == 0:
@@ -418,7 +418,7 @@ def trajectory_disjoint_ood_split(
     ids = tuple(str(value) for value in trajectory_ids)
     if not ids or any(not value for value in ids):
         raise ValueError("trajectory_ids must be non-empty strings.")
-    ood = np.asarray(ood_mask, dtype=bool)
+    ood = np.asarray(ood_mask, dtype=np.bool_)
     if ood.shape != (len(ids),):
         raise ValueError("ood_mask must contain one value per case.")
     validation = float(validation_fraction)

@@ -34,8 +34,7 @@ class VirtualElementDirichletConstraint(StrictModule, NonTrainableState):
     def lift(self, values: ArrayLike | Callable[[Array], ArrayLike], /) -> Array:
         if callable(values) and self.trace_kind != "value":
             raise ValueError(
-                "Moment-trace Dirichlet lifts require prescribed DOF moments, "
-                "not point samples."
+                "Moment-trace Dirichlet lifts require prescribed DOF moments, not point samples."
             )
         if callable(values):
             evaluator = cast(Callable[[Array], ArrayLike], values)
@@ -69,7 +68,7 @@ class VirtualElementDirichletConstraint(StrictModule, NonTrainableState):
 
 
 def _component_roots(discretization: VirtualElementDiscretization, /) -> np.ndarray:
-    vertex_count = int(discretization.mesh.coordinates.shape[0])
+    vertex_count = discretization.mesh.coordinates.shape[0]
     parents = np.arange(vertex_count, dtype=np.int32)
 
     def root(value: int) -> int:
@@ -105,7 +104,7 @@ def virtual_element_dirichlet_constraint(
         raise ValueError("Discontinuous L2 virtual elements have no boundary trace.")
     if boundary_mask is not None and domain is not None:
         raise ValueError("Specify boundary_mask or domain, not both.")
-    mask = np.asarray(discretization.dof_map.boundary_dof_mask, dtype=bool)
+    mask = np.asarray(discretization.dof_map.boundary_dof_mask, dtype=np.bool_)
     if domain is not None:
         if domain.kind != "exterior_facet":
             raise ValueError("VEM Dirichlet domains must select exterior facets.")
@@ -129,10 +128,10 @@ def virtual_element_dirichlet_constraint(
                     + (int(edge) + 1) * edge_width
                 ] = True
     elif boundary_mask is not None:
-        mask = np.asarray(boundary_mask, dtype=bool)
+        mask = np.asarray(boundary_mask, dtype=np.bool_)
         if mask.shape != (discretization.dof_map.global_dof_count,):
             raise ValueError("boundary_mask must have global VEM DOF shape.")
-        boundary = np.asarray(discretization.dof_map.boundary_dof_mask, dtype=bool)
+        boundary = np.asarray(discretization.dof_map.boundary_dof_mask, dtype=np.bool_)
         if np.any(mask & ~boundary):
             raise ValueError("boundary_mask may select only VEM boundary-trace DOFs.")
     constrained = np.flatnonzero(mask).astype(np.int32)
@@ -146,12 +145,12 @@ def virtual_element_dirichlet_constraint(
             constrained < discretization.dof_map.vertex_dof_count
         ]
         if {int(roots[index]) for index in constrained_vertices} != component_roots:
-            raise ValueError("VEM Dirichlet constraints must anchor every mesh component.")
+            raise ValueError(
+                "VEM Dirichlet constraints must anchor every mesh component."
+            )
     if discretization.field.element.trace_kind in ("normal", "tangential"):
         edge_width = discretization.field.element.edge_dofs_per_entity
-        trace_modes = (
-            constrained - discretization.dof_map.vertex_dof_count
-        ) % edge_width
+        trace_modes = (constrained - discretization.dof_map.vertex_dof_count) % edge_width
     else:
         trace_modes = np.full(constrained.shape, -1, dtype=np.int32)
     full_space = discretization.field_space.vector_space

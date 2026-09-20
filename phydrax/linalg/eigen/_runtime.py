@@ -332,8 +332,7 @@ def _constraint_state(problem: EigenproblemLike, /) -> tuple[Array, Array]:
     basis = eqx.error_if(
         basis,
         unresolved,
-        "Active constraints are numerically rank-deficient in the metric or "
-        "residual-dual pairing.",
+        "Active constraints are numerically rank-deficient in the metric or residual-dual pairing.",
     )
     return basis, metric_basis
 

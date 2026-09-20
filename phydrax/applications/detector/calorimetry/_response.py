@@ -47,9 +47,9 @@ class CalorimeterResponsePlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(geometry, CalorimeterGeometry):
             raise TypeError("geometry must be CalorimeterGeometry.")
-        gain_ = np.asarray(gain, dtype=float)
-        noise = np.asarray(noise_standard_deviation, dtype=float)
-        crosstalk_ = np.asarray(crosstalk, dtype=float)
+        gain_ = np.asarray(gain, dtype=np.float64)
+        noise = np.asarray(noise_standard_deviation, dtype=np.float64)
+        crosstalk_ = np.asarray(crosstalk, dtype=np.float64)
         count = geometry.cell_count
         if (
             gain_.shape != (count,)

@@ -174,7 +174,7 @@ preserve the accepted `DEMEnergyLedgerState` exactly.
 
 Contact balance loss is a discrete accounting quantity, not automatically pure
 thermodynamic dissipation. Normal viscous, tangential constitutive, rolling, and
-plastic estimates remain separately labelled.
+plastic estimates remain separately labeled.
 
 ## Cached and specialized neighborhoods
 

@@ -12,7 +12,7 @@ from tests.unit.control.test_global_control_search import _quadratic_problem
 
 def _catalog(rows):
     return phx.optim.FiniteProductSpace(
-        phx.optim.FiniteAxis(jnp.asarray(rows, dtype=float))
+        phx.optim.FiniteAxis(jnp.asarray(rows, dtype="float64"))
     )
 
 
@@ -56,7 +56,7 @@ def test_control_candidate_search_finds_exact_catalog_minimum_and_reconstructs()
     assert result.control_id == parameterization.parameterization_id
     assert result.parameterization_id == parameterization.parameterization_id
     assert result.approximation_id == parameterization.approximation_id
-    assert result.method_id == "finite-exhaustive-control-candidate-search-v1"
+    assert result.method_id == "finite-exhaustive-control-candidate-search"
     assert result.candidate_signature == candidates.signature()
     assert result.control_shape == (1,)
     assert result.case_shape == ()

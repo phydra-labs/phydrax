@@ -118,7 +118,7 @@ def _distributed_case(part_count: int, entities_per_part: int) -> dict[str, obje
     pairing_residual = float(
         jnp.abs(jnp.vdot(distributed, cotangent) - jnp.vdot(value, distributed_transpose))
     )
-    communication_bytes = int(halo.phase_send_valid.size * value.dtype.itemsize)
+    communication_bytes = halo.phase_send_valid.size * value.dtype.itemsize
     successful = (
         max(
             forward_error,

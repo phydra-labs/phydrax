@@ -255,7 +255,6 @@ def run_time_integrator_benchmarks(*, steps: int, repeats: int) -> dict[str, Any
     )
 
     return {
-        "schema_version": "phydrax-time-integrator-benchmark-v1",
         "configuration": {"steps": steps, "repeats": repeats},
         "environment": {
             "python": platform.python_version(),

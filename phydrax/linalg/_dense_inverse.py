@@ -23,7 +23,7 @@ def dense_inverse(
     if value.ndim < 2 or value.shape[-2] != value.shape[-1]:
         raise ValueError("dense_inverse requires square trailing matrix axes.")
     if not jnp.issubdtype(value.dtype, jnp.inexact):
-        value = value.astype(float)
+        value = value.astype("float64")
     dimension = value.shape[-1]
     identity = jnp.broadcast_to(jnp.eye(dimension, dtype=value.dtype), value.shape)
     if not positive_definite:

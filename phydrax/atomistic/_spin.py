@@ -36,7 +36,7 @@ class ClassicalSpinState(StrictModule):
         tolerance: float = 1.0e-8,
     ):
         values = jnp.asarray(directions)
-        active = jnp.asarray(active_mask, dtype=bool)
+        active = jnp.asarray(active_mask, dtype=jnp.bool_)
         identifier = str(hamiltonian_id)
         if values.ndim != 2 or values.shape[-1] != 3:
             raise ValueError("Classical spin directions must have shape (site, 3).")
@@ -109,7 +109,7 @@ class ClassicalSpinHamiltonianPlan(StrictModule, NonTrainableState):
             raise ValueError("Classical spin preparation refuses graph overflow.")
         senders = np.asarray(graph.graph.senders, dtype=np.int64)
         receivers = np.asarray(graph.graph.receivers, dtype=np.int64)
-        edge_mask = np.asarray(graph.graph.edge_mask, dtype=bool)
+        edge_mask = np.asarray(graph.graph.edge_mask, dtype=np.bool_)
         if senders.shape != receivers.shape or edge_mask.shape != senders.shape:
             raise ValueError("Atomistic graph edge storage is inconsistent.")
         if senders.ndim != 1:
@@ -126,8 +126,8 @@ class ClassicalSpinHamiltonianPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Atomistic graph endpoint exceeds the prepared system capacity."
             )
-        graph_nodes = np.asarray(graph.graph.node_mask, dtype=bool)
-        site_mask = np.asarray(system.active_mask, dtype=bool)
+        graph_nodes = np.asarray(graph.graph.node_mask, dtype=np.bool_)
+        site_mask = np.asarray(system.active_mask, dtype=np.bool_)
         if graph_nodes.shape != site_mask.shape or not np.array_equal(
             graph_nodes, site_mask
         ):
@@ -208,11 +208,11 @@ class ClassicalSpinHamiltonianPlan(StrictModule, NonTrainableState):
 
     @property
     def site_count(self) -> int:
-        return int(self.site_mask.size)
+        return self.site_mask.size
 
     @property
     def bond_count(self) -> int:
-        return int(self.bond_senders.size)
+        return self.bond_senders.size
 
 
 class PreparedClassicalSpinHamiltonian(StrictModule):
@@ -267,7 +267,7 @@ def _numeric_coefficients(
     bonds = plan.bond_count
     sites = plan.site_count
     exchange_host = (
-        np.zeros((bonds,), dtype=float) if exchange is None else np.asarray(exchange)
+        np.zeros((bonds,), dtype=np.float64) if exchange is None else np.asarray(exchange)
     )
     gamma_host = (
         np.zeros((bonds, 3, 3), dtype=exchange_host.dtype)
@@ -316,7 +316,7 @@ def _numeric_coefficients(
     gamma_scale = max(float(np.max(np.abs(gamma_host), initial=0.0)), 1.0)
     if max(float(transpose_defect), float(trace_defect)) > tolerance * gamma_scale:
         raise ValueError("Gamma exchange tensors must be symmetric and traceless.")
-    active = np.asarray(plan.site_mask, dtype=bool)
+    active = np.asarray(plan.site_mask, dtype=np.bool_)
     if np.any(moments_host[active] <= 0.0):
         raise ValueError("Active classical magnetic moments must be positive.")
     relevant_axes = active & (np.abs(anisotropy_host) > 0.0)

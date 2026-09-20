@@ -114,8 +114,7 @@ class PDEConditionedOperator(AbstractOperatorModel):
     ) -> Array:
         if not isinstance(batch, OperatorBatch):
             raise TypeError(
-                "PDEConditionedOperator.__call_operator_batch__ requires an "
-                "OperatorBatch."
+                "PDEConditionedOperator.__call_operator_batch__ requires an OperatorBatch."
             )
         if self.input_name not in batch.inputs:
             raise ValueError(
@@ -136,8 +135,7 @@ class PDEConditionedOperator(AbstractOperatorModel):
             raise TypeError("PDEConditionedOperator requires a PDEConditionedInput.")
         if self.input_name in x.batch.inputs:
             raise ValueError(
-                "Cannot attach PDE condition: OperatorBatch already contains input "
-                f"{self.input_name!r}."
+                f"Cannot attach PDE condition: OperatorBatch already contains input {self.input_name!r}."
             )
         conditioned = attach_pde_condition(
             x.batch,

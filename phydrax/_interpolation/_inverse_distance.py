@@ -39,7 +39,7 @@ def _candidate_parameter(
     raw = jnp.asarray(value)
     if jnp.issubdtype(raw.dtype, jnp.complexfloating):
         raise TypeError(f"{name} must be real-valued.")
-    parameter = jnp.broadcast_to(raw.astype(float), shape)
+    parameter = jnp.broadcast_to(raw.astype("float64"), shape)
     invalid = ~jnp.isfinite(parameter)
     invalid = invalid | (parameter <= 0.0 if positive else parameter < 0.0)
     return eqx.error_if(
@@ -77,21 +77,20 @@ def inverse_distance_stencil(
     distance_input = jnp.asarray(squared_distances)
     if jnp.issubdtype(distance_input.dtype, jnp.complexfloating):
         raise TypeError("Squared distances must be real-valued.")
-    distances = distance_input.astype(float)
+    distances = distance_input.astype("float64")
     if indices_.shape != distances.shape or indices_.ndim < 1:
         raise ValueError(
-            "Inverse-distance indices and squared_distances must have matching "
-            "shapes ending in a candidate axis."
+            "Inverse-distance indices and squared_distances must have matching shapes ending in a candidate axis."
         )
-    if int(indices_.shape[-1]) <= 0:
+    if indices_.shape[-1] <= 0:
         raise ValueError("Inverse-distance stencils require at least one candidate.")
     if not jnp.issubdtype(indices_.dtype, jnp.integer):
         raise TypeError("Inverse-distance indices must have an integer dtype.")
 
     valid_ = (
-        jnp.ones(indices_.shape, dtype=bool)
+        jnp.ones(indices_.shape, dtype=jnp.bool_)
         if valid is None
-        else jnp.asarray(valid, dtype=bool)
+        else jnp.asarray(valid, dtype=jnp.bool_)
     )
     if valid_.shape != indices_.shape:
         raise ValueError("valid must match the inverse-distance candidate shape.")
@@ -101,7 +100,7 @@ def inverse_distance_stencil(
         "Valid squared distances must be finite and non-negative.",
     )
 
-    candidate_shape = tuple(int(size) for size in indices_.shape)
+    candidate_shape = tuple(indices_.shape)
     exponent = _candidate_parameter(
         "power",
         power,
@@ -143,7 +142,7 @@ def inverse_distance_stencil(
     if snap_policy == "first":
         snap_weights = jax.nn.one_hot(
             nearest,
-            int(indices_.shape[-1]),
+            indices_.shape[-1],
             dtype=distances.dtype,
         )
         snap_weights = snap_weights * valid_.astype(distances.dtype)
@@ -175,9 +174,9 @@ def inverse_distance_stencil(
 
     query_shape = indices_.shape[:-1]
     base_support = (
-        jnp.ones(query_shape, dtype=bool)
+        jnp.ones(query_shape, dtype=jnp.bool_)
         if support is None
-        else jnp.asarray(support, dtype=bool)
+        else jnp.asarray(support, dtype=jnp.bool_)
     )
     if base_support.shape != query_shape:
         raise ValueError("support must match the inverse-distance query shape.")

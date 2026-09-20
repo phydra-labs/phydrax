@@ -43,7 +43,7 @@ class ModelLossTerm(StrictModule, NonTrainableState):
         if not callable(penalty):
             raise TypeError("Model loss penalty must be callable.")
         self.penalty = _ensure_special_kwonly_args(penalty)
-        self.weight = jnp.asarray(weight, dtype=float)
+        self.weight = jnp.asarray(weight, dtype=jnp.float64)
         self.label = None if label is None else str(label)
 
     def __call__(
@@ -55,7 +55,7 @@ class ModelLossTerm(StrictModule, NonTrainableState):
         iter_: Array | None = None,
     ) -> Array:
         value = self.penalty(model, key=key, iter_=iter_)
-        return self.weight * jnp.asarray(value, dtype=float).reshape(())
+        return self.weight * jnp.asarray(value, dtype=jnp.float64).reshape(())
 
 
 class ModelWithLoss(
@@ -89,8 +89,7 @@ class ModelWithLoss(
         bad = tuple(t for t in terms if not isinstance(t, ModelLossTerm))
         if bad:
             raise TypeError(
-                "loss_terms must contain ModelLossTerm instances; got "
-                f"{tuple(type(t).__name__ for t in bad)!r}."
+                f"loss_terms must contain ModelLossTerm instances; got {tuple(type(t).__name__ for t in bad)!r}."
             )
         self.model = model
         self.loss_terms = terms
@@ -153,7 +152,7 @@ class ModelWithLoss(
         return tuple(
             jnp.asarray(
                 term(self.model, key=fold_in_eval_key(key, index), iter_=iter_),
-                dtype=float,
+                dtype=jnp.float64,
             ).reshape(())
             for index, term in enumerate(self.loss_terms)
         )

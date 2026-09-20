@@ -65,7 +65,7 @@ def _problem(*, refinement_ratio: int = 2, coarsen: bool = False):
     )
     fd = phx.discretization.FDAMRHierarchyPlan(hierarchy).prepare()
     initial = fd.initial_topology()
-    tags = jnp.zeros((4, 4), dtype=bool).at[2, 1:3].set(True)
+    tags = jnp.zeros((4, 4), dtype="bool").at[2, 1:3].set(True)
     compilation = fd.compile_topology(initial, (tags,))
     assert compilation.status.successful
     topology = compilation.topology
@@ -394,7 +394,7 @@ def test_high_ratio_topology_preflight_rejects_before_padded_route_allocation(
                 hierarchy.levels[0].maximum_blocks,
                 *hierarchy.levels[0].block_shape,
             ),
-            dtype=bool,
+            dtype="bool",
         ),
     )
     compilation = prepared.fd_hierarchy.compile_topology(
@@ -442,8 +442,9 @@ def test_high_ratio_topology_preflight_rejects_before_padded_route_allocation(
         * local_target_capacity
         * density_transition.leaf_routes.maximum_target_row_width
     )
-    assert padded_overlap_entries > int(
-        density_transition.leaf_routes.relation.source_indices.size
+    assert (
+        padded_overlap_entries
+        > density_transition.leaf_routes.relation.source_indices.size
     )
     insufficient_budget = source.required_bytes + target.required_bytes + estimate - 1
     packed = source.execution.bind_packed_state(

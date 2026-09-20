@@ -77,7 +77,7 @@ def _build_projected_state(
     max_factorization_bytes: int,
     checkpoint: bool,
 ) -> _ProjectedGaussianProcessState:
-    observation_count = int(observation_points.shape[0])
+    observation_count = observation_points.shape[0]
     noise = jnp.broadcast_to(jnp.asarray(noise_scale), (observation_count,))
     effective_variance = noise * noise + jnp.asarray(jitter)
     effective_variance = eqx.error_if(
@@ -93,7 +93,7 @@ def _build_projected_state(
         max_workspace_bytes=max_workspace_bytes,
         checkpoint=checkpoint,
     )
-    mask = jnp.asarray(active_mask, dtype=bool)
+    mask = jnp.asarray(active_mask, dtype=jnp.bool_)
     if mask.shape != (actions.source.size,):
         raise ValueError("Action active_mask must align with action capacity.")
     active_float = mask.astype(effective_variance.dtype)
@@ -142,10 +142,10 @@ def _kernel_matrix_action(
     max_workspace_bytes: int,
     checkpoint: bool,
 ) -> tuple[Array, int, int, int]:
-    left_count = int(left_points.shape[0])
-    right_count = int(right_points.shape[0])
+    left_count = left_points.shape[0]
+    right_count = right_points.shape[0]
     action_count = actions.source.size
-    itemsize = int(jnp.dtype(left_points.dtype).itemsize)
+    itemsize = jnp.dtype(left_points.dtype).itemsize
     bytes_per_row = max(1, (right_count + action_count) * itemsize)
     batch_size = min(left_count, max_workspace_bytes // bytes_per_row)
     if batch_size < 1:
@@ -309,8 +309,8 @@ def _factorize_positive(
     name: str,
     max_factorization_bytes: int,
 ) -> _PositiveFactor:
-    itemsize = int(jnp.dtype(matrix.dtype).itemsize)
-    required_bytes = int(matrix.size) * itemsize
+    itemsize = jnp.dtype(matrix.dtype).itemsize
+    required_bytes = matrix.size * itemsize
     if required_bytes > max_factorization_bytes:
         raise ValueError(
             f"{name} requires {required_bytes} factorization bytes, exceeding "
@@ -334,7 +334,7 @@ def _factorize_positive(
         LinearSolvePolicy(
             DenseCholesky(),
             materialization=MaterializationPolicy(
-                max_entries=max(1, int(matrix.size)),
+                max_entries=max(1, matrix.size),
                 max_bytes=max(1, required_bytes),
             ),
             differentiation=DifferentiationPolicy("mathematical"),
@@ -425,7 +425,7 @@ def _validated_variance(
     tolerance = (
         32.0
         * jnp.finfo(scale.dtype).eps
-        * max(int(scale.shape[0]), int(action_count), 1)
+        * max(scale.shape[0], int(action_count), 1)
         * magnitude
     )
     variance = eqx.error_if(

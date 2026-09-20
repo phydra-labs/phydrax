@@ -85,8 +85,8 @@ class CompactGeometricTarget(StrictModule):
             raise TypeError("evaluate must be callable.")
         if not isinstance(geometry, AbstractStateGeometry):
             raise TypeError("geometry must implement AbstractStateGeometry.")
-        point_shape = tuple(int(size) for size in configuration_shape)
-        local_shape = tuple(int(size) for size in local_coordinate_shape)
+        point_shape = tuple(configuration_shape)
+        local_shape = tuple(local_coordinate_shape)
         if not point_shape or any(size <= 0 for size in point_shape):
             raise ValueError("configuration_shape must contain positive dimensions.")
         if not local_shape or any(size <= 0 for size in local_shape):
@@ -163,11 +163,11 @@ class CompactGroupHamiltonianSampleResult(AbstractChainSampleResult):
 
     @property
     def num_chains(self) -> int:
-        return int(self.log_target.shape[0])
+        return self.log_target.shape[0]
 
     @property
     def num_draws(self) -> int:
-        return int(self.log_target.shape[1])
+        return self.log_target.shape[1]
 
     @property
     def chain_provenance(self) -> str:
@@ -175,7 +175,7 @@ class CompactGroupHamiltonianSampleResult(AbstractChainSampleResult):
 
     @property
     def acceptance_rate(self) -> Array:
-        return jnp.mean(self.accepted.astype(float), axis=1)
+        return jnp.mean(self.accepted.astype("float64"), axis=1)
 
 
 class CompactGroupHamiltonianAdaptationResult(StrictModule):
@@ -199,8 +199,7 @@ def _geometry_kind(target: CompactGeometricTarget, /) -> str:
     ):
         return "pointwise-left-lie-group"
     raise TypeError(
-        "Compact-group HMC supports FlatTorusStateGeometry or pointwise "
-        "LieGroupStateGeometry."
+        "Compact-group HMC supports FlatTorusStateGeometry or pointwise LieGroupStateGeometry."
     )
 
 

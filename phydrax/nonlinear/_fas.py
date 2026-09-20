@@ -575,8 +575,7 @@ class FASNonlinearPreconditioner(AbstractNonlinearUpdate):
                         update_id=self.update_id,
                         plan_id=prepared.plan.plan_id,
                         notes=(
-                            f"cycle={self.policy.kind};"
-                            f"hierarchy={self.hierarchy.hierarchy_id}"
+                            f"cycle={self.policy.kind};hierarchy={self.hierarchy.hierarchy_id}"
                         ),
                     ),
                 ),

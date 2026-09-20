@@ -322,7 +322,7 @@ def _normalize_message(
             ).reshape((-1, 3))
         }
     elif kind is RosMessageKind.LASER_SCAN:
-        ranges = np.asarray(message.ranges, dtype=float)
+        ranges = np.asarray(message.ranges, dtype=np.float64)
         angles = message.angle_min + message.angle_increment * np.arange(ranges.size)
         payload = {
             "ranges": ranges,
@@ -468,7 +468,7 @@ def _lower_record(
             )
         )
     elif record.kind is RosMessageKind.POINT_CLOUD:
-        points = np.asarray(record.payload["points"], dtype=float)
+        points = np.asarray(record.payload["points"], dtype=np.float64)
         contract = SpatialCoordinateContract(
             METER, coordinate_system="cartesian", reference_frame="sensor"
         )

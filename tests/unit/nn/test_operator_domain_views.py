@@ -408,4 +408,4 @@ def test_operator_domain_preflight_rejects_unsupported_geometry_before_execution
     )
 
     with pytest.raises(ValueError, match="UNSUPPORTED_GEOMETRY"):
-        model.predict(view.batch)
+        model.evaluate(view.batch)

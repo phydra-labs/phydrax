@@ -193,10 +193,10 @@ class KWayMPMContactPlan(StrictModule, NonTrainableState):
         valid = graph.valid.reshape((self.maximum_pairs, node_count)).T
         pairs = graph.field_pairs
         mask = (
-            jnp.zeros_like(velocity_, dtype=bool)
+            jnp.zeros_like(velocity_, dtype=jnp.bool_)
             if essential_mask is None
             else jnp.broadcast_to(
-                jnp.asarray(essential_mask, dtype=bool), velocity_.shape
+                jnp.asarray(essential_mask, dtype=jnp.bool_), velocity_.shape
             )
         )
         values = (

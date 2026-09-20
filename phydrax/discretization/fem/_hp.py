@@ -65,8 +65,8 @@ class FiniteElementHPTopology(StrictModule, NonTrainableState):
         kind = cell_kind
         identifier = str(topology_id)
         identifiers = np.asarray(cell_global_ids, dtype=np.int64)
-        allocated_ = np.asarray(allocated, dtype=bool)
-        active_ = np.asarray(active, dtype=bool)
+        allocated_ = np.asarray(allocated, dtype=np.bool_)
+        active_ = np.asarray(active, dtype=np.bool_)
         degrees = np.asarray(cell_degrees, dtype=np.int32)
         dimension = 2 if kind == "quadrilateral" else 3 if kind == "hexahedron" else 0
         children_per_parent = 2**dimension if dimension else 0
@@ -111,9 +111,9 @@ class FiniteElementHPTopology(StrictModule, NonTrainableState):
             else np.asarray(child_slots, dtype=np.int32)
         )
         children_valid = (
-            np.zeros((capacity, children_per_parent), dtype=bool)
+            np.zeros((capacity, children_per_parent), dtype=np.bool_)
             if child_valid is None
-            else np.asarray(child_valid, dtype=bool)
+            else np.asarray(child_valid, dtype=np.bool_)
         )
         if (
             roots.shape != identifiers.shape
@@ -248,9 +248,9 @@ class FiniteElementHPLineage(StrictModule, NonTrainableState):
         target = np.asarray(target_slots, dtype=np.int32)
         relation_names = tuple(str(value) for value in relations)
         valid_ = (
-            np.ones(source.shape, dtype=bool)
+            np.ones(source.shape, dtype=np.bool_)
             if valid is None
-            else np.asarray(valid, dtype=bool)
+            else np.asarray(valid, dtype=np.bool_)
         )
         if (
             not source_id
@@ -346,9 +346,9 @@ class FiniteElementHPWorksetPlan(StrictModule, NonTrainableState):
         identifier = str(topology_id)
         topology_plan = str(topology_plan_id)
         degrees = np.asarray(bucket_degrees, dtype=np.int32)
-        buckets = np.asarray(bucket_valid, dtype=bool)
+        buckets = np.asarray(bucket_valid, dtype=np.bool_)
         slots = np.asarray(cell_slots, dtype=np.int32)
-        valid = np.asarray(cell_valid, dtype=bool)
+        valid = np.asarray(cell_valid, dtype=np.bool_)
         reverse = np.asarray(cell_bucket, dtype=np.int32)
         if (
             not identifier
@@ -423,13 +423,11 @@ def finite_element_hp_workset_plan(
     active = np.asarray(topology.active)
     degrees = np.asarray(topology.cell_degrees)
     capacity = topology.capacity
-    unique_degrees = sorted(
-        {tuple(int(value) for value in degree) for degree in degrees[active]}
-    )
+    unique_degrees = sorted({tuple(degree) for degree in degrees[active]})
     bucket_degrees = np.zeros((capacity, topology.dimension), dtype=np.int32)
-    bucket_valid = np.zeros((capacity,), dtype=bool)
+    bucket_valid = np.zeros((capacity,), dtype=np.bool_)
     slots = np.full((capacity, capacity), -1, dtype=np.int32)
-    valid = np.zeros((capacity, capacity), dtype=bool)
+    valid = np.zeros((capacity, capacity), dtype=np.bool_)
     reverse = np.full((capacity,), -1, dtype=np.int32)
     for bucket, degree in enumerate(unique_degrees):
         members = np.flatnonzero(active & np.all(degrees == degree, axis=1))
@@ -506,9 +504,9 @@ class FiniteElementHPTransferPlan(StrictModule, NonTrainableState):
         target_count = np.asarray(target_dof_count, dtype=np.int32)
         primal_ = np.asarray(primal)
         valid_ = (
-            np.ones(source.shape, dtype=bool)
+            np.ones(source.shape, dtype=np.bool_)
             if valid is None
-            else np.asarray(valid, dtype=bool)
+            else np.asarray(valid, dtype=np.bool_)
         )
         if (
             not source_id

@@ -186,8 +186,7 @@ def _run(case: MolecularCase, seed: int, *, compilation_expected: bool):
             "proposal_id": problem.kernel.proposal.proposal_id,
             "kernel_id": problem.kernel.kernel_id,
             "trace_cost_claim": (
-                "exact coordinate second derivatives; linear in coordinate count "
-                "times derivative-action cost"
+                "exact coordinate second derivatives; linear in coordinate count times derivative-action cost"
             ),
             "resource_admission": {
                 "claim": problem.model.resource_plan.claim,
@@ -249,8 +248,7 @@ def main():
             "relativistic": False,
             "stochastic_trace": False,
             "energy_interpretation": (
-                "finite-sample VMC estimate; upper-bound language requires "
-                "separately established estimator conditions"
+                "finite-sample VMC estimate; upper-bound language requires separately established estimator conditions"
             ),
         },
     }

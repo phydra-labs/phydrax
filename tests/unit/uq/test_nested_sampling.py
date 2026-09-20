@@ -335,7 +335,7 @@ def test_nested_sampling_rejects_nondeterministic_likelihood():
 
     def changing_likelihood(_value):
         calls["count"] += 1
-        return jnp.asarray(calls["count"], dtype=float)
+        return jnp.asarray(calls["count"], dtype="float64")
 
     problem = phx.uq.PosteriorProblem(
         phx.uq.ParameterSpace(jnp.asarray(0.0), priors=phx.uq.Normal(0.0, 1.0)),

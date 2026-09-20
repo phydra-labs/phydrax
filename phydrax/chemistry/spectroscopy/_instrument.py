@@ -165,14 +165,14 @@ class SpectralInstrumentEvidence(StrictModule, NonTrainableState):
     ):
         residuals = jnp.asarray(
             [kernel_normalization_residual, area_residual, finite_window_loss],
-            dtype=float,
+            dtype=jnp.float64,
         ).reshape((3,))
         if bool(jnp.any(~jnp.isfinite(residuals))) or bool(jnp.any(residuals < 0.0)):
             raise ValueError("Instrument residuals must be finite and non-negative.")
         self.kernel_normalization_residual = residuals[0]
         self.area_residual = residuals[1]
         self.finite_window_loss = residuals[2]
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.evidence_id = canonical_fingerprint(
             {
                 "kind": "spectral-instrument-evidence",
@@ -249,7 +249,7 @@ def prepare_spectral_instrument(
     if plan.kind is SpectralInstrumentKind.LINE_PROFILE:
         if kernel is not None:
             raise ValueError("A line-profile instrument does not accept a second kernel.")
-        return PreparedSpectralInstrument(plan, jnp.empty((0,), dtype=float), 0.0)
+        return PreparedSpectralInstrument(plan, jnp.empty((0,), dtype=jnp.float64), 0.0)
     if kernel is None:
         raise ValueError("A stationary instrument requires explicit resolution taps.")
     taps = jnp.asarray(kernel)

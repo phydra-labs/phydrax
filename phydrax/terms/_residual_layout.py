@@ -43,11 +43,7 @@ class ResidualBlockLayout(StrictModule, NonTrainableState):
             raise ValueError("Residual block names must be non-empty.")
         if len(set(names_)) != len(names_):
             raise ValueError("Residual block names must be unique.")
-        sizes_ = (
-            tuple(1 for _ in names_)
-            if sizes is None
-            else tuple(int(size) for size in sizes)
-        )
+        sizes_ = tuple(1 for _ in names_) if sizes is None else tuple(sizes)
         if len(sizes_) != len(names_) or any(size <= 0 for size in sizes_):
             raise ValueError(
                 "Residual block sizes must be positive and align with block names."
@@ -99,15 +95,13 @@ class ResidualBlockLayout(StrictModule, NonTrainableState):
         )
         if self.event_axis >= len(event_positions):
             raise ValueError(
-                f"Residual field has {len(event_positions)} event axes; "
-                f"layout requests event axis {self.event_axis}."
+                f"Residual field has {len(event_positions)} event axes; layout requests event axis {self.event_axis}."
             )
         axis = event_positions[self.event_axis]
         data = jnp.asarray(field.data)
-        if int(data.shape[axis]) != self.event_size:
+        if data.shape[axis] != self.event_size:
             raise ValueError(
-                f"Residual block layout requires event size {self.event_size}, "
-                f"got {data.shape[axis]}."
+                f"Residual block layout requires event size {self.event_size}, got {data.shape[axis]}."
             )
         blocks: list[cx.AxisArray] = []
         start = 0

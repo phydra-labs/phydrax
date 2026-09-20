@@ -32,7 +32,7 @@ def _mixed_layout(dimension=2):
 
 def test_tensor_layout_round_trips_packed_fields_and_schema():
     layout = _mixed_layout()
-    values = jnp.arange(5 * layout.channel_count, dtype=float).reshape(
+    values = jnp.arange(5 * layout.channel_count, dtype="float64").reshape(
         5, layout.channel_count
     )
 
@@ -116,7 +116,7 @@ def test_builtin_finite_groups_have_exact_group_metadata(construct, order, prope
 def test_finite_group_field_actions_compose_for_mixed_tensor_fields_under_jit():
     group = FiniteOrthogonalGroup.d4()
     layout = _mixed_layout()
-    values = jnp.arange(5 * 5 * layout.channel_count, dtype=float).reshape(
+    values = jnp.arange(5 * 5 * layout.channel_count, dtype="float64").reshape(
         5, 5, layout.channel_count
     )
 

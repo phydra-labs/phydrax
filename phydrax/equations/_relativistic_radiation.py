@@ -64,7 +64,7 @@ def _m1_pressure(
     return pressure, flux_norm, unconstrained_flux_factor, eddington
 
 
-class GRGreyM1ClosureEvaluation(StrictModule):
+class GRGrayM1ClosureEvaluation(StrictModule):
     pressure_tensor: Array
     flux_vector: Array
     flux_norm: Array
@@ -77,12 +77,12 @@ class GRGreyM1ClosureEvaluation(StrictModule):
     system_id: str = eqx.field(static=True)
 
 
-class GRGreyM1RadiationSystem(AbstractAdmissibleSystem):
-    """Grey M1 transport and stress energy in a 3+1 frame.
+class GRGrayM1RadiationSystem(AbstractAdmissibleSystem):
+    """Gray M1 transport and stress energy in a 3+1 frame.
 
     The local moment state is ``(E, F_x, F_y, F_z)``. Metric-aware methods
     treat flux as a spatial covector. Matter interaction is owned separately
-    by :class:`GRGreyRadiationInteractionPlan`.
+    by :class:`GRGrayRadiationInteractionPlan`.
     """
 
     scale: RelativityScaleContract
@@ -105,7 +105,7 @@ class GRGreyM1RadiationSystem(AbstractAdmissibleSystem):
         if not isinstance(convention, RelativityConvention):
             raise TypeError("convention must be RelativityConvention.")
         if convention.metric_signature != "mostly_plus":
-            raise ValueError("GR grey M1 requires the mostly-plus convention.")
+            raise ValueError("GR gray M1 requires the mostly-plus convention.")
         physical_light_speed = float(scale.speed_of_light)
         reduced = (
             physical_light_speed
@@ -120,7 +120,7 @@ class GRGreyM1RadiationSystem(AbstractAdmissibleSystem):
             or not np.isfinite(tolerance)
             or tolerance <= 0.0
         ):
-            raise ValueError("GR grey M1 transport controls are invalid.")
+            raise ValueError("GR gray M1 transport controls are invalid.")
         local = MultigroupM1RadiationSystem(
             1,
             3,
@@ -140,7 +140,7 @@ class GRGreyM1RadiationSystem(AbstractAdmissibleSystem):
         self.metric_tolerance = tolerance
         self.system_id = canonical_fingerprint(
             {
-                "kind": "gr-grey-m1-radiation-system",
+                "kind": "gr-gray-m1-radiation-system",
                 "scale": scale.scale_id,
                 "convention": convention.convention_id,
                 "local_system": local.system_id,
@@ -164,7 +164,7 @@ class GRGreyM1RadiationSystem(AbstractAdmissibleSystem):
     def _state(state: ArrayLike, /) -> Array:
         value = jnp.asarray(state)
         if value.shape[-1:] != (4,):
-            raise ValueError("Grey M1 state must have four trailing components.")
+            raise ValueError("Gray M1 state must have four trailing components.")
         return value
 
     def conserved_to_primitive(self, state: Array, /) -> Array:
@@ -178,7 +178,7 @@ class GRGreyM1RadiationSystem(AbstractAdmissibleSystem):
         value = self._state(state)
         axis_ = int(axis)
         if axis_ not in (0, 1, 2):
-            raise ValueError("Grey M1 flux axis must be zero, one, or two.")
+            raise ValueError("Gray M1 flux axis must be zero, one, or two.")
         energy = value[..., 0]
         flux = value[..., 1:]
         identity = jnp.broadcast_to(
@@ -252,7 +252,7 @@ class GRGreyM1RadiationSystem(AbstractAdmissibleSystem):
         flux_covector: ArrayLike,
         geometry: ADMGridGeometry,
         /,
-    ) -> GRGreyM1ClosureEvaluation:
+    ) -> GRGrayM1ClosureEvaluation:
         if not isinstance(geometry, ADMGridGeometry):
             raise TypeError("geometry must be ADMGridGeometry.")
         if (
@@ -266,7 +266,7 @@ class GRGreyM1RadiationSystem(AbstractAdmissibleSystem):
         inverse = geometry.inverse_spatial_metric.astype(energy.dtype)
         cell_shape = geometry.leading_shape
         if energy.shape != cell_shape or flux_covector_.shape != cell_shape + (3,):
-            raise ValueError("Grey M1 moments must match ADM geometry.")
+            raise ValueError("Gray M1 moments must match ADM geometry.")
         flux_vector = contract("...ij,...j->...i", inverse, flux_covector_, backend="jax")
         flux_squared = contract(
             "...i,...i->...", flux_covector_, flux_vector, backend="jax"
@@ -306,7 +306,7 @@ class GRGreyM1RadiationSystem(AbstractAdmissibleSystem):
         derivative_valid = qualified & (
             unconstrained_reduced_flux < 1.0 - 32.0 * jnp.finfo(energy.dtype).eps
         )
-        return GRGreyM1ClosureEvaluation(
+        return GRGrayM1ClosureEvaluation(
             pressure,
             flux_vector,
             flux_norm,
@@ -344,7 +344,7 @@ class GRGreyM1RadiationSystem(AbstractAdmissibleSystem):
         conservation_defect = jnp.zeros_like(energy)
         projection_id = canonical_fingerprint(
             {
-                "kind": "gr-grey-m1-stress-energy-projection",
+                "kind": "gr-gray-m1-stress-energy-projection",
                 "system": self.system_id,
                 "geometry_lineage": geometry.geometry_lineage_id,
             }
@@ -381,7 +381,7 @@ class GRGreyM1RadiationSystem(AbstractAdmissibleSystem):
         metric = geometry.spatial_metric.astype(energy.dtype)
         axis_ = int(axis)
         if axis_ not in (0, 1, 2):
-            raise ValueError("Grey M1 flux axis must be zero, one, or two.")
+            raise ValueError("Gray M1 flux axis must be zero, one, or two.")
         mixed_pressure = contract(
             "...ik,...ka->...ia", metric, closure.pressure_tensor, backend="jax"
         )

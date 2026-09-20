@@ -264,7 +264,7 @@ class G2LocalLogResult(StrictModule):
     ):
         self.coordinates = jnp.asarray(coordinates)
         self.residual = jnp.asarray(residual)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
 
 
 class G2GroupOperations(StrictModule):
@@ -438,7 +438,7 @@ class AlgebraOperatorInverse(StrictModule):
         self.value = jnp.asarray(value)
         self.residual = jnp.asarray(residual)
         self.side = side
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
 
 
 def _regular_matrix(

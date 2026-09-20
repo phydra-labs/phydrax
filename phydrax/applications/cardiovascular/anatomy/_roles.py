@@ -40,10 +40,10 @@ def _components(faces: np.ndarray, /) -> int:
         for first, second in ((face[0], face[1]), (face[1], face[2]), (face[2], face[0])):
             edge = tuple(sorted((int(first), int(second))))
             edge_owners.setdefault(edge, []).append(face_index)
-    neighbours = [set() for _ in range(faces.shape[0])]
+    neighbors = [set() for _ in range(faces.shape[0])]
     for owners in edge_owners.values():
         for first in owners:
-            neighbours[first].update(owner for owner in owners if owner != first)
+            neighbors[first].update(owner for owner in owners if owner != first)
     unseen = set(range(faces.shape[0]))
     count = 0
     while unseen:
@@ -51,7 +51,7 @@ def _components(faces: np.ndarray, /) -> int:
         pending = [unseen.pop()]
         while pending:
             current = pending.pop()
-            attached = unseen.intersection(neighbours[current])
+            attached = unseen.intersection(neighbors[current])
             unseen.difference_update(attached)
             pending.extend(attached)
     return count
@@ -60,13 +60,13 @@ def _components(faces: np.ndarray, /) -> int:
 def _closure_components(vertices: set[int], edges: np.ndarray, /) -> int:
     if not vertices:
         return 0
-    neighbours = {vertex: set() for vertex in vertices}
+    neighbors = {vertex: set() for vertex in vertices}
     for first, second in edges:
         first_ = int(first)
         second_ = int(second)
         if first_ in vertices and second_ in vertices:
-            neighbours[first_].add(second_)
-            neighbours[second_].add(first_)
+            neighbors[first_].add(second_)
+            neighbors[second_].add(first_)
     unseen = set(vertices)
     count = 0
     while unseen:
@@ -74,7 +74,7 @@ def _closure_components(vertices: set[int], edges: np.ndarray, /) -> int:
         pending = [unseen.pop()]
         while pending:
             current = pending.pop()
-            attached = unseen.intersection(neighbours[current])
+            attached = unseen.intersection(neighbors[current])
             unseen.difference_update(attached)
             pending.extend(attached)
     return count
@@ -201,7 +201,7 @@ class BoundaryRoleEvidence(StrictModule, NonTrainableState):
         self.assigned_face_count = jnp.asarray(assigned_face_count, dtype=jnp.int32)
         self.exterior_face_count = jnp.asarray(exterior_face_count, dtype=jnp.int32)
         self.unassigned_face_count = jnp.asarray(unassigned_face_count, dtype=jnp.int32)
-        self.successful = jnp.asarray(successful, dtype=bool)
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_)
 
 
 class CardiacBoundaryRoles(StrictModule, NonTrainableState):
@@ -256,10 +256,10 @@ class CardiacBoundaryRoles(StrictModule, NonTrainableState):
 
         connectivity = mesh.connectivity
         faces = np.asarray(connectivity.faces, dtype=np.int32)
-        exterior_mask = np.asarray(connectivity.boundary_faces, dtype=bool)
+        exterior_mask = np.asarray(connectivity.boundary_faces, dtype=np.bool_)
         owner = np.full((faces.shape[0],), -1, dtype=np.int32)
         role_vertex_masks = np.zeros(
-            (len(normalized), mesh.coordinates.shape[0]), dtype=bool
+            (len(normalized), mesh.coordinates.shape[0]), dtype=np.bool_
         )
         component_counts: list[int] = []
         for role_index, assignment in enumerate(normalized):
@@ -279,8 +279,7 @@ class CardiacBoundaryRoles(StrictModule, NonTrainableState):
             count = component_counts[name_to_index[role]]
             if count != 1:
                 raise ValueError(
-                    f"Boundary role {role!r} must have one edge-connected component; "
-                    f"found {count}."
+                    f"Boundary role {role!r} must have one edge-connected component; found {count}."
                 )
 
         for first, second in profile.disjoint_closure_pairs:
@@ -309,8 +308,7 @@ class CardiacBoundaryRoles(StrictModule, NonTrainableState):
             )
             if count != 1 or shared_edge_count == 0:
                 raise ValueError(
-                    f"Boundary roles {first!r} and {second!r} must share one "
-                    "edge-connected closure component."
+                    f"Boundary roles {first!r} and {second!r} must share one edge-connected closure component."
                 )
             shared_counts.append(count)
 

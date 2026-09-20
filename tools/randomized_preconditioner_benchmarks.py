@@ -27,7 +27,7 @@ def _properties():
 
 
 def _spectrum(kind: str, dimension: int) -> jax.Array:
-    index = jnp.arange(dimension, dtype=float)
+    index = jnp.arange(dimension, dtype="float64")
     if kind == "power":
         return 20.0 / (index + 1.0) ** 2
     if kind == "exponential":
@@ -59,7 +59,7 @@ def _run(kind: str, dimension: int, rank: int, seed: int) -> dict[str, object]:
         ),
         operator_id=f"benchmark:{kind}:{dimension}:shifted",
     )
-    rhs = jnp.sin(jnp.arange(dimension, dtype=float) + 1.0)
+    rhs = jnp.sin(jnp.arange(dimension, dtype="float64") + 1.0)
     builder = phx.linalg.RandomizedNystromPreconditionerBuilder(
         rank,
         oversampling=min(8, dimension - rank),

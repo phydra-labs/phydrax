@@ -62,12 +62,12 @@ def prepare_calorimeter_corpus(
         manifest.require_rights(training_use=True, commercial_use=commercial_use)
         for manifest in manifests
     )
-    showers = np.asarray(cell_energies, dtype=float)
-    context = np.asarray(conditions, dtype=float)
-    ledger_ = np.asarray(ledger, dtype=float)
+    showers = np.asarray(cell_energies, dtype=np.float64)
+    context = np.asarray(conditions, dtype=np.float64)
+    ledger_ = np.asarray(ledger, dtype=np.float64)
     if showers.ndim != 2 or showers.shape[1] != geometry.cell_count:
         raise ValueError("cell_energies must have shape (record, geometry.cell_count).")
-    count = int(showers.shape[0])
+    count = showers.shape[0]
     maximum = int(maximum_records)
     if count < 3 or maximum < 3 or count > maximum:
         raise ValueError("Corpus record count exceeds its finite resource policy.")

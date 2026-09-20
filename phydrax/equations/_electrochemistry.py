@@ -122,10 +122,10 @@ class IdealDiluteElectrochemicalClosure(AbstractElectrochemicalClosure):
                     ].standard_concentration
                     for index in range(schema.species_count)
                 ],
-                dtype=float,
+                dtype=np.float64,
             )
         else:
-            values = np.asarray(standard_concentrations, dtype=float)
+            values = np.asarray(standard_concentrations, dtype=np.float64)
         if (
             values.shape != (schema.species_count,)
             or np.any(~np.isfinite(values))

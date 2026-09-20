@@ -56,20 +56,18 @@ def _rank1_leading_broadcast_op(
     right_arr = jnp.asarray(right)
 
     if left_arr.ndim == 1 and right_arr.ndim == 1:
-        if int(left_arr.shape[0]) != int(right_arr.shape[0]):
+        if left_arr.shape[0] != right_arr.shape[0]:
             return op(left_arr[:, None], right_arr[None, :])
 
     if left_arr.ndim == 1 and right_arr.ndim >= 2:
-        if int(left_arr.shape[0]) == int(right_arr.shape[0]):
-            left_b = left_arr.reshape(
-                (int(left_arr.shape[0]),) + (1,) * (right_arr.ndim - 1)
-            )
+        if left_arr.shape[0] == right_arr.shape[0]:
+            left_b = left_arr.reshape((left_arr.shape[0],) + (1,) * (right_arr.ndim - 1))
             return op(left_b, right_arr)
 
     if right_arr.ndim == 1 and left_arr.ndim >= 2:
-        if int(right_arr.shape[0]) == int(left_arr.shape[0]):
+        if right_arr.shape[0] == left_arr.shape[0]:
             right_b = right_arr.reshape(
-                (int(right_arr.shape[0]),) + (1,) * (left_arr.ndim - 1)
+                (right_arr.shape[0],) + (1,) * (left_arr.ndim - 1)
             )
             return op(left_arr, right_b)
 
@@ -130,7 +128,7 @@ class _ExpectationFieldOp(StrictModule, NonTrainableState):
             raise ValueError(
                 "expectation_field requires an output with a terminal class axis."
             )
-        if int(probabilities_.shape[-1]) != int(self.class_values.shape[0]):
+        if probabilities_.shape[-1] != self.class_values.shape[0]:
             raise ValueError(
                 "expectation_field class_values length must match the terminal "
                 f"output axis, got {self.class_values.shape[0]} and "
@@ -174,8 +172,8 @@ class BinaryFieldEvaluator(StrictModule, BatchEvaluator):
         self.a = a
         self.b = b
         self.op = op
-        self.a_pos = tuple(int(i) for i in a_pos)
-        self.b_pos = tuple(int(i) for i in b_pos)
+        self.a_pos = tuple(a_pos)
+        self.b_pos = tuple(b_pos)
         self.reverse = bool(reverse)
 
     def __call_batch__(
@@ -739,7 +737,7 @@ def expectation_field(
     _require_domain_function(field)
     _require_terminal_axis(axis)
     values = jnp.asarray(class_values)
-    if values.ndim != 1 or int(values.shape[0]) == 0:
+    if values.ndim != 1 or values.shape[0] == 0:
         raise ValueError("class_values must be a nonempty one-dimensional vector.")
     if not bool(jnp.all(jnp.isfinite(values))):
         raise ValueError("class_values must contain only finite values.")

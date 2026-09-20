@@ -12,7 +12,7 @@ import phydrax as phx
 
 
 def _polynomial(coefficients):
-    values = jnp.asarray(coefficients, dtype=float)
+    values = jnp.asarray(coefficients, dtype="float64")
     potential = phx.equations.HolomorphicPolynomialPotential(
         values.shape[0],
         values.shape[1] - 1,

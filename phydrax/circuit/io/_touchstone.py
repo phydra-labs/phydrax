@@ -80,7 +80,7 @@ class TouchstoneData(StrictModule):
         if frequencies.size == 0 or not bool(jnp.all(jnp.isfinite(frequencies))):
             raise ValueError("Touchstone frequencies must be non-empty and finite.")
         reference = jnp.asarray(reference_impedance, dtype=jnp.float64)
-        count = int(matrix.shape[-1])
+        count = matrix.shape[-1]
         if reference.ndim == 0:
             reference = jnp.broadcast_to(reference, (count,))
         if reference.shape != (count,) or not bool(
@@ -111,7 +111,7 @@ class TouchstoneData(StrictModule):
 
     @property
     def port_count(self) -> int:
-        return int(self.scattering.shape[-1])
+        return self.scattering.shape[-1]
 
 
 _UNIT_SCALE = {"HZ": 1.0, "KHZ": 1e3, "MHZ": 1e6, "GHZ": 1e9}

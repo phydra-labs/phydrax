@@ -88,12 +88,12 @@ def trajectory_data_from_fixed_step(
         raise TypeError("state_layout must be a StateLayout.")
 
     times = jnp.asarray(solution.times)
-    valid = jnp.asarray(solution.valid, dtype=bool)
+    valid = jnp.asarray(solution.valid, dtype=jnp.bool_)
     if times.ndim != 1 or valid.shape != times.shape:
         raise ValueError(
             "Fixed-step retained times and validity must be aligned vectors."
         )
-    retained_count = int(times.shape[0])
+    retained_count = times.shape[0]
     if retained_count < 2:
         raise ValueError(
             "A final-only fixed-step rollout is not a trajectory; retain checkpoints "
@@ -103,16 +103,12 @@ def trajectory_data_from_fixed_step(
     expected_shape = (retained_count,) + state_layout.shape
     if states.shape != expected_shape:
         raise ValueError(
-            "projection must return retained_time + state_layout.shape; "
-            f"expected {expected_shape}, got {states.shape}."
+            f"projection must return retained_time + state_layout.shape; expected {expected_shape}, got {states.shape}."
         )
 
     transitions = valid[:-1] & valid[1:]
     if isinstance(solution, FixedStepRolloutResult):
-        default_source = (
-            f"fixed-step-rollout:{solution.problem_id}:{solution.method_id}:"
-            f"{solution.plan_id}"
-        )
+        default_source = f"fixed-step-rollout:{solution.problem_id}:{solution.method_id}:{solution.plan_id}"
     else:
         default_source = f"fixed-step:{solution.problem_id}:{solution.method_id}"
     source = default_source if source_id is None else str(source_id).strip()
@@ -126,8 +122,7 @@ def trajectory_data_from_fixed_step(
         transition_valid=transitions,
         coordinate_id=coordinate_id,
         source_id=(
-            f"{source}:source-geometry:{solution.state_geometry_id}:"
-            f"projection:{identifier}"
+            f"{source}:source-geometry:{solution.state_geometry_id}:projection:{identifier}"
         ),
     )
 
@@ -215,8 +210,7 @@ def trajectory_data_from_differential_solution(
     )
     if not isinstance(solution, supported):
         raise TypeError(
-            "solution must be DAE, differential, delay/memory, rough, or "
-            "controlled differential solver output."
+            "solution must be DAE, differential, delay/memory, rough, or controlled differential solver output."
         )
     derivatives = None
     derivative_valid = None
@@ -245,10 +239,7 @@ def trajectory_data_from_differential_solution(
         sample_shape = base.sample_shape
         state_shape = tuple(base.states.shape[len(sample_shape) + 1 :])
         geometry_id = base.state_geometry_id
-        default_source_id = (
-            f"controlled-differential:{solution.problem_id}:{solution.path_id}:"
-            f"{base.solver_id}:{base.resolved_method}"
-        )
+        default_source_id = f"controlled-differential:{solution.problem_id}:{solution.path_id}:{base.solver_id}:{base.resolved_method}"
         default_coordinate_id = "time"
     elif isinstance(solution, DifferentialSolution):
         states = solution.states

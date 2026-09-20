@@ -89,7 +89,7 @@ class ManifoldTangentMeasureEvidence(StrictModule):
         self.rank_margin = jnp.asarray(rank_margin)
         self.log_volume = jnp.asarray(log_volume)
         self.orientation = jnp.asarray(orientation)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
 
 
 class RiemannianMapMeasureEvidence(StrictModule):
@@ -130,7 +130,7 @@ class RiemannianMapMeasureEvidence(StrictModule):
         self.log_volume = jnp.asarray(log_volume)
         self.hausdorff_jacobian = jnp.asarray(hausdorff_jacobian)
         self.orientation = jnp.asarray(orientation)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
 
 
 class RegularLevelSetManifold(AbstractRiemannianManifold):

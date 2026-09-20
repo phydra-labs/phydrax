@@ -401,7 +401,7 @@ def prepare_belief_propagation(
             raise ValueError(f"Factor group {group_index} does not support max-product.")
         dense_configurations = prod(signature)
         represented = (
-            int(group.configurations.shape[0])
+            group.configurations.shape[0]
             if isinstance(group, EnumeratedFactorGroup)
             else dense_configurations
         )
@@ -413,7 +413,7 @@ def prepare_belief_propagation(
         dense_elements = (
             0
             if isinstance(group, EnumeratedFactorGroup)
-            else int(scope.shape[0]) * dense_configurations
+            else scope.shape[0] * dense_configurations
         )
         dense_total += dense_elements
         if dense_total > resources_.maximum_dense_elements:
@@ -430,13 +430,12 @@ def prepare_belief_propagation(
         scope_host = np.asarray(scope, dtype=np.int32)
         group_layout: list[tuple[int, int, int, int]] = []
         for position, cardinality in enumerate(signature):
-            count = int(scope.shape[0])
+            count = scope.shape[0]
             start = offset
             stop = start + count * cardinality
             if stop > resources_.maximum_message_entries:
                 raise ValueError(
-                    f"Message entries {stop} exceed maximum_message_entries="
-                    f"{resources_.maximum_message_entries}."
+                    f"Message entries {stop} exceed maximum_message_entries={resources_.maximum_message_entries}."
                 )
             group_layout.append((start, stop, count, cardinality))
             if count:
@@ -467,8 +466,7 @@ def prepare_belief_propagation(
         )
     if offset > resources_.maximum_message_entries:
         raise ValueError(
-            f"Message entries {offset} exceed maximum_message_entries="
-            f"{resources_.maximum_message_entries}."
+            f"Message entries {offset} exceed maximum_message_entries={resources_.maximum_message_entries}."
         )
     message_state_indices = (
         np.concatenate(message_indices)
@@ -626,7 +624,7 @@ def _variable_to_factor(
 ) -> Array:
     messages = prepared.precision.accumulation(messages)
     evidence = prepared.precision.accumulation(evidence)
-    state_count = int(prepared.state_variable_indices.shape[0])
+    state_count = prepared.state_variable_indices.shape[0]
     indices = prepared.message_variable_state_indices
     finite = jnp.isfinite(messages)
     finite_sums = segment_sum(jnp.where(finite, messages, 0.0), indices, state_count)
@@ -640,8 +638,8 @@ def _variable_to_factor(
 
 
 def _broadcast_message(values: Array, position: int, arity: int, /) -> Array:
-    shape = [int(values.shape[0])] + [1] * arity
-    shape[position + 1] = int(values.shape[1])
+    shape = [values.shape[0]] + [1] * arity
+    shape[position + 1] = values.shape[1]
     return values.reshape(tuple(shape))
 
 
@@ -860,7 +858,7 @@ def _relax_messages(
 
 
 def _message_residual(current: Array, updated: Array, /) -> tuple[Array, Array]:
-    if int(current.shape[0]) == 0:
+    if current.shape[0] == 0:
         return jnp.asarray(0.0), jnp.asarray(False)
     current_support = jnp.isfinite(current)
     updated_support = jnp.isfinite(updated)
@@ -937,7 +935,7 @@ def _forest_edge_message(
         for position, values in enumerate(incoming):
             if position != target_position:
                 joint = joint + values[configurations[:, position]]
-        target_cardinality = int(incoming[target_position].shape[0])
+        target_cardinality = incoming[target_position].shape[0]
         reduced = []
         for state in range(target_cardinality):
             candidates = jnp.where(
@@ -955,7 +953,7 @@ def _forest_edge_message(
         for position, incoming_values in enumerate(incoming):
             if position != target_position:
                 shape = [1] * arity
-                shape[position] = int(incoming_values.shape[0])
+                shape[position] = incoming_values.shape[0]
                 joint = joint + incoming_values.reshape(tuple(shape))
         axes = tuple(axis for axis in range(arity) if axis != target_position)
         values = (
@@ -1081,7 +1079,7 @@ def _asynchronous_bp_step(
     original = messages
     feasible = jnp.asarray(True)
     finite = jnp.asarray(True)
-    state_count = int(prepared.state_variable_indices.shape[0])
+    state_count = prepared.state_variable_indices.shape[0]
     state_indices = prepared.message_variable_state_indices
     message_finite = jnp.isfinite(messages)
     finite_sums = segment_sum(
@@ -1241,12 +1239,12 @@ def _variable_log_beliefs(prepared, state):
     sums = segment_sum(
         jnp.where(finite, messages, 0.0),
         indices,
-        int(prepared.state_variable_indices.shape[0]),
+        prepared.state_variable_indices.shape[0],
     )
     impossible = segment_sum(
         (~finite).astype(jnp.int32),
         indices,
-        int(prepared.state_variable_indices.shape[0]),
+        prepared.state_variable_indices.shape[0],
     )
     evidence = state.evidence.values
     evidence_finite = jnp.isfinite(evidence)

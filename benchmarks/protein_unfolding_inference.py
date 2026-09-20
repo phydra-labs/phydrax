@@ -139,7 +139,7 @@ def run_case(*, temperature_count, denaturant_count, repeats, posterior_samples)
         "temperature_count": temperature_count,
         "denaturant_count": denaturant_count,
         "channel_replicate_count": 2,
-        "active_observations": int(problem.residual(problem.initial_coordinates).size),
+        "active_observations": problem.residual(problem.initial_coordinates).size,
         "free_parameter_names": problem.parameters.free_names,
         "preparation_seconds": preparation_seconds,
         "residual_compilation": asdict(compilation),

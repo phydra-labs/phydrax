@@ -97,7 +97,7 @@ def infinite_temperature_purification(
     precision=None,
 ) -> LocallyPurifiedDensity:
     """Return the normalized beta=0 product purification of the identity."""
-    dimensions = tuple(int(value) for value in physical_dimensions)
+    dimensions = tuple(physical_dimensions)
     if not dimensions or any(value < 1 for value in dimensions):
         raise ValueError("physical_dimensions must be nonempty and positive.")
     tensors = []
@@ -210,7 +210,7 @@ def finite_temperature_purification(
     real_dtype = state.tensors[0].real.dtype
     term_norms = jnp.full((policy.maximum_order,), jnp.nan, dtype=real_dtype)
     discarded = jnp.full((policy.maximum_order,), jnp.nan, dtype=real_dtype)
-    active = jnp.zeros((policy.maximum_order,), dtype=bool)
+    active = jnp.zeros((policy.maximum_order,), dtype=jnp.bool_)
     status = (
         FiniteThermalStatus.SUCCESS
         if beta_ == 0.0

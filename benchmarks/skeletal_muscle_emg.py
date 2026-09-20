@@ -28,9 +28,9 @@ def _case(unit_count: int, channel_count: int, event_capacity: int) -> dict[str,
         tuple(f"channel-{index}" for index in range(channel_count)),
         template_source_id="benchmark-explicit-template",
     ).prepare()
-    events = jnp.arange(event_capacity, dtype=float)[None, :] * 0.01
+    events = jnp.arange(event_capacity, dtype="float64")[None, :] * 0.01
     events = jnp.broadcast_to(events, (unit_count, event_capacity))
-    mask = jnp.ones(events.shape, dtype=bool)
+    mask = jnp.ones(events.shape, dtype="bool")
     times = jnp.arange(1024) * 0.001
     action = eqx.filter_jit(prepared.synthesize)
     start = time.perf_counter()

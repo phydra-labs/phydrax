@@ -97,18 +97,18 @@ def compute_cell_local_homology(
         raise ValueError("Local homology cell is outside the entity set.")
     if not bool(np.asarray(complex.masks[degree_])[cell]):
         raise ValueError("Local homology cell is not selected in the complex.")
-    cofaces = [np.zeros_like(np.asarray(mask), dtype=bool) for mask in complex.masks]
+    cofaces = [np.zeros_like(np.asarray(mask), dtype=np.bool_) for mask in complex.masks]
     cofaces[degree_][cell] = True
     for current_degree in range(degree_ + 1, complex.max_degree + 1):
         incidence = complex.topology.incidences[current_degree - 1]
-        valid = np.asarray(incidence.relation.valid, dtype=bool)
+        valid = np.asarray(incidence.relation.valid, dtype=np.bool_)
         lower = np.asarray(incidence.relation.source_indices)[valid]
         upper = np.asarray(incidence.relation.target_indices)[valid]
         for lower_cell, upper_cell in zip(lower, upper, strict=True):
             if cofaces[current_degree - 1][int(lower_cell)]:
                 cofaces[current_degree][int(upper_cell)] = True
     complement_masks = tuple(
-        np.asarray(mask, dtype=bool) & ~coface
+        np.asarray(mask, dtype=np.bool_) & ~coface
         for mask, coface in zip(complex.masks, cofaces, strict=True)
     )
     complement = CellSubcomplex(complex.topology, complement_masks)

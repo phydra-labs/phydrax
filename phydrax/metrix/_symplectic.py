@@ -189,9 +189,9 @@ class SymplecticValidationReport(StrictModule):
         maximum_closure_residual: Array,
         minimum_singular_value: Array,
     ):
-        self.valid = jnp.asarray(valid, dtype=bool)
-        self.closed = jnp.asarray(closed, dtype=bool)
-        self.nondegenerate = jnp.asarray(nondegenerate, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
+        self.closed = jnp.asarray(closed, dtype=jnp.bool_)
+        self.nondegenerate = jnp.asarray(nondegenerate, dtype=jnp.bool_)
         self.maximum_closure_residual = jnp.asarray(maximum_closure_residual)
         self.minimum_singular_value = jnp.asarray(minimum_singular_value)
 
@@ -212,9 +212,9 @@ class PoissonValidationReport(StrictModule):
         maximum_skew_residual: Array,
         maximum_jacobi_residual: Array,
     ):
-        self.valid = jnp.asarray(valid, dtype=bool)
-        self.skew = jnp.asarray(skew, dtype=bool)
-        self.jacobi = jnp.asarray(jacobi, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
+        self.skew = jnp.asarray(skew, dtype=jnp.bool_)
+        self.jacobi = jnp.asarray(jacobi, dtype=jnp.bool_)
         self.maximum_skew_residual = jnp.asarray(maximum_skew_residual)
         self.maximum_jacobi_residual = jnp.asarray(maximum_jacobi_residual)
 

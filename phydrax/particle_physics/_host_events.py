@@ -97,7 +97,7 @@ class HostParticleRecord:
         ):
             if value is not None and int(value) < 0:
                 raise ValueError(f"{name} must be nonnegative when present.")
-        color = tuple(int(value) for value in self.color_flow)
+        color = tuple(self.color_flow)
         if len(color) != 2:
             raise ValueError("color_flow must contain two integers.")
         attributes = tuple(self.attributes)
@@ -136,8 +136,8 @@ class HostVertexRecord:
     def __post_init__(self) -> None:
         vertex_id = int(self.vertex_id)
         position = tuple(float(value) for value in self.position)
-        incoming = tuple(int(value) for value in self.incoming_particle_ids)
-        outgoing = tuple(int(value) for value in self.outgoing_particle_ids)
+        incoming = tuple(self.incoming_particle_ids)
+        outgoing = tuple(self.outgoing_particle_ids)
         attributes = tuple(self.attributes)
         if (
             vertex_id < 0
@@ -384,13 +384,13 @@ def pack_host_events(
     vertex_capacity = prepared.plan.vertex_capacity
     event_ids = np.zeros((event_capacity,), dtype=np.int64)
     subevent_ids = np.zeros((event_capacity,), dtype=np.int32)
-    event_active = np.zeros((event_capacity,), dtype=bool)
+    event_active = np.zeros((event_capacity,), dtype=np.bool_)
     pdg_ids = np.zeros((event_capacity, particle_capacity), dtype=np.int32)
     roles = np.zeros((event_capacity, particle_capacity), dtype=np.int32)
     provider_status = np.zeros((event_capacity, particle_capacity), dtype=np.int32)
     momenta = np.zeros((event_capacity, particle_capacity, 4), dtype=np.float64)
     rest_energies = np.zeros((event_capacity, particle_capacity), dtype=np.float64)
-    particle_active = np.zeros((event_capacity, particle_capacity), dtype=bool)
+    particle_active = np.zeros((event_capacity, particle_capacity), dtype=np.bool_)
     mother_indices = np.full((event_capacity, particle_capacity, 2), -1, dtype=np.int32)
     production_vertex_indices = np.full(
         (event_capacity, particle_capacity), -1, dtype=np.int32
@@ -398,8 +398,8 @@ def pack_host_events(
     end_vertex_indices = np.full((event_capacity, particle_capacity), -1, dtype=np.int32)
     color_flow = np.zeros((event_capacity, particle_capacity, 2), dtype=np.int32)
     vertices = np.zeros((event_capacity, vertex_capacity, 4), dtype=np.float64)
-    vertex_active = np.zeros((event_capacity, vertex_capacity), dtype=bool)
-    overflow = np.zeros((event_capacity,), dtype=bool)
+    vertex_active = np.zeros((event_capacity, vertex_capacity), dtype=np.bool_)
+    overflow = np.zeros((event_capacity,), dtype=np.bool_)
     weight_values = np.zeros((event_capacity, len(layout)), dtype=np.float64)
     statuses: list[EventPackingStatus] = []
     attribute_loss_count = 0
@@ -544,7 +544,7 @@ def unpack_particle_events(events: ParticleEventBatch, /) -> tuple[HostEventReco
         vertex_mask = np.asarray(events.vertex_active[event_slot])
         production = np.asarray(events.production_vertex_indices[event_slot])
         ending = np.asarray(events.end_vertex_indices[event_slot])
-        particle_ids = tuple(int(value) for value in np.flatnonzero(particle_mask))
+        particle_ids = tuple(np.flatnonzero(particle_mask))
         vertices: list[HostVertexRecord] = []
         for vertex_slot in np.flatnonzero(vertex_mask):
             incoming = tuple(
@@ -583,10 +583,7 @@ def unpack_particle_events(events: ParticleEventBatch, /) -> tuple[HostEventReco
                 float(events.rest_energies[event_slot, particle_id]),
                 None if production[particle_id] < 0 else int(production[particle_id]),
                 None if ending[particle_id] < 0 else int(ending[particle_id]),
-                tuple(
-                    int(value)
-                    for value in np.asarray(events.color_flow[event_slot, particle_id])
-                ),
+                tuple(np.asarray(events.color_flow[event_slot, particle_id])),
             )
             for particle_id in particle_ids
         )

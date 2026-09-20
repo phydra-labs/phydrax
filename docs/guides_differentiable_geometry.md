@@ -228,7 +228,7 @@ physical reporting or reanalysis route. Topology lowering returns
 `solve_learned_topology_design(design, initial_states, initial_latent,
 reanalysis_plan, initial_reference_state, *, method=None, termination=None,
 args=None)` performs the latent solve—`ReducedMMA` by default—and then
-mandatorily calls the existing `reanalyse_topology_design` protocol from its
+mandatorily calls the existing `reanalyze_topology_design` protocol from its
 `TopologyReanalysisPlan`.
 
 `LearnedTopologyResult.accepted` requires latent solve success, accepted source

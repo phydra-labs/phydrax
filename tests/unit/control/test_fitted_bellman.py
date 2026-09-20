@@ -35,7 +35,9 @@ def _controlled_problem(
     terminal_cost=None,
     problem_id="fitted:linear",
 ):
-    grid = TimeGrid(jnp.arange(num_steps + 1, dtype=float), time_id=f"{problem_id}:time")
+    grid = TimeGrid(
+        jnp.arange(num_steps + 1, dtype="float64"), time_id=f"{problem_id}:time"
+    )
 
     def transition(context, state, action, noise, args):
         del context, args
@@ -78,14 +80,14 @@ def _paths(
     policy_id="frozen:linear",
     realization_ids=None,
 ):
-    values = jnp.asarray(increments, dtype=float)
+    values = jnp.asarray(increments, dtype="float64")
     count = values.shape[0]
     prepared = PreparedControlledNoise(
         values,
         valid=(
-            jnp.ones((count,), dtype=bool)
+            jnp.ones((count,), dtype="bool")
             if validity is None
-            else jnp.asarray(validity, dtype=bool)
+            else jnp.asarray(validity, dtype="bool")
         ),
         realization_ids=(
             tuple(f"{role}:realization:{index}" for index in range(count))

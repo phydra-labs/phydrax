@@ -55,7 +55,7 @@ def test_exact_two_level_dynamic_structure_closes_sum_and_detailed_balance():
     energies = np.asarray([0.0, 1.0])
     probabilities = np.exp(-beta * energies)
     probabilities /= probabilities.sum()
-    operator = np.asarray([[[0.0, 1.0], [1.0, 0.0]]], dtype=complex)
+    operator = np.asarray([[[0.0, 1.0], [1.0, 0.0]]], dtype="complex128")
     result = DynamicStructureFactorPlan(
         beta=beta,
         state_capacity=2,

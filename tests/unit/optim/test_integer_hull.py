@@ -39,7 +39,7 @@ def test_integer_hull_quadratic_matches_exhaustive_cardinality_search():
     for selected in itertools.combinations(range(4), 2):
         features = jnp.asarray(
             [index in selected for index in range(4)],
-            dtype=float,
+            dtype="float64",
         )
         exhaustive.append((float(_quadratic_value(features, target)), selected))
     expected_value, expected = min(exhaustive)

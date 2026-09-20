@@ -62,7 +62,7 @@ class ScaledHEOMTopology(StrictModule):
         self.source_edges = jnp.asarray(sources, dtype=jnp.int32)
         self.target_edges = jnp.asarray(targets, dtype=jnp.int32)
         self.term_edges = jnp.asarray(terms, dtype=jnp.int32)
-        self.upward_edges = jnp.asarray(upward, dtype=bool)
+        self.upward_edges = jnp.asarray(upward, dtype=jnp.bool_)
         self.scaling_factors = jnp.exp(log_factors)
         self.valid = jnp.all(jnp.isfinite(self.scaling_factors)) & jnp.all(
             self.scaling_factors > 0.0
@@ -90,13 +90,11 @@ def prepare_scaled_heom_topology(
     edge_bound = 2 * count * int(term_count)
     if count > int(maximum_auxiliaries):
         raise ValueError(
-            f"HEOM auxiliary capacity exceeded: required {count}, "
-            f"available {maximum_auxiliaries}."
+            f"HEOM auxiliary capacity exceeded: required {count}, available {maximum_auxiliaries}."
         )
     if edge_bound > int(maximum_edges):
         raise ValueError(
-            f"HEOM edge capacity exceeded: required at most {edge_bound}, "
-            f"available {maximum_edges}."
+            f"HEOM edge capacity exceeded: required at most {edge_bound}, available {maximum_edges}."
         )
     hierarchy = HEOMHierarchy(term_count, depth)
     topology = ScaledHEOMTopology(hierarchy, expansion)

@@ -14,7 +14,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from .._evolution import AbstractEvolution, EvolutionTrajectory
 from .._layout import StateLayout
 from .._trajectory import TrajectoryData
@@ -32,8 +32,8 @@ SECTION_NONFINITE = 3
 class AbstractSection(StrictModule):
     """Scalar section function over one declared state layout."""
 
-    state_layout: AbstractAttribute[StateLayout]
-    section_id: AbstractAttribute[str]
+    state_layout: eqx.AbstractVar[StateLayout]
+    section_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def evaluate(
@@ -438,9 +438,9 @@ def find_section_crossings(
         crossing_values = jnp.full((capacity,), jnp.nan)
         bracket_starts = jnp.full((capacity,), jnp.nan)
         bracket_ends = jnp.full((capacity,), jnp.nan)
-        detected = jnp.zeros((capacity,), dtype=bool)
-        valid = jnp.zeros((capacity,), dtype=bool)
-        converged = jnp.zeros((capacity,), dtype=bool)
+        detected = jnp.zeros((capacity,), dtype=jnp.bool_)
+        valid = jnp.zeros((capacity,), dtype=jnp.bool_)
+        converged = jnp.zeros((capacity,), dtype=jnp.bool_)
         iterations = jnp.zeros((capacity,), dtype=jnp.int32)
         statuses = jnp.full((capacity,), SECTION_REFINEMENT_FAILED, dtype=jnp.int32)
         stored = 0

@@ -214,7 +214,7 @@ class ScoreMatchingTerm(AbstractSamplingTerm):
                 raise TypeError("Fixed score matching requires materialized samples.")
             fixed = _as_samples(samples)
             provider = None
-        weight = jnp.asarray(scalar_weight, dtype=float).reshape(())
+        weight = jnp.asarray(scalar_weight, dtype=jnp.float64).reshape(())
         if bool(~jnp.isfinite(weight)) or float(weight) < 0.0:
             raise ValueError("scalar_weight must be finite and nonnegative.")
         self.fixed_samples = fixed
@@ -241,7 +241,6 @@ class ScoreMatchingTerm(AbstractSamplingTerm):
             batch_id=self.label or self.policy.policy_id,
         )
 
-
     def _evaluate_nodes(
         self,
         functions: Mapping[str, DomainFunction],
@@ -263,8 +262,8 @@ class ScoreMatchingTerm(AbstractSamplingTerm):
         state_shape = samples.states.shape[sample_rank:]
         states = jnp.asarray(samples.states.data).reshape((node_count,) + state_shape)
         times = jnp.asarray(samples.times.data).reshape((node_count,))
-        valid = jnp.asarray(samples.valid.data, dtype=bool).reshape((node_count,))
-        log_weights = jnp.asarray(samples.log_weights.data, dtype=float).reshape(
+        valid = jnp.asarray(samples.valid.data, dtype=jnp.bool_).reshape((node_count,))
+        log_weights = jnp.asarray(samples.log_weights.data, dtype=jnp.float64).reshape(
             (node_count,)
         )
         path_indices = jnp.asarray(samples.path_indices.data, dtype=jnp.int32).reshape(
@@ -405,7 +404,7 @@ class ScoreMatchingTerm(AbstractSamplingTerm):
             evaluation.path_indices,
             samples.num_paths,
         )
-        valid_array = jnp.asarray(samples.valid.data, dtype=float)
+        valid_array = jnp.asarray(samples.valid.data, dtype=jnp.float64)
         time_coverage = jnp.mean(
             valid_array,
             axis=tuple(range(valid_array.ndim - 1)),

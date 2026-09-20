@@ -23,4 +23,6 @@ def test_application_portfolios_are_nonempty_honest_and_content_addressed() -> N
     assert all(portfolio.capability_ids for portfolio in portfolios)
     assert all(portfolio.portfolio_id for portfolio in portfolios)
     assert all(not portfolio.ready_for_release_review for portfolio in portfolios)
-    assert all("release-authorization-absent" in portfolio.blockers for portfolio in portfolios)
+    assert all(
+        "release-authorization-absent" in portfolio.blockers for portfolio in portfolios
+    )

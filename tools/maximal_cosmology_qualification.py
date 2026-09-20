@@ -19,7 +19,7 @@ def main() -> None:
     squared = jnp.sum(displacement**2, axis=-1) + 0.01**2
     direct = jnp.sum(
         jnp.where(
-            (~jnp.eye(4, dtype=bool))[..., None],
+            (~jnp.eye(4, dtype="bool"))[..., None],
             masses[None, :, None] * displacement / squared[..., None] ** 1.5,
             0.0,
         ),
@@ -38,14 +38,13 @@ def main() -> None:
         positions,
         jnp.zeros_like(positions),
         masses,
-        jnp.ones((4,), dtype=bool),
+        jnp.ones((4,), dtype="bool"),
     )
     manifold = cosmo.S3ManifoldPlan(2.0)
     point = jnp.asarray([[2.0, 0.0, 0.0, 0.0]])
     tangent = jnp.asarray([[0.0, 0.1, 0.0, 0.0]])
     target = manifold.exponential(point, tangent)
     recovered = manifold.logarithm(point, target)
-
 
     report = {
         "barnes_hut_max_absolute_error": float(bh_error),

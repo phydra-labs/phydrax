@@ -137,7 +137,7 @@ def test_shared_trajectory_data_batches_preserve_discrete_target_dtype():
     ragged_term = RaggedTimeSeriesDataTerm(
         "value",
         domain.component(),
-        jnp.zeros((domain.size, domain.max_length), dtype=bool),
+        jnp.zeros((domain.size, domain.max_length), dtype="bool"),
         sampling=_paired_sampling(8),
         selection="observation_uniform",
     )
@@ -151,7 +151,7 @@ def test_shared_trajectory_data_batches_preserve_discrete_target_dtype():
 )
 def test_ragged_selection_policies_respect_case_subset(selection):
     domain = _regular_domain()
-    targets = jnp.zeros((domain.size, domain.max_length), dtype=bool)
+    targets = jnp.zeros((domain.size, domain.max_length), dtype="bool")
     term = RaggedTimeSeriesClassificationTerm(
         "classify",
         domain.component(),
@@ -185,7 +185,7 @@ def test_hard_targets_reject_linear_interpolation():
 
 def test_soft_multiclass_linear_interpolation_stays_on_simplex():
     domain = _regular_domain()
-    time = jnp.arange(domain.max_length, dtype=float)
+    time = jnp.arange(domain.max_length, dtype="float64")
     probability = jnp.broadcast_to(
         jnp.stack((0.2 + 0.1 * time, 0.8 - 0.1 * time), axis=-1)[None, ...],
         (domain.size, domain.max_length, 2),
@@ -226,7 +226,7 @@ def test_soft_multiclass_linear_rejects_invalid_active_simplex():
 
 def test_multilabel_case_time_grid_retains_case_time_and_label_axes():
     domain = _regular_domain()
-    targets = jnp.zeros((domain.size, domain.max_length, 3), dtype=bool)
+    targets = jnp.zeros((domain.size, domain.max_length, 3), dtype="bool")
     targets = targets.at[..., 0].set(True)
     term = RaggedTimeSeriesClassificationTerm(
         "classify",
@@ -419,7 +419,7 @@ def test_physical_measure_requires_sum_and_preserves_trajectory_mass():
         dt=0.5,
         measure="time_integral_sum",
     )
-    targets = jnp.zeros((domain.size, domain.max_length), dtype=bool)
+    targets = jnp.zeros((domain.size, domain.max_length), dtype="bool")
     with pytest.raises(ValueError, match="Physical.*sum"):
         RaggedTimeSeriesClassificationTerm(
             "classify",

@@ -151,7 +151,7 @@ def test_sparse_stiffness_solver_recovers_path_graph_low_modes():
 
 
 def test_basis_transform_plan_reconstructs_its_modal_subspace_and_differentiates():
-    nodes = jnp.arange(17, dtype=float) / 17.0
+    nodes = jnp.arange(17, dtype="float64") / 17.0
     weights = jnp.full((17,), 1.0 / 17.0)
     plan = BasisTransformPlan(
         (nodes,),

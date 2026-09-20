@@ -56,7 +56,7 @@ class MetricMeasureNormalization(StrictModule):
     ):
         self.mass = jnp.asarray(mass)
         self.log_mass = jnp.asarray(log_mass)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.minimum_log_density = jnp.asarray(minimum_log_density)
         self.maximum_log_density = jnp.asarray(maximum_log_density)
         if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):

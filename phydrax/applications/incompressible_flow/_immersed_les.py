@@ -203,8 +203,7 @@ class FixedImmersedMACLESPlan(StrictModule, NonTrainableState):
             or not np.any(fraction > 0.0)
         ):
             raise ValueError(
-                "cell_fluid_fraction must be finite, floating, lie in [0, 1], and "
-                "contain active fluid."
+                "cell_fluid_fraction must be finite, floating, lie in [0, 1], and contain active fluid."
             )
         capacity = projection.transfer.markers.capacity
         dimension = projection.transfer.dimension
@@ -223,8 +222,7 @@ class FixedImmersedMACLESPlan(StrictModule, NonTrainableState):
                 )
             if marker_wall_normal is None or marker_sample_distance is None:
                 raise ValueError(
-                    "Vector wall stress requires marker_wall_normal and "
-                    "marker_sample_distance."
+                    "Vector wall stress requires marker_wall_normal and marker_sample_distance."
                 )
             normal = np.asarray(marker_wall_normal)
             distance = np.asarray(marker_sample_distance)

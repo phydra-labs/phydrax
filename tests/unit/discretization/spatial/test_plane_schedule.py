@@ -109,7 +109,7 @@ def test_plane_schedule_empty_build_and_atomic_refresh_jit() -> None:
     plan = _plan()
     points = _points()
     build = eqx.filter_jit(plan.build)
-    empty = build(points, active_mask=jnp.zeros((8,), dtype=bool))
+    empty = build(points, active_mask=jnp.zeros((8,), dtype="bool"))
     assert bool(empty.evidence.successful)
     assert int(empty.evidence.active_nodes) == 0
     np.testing.assert_array_equal(empty.logical_point_leaf_slots, -1)

@@ -24,7 +24,7 @@ class PolynomialLimbDarkenedDisk(StrictModule, NonTrainableState):
     model_id: str = eqx.field(static=True)
 
     def __init__(self, coefficients: ArrayLike, /):
-        host = np.asarray(coefficients, dtype=float)
+        host = np.asarray(coefficients, dtype=np.float64)
         if host.ndim != 1 or np.any(~np.isfinite(host)):
             raise ValueError(
                 "Limb-darkening coefficients must be a finite rank-one array."
@@ -45,7 +45,7 @@ class PolynomialLimbDarkenedDisk(StrictModule, NonTrainableState):
         values = np.polynomial.polynomial.polyval(np.asarray(candidates), polynomial)
         if np.any(values < -1.0e-12):
             raise ValueError("Limb-darkening law is negative on the stellar disk.")
-        orders = np.arange(1, host.size + 1, dtype=float)
+        orders = np.arange(1, host.size + 1, dtype=np.float64)
         radial_integral = 0.5 - np.sum(host / ((orders + 1.0) * (orders + 2.0)))
         normalization = 2.0 * np.pi * radial_integral
         if not np.isfinite(normalization) or normalization <= 0.0:
@@ -62,9 +62,9 @@ class PolynomialLimbDarkenedDisk(StrictModule, NonTrainableState):
     def intensity(self, mu: ArrayLike, /) -> Array:
         mu_ = jnp.asarray(mu)
         power = 1.0 - mu_
-        if int(self.coefficients.size) == 0:
+        if self.coefficients.size == 0:
             return jnp.ones_like(mu_)
-        exponents = jnp.arange(1, int(self.coefficients.size) + 1)
+        exponents = jnp.arange(1, self.coefficients.size + 1)
         return 1.0 - jnp.sum(
             self.coefficients * power[..., None] ** exponents,
             axis=-1,
@@ -124,7 +124,7 @@ class CircularOccultationPlan(StrictModule, NonTrainableState):
         separation, ratio, foreground_ = jnp.broadcast_arrays(
             jnp.asarray(projected_separation),
             jnp.asarray(radius_ratio),
-            jnp.asarray(foreground, dtype=bool),
+            jnp.asarray(foreground, dtype=jnp.bool_),
         )
         finite = jnp.isfinite(separation) & jnp.isfinite(ratio)
         domain = finite & (separation >= 0.0) & (ratio >= 0.0)

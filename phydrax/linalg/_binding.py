@@ -28,7 +28,6 @@ class LinearSolveTemplate(StrictModule):
     batch_shape: tuple[int, ...] = eqx.field(static=True)
     device_bindable: bool = eqx.field(static=True)
     rejection_reason: str | None = eqx.field(static=True)
-    schema_version: int = eqx.field(static=True)
     template_id: str = eqx.field(static=True)
 
     def __init__(
@@ -42,13 +41,9 @@ class LinearSolveTemplate(StrictModule):
         target_space_id: str,
         batch_shape: tuple[int, ...],
         rejection_reason: str | None = None,
-        schema_version: int = 1,
     ):
         if not isinstance(plan, LinearSolvePlan):
             raise TypeError("plan must be a LinearSolvePlan.")
-        version = int(schema_version)
-        if version < 1:
-            raise ValueError("schema_version must be positive.")
         reason = None if rejection_reason is None else str(rejection_reason)
         if reason == "":
             raise ValueError("rejection_reason must be non-empty or None.")
@@ -63,7 +58,7 @@ class LinearSolveTemplate(StrictModule):
         target_id = str(target_space_id)
         if not source_id or not target_id:
             raise ValueError("Template source and target space IDs must be non-empty.")
-        batch = tuple(int(size) for size in batch_shape)
+        batch = tuple(batch_shape)
         if any(size < 0 for size in batch):
             raise ValueError("Template batch dimensions must be nonnegative.")
         self.plan = plan
@@ -74,13 +69,11 @@ class LinearSolveTemplate(StrictModule):
         self.batch_shape = batch
         self.device_bindable = bindable
         self.rejection_reason = reason
-        self.schema_version = version
         self.template_id = canonical_fingerprint(
             {
                 "kind": "linear-solve-template",
                 "plan": plan.plan_id,
                 "backend": plan.backend,
-                "schema_version": version,
                 "device_bindable": bindable,
                 "source": source_id,
                 "target": target_id,

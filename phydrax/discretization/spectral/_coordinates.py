@@ -95,13 +95,13 @@ class HermitianSpectralCoordinates(AbstractRealCoordinateMap, NonTrainableState)
         fixed = flat_indices[conjugates == flat_indices]
         representatives = flat_indices[flat_indices < conjugates]
         partners = conjugates[representatives]
-        coordinate_size = int(fixed.size + 2 * representatives.size)
+        coordinate_size = fixed.size + 2 * representatives.size
         coefficient_dtype = jnp.dtype(discretization.plan.precision.coefficient_dtype)
         coordinate_dtype = jnp.empty((), dtype=coefficient_dtype).real.dtype
         state_shape = modal_shape + components
         identifier = canonical_fingerprint(
             {
-                "kind": "hermitian-spectral-coordinates-v1",
+                "kind": "hermitian-spectral-coordinates",
                 "discretization": discretization.prepared_id,
                 "component_shape": list(components),
                 "state_shape": list(state_shape),
@@ -134,7 +134,7 @@ class HermitianSpectralCoordinates(AbstractRealCoordinateMap, NonTrainableState)
             source_shape=state_shape,
             coordinate_shape=(coordinate_size,),
             norm_relation="isometry",
-            projection_kind="hermitian-orthogonal-v1",
+            projection_kind="hermitian-orthogonal",
             map_id=identifier,
         )
         self.source_space = source_space
@@ -147,8 +147,8 @@ class HermitianSpectralCoordinates(AbstractRealCoordinateMap, NonTrainableState)
         self.reality_tolerance = tolerance
         self.full_state_bytes = modal_size * component_count * coefficient_dtype.itemsize
         self.coordinate_state_bytes = coordinate_size * coordinate_dtype.itemsize
-        self.fixed_mode_count = int(fixed.size)
-        self.conjugate_pair_count = int(representatives.size)
+        self.fixed_mode_count = fixed.size
+        self.conjugate_pair_count = representatives.size
         self.coordinate_id = identifier
 
     def validate_state(self, state: ArrayLike, /) -> Array:
@@ -202,8 +202,8 @@ class HermitianSpectralCoordinates(AbstractRealCoordinateMap, NonTrainableState)
 
     def from_real_coordinates(self, coordinates: ArrayLike, /) -> Array:
         values = self.validate_coordinates(coordinates)
-        fixed_count = int(self.fixed_indices.size)
-        pair_count = int(self.representative_indices.size)
+        fixed_count = self.fixed_indices.size
+        pair_count = self.representative_indices.size
         fixed = values[:fixed_count]
         real = values[fixed_count : fixed_count + pair_count]
         imaginary = values[fixed_count + pair_count :]

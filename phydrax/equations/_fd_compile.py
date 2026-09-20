@@ -201,7 +201,7 @@ class _GhostDerivativeRule(StrictModule, NonTrainableState):
             width += 1
         radius = width // 2
         offsets = tuple(range(-radius, radius + 1))
-        nodes = np.asarray(offsets, dtype=float) * float(spacing)
+        nodes = np.asarray(offsets, dtype=np.float64) * float(spacing)
         weights = fornberg_weights(nodes, 0.0, derivative)
         self.axis = str(axis)
         self.axis_index = int(axis_index)
@@ -233,8 +233,7 @@ class _GhostDerivativeRule(StrictModule, NonTrainableState):
         expected[self.axis_index] += self.lower_width + self.upper_width
         if padded.shape != tuple(expected):
             raise ValueError(
-                f"Ghost derivative expected padded shape {tuple(expected)}; "
-                f"got {padded.shape}."
+                f"Ghost derivative expected padded shape {tuple(expected)}; got {padded.shape}."
             )
         result = jnp.zeros(original_shape, dtype=jnp.result_type(padded, self.weights))
         count = original_shape[self.axis_index]
@@ -362,7 +361,7 @@ class _FiniteDifferenceExpressionEvaluator(StrictModule):
                 axis
             ]
             reshape = [1] * len(self.spatial_axes)
-            reshape[axis] = int(values.size)
+            reshape[axis] = values.size
             components.append(
                 jnp.broadcast_to(values.reshape(reshape), self.layout.spatial_shape)
             )
@@ -835,7 +834,7 @@ def compile_finite_difference_pde(
     coordinate_axes_list = []
     cursor = 0
     for coordinate in spatial_coordinates:
-        stop = cursor + int(coordinate.size)
+        stop = cursor + coordinate.size
         if stop > len(grid.axis_names):
             raise ValueError("PDE spatial coordinate rank exceeds the tensor grid rank.")
         coordinate_axes_list.append((coordinate.name, grid.axis_names[cursor:stop]))

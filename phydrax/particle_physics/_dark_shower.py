@@ -85,7 +85,7 @@ class DarkSplittingChannel(StrictModule, NonTrainableState):
         kernel_coefficient: float,
         envelope_coefficient: float,
     ):
-        daughters = tuple(int(value) for value in daughter_pdg_ids)
+        daughters = tuple(daughter_pdg_ids)
         kind = DarkSplittingKernelKind(kernel_kind)
         rule = DarkColorRule(color_rule)
         coefficient = float(kernel_coefficient)
@@ -489,7 +489,7 @@ def evolve_dark_shower_epoch(
         raise TypeError("events must be ParticleEventBatch.")
     uniforms = jnp.asarray(proposal_uniforms, dtype=events.momenta.dtype)
     event_capacity, particle_capacity = events.particle_active.shape
-    vertex_capacity = events.vertex_active.shape[1]
+    events.vertex_active.shape[1]
     if uniforms.shape != (event_capacity, plan.proposal_capacity, 4):
         raise ValueError("proposal_uniforms has incompatible fixed capacity.")
     uniforms = eqx.error_if(
@@ -520,8 +520,8 @@ def evolve_dark_shower_epoch(
     proposal_fractions = jnp.zeros_like(proposal_status, dtype=momenta.dtype)
     proposal_kernel = jnp.zeros_like(proposal_status, dtype=momenta.dtype)
     proposal_envelope = jnp.zeros_like(proposal_status, dtype=momenta.dtype)
-    accepted = jnp.zeros_like(proposal_status, dtype=bool)
-    backpressured = jnp.zeros((event_capacity,), dtype=bool)
+    accepted = jnp.zeros_like(proposal_status, dtype=jnp.bool_)
+    backpressured = jnp.zeros((event_capacity,), dtype=jnp.bool_)
     event_indices = jnp.arange(event_capacity, dtype=jnp.int32)
 
     carry = (
@@ -692,10 +692,10 @@ def evolve_dark_shower_epoch(
             rest_, second_slot, jnp.zeros((event_capacity,), dtype=rest_.dtype)
         )
         occupied_ = scatter_if(
-            occupied_, first_slot, jnp.ones((event_capacity,), dtype=bool)
+            occupied_, first_slot, jnp.ones((event_capacity,), dtype=jnp.bool_)
         )
         occupied_ = scatter_if(
-            occupied_, second_slot, jnp.ones((event_capacity,), dtype=bool)
+            occupied_, second_slot, jnp.ones((event_capacity,), dtype=jnp.bool_)
         )
         child_mothers = jnp.stack((emitter, jnp.full_like(emitter, -1)), axis=1)
         mothers_ = scatter_if(mothers_, first_slot, child_mothers)
@@ -720,10 +720,10 @@ def evolve_dark_shower_epoch(
             jnp.where(publish, False, frontier_[event_indices, emitter])
         )
         frontier_ = scatter_if(
-            frontier_, first_slot, jnp.ones((event_capacity,), dtype=bool)
+            frontier_, first_slot, jnp.ones((event_capacity,), dtype=jnp.bool_)
         )
         frontier_ = scatter_if(
-            frontier_, second_slot, jnp.ones((event_capacity,), dtype=bool)
+            frontier_, second_slot, jnp.ones((event_capacity,), dtype=jnp.bool_)
         )
         branch_scales_ = scatter_if(branch_scales_, first_slot, candidate_scale)
         branch_scales_ = scatter_if(branch_scales_, second_slot, candidate_scale)

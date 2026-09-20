@@ -67,8 +67,7 @@ class LowRankResourcePolicy(StrictModule):
         max_workspace_bytes: int = 512 * 1024 * 1024,
     ):
         values = tuple(
-            int(value)
-            for value in (
+            (
                 max_rank,
                 max_storage_bytes,
                 max_workspace_bytes,
@@ -380,7 +379,7 @@ class LowRankUpdate(StrictModule):
         if route == "dense":
             if left.ndim != 2 or right.shape != left.shape or left.shape[0] != size:
                 raise ValueError("Dense factors must have matching shape (n, rank).")
-            rank = int(left.shape[1])
+            rank = left.shape[1]
             expected_indices = (rank,)
         elif route == "row-indexed":
             if (
@@ -393,7 +392,7 @@ class LowRankUpdate(StrictModule):
                 raise ValueError(
                     "Indexed-row data must have factor shapes (0, rank) and (n, rank)."
                 )
-            rank = int(right.shape[1])
+            rank = right.shape[1]
             expected_indices = (rank,)
         elif route == "column-indexed":
             if (
@@ -406,7 +405,7 @@ class LowRankUpdate(StrictModule):
                 raise ValueError(
                     "Indexed-column data must have factor shapes (n, rank) and (0, rank)."
                 )
-            rank = int(left.shape[1])
+            rank = left.shape[1]
             expected_indices = (rank,)
         else:
             if left.shape != (size, 2) or right.shape != (size, 2):
@@ -960,12 +959,12 @@ def dense_low_rank_update(
     left, right = jnp.asarray(left_factor), jnp.asarray(right_factor)
     if left.ndim != 2 or right.shape != left.shape:
         raise ValueError("Dense factors must have matching shape (n, rank).")
-    rank = int(left.shape[1])
+    rank = left.shape[1]
     return LowRankUpdate(
         left,
         right,
         jnp.full((rank,), -1, dtype=jnp.int32),
-        dimension=int(left.shape[0]),
+        dimension=left.shape[0],
         route="dense",
     )
 
@@ -981,7 +980,7 @@ def row_low_rank_update(
         raise ValueError(
             "rows must have shape (rank, n) matching one-dimensional indices."
         )
-    rank, dimension = (int(value) for value in rows_.shape)
+    rank, dimension = (value for value in rows_.shape)
     return LowRankUpdate(
         jnp.zeros((0, rank), dtype=rows_.dtype),
         jnp.swapaxes(rows_, 0, 1),
@@ -1002,7 +1001,7 @@ def column_low_rank_update(
         raise ValueError(
             "columns must have shape (n, rank) matching one-dimensional indices."
         )
-    dimension, rank = (int(value) for value in columns_.shape)
+    dimension, rank = (value for value in columns_.shape)
     return LowRankUpdate(
         columns_,
         jnp.zeros((0, rank), dtype=columns_.dtype),
@@ -1022,7 +1021,7 @@ def skew_row_column_low_rank_update(
     index_ = jnp.asarray(index, dtype=jnp.int32)
     if row.ndim != 1 or index_.shape != ():
         raise ValueError("row_delta must be one-dimensional and index must be scalar.")
-    dimension = int(row.shape[0])
+    dimension = row.shape[0]
     zeros = jnp.zeros_like(row)
     left = jnp.stack((zeros, -row), axis=1)
     right = jnp.stack((row, zeros), axis=1)
@@ -1200,8 +1199,7 @@ def propose_low_rank_update(
         value = eqx.error_if(
             value,
             status != int(LowRankDeterminantStatus.SUCCESS),
-            "Low-rank determinant proposal failed; use status failure mode for "
-            "diagnostics.",
+            "Low-rank determinant proposal failed; use status failure mode for diagnostics.",
         )
     return LowRankDeterminantResult(
         value=value,
@@ -1343,10 +1341,10 @@ def accept_low_rank_update(
         & (proposal.provenance.active_rank == sequence.active_rank)
         & (proposal.provenance.accepted_count == sequence.accepted_count)
     )
-    accepted_ = jnp.asarray(accepted, dtype=bool)
+    accepted_ = jnp.asarray(accepted, dtype=jnp.bool_)
     if accepted_.shape != ():
         raise ValueError("accepted must be scalar.")
-    versions_match = jnp.asarray(versions_match, dtype=bool)
+    versions_match = jnp.asarray(versions_match, dtype=jnp.bool_)
     selected = accepted_ & proposal.successful & versions_match & source_matches
 
     def perform(_: None) -> PreparedLowRankSequence:
@@ -1475,7 +1473,7 @@ def _sequence_base_determinant(
         return (
             sign.astype(sign_dtype),
             stored_log_abs.astype(log_dtype),
-            jnp.asarray(available, dtype=bool),
+            jnp.asarray(available, dtype=jnp.bool_),
         )
     return (
         jnp.ones((), dtype=sign_dtype),
@@ -1676,8 +1674,7 @@ def _prepare_from_base(
         inverse_left = eqx.error_if(
             inverse_left,
             base_failed,
-            "The base solve failed while preparing inverse actions on the "
-            "low-rank factor.",
+            "The base solve failed while preparing inverse actions on the low-rank factor.",
         )
     inverse_left = jnp.where(base_failed, jnp.zeros_like(inverse_left), inverse_left)
     correction_matrix = jnp.eye(operator.rank, dtype=operator.core.dtype) + contract(

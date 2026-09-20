@@ -25,7 +25,7 @@ def enumerated_joint_scores(
     for position, values in enumerate(incoming):
         indices = jnp.broadcast_to(
             group.configurations[:, position][None, :],
-            (int(values.shape[0]), int(group.configurations.shape[0])),
+            (values.shape[0], group.configurations.shape[0]),
         )
         scores = scores + jnp.take_along_axis(values, indices, axis=-1)
     return scores
@@ -49,7 +49,7 @@ def enumerated_factor_messages(
                 continue
             indices = jnp.broadcast_to(
                 group.configurations[:, position][None, :],
-                (int(values.shape[0]), int(group.configurations.shape[0])),
+                (values.shape[0], group.configurations.shape[0]),
             )
             scores = scores + jnp.take_along_axis(values, indices, axis=-1)
         state_ids = group.configurations[:, target]

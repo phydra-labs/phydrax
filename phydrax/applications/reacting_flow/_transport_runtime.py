@@ -239,7 +239,7 @@ class TransportPropertyReusePlan(StrictModule, NonTrainableState):
     ) -> TransportPropertyReuseState:
         if candidate.plan_id != self.plan_id or accepted.plan_id != self.plan_id:
             raise ValueError("Transport reuse state/candidate belongs to another plan.")
-        decision = jnp.asarray(commit, dtype=bool)
+        decision = jnp.asarray(commit, dtype=jnp.bool_)
         if decision.shape != ():
             raise ValueError("Transport reuse commit decision must be scalar.")
         return jax.tree.map(

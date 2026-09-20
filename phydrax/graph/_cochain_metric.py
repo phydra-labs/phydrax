@@ -70,11 +70,10 @@ def cochain_metric_reduce(
     if entity_mask is None:
         active = graph_id >= 0
     else:
-        active = jnp.asarray(entity_mask, dtype=bool)
+        active = jnp.asarray(entity_mask, dtype=jnp.bool_)
         if active.shape != value_array.shape:
             raise ValueError(
-                f"entity_mask shape {active.shape!r} must match values "
-                f"{value_array.shape!r}."
+                f"entity_mask shape {active.shape!r} must match values {value_array.shape!r}."
             )
         active = active & (graph_id >= 0)
     safe_graph_id = jnp.where(active, graph_id, 0)
@@ -88,8 +87,7 @@ def cochain_metric_reduce(
         )
         if time_weight.shape != value_array.shape:
             raise ValueError(
-                "segment_weight shape must match values; "
-                f"got {time_weight.shape!r} and {value_array.shape!r}."
+                f"segment_weight shape must match values; got {time_weight.shape!r} and {value_array.shape!r}."
             )
 
     reduced_values = precision_.accumulation(value_array)

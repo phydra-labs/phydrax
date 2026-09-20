@@ -93,7 +93,7 @@ def build_workflow():
         differentiation="native-parameter",
     )
     coordinates = tuple(
-        (jnp.arange(count_, dtype=float) + 0.5) / count_ for count_ in shape
+        (jnp.arange(count_, dtype="float64") + 0.5) / count_ for count_ in shape
     )
     mesh = jnp.meshgrid(*coordinates, indexing="ij")
     white_noise = sum(

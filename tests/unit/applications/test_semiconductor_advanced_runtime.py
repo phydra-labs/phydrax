@@ -266,7 +266,7 @@ def test_declared_quasi_fermi_high_field_law_reduces_only_nonequilibrium_flux():
     assert np.all(np.abs(np.asarray(saturated_flux)) < np.abs(np.asarray(reference_flux)))
 
 
-def test_equilibrium_incomplete_ionization_is_rejected_by_dynamic_analyses():
+def test_equilibrium_incomplete_ionization_is_rejected_by_dynamic_analyzes():
     bands = _bands(
         "freezeout-bands", 0.56, -0.56, 2.8e25, 1.04e25, temperature_range=(50.0, 500.0)
     )

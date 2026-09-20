@@ -101,7 +101,7 @@ def _decoded_bytes(source) -> int:
             return sum(size(item) for item in value.values())
         if isinstance(value, (tuple, list)):
             return sum(size(item) for item in value)
-        return 0 if value is None else int(np.asarray(value).nbytes)
+        return 0 if value is None else np.asarray(value).nbytes
 
     return sum(
         size(value)

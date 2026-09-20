@@ -179,13 +179,13 @@ class SymmetricWaringProblem(StrictModule):
         values = jnp.asarray(tensor)
         if values.ndim < 3:
             raise ValueError("A symmetric Waring tensor must have order at least three.")
-        if any(int(size) != int(values.shape[0]) for size in values.shape):
+        if any(size != values.shape[0] for size in values.shape):
             raise ValueError("Every symmetric tensor mode must have one dimension.")
-        dimension = int(values.shape[0])
+        dimension = values.shape[0]
         if dimension < 2:
             raise ValueError("A symmetric Waring tensor dimension must be at least two.")
         if not jnp.issubdtype(values.dtype, jnp.inexact):
-            values = values.astype(float)
+            values = values.astype("float64")
         host = np.asarray(values)
         if not np.all(np.isfinite(host)):
             raise ValueError("Symmetric Waring tensor entries must be finite.")
@@ -210,7 +210,7 @@ class SymmetricWaringProblem(StrictModule):
         identifier = (
             canonical_fingerprint(
                 {
-                    "kind": "symmetric-waring-problem-v1",
+                    "kind": "symmetric-waring-problem",
                     "rank": rank_,
                     "tensor": array_tree_fingerprint(host),
                 }
@@ -311,14 +311,12 @@ class SymmetricWaringPlan(StrictModule):
             raise TypeError("refinement must be a SymmetricWaringRefinement.")
         if not isinstance(cost, SymmetricWaringCostEstimate):
             raise TypeError("cost must be a SymmetricWaringCostEstimate.")
-        axes = tuple(int(axis) for axis in chart_axes)
+        axes = tuple(chart_axes)
         if not axes or len(set(axes)) != len(axes):
             raise ValueError("chart_axes must be nonempty and unique.")
         if any(axis < 0 or axis >= problem.dimension for axis in axes):
             raise ValueError("chart_axes contains an out-of-range tensor axis.")
-        exponents = tuple(
-            tuple(int(value) for value in row) for row in quotient_exponents
-        )
+        exponents = tuple(tuple(row) for row in quotient_exponents)
         if any(
             len(row) != problem.dimension - 1 or any(value < 0 for value in row)
             for row in exponents
@@ -340,7 +338,7 @@ class SymmetricWaringPlan(StrictModule):
         self.cost = cost
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "symmetric-waring-plan-v1",
+                "kind": "symmetric-waring-plan",
                 "problem": problem.problem_id,
                 "charts": list(axes),
                 "quotient_degree": self.quotient_degree,
@@ -404,17 +402,17 @@ class SymmetricWaringEvidence(StrictModule):
         self.observed_hankel_rank = int(observed_hankel_rank)
         self.chart_axis = int(chart_axis)
         self.quotient_degree = int(quotient_degree)
-        self.basis_indices = tuple(int(index) for index in basis_indices)
+        self.basis_indices = tuple(basis_indices)
         self.hankel_condition = jnp.asarray(hankel_condition)
         self.commutator_defect = jnp.asarray(commutator_defect)
         self.joint_diagonalization_defect = jnp.asarray(joint_diagonalization_defect)
         self.joint_spectrum_separation = jnp.asarray(joint_spectrum_separation)
         self.algebraic_relative_residual = jnp.asarray(algebraic_relative_residual)
         self.final_relative_residual = jnp.asarray(final_relative_residual)
-        self.path_accepted = jnp.asarray(path_accepted, dtype=bool)
-        self.physical_accepted = jnp.asarray(physical_accepted, dtype=bool)
+        self.path_accepted = jnp.asarray(path_accepted, dtype=jnp.bool_)
+        self.physical_accepted = jnp.asarray(physical_accepted, dtype=jnp.bool_)
         self.refinement_attempted = bool(refinement_attempted)
-        self.refinement_accepted = jnp.asarray(refinement_accepted, dtype=bool)
+        self.refinement_accepted = jnp.asarray(refinement_accepted, dtype=jnp.bool_)
         self.refinement_status = jnp.asarray(refinement_status, dtype=jnp.int32)
         self.provider = str(provider)
         self.detail = str(detail)
@@ -484,7 +482,7 @@ class SymmetricWaringResult(StrictModule):
 
     @property
     def rank(self) -> int:
-        return int(self.weights.shape[0])
+        return self.weights.shape[0]
 
 
 def _positive_integer(value: int, name: str, /) -> int:

@@ -58,10 +58,7 @@ def test_meshio_quadratic_triangle_preserves_coordinate_dofs(tmp_path):
         coordinate_spec=imported.coordinate_spec,
     ).prepare()
     system = EulerSystem(2)
-    exterior = tuple(
-        int(value)
-        for value in np.asarray(discretization.exterior_facet_domain.entity_indices)
-    )
+    exterior = tuple(np.asarray(discretization.exterior_facet_domain.entity_indices))
     boundaries = FiniteElementBoundarySet(
         discretization,
         {"outflow": (exterior, ExtrapolationBoundary())},
@@ -120,10 +117,7 @@ def test_curved_mixed_mortar_uses_both_high_order_coordinate_traces(tmp_path):
         ),
         coordinate_spec=imported.coordinate_spec,
     ).prepare()
-    exterior = tuple(
-        int(value)
-        for value in np.asarray(discretization.exterior_facet_domain.entity_indices)
-    )
+    exterior = tuple(np.asarray(discretization.exterior_facet_domain.entity_indices))
     boundaries = FiniteElementBoundarySet(
         discretization,
         {"outflow": (exterior, ExtrapolationBoundary())},

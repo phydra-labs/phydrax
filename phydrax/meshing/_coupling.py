@@ -192,8 +192,8 @@ class PeriodicCoupling(_PointPairCoupling):
             source, target, source_scope, target_scope, source_ids
         )
         matrix, offset = (
-            np.asarray(rotation, dtype=float),
-            np.asarray(translation, dtype=float),
+            np.asarray(rotation, dtype=np.float64),
+            np.asarray(translation, dtype=np.float64),
         )
         dimension = source.ambient_dimension
         if (
@@ -263,7 +263,7 @@ class ContactCoupling(_PointPairCoupling):
         rows, left, right = _point_pairs(
             source, target, source_scope, target_scope, source_ids
         )
-        normal = np.asarray(normals, dtype=float)
+        normal = np.asarray(normals, dtype=np.float64)
         distance = float(clearance)
         if (
             normal.shape != right.shape
@@ -347,7 +347,10 @@ class OversetCoupling(MeshCoupling):
         tol = _tolerance(tolerance)
         if tol >= 1:
             raise ValueError("Overset normalization tolerance must be smaller than one.")
-        donors, weights = np.asarray(donor_ids), np.asarray(donor_weights, dtype=float)
+        donors, weights = (
+            np.asarray(donor_ids),
+            np.asarray(donor_weights, dtype=np.float64),
+        )
         if (
             donors.ndim != 2
             or donors.shape[0] != target_scope.entity_ids.size

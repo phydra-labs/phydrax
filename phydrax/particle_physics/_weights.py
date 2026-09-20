@@ -102,9 +102,9 @@ class EventWeightSet(StrictModule, NonTrainableState):
         if sum(kind is WeightVariationKind.NOMINAL for kind in kinds) != 1:
             raise ValueError("Exactly one nominal weight is required.")
         active = (
-            jnp.ones((values_.shape[0],), dtype=bool)
+            jnp.ones((values_.shape[0],), dtype=jnp.bool_)
             if event_active is None
-            else jnp.asarray(event_active, dtype=bool)
+            else jnp.asarray(event_active, dtype=jnp.bool_)
         )
         if active.shape != (values_.shape[0],):
             raise ValueError("event_active must align with the event axis.")
@@ -116,8 +116,8 @@ class EventWeightSet(StrictModule, NonTrainableState):
         self.correlation_groups = groups
         self.systematic_source_ids = sources
         self.nominal_index = nominal_index
-        self.event_capacity = int(values_.shape[0])
-        self.weight_count = int(values_.shape[1])
+        self.event_capacity = values_.shape[0]
+        self.weight_count = values_.shape[1]
         self.weight_set_id = canonical_fingerprint(
             {
                 "kind": "hep-event-weight-set",
@@ -173,14 +173,14 @@ def summarize_event_weights(
     selected_ = (
         weights.event_active
         if selected is None
-        else jnp.asarray(selected, dtype=bool) & weights.event_active
+        else jnp.asarray(selected, dtype=jnp.bool_) & weights.event_active
     )
     if selected_.shape != (weights.event_capacity,):
         raise ValueError("selected must align with event capacity.")
     overflow_ = (
-        jnp.zeros((weights.event_capacity,), dtype=bool)
+        jnp.zeros((weights.event_capacity,), dtype=jnp.bool_)
         if overflow is None
-        else jnp.asarray(overflow, dtype=bool)
+        else jnp.asarray(overflow, dtype=jnp.bool_)
     )
     if overflow_.shape != (weights.event_capacity,):
         raise ValueError("overflow must align with event capacity.")

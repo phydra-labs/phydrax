@@ -48,7 +48,7 @@ class SparseVariationalGaussianState(StrictModule):
             raise ValueError(
                 "inducing_points must have shape (M, input_size) with M > 0."
             )
-        count = int(inducing.shape[0])
+        count = inducing.shape[0]
         if mean_array.shape != (count,) or lower.shape != (count, count):
             raise ValueError(
                 "Whitened mean/lower shapes must align with inducing points."
@@ -75,7 +75,7 @@ class SparseVariationalGaussianState(StrictModule):
         dtype: Any | None = None,
     ) -> SparseVariationalGaussianState:
         inducing = jnp.asarray(inducing_points, dtype=dtype)
-        count = int(inducing.shape[0]) if inducing.ndim == 2 else 0
+        count = inducing.shape[0] if inducing.ndim == 2 else 0
         if count <= 0:
             raise ValueError("inducing_points must be a nonempty matrix.")
         return cls(
@@ -128,7 +128,7 @@ class SparseVariationalGaussianProcessELBO(StrictModule):
             )
         if observation_factor.semantics != "normalized_likelihood":
             raise ValueError("SVGP ELBO requires normalized_likelihood semantics.")
-        regularization_array = jnp.asarray(regularization, dtype=float).reshape(())
+        regularization_array = jnp.asarray(regularization, dtype=jnp.float64).reshape(())
         if not bool(jnp.isfinite(regularization_array)) or bool(
             regularization_array < 0.0
         ):
@@ -225,7 +225,7 @@ class SparseVariationalGaussianProcessResult(StrictModule):
         final_step: int,
         source_fingerprint: str,
     ):
-        trace = jnp.asarray(objective_trace, dtype=float)
+        trace = jnp.asarray(objective_trace, dtype=jnp.float64)
         if trace.ndim != 1 or trace.size == 0:
             raise ValueError("objective_trace must be a nonempty vector.")
         self.state = state
@@ -274,7 +274,7 @@ def fit_sparse_variational_gaussian_process(
         state = initial_state
         optimizer_state = transformation.init(eqx.filter(state, eqx.is_inexact_array))
         start_step = 0
-        prior_trace = jnp.empty((0,), dtype=float)
+        prior_trace = jnp.empty((0,), dtype=jnp.float64)
     else:
         if not isinstance(continuation, SparseVariationalGaussianProcessResult):
             raise TypeError("continuation must be an SVGP result or None.")

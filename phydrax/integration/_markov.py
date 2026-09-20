@@ -33,7 +33,7 @@ def markov_chain_measure(
     if chain == draw:
         raise ValueError("chain_dim and draw_dim must be distinct.")
     log_weights = cx.AxisArray(
-        jnp.zeros((result.num_chains, result.num_draws), dtype=float),
+        jnp.zeros((result.num_chains, result.num_draws), dtype=jnp.float64),
         dims=(chain, draw),
     )
     replicate_ids = jnp.repeat(

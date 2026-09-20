@@ -287,8 +287,8 @@ def _compiler_phases(
     )
     values = tuple(level.values for level in state.levels)
 
-    coarse_tags = jnp.zeros((4, 4), dtype=bool).at[1:3].set(True)
-    middle_tags = jnp.zeros((16, 2), dtype=bool).at[3, 1].set(True)
+    coarse_tags = jnp.zeros((4, 4), dtype="bool").at[1:3].set(True)
+    middle_tags = jnp.zeros((16, 2), dtype="bool").at[3, 1].set(True)
     _, topology_phase = _host_phase(
         "host-topology-compilation",
         lambda: prepared.compile_topology(
@@ -333,7 +333,7 @@ def _compiler_phases(
                     "kind": route.block_kind,
                     "level": route.level,
                     "axis": route.axis,
-                    "faces": int(route.owner_cells.size),
+                    "faces": route.owner_cells.size,
                 }
                 for route in result.face_routes
             ],
@@ -481,8 +481,8 @@ def _compiler_phases(
             "operator_id": operator.operator_id,
             "route_id": composite_plan.route_fingerprint,
             "precision_policy_id": composite_plan.precision.policy_id,
-            "edge_count": int(operator.plan.routes.edge_left.size),
-            "boundary_face_count": int(operator.plan.routes.boundary_cells.size),
+            "edge_count": operator.plan.routes.edge_left.size,
+            "boundary_face_count": operator.plan.routes.boundary_cells.size,
         },
         passed=lambda result: all(
             bool(jnp.all(jnp.isfinite(value))) for value in jax.tree.leaves(result)
@@ -834,7 +834,7 @@ def _block_to_dense(topology: Any, values: Any) -> jax.Array:
     metadata = topology.levels[0]
     output = jnp.zeros(topology.plan.global_cell_shapes[0] + values.shape[3:])
     logical = np.asarray(metadata.logical_indices, dtype=np.int32)
-    for slot in np.flatnonzero(np.asarray(metadata.active, dtype=bool)):
+    for slot in np.flatnonzero(np.asarray(metadata.active, dtype="bool")):
         slices = tuple(
             slice(index * size, (index + 1) * size)
             for index, size in zip(logical[slot], level.block_shape, strict=True)
@@ -907,7 +907,7 @@ def _uniform_path_comparisons(
     metadata = block_topology.levels[0]
     block_values = jnp.zeros((block_capacity, *block_shape, 1), dtype=dense_state.dtype)
     logical = np.asarray(metadata.logical_indices, dtype=np.int32)
-    for slot in np.flatnonzero(np.asarray(metadata.active, dtype=bool)):
+    for slot in np.flatnonzero(np.asarray(metadata.active, dtype="bool")):
         slices = tuple(
             slice(index * size, (index + 1) * size)
             for index, size in zip(logical[slot], block_shape, strict=True)

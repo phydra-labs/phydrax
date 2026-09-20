@@ -15,7 +15,7 @@ import numpy as np
 from jaxtyping import Array
 
 from ..._fingerprint import canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._dem_contact import (
     DEMContactBatch,
@@ -47,7 +47,7 @@ class DEMBarrierMotion(StrictModule):
 
 
 class AbstractDEMBarrierMotionPlan(StrictModule, NonTrainableState):
-    motion_id: AbstractAttribute[str]
+    motion_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def evaluate(
@@ -518,8 +518,7 @@ def evaluate_dem_barrier(
             return jnp.broadcast_to(array, (bodies.capacity, width))
         if array.shape != (bodies.capacity, width):
             raise ValueError(
-                f"Barrier {name} must have shape {(width,)} or "
-                f"{(bodies.capacity, width)}."
+                f"Barrier {name} must have shape {(width,)} or {(bodies.capacity, width)}."
             )
         return array
 
@@ -693,7 +692,7 @@ def evaluate_dem_barrier(
     successful = (
         response.successful
         & ~jnp.any(degenerate)
-        & jnp.asarray(motion.valid, dtype=bool)
+        & jnp.asarray(motion.valid, dtype=jnp.bool_)
         & jnp.all(jnp.isfinite(wall_contact_velocity))
         & jnp.isfinite(wall_power)
         & (curvature_margin > 0.0)

@@ -91,7 +91,7 @@ class ConvolutionQuadratureContourPolicy(StrictModule):
         fft_length: int,
         /,
         *,
-        machine_epsilon: float = float(np.finfo(float).eps),
+        machine_epsilon: float = float(np.finfo(np.float64).eps),
     ) -> float:
         length = int(fft_length)
         if length < 1:
@@ -190,7 +190,7 @@ def prepare_convolution_quadrature_contour(
     if step.ndim != 0:
         raise ValueError("step_size must be scalar.")
     if not jnp.issubdtype(step.dtype, jnp.inexact):
-        step = step.astype(float)
+        step = step.astype("float64")
     if jnp.issubdtype(step.dtype, jnp.complexfloating):
         raise TypeError("step_size must be real-valued.")
     concrete_step = float(np.asarray(step))
@@ -231,11 +231,11 @@ def convolution_quadrature_fft(
     values = jnp.asarray(history)
     if values.ndim < 1:
         raise ValueError("history must have a leading time axis.")
-    count = int(values.shape[0])
+    count = values.shape[0]
     if count > contour.history_length:
         raise ValueError("history exceeds the prepared history length.")
     if not jnp.issubdtype(values.dtype, jnp.inexact):
-        values = values.astype(float)
+        values = values.astype("float64")
     pad = ((0, contour.fft_length - count),) + ((0, 0),) * (values.ndim - 1)
     padded = jnp.pad(values, pad)
     powers = jnp.power(contour.radius, jnp.arange(contour.fft_length))
@@ -254,7 +254,7 @@ def convolution_quadrature_ifft(
     if not isinstance(contour, ConvolutionQuadratureContour):
         raise TypeError("contour must be ConvolutionQuadratureContour.")
     values = jnp.asarray(spectrum)
-    if values.ndim < 1 or int(values.shape[0]) != contour.fft_length:
+    if values.ndim < 1 or values.shape[0] != contour.fft_length:
         raise ValueError("spectrum leading axis must equal contour.fft_length.")
     count = contour.history_length if history_length is None else int(history_length)
     if count < 1 or count > contour.history_length:
@@ -282,10 +282,10 @@ def causal_prefix_fft(
     values = jnp.asarray(history)
     if values.ndim < 2:
         raise ValueError("history must have time and coordinate axes.")
-    if int(values.shape[0]) != contour.history_length:
+    if values.shape[0] != contour.history_length:
         raise ValueError("history leading axis must match the prepared history length.")
     if not jnp.issubdtype(values.dtype, jnp.inexact):
-        values = values.astype(float)
+        values = values.astype("float64")
 
     count, length = contour.history_length, contour.fft_length
     pad = ((0, length - count),) + ((0, 0),) * (values.ndim - 1)
@@ -316,9 +316,9 @@ def reconstruct_causal_history(
     values = jnp.asarray(node_values)
     if values.ndim < 3:
         raise ValueError("node_values must have frequency, coordinate, and prefix axes.")
-    if int(values.shape[0]) != contour.fft_length:
+    if values.shape[0] != contour.fft_length:
         raise ValueError("node_values frequency axis does not match the contour.")
-    if int(values.shape[2]) != contour.history_length:
+    if values.shape[2] != contour.history_length:
         raise ValueError("node_values prefix axis does not match the history length.")
     coefficients = jnp.fft.ifft(values, axis=0)
     indices = jnp.arange(contour.history_length)

@@ -4,6 +4,8 @@
 
 """Typed molecular computational chemistry and provider-neutral workflows."""
 
+from importlib import import_module
+
 from . import interchange, periodic
 from ._atomistic import (
     AtomisticPotentialEnergySurface,
@@ -256,7 +258,6 @@ from .excited import (
     track_excited_states,
     TwoStateSurfaceEvaluation,
 )
-from .periodic import *  # noqa: F403
 from .periodic import __all__ as _periodic_all
 from .qmmm import (
     AbstractEmbeddedRegionProvider,
@@ -398,7 +399,24 @@ from .vibration import (
 )
 
 
-__all__ = [  # noqa: PLE0604
+_FACADE_EXPORT_MODULES = (".periodic",)
+
+
+def __getattr__(name: str):
+    for module_name in reversed(_FACADE_EXPORT_MODULES):
+        module = import_module(module_name, __package__)
+        if name in module.__all__:
+            value = getattr(module, name)
+            globals()[name] = value
+            return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
+
+
+__all__ = [
     *_periodic_all,
     "AbstractElectronicProvider",
     "AbstractPreparedElectronicCalculation",

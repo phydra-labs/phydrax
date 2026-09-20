@@ -91,7 +91,7 @@ def test_population_transactions_preserve_strength_and_fail_closed_on_capacity()
         jnp.zeros((3,)),
         jnp.ones((3,)),
         jnp.ones((3,)),
-        active_mask=jnp.zeros((3,), dtype=bool),
+        active_mask=jnp.zeros((3,), dtype="bool"),
     )
     first = plan.insert(
         state,

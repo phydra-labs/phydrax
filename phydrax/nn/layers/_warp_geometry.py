@@ -51,7 +51,7 @@ class RectilinearWarpDiagnostics(StrictModule):
         self.coordinates = jnp.asarray(coordinates)
         self.jacobian = jnp.asarray(jacobian)
         self.determinant = jnp.asarray(determinant)
-        self.interpolation_support = jnp.asarray(interpolation_support, dtype=bool)
+        self.interpolation_support = jnp.asarray(interpolation_support, dtype=jnp.bool_)
         self.route_scale = None if route_scale is None else jnp.asarray(route_scale)
 
     @property
@@ -83,7 +83,7 @@ class GaussianWarpRoute(StrictModule):
         self.scale = scale_
 
     def sample(self, key: Array, sample_shape: Sequence[int] = (), /) -> Array:
-        shape = tuple(int(size) for size in sample_shape) + self.mean.shape
+        shape = tuple(sample_shape) + self.mean.shape
         noise = jax.random.normal(key, shape, dtype=self.mean.dtype)
         return self.mean + self.scale * noise
 
@@ -113,8 +113,8 @@ def normalized_axis_nodes(
 ) -> Array:
     """Normalize ordered physical nodes to Flower's ``[-1, 1]`` convention."""
 
-    values = jnp.asarray(nodes, dtype=float).reshape((-1,))
-    if int(values.size) < 2:
+    values = jnp.asarray(nodes, dtype=jnp.float64).reshape((-1,))
+    if values.size < 2:
         raise ValueError("A warped axis must contain at least two nodes.")
     spacing = jnp.diff(values)
     values = eqx.error_if(
@@ -199,7 +199,7 @@ def _broadcast_source_mask(
     spatial_shape: tuple[int, ...],
     /,
 ) -> Array:
-    mask = jnp.asarray(source_mask, dtype=bool)
+    mask = jnp.asarray(source_mask, dtype=jnp.bool_)
     if mask.shape == spatial_shape:
         return jnp.broadcast_to(mask, batch_shape + spatial_shape)
     expected = batch_shape + spatial_shape
@@ -232,7 +232,7 @@ def sample_rectilinear_grid(
 
     array = jnp.asarray(values)
     if not jnp.issubdtype(array.dtype, jnp.inexact):
-        array = array.astype(float)
+        array = array.astype("float64")
     dimensions = int(spatial_ndim)
     modes = tuple(boundary)
     if dimensions not in (1, 2, 3) or len(modes) != dimensions:
@@ -243,25 +243,23 @@ def sample_rectilinear_grid(
         raise TypeError("Rectilinear warping supports real-valued arrays only.")
     if array.ndim < dimensions + 1:
         raise ValueError("values must end in spatial dimensions and one channel axis.")
-    batch_shape = tuple(int(size) for size in array.shape[: -dimensions - 1])
-    spatial_shape = tuple(int(size) for size in array.shape[-dimensions - 1 : -1])
+    batch_shape = tuple(array.shape[: -dimensions - 1])
+    spatial_shape = tuple(array.shape[-dimensions - 1 : -1])
     if any(size < 2 for size in spatial_shape):
         raise ValueError("Every warped spatial axis must contain at least two nodes.")
-    dtype = jnp.result_type(array.dtype, float)
+    dtype = jnp.result_type(array.dtype, jnp.float64)
     nodes = _prepare_axis_nodes(axis_nodes, spatial_shape, modes, dtype)
 
     query = jnp.asarray(coordinates, dtype=dtype)
-    if query.ndim < len(batch_shape) + 2 or int(query.shape[-1]) != dimensions:
+    if query.ndim < len(batch_shape) + 2 or query.shape[-1] != dimensions:
         raise ValueError(
-            "coordinates must have shape batch_shape + query_shape + "
-            f"({dimensions},); got {query.shape}."
+            f"coordinates must have shape batch_shape + query_shape + ({dimensions},); got {query.shape}."
         )
-    if tuple(int(size) for size in query.shape[: len(batch_shape)]) != batch_shape:
+    if tuple(query.shape[: len(batch_shape)]) != batch_shape:
         raise ValueError(
-            f"Coordinate batch shape must be {batch_shape}; got "
-            f"{query.shape[: len(batch_shape)]}."
+            f"Coordinate batch shape must be {batch_shape}; got {query.shape[: len(batch_shape)]}."
         )
-    query_shape = tuple(int(size) for size in query.shape[len(batch_shape) : -1])
+    query_shape = tuple(query.shape[len(batch_shape) : -1])
     if not query_shape or any(size <= 0 for size in query_shape):
         raise ValueError("Rectilinear queries must contain at least one sample.")
 
@@ -285,7 +283,7 @@ def sample_rectilinear_grid(
         periods=periods,
         axis_bounds=((-1.0, 1.0),) * dimensions,
     )
-    channels = int(array.shape[-1])
+    channels = array.shape[-1]
     flat_mask = None if mask is None else mask.reshape((-1,))
     interpolation = apply_gather_stencil(
         array.reshape((-1, channels)),
@@ -310,7 +308,7 @@ def _periodic_axis_derivative(
     axis: int,
     /,
 ) -> Array:
-    count = int(nodes.size)
+    count = nodes.size
     previous_nodes = jnp.roll(nodes, 1).at[0].add(-2.0)
     next_nodes = jnp.roll(nodes, -1).at[count - 1].add(2.0)
     previous_width = nodes - previous_nodes
@@ -340,18 +338,18 @@ def warp_jacobian(
     """Return the Jacobian of ``identity + displacement`` on a rectilinear grid."""
 
     field = jnp.asarray(displacement)
-    dimensions = int(field.shape[-1])
+    dimensions = field.shape[-1]
     modes = tuple(boundary)
     if dimensions not in (1, 2, 3) or len(modes) != dimensions:
         raise ValueError("Warp displacement must end in one, two, or three components.")
     if field.ndim < 2 * dimensions + 1 and field.ndim < dimensions + 1:
         raise ValueError("Warp displacement rank is too small for its spatial dimension.")
-    spatial_shape = tuple(int(size) for size in field.shape[-dimensions - 1 : -1])
+    spatial_shape = tuple(field.shape[-dimensions - 1 : -1])
     nodes = _prepare_axis_nodes(
         axis_nodes,
         spatial_shape,
         modes,
-        jnp.result_type(field.dtype, float),
+        jnp.result_type(field.dtype, jnp.float64),
     )
     case_ndim = field.ndim - dimensions - 1
     columns = []
@@ -380,7 +378,7 @@ def _transform_tensor(
     spec: TensorType,
     /,
 ) -> Array:
-    dimensions = int(jacobian.shape[-1])
+    dimensions = jacobian.shape[-1]
     rank = len(spec.variance)
     if rank == 0:
         transformed = sampled
@@ -388,8 +386,7 @@ def _transform_tensor(
         component_shape = (dimensions,) * rank
         if sampled.shape[-rank:] != component_shape:
             raise ValueError(
-                f"Warped tensor must end in component shape {component_shape}; "
-                f"got {sampled.shape}."
+                f"Warped tensor must end in component shape {component_shape}; got {sampled.shape}."
             )
         prefix = sampled.shape[:-rank]
         point_count = prod(prefix)
@@ -437,15 +434,15 @@ def warp_field(
 
     field = jnp.asarray(values)
     delta = jnp.asarray(displacement)
-    dimensions = int(delta.shape[-1])
+    dimensions = delta.shape[-1]
     modes = tuple(boundary)
-    spatial_shape = tuple(int(size) for size in delta.shape[-dimensions - 1 : -1])
-    case_shape = tuple(int(size) for size in delta.shape[: -dimensions - 1])
+    spatial_shape = tuple(delta.shape[-dimensions - 1 : -1])
+    case_shape = tuple(delta.shape[: -dimensions - 1])
     nodes = _prepare_axis_nodes(
         axis_nodes,
         spatial_shape,
         modes,
-        jnp.result_type(field.dtype, delta.dtype, float),
+        jnp.result_type(field.dtype, delta.dtype, jnp.float64),
     )
     tensor_shape = (dimensions,) * len(field_spec.variance)
     expected = case_shape + spatial_shape + tensor_shape

@@ -42,7 +42,7 @@ class HypersurfacePatchEvaluation(StrictModule):
         self.polynomial_residual = jnp.asarray(polynomial_residual)
         self.smoothness_margin = jnp.asarray(smoothness_margin)
         self.residue_coefficient = jnp.asarray(residue_coefficient)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.chart_index = int(chart_index)
         self.pivot_index = int(pivot_index)
 

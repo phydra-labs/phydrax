@@ -58,7 +58,7 @@ class ExperimentConditions(StrictModule):
         concentration=None,
         concentration_unit=None,
     ):
-        t = np.asarray(temperature, dtype=float) * float(
+        t = np.asarray(temperature, dtype=np.float64) * float(
             conversion_factor(temperature_unit, KELVIN)
         )
         d_unit = (
@@ -69,7 +69,7 @@ class ExperimentConditions(StrictModule):
             if concentration_unit is None
             else concentration_unit
         )
-        d = np.asarray(denaturant, dtype=float) * float(
+        d = np.asarray(denaturant, dtype=np.float64) * float(
             conversion_factor(d_unit, convention.concentration_unit)
         )
         t, d = np.broadcast_arrays(t, d)
@@ -87,7 +87,7 @@ class ExperimentConditions(StrictModule):
         c = (
             np.zeros_like(t)
             if concentration is None
-            else np.broadcast_to(np.asarray(concentration, dtype=float), t.shape)
+            else np.broadcast_to(np.asarray(concentration, dtype=np.float64), t.shape)
             * float(conversion_factor(c_unit, convention.concentration_unit))
         )
         if np.any(~np.isfinite(c)) or np.any(c < 0):
@@ -141,8 +141,8 @@ class NamedParameterMap(StrictModule):
         names = tuple(p.name for p in parameters)
         if len(set(names)) != len(names):
             raise ValueError("Shared parameters are declared once, with unique names.")
-        self.initial = jnp.asarray([p.initial for p in parameters], dtype=float)
-        self.scale = jnp.asarray([p.scale for p in parameters], dtype=float)
+        self.initial = jnp.asarray([p.initial for p in parameters], dtype=jnp.float64)
+        self.scale = jnp.asarray([p.scale for p in parameters], dtype=jnp.float64)
         self.free_indices = jnp.asarray(
             [i for i, p in enumerate(parameters) if p.free], dtype=jnp.int32
         )
@@ -399,10 +399,10 @@ def _prepare_observation(plan, parameters):
             raise ValueError(
                 "Chevron/parallel models are isothermal; no activation-enthalpy law is supplied."
             )
-        observed = np.asarray(plan.observed_log_rates, dtype=float) - np.log(
+        observed = np.asarray(plan.observed_log_rates, dtype=np.float64) - np.log(
             float(conversion_factor(plan.time_unit, SECOND))
         )
-        errors = np.asarray(plan.log_standard_errors, dtype=float)
+        errors = np.asarray(plan.log_standard_errors, dtype=np.float64)
         group_indices, features, group_count = (
             np.zeros(count, dtype=np.int32),
             np.empty((count, 0)),
@@ -457,13 +457,13 @@ def _prepare_observation(plan, parameters):
         )
         group_count = len(group_names)
         observed, errors = (
-            np.asarray(plan.observed, dtype=float),
-            np.asarray(plan.standard_errors, dtype=float),
+            np.asarray(plan.observed, dtype=np.float64),
+            np.asarray(plan.standard_errors, dtype=np.float64),
         )
     observed, errors = np.broadcast_arrays(observed, errors)
     if observed.shape != (count,):
         raise ValueError("Measurements and calibrated errors must match condition rows.")
-    mask = np.ones(count, dtype=bool) if plan.mask is None else np.asarray(plan.mask)
+    mask = np.ones(count, dtype=np.bool_) if plan.mask is None else np.asarray(plan.mask)
     if mask.dtype != bool or mask.shape != (count,) or not np.any(mask):
         raise ValueError("Observation mask must be a nonempty boolean selection of rows.")
     active = np.flatnonzero(mask)
@@ -490,7 +490,7 @@ def _prepare_observation(plan, parameters):
     layout = CoordinateLayout(tuple(f"{plan.name}:{i}" for i in active))
     covariance = None
     if plan.covariance_cholesky is not None:
-        root = np.asarray(plan.covariance_cholesky, dtype=float)
+        root = np.asarray(plan.covariance_cholesky, dtype=np.float64)
         if (
             root.shape != (active.size, active.size)
             or np.any(~np.isfinite(root))

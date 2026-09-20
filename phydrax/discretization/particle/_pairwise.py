@@ -49,11 +49,11 @@ class ParticleBox(StrictModule, NonTrainableState):
         if np.any(upper_host <= lower_host):
             raise ValueError("ParticleBox upper bounds must exceed lower bounds.")
         axes = (
-            (True,) * int(lower_host.size)
+            (True,) * lower_host.size
             if periodic_axes is None
             else tuple(bool(value) for value in periodic_axes)
         )
-        if len(axes) != int(lower_host.size):
+        if len(axes) != lower_host.size:
             raise ValueError("periodic_axes must align with ParticleBox bounds.")
         dtype = np.result_type(lower_host.dtype, upper_host.dtype, np.float32)
         lower_host = lower_host.astype(dtype, copy=False)
@@ -61,7 +61,7 @@ class ParticleBox(StrictModule, NonTrainableState):
         self.lower = jnp.asarray(lower_host)
         self.upper = jnp.asarray(upper_host)
         self.lengths = jnp.asarray(upper_host - lower_host)
-        self.periodic_mask = jnp.asarray(axes, dtype=bool)
+        self.periodic_mask = jnp.asarray(axes, dtype=jnp.bool_)
         self.periodic_axes = axes
         self.box_id = canonical_fingerprint(
             {
@@ -75,7 +75,7 @@ class ParticleBox(StrictModule, NonTrainableState):
 
     @property
     def ambient_dimension(self) -> int:
-        return int(self.lower.shape[0])
+        return self.lower.shape[0]
 
     def minimum_image(self, displacement: ArrayLike, /) -> Array:
         value = jnp.asarray(displacement)
@@ -135,7 +135,7 @@ class ParticlePairRelation(StrictModule, NonTrainableState):
         if relation_schema_id is None:
             left_host = np.asarray(left_ids)
             right_host = np.asarray(right_ids)
-            valid_host = np.asarray(relation.valid, dtype=bool)
+            valid_host = np.asarray(relation.valid, dtype=np.bool_)
             if (
                 same_set
                 and unordered
@@ -222,7 +222,7 @@ class ParticlePairGeometry(StrictModule):
         displacement_ = jnp.asarray(displacement)
         distance_ = jnp.asarray(distance)
         direction_ = jnp.asarray(direction)
-        valid_ = jnp.asarray(valid, dtype=bool)
+        valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         if displacement_.ndim != 2:
             raise ValueError("Pair displacement must have shape (pairs, dimension).")
         if direction_.shape != displacement_.shape:
@@ -295,13 +295,11 @@ def particle_pair_geometry(
 
 def _masked_pair_values(values: ArrayLike, valid: ArrayLike, /) -> Array:
     array = jnp.asarray(values)
-    valid_ = jnp.asarray(valid, dtype=bool)
+    valid_ = jnp.asarray(valid, dtype=jnp.bool_)
     if array.ndim < 1 or array.shape[0] != valid_.shape[0]:
         raise ValueError("Pair values must begin with the pair-validity dimension.")
     mask = valid_.reshape(valid_.shape + (1,) * (array.ndim - 1))
     return jnp.where(mask, array, 0.0)
-
-
 
 
 def scatter_pair_sum(
@@ -323,16 +321,16 @@ def scatter_pair_sum(
         raise ValueError("Left and right pair values must have matching shapes.")
     if left.shape[0] == 0:
         return jnp.zeros((int(size),) + left.shape[1:], dtype=left.dtype)
-    route_count = int(left.shape[0])
+    route_count = left.shape[0]
     endpoint_indices = jnp.stack(
         (pairs.left_indices, pairs.right_indices), axis=1
     ).reshape((-1,))
     endpoint_values = jnp.stack((left, right), axis=1).reshape(
         (2 * route_count,) + left.shape[1:]
     )
-    endpoint_valid = jnp.broadcast_to(
-        route_valid[:, None], (route_count, 2)
-    ).reshape((-1,))
+    endpoint_valid = jnp.broadcast_to(route_valid[:, None], (route_count, 2)).reshape(
+        (-1,)
+    )
     relation = EdgeRelation(
         jnp.arange(2 * route_count, dtype=jnp.int32),
         endpoint_indices,

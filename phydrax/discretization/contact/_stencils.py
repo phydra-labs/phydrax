@@ -126,9 +126,9 @@ class ContactStencilBatch(StrictModule, NonTrainableState):
         indices = indices.astype(np.int32, copy=False)
         arity = _ARITY[kind]
         active = (
-            np.ones((count,), dtype=bool)
+            np.ones((count,), dtype=np.bool_)
             if valid is None
-            else np.asarray(valid, dtype=bool)
+            else np.asarray(valid, dtype=np.bool_)
         )
         if active.shape != (count,):
             raise ValueError("Contact stencil valid mask must have capacity shape.")
@@ -162,10 +162,12 @@ class ContactStencilBatch(StrictModule, NonTrainableState):
         if np.any(active[:, None] & (local_features < 0)):
             raise ValueError("Active local feature indices must be nonnegative.")
         weight = (
-            np.ones((count,), dtype=float) if weights is None else np.asarray(weights)
+            np.ones((count,), dtype=np.float64)
+            if weights is None
+            else np.asarray(weights)
         )
         separation = (
-            np.zeros((count,), dtype=float)
+            np.zeros((count,), dtype=np.float64)
             if minimum_separation is None
             else np.asarray(minimum_separation)
         )
@@ -219,7 +221,7 @@ class ContactStencilBatch(StrictModule, NonTrainableState):
         identifier = generated if batch_id is None else str(batch_id)
         if not identifier:
             raise ValueError("batch_id must be nonempty or None.")
-        dtype = jnp.result_type(weight, separation, float)
+        dtype = jnp.result_type(weight, separation, jnp.float64)
         self.vertex_indices = jnp.asarray(indices, dtype=jnp.int32)
         self.left_feature_ids = jnp.asarray(left, dtype=jnp.int64)
         self.right_feature_ids = jnp.asarray(right, dtype=jnp.int64)
@@ -255,7 +257,7 @@ class ContactStencilBatch(StrictModule, NonTrainableState):
             weights=np.zeros((count,), dtype=np.dtype(dtype)),
             minimum_separation=np.zeros((count,), dtype=np.dtype(dtype)),
             feature_indices=np.zeros((count, 2), dtype=np.int32),
-            valid=np.zeros((count,), dtype=bool),
+            valid=np.zeros((count,), dtype=np.bool_),
         )
 
 

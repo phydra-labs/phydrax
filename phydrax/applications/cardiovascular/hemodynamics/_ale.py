@@ -148,8 +148,7 @@ class CardiovascularALEPlan(StrictModule, NonTrainableState):
             raise TypeError("motion must be MACALEGeometryPlan.")
         if not isinstance(gap_route, ALEMinimumGapRoute):
             raise TypeError(
-                "gap_route must be ALEMinimumGapRoute; true contact belongs to the "
-                "leaflet contact workflow."
+                "gap_route must be ALEMinimumGapRoute; true contact belongs to the leaflet contact workflow."
             )
         measures = (
             float(minimum_cell_volume),

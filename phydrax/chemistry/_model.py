@@ -12,7 +12,7 @@ from enum import StrEnum
 import equinox as eqx
 
 from .._fingerprint import canonical_fingerprint
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..qualification import ReferenceArtifactManifest
 
@@ -62,11 +62,11 @@ class ElectronicMethodFamily(StrEnum):
 class AbstractElectronicMethodPlan(StrictModule, NonTrainableState):
     """Physical electronic approximation, independent of its implementation."""
 
-    family: AbstractAttribute[ElectronicMethodFamily]
-    method: AbstractAttribute[str]
-    reference: AbstractAttribute[ElectronicReferenceKind]
-    definition_ids: AbstractAttribute[tuple[str, ...]]
-    method_id: AbstractAttribute[str]
+    family: eqx.AbstractVar[ElectronicMethodFamily]
+    method: eqx.AbstractVar[str]
+    reference: eqx.AbstractVar[ElectronicReferenceKind]
+    definition_ids: eqx.AbstractVar[tuple[str, ...]]
+    method_id: eqx.AbstractVar[str]
 
 
 class BasisSetReference(StrictModule, NonTrainableState):

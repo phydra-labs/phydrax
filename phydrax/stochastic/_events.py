@@ -50,7 +50,7 @@ def _call_path(function: Callable, times: Array, states: Array, /) -> Array:
 
 
 def _prefix_valid(valid: Array, /) -> Array:
-    return jnp.cumprod(valid.astype(jnp.int32), axis=-1).astype(bool)
+    return jnp.cumprod(valid.astype(jnp.int32), axis=-1).astype("bool")
 
 
 def _crossing_hits(values: Array, direction: CrossingDirection, /) -> Array:
@@ -247,14 +247,14 @@ class PathEventResult(StrictModule):
         event_ids: Sequence[str],
         trajectory_ids: Sequence[str],
     ):
-        occurrence = jnp.asarray(occurred, dtype=bool)
+        occurrence = jnp.asarray(occurred, dtype=jnp.bool_)
         shape = occurrence.shape
-        censoring = jnp.asarray(censored, dtype=bool)
-        failures = jnp.asarray(failed, dtype=bool)
-        times = jnp.asarray(event_times, dtype=float)
+        censoring = jnp.asarray(censored, dtype=jnp.bool_)
+        failures = jnp.asarray(failed, dtype=jnp.bool_)
+        times = jnp.asarray(event_times, dtype=jnp.float64)
         indices = jnp.asarray(event_indices, dtype=jnp.int32)
         codes = jnp.asarray(event_codes, dtype=jnp.int32)
-        scores = jnp.asarray(terminal_scores, dtype=float)
+        scores = jnp.asarray(terminal_scores, dtype=jnp.float64)
         if any(
             value.shape != shape
             for value in (censoring, failures, times, indices, codes, scores)
@@ -308,7 +308,7 @@ def path_event_scores(
         if isinstance(atomic, TerminalSetEvent):
             function = atomic.predicate if atomic.score is None else atomic.score
             values = jax.vmap(lambda t, x: _call_path(function, t, x))(times, states)
-            return values.astype(float)
+            return values.astype("float64")
         if isinstance(atomic, ThresholdCrossingEvent):
             values = (
                 jax.vmap(lambda t, x: _call_path(atomic.observable, t, x))(times, states)
@@ -367,7 +367,7 @@ def _evaluate_atomic(
     scores = path_event_scores(trajectory, event).reshape((count, trajectory.num_times))
     if isinstance(event, TerminalSetEvent):
         terminal_hit = jnp.asarray(
-            jax.vmap(event.predicate)(times[:, -1], states[:, -1]), dtype=bool
+            jax.vmap(event.predicate)(times[:, -1], states[:, -1]), dtype=jnp.bool_
         )
         occurred = complete & terminal_hit
         indices = jnp.where(occurred, trajectory.num_times - 1, -1).astype(jnp.int32)

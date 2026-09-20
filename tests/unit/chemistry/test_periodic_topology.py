@@ -34,7 +34,7 @@ def _ssh(intercell=1.0, intracell=0.4, points=8):
         ANGSTROM,
         PeriodicBlochGauge("lattice"),
     )
-    blocks = np.zeros((3, 2, 1, 2, 1), dtype=complex)
+    blocks = np.zeros((3, 2, 1, 2, 1), dtype="complex128")
     blocks[1, 0, 0, 1, 0] = intracell
     blocks[1, 1, 0, 0, 0] = intracell
     blocks[0, 0, 0, 1, 0] = intercell
@@ -65,7 +65,7 @@ def test_ssh_wilson_loop_returns_raw_links_and_quantized_zak_phase():
 
 def test_topology_rejects_gap_and_link_rank_ambiguity():
     pencil, mesh, _, connectivity, _ = _ssh(intercell=1.0, intracell=1.0)
-    points = np.arange(8, dtype=float)[:, None] / 8.0
+    points = np.arange(8, dtype="float64")[:, None] / 8.0
     explicit_mesh = ReciprocalMeshPlan(
         mesh.cell,
         points,

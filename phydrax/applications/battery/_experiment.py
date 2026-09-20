@@ -383,11 +383,11 @@ class BatteryExperimentPlan(StrictModule, NonTrainableState):
                 "Battery adapter observable names must be unique; current_a is protocol-owned."
             )
         times = jnp.asarray(save_times_s)
-        if times.ndim != 1 or int(times.size) < 2:
+        if times.ndim != 1 or times.size < 2:
             raise ValueError("Battery save_times_s must contain at least two nodes.")
         if jnp.issubdtype(times.dtype, jnp.complexfloating):
             raise TypeError("Battery save times must be real-valued.")
-        host_times = np.asarray(times, dtype=float)
+        host_times = np.asarray(times, dtype=np.float64)
         if not np.all(np.isfinite(host_times)) or np.any(np.diff(host_times) <= 0.0):
             raise ValueError("Battery save times must be finite and strictly increasing.")
         if host_times[0] != protocol.t0_s or host_times[-1] != protocol.t1_s:
@@ -690,11 +690,11 @@ def prepare_battery_experiment(
             raise ValueError(
                 "Battery native DAE guard IDs must match the solve plan exactly."
             )
-    protocol_times = np.asarray(plan.protocol.transition_times_s, dtype=float)
+    protocol_times = np.asarray(plan.protocol.transition_times_s, dtype=np.float64)
     transition_times = np.unique(protocol_times)
     if transition_times.size != protocol_times.size:
         raise ValueError("Battery protocol transition times must be unique.")
-    save_times = np.asarray(plan.save_times_s, dtype=float)
+    save_times = np.asarray(plan.save_times_s, dtype=np.float64)
     if transition_times[0] != save_times[0] or transition_times[-1] != save_times[-1]:
         raise ValueError("Battery transitions and save grid must have identical support.")
     # Protocol boundaries are authoritative. Snap only save nodes within local
@@ -761,7 +761,7 @@ def prepare_battery_experiment(
                 )
             )
         else:
-            step_times = np.asarray(base.ts, dtype=float)
+            step_times = np.asarray(base.ts, dtype=np.float64)
             if (
                 step_times.ndim != 1
                 or step_times[0] != integration_times[0]
@@ -914,7 +914,7 @@ def _localized_event_time(
         native_solution.terminal_time,
         dtype=prepared.plan.save_times_s.dtype,
     )
-    terminal_valid = jnp.asarray(native_solution.terminal_valid, dtype=bool)
+    terminal_valid = jnp.asarray(native_solution.terminal_valid, dtype=jnp.bool_)
     return jnp.where(
         terminated & terminal_valid,
         terminal_time,
@@ -973,14 +973,14 @@ def _termination(
         )
     mask = jnp.stack(
         tuple(
-            jnp.asarray(value, dtype=bool)
+            jnp.asarray(value, dtype=jnp.bool_)
             for value in jax.tree.leaves(native_solution.event_mask)
         )
     )
     guard_count = prepared.plan.protocol.guard_count
     initial_mask, crossing_mask = mask[:guard_count], mask[guard_count:]
     mask = initial_mask | crossing_mask
-    terminated = jnp.asarray(native_solution.event_terminated, dtype=bool)
+    terminated = jnp.asarray(native_solution.event_terminated, dtype=jnp.bool_)
     winner = jnp.argmax(mask).astype(jnp.int32)
     event_time = _localized_event_time(prepared, native_solution, terminated)
     winner = jnp.where(terminated, winner, jnp.asarray(-1, dtype=jnp.int32))
@@ -1147,12 +1147,12 @@ def _solve_fixed_segments(
     controller = prepared.stepsize_controller
     if not isinstance(controller, dfx.StepTo):
         raise TypeError("Fixed segmented battery execution requires diffrax.StepTo.")
-    boundaries = np.asarray(prepared.transition_times_s, dtype=float)
-    requested = np.asarray(prepared.integration_time_grid.times, dtype=float)
-    step_times = np.asarray(controller.ts, dtype=float)
+    boundaries = np.asarray(prepared.transition_times_s, dtype=np.float64)
+    requested = np.asarray(prepared.integration_time_grid.times, dtype=np.float64)
+    step_times = np.asarray(controller.ts, dtype=np.float64)
     sample_count = requested.size
     stitched_times = jnp.full_like(prepared.integration_time_grid.times, jnp.inf)
-    stitched_valid = jnp.zeros((sample_count,), dtype=bool)
+    stitched_valid = jnp.zeros((sample_count,), dtype=jnp.bool_)
     stitched_states = jax.tree.map(
         lambda value: jnp.zeros(
             (sample_count,) + jnp.asarray(value).shape,
@@ -1407,9 +1407,9 @@ def _initial_dae_solution(native_prepared, runtime, initialization, event_plan, 
     """Represent a genuine initial consistency failure or immediate terminal guard."""
     solution = _neutral_dae_solution(native_prepared, runtime)
     time = native_prepared.time_grid.times[0]
-    count = int(native_prepared.time_grid.times.size)
+    count = native_prepared.time_grid.times.size
     state, rate = initialization.state, initialization.state_rate
-    valid = jnp.zeros((count,), dtype=bool).at[0].set(initialization.valid)
+    valid = jnp.zeros((count,), dtype=jnp.bool_).at[0].set(initialization.valid)
     states = jnp.zeros((count,) + state.shape, state.dtype).at[0].set(state)
     rates = jnp.zeros_like(states).at[0].set(rate)
     status = (
@@ -1565,7 +1565,7 @@ def _initial_dae_solution(native_prepared, runtime, initialization, event_plan, 
             states,
             rates,
             valid,
-            jnp.zeros_like(states, dtype=bool).at[0].set(initialization.rate_valid),
+            jnp.zeros_like(states, dtype=jnp.bool_).at[0].set(initialization.rate_valid),
             status,
             initialization,
             events,
@@ -1597,8 +1597,8 @@ def _solve_dae_segments(prepared, problem, initial_state, runtime, /):
         "times": jnp.full_like(prepared.integration_time_grid.times, jnp.inf),
         "states": jnp.zeros((sample_count,) + state.shape, state.dtype),
         "state_rates": jnp.zeros((sample_count,) + state.shape, state.dtype),
-        "valid": jnp.zeros((sample_count,), dtype=bool),
-        "rate_valid": jnp.zeros((sample_count,) + state.shape, dtype=bool),
+        "valid": jnp.zeros((sample_count,), dtype=jnp.bool_),
+        "rate_valid": jnp.zeros((sample_count,) + state.shape, dtype=jnp.bool_),
         "status": jnp.full((sample_count,), int(DAEStatus.NOT_RUN), dtype=jnp.int32),
     }
     forcing_currents = jnp.zeros((sample_count,), state.real.dtype)
@@ -1875,12 +1875,12 @@ def run_battery_experiment(
                 solver_configuration_id=solve_plan.solve_plan_id,
                 state_coordinates=_identity_coordinates(initial_state),
             )
-        native_success = jnp.asarray(native_solution.backend_successful, dtype=bool)
+        native_success = jnp.asarray(native_solution.backend_successful, dtype=jnp.bool_)
     else:
         if not isinstance(prepared.plan.native_solve_plan, BatteryDAESolvePlan):
             raise TypeError("Prepared DAE battery experiment lost BatteryDAESolvePlan.")
         native_solution = _solve_dae_segments(prepared, problem, initial_state, runtime)
-        native_success = jnp.asarray(native_solution.successful, dtype=bool)
+        native_success = jnp.asarray(native_solution.successful, dtype=jnp.bool_)
     termination = _termination(prepared, native_solution, runtime)
     outputs, domain_ok, finite_ok = _selected_outputs(
         prepared, initial_state, runtime, native_solution, termination
@@ -1889,7 +1889,7 @@ def run_battery_experiment(
     if not hasattr(ledger, "successful"):
         raise TypeError("Every battery model ledger must expose scalar successful.")
     ledger_success = jnp.asarray(ledger.successful)
-    if ledger_success.shape != () or ledger_success.dtype != jnp.dtype(bool):
+    if ledger_success.shape != () or ledger_success.dtype != jnp.dtype(jnp.bool_):
         raise ValueError("Battery ledger successful must be one scalar Boolean.")
     native_failure_status = jnp.asarray(int(BatteryRunStatus.NATIVE_SOLVE_FAILED))
     if isinstance(native_solution, BatteryDAESolution):

@@ -15,7 +15,7 @@ from jaxtyping import Array
 
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._training import TrainingProgress
 from ..domain import DomainFunction
 from ..optim._update_alignment import ConflictFreeUpdateStatistics
@@ -28,7 +28,7 @@ class FunctionalWindowAdapter(StrictModule):
 
     __strict_abstract__ = True
 
-    adapter_id: AbstractAttribute[str]
+    adapter_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def build_solver(
@@ -97,7 +97,7 @@ class FunctionalTimeWindowPlan(StrictModule):
         counts = (
             tuple(int(steps) for _ in range(schedule.slab_count))
             if isinstance(steps, int)
-            else tuple(int(value) for value in steps)
+            else tuple(steps)
         )
         if len(counts) != schedule.slab_count or any(value < 1 for value in counts):
             raise ValueError("steps must provide one positive count per window.")
@@ -260,8 +260,7 @@ def train_functional_time_windows(
             raise TypeError("Window training factory returned an invalid plan.")
         if plan.transfer_optimizer_state and training is None:
             raise ValueError(
-                "Optimizer-state transfer requires a FunctionalTrainingPlan "
-                "for every window."
+                "Optimizer-state transfer requires a FunctionalTrainingPlan for every window."
             )
         if plan.transfer_optimizer_state and index > 0:
             built = _transfer_training_state(current, built, training)

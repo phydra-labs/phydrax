@@ -49,9 +49,9 @@ class PlanarWallFramePlan(StrictModule, NonTrainableState):
         lower_wall_id: str,
         upper_wall_id: str,
     ) -> None:
-        origin_ = np.asarray(origin, dtype=float)
-        normal = np.asarray(inward_normal, dtype=float)
-        tangent = np.asarray(tangential_basis, dtype=float)
+        origin_ = np.asarray(origin, dtype=np.float64)
+        normal = np.asarray(inward_normal, dtype=np.float64)
+        tangent = np.asarray(tangential_basis, dtype=np.float64)
         gap_ = float(gap)
         area = float(cross_section_area)
         identities = tuple(

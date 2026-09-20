@@ -340,10 +340,10 @@ class SharpCrackQuadrature(StrictModule, NonTrainableState):
                 "topology": topology_identifier,
                 "geometry": geometry_identifier,
                 "order": evidence.order,
-                "plus_count": int(plus.weights.size),
-                "minus_count": int(minus.weights.size),
-                "face_count": int(faces.weights.size),
-                "tip_count": int(tips.weights.size),
+                "plus_count": plus.weights.size,
+                "minus_count": minus.weights.size,
+                "face_count": faces.weights.size,
+                "tip_count": tips.weights.size,
                 "area": float(evidence.integrated_area),
             }
         )
@@ -577,7 +577,7 @@ def build_sharp_crack_quadrature(
         cut_cell_area=jnp.asarray(cut_area),
         integrated_area=jnp.asarray(integrated_area),
         relative_area_defect=jnp.asarray(
-            abs(integrated_area - cut_area) / max(cut_area, np.finfo(float).eps)
+            abs(integrated_area - cut_area) / max(cut_area, np.finfo(np.float64).eps)
         ),
         plus_face_measure=jnp.asarray(plus_face_measure),
         minus_face_measure=jnp.asarray(minus_face_measure),

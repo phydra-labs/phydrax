@@ -31,7 +31,7 @@ class NearestNeighborHamiltonian(StrictModule):
         *,
         hamiltonian_id: str,
     ):
-        dimensions = tuple(int(value) for value in physical_dimensions)
+        dimensions = tuple(physical_dimensions)
         values = tuple(jnp.asarray(term) for term in terms)
         identifier = str(hamiltonian_id)
         if not dimensions or any(value < 1 for value in dimensions):

@@ -119,10 +119,10 @@ def test_modified_cam_clay_and_nonlocal_softening_are_admissible():
 def test_biot_thermal_operator_has_coupled_jvp_vjp_and_boundaries():
     shape = (8, 8)
     boundary = phx.applications.solid_mechanics.MPMCoupledBoundaryPlan(
-        pressure_mask=jnp.zeros(shape, dtype=bool).at[0, :].set(True),
+        pressure_mask=jnp.zeros(shape, dtype="bool").at[0, :].set(True),
         pressure_values=0.0,
         pressure_flux=0.0,
-        temperature_mask=jnp.zeros(shape, dtype=bool).at[-1, :].set(True),
+        temperature_mask=jnp.zeros(shape, dtype="bool").at[-1, :].set(True),
         temperature_values=300.0,
         heat_flux=0.0,
     )

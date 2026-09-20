@@ -64,7 +64,7 @@ class GaussianPathConstructionPlan(StrictModule, NonTrainableState):
         if method not in ("chronological", "bridge", "pca"):
             raise ValueError("method must be 'chronological', 'bridge', or 'pca'.")
 
-        full_rank = int(nodes_host.size - 1)
+        full_rank = nodes_host.size - 1
         if factor_rank is None:
             rank = full_rank
         elif isinstance(factor_rank, bool) or not isinstance(factor_rank, Integral):
@@ -83,7 +83,7 @@ class GaussianPathConstructionPlan(StrictModule, NonTrainableState):
         self.times = nodes
         self.method = method
         self.factor_rank = rank
-        self.num_times = int(nodes_host.size)
+        self.num_times = nodes_host.size
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "gaussian-path-construction-plan",
@@ -157,7 +157,7 @@ def _brownian_covariance(times: Array, /) -> Array:
 
 def _chronological_factor(times: Array, /) -> tuple[Array, Array]:
     widths = jnp.diff(times)
-    rank = int(widths.size)
+    rank = widths.size
     factor = (
         jnp.tril(jnp.ones((rank, rank), dtype=times.dtype)) * jnp.sqrt(widths)[None, :]
     )
@@ -167,7 +167,7 @@ def _chronological_factor(times: Array, /) -> tuple[Array, Array]:
 
 def _bridge_factor(times: Array, /) -> tuple[Array, Array]:
     nodes = np.asarray(jax.device_get(times))
-    count = int(nodes.size)
+    count = nodes.size
     rank = count - 1
     coefficients = np.zeros((count, rank), dtype=nodes.dtype)
     ordering = np.empty((rank,), dtype=np.int32)
@@ -227,7 +227,7 @@ def _pca_factor(
     eigenvectors = spectrum.eigenvectors[:, ::-1][:, :rank]
     eigenvectors = _canonicalize_eigenvector_signs(eigenvectors)
     factor = eigenvectors * jnp.sqrt(jnp.maximum(eigenvalues, 0.0))[None, :]
-    full_rank = int(covariance.shape[0])
+    full_rank = covariance.shape[0]
     ordering = jnp.arange(full_rank - 1, full_rank - rank - 1, -1, dtype=jnp.int32)
     return factor, ordering
 

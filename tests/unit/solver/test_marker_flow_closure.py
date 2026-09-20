@@ -324,7 +324,7 @@ def test_mapped_composite_and_distributed_transfers_preserve_virtual_work():
     indices = tuple(
         jnp.broadcast_to(jnp.arange(4, dtype=jnp.int32), (2, 4)) for _ in range(2)
     )
-    valid = tuple(jnp.ones((2, 4), dtype=bool) for _ in range(2))
+    valid = tuple(jnp.ones((2, 4), dtype="bool") for _ in range(2))
     relation = composite.relation(
         position,
         levels,
@@ -341,14 +341,14 @@ def test_mapped_composite_and_distributed_transfers_preserve_virtual_work():
         jnp.arange(2),
         jnp.zeros((2,), dtype=jnp.int32),
         jnp.zeros((2, 1), dtype=jnp.int32),
-        jnp.ones((2, 1), dtype=bool),
+        jnp.ones((2, 1), dtype="bool"),
         rank_count=1,
     )
     multi_rank = phx.discretization.DistributedMarkerOwnershipPlan(
         jnp.arange(2),
         jnp.asarray([0, 1]),
         jnp.asarray([[0, 1], [0, 1]]),
-        jnp.ones((2, 2), dtype=bool),
+        jnp.ones((2, 2), dtype="bool"),
         rank_count=2,
     )
     distributed = phx.discretization.DistributedMACMarkerTransfer(local, ownership, 0)

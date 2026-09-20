@@ -111,7 +111,7 @@ class GammaSCFEvidence(StrictModule, NonTrainableState):
                 & (factorization <= factorization_limit)
             )
         admitted = (
-            jnp.asarray(successful, dtype=bool).reshape(())
+            jnp.asarray(successful, dtype=jnp.bool_).reshape(())
             & finite
             & factor_ok
             & (residuals[0] <= convergence)
@@ -341,7 +341,7 @@ def _hermitian_eigh(matrix: Array, problem_id: str, /) -> tuple[Array, Array]:
             problem_id=problem_id,
         ),
         policy=EigenSolvePolicy(
-            DenseEigh(), count=int(matrix.shape[0]), which="smallest-algebraic"
+            DenseEigh(), count=matrix.shape[0], which="smallest-algebraic"
         ),
     )
     if not bool(solve.successful):
@@ -371,7 +371,7 @@ def _generalized_eigh(
             problem_id=problem_id,
         ),
         policy=EigenSolvePolicy(
-            DenseEigh(), count=int(matrix.shape[0]), which="smallest-algebraic"
+            DenseEigh(), count=matrix.shape[0], which="smallest-algebraic"
         ),
     )
     if not bool(solve.successful):
@@ -440,7 +440,7 @@ class GammaFFTDFPlan(StrictModule, NonTrainableState):
             raise TypeError(
                 "Gamma FFTDF requires a fully periodic three-dimensional cell."
             )
-        shape = tuple(int(value) for value in grid_shape)
+        shape = tuple(grid_shape)
         pseudopotentials_ = tuple(pseudopotentials)
         positions = np.asarray(ionic_positions_fractional)
         electrons = float(electron_count)

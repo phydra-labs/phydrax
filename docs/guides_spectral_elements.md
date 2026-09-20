@@ -56,7 +56,7 @@ the compilation identity.
 Runtime metric data contain physical points, Jacobians, cofactors, weighted
 measures, and mapped gradients. Tensor execution does not materialize one full
 physical-gradient tensor per cell. Prepared facet metrics bind physical trace
-points, surface measures, scaled normals, and explicit owner/neighbour trace
+points, surface measures, scaled normals, and explicit owner/neighbor trace
 permutations.
 
 High-order conforming H1 routes share vertex, oriented-edge, oriented-face, and
@@ -166,7 +166,7 @@ independent faces.
 
 For H1 fields, a canonical master trace constrains p- and h-nonconforming cell
 traces. For L2/DG fields, coarse-to-fine patches lower through asymmetric mortar
-worksets with independent owner and neighbour widths. Hanging interfaces are
+worksets with independent owner and neighbor widths. Hanging interfaces are
 removed from the physical exterior domain.
 
 ## Adaptive decisions and transactions

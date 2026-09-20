@@ -19,15 +19,11 @@ from ..discretization.mpm import MPMRuntimeState
 from ..equations import CompiledMaterialPointProblem
 
 
-_OUTPUT_SCHEMA_VERSION = 1
-
-
 def _h5py():
     return import_module("h5py")
 
 
 class MPMOutputManifest(StrictModule, NonTrainableState):
-    schema_version: int = eqx.field(static=True)
     output_id: str = eqx.field(static=True)
     compilation_id: str = eqx.field(static=True)
     accepted_steps: int = eqx.field(static=True)
@@ -57,7 +53,6 @@ class MPMOutputPlan(StrictModule, NonTrainableState):
         self.output_id = canonical_fingerprint(
             {
                 "kind": "mpm-output-plan",
-                "schema_version": _OUTPUT_SCHEMA_VERSION,
                 "compilation": compiled.compilation_id,
                 "hdf5_path": str(hdf5),
             }
@@ -68,7 +63,6 @@ class MPMOutputPlan(StrictModule, NonTrainableState):
         path = Path(self.hdf5_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         with h5py.File(path, "w") as handle:
-            handle.attrs["schema_version"] = _OUTPUT_SCHEMA_VERSION
             handle.attrs["output_id"] = self.output_id
             handle.attrs["compilation_id"] = self.compiled.compilation_id
             handle.attrs["claim_id"] = self.compiled.claim_id
@@ -77,8 +71,7 @@ class MPMOutputPlan(StrictModule, NonTrainableState):
 
     def _validate(self, handle):
         if (
-            int(handle.attrs.get("schema_version", -1)) != _OUTPUT_SCHEMA_VERSION
-            or handle.attrs.get("output_id") != self.output_id
+            handle.attrs.get("output_id") != self.output_id
             or handle.attrs.get("compilation_id") != self.compiled.compilation_id
         ):
             raise ValueError("MPM output archive identity is incompatible.")
@@ -157,7 +150,6 @@ class MPMOutputPlan(StrictModule, NonTrainableState):
         identifier = canonical_fingerprint(
             {
                 "kind": "mpm-output-manifest",
-                "schema_version": _OUTPUT_SCHEMA_VERSION,
                 "output_id": self.output_id,
                 "compilation": self.compiled.compilation_id,
                 "accepted_steps": count,
@@ -165,7 +157,6 @@ class MPMOutputPlan(StrictModule, NonTrainableState):
             }
         )
         return MPMOutputManifest(
-            _OUTPUT_SCHEMA_VERSION,
             self.output_id,
             self.compiled.compilation_id,
             count,

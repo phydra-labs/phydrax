@@ -103,12 +103,6 @@ from ._materials import (
     SemiconductorMaterial,
     srh_recombination,
 )
-from ._production_qualification import (
-    semiconductor_candidate_profile,
-    semiconductor_candidate_profiles,
-    semiconductor_detector_campaign,
-    semiconductor_quantum_transport_campaign,
-)
 from ._optical_response import (
     ActiveRegionOpticalProjection,
     CarrierOpticalResponsePlan,
@@ -118,6 +112,12 @@ from ._optical_response import (
     SemiconductorOpticalResponseResult,
     SemiconductorOpticalResponseStatus,
     TabulatedCarrierOpticalResponsePlan,
+)
+from ._production_qualification import (
+    semiconductor_candidate_profile,
+    semiconductor_candidate_profiles,
+    semiconductor_detector_campaign,
+    semiconductor_quantum_transport_campaign,
 )
 from ._quantities import (
     BOLTZMANN_CONSTANT_SI,

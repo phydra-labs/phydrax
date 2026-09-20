@@ -32,7 +32,7 @@ def run_pic_qualification(*, smoke=False):
         axis_names=("x",),
     ).prepare(jnp.asarray([[0.0], [1.0]]))
     bridge = phx.discretization.StructuredCochainBridge(grid)
-    base = (jnp.arange(particle_count, dtype=float)[:, None] + 0.5) / particle_count
+    base = (jnp.arange(particle_count, dtype="float64")[:, None] + 0.5) / particle_count
     transfers = []
     for offset, sign, name in ((0, -1.0, "negative"), (1000, 1.0, "positive")):
         support = phx.discretization.ParticleSetPlan(

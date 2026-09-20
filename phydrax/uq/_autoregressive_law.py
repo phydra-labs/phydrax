@@ -32,7 +32,7 @@ class AutoregressiveLaw(AbstractProbabilityLaw):
         length: int,
         /,
         *,
-        dtype=float,
+        dtype=jnp.float64,
         order_id: str,
         law_id: str | None = None,
     ):
@@ -44,7 +44,9 @@ class AutoregressiveLaw(AbstractProbabilityLaw):
         resolved_dtype = jnp.dtype(dtype)
         probe = conditional(jnp.empty((0,), dtype=resolved_dtype), 0)
         if not isinstance(probe, AbstractProbabilityLaw) or probe.event_shape != ():
-            raise ValueError("Autoregressive conditionals must be scalar probability laws.")
+            raise ValueError(
+                "Autoregressive conditionals must be scalar probability laws."
+            )
         self.conditional = conditional
         self.length = size
         self.dtype = resolved_dtype
@@ -76,11 +78,13 @@ class AutoregressiveLaw(AbstractProbabilityLaw):
         if not isinstance(law, AbstractProbabilityLaw) or law.event_shape != ():
             raise ValueError("Autoregressive conditional must return a scalar law.")
         if law.density_measure_kind != self.density_measure_kind:
-            raise ValueError("Every autoregressive conditional must use one reference measure.")
+            raise ValueError(
+                "Every autoregressive conditional must use one reference measure."
+            )
         return law
 
     def sample(self, key, sample_shape: tuple[int, ...] = ()) -> Array:
-        samples = tuple(int(size) for size in sample_shape)
+        samples = tuple(sample_shape)
         if any(size <= 0 for size in samples):
             raise ValueError("sample_shape dimensions must be positive.")
         count = 1
@@ -101,7 +105,7 @@ class AutoregressiveLaw(AbstractProbabilityLaw):
 
     def _rows(self, value: ArrayLike, /) -> tuple[Array, tuple[int, ...]]:
         array = jnp.asarray(value, dtype=self.dtype)
-        if array.ndim < 1 or int(array.shape[-1]) != self.length:
+        if array.ndim < 1 or array.shape[-1] != self.length:
             raise ValueError("Autoregressive values must end in the declared length.")
         return array.reshape((-1, self.length)), tuple(array.shape[:-1])
 

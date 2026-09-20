@@ -524,13 +524,13 @@ class LearnedStressEvidence(StrictModule, NonTrainableState):
         self.selected_forward_transfer = jnp.asarray(selected_forward_transfer)
         self.selected_backscatter_transfer = jnp.asarray(selected_backscatter_transfer)
         self.backscatter_limit = jnp.asarray(backscatter_limit)
-        self.correction_active = jnp.asarray(correction_active, dtype=bool)
-        self.correction_applied = jnp.asarray(correction_applied, dtype=bool)
+        self.correction_active = jnp.asarray(correction_active, dtype=jnp.bool_)
+        self.correction_applied = jnp.asarray(correction_applied, dtype=jnp.bool_)
         self.correction_norm = jnp.asarray(correction_norm)
         self.symmetry_defect = jnp.asarray(symmetry_defect)
         self.trace_defect = jnp.asarray(trace_defect)
         self.nonfinite_count = jnp.asarray(nonfinite_count)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.binding_id = plan.plan_id
         self.target_id = plan.output_contract.target_id
         self.filter_id = plan.resolved_filter.filter_id
@@ -795,7 +795,7 @@ class SpectralDriftEvidence(StrictModule, NonTrainableState):
         self.divergence_norm = jnp.asarray(divergence_norm)
         self.hermitian_defect = jnp.asarray(hermitian_defect)
         self.nonfinite_count = jnp.asarray(nonfinite_count)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.binding_id = str(binding_id)
         self.projector_id = str(projector_id)
         self.hermitian_coordinate_id = str(hermitian_coordinate_id)
@@ -830,7 +830,7 @@ class SpectralFallbackArtifact(StrictModule, NonTrainableState):
         binding = str(binding_id).strip()
         if not binding:
             raise ValueError("binding_id must be non-empty.")
-        self.used = jnp.asarray(used, dtype=bool)
+        self.used = jnp.asarray(used, dtype=jnp.bool_)
         self.reason_code = jnp.asarray(reason_code, dtype=jnp.int32)
         self.binding_id = binding
         self.fallback_kind = "zero_spectral_drift"

@@ -12,7 +12,7 @@ import phydrax as phx
 def _axis(size=8):
     return phx.nn.operator.OperatorAxis(
         "x",
-        jnp.arange(size, dtype=float) / size,
+        jnp.arange(size, dtype="float64") / size,
         quadrature_weights=jnp.full((size,), 1.0 / size),
         periodic=True,
     )
@@ -95,7 +95,7 @@ def test_conditioned_flower_applies_query_masks_after_context_routing():
     model = _conditioned_flower(jr.key(1))
     values = jr.normal(jr.key(2), (2, 8))
     conditions = jnp.array([-0.5, 0.75])
-    query_mask = jnp.ones((2, 8), dtype=bool)
+    query_mask = jnp.ones((2, 8), dtype="bool")
     query_mask = query_mask.at[0, -1].set(False).at[1, 0].set(False)
     batch = _conditioned_batch(
         values,
@@ -112,7 +112,7 @@ def test_conditioned_flower_applies_query_masks_after_context_routing():
 
 def test_flower_scalar_case_count_equal_to_grid_size_is_not_a_channel_axis():
     size = 8
-    nodes = jnp.arange(size, dtype=float) / size
+    nodes = jnp.arange(size, dtype="float64") / size
     values = jr.normal(jr.key(3), (size, size))
     model = phx.nn.operator.architectures.Flower(
         in_channels="scalar",

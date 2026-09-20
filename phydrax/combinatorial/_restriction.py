@@ -89,7 +89,7 @@ class CombinatorialFeatureRestriction(StrictModule, NonTrainableState):
             hi_ = jnp.asarray(hi, dtype=dtype)
             root_lo_ = jnp.asarray(root_lo, dtype=dtype)
             root_hi_ = jnp.asarray(root_hi, dtype=dtype)
-            integral_ = jnp.asarray(integral, dtype=bool)
+            integral_ = jnp.asarray(integral, dtype=jnp.bool_)
             if any(
                 value.shape != spec.shape
                 for value in (lo_, hi_, root_lo_, root_hi_, integral_)

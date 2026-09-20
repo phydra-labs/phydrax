@@ -67,9 +67,7 @@ def _chain_urdf(joint_count: int, /) -> str:
 
 
 def _prepare_chain(joint_count: int, /):
-    adaptation = parse_urdf_text(
-        _chain_urdf(joint_count), root_policy="fixed_world"
-    )
+    adaptation = parse_urdf_text(_chain_urdf(joint_count), root_policy="fixed_world")
     particles = adaptation.particles.prepare()
     bodies = adaptation.bodies.prepare(particles)
     graph = adaptation.joints.prepare(bodies, adaptation.reference)
@@ -98,7 +96,7 @@ def _measure(
         result = operation()
         _synchronize(result)
         samples.append((time.perf_counter_ns() - started) * 1.0e-6)
-    values = np.asarray(samples, dtype=float)
+    values = np.asarray(samples, dtype="float64")
     return result, {
         "maximum_ms": round(float(np.max(values)), 6),
         "median_ms": round(float(np.median(values)), 6),
@@ -323,9 +321,7 @@ def _run_case(
             ),
             "inverse_dynamics_status": int(np.asarray(inverse.status)),
             "inverse_dynamics_successful": _scalar_bool(inverse.successful),
-            "jacobian_relative_power_residual": _scalar_float(
-                jacobian_relative_residual
-            ),
+            "jacobian_relative_power_residual": _scalar_float(jacobian_relative_residual),
             "maximum_acceleration_reconstruction_error": _scalar_float(
                 acceleration_error
             ),

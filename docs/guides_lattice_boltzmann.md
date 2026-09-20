@@ -38,7 +38,7 @@ profile evaluation remains a candidate for one exact operating/deployment tuple.
 | Multiblock Cartesian coupling | Implemented research path | Same-step halo schedule with explicit transfer operators |
 | Ratio-2 block refinement | Experimental infrastructure | Conservative restriction/prolongation and fixed subcycling schedule |
 | Collision-aware ratio-2 transfer | Experimental research path | Equilibrium/nonequilibrium transfer, acoustic scaling, half-time interface data, and local defects |
-| Phase-field, colour-gradient, free-energy, thermal, passive species | Implemented research path | Separate distributions and explicit mass/energy/species ledgers |
+| Phase-field, color-gradient, free-energy, thermal, passive species | Implemented research path | Separate distributions and explicit mass/energy/species ledgers |
 | Single-source binary thermodynamics | Implemented research path | Energy, variational derivative, symmetric stress, and selected force share one closure |
 | Reactive species with Strang splitting | Implemented research path | Atomic rollback across flow, thermal, and species states |
 | D2V17 and off-lattice D2V37 smooth compressible kinetic methods | Implemented research path | Total energy is a kinetic population; off-lattice transport is explicit |
@@ -159,8 +159,8 @@ unchanged.
 traces from the same source state before committing incoming directions, with exact
 orientation/Q-permutation reciprocity. Ratio-2 refinement uses explicit conservative
 restriction, prolongation, and a fixed subcycle phase. `MappedLatticeBoltzmannPlan`
-requires its prepared metric nodes to coincide with the Cartesian LBM cell centres;
-users therefore prepare the companion point-primary metric grid over the cell-centre
+requires its prepared metric nodes to coincide with the Cartesian LBM cell centers;
+users therefore prepare the companion point-primary metric grid over the cell-center
 coordinate bounds. Mapped free-stream and metric-identity residuals remain explicit
 experimental evidence.
 
@@ -168,7 +168,7 @@ experimental evidence.
 
 The multiphysics paths use separate distributions and expose conservation accounting:
 
-- colour-gradient and free-energy phase-field flow;
+- color-gradient and free-energy phase-field flow;
 - thermal energy distribution with sensible-energy conversion;
 - independent passive species distributions;
 - reactive species with a fixed Strang reaction/transport/reaction schedule.
@@ -443,7 +443,7 @@ The profile factories create only unsigned candidates:
   population-space Guo forcing;
 - `c1_collision_native_forcing_profile`: D3Q27 central-moment collision with
   collision-native Guo forcing;
-- `c2_binary_interface_profiles`: selected D2Q9/TRT free-energy and colour-gradient
+- `c2_binary_interface_profiles`: selected D2Q9/TRT free-energy and color-gradient
   interfaces, with dynamic wetting only when an explicit
   `ConstitutiveDynamicWettingPlan` is bound;
 - `c3_passive_transport_profiles`: passive sensible energy, passive Fickian species,

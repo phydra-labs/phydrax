@@ -41,10 +41,9 @@ def _order_axes(cell_kind: str, order: PLevelOrder, /) -> tuple[int, ...]:
         dimension = {"quadrilateral": 2, "hexahedron": 3}.get(cell)
         if dimension is None:
             raise ValueError(
-                "Anisotropic p-level orders are supported only for quadrilaterals "
-                "and hexahedra."
+                "Anisotropic p-level orders are supported only for quadrilaterals and hexahedra."
             )
-        axes = tuple(int(value) for value in order)
+        axes = tuple(order)
         if len(axes) != dimension or any(value < 1 for value in axes):
             raise ValueError(
                 "Anisotropic p-level order must have one positive degree per axis."
@@ -122,7 +121,7 @@ class FiniteElementPMultigridPolicy(StrictModule, NonTrainableState):
     ):
         coarsening = str(degree_coarsening)
         orders = tuple(
-            tuple(int(axis) for axis in value) if isinstance(value, tuple) else int(value)
+            tuple(value) if isinstance(value, tuple) else int(value)
             for value in explicit_orders
         )
         pre = int(pre_smoothing)
@@ -166,8 +165,7 @@ class FiniteElementPMultigridPolicy(StrictModule, NonTrainableState):
                     )
                 ):
                     raise ValueError(
-                        "Explicit anisotropic p-level orders must decrease "
-                        "componentwise and terminate at all ones."
+                        "Explicit anisotropic p-level orders must decrease componentwise and terminate at all ones."
                     )
             else:
                 isotropic_orders = []

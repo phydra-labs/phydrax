@@ -43,8 +43,8 @@ class VirtualElementDofMap(StrictModule, NonTrainableState):
         if not isinstance(element, VirtualElementSpec):
             raise TypeError("element must be VirtualElementSpec.")
         connectivity = mesh.connectivity
-        topology_vertex_count = int(mesh.coordinates.shape[0])
-        edge_count = int(connectivity.edges.shape[0])
+        topology_vertex_count = mesh.coordinates.shape[0]
+        edge_count = connectivity.edges.shape[0]
         cell_count = connectivity.cell_count
         vertex_width = element.vertex_dofs_per_entity
         edge_width = element.edge_dofs_per_entity
@@ -54,7 +54,7 @@ class VirtualElementDofMap(StrictModule, NonTrainableState):
         cell_dof_count = cell_count * cell_width
         global_count = vertex_dof_count + edge_dof_count + cell_dof_count
         cell_edges = np.asarray(connectivity.cell_edges, dtype=np.int32)
-        cell_signs = np.asarray(connectivity.cell_edge_signs, dtype=float)
+        cell_signs = np.asarray(connectivity.cell_edge_signs, dtype=np.float64)
         block_dofs = []
         block_orientations = []
         relations = []
@@ -62,7 +62,7 @@ class VirtualElementDofMap(StrictModule, NonTrainableState):
         for block in mesh.blocks:
             width = element.local_dof_count(block.arity)
             local = np.empty((block.cell_count, width), dtype=np.int32)
-            orientation = np.ones((block.cell_count, width), dtype=float)
+            orientation = np.ones((block.cell_count, width), dtype=np.float64)
             cursor = 0
             if vertex_width:
                 vertices = np.asarray(block.vertices, dtype=np.int32)
@@ -113,16 +113,16 @@ class VirtualElementDofMap(StrictModule, NonTrainableState):
             block_orientations.append(jnp.asarray(orientation))
             relations.append(RowRelation(local, source_size=global_count))
             cell_offset += block.cell_count
-        boundary = np.zeros((global_count,), dtype=bool)
+        boundary = np.zeros((global_count,), dtype=np.bool_)
         if vertex_width:
             boundary[:vertex_dof_count] = np.asarray(
-                connectivity.boundary_vertices, dtype=bool
+                connectivity.boundary_vertices, dtype=np.bool_
             )
         if edge_width:
             boundary[vertex_dof_count : vertex_dof_count + edge_dof_count] = np.repeat(
-                np.asarray(connectivity.boundary_edges, dtype=bool), edge_width
+                np.asarray(connectivity.boundary_edges, dtype=np.bool_), edge_width
             )
-        point_valid = np.zeros((global_count,), dtype=bool)
+        point_valid = np.zeros((global_count,), dtype=np.bool_)
         if element.family == "ConformingH1":
             point_valid[: vertex_dof_count + edge_dof_count] = True
         self.block_names = tuple(block.name for block in mesh.blocks)
@@ -166,7 +166,7 @@ class VirtualElementDofMap(StrictModule, NonTrainableState):
         if self.family == "ConformingH1":
             result = result.at[: self.vertex_dof_count].set(points)
         edge_width = (
-            self.edge_dof_count // int(mesh.connectivity.edges.shape[0])
+            self.edge_dof_count // mesh.connectivity.edges.shape[0]
             if self.edge_dof_count
             else 0
         )

@@ -43,7 +43,7 @@ def _vertex():
         labels,
         labels,
         labels,
-        values[..., None, None, None, None].astype(complex),
+        values[..., None, None, None, None].astype("complex128"),
         fermion_label_minimum=-1,
         fermion_label_count=3,
     )
@@ -168,7 +168,7 @@ def run_smoke():
     grid = nef.ClosedTimePathPlan(jnp.linspace(0.0, 0.2, 3)).prepare()
     free = nef.fermionic_keldysh_from_propagators(
         grid,
-        jnp.broadcast_to(jnp.eye(1, dtype=complex), (3, 1, 1)),
+        jnp.broadcast_to(jnp.eye(1, dtype="complex128"), (3, 1, 1)),
         jnp.asarray([[0.5]]),
         source_id="smoke-stationary-level",
     )

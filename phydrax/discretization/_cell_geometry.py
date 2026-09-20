@@ -78,7 +78,7 @@ class CellGeometrySpec(StrictModule, NonTrainableState):
             str(name): np.asarray(value, dtype=np.int32)
             for name, value in geometry_dofs.items()
         }
-        points = np.asarray(coordinates, dtype=float)
+        points = np.asarray(coordinates, dtype=np.float64)
         if not items or any(not name for name, _ in items):
             raise ValueError("Coordinate element mapping must be non-empty.")
         if not all(isinstance(element, CellGeometryElement) for _, element in items):

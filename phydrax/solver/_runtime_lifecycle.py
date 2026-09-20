@@ -57,8 +57,7 @@ def _host_array_tree(tree: Any, role: str, /) -> Any:
     for leaf in leaves:
         if isinstance(leaf, jax.Array) and not leaf.is_fully_addressable:
             raise ValueError(
-                "Runtime checkpoint contains a non-addressable global array; "
-                "use lifecycle.publish_process_checkpoint."
+                "Runtime checkpoint contains a non-addressable global array; use lifecycle.publish_process_checkpoint."
             )
         arrays.append(_read_only_c_array(leaf, role))
     return jax.tree_util.tree_unflatten(treedef, arrays)
@@ -404,7 +403,7 @@ def _tree_archive_inventory(
 ) -> dict[str, tuple[tuple[int, ...], np.dtype[Any] | None]]:
     return {
         f"{prefix}/{index:06d}": (
-            tuple(int(extent) for extent in leaf.shape),
+            tuple(leaf.shape),
             np.dtype(leaf.dtype),
         )
         for index, leaf in enumerate(jax.tree.leaves(tree))
@@ -430,7 +429,7 @@ def _runtime_archive_inventory(
     for index, (_, leaf) in enumerate(path_leaves):
         binding = encoding.binding_for(index)
         if binding is None:
-            shape = tuple(int(extent) for extent in leaf.shape)
+            shape = tuple(leaf.shape)
             dtype = np.dtype(leaf.dtype)
         else:
             if tuple(leaf.shape) != tuple(binding.evidence.source_shape) or np.dtype(
@@ -975,7 +974,7 @@ class StreamingObservablePlan(StrictModule, NonTrainableState):
         )
 
     def initial_state(
-        self, shape: tuple[int, ...], dtype=float, /
+        self, shape: tuple[int, ...], dtype=jnp.float64, /
     ) -> StreamingObservableState:
         zeros = jnp.zeros(shape, dtype=dtype)
         return StreamingObservableState(
@@ -1075,7 +1074,7 @@ class AcceptedStepTrigger(StrictModule, NonTrainableState):
             }
         )
 
-    def initial_state(self, dtype=float, /) -> AcceptedStepTriggerState:
+    def initial_state(self, dtype=jnp.float64, /) -> AcceptedStepTriggerState:
         return AcceptedStepTriggerState(
             jnp.asarray(False),
             jnp.asarray(0, dtype=jnp.int64),
@@ -1091,7 +1090,7 @@ class AcceptedStepTrigger(StrictModule, NonTrainableState):
         accepted: ArrayLike,
     ) -> tuple[Array, AcceptedStepTriggerState]:
         value_ = jnp.asarray(value).reshape(())
-        accepted_ = jnp.asarray(accepted, dtype=bool).reshape(())
+        accepted_ = jnp.asarray(accepted, dtype=jnp.bool_).reshape(())
         active = (
             value_ >= self.threshold
             if self.direction == "above"
@@ -1247,7 +1246,7 @@ class ByteBoundedAsyncPublisher:
     @staticmethod
     def _snapshot(value: Any, byte_count: int, /) -> tuple[Any, int]:
         snapshot = jax.tree.map(_immutable_host_snapshot_leaf, value)
-        copied_bytes = sum(int(leaf.nbytes) for leaf in jax.tree.leaves(snapshot))
+        copied_bytes = sum(leaf.nbytes for leaf in jax.tree.leaves(snapshot))
         if copied_bytes != byte_count:
             raise ValueError("Output snapshot shape or dtype changed during host copy.")
         return snapshot, copied_bytes
@@ -1379,7 +1378,7 @@ class StreamingMomentPlan(StrictModule, NonTrainableState):
         plan_id: str,
     ):
         edges = np.asarray(histogram_edges)
-        shape = tuple(int(value) for value in value_shape)
+        shape = tuple(value_shape)
         start = None if window_start is None else float(window_start)
         end = None if window_end is None else float(window_end)
         duration = None if batch_duration is None else float(batch_duration)
@@ -1422,14 +1421,14 @@ class StreamingMomentPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def initial_state(self, dtype=float, /) -> StreamingMomentState:
+    def initial_state(self, dtype=jnp.float64, /) -> StreamingMomentState:
         return StreamingMomentState(
             jnp.asarray(0.0, dtype=dtype),
             jnp.zeros(self.value_shape, dtype=dtype),
             jnp.zeros(self.value_shape, dtype=dtype),
             jnp.full(self.value_shape, jnp.inf, dtype=dtype),
             jnp.full(self.value_shape, -jnp.inf, dtype=dtype),
-            jnp.zeros((max(int(self.histogram_edges.size) - 1, 0),), dtype=jnp.int64),
+            jnp.zeros((max(self.histogram_edges.size - 1, 0),), dtype=jnp.int64),
             jnp.zeros((self.maximum_batches,), dtype=dtype),
             jnp.zeros((self.maximum_batches, *self.value_shape), dtype=dtype),
             jnp.asarray(-jnp.inf, dtype=dtype),
@@ -1628,7 +1627,7 @@ class AcceptedStepTriggerGraph(StrictModule, NonTrainableState):
             }
         )
 
-    def initial_state(self, dtype=float, /) -> AcceptedStepTriggerGraphState:
+    def initial_state(self, dtype=jnp.float64, /) -> AcceptedStepTriggerGraphState:
         return AcceptedStepTriggerGraphState(
             tuple(value.initial_state(dtype) for value in self.triggers),
             jnp.asarray(0, dtype=jnp.int32),
@@ -1664,14 +1663,16 @@ class AcceptedStepTriggerGraph(StrictModule, NonTrainableState):
             jnp.asarray(0, dtype=jnp.int32),
         )
         fire = (
-            jnp.asarray(accepted, dtype=bool) & active & (counter > self.debounce_steps)
+            jnp.asarray(accepted, dtype=jnp.bool_)
+            & active
+            & (counter > self.debounce_steps)
         )
         proposed = AcceptedStepTriggerGraphState(
             tuple(states),
             counter,
             state.fire_count + fire.astype(jnp.int64),
         )
-        return fire, _tree_where(jnp.asarray(accepted, dtype=bool), proposed, state)
+        return fire, _tree_where(jnp.asarray(accepted, dtype=jnp.bool_), proposed, state)
 
 
 __all__ = [

@@ -33,7 +33,6 @@ from .._doc import DOC_KEY0
 from .._frozendict import frozendict
 from .._sampling import (
     derive_key,
-    DESIGN_ALGORITHM_VERSION,
     design_name,
     materialize_design,
     SampleAddress,
@@ -101,10 +100,10 @@ def _fixed_field(factor: Any, selector: Any, /) -> cx.AxisArray:
             value = selector.value
         else:
             raise TypeError("Expected a fixed scalar selector.")
-        return cx.AxisArray(jnp.asarray(value, dtype=float).reshape(()), dims=())
+        return cx.AxisArray(jnp.asarray(value, dtype=jnp.float64).reshape(()), dims=())
     if isinstance(factor, AbstractGeometry) and isinstance(selector, Fixed):
         return cx.AxisArray(
-            jnp.asarray(selector.value, dtype=float).reshape((factor.spatial_dim,)),
+            jnp.asarray(selector.value, dtype=jnp.float64).reshape((factor.spatial_dim,)),
             dims=(None,),
         )
     raise TypeError("Unsupported fixed product-plan factor.")
@@ -204,8 +203,7 @@ def _validate_sparse_factor(
         )
     if factor.reference_transport.reference_measure != "standard-normal":
         raise ValueError(
-            f"Gauss--Hermite sparse-grid axis {label!r} requires a "
-            "standard-normal reference transport."
+            f"Gauss--Hermite sparse-grid axis {label!r} requires a standard-normal reference transport."
         )
 
 
@@ -273,8 +271,7 @@ def materialize_product(
     )
     if controlled_groups:
         raise ValueError(
-            "Product integration does not support control variates; "
-            "use a direct Monte Carlo or quasi-Monte Carlo plan."
+            "Product integration does not support control variates; use a direct Monte Carlo or quasi-Monte Carlo plan."
         )
     fixed_labels = frozenset(
         label
@@ -338,8 +335,7 @@ def materialize_product(
                 for factor in endpoint_factors
             ):
                 raise ValueError(
-                    "Endpoint-inclusive product rules require bounded probability "
-                    "support."
+                    "Endpoint-inclusive product rules require bounded probability support."
                 )
             if isinstance(factor_plan, FixedQuadraturePlan):
                 if isinstance(factor_plan.rule, GaussianCubatureRule):
@@ -363,8 +359,7 @@ def materialize_product(
                         transport = factor.reference_transport
                         if transport.reference_measure != "standard-normal":
                             raise ValueError(
-                                "Gaussian cubature product factors require "
-                                "standard-normal reference transports."
+                                "Gaussian cubature product factors require standard-normal reference transports."
                             )
                         points[label] = cx.AxisArray(
                             transport.from_reference(rule.prepared.points[:, column]),
@@ -477,7 +472,6 @@ def materialize_product(
             address = SampleAddress(
                 "integration",
                 "product-group",
-                algorithm_version=DESIGN_ALGORITHM_VERSION,
                 target=labels,
                 role=name,
             )
@@ -497,7 +491,7 @@ def materialize_product(
                 second = (
                     1.0 - first
                     if design.involution is None
-                    else jnp.asarray(design.involution(first), dtype=float)
+                    else jnp.asarray(design.involution(first), dtype=jnp.float64)
                 )
                 if second.shape != first.shape:
                     raise ValueError(
@@ -807,7 +801,7 @@ def integrate_product(
         status = jnp.max(
             jnp.stack(tuple(jnp.asarray(estimate.status) for estimate in estimates))
         )
-        evaluations = sum(int(batch.weights.data.size) for batch in realization.batches)
+        evaluations = sum(batch.weights.data.size for batch in realization.batches)
         diagnostics = ProductIntegrationDiagnostics(
             status=status,
             num_evaluations=jnp.asarray(evaluations, dtype=jnp.int32),
@@ -863,7 +857,7 @@ def integrate_product(
         else:
             error_kind = None
     status = jnp.max(jnp.stack(tuple(item[2] for item in reductions)))
-    evaluations = sum(int(batch.weights.data.size) for batch in realization.batches)
+    evaluations = sum(batch.weights.data.size for batch in realization.batches)
     diagnostics = ProductIntegrationDiagnostics(
         status=status,
         num_evaluations=jnp.asarray(evaluations, dtype=jnp.int32),

@@ -130,11 +130,11 @@ class PreparedEmbeddedMeasureTransfer(StrictModule):
 
     @property
     def target_count(self) -> int:
-        return int(self.target_measures.shape[0])
+        return self.target_measures.shape[0]
 
     @property
     def quadrature_count(self) -> int:
-        return int(self.quadrature_weights.shape[1])
+        return self.quadrature_weights.shape[1]
 
     def average(self, source_values: ArrayLike, /) -> EmbeddedTransferResult:
         sampled = self.sampling.apply(source_values)
@@ -214,9 +214,9 @@ class PreparedEmbeddedMeasureTransfer(StrictModule):
         if source.shape[:1] != self.source_measures.shape:
             raise ValueError("source_values must begin with the source row count.")
         support_ = (
-            jnp.ones((self.target_count, self.quadrature_count), dtype=bool)
+            jnp.ones((self.target_count, self.quadrature_count), dtype=jnp.bool_)
             if support is None
-            else jnp.asarray(support, dtype=bool).reshape(
+            else jnp.asarray(support, dtype=jnp.bool_).reshape(
                 (self.target_count, self.quadrature_count)
             )
         )
@@ -289,11 +289,11 @@ class EmbeddedMeasureTransferPlan:
             raise TypeError("Embedded transfer requires a tetrahedral source mesh.")
         if not isinstance(self.coordinate_contract, SpatialCoordinateContract):
             raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
-        points = np.asarray(self.target_points, dtype=float)
+        points = np.asarray(self.target_points, dtype=np.float64)
         if points.ndim != 2 or points.shape[1] != 3 or not np.all(np.isfinite(points)):
             raise ValueError("target_points must have finite shape (N, 3).")
-        target_measures = np.asarray(self.target_measures, dtype=float)
-        source_measures = np.asarray(self.source_lumped_measures, dtype=float)
+        target_measures = np.asarray(self.target_measures, dtype=np.float64)
+        source_measures = np.asarray(self.source_lumped_measures, dtype=np.float64)
         if target_measures.shape != (len(points),) or np.any(target_measures <= 0.0):
             raise ValueError(
                 "target_measures must be positive with one value per target."
@@ -319,7 +319,7 @@ class EmbeddedMeasureTransferPlan:
         if isinstance(self.kernel, CircleAverageKernel):
             if self.target_tangents is None:
                 raise ValueError("Circle averages require target_tangents.")
-            tangents = np.asarray(self.target_tangents, dtype=float)
+            tangents = np.asarray(self.target_tangents, dtype=np.float64)
             if tangents.shape != points.shape or not np.all(np.isfinite(tangents)):
                 raise ValueError("target_tangents must match target_points.")
             norms = np.linalg.norm(tangents, axis=1)

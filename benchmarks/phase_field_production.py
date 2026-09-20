@@ -120,7 +120,7 @@ def _benchmark_method(
         "equation": equation,
         "resolution": resolution,
         "cells": 2 * resolution * resolution,
-        "degrees_of_freedom": int(candidate.size),
+        "degrees_of_freedom": candidate.size,
         "method_id": method.method_id,
         "preparation_seconds": preparation_seconds,
         "compilation": {

@@ -240,7 +240,7 @@ class IncrementalMarkovTarget(StrictModule):
             log_ratio=ratio_,
             proposed_cache=cache,
             valid=(
-                jnp.asarray(valid, dtype=bool)
+                jnp.asarray(valid, dtype=jnp.bool_)
                 & jnp.isfinite(ratio_)
                 & _tree_all_finite(cache)
                 & _tree_all_finite(proposed_position)
@@ -282,7 +282,7 @@ class IncrementalMarkovTarget(StrictModule):
         else:
             cache_valid = jnp.asarray(
                 self.refresh_validate_fn(state.cache, cache),
-                dtype=bool,
+                dtype=jnp.bool_,
             )
             if cache_valid.shape != ():
                 raise ValueError(

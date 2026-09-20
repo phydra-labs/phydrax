@@ -18,7 +18,7 @@ from jaxtyping import Array, ArrayLike, Key
 from ..._doc import DOC_KEY0
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._model import AbstractArrayModel, MODEL_CONSTRUCTION_CERTIFICATE_KEYS
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
 
@@ -45,7 +45,7 @@ class SimilarityNormalization(StrictModule, NonTrainableState):
     normalization_id: str = eqx.field(static=True)
 
     def __init__(self, center: ArrayLike, scale: float = 1.0, /):
-        center_host = np.asarray(center, dtype=float)
+        center_host = np.asarray(center, dtype=np.float64)
         scale_ = float(scale)
         if center_host.ndim != 1 or center_host.size < 2:
             raise ValueError(
@@ -55,11 +55,11 @@ class SimilarityNormalization(StrictModule, NonTrainableState):
             raise ValueError("SimilarityNormalization center must be finite.")
         if not math.isfinite(scale_) or scale_ <= 0.0:
             raise ValueError("SimilarityNormalization scale must be finite and positive.")
-        self.center = jnp.asarray(center_host, dtype=float)
-        self.scale = jnp.asarray(scale_, dtype=float).reshape(())
+        self.center = jnp.asarray(center_host, dtype=jnp.float64)
+        self.scale = jnp.asarray(scale_, dtype=jnp.float64).reshape(())
         self.normalization_id = canonical_fingerprint(
             {
-                "kind": "euclidean-similarity-normalization-v1",
+                "kind": "euclidean-similarity-normalization",
                 "center": center_host.tolist(),
                 "scale": scale_,
             }
@@ -67,7 +67,7 @@ class SimilarityNormalization(StrictModule, NonTrainableState):
 
     @property
     def dimension(self) -> int:
-        return int(self.center.shape[0])
+        return self.center.shape[0]
 
     def __call__(self, point: ArrayLike, /) -> Array:
         value = jnp.asarray(point)
@@ -95,8 +95,7 @@ class TrefftzResourceBudget(StrictModule, NonTrainableState):
         maximum_basis_bytes: int = 256 * 1024**2,
     ):
         values = tuple(
-            int(value)
-            for value in (
+            (
                 maximum_rank,
                 maximum_monomials,
                 maximum_basis_entries,
@@ -164,7 +163,7 @@ class TrefftzResourceEvidence(StrictModule, NonTrainableState):
         self.basis_bytes = int(basis_bytes)
         self.evidence_id = canonical_fingerprint(
             {
-                "kind": "trefftz-resource-evidence-v1",
+                "kind": "trefftz-resource-evidence",
                 "rank": self.rank,
                 "monomials": self.monomials,
                 "basis_entries": self.basis_entries,
@@ -228,9 +227,9 @@ class TrialSpaceCertificate(StrictModule, NonTrainableState):
             raise ValueError("Unknown Trefftz equation family.")
         dimension = int(ambient_dimension)
         rank_ = int(rank)
-        shape = tuple(int(value) for value in field_shape)
+        shape = tuple(field_shape)
         tolerance = float(construction_tolerance)
-        residual = jnp.asarray(construction_residual, dtype=float).reshape(())
+        residual = jnp.asarray(construction_residual, dtype=jnp.float64).reshape(())
         parameters = tuple(
             sorted(
                 dict(equation_parameters).items(),
@@ -280,8 +279,7 @@ class TrialSpaceCertificate(StrictModule, NonTrainableState):
             )
         if residual_host > tolerance:
             raise ValueError(
-                "Trefftz construction residual exceeds tolerance: "
-                f"{residual_host:.3e} > {tolerance:.3e}."
+                f"Trefftz construction residual exceeds tolerance: {residual_host:.3e} > {tolerance:.3e}."
             )
         representation = None if representation_id is None else str(representation_id)
         if representation_id is not None and not representation:
@@ -306,7 +304,7 @@ class TrialSpaceCertificate(StrictModule, NonTrainableState):
         self.construction_tolerance = tolerance
         self.certificate_id = canonical_fingerprint(
             {
-                "kind": "trefftz-trial-space-certificate-v2",
+                "kind": "trefftz-trial-space-certificate",
                 "equation_family": equation_family,
                 "ambient_dimension": dimension,
                 "field_shape": list(shape),
@@ -351,7 +349,7 @@ def trial_target_fingerprint(
     ambient_dimension: int,
     /,
 ) -> str:
-    values = jnp.asarray(points, dtype=float)
+    values = jnp.asarray(points, dtype=jnp.float64)
     dimension = int(ambient_dimension)
     if dimension <= 0 or values.ndim < 1 or values.shape[-1] != dimension:
         raise ValueError("Trial target points must end in the ambient dimension.")
@@ -360,7 +358,7 @@ def trial_target_fingerprint(
         raise ValueError("Trial target points must be nonempty.")
     return canonical_fingerprint(
         {
-            "kind": "trial-space-target-points-v1",
+            "kind": "trial-space-target-points",
             "points": array_tree_fingerprint(flattened),
         }
     )
@@ -369,12 +367,12 @@ def trial_target_fingerprint(
 class AbstractTrialSpaceAdmissibility(StrictModule, NonTrainableState):
     """Abstract target-domain evidence for a restricted-validity trial field."""
 
-    pde_membership_valid: AbstractAttribute[Array]
-    accuracy_supported: AbstractAttribute[Array]
-    target_count: AbstractAttribute[int]
-    target_fingerprint: AbstractAttribute[str]
-    singular_support_id: AbstractAttribute[str]
-    report_id: AbstractAttribute[str]
+    pde_membership_valid: eqx.AbstractVar[Array]
+    accuracy_supported: eqx.AbstractVar[Array]
+    target_count: eqx.AbstractVar[int]
+    target_fingerprint: eqx.AbstractVar[str]
+    singular_support_id: eqx.AbstractVar[str]
+    report_id: eqx.AbstractVar[str]
 
 
 class TrialSpaceAuditReport(StrictModule, NonTrainableState):
@@ -408,15 +406,15 @@ class TrialSpaceAuditReport(StrictModule, NonTrainableState):
         evaluation_accuracy_supported: ArrayLike = True,
         admissibility_report_id: str | None = None,
     ):
-        finite_ = jnp.asarray(finite, dtype=bool).reshape(())
-        maximum = jnp.asarray(maximum_residual, dtype=float).reshape(())
-        rms = jnp.asarray(root_mean_square_residual, dtype=float).reshape(())
-        scale = jnp.asarray(reference_scale, dtype=float).reshape(())
-        tolerance_ = jnp.asarray(tolerance, dtype=float).reshape(())
-        membership = jnp.asarray(pde_membership_valid, dtype=bool).reshape(())
+        finite_ = jnp.asarray(finite, dtype=jnp.bool_).reshape(())
+        maximum = jnp.asarray(maximum_residual, dtype=jnp.float64).reshape(())
+        rms = jnp.asarray(root_mean_square_residual, dtype=jnp.float64).reshape(())
+        scale = jnp.asarray(reference_scale, dtype=jnp.float64).reshape(())
+        tolerance_ = jnp.asarray(tolerance, dtype=jnp.float64).reshape(())
+        membership = jnp.asarray(pde_membership_valid, dtype=jnp.bool_).reshape(())
         accuracy = jnp.asarray(
             evaluation_accuracy_supported,
-            dtype=bool,
+            dtype=jnp.bool_,
         ).reshape(())
         count = int(point_count)
         if count <= 0:
@@ -440,7 +438,7 @@ class TrialSpaceAuditReport(StrictModule, NonTrainableState):
         self.certificate_id = str(certificate_id)
         self.audit_id = canonical_fingerprint(
             {
-                "kind": "trefftz-trial-space-audit-v2",
+                "kind": "trefftz-trial-space-audit",
                 "certificate_id": certificate_id,
                 "point_fingerprint": point_fingerprint,
                 "point_count": count,

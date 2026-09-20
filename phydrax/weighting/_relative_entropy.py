@@ -394,8 +394,7 @@ def _require_dual_compatible(problem, execution):
         or problem.boundary is not None
     ):
         raise ValueError(
-            "Group, subset, and boundary structures are incompatible with the "
-            "regular dual-relative-entropy route."
+            "Group, subset, and boundary structures are incompatible with the regular dual-relative-entropy route."
         )
 
 

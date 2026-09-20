@@ -229,7 +229,7 @@ class SemiconductorDetectorPlan(StrictModule, NonTrainableState):
         masks = np.stack(tuple(np.asarray(value.node_mask) for value in values))
         if masks.shape != (len(values), node_count):
             raise ValueError("Every electrode mask must match the detector vertices.")
-        boundary = np.asarray(bridge.cochain.boundary_masks[0], dtype=bool)
+        boundary = np.asarray(bridge.cochain.boundary_masks[0], dtype=np.bool_)
         if not np.any(boundary):
             raise ValueError("Detector electrostatics requires a physical boundary.")
         if np.any(masks & ~boundary[None, :]):

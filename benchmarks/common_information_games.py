@@ -156,7 +156,7 @@ def _bayes_evidence(result) -> dict[str, Any]:
     posterior_mass_defect = jnp.where(support, jnp.abs(posterior_mass - 1.0), 0.0)
     return {
         "support_count": int(jnp.sum(support)),
-        "total_observation_branches": int(support.size),
+        "total_observation_branches": support.size,
         "minimum_supported_normalizer": float(jnp.min(supported_normalizers)),
         "maximum_normalization_residual": float(
             jnp.max(result.bayes_evidence.normalization_residuals)

@@ -512,7 +512,7 @@ def _qualification() -> dict[str, Any]:
             "external_code": False,
             "external_data": False,
             "external_weights": False,
-            "case_count": int(density.size),
+            "case_count": density.size,
             "case_order": [
                 "positive-x-negative-y",
                 "negative-x-positive-y",
@@ -561,7 +561,7 @@ def _qualification() -> dict[str, Any]:
             "maximum_mass_momentum_stress_residual": particle_moment_residual,
         },
         "learned_thermal_energy": {
-            "statistic_count": int(statistics.shape[-1]),
+            "statistic_count": statistics.shape[-1],
             "natural_parameters": _vector(natural_parameters),
             "all_successful": _all_successful(learned_energy.status),
             "all_populations_positive": bool(jnp.all(learned_energy.populations > 0.0)),

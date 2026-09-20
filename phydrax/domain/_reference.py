@@ -27,7 +27,7 @@ class _ExactReferenceTransport:
     _map: Callable[[Array], Any]
 
     def map(self, unit: Array, /) -> Any:
-        return self._map(jnp.asarray(unit, dtype=float))
+        return self._map(jnp.asarray(unit, dtype=jnp.float64))
 
 
 def _scalar_transport(
@@ -40,18 +40,18 @@ def _scalar_transport(
                 1,
                 lambda unit: jnp.asarray(
                     factor.distribution.icdf(open_unit_interval(unit[:, 0])),
-                    dtype=float,
+                    dtype=jnp.float64,
                 ),
             )
-        lower = jnp.asarray(factor.fixed("start"), dtype=float)
-        upper = jnp.asarray(factor.fixed("end"), dtype=float)
+        lower = jnp.asarray(factor.fixed("start"), dtype=jnp.float64)
+        upper = jnp.asarray(factor.fixed("end"), dtype=jnp.float64)
         return _ExactReferenceTransport(
             1,
             lambda unit: lower + unit[:, 0] * (upper - lower),
         )
     if isinstance(component, Boundary):
-        lower = jnp.asarray(factor.fixed("start"), dtype=float)
-        upper = jnp.asarray(factor.fixed("end"), dtype=float)
+        lower = jnp.asarray(factor.fixed("start"), dtype=jnp.float64)
+        upper = jnp.asarray(factor.fixed("end"), dtype=jnp.float64)
         return _ExactReferenceTransport(
             1,
             lambda unit: jnp.where(unit[:, 0] < 0.5, lower, upper),

@@ -31,7 +31,7 @@ def _assumptions() -> causal.AssumptionLedger:
 
 def _binary_problem(schema: causal.CausalSchema, probabilities: np.ndarray):
     assignments = np.indices(probabilities.shape).reshape(len(probabilities.shape), -1).T
-    repeats = np.maximum(np.rint(probabilities.reshape(-1) * 10_000), 1).astype(int)
+    repeats = np.maximum(np.rint(probabilities.reshape(-1) * 10_000), 1).astype("int64")
     rows = np.repeat(assignments, repeats, axis=0)
     dataset = causal.CausalDataset(
         schema=schema,

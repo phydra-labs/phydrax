@@ -211,7 +211,7 @@ def _oracle_trajectory(runtime, binding, trajectory_id, density, phase):
         jnp.stack(f_states),
         jnp.stack(g_states),
         jnp.stack(U_states),
-        jnp.asarray(valid, dtype=bool),
+        jnp.asarray(valid, dtype="bool"),
         schema,
         case_id=f"case-{trajectory_id}",
         trajectory_id=trajectory_id,

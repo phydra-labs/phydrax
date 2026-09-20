@@ -138,7 +138,7 @@ class TargetAugmentedBranchEncoder(AbstractBranchEncoder):
     ):
         if not isinstance(free_encoder, AbstractBranchEncoder):
             raise TypeError("free_encoder must be AbstractBranchEncoder.")
-        indices = tuple(int(value) for value in target_indices)
+        indices = tuple(target_indices)
         if (
             not indices
             or any(value < 0 for value in indices)
@@ -171,9 +171,9 @@ class TargetAugmentedBranchEncoder(AbstractBranchEncoder):
         values = jnp.asarray(samples.values)
         if jnp.iscomplexobj(values):
             raise TypeError("Hard boundary targets must be real.")
-        case_shape = tuple(int(size) for size in values.shape[:case_ndim])
+        case_shape = tuple(values.shape[:case_ndim])
         flat = values.reshape(case_shape + (-1,))
-        if max(self.target_indices) >= int(flat.shape[-1]):
+        if max(self.target_indices) >= flat.shape[-1]:
             raise ValueError("target_indices exceed the flattened source values.")
         targets = flat[..., jnp.asarray(self.target_indices)]
         free = self.free_encoder(samples, case_ndim=case_ndim, key=key)

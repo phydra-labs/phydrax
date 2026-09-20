@@ -53,7 +53,7 @@ class ContinuationReplayEvidence(StrictModule):
         if any(not value for value in expected) or any(not value for value in observed):
             raise ValueError("Replay decision identities must be non-empty.")
         flags = tuple(
-            jnp.asarray(value, dtype=bool)
+            jnp.asarray(value, dtype=jnp.bool_)
             for value in (
                 runtime_identities_match,
                 decision_history_matches,

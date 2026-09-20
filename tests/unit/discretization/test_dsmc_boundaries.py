@@ -30,7 +30,7 @@ def _empty_particles(capacity=4):
         jnp.zeros((capacity,)),
         jnp.zeros((capacity,)),
         -jnp.ones((capacity,), dtype=jnp.int32),
-        jnp.zeros((capacity,), dtype=bool),
+        jnp.zeros((capacity,), dtype="bool"),
         jnp.zeros((capacity,), dtype=jnp.int32),
     )
 
@@ -172,7 +172,7 @@ def test_specular_streaming_keeps_exact_upper_face_hit_inside_domain():
         jnp.zeros((1,)),
         jnp.ones((1,)),
         jnp.zeros((1,), dtype=jnp.int32),
-        jnp.ones((1,), dtype=bool),
+        jnp.ones((1,), dtype="bool"),
         jnp.zeros((1,), dtype=jnp.int32),
     )
     result = phx.discretization.dsmc.DSMCStreamingPlan(

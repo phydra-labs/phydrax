@@ -6,15 +6,16 @@ from __future__ import annotations
 
 from abc import abstractmethod
 
+import equinox as eqx
 from jaxtyping import Array, PyTree
 
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 
 
 class AbstractChainSampleResult(StrictModule):
     """Correlated chain-by-draw samples with stable provenance semantics."""
 
-    samples: AbstractAttribute[PyTree[Array]]
+    samples: eqx.AbstractVar[PyTree[Array]]
 
     @property
     @abstractmethod

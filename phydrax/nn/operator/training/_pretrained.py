@@ -38,13 +38,13 @@ class BundledPretrainedOperator(StrictModule):
             normalized = (source - mean) / scale
             lifted = contract("...ni,wi->...nw", normalized, lift_weight)
             coefficients = jnp.fft.rfft(lifted, axis=-2)
-            modes = min(int(coefficients.shape[-2]), int(spectral_weight.shape[-1]))
+            modes = min(coefficients.shape[-2], spectral_weight.shape[-1])
             mixed = contract(
                 "...mr,orm->...mo",
                 coefficients[..., :modes, :],
                 spectral_weight[..., :modes],
             )
-            source_size = int(source.shape[-2])
+            source_size = source.shape[-2]
             target_size = source_size if query is None else int(query)
             if target_size != source_size:
                 mixed = mixed * (target_size / source_size)

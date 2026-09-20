@@ -111,7 +111,7 @@ class WaveConnectionMap(StrictModule):
 
     @property
     def size(self) -> int:
-        return int(self.forward.shape[0])
+        return self.forward.shape[0]
 
 
 class WaveConnection(StrictModule):

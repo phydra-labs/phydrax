@@ -33,7 +33,7 @@ def certify_closed_oriented_surface(
 ) -> ClosedSurfaceCertificate:
     if not isinstance(plan, CollisionSurfacePlan):
         raise TypeError("plan must be CollisionSurfacePlan.")
-    positions = np.asarray(rest_positions, dtype=float)
+    positions = np.asarray(rest_positions, dtype=np.float64)
     faces = np.asarray(plan.faces, dtype=np.int32)
     edges = np.asarray(plan.edges, dtype=np.int32)
     edge_lookup = {

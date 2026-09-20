@@ -17,6 +17,15 @@ import sympy as sp
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
+from ..linalg import (
+    DenseLinearOperator,
+    DenseLU,
+    LinearSolvePolicy,
+    LinearSystem,
+    OperatorProperties,
+    prepare,
+    solve,
+)
 from ._system import SparsePolynomialSystem
 
 
@@ -49,8 +58,16 @@ def smale_alpha_certificate(
         raise ValueError("Alpha theory requires a square polynomial system.")
     jacobian = system.jacobian(point_)
     residual = system.evaluate(point_)
-    inverse = jnp.linalg.inv(jacobian)
-    beta = jnp.linalg.norm(inverse @ residual)
+    operator = DenseLinearOperator(
+        jacobian,
+        properties=OperatorProperties(square=True),
+    )
+    prepared = prepare(
+        LinearSystem(operator),
+        LinearSolvePolicy(DenseLU()),
+    )
+    residual_solve = solve(prepared, residual)
+    beta = jnp.linalg.norm(residual_solve.value)
     maximum_degree = int(np.max(np.asarray(system.support.exponents)))
     total_degree = int(np.max(np.sum(np.asarray(system.support.exponents), axis=1)))
     degree = max(maximum_degree, total_degree)
@@ -61,7 +78,9 @@ def smale_alpha_certificate(
         if order < 2:
             continue
         tensor = derivative(point_)
-        transformed = jnp.tensordot(inverse, tensor, axes=((1,), (0,)))
+        columns = tensor.reshape((tensor.shape[0], -1)).T
+        solved = jax.vmap(lambda column: solve(prepared, column).value)(columns)
+        transformed = solved.T.reshape(tensor.shape)
         bound = jnp.linalg.norm(transformed) / factorial(order)
         gamma_candidates.append(bound ** (1.0 / (order - 1)))
     gamma = (
@@ -70,7 +89,12 @@ def smale_alpha_certificate(
         else jnp.asarray(0.0, dtype=point_.real.dtype)
     )
     alpha = beta * gamma
-    finite = jnp.isfinite(beta) & jnp.isfinite(gamma) & jnp.isfinite(alpha)
+    finite = (
+        residual_solve.successful
+        & jnp.isfinite(beta)
+        & jnp.isfinite(gamma)
+        & jnp.isfinite(alpha)
+    )
     approximate = bool(finite & (alpha <= _SMALE_ALPHA_THRESHOLD))
     payload = {
         "kind": "smale-alpha-certificate",
@@ -121,7 +145,7 @@ def _jacobian_interval(system, lower, upper, /):
     coefficients = np.asarray(system.coefficients)
     if np.iscomplexobj(coefficients):
         raise ValueError("Krawczyk certification currently requires real coefficients.")
-    low = np.zeros((support.equation_count, support.variable_count), dtype=float)
+    low = np.zeros((support.equation_count, support.variable_count), dtype=np.float64)
     high = np.zeros_like(low)
     equations = np.asarray(support.equation_indices)
     exponents = np.asarray(support.exponents)
@@ -135,7 +159,10 @@ def _jacobian_interval(system, lower, upper, /):
             derivative_exponent = exponent.copy()
             derivative_exponent[variable] -= 1
             interval = _monomial_interval(lower, upper, derivative_exponent)
-            scaled = (coefficient * power * interval[0], coefficient * power * interval[1])
+            scaled = (
+                coefficient * power * interval[0],
+                coefficient * power * interval[1],
+            )
             low[equation, variable] += min(scaled)
             high[equation, variable] += max(scaled)
     return low, high
@@ -159,9 +186,12 @@ def krawczyk_certificate(
 ) -> KrawczykCertificate:
     """Certify one unique real root in an axis-aligned polynomial box."""
 
-    center_ = np.asarray(center, dtype=float)
-    radius_ = np.asarray(radius, dtype=float)
-    if center_.shape != (system.support.variable_count,) or radius_.shape != center_.shape:
+    center_ = np.asarray(center, dtype=np.float64)
+    radius_ = np.asarray(radius, dtype=np.float64)
+    if (
+        center_.shape != (system.support.variable_count,)
+        or radius_.shape != center_.shape
+    ):
         raise ValueError("Krawczyk center/radius shapes do not match the system.")
     if np.any(radius_ <= 0.0) or not np.all(np.isfinite(center_ + radius_)):
         raise ValueError("Krawczyk radii must be finite and positive.")
@@ -169,9 +199,9 @@ def krawczyk_certificate(
         raise ValueError("Krawczyk certification requires a square system.")
     lower = center_ - radius_
     upper = center_ + radius_
-    center_jacobian = np.asarray(system.jacobian(jnp.asarray(center_)), dtype=float)
-    inverse = np.linalg.inv(center_jacobian)
-    residual = np.asarray(system.evaluate(jnp.asarray(center_)), dtype=float)
+    center_jacobian = np.asarray(system.jacobian(jnp.asarray(center_)), dtype=jnp.float64)
+    inverse = np.linalg.solve(center_jacobian, np.eye(center_jacobian.shape[0]))
+    residual = np.asarray(system.evaluate(jnp.asarray(center_)), dtype=jnp.float64)
     jacobian_low, jacobian_high = _jacobian_interval(system, lower, upper)
     matrix_low = np.eye(center_.size) - inverse @ jacobian_high
     matrix_high = np.eye(center_.size) - inverse @ jacobian_low
@@ -233,7 +263,9 @@ def isolate_univariate_real_roots(
         for index, value in enumerate(coefficients)
     )
     polynomial = sp.Poly(expression, variable, domain=sp.QQ)
-    intervals = polynomial.intervals(eps=sp.Rational(tolerance.numerator, tolerance.denominator))
+    intervals = polynomial.intervals(
+        eps=sp.Rational(tolerance.numerator, tolerance.denominator)
+    )
     result = []
     for (lower, upper), multiplicity in intervals:
         result.append(

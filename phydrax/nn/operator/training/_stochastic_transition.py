@@ -91,8 +91,7 @@ def _case_value(value: ArrayLike, batch: OperatorBatch, /, *, name: str) -> Arra
     array = jnp.asarray(value)
     if array.shape not in ((), batch.case_shape):
         raise ValueError(
-            f"{name} must be scalar or have OperatorBatch case shape "
-            f"{batch.case_shape}; got {array.shape}."
+            f"{name} must be scalar or have OperatorBatch case shape {batch.case_shape}; got {array.shape}."
         )
     return array
 
@@ -326,7 +325,7 @@ class OperatorTransitionSpec(StrictModule):
         values = batch.input(binding.input_name).values
         if values is None:
             raise ValueError("The configured driver input has no values.")
-        return tuple(int(size) for size in values.shape[len(batch.case_shape) :])
+        return tuple(values.shape[len(batch.case_shape) :])
 
     def validate_batch(
         self,
@@ -367,10 +366,9 @@ class OperatorTransitionSpec(StrictModule):
         query = batch.query(self.query_name)
         expected = batch.case_shape + self.state_event_shape(batch)
         assert state.values is not None
-        if tuple(int(size) for size in state.values.shape) != expected:
+        if tuple(state.values.shape) != expected:
             raise ValueError(
-                f"Transition state input must have shape {expected}; "
-                f"got {state.values.shape}."
+                f"Transition state input must have shape {expected}; got {state.values.shape}."
             )
         if state.sample_shape != query.sample_shape:
             raise ValueError(
@@ -418,10 +416,9 @@ class OperatorTransitionSpec(StrictModule):
     def advance(self, batch: OperatorBatch, state: ArrayLike, /) -> OperatorBatch:
         values = jnp.asarray(state)
         expected = batch.case_shape + self.state_event_shape(batch)
-        if tuple(int(size) for size in values.shape) != expected:
+        if tuple(values.shape) != expected:
             raise ValueError(
-                f"Advanced transition state must have shape {expected}; "
-                f"got {values.shape}."
+                f"Advanced transition state must have shape {expected}; got {values.shape}."
             )
         return _replace_input_values(batch, self.state_input, values)
 
@@ -444,7 +441,7 @@ class OperatorTransitionSpec(StrictModule):
                 "Transition state must end in template case_shape + event_shape; "
                 f"expected tail {base_tail}, got {values.shape}."
             )
-        prefix = tuple(int(size) for size in values.shape[: -len(base_tail)])
+        prefix = tuple(values.shape[: -len(base_tail)])
         if not prefix:
             return self.advance(template, values)
         axes = (
@@ -466,15 +463,15 @@ class OperatorTransitionSpec(StrictModule):
         binding = self.driver_binding(input_name)
         template = batch.input(binding.input_name).values
         assert template is not None
-        event_shape = tuple(int(size) for size in template.shape[len(batch.case_shape) :])
+        event_shape = tuple(template.shape[len(batch.case_shape) :])
         array = jnp.asarray(values, dtype=template.dtype)
         if len(event_shape) == 0:
-            leading = tuple(int(size) for size in array.shape)
+            leading = tuple(array.shape)
         elif (
             array.ndim >= len(event_shape)
             and tuple(array.shape[-len(event_shape) :]) == event_shape
         ):
-            leading = tuple(int(size) for size in array.shape[: -len(event_shape)])
+            leading = tuple(array.shape[: -len(event_shape)])
         else:
             raise ValueError(
                 f"Driver field must end in event shape {event_shape}; got {array.shape}."
@@ -783,8 +780,7 @@ class OperatorMarginalTransition(AbstractMarginalTransitionLaw):
     ):
         if not isinstance(model, AbstractProbabilisticOperatorModel):
             raise TypeError(
-                "OperatorMarginalTransition requires an "
-                "AbstractProbabilisticOperatorModel."
+                "OperatorMarginalTransition requires an AbstractProbabilisticOperatorModel."
             )
         if not isinstance(spec, OperatorTransitionSpec):
             raise TypeError("spec must be an OperatorTransitionSpec.")
@@ -1045,7 +1041,7 @@ class StochasticOperatorRollout(StrictModule):
 
 def _time_grid(times: ArrayLike, /) -> Array:
     values = jnp.asarray(times)
-    if values.ndim != 1 or int(values.shape[0]) < 2:
+    if values.ndim != 1 or values.shape[0] < 2:
         raise ValueError("Operator rollouts require at least two one-dimensional times.")
     if bool(jnp.any(~jnp.isfinite(values)) | jnp.any(jnp.diff(values) <= 0.0)):
         raise ValueError("Operator rollout times must be finite and strictly increasing.")
@@ -1203,7 +1199,7 @@ def marginal_operator_rollout(
         )
     state = jnp.broadcast_to(initial, (count,) + expected)
     states = [state]
-    sample_keys = jr.split(key, int(query_times.shape[0]) - 1)
+    sample_keys = jr.split(key, query_times.shape[0] - 1)
     for index, sample_key in enumerate(sample_keys):
         distribution = law.marginal_transition(
             state,
@@ -1304,7 +1300,7 @@ def pathwise_operator_rollout(
         dtype=initial.real.dtype,
     )
     interval_axis = len(driver.sample_shape)
-    for index in range(int(query_times.shape[0]) - 1):
+    for index in range(query_times.shape[0] - 1):
         increment = jnp.take(increments, index, axis=interval_axis)
         state = law.pathwise_transition(
             state,
@@ -1442,8 +1438,7 @@ def process_operator_rollout(
             raise AssertionError(f"Unhandled driver quantity {binding.quantity!r}.")
         if event_shape != expected_event:
             raise ValueError(
-                f"Driver input {binding.input_name!r} must have event shape "
-                f"{expected_event}; got {event_shape}."
+                f"Driver input {binding.input_name!r} must have event shape {expected_event}; got {event_shape}."
             )
         jump_components[binding.component] = component
 
@@ -1469,7 +1464,7 @@ def process_operator_rollout(
         for name, component in wiener_components.items()
     }
     interval_axis = len(realization.sample_shape)
-    for index in range(int(query_times.shape[0]) - 1):
+    for index in range(query_times.shape[0] - 1):
         start = query_times[index]
         end = query_times[index + 1]
         if isinstance(law, OperatorJumpTransition):
@@ -1546,13 +1541,11 @@ def operator_markov_chain_nll(
         raise TypeError("law must be an OperatorMarginalTransition.")
     query_times = _time_grid(times)
     values = jnp.asarray(states)
-    expected = (
-        (int(query_times.shape[0]),) + law.template_batch.case_shape + law.state_shape
-    )
+    expected = (query_times.shape[0],) + law.template_batch.case_shape + law.state_shape
     if values.shape != expected:
         raise ValueError(f"states must have shape {expected}; got {values.shape}.")
     terms = []
-    for index in range(int(query_times.shape[0]) - 1):
+    for index in range(query_times.shape[0] - 1):
         distribution = law.marginal_transition(
             values[index],
             t0=query_times[index],
@@ -1576,7 +1569,7 @@ def direct_operator_horizon_nll(
     if not isinstance(law, OperatorMarginalTransition):
         raise TypeError("law must be an OperatorMarginalTransition.")
     times = jnp.asarray(target_times)
-    if times.ndim != 1 or int(times.shape[0]) <= 0:
+    if times.ndim != 1 or times.shape[0] <= 0:
         raise ValueError("target_times must be a non-empty vector.")
     state = jnp.asarray(initial_state)
     base_shape = law.template_batch.case_shape + law.state_shape
@@ -1585,13 +1578,13 @@ def direct_operator_horizon_nll(
             f"initial_state must have shape {base_shape}; got {state.shape}."
         )
     target_values = jnp.asarray(targets)
-    expected = (int(times.shape[0]),) + base_shape
+    expected = (times.shape[0],) + base_shape
     if target_values.shape != expected:
         raise ValueError(
             f"targets must have shape {expected}; got {target_values.shape}."
         )
     terms = []
-    for index in range(int(times.shape[0])):
+    for index in range(times.shape[0]):
         distribution = law.marginal_transition(
             state,
             t0=initial_time,

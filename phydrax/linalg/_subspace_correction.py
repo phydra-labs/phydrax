@@ -222,8 +222,7 @@ def _resolved_properties(
     if unsupported:
         names = ", ".join(unsupported)
         raise ValueError(
-            "Supplied subspace-correction properties lack component and structural "
-            f"support for: {names}."
+            f"Supplied subspace-correction properties lack component and structural support for: {names}."
         )
     return supplied
 
@@ -568,7 +567,7 @@ def _operator_storage_bytes(
     for value in jax.tree.leaves(operators):
         if eqx.is_array(value):
             arrays[id(value)] = value
-    return sum(int(value.size * value.dtype.itemsize) for value in arrays.values())
+    return sum(value.size * value.dtype.itemsize for value in arrays.values())
 
 
 def _cost_for_terms(

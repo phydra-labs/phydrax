@@ -77,7 +77,7 @@ def benchmark(*, smoke: bool) -> dict[str, object]:
             positions,
             jnp.asarray((1.0, 2.0, 3.0)),
             jnp.ones((3,)),
-            jnp.ones((3,), dtype=bool),
+            jnp.ones((3,), dtype="bool"),
         ),
         warmup=1,
         repeats=repeats,

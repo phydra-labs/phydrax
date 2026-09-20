@@ -1,7 +1,8 @@
+from importlib import import_module
+
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-
 from ._acceleration import FixedClusterDiagnostics2D, FixedClusterVortexPlan2D
 from ._core_families import (
     RosenheadVortexKernel2D,
@@ -21,7 +22,6 @@ from ._direct3d import (
     GaussianErfDirectVortexPlan3D,
     PreparedGaussianErfDirectVortex3D,
 )
-from ._ewald import *  # noqa: F403
 from ._ewald import __all__ as _ewald_all
 from ._filament3d import (
     FilamentVelocityDiagnostics,
@@ -29,9 +29,7 @@ from ._filament3d import (
     PreparedFilamentVelocity3D,
     regularized_filament_velocity_3d,
 )
-from ._fmm_complete import *  # noqa: F403
 from ._fmm_complete import __all__ as _fmm_complete_all
-from ._free_space_mesh import *  # noqa: F403
 from ._free_space_mesh import __all__ as _free_space_mesh_all
 from ._gaussian2d import (
     gaussian_vortex_kernel_2d,
@@ -41,11 +39,8 @@ from ._gaussian2d import (
     GaussianVortexKernelEvaluation2D,
 )
 from ._gaussian3d import GaussianErfKernelEvaluation3D, GaussianErfVortexKernel3D
-from ._morton import *  # noqa: F403
 from ._morton import __all__ as _morton_all
-from ._p3m import *  # noqa: F403
 from ._p3m import __all__ as _p3m_all
-from ._panel_complete import *  # noqa: F403
 from ._panel_complete import __all__ as _panel_complete_all
 from ._panels2d import (
     constant_panel_velocity_2d,
@@ -53,7 +48,6 @@ from ._panels2d import (
     panel_influence_matrix_2d,
     RigidPanelMotion2D,
 )
-from ._panels3d_complete import *  # noqa: F403
 from ._panels3d_complete import __all__ as _panels3d_complete_all
 from ._particle_mesh import (
     PeriodicVortexInCellDiagnostics,
@@ -65,10 +59,35 @@ from ._pse import (
     ParticleStrengthExchangeEvidence,
     PreparedGaussianParticleStrengthExchange,
 )
-from ._ring_field import *  # noqa: F403
 from ._ring_field import __all__ as _ring_field_all
-from ._sharding import *  # noqa: F403
 from ._sharding import __all__ as _sharding_all
+
+
+_FACADE_EXPORT_MODULES = (
+    "._ewald",
+    "._fmm_complete",
+    "._free_space_mesh",
+    "._morton",
+    "._p3m",
+    "._panel_complete",
+    "._panels3d_complete",
+    "._ring_field",
+    "._sharding",
+)
+
+
+def __getattr__(name: str):
+    for module_name in reversed(_FACADE_EXPORT_MODULES):
+        module = import_module(module_name, __package__)
+        if name in module.__all__:
+            value = getattr(module, name)
+            globals()[name] = value
+            return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
 
 
 __all__ = [

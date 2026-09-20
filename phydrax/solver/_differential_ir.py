@@ -63,7 +63,7 @@ def _state_structure(state: Any, /) -> tuple[tuple[str, tuple[int, ...], str], .
     return tuple(
         (
             jax.tree_util.keystr(path) or "<root>",
-            tuple(int(size) for size in jnp.asarray(leaf).shape),
+            tuple(jnp.asarray(leaf).shape),
             str(jnp.asarray(leaf).dtype),
         )
         for path, leaf in jax.tree_util.tree_flatten_with_path(state)[0]

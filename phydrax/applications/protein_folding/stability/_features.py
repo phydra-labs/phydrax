@@ -108,10 +108,10 @@ class AminoAcidScalarDefinition(StrictModule, NonTrainableState):
         manifests, source_ids = _admitted_manifests(
             source_manifests, requested_use, "scalar source manifests"
         )
-        volume_array = np.asarray([volume[key] for key in _AMINO_ACIDS], dtype=float)
-        charge_array = np.asarray([charge[key] for key in _AMINO_ACIDS], dtype=float)
+        volume_array = np.asarray([volume[key] for key in _AMINO_ACIDS], dtype=np.float64)
+        charge_array = np.asarray([charge[key] for key in _AMINO_ACIDS], dtype=np.float64)
         hydropathy_array = np.asarray(
-            [hydropathy[key] for key in _AMINO_ACIDS], dtype=float
+            [hydropathy[key] for key in _AMINO_ACIDS], dtype=np.float64
         )
         if not all(
             np.all(np.isfinite(array))
@@ -285,7 +285,7 @@ class ProteinMutationFeatures(StrictModule, NonTrainableState):
         source_manifests: Sequence[ReferenceArtifactManifest],
         requested_use: Mapping[str, bool],
     ):
-        array = np.asarray(values, dtype=float)
+        array = np.asarray(values, dtype=np.float64)
         names = tuple(_identifier(value, "feature name") for value in feature_names)
         if array.ndim != 1 or array.shape != (len(names),) or not names:
             raise ValueError("Feature values must align with one non-empty named layout.")
@@ -400,8 +400,8 @@ class ProteinFeatureTransform(StrictModule, NonTrainableState):
         source_id: str,
         constant_feature_names: Sequence[str] = (),
     ):
-        mean_array = np.asarray(mean, dtype=float)
-        scale_array = np.asarray(scale, dtype=float)
+        mean_array = np.asarray(mean, dtype=np.float64)
+        scale_array = np.asarray(scale, dtype=np.float64)
         names = tuple(feature_names)
         if (
             mean_array.shape != (len(names),)
@@ -473,7 +473,7 @@ def protein_mutation_features(
     feature_definition_id: str,
     requested_use: Mapping[str, bool],
 ) -> ProteinMutationFeatures:
-    """Build the pinned V1 feature layout for one exact single substitution."""
+    """Build the pinned Canonical feature layout for one exact single substitution."""
     if not isinstance(measurement, ProteinStabilityMeasurement):
         raise TypeError("measurement must be ProteinStabilityMeasurement.")
     if not isinstance(environment, ProteinResidueEnvironment):
@@ -482,7 +482,9 @@ def protein_mutation_features(
         raise TypeError("scalars must be AminoAcidScalarDefinition.")
     substitutions = parse_mutation_code(measurement.mutation_code)
     if len(substitutions) != 1:
-        raise ValueError("V1 mutation features require exactly one point substitution.")
+        raise ValueError(
+            "Canonical mutation features require exactly one point substitution."
+        )
     wild_type, position, mutant = substitutions[0]
     if environment.residue_position != position:
         raise ValueError("Environment position does not match the mutation position.")

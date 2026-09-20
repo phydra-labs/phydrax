@@ -194,7 +194,7 @@ class PreparedReducedClimate(StrictModule):
             raise ValueError(
                 "The numerical clock requires a positive finite seconds conversion."
             )
-        times = np.asarray(grid.times, dtype=float)
+        times = np.asarray(grid.times, dtype=np.float64)
         durations = np.diff(times)
         if not np.allclose(durations, durations[0], rtol=1.0e-6, atol=1.0e-12):
             raise ValueError(

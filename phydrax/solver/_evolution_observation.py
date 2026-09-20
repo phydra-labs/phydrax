@@ -122,14 +122,13 @@ def observe_evolution_bounded(
     initial_value = jnp.asarray(plan.observable(grid[0], initial, args))
     if initial_value.shape != plan.observable_shape:
         raise ValueError(
-            f"Observable must return shape {plan.observable_shape}; "
-            f"got {initial_value.shape}."
+            f"Observable must return shape {plan.observable_shape}; got {initial_value.shape}."
         )
     coordinate_buffer = jnp.full((plan.capacity,), jnp.inf, dtype=grid.dtype)
     value_buffer = jnp.zeros(
         (plan.capacity,) + plan.observable_shape, dtype=initial_value.dtype
     )
-    valid_buffer = jnp.zeros((plan.capacity,), dtype=bool)
+    valid_buffer = jnp.zeros((plan.capacity,), dtype=jnp.bool_)
     initial_finite = jnp.all(jnp.isfinite(initial)) & jnp.all(jnp.isfinite(initial_value))
     initial_count = jnp.asarray(int(plan.include_initial), dtype=jnp.int32)
     initial_status = jnp.where(

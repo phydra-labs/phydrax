@@ -68,7 +68,7 @@ def _finite_problem():
     assignments = np.indices((2, 2, 2)).reshape(3, -1).T
     repeats = np.maximum(
         np.rint(np.asarray(law.probabilities).reshape(-1) * 1000), 1
-    ).astype(int)
+    ).astype("int64")
     rows = np.repeat(assignments, repeats, axis=0)
     dataset = causal.CausalDataset(
         schema=schema,

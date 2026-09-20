@@ -247,36 +247,37 @@ class VariablePatchEmbeddedBoundaryPlan(StrictModule, NonTrainableState):
             for bucket_index, bucket in enumerate(level_plan.buckets):
                 envelope = bucket.signature.envelope_shape
                 shape = (bucket.lane_capacity,) + envelope
-                fraction = np.zeros(shape, dtype=float)
-                fluid_volume = np.zeros(shape, dtype=float)
-                fluid_center = np.zeros(shape + (2,), dtype=float)
-                cut_center = np.zeros(shape + (2,), dtype=float)
-                cut_normal = np.zeros(shape + (2,), dtype=float)
-                cut_measure = np.zeros(shape, dtype=float)
-                cut_active = np.zeros(shape, dtype=bool)
+                fraction = np.zeros(shape, dtype=np.float64)
+                fluid_volume = np.zeros(shape, dtype=np.float64)
+                fluid_center = np.zeros(shape + (2,), dtype=np.float64)
+                cut_center = np.zeros(shape + (2,), dtype=np.float64)
+                cut_normal = np.zeros(shape + (2,), dtype=np.float64)
+                cut_measure = np.zeros(shape, dtype=np.float64)
+                cut_active = np.zeros(shape, dtype=np.bool_)
                 tags = np.full(shape, -1, dtype=np.int32)
-                small = np.zeros(shape, dtype=bool)
+                small = np.zeros(shape, dtype=np.bool_)
                 face_shapes = (
                     (bucket.lane_capacity, envelope[0] + 1, envelope[1]),
                     (bucket.lane_capacity, envelope[0], envelope[1] + 1),
                 )
                 open_fraction = [
-                    np.zeros(face_shape, dtype=float) for face_shape in face_shapes
+                    np.zeros(face_shape, dtype=np.float64) for face_shape in face_shapes
                 ]
                 open_measure = [
-                    np.zeros(face_shape, dtype=float) for face_shape in face_shapes
+                    np.zeros(face_shape, dtype=np.float64) for face_shape in face_shapes
                 ]
                 open_center = [
-                    np.zeros(face_shape + (2,), dtype=float) for face_shape in face_shapes
+                    np.zeros(face_shape + (2,), dtype=np.float64)
+                    for face_shape in face_shapes
                 ]
                 open_endpoints = [
-                    np.zeros(face_shape + (2, 2), dtype=float)
+                    np.zeros(face_shape + (2, 2), dtype=np.float64)
                     for face_shape in face_shapes
                 ]
                 vertex = np.asarray(vertices[bucket_index])
                 full_volume = np.asarray(cell_volumes[bucket_index])
                 full_center = np.asarray(cell_centers[bucket_index])
-                active_cells = np.asarray(active[bucket_index], dtype=bool)
+                active_cells = np.asarray(active[bucket_index], dtype=np.bool_)
                 patch_lower = np.asarray(metadata.lower[bucket_index], dtype=np.int32)
                 for lane in range(bucket.lane_capacity):
                     if not np.any(active_cells[lane]):
@@ -294,7 +295,7 @@ class VariablePatchEmbeddedBoundaryPlan(StrictModule, NonTrainableState):
                         )
                         values = np.asarray(
                             self.level_set(jnp.asarray(polygon), geometry.time, args),
-                            dtype=float,
+                            dtype=np.float64,
                         )
                         if values.shape != (4,) or np.any(~np.isfinite(values)):
                             raise ValueError(
@@ -306,9 +307,7 @@ class VariablePatchEmbeddedBoundaryPlan(StrictModule, NonTrainableState):
                             raise ValueError(
                                 "Embedded cut classification is ambiguous at a vertex."
                             )
-                        global_cell = tuple(
-                            int(value) for value in patch_lower[lane] + local
-                        )
+                        global_cell = tuple(patch_lower[lane] + local)
                         edge_specs = (
                             (
                                 0,
@@ -347,7 +346,7 @@ class VariablePatchEmbeddedBoundaryPlan(StrictModule, NonTrainableState):
                                 (i, j + 1),
                             ),
                         )
-                        closure_vector = np.zeros((2,), dtype=float)
+                        closure_vector = np.zeros((2,), dtype=np.float64)
                         for (
                             axis,
                             face_key,

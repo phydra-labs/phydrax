@@ -13,6 +13,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+import phydrax.ein as ein
+
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -57,7 +59,7 @@ class ThreePhononScatteringResult(StrictModule, NonTrainableState):
         ).reshape(())
         self.decay_channel_count = int(decay_count)
         self.coalescence_channel_count = int(coalescence_count)
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.result_id = canonical_fingerprint(
             {
                 "kind": "three-phonon-scattering-result",
@@ -123,15 +125,11 @@ class ThreePhononModeVertices(StrictModule, NonTrainableState):
         self.coalescence_vertices = jnp.asarray(coalescence)
         self.angular_frequencies = jnp.asarray(frequency)
         self.qpoint_indices = jnp.asarray(indices, dtype=jnp.int32)
-        self.mesh_shape = tuple(int(value) for value in mesh_shape)
+        self.mesh_shape = tuple(mesh_shape)
         self.energy_unit = energy_unit
         self.ifc3_id = str(ifc3_id)
         self.phonon_result_id = str(phonon_result_id)
-        self.convention_id = (
-            "mass-weighted-eigenvectors-columns;"
-            "decay=(-q1,q2,q1-q2);coalescence=(q1,q2,-q1-q2);"
-            "sqrt-hbar-over-2Momega"
-        )
+        self.convention_id = "mass-weighted-eigenvectors-columns;decay=(-q1,q2,q1-q2);coalescence=(q1,q2,-q1-q2);sqrt-hbar-over-2Momega"
         self.vertex_id = canonical_fingerprint(
             {
                 "kind": "three-phonon-mode-vertices",
@@ -194,11 +192,11 @@ class IFC3ModeVertexPlan(StrictModule, NonTrainableState):
         if ifc3.unit.unit_id != expected_unit.unit_id:
             raise ValueError("IFC3 unit differs from the phonon unit system.")
         indices = np.asarray(qpoint_indices)
-        shape = tuple(int(value) for value in mesh_shape)
-        q = np.asarray(fractional_qpoints, dtype=float)
-        frequency = np.asarray(angular_frequencies, dtype=float)
+        shape = tuple(mesh_shape)
+        q = np.asarray(fractional_qpoints, dtype=np.float64)
+        frequency = np.asarray(angular_frequencies, dtype=np.float64)
         vectors = np.asarray(eigenvectors)
-        mass = np.asarray(masses, dtype=float)
+        mass = np.asarray(masses, dtype=np.float64)
         qpoints, branches = frequency.shape if frequency.ndim == 2 else (-1, -1)
         if (
             len(shape) not in (1, 2, 3)
@@ -220,9 +218,7 @@ class IFC3ModeVertexPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "IFC3 mode transform axes, masses, or stable modes are invalid."
             )
-        if len({tuple(int(value) for value in row) for row in indices}) != int(
-            np.prod(shape)
-        ):
+        if len({tuple(row) for row in indices}) != int(np.prod(shape)):
             raise ValueError("IFC3 mode transform requires one complete regular mesh.")
         expected_q = indices / np.asarray(shape)[None, :]
         if not np.allclose(np.mod(q, 1.0), expected_q, atol=1.0e-12):
@@ -280,9 +276,7 @@ class IFC3ModeVertexPlan(StrictModule, NonTrainableState):
         shape = np.asarray(self.mesh_shape)
         qpoints, branches = frequency.shape
         atom_count = self.ifc3.atom_count
-        lookup = {
-            tuple(int(value) for value in row): index for index, row in enumerate(indices)
-        }
+        lookup = {tuple(row): index for index, row in enumerate(indices)}
         polarization = vectors.reshape((qpoints, atom_count, 3, branches))
         amplitude = np.sqrt(
             self.units.reduced_planck_constant
@@ -309,16 +303,8 @@ class IFC3ModeVertexPlan(StrictModule, NonTrainableState):
         for q1 in range(qpoints):
             first = modes[q1, triplets[:, 0]]
             for q2 in range(qpoints):
-                q_decay = lookup[
-                    tuple(
-                        int(value) for value in np.mod(indices[q1] - indices[q2], shape)
-                    )
-                ]
-                q_coalescence = lookup[
-                    tuple(
-                        int(value) for value in np.mod(indices[q1] + indices[q2], shape)
-                    )
-                ]
+                q_decay = lookup[tuple(np.mod(indices[q1] - indices[q2], shape))]
+                q_coalescence = lookup[tuple(np.mod(indices[q1] + indices[q2], shape))]
                 decay_phase = np.exp(
                     2.0j
                     * np.pi
@@ -332,7 +318,7 @@ class IFC3ModeVertexPlan(StrictModule, NonTrainableState):
                 second = modes[q2, triplets[:, 1]]
                 decay_third = modes[q_decay, triplets[:, 2]]
                 coalescence_third = modes[q_coalescence, triplets[:, 2]]
-                decay[q1, :, q2, :, :] = normalization * np.einsum(
+                decay[q1, :, q2, :, :] = normalization * ein.contract(
                     "eabc,eam,ebn,eco,e->mno",
                     values,
                     np.conj(first),
@@ -340,7 +326,7 @@ class IFC3ModeVertexPlan(StrictModule, NonTrainableState):
                     decay_third,
                     decay_phase,
                 )
-                coalescence[q1, :, q2, :, :] = normalization * np.einsum(
+                coalescence[q1, :, q2, :, :] = normalization * ein.contract(
                     "eabc,eam,ebn,eco,e->mno",
                     values,
                     first,
@@ -399,17 +385,17 @@ class ThreePhononRTAResult(StrictModule, NonTrainableState):
             conductivity, dtype=self.lifetimes.dtype
         ).reshape((3, 3))
         self.mean_free_paths = jnp.asarray(mean_free_paths, dtype=self.lifetimes.dtype)
-        self.ballistic_mask = jnp.asarray(ballistic, dtype=bool)
+        self.ballistic_mask = jnp.asarray(ballistic, dtype=jnp.bool_)
         self.conductivity_antisymmetry_residual = jnp.asarray(
             antisymmetry, dtype=self.lifetimes.dtype
         ).reshape(())
         self.conductivity_eigenvalues = jnp.asarray(
             eigenvalues, dtype=self.lifetimes.dtype
         ).reshape((3,))
-        self.finite_conductivity = jnp.asarray(finite_conductivity, dtype=bool).reshape(
-            ()
-        )
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.finite_conductivity = jnp.asarray(
+            finite_conductivity, dtype=jnp.bool_
+        ).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.unit_system_id = str(unit_system_id)
         self.approximation = "intrinsic-three-phonon-single-mode-rta"
         self.result_id = canonical_fingerprint(
@@ -470,8 +456,8 @@ class ThreePhononRTAPlan(StrictModule, NonTrainableState):
                 "Production RTA requires IFC3 permutation and acoustic constraints."
             )
         indices = np.asarray(qpoint_indices)
-        shape = tuple(int(value) for value in mesh_shape)
-        weights = np.asarray(qpoint_weights, dtype=float)
+        shape = tuple(mesh_shape)
+        weights = np.asarray(qpoint_weights, dtype=np.float64)
         if (
             indices.ndim != 2
             or not np.issubdtype(indices.dtype, np.integer)
@@ -552,9 +538,9 @@ class ThreePhononRTAPlan(StrictModule, NonTrainableState):
             )
         ):
             raise ValueError("Mode vertices do not bind this IFC3 and momentum mesh.")
-        frequency = np.asarray(mode_vertices.angular_frequencies, dtype=float)
-        velocity = np.asarray(group_velocities, dtype=float)
-        heat = np.asarray(heat_capacities, dtype=float)
+        frequency = np.asarray(mode_vertices.angular_frequencies, dtype=np.float64)
+        velocity = np.asarray(group_velocities, dtype=np.float64)
+        heat = np.asarray(heat_capacities, dtype=np.float64)
         decay_vertices = np.asarray(mode_vertices.decay_vertices)
         coalescence_vertices = np.asarray(mode_vertices.coalescence_vertices)
         qpoints, branches = frequency.shape
@@ -576,10 +562,7 @@ class ThreePhononRTAPlan(StrictModule, NonTrainableState):
         if channel_count > self.maximum_channels:
             raise ValueError("Three-phonon channel capacity exceeded before allocation.")
         addresses = np.asarray(self.qpoint_indices)
-        lookup = {
-            tuple(int(value) for value in row): index
-            for index, row in enumerate(addresses)
-        }
+        lookup = {tuple(row): index for index, row in enumerate(addresses)}
         shape = np.asarray(self.mesh_shape)
         if len(lookup) != int(np.prod(shape)):
             raise ValueError(
@@ -598,17 +581,9 @@ class ThreePhononRTAPlan(StrictModule, NonTrainableState):
         weights = np.asarray(self.qpoint_weights)
         for q1 in range(qpoints):
             for q2 in range(qpoints):
-                q_decay = lookup[
-                    tuple(
-                        int(value)
-                        for value in np.mod(addresses[q1] - addresses[q2], shape)
-                    )
-                ]
+                q_decay = lookup[tuple(np.mod(addresses[q1] - addresses[q2], shape))]
                 q_coalescence = lookup[
-                    tuple(
-                        int(value)
-                        for value in np.mod(addresses[q1] + addresses[q2], shape)
-                    )
+                    tuple(np.mod(addresses[q1] + addresses[q2], shape))
                 ]
                 for b1 in range(branches):
                     omega1 = frequency[q1, b1]
@@ -668,10 +643,10 @@ class ThreePhononRTAPlan(StrictModule, NonTrainableState):
         coalescence *= prefactor
         rates = decay + coalescence
         detailed_balance = balance_numerator / max(
-            balance_denominator, np.finfo(float).tiny
+            balance_denominator, np.finfo(np.float64).tiny
         )
-        negative = rates < -np.finfo(float).eps
-        rates = np.where(np.abs(rates) <= np.finfo(float).eps, 0.0, rates)
+        negative = rates < -np.finfo(np.float64).eps
+        rates = np.where(np.abs(rates) <= np.finfo(np.float64).eps, 0.0, rates)
         ballistic = rates == 0.0
         finite_conductivity = not np.any(
             ballistic & (heat > 0.0) & (np.linalg.norm(velocity, axis=-1) > 0.0)

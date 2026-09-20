@@ -33,7 +33,7 @@ class SpatialPopulationTransport:
 
     @classmethod
     def create(cls, cell_volumes: ArrayLike, /) -> SpatialPopulationTransport:
-        volumes = np.asarray(cell_volumes, dtype=float)
+        volumes = np.asarray(cell_volumes, dtype=np.float64)
         if volumes.ndim != 1 or volumes.size == 0 or np.any(volumes <= 0):
             raise ValueError("Population control volumes must be a positive vector.")
         return cls(jnp.asarray(volumes))

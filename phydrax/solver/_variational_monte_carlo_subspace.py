@@ -94,7 +94,7 @@ def _batched_amplitude(model: Any, configurations: Array, /) -> LogAmplitude:
     value = jax.vmap(model)(configurations)
     if not isinstance(value, LogAmplitude):
         raise TypeError("Every subspace VMC model must return LogAmplitude.")
-    expected = (int(configurations.shape[0]),)
+    expected = (configurations.shape[0],)
     if value.log_abs.shape != expected:
         raise ValueError(
             "Every subspace VMC model must return one scalar amplitude per "
@@ -135,11 +135,10 @@ def _vector_from_coordinates(
     values = jnp.asarray(coordinates)
     if mode != "nonholomorphic":
         return values.astype(exemplar.dtype)
-    size = int(exemplar.shape[0])
+    size = exemplar.shape[0]
     if values.shape != (2 * size,):
         raise ValueError(
-            f"Nonholomorphic coordinates must have shape ({2 * size},); "
-            f"got {values.shape}."
+            f"Nonholomorphic coordinates must have shape ({2 * size},); got {values.shape}."
         )
     return (values[:size] + 1j * values[size:]).astype(exemplar.dtype)
 
@@ -262,7 +261,7 @@ class VariationalMonteCarloSubspaceProblem(StrictModule):
                 "initial_configurations must have shape (chain,) + "
                 f"{operator.configuration_shape}; got {configurations.shape}."
             )
-        if int(configurations.shape[0]) < 1:
+        if configurations.shape[0] < 1:
             raise ValueError("At least one initial Markov chain is required.")
         exemplars = tuple(
             _scalar_amplitude(model, configurations[0]) for model in models_
@@ -288,7 +287,7 @@ class VariationalMonteCarloSubspaceProblem(StrictModule):
                     "parameter_subspaces entries must be ParameterSubspace or None."
                 )
         vectors = tuple(
-            jnp.empty((0,), dtype=float) if subspace is None else subspace.pack()
+            jnp.empty((0,), dtype=jnp.float64) if subspace is None else subspace.pack()
             for subspace in subspaces
         )
         coordinates = tuple(
@@ -331,7 +330,7 @@ class VariationalMonteCarloSubspaceProblem(StrictModule):
 
     @property
     def trainable_dimension(self) -> int:
-        return sum(int(coordinates.size) for coordinates in self.initial_coordinates)
+        return sum(coordinates.size for coordinates in self.initial_coordinates)
 
     def model_from_coordinates(self, index: int, coordinates: Array, /) -> Any:
         if index < 0 or index >= self.state_count:
@@ -481,7 +480,7 @@ def _relative_amplitudes_and_actions(
     Computing the local action numerator directly avoids the undefined
     ``0 * (H psi_j / psi_j)`` form at nodes of an individual state.
     """
-    count = int(configurations.shape[0])
+    count = configurations.shape[0]
     amplitudes = tuple(_batched_amplitude(model, configurations) for model in models)
     relative, log_norm, current_valid = _mixture_components(amplitudes)
     diagonal = jnp.asarray(operator.diagonal(configurations)).reshape((count,))
@@ -577,7 +576,7 @@ def _estimate_from_samples(
         models, problem.operator, flat
     )
     active = jnp.sum(sample_valid, dtype=jnp.int32)
-    normalized_weights = sample_valid.astype(float) / jnp.maximum(active, 1)
+    normalized_weights = sample_valid.astype("float64") / jnp.maximum(active, 1)
     raw_overlap, raw_hamiltonian, overlap, hamiltonian = _weighted_matrices(
         relative, actions, normalized_weights
     )
@@ -663,11 +662,11 @@ def _estimate_from_samples(
 
         chain_diagnostics = mcmc_diagnostics(
             {
-                "configuration": configurations.astype(float),
+                "configuration": configurations.astype("float64"),
                 "mixture_log_target": samples.log_target,
             },
             acceptance_rate=samples.acceptance_rate,
-            divergent=jnp.zeros(samples.log_target.shape, dtype=bool),
+            divergent=jnp.zeros(samples.log_target.shape, dtype=jnp.bool_),
         )
     return VariationalMonteCarloSubspaceEstimate(
         objective=objective,
@@ -823,8 +822,8 @@ def _score_corrected_objective(
     ``d log(sum_i |psi_i|^2)`` supplies the missing distribution derivative.
     Softmax shift invariance makes the unknown mixture normalization cancel.
     """
-    sample_count = int(configurations.shape[0])
-    zero_logits = jnp.zeros((sample_count,), dtype=float)
+    sample_count = configurations.shape[0]
+    zero_logits = jnp.zeros((sample_count,), dtype=jnp.float64)
 
     def objective_from_logits(logits):
         return _weighted_block_objective(
@@ -855,7 +854,7 @@ def _validate_state(
         raise ValueError("Subspace VMC state has an incompatible model count.")
     if len(state.parameter_coordinates) != problem.state_count:
         raise ValueError("Subspace VMC state has an incompatible coordinate count.")
-    if state.markov_state.num_chains != int(problem.initial_configurations.shape[0]):
+    if state.markov_state.num_chains != problem.initial_configurations.shape[0]:
         raise ValueError("Subspace VMC state chain count is incompatible.")
     for model_index, (model, current, initial) in enumerate(
         zip(
@@ -990,7 +989,7 @@ def solve_variational_monte_carlo_subspace(
                 strict=True,
             )
         ):
-            if int(coordinates.size) == 0:
+            if coordinates.size == 0:
                 directions.append(jnp.empty((0,), dtype=coordinates.dtype))
                 iteration_linear_results.append(None)
                 continue

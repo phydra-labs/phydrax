@@ -28,7 +28,7 @@ def _pair(shape: int | Sequence[int], name: str, /) -> tuple[int, int]:
     if isinstance(shape, int):
         result = (int(shape), int(shape))
     else:
-        result = tuple(int(size) for size in shape)
+        result = tuple(shape)
     if len(result) != 2 or any(size <= 0 for size in result):
         raise ValueError(f"{name} must contain two positive dimensions.")
     return result
@@ -139,7 +139,7 @@ def dpot_corrupt_history(
         mask_suffix = (1,)
     sample_mask = None
     if mask is not None:
-        sample_mask = jnp.asarray(mask, dtype=bool)
+        sample_mask = jnp.asarray(mask, dtype=jnp.bool_)
         if sample_mask.shape != expected_mask_shape:
             raise ValueError("mask must match the DPOT case and sample axes.")
         expanded_mask = sample_mask.reshape(sample_mask.shape + mask_suffix)
@@ -199,7 +199,7 @@ class _AFNO2D(StrictModule):
     def __call__(self, values: Array, /) -> Array:
         batch, height, width, _ = values.shape
         spectrum = jnp.fft.rfft2(values, axes=(1, 2), norm="ortho")
-        frequency_width = int(spectrum.shape[2])
+        frequency_width = spectrum.shape[2]
         blocks = spectrum.reshape(
             batch,
             height,
@@ -327,7 +327,7 @@ class _TemporalAggregator(StrictModule):
         self.frequencies = 2.0 ** jnp.linspace(-10.0, 10.0, self.width)[None, :]
 
     def __call__(self, values: Array, /) -> Array:
-        if int(values.shape[-2]) != self.history_steps:
+        if values.shape[-2] != self.history_steps:
             raise ValueError("DPOT latent history length differs from history_steps.")
         if self.exponential_embedding:
             time = jnp.linspace(0.0, 1.0, self.history_steps)[:, None]
@@ -543,8 +543,7 @@ class DPOT(AbstractOperatorModel):
         expected_sample_shape = self.image_shape + (self.history_steps,)
         if len(samples.axes) != 3 or samples.sample_shape != expected_sample_shape:
             raise ValueError(
-                "DPOT source axes must have sample shape "
-                f"{expected_sample_shape}; got {samples.sample_shape}."
+                f"DPOT source axes must have sample shape {expected_sample_shape}; got {samples.sample_shape}."
             )
         values = _single_array(samples, "DPOT")
         channels = _get_size(self.in_size)
@@ -589,14 +588,14 @@ class DPOT(AbstractOperatorModel):
         return jnp.broadcast_to(grid, (batch,) + grid.shape)
 
     def _evaluate(self, history: Array, mask: Array, /) -> Array:
-        batch = int(history.shape[0])
+        batch = history.shape[0]
         history, mean, std = self._normalize_history(history, mask)
         history = jnp.concatenate((history, self._coordinate_grid(batch)), axis=-1)
         per_time = history.transpose((0, 3, 1, 2, 4)).reshape(
             batch * self.history_steps,
             self.image_shape[0],
             self.image_shape[1],
-            int(history.shape[-1]),
+            history.shape[-1],
         )
         embedded = self.patch_projection(
             self.patch_lift(_patchify(per_time, self.patch_size))

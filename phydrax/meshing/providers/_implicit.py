@@ -144,7 +144,7 @@ class ImplicitMeshingPlan(StrictModule, NonTrainableState):
             face_set.entity_ids,
             tuple("implicit-zero-set" for _ in range(face_set.count)),
             residuals,
-            resolved=np.ones((face_set.count,), dtype=bool),
+            resolved=np.ones((face_set.count,), dtype=np.bool_),
             exact=False,
         )
         geometry = CellGeometrySpec.affine(mesh)

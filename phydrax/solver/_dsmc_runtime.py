@@ -313,7 +313,7 @@ class DSMCProductionPlan(StrictModule, NonTrainableState):
         successful = jnp.asarray(True)
         if not self.surface_boundaries:
             return streamed.state, mass, impulse, heat, finite, successful
-        surface_crossed = jnp.zeros((incoming.capacity,), dtype=bool)
+        surface_crossed = jnp.zeros((incoming.capacity,), dtype=jnp.bool_)
         for surface in self.surface_boundaries:
             face_index = 2 * surface.face.axis + (
                 1 if surface.face.side == "upper" else 0

@@ -38,8 +38,8 @@ class _PolynomialBasis(AbstractArrayModel):
             raise ValueError("coefficients must have shape (channels, rank, powers).")
         self.coefficients = values
         self.in_size = 1
-        self.channels = int(values.shape[0])
-        self.rank = int(values.shape[1])
+        self.channels = values.shape[0]
+        self.rank = values.shape[1]
         self.out_size = self.channels * self.rank
 
     def __call__(self, coordinate, /, *, key=None):
@@ -59,7 +59,7 @@ class _PolynomialOutput(AbstractArrayModel):
             raise ValueError("coefficients must have shape (channels, powers).")
         self.coefficients = values
         self.in_size = 1
-        self.out_size = int(values.shape[0])
+        self.out_size = values.shape[0]
 
     def __call__(self, coordinate, /, *, key=None):
         del key
@@ -75,8 +75,8 @@ class _LinearMap(AbstractArrayModel):
     def __init__(self, matrix):
         values = jnp.asarray(matrix)
         self.matrix = values
-        self.in_size = int(values.shape[1])
-        self.out_size = int(values.shape[0])
+        self.in_size = values.shape[1]
+        self.out_size = values.shape[0]
 
     def __call__(self, coefficients, /, *, key=None):
         del key
@@ -90,7 +90,7 @@ def _scalar_frame(*, frame_id="scalar", offset_model=None, coefficients=None):
     return LearnedFunctionFrame(
         basis_model=_PolynomialBasis(basis_coefficients),
         offset_model=offset_model,
-        rank=int(basis_coefficients.shape[1]),
+        rank=basis_coefficients.shape[1],
         coord_dim=1,
         out_size="scalar",
         frame_id=frame_id,
@@ -110,9 +110,9 @@ def _vector_frame(*, frame_id="vector", coefficients=None):
     )
     return LearnedFunctionFrame(
         basis_model=_PolynomialBasis(basis_coefficients),
-        rank=int(basis_coefficients.shape[1]),
+        rank=basis_coefficients.shape[1],
         coord_dim=1,
-        out_size=int(basis_coefficients.shape[0]),
+        out_size=basis_coefficients.shape[0],
         frame_id=frame_id,
     )
 
@@ -406,7 +406,7 @@ def test_projection_reports_insufficient_support_and_blocks_coefficients():
         _samples(
             coordinates,
             jnp.ones(4),
-            mask=jnp.zeros(4, dtype=bool),
+            mask=jnp.zeros(4, dtype="bool"),
         )
     )
     too_few = frame.project(_samples(coordinates[:2], jnp.ones(2)))

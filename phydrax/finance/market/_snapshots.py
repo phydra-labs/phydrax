@@ -223,8 +223,8 @@ class MarketDataSnapshot(StrictModule, NonTrainableState):
         ):
             raise ValueError("capacity must be a positive integer or None.")
         count = layout.factor_count
-        values = np.zeros((count,), dtype=float)
-        valid = np.zeros((count,), dtype=bool)
+        values = np.zeros((count,), dtype=np.float64)
+        valid = np.zeros((count,), dtype=np.bool_)
         status = np.zeros((count,), dtype=np.int32)
         event = np.zeros((count,), dtype=np.int64)
         available = np.zeros((count,), dtype=np.int64)

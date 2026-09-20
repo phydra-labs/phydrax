@@ -92,7 +92,7 @@ class SpinOrbitCouplingPlan(StrictModule):
     ):
         if not isinstance(convention, SpinorBasisConvention):
             raise TypeError("convention must be SpinorBasisConvention.")
-        angular = np.asarray(orbital_angular_momentum, dtype=complex)
+        angular = np.asarray(orbital_angular_momentum, dtype=np.complex128)
         expected = (3, convention.orbital_count, convention.orbital_count)
         if angular.shape != expected or np.any(~np.isfinite(angular)):
             raise ValueError(

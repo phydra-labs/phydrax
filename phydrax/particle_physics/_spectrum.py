@@ -68,10 +68,7 @@ class SpectrumApproximationProfile(StrictModule):
                 electroweak_scale_rule,
             )
         )
-        orders = tuple(
-            int(value)
-            for value in (rge_loop_order, threshold_loop_order, pole_mass_loop_order)
-        )
+        orders = tuple((rge_loop_order, threshold_loop_order, pole_mass_loop_order))
         corrections = tuple(sorted(str(value).strip() for value in correction_ids))
         sources = tuple(sorted(str(value).strip() for value in source_ids))
         if any(not value for value in strings) or any(value < 0 for value in orders):
@@ -189,14 +186,14 @@ class SpectrumDiagnostics(StrictModule):
         warnings = tuple(sorted(str(value).strip() for value in warning_ids))
         if any(not value for value in warnings) or len(set(warnings)) != len(warnings):
             raise ValueError("Spectrum warning IDs must be unique and non-empty.")
-        provider = jnp.asarray(provider_available, dtype=bool).reshape(())
-        finite_value = jnp.asarray(finite, dtype=bool).reshape(())
-        root = jnp.asarray(root_found, dtype=bool).reshape(())
-        minimum = jnp.asarray(electroweak_minimum, dtype=bool).reshape(())
-        perturbative_value = jnp.asarray(perturbative, dtype=bool).reshape(())
-        running = jnp.asarray(running_tachyons, dtype=bool).reshape(())
-        pole = jnp.asarray(pole_tachyons, dtype=bool).reshape(())
-        warning = jnp.asarray(approximation_warning, dtype=bool).reshape(())
+        provider = jnp.asarray(provider_available, dtype=jnp.bool_).reshape(())
+        finite_value = jnp.asarray(finite, dtype=jnp.bool_).reshape(())
+        root = jnp.asarray(root_found, dtype=jnp.bool_).reshape(())
+        minimum = jnp.asarray(electroweak_minimum, dtype=jnp.bool_).reshape(())
+        perturbative_value = jnp.asarray(perturbative, dtype=jnp.bool_).reshape(())
+        running = jnp.asarray(running_tachyons, dtype=jnp.bool_).reshape(())
+        pole = jnp.asarray(pole_tachyons, dtype=jnp.bool_).reshape(())
+        warning = jnp.asarray(approximation_warning, dtype=jnp.bool_).reshape(())
         residual = jnp.asarray(residual_norm).reshape(())
         physical = (
             provider

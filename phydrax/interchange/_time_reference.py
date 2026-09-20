@@ -43,8 +43,8 @@ class LeapSecondTable(StrictModule, NonTrainableState):
         source: ResourceManifest,
         /,
     ):
-        transitions = np.asarray(transition_utc_seconds, dtype=float)
-        offsets = np.asarray(tai_minus_utc_after, dtype=float)
+        transitions = np.asarray(transition_utc_seconds, dtype=np.float64)
+        offsets = np.asarray(tai_minus_utc_after, dtype=np.float64)
         initial = float(initial_tai_minus_utc)
         if transitions.ndim != 1 or offsets.shape != transitions.shape:
             raise ValueError("Leap transitions and offsets must be matching vectors.")
@@ -94,7 +94,7 @@ class LeapSecondTable(StrictModule, NonTrainableState):
     def tai_in_positive_leap(self, tai_seconds: ArrayLike) -> Array:
         values = jnp.asarray(tai_seconds)
         if self.transition_utc_seconds.size == 0:
-            return jnp.zeros_like(values, dtype=bool)
+            return jnp.zeros_like(values, dtype=jnp.bool_)
         previous = jnp.concatenate(
             (
                 jnp.asarray([self.initial_tai_minus_utc]),

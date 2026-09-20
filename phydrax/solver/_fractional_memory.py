@@ -57,8 +57,8 @@ class CaputoFractionalProblem(StrictModule):
         if not callable(vector_field):
             raise TypeError("vector_field must be callable.")
         state = jnp.asarray(initial_state)
-        state = state.astype(jnp.result_type(state, float))
-        state_shape = tuple(int(size) for size in state.shape)
+        state = state.astype(jnp.result_type(state, jnp.float64))
+        state_shape = tuple(state.shape)
         if not state_shape or any(size <= 0 for size in state_shape):
             raise ValueError("initial_state must have a non-empty positive shape.")
         raw_order = order
@@ -68,7 +68,7 @@ class CaputoFractionalProblem(StrictModule):
             raise ValueError("CaputoFractionalProblem order must be declared statically.")
         else:
             alpha_value = float(jax.device_get(jnp.asarray(raw_order)))
-        alpha = jnp.asarray(raw_order, dtype=float)
+        alpha = jnp.asarray(raw_order, dtype=jnp.float64)
         if alpha.shape != ():
             raise ValueError("order must be scalar.")
         if not isfinite(alpha_value) or not 0.0 < alpha_value <= 2.0:
@@ -84,8 +84,8 @@ class CaputoFractionalProblem(StrictModule):
             if initial_derivative is not None:
                 raise ValueError("initial_derivative is only valid for orders above one.")
             derivative = None
-        start = jnp.asarray(t0, dtype=float)
-        end = jnp.asarray(t1, dtype=float)
+        start = jnp.asarray(t0, dtype=jnp.float64)
+        end = jnp.asarray(t1, dtype=jnp.float64)
         if start.shape != () or end.shape != ():
             raise ValueError("t0 and t1 must be scalar.")
         start = eqx.error_if(
@@ -125,7 +125,7 @@ def solve_caputo_fractional(
     if not isinstance(problem, CaputoFractionalProblem):
         raise TypeError("problem must be a CaputoFractionalProblem.")
     grid = _time_grid(problem.t0, problem.t1, times)
-    num_times = int(grid.size)
+    num_times = grid.size
     states = (
         jnp.zeros(
             (num_times,) + problem.state_shape,
@@ -187,7 +187,7 @@ def solve_caputo_fractional(
         realization=None,
         state_shape=problem.state_shape,
         solver_name="CaputoProductIntegration",
-        solver_id="solver:fractional:caputo-product-integration:v1",
+        solver_id="solver:fractional:caputo-product-integration",
         resolved_method="explicit-piecewise-constant-power-law-convolution",
         stats={
             "num_steps": num_times - 1,

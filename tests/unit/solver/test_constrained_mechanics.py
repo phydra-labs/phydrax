@@ -31,7 +31,9 @@ def test_shake_rattle_preserves_position_and_velocity_constraints() -> None:
     assert bool(result.accepted)
     assert result.position_residual < 1.0e-10
     assert result.velocity_residual < 1.0e-10
-    assert jnp.allclose(jnp.vdot(result.state.configuration, result.state.configuration), 1.0)
+    assert jnp.allclose(
+        jnp.vdot(result.state.configuration, result.state.configuration), 1.0
+    )
     assert jnp.allclose(
         jnp.vdot(result.state.configuration, result.state.momentum), 0.0, atol=1.0e-10
     )

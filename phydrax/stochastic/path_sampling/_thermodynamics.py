@@ -138,7 +138,7 @@ def normalized_discrete_path_thermodynamics(
     if any(path.capacity > plan.maximum_steps + 1 for path in paths):
         raise ValueError("A path exceeds maximum_steps before thermodynamic reduction.")
     arrays = tuple(
-        jnp.asarray(value, dtype=float)
+        jnp.asarray(value, dtype=jnp.float64)
         for value in (
             forward_log_weight,
             reverse_log_weight,

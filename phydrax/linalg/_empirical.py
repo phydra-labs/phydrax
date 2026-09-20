@@ -51,7 +51,7 @@ class EmpiricalGramLinearOperator(AbstractLinearOperator):
             raise TypeError("Empirical feature targets must be an ArraySpace.")
         if not features.target.shape:
             raise ValueError("Empirical feature targets need a leading sample axis.")
-        sample_count = int(features.target.shape[0])
+        sample_count = features.target.shape[0]
         if sample_count < 1:
             raise ValueError("Empirical feature targets require at least one sample.")
         values = jnp.asarray(weights)
@@ -83,7 +83,7 @@ class EmpiricalGramLinearOperator(AbstractLinearOperator):
         damping_ = float(damping)
         if not isfinite(damping_) or damping_ < 0.0:
             raise ValueError("damping must be finite and non-negative.")
-        normalized = values.astype(float) / jnp.sum(values.astype(float))
+        normalized = values.astype("float64") / jnp.sum(values.astype("float64"))
         event_size = prod(features.target.shape[1:]) if features.target.shape[1:] else 1
         rank_bound = active_bound * event_size
         if centered:

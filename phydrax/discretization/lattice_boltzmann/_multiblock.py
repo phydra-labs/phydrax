@@ -134,12 +134,11 @@ class LatticeBoltzmannBlockInterfacePlan(StrictModule, NonTrainableState):
         if left_velocities.shape != transformed_right.shape:
             raise ValueError("LBM blocks must have the same population count.")
         left_lookup = {
-            tuple(int(value) for value in velocity): index
-            for index, velocity in enumerate(left_velocities)
+            tuple(velocity): index for index, velocity in enumerate(left_velocities)
         }
         right_to_left = []
         for velocity in transformed_right:
-            key = tuple(int(value) for value in velocity)
+            key = tuple(velocity)
             if key not in left_lookup:
                 raise ValueError(
                     "Interface orientation is incompatible with the lattice velocity set."
@@ -175,10 +174,8 @@ class LatticeBoltzmannBlockInterfacePlan(StrictModule, NonTrainableState):
         self.right_axis = right_axis_
         self.left_side = left_side
         self.right_side = right_side
-        self.population_permutation_indices = tuple(int(value) for value in permutation)
-        self.inverse_population_permutation_indices = tuple(
-            int(value) for value in inverse
-        )
+        self.population_permutation_indices = tuple(permutation)
+        self.inverse_population_permutation_indices = tuple(inverse)
         self.geometry_kind = LatticeBoltzmannGeometryKind.BLOCKWISE
         self.plan_id = canonical_fingerprint(
             {
@@ -381,7 +378,7 @@ class LatticeBoltzmannMultiblockCouplingPlan(StrictModule, NonTrainableState):
             for block, values in zip(self.blocks, state.populations, strict=True)
         )
         exchanged = list(source)
-        write_masks = [jnp.zeros(values.shape, dtype=bool) for values in source]
+        write_masks = [jnp.zeros(values.shape, dtype=jnp.bool_) for values in source]
         reciprocity_residual = jnp.asarray(0.0, dtype=source[0].dtype)
         for connection in self.connections:
             interface = connection.interface

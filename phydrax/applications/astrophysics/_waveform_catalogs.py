@@ -54,8 +54,8 @@ class QnmModeTable(StrictModule, NonTrainableState):
         indices_raw = np.asarray(mode_indices)
         if np.iscomplexobj(frequency_raw) or np.iscomplexobj(damping_raw):
             raise ValueError("QNM frequencies and damping times must be real.")
-        frequency_host = np.asarray(frequency_raw, dtype=float)
-        damping_host = np.asarray(damping_raw, dtype=float)
+        frequency_host = np.asarray(frequency_raw, dtype=np.float64)
+        damping_host = np.asarray(damping_raw, dtype=np.float64)
         if (
             frequency_host.ndim != 1
             or frequency_host.size == 0
@@ -83,8 +83,7 @@ class QnmModeTable(StrictModule, NonTrainableState):
             or np.unique(indices_host, axis=0).shape[0] != indices_host.shape[0]
         ):
             raise ValueError(
-                "QNM data must be finite with positive damping times and unique "
-                "valid modes (ell, m, n)."
+                "QNM data must be finite with positive damping times and unique valid modes (ell, m, n)."
             )
         self.frequency = jnp.asarray(frequency_host)
         self.damping_time = jnp.asarray(damping_host)

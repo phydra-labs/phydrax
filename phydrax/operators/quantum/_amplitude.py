@@ -44,7 +44,7 @@ class LogAmplitude(StrictModule):
         unit_phase = jnp.isclose(jnp.abs(phase_value), 1.0, rtol=1e-6, atol=1e-7)
         resolved_valid = admissible_magnitude & finite_phase & unit_phase
         if valid is not None:
-            declared = jnp.asarray(valid, dtype=bool)
+            declared = jnp.asarray(valid, dtype=jnp.bool_)
             if declared.shape != magnitude.shape:
                 declared = jnp.broadcast_to(declared, magnitude.shape)
             resolved_valid = resolved_valid & declared

@@ -161,7 +161,7 @@ class CandidateEvaluation(StrictModule):
         self.recipe = recipe
         self.cross_validation = cross_validation
         self.utility = jnp.asarray(utility)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
 
 
@@ -181,7 +181,7 @@ class HalvingRung(StrictModule):
         num_folds: int,
     ):
         self.evaluations = tuple(evaluations)
-        self.surviving_candidate_ids = tuple(int(i) for i in surviving_candidate_ids)
+        self.surviving_candidate_ids = tuple(surviving_candidate_ids)
         self.num_folds = int(num_folds)
 
 
@@ -295,7 +295,7 @@ def _candidate_utility(
 ) -> tuple[Any, Any, Any]:
     score = jnp.asarray(select_metric(result.aggregate_score.value, primary_metric))
     metric_valid = jnp.asarray(
-        select_metric(result.aggregate_score.valid, primary_metric), dtype=bool
+        select_metric(result.aggregate_score.valid, primary_metric), dtype=jnp.bool_
     )
     metric_status = jnp.asarray(
         select_metric(result.aggregate_score.status, primary_metric), dtype=jnp.int32
@@ -305,7 +305,7 @@ def _candidate_utility(
     if not jnp.issubdtype(score.dtype, jnp.number):
         raise TypeError("Search ranking requires a numeric primary metric.")
     valid = (
-        jnp.asarray(result.valid, dtype=bool)
+        jnp.asarray(result.valid, dtype=jnp.bool_)
         & jnp.all(metric_valid)
         & jnp.all(jnp.isfinite(score))
     )
@@ -699,7 +699,7 @@ class DifferentiableSearchResult(StrictModule):
         self.valid = (
             finite
             & cross_validation.valid
-            & jnp.all(jnp.asarray(best_fit.valid, dtype=bool))
+            & jnp.all(jnp.asarray(best_fit.valid, dtype=jnp.bool_))
         )
         self.status = jnp.where(
             self.valid,

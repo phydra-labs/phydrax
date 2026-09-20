@@ -145,7 +145,7 @@ def fixed_lag_kalman_smoother(
     resolved_lag = _lag(lag)
     case_shape = result.case_shape
     case_count = prod(case_shape) if case_shape else 1
-    num_steps = int(result.filtered_means.shape[len(case_shape)])
+    num_steps = result.filtered_means.shape[len(case_shape)]
     state_size = prod(result.state_shape) if result.state_shape else 1
     filtered_means = result.filtered_means.reshape((case_count, num_steps, state_size))
     filtered_covariances = result.filtered_covariances.reshape(

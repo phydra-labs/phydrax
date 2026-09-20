@@ -17,7 +17,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic import ImplicitSolventPlan
 from ...ein import contract
@@ -141,8 +141,8 @@ ContinuumEvaluator = Callable[[ArrayLike, ArrayLike], ContinuumSolvationResult]
 
 
 class AbstractContinuumSolventProvider(StrictModule, NonTrainableState):
-    provider_id: AbstractAttribute[str]
-    plan_id: AbstractAttribute[str]
+    provider_id: eqx.AbstractVar[str]
+    plan_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def evaluate(

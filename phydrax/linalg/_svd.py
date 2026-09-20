@@ -205,8 +205,7 @@ class SVDCostEstimate(StrictModule):
         /,
     ):
         values = tuple(
-            int(value)
-            for value in (
+            (
                 storage_bytes,
                 preparation_workspace_bytes,
                 apply_workspace_bytes,
@@ -461,13 +460,11 @@ def plan_svd(
     failures: list[str] = []
     if operator_entries > policy_.materialization.max_entries:
         failures.append(
-            f"dense entries {operator_entries} exceed materialization limit "
-            f"{policy_.materialization.max_entries}"
+            f"dense entries {operator_entries} exceed materialization limit {policy_.materialization.max_entries}"
         )
     if operator_bytes > policy_.materialization.max_bytes:
         failures.append(
-            f"dense bytes {operator_bytes} exceed materialization limit "
-            f"{policy_.materialization.max_bytes}"
+            f"dense bytes {operator_bytes} exceed materialization limit {policy_.materialization.max_bytes}"
         )
     checks = (
         (preparation, policy_.resources.preparation_bytes, "preparation bytes"),

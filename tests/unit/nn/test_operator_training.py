@@ -22,7 +22,7 @@ def _dataset(cases=10, resolution=8):
         jnp.linspace(0.0, 1.0, resolution),
         quadrature_weights=jnp.full((resolution,), 1.0 / resolution),
     )
-    offsets = jnp.arange(cases, dtype=float)[:, None]
+    offsets = jnp.arange(cases, dtype="float64")[:, None]
     values = offsets + axis.nodes[None, :]
     return phx.nn.operator.training.operator_dataset_from_arrays(
         {"state": values},
@@ -86,7 +86,7 @@ def test_normalization_is_training_only_invertible_and_persisted(tmp_path):
 
 def test_quadrature_normalization_is_invariant_to_sampling_density():
     def sampled_batch(values, weights):
-        count = int(values.shape[0])
+        count = values.shape[0]
         coordinates = jnp.linspace(0.0, 1.0, count)[:, None]
         samples = phx.nn.operator.FunctionSamples(
             values=values,
@@ -560,7 +560,7 @@ def test_fit_operator_compiles_accumulates_normalizes_and_composes_losses():
                 "prediction_energy",
                 _prediction_energy,
                 weight=1e-3,
-                identity="tests.prediction_energy.v1",
+                identity="tests.prediction_energy",
                 case_reduction="per_case",
             ),
         ),
@@ -753,7 +753,7 @@ def test_fit_operator_resume_is_bitwise_exact_with_shuffle_and_accumulation(tmp_
         "gradient_accumulation": 2,
         "seed": 17,
         "checkpoint_every": 1,
-        "configuration": {"test_contract": "exact-resume-v1"},
+        "configuration": {"test_contract": "exact-resume"},
     }
     uninterrupted = phx.nn.operator.training.fit_operator(
         model,

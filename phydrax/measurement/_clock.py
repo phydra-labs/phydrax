@@ -155,8 +155,8 @@ class PiecewiseClockMap:
             self.target, ClockIdentity
         ):
             raise TypeError("source and target must be ClockIdentity values.")
-        source = np.array(self.source_knots, dtype=float, copy=True)
-        target = np.array(self.target_knots, dtype=float, copy=True)
+        source = np.array(self.source_knots, dtype=np.float64, copy=True)
+        target = np.array(self.target_knots, dtype=np.float64, copy=True)
         if (
             source.ndim != 1
             or source.shape != target.shape

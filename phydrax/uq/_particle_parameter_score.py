@@ -48,7 +48,7 @@ def parameterized_particle_genealogical_score(
     if result.problem_id != parameterized.problem.problem_id:
         raise ValueError("Particle result and parameterized problem IDs do not match.")
     flat_position, unravel = ravel_pytree(position)
-    parameter_size = int(flat_position.size)
+    parameter_size = flat_position.size
     if parameter_size < 1:
         raise ValueError("Parameterized particle scores require nonempty coordinates.")
     case_count = prod(result.case_shape) if result.case_shape else 1

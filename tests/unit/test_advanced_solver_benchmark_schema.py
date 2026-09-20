@@ -15,7 +15,6 @@ from benchmarks.advanced_solvers.compare import (
 )
 from benchmarks.advanced_solvers.schema import (
     empty_distribution,
-    SCHEMA_VERSION,
     SchemaError,
     TIMING_PHASES,
     validate_report,
@@ -257,7 +256,6 @@ def test_schema_rejects_continuation_success_without_fold_evidence():
 
 def _report(rows):
     return {
-        "schema_version": SCHEMA_VERSION,
         "environment": _environment(),
         "campaign": {
             "seed": 7,
@@ -283,7 +281,6 @@ def _measured_row():
         "max_ms": 1.0,
     }
     return {
-        "schema_version": SCHEMA_VERSION,
         "case_id": "linear-scalar",
         "environment": _environment(),
         "problem": {

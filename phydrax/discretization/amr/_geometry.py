@@ -26,7 +26,7 @@ CoordinateMap = Callable[[Array, Array, object], Array]
 
 def _corners(vertices: Array, dimension: int, /) -> Array:
     """Return tensor-cell corners ordered x-fastest: 00,10,01,11, ... ."""
-    cell_shape = tuple(int(size) - 1 for size in vertices.shape[1:-1])
+    cell_shape = tuple(size - 1 for size in vertices.shape[1:-1])
     order = tuple(
         tuple((index >> axis) & 1 for axis in range(dimension))
         for index in range(2**dimension)
@@ -255,7 +255,7 @@ class VariablePatchGeometryPlan(StrictModule, NonTrainableState):
         vertex_masks: list[tuple[Array, ...]] = []
         lower_bounds = np.asarray(
             [axis.bounds[0] for axis in topology.plan.grid.structured_axes],
-            dtype=float,
+            dtype=np.float64,
         )
         for level_plan, metadata, spacing in zip(
             topology.plan.levels,
@@ -271,7 +271,7 @@ class VariablePatchGeometryPlan(StrictModule, NonTrainableState):
                 vertex_shape = tuple(value + 1 for value in envelope)
                 vertex_local = np.stack(
                     np.meshgrid(
-                        *(np.arange(value, dtype=float) for value in vertex_shape),
+                        *(np.arange(value, dtype=np.float64) for value in vertex_shape),
                         indexing="ij",
                     ),
                     axis=-1,
@@ -283,18 +283,18 @@ class VariablePatchGeometryPlan(StrictModule, NonTrainableState):
                     ),
                     axis=-1,
                 )
-                lower = np.asarray(metadata.lower[bucket_index], dtype=float)
+                lower = np.asarray(metadata.lower[bucket_index], dtype=np.float64)
                 extent = np.asarray(metadata.extent[bucket_index], dtype=np.int32)
                 lanes = bucket.lane_capacity
                 reference = (
                     lower.reshape((lanes,) + (1,) * dimension + (dimension,))
                     + vertex_local.reshape((1,) + vertex_shape + (dimension,))
-                    * np.asarray(spacing, dtype=float).reshape(
+                    * np.asarray(spacing, dtype=np.float64).reshape(
                         (1,) + (1,) * dimension + (dimension,)
                     )
                     + lower_bounds.reshape((1,) + (1,) * dimension + (dimension,))
                 )
-                active_lane = np.asarray(metadata.active[bucket_index], dtype=bool)
+                active_lane = np.asarray(metadata.active[bucket_index], dtype=np.bool_)
                 cell_valid = active_lane[(slice(None),) + (None,) * dimension]
                 vertex_valid = active_lane[(slice(None),) + (None,) * dimension]
                 for axis in range(dimension):

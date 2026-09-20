@@ -34,7 +34,7 @@ def build_default_flow(
         jnp.ones_like(location), jnp.abs(location)
     )
     base = Normal(location, jnp.maximum(scale, tolerance))
-    dimension = int(samples.shape[1])
+    dimension = samples.shape[1]
     if dimension == 1:
         return triangular_spline_flow(
             key,
@@ -64,7 +64,7 @@ def validate_flow(
     """Validate event shape and finite sample/density behavior."""
 
     samples = jnp.asarray(data)
-    expected_shape = (int(samples.shape[-1]),)
+    expected_shape = (samples.shape[-1],)
     if flow.shape != expected_shape:
         raise ValueError(
             f"Flow event shape {flow.shape} does not match {expected_shape}."
@@ -74,7 +74,7 @@ def validate_flow(
     data_log_density = flow.log_prob(samples)
     proposed, proposed_log_density = flow.sample_and_log_prob(
         key,
-        sample_shape=(min(8, int(samples.shape[0])),),
+        sample_shape=(min(8, samples.shape[0]),),
     )
     if proposed.shape[1:] != expected_shape:
         raise ValueError("Flow proposal samples have an incompatible event shape.")

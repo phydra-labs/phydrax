@@ -33,12 +33,12 @@ class SchedulerState(str, Enum):
     RUNNING = "running"
     SUCCEEDED = "completed"
     FAILED = "failed"
-    CANCELLED = "cancelled"
+    CANCELED = "canceled"
     UNKNOWN = "unknown"
 
     @property
     def terminal(self) -> bool:
-        return self in (self.SUCCEEDED, self.FAILED, self.CANCELLED)
+        return self in (self.SUCCEEDED, self.FAILED, self.CANCELED)
 
 
 @dataclass(frozen=True, slots=True)
@@ -163,7 +163,7 @@ class SlurmJobSpec:
 
 _SLURM_STATE_MAP = {
     "BOOT_FAIL": SchedulerState.FAILED,
-    "CANCELLED": SchedulerState.CANCELLED,
+    "CANCELED": SchedulerState.CANCELED,
     "COMPLETED": SchedulerState.SUCCEEDED,
     "COMPLETING": SchedulerState.RUNNING,
     "CONFIGURING": SchedulerState.QUEUED,
@@ -175,7 +175,7 @@ _SLURM_STATE_MAP = {
     "PREEMPTED": SchedulerState.FAILED,
     "REQUEUED": SchedulerState.QUEUED,
     "RESIZING": SchedulerState.RUNNING,
-    "REVOKED": SchedulerState.CANCELLED,
+    "REVOKED": SchedulerState.CANCELED,
     "RUNNING": SchedulerState.RUNNING,
     "SIGNALING": SchedulerState.RUNNING,
     "SPECIAL_EXIT": SchedulerState.FAILED,
@@ -542,7 +542,7 @@ class KubernetesScheduler:
         if metadata.get("deletionTimestamp"):
             return SchedulerStatus(
                 scheduler_job_id,
-                SchedulerState.CANCELLED,
+                SchedulerState.CANCELED,
                 "deletion requested",
                 resource_version=version,
             )
@@ -605,7 +605,7 @@ class KubernetesScheduler:
         if not expected_resource_version:
             raise ValueError("Kubernetes deletion requires the observed resourceVersion.")
         body = {
-            "apiVersion": "v1",
+            "apiVersion": "canonical",
             "kind": "DeleteOptions",
             "propagationPolicy": "Foreground",
             "preconditions": {"resourceVersion": expected_resource_version},
@@ -626,7 +626,7 @@ class KubernetesScheduler:
             self._service_object_url(namespace, scheduler_job_id),
             body=_json_bytes(
                 {
-                    "apiVersion": "v1",
+                    "apiVersion": "canonical",
                     "kind": "DeleteOptions",
                     "propagationPolicy": "Foreground",
                 }
@@ -778,8 +778,7 @@ def _kubernetes_job_body(
                 "valueFrom": {
                     "fieldRef": {
                         "fieldPath": (
-                            "metadata.annotations['batch.kubernetes.io/"
-                            "job-completion-index']"
+                            "metadata.annotations['batch.kubernetes.io/job-completion-index']"
                         )
                     }
                 },
@@ -787,8 +786,7 @@ def _kubernetes_job_body(
             {
                 "name": "PHYDRAX_COORDINATOR_ADDRESS",
                 "value": (
-                    f"{name}-0.{name}.{spec.namespace}.svc.cluster.local:"
-                    f"{spec.coordinator_port}"
+                    f"{name}-0.{name}.{spec.namespace}.svc.cluster.local:{spec.coordinator_port}"
                 ),
             },
             {
@@ -846,7 +844,7 @@ def _kubernetes_job_body(
                 }
             ]
     return {
-        "apiVersion": "batch/v1",
+        "apiVersion": "batch/canonical",
         "kind": "Job",
         "metadata": {
             "name": name,
@@ -870,7 +868,7 @@ def _kubernetes_service_body(
     digest: str,
 ) -> dict[str, object]:
     return {
-        "apiVersion": "v1",
+        "apiVersion": "canonical",
         "kind": "Service",
         "metadata": {
             "name": name,

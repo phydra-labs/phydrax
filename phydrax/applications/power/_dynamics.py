@@ -1038,7 +1038,7 @@ def simulate_power_dynamics(
             ),
         )
     values = np.asarray(
-        times.times if isinstance(times, TimeGrid) else times, dtype=float
+        times.times if isinstance(times, TimeGrid) else times, dtype=np.float64
     )
     if (
         values.ndim != 1

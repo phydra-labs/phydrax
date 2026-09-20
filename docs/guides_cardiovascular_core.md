@@ -1,7 +1,7 @@
 # Cardiovascular core contracts
 
-`phydrax.applications.cardiovascular` uses a fixed numeric kernel scale of millimetres,
-milliseconds, milligrams, millivolts, kilopascals, and cubic millimetres. Runtime arrays
+`phydrax.applications.cardiovascular` uses a fixed numeric kernel scale of millimeters,
+milliseconds, milligrams, millivolts, kilopascals, and cubic millimeters. Runtime arrays
 remain ordinary arrays: `CardiovascularQuantitySpec` is immutable host metadata, not a
 second array, unit, solver, or archive framework.
 

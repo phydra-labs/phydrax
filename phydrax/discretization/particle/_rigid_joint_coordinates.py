@@ -87,7 +87,7 @@ class PreparedRigidJointCoordinates(StrictModule, NonTrainableState):
                 _quaternion_conjugate(kinematics.orientation[graph.ball_left]),
                 kinematics.orientation[graph.ball_right],
             )
-        ball_rotation = _rigid_body_relative_rotation(
+        _rigid_body_relative_rotation(
             graph.bodies, graph.ball_rest_orientation, ball_current
         )
 
@@ -156,7 +156,7 @@ class PreparedRigidJointCoordinates(StrictModule, NonTrainableState):
             raise TypeError("kinematics must be RigidBodyKinematics.")
         graph = self.graph
         residuals = graph.residuals(kinematics)
-        rotation = _rigid_body_rotation_matrix(graph.bodies, kinematics.orientation)
+        _rigid_body_rotation_matrix(graph.bodies, kinematics.orientation)
         if graph.bodies.ambient_dimension == 2:
             ball_current = _principal_angle(
                 kinematics.orientation[graph.ball_right]

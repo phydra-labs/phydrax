@@ -159,7 +159,7 @@ class RodFrameQueryPlan(StrictModule, NonTrainableState):
         if points.size < 1:
             raise ValueError("arc_lengths must contain at least one physical query.")
         self.arc_lengths = jnp.asarray(points)
-        self.query_count = int(points.size)
+        self.query_count = points.size
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "rod-frame-physical-arc-length-query-plan",
@@ -518,7 +518,7 @@ class PreparedRodReconstruction(StrictModule, NonTrainableState):
         self.query_route_indices = jnp.asarray(query_routes)
         self.frame_space = frame_space
         self.method = resolved_method
-        self.panel_count = int(integration.size - 1)
+        self.panel_count = integration.size - 1
         self.characteristic_length = rod_length
         self.maximum_panel_length = maximum_panel_length
         self.route_id = route_id

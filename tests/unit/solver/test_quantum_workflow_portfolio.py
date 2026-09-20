@@ -90,7 +90,7 @@ def _experiment():
     )
     instrument = QuantumInstrument(
         jnp.stack((_P0, _P1))[:, None, :, :],
-        jnp.ones((2, 1), dtype=bool),
+        jnp.ones((2, 1), dtype="bool"),
         tolerance=1e-5,
     )
     experiment = QuantumExperimentProgram(
@@ -170,7 +170,7 @@ def test_zero_probability_evidence_and_mps_mixed_outcome_refusal():
 
     mixed = QuantumInstrument(
         jnp.stack((jnp.sqrt(0.5) * _I, jnp.sqrt(0.5) * _X))[None, ...],
-        jnp.ones((1, 2), dtype=bool),
+        jnp.ones((1, 2), dtype="bool"),
         tolerance=1e-5,
     )
     mps = MatrixProductState((jnp.asarray([[[1], [0]]], dtype=_C64),))

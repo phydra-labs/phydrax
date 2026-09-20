@@ -63,7 +63,7 @@ class NonSequentialSurfaceTable(StrictModule, NonTrainableState):
     ``positive_medium_indices``. Triangles sharing a physical interface must
     share a ``surface_id``; otherwise a nearest-distance edge tie is reported as
     ambiguous. Power attenuation coefficients are homogeneous per-medium
-    values in inverse metres. Every medium requires a nonempty model identity
+    values in inverse meters. Every medium requires a nonempty model identity
     when any coefficient is nonzero. Medium zero has no special hidden meaning.
     """
 
@@ -142,7 +142,7 @@ class NonSequentialSurfaceTable(StrictModule, NonTrainableState):
                 "medium_attenuation_model_ids must contain nonempty strings."
             )
         if medium_power_attenuation_coefficients is None:
-            attenuation = np.zeros(media.shape, dtype=float)
+            attenuation = np.zeros(media.shape, dtype=np.float64)
             if model_ids:
                 raise ValueError(
                     "Attenuation model IDs require explicit attenuation coefficients."
@@ -151,8 +151,7 @@ class NonSequentialSurfaceTable(StrictModule, NonTrainableState):
             attenuation = np.asarray(medium_power_attenuation_coefficients)
             if attenuation.shape != media.shape or np.iscomplexobj(attenuation):
                 raise ValueError(
-                    "medium_power_attenuation_coefficients must be one real "
-                    "value per medium."
+                    "medium_power_attenuation_coefficients must be one real value per medium."
                 )
             if not np.issubdtype(attenuation.dtype, np.number):
                 raise TypeError(
@@ -160,15 +159,13 @@ class NonSequentialSurfaceTable(StrictModule, NonTrainableState):
                 )
             if not np.all(np.isfinite(attenuation)) or np.any(attenuation < 0.0):
                 raise ValueError(
-                    "medium_power_attenuation_coefficients must be finite "
-                    "and nonnegative."
+                    "medium_power_attenuation_coefficients must be finite and nonnegative."
                 )
             if np.any(attenuation > 0.0) and len(model_ids) != media.size:
                 raise ValueError("Nonzero attenuation requires one model ID per medium.")
             if model_ids and len(model_ids) != media.size:
                 raise ValueError(
-                    "medium_attenuation_model_ids must be empty or have one "
-                    "entry per medium."
+                    "medium_attenuation_model_ids must be empty or have one entry per medium."
                 )
 
         if surface_ids is None:
@@ -211,7 +208,7 @@ class NonSequentialSurfaceTable(StrictModule, NonTrainableState):
             else np.asarray(detector_indices)
         )
         acceptances = (
-            np.zeros((triangle_count,), dtype=float)
+            np.zeros((triangle_count,), dtype=np.float64)
             if detector_acceptance_cosines is None
             else np.asarray(detector_acceptance_cosines)
         )
@@ -266,8 +263,7 @@ class NonSequentialSurfaceTable(StrictModule, NonTrainableState):
             or np.any((attenuation > 0.0) & (stored_attenuation == 0.0))
         ):
             raise ValueError(
-                "Attenuation coefficients must remain finite and nonnegative "
-                "in the scene dtype."
+                "Attenuation coefficients must remain finite and nonnegative in the scene dtype."
             )
         self.vertices = jnp.asarray(vertices_host, dtype=dtype)
         self.triangles = jnp.asarray(triangles_host, dtype=jnp.int32)
@@ -410,7 +406,7 @@ def prepare_nonsequential_optics(
         tie_tolerance=plan.tie_tolerance,
     )
     triangle_query = prepare_triangle_ray_query(triangle_plan)
-    scalar_bytes = int(plan.surfaces.vertices.dtype.itemsize)
+    scalar_bytes = plan.surfaces.vertices.dtype.itemsize
     history_capacity = plan.maximum_interactions + 1 if plan.record_history else 0
     state_scalars = 3 + 3 + 1 + 1 + 1 + 1
     required_bytes = plan.branch_capacity * scalar_bytes * state_scalars
@@ -509,7 +505,7 @@ def _trace_one(
         & (initial_medium < prepared.surfaces.refractive_indices.shape[0])
     )
     live = (
-        jnp.zeros((capacity,), dtype=bool)
+        jnp.zeros((capacity,), dtype=jnp.bool_)
         .at[0]
         .set(input_finite & (launched_power > 0.0))
     )
@@ -522,7 +518,7 @@ def _trace_one(
     history_origins = jnp.zeros((prepared.history_capacity, capacity, 3), dtype=dtype)
     history_directions = jnp.zeros((prepared.history_capacity, capacity, 3), dtype=dtype)
     history_powers = jnp.zeros((prepared.history_capacity, capacity), dtype=dtype)
-    history_live = jnp.zeros((prepared.history_capacity, capacity), dtype=bool)
+    history_live = jnp.zeros((prepared.history_capacity, capacity), dtype=jnp.bool_)
     history_triangles = jnp.full(
         (max(prepared.history_capacity - 1, 0), capacity), -1, dtype=jnp.int32
     )

@@ -59,9 +59,9 @@ class TensorSpectralSymmetry(StrictModule, NonTrainableState):
         )
         if len(signs) != rank or any(value not in (-1, 1) for value in signs):
             raise ValueError("axis_signs must contain one +1 or -1 per spectral axis.")
-        shifts = np.zeros((rank,), dtype=float)
+        shifts = np.zeros((rank,), dtype=np.float64)
         if translations is not None:
-            shifts = np.asarray(tuple(translations), dtype=float)
+            shifts = np.asarray(tuple(translations), dtype=np.float64)
         if shifts.shape != (rank,) or np.any(~np.isfinite(shifts)):
             raise ValueError("translations must contain one finite value per axis.")
         for axis, shift, sign in zip(discretization.axes, shifts, signs, strict=True):
@@ -74,8 +74,7 @@ class TensorSpectralSymmetry(StrictModule, NonTrainableState):
                 "rational_chebyshev_line",
             ):
                 raise ValueError(
-                    "Reflections require Fourier, bounded polynomial, or full-line "
-                    "rational Chebyshev axes."
+                    "Reflections require Fourier, bounded polynomial, or full-line rational Chebyshev axes."
                 )
         if isinstance(component_count, bool):
             raise TypeError("component_count must be an integer.")
@@ -84,12 +83,12 @@ class TensorSpectralSymmetry(StrictModule, NonTrainableState):
             if component_count is not None
             else 1
             if component_matrix is None
-            else int(np.asarray(component_matrix).shape[0])
+            else np.asarray(component_matrix).shape[0]
         )
         if count < 1:
             raise ValueError("component_count must be positive.")
         matrix = (
-            np.eye(count, dtype=float)
+            np.eye(count, dtype=np.float64)
             if component_matrix is None
             else np.asarray(component_matrix)
         )
@@ -107,7 +106,7 @@ class TensorSpectralSymmetry(StrictModule, NonTrainableState):
         identifier = (
             canonical_fingerprint(
                 {
-                    "kind": "tensor-spectral-symmetry-v1",
+                    "kind": "tensor-spectral-symmetry",
                     "discretization": discretization.prepared_id,
                     "axis_signs": list(signs),
                     "translations": array_tree_fingerprint(normalized),
@@ -134,8 +133,7 @@ class TensorSpectralSymmetry(StrictModule, NonTrainableState):
         value = jnp.asarray(state)
         if value.shape != self.state_shape:
             raise ValueError(
-                f"Spectral symmetry state must have shape {self.state_shape}; "
-                f"got {value.shape}."
+                f"Spectral symmetry state must have shape {self.state_shape}; got {value.shape}."
             )
         if not jnp.issubdtype(value.dtype, jnp.complexfloating):
             raise TypeError("Spectral symmetry state must be complex-valued.")

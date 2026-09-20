@@ -262,7 +262,9 @@ class TransportedExternalAtomisticProvider(AbstractExternalAtomisticProvider):
         if session.status is not IPITransportStatus.READY:
             raise ValueError("i-PI provider session is not ready for a request.")
         cell = (
-            np.eye(3) if cell_vectors is None else np.asarray(cell_vectors, dtype=float)
+            np.eye(3)
+            if cell_vectors is None
+            else np.asarray(cell_vectors, dtype=np.float64)
         )
         coordinate = np.asarray(positions, dtype="<f8")
         if (
@@ -294,7 +296,7 @@ class TransportedExternalAtomisticProvider(AbstractExternalAtomisticProvider):
         extra_size = struct.unpack("<i", session._recv_exact(4))[0]
         if extra_size < 0 or extra_size > session.plan.maximum_extra_bytes:
             raise ValueError("i-PI extra response size is invalid.")
-        extra = json.loads(session._recv_exact(extra_size) or b"{}")
+        json.loads(session._recv_exact(extra_size) or b"{}")
         session.status = IPITransportStatus.READY
         return ExternalAtomisticEvaluation(
             jnp.asarray(energy),

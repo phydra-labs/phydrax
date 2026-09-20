@@ -24,7 +24,7 @@ def _case_batch():
             [[2.0, 1.0], [4.0, 3.0], [6.0, 5.0], [8.0, 7.0]],
         ]
     )
-    feature_mask = jnp.ones_like(features, dtype=bool).at[:, 1, 1].set(False)
+    feature_mask = jnp.ones_like(features, dtype="bool").at[:, 1, 1].set(False)
     return phx.ml.MLBatch(
         features,
         feature_mask=feature_mask,
@@ -94,7 +94,7 @@ def test_minmax_clip_and_norm_scaling_explicitly_reject_nonbijective_inverse():
 def test_scaler_constant_empty_and_invalid_weight_diagnostics_are_finite_and_exact():
     constant = StandardScaler().fit_batch(phx.ml.MLBatch(jnp.ones((3, 2))))
     empty = RobustScaler().fit_batch(
-        phx.ml.MLBatch(jnp.ones((3, 2)), sample_mask=jnp.zeros(3, dtype=bool))
+        phx.ml.MLBatch(jnp.ones((3, 2)), sample_mask=jnp.zeros(3, dtype="bool"))
     )
     negative = StandardScaler().fit_batch(
         phx.ml.MLBatch(jnp.ones((2, 1)), sample_weight=jnp.array([1.0, -1.0]))

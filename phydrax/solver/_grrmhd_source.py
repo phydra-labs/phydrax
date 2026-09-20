@@ -22,7 +22,7 @@ from ..equations._relativistic_mhd import (
     ValenciaPrimitiveRecovery,
 )
 from ..equations._relativistic_radiation_interaction import (
-    GRGreyRadiationInteractionPlan,
+    GRGrayRadiationInteractionPlan,
     GRRadiationMatterExchange,
 )
 from ..metrix._adm_exchange import ADMGridGeometry
@@ -154,7 +154,7 @@ class _SourceResidualBase(StrictModule):
     __strict_abstract__ = True
 
     material: IdealValenciaGRMHDSystem
-    interaction: GRGreyRadiationInteractionPlan
+    interaction: GRGrayRadiationInteractionPlan
     caloric_temperature_scale: float | None = eqx.field(static=True)
     uses_composition: bool = eqx.field(static=True)
     chart_id: str = eqx.field(static=True)
@@ -312,7 +312,7 @@ class GRRMHDImplicitSourcePlan(StrictModule, NonTrainableState):
     """Cell-local conservative implicit radiation-GRMHD source solve."""
 
     material: IdealValenciaGRMHDSystem
-    interaction: GRGreyRadiationInteractionPlan
+    interaction: GRGrayRadiationInteractionPlan
     maximum_iterations: int = eqx.field(static=True)
     absolute_tolerance: float = eqx.field(static=True)
     relative_tolerance: float = eqx.field(static=True)
@@ -324,7 +324,7 @@ class GRRMHDImplicitSourcePlan(StrictModule, NonTrainableState):
     def __init__(
         self,
         material: IdealValenciaGRMHDSystem,
-        interaction: GRGreyRadiationInteractionPlan,
+        interaction: GRGrayRadiationInteractionPlan,
         /,
         *,
         maximum_iterations: int = 24,
@@ -336,8 +336,8 @@ class GRRMHDImplicitSourcePlan(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(material, IdealValenciaGRMHDSystem):
             raise TypeError("material must be IdealValenciaGRMHDSystem.")
-        if not isinstance(interaction, GRGreyRadiationInteractionPlan):
-            raise TypeError("interaction must be GRGreyRadiationInteractionPlan.")
+        if not isinstance(interaction, GRGrayRadiationInteractionPlan):
+            raise TypeError("interaction must be GRGrayRadiationInteractionPlan.")
         if (
             material.scale.scale_id != interaction.radiation.scale.scale_id
             or material.convention.convention_id

@@ -34,7 +34,7 @@ class _LinearField(eqx.Module):
 
 
 def _declared_path(value, derivative, *, dimension, path_id, breakpoints=()):
-    points = jnp.asarray(breakpoints, dtype=float)
+    points = jnp.asarray(breakpoints, dtype="float64")
     return phx.solver.CallableDrivingPath(
         value,
         derivative,
@@ -42,7 +42,7 @@ def _declared_path(value, derivative, *, dimension, path_id, breakpoints=()):
         value_shape=(dimension,),
         path_id=path_id,
         breakpoints=points,
-        breakpoint_mask=jnp.ones(points.shape, dtype=bool),
+        breakpoint_mask=jnp.ones(points.shape, dtype="bool"),
     )
 
 
@@ -123,8 +123,8 @@ def test_piecewise_linear_derivative_knot_is_declared_and_landed():
     path = phx.solver.PiecewiseLinearDrivingPath(
         jnp.asarray([0.0, 0.3, 1.0]),
         jnp.asarray([[0.0], [0.3], [3.1]]),
-        time_mask=jnp.ones((3,), dtype=bool),
-        value_mask=jnp.ones((3, 1), dtype=bool),
+        time_mask=jnp.ones((3,), dtype="bool"),
+        value_mask=jnp.ones((3, 1), dtype="bool"),
         path_id="one-knot-control",
     )
     problem = phx.solver.RoughDifferentialProblem(

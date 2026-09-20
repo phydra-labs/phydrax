@@ -30,7 +30,7 @@ def _identifier(value: str | None, payload: dict[str, Any], /) -> str:
 
 
 def _shape(value: Sequence[int], name: str, /) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if any(size < 0 for size in shape):
         raise ValueError(f"{name} dimensions must be non-negative.")
     return shape
@@ -220,7 +220,7 @@ class PyTreeSpace(AbstractVectorSpace):
                 dtype = _dtype(leaf.dtype)
             else:
                 array = jnp.asarray(leaf)
-                shape = tuple(int(size) for size in array.shape)
+                shape = tuple(array.shape)
                 dtype = _dtype(array.dtype)
             specs.append(jax.ShapeDtypeStruct(shape, dtype))
         if len({np.dtype(spec.dtype) for spec in specs}) != 1 and not _allow_mixed_dtypes:

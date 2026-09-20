@@ -36,7 +36,7 @@ def _mode_tuple(modes: Sequence[int], mode_count: int, name: str, /) -> tuple[in
         for mode in values
     ):
         raise TypeError(f"{name} must contain integer mode indices.")
-    normalized = tuple(int(mode) for mode in values)
+    normalized = tuple(values)
     if len(set(normalized)) != len(normalized):
         raise ValueError(f"{name} cannot contain duplicate modes.")
     if any(mode < 0 or mode >= mode_count for mode in normalized):
@@ -56,7 +56,7 @@ def _square_covariance(covariance: ArrayLike, /) -> Array:
     if value.ndim != 2 or value.shape[0] != value.shape[1] or value.shape[0] % 2:
         raise ValueError("Gaussian covariance must be an even square matrix.")
     if not jnp.issubdtype(value.dtype, jnp.inexact):
-        value = value.astype(float)
+        value = value.astype("float64")
     return value
 
 
@@ -274,7 +274,7 @@ class PreparedGaussianSubsystem(StrictModule, NonTrainableState):
             {
                 "kind": "prepared-gaussian-subsystem",
                 "plan": plan.plan_id,
-                "quadrature_indices": tuple(int(value) for value in indices),
+                "quadrature_indices": tuple(indices),
             }
         )
 
@@ -387,7 +387,7 @@ class PreparedGaussianEntanglement(StrictModule, NonTrainableState):
             global_mode: local_mode
             for local_mode, global_mode in enumerate(plan.subsystem_modes)
         }
-        signs = np.ones((2 * len(plan.subsystem_modes),), dtype=float)
+        signs = np.ones((2 * len(plan.subsystem_modes),), dtype=np.float64)
         for global_mode in plan.transposed_modes:
             signs[2 * local_lookup[global_mode] + 1] = -1.0
         self.plan = plan
@@ -398,7 +398,7 @@ class PreparedGaussianEntanglement(StrictModule, NonTrainableState):
             {
                 "kind": "prepared-gaussian-entanglement",
                 "plan": plan.plan_id,
-                "indices": tuple(int(value) for value in indices),
+                "indices": tuple(indices),
                 "transpose_signs": tuple(float(value) for value in signs),
             }
         )
@@ -425,7 +425,7 @@ class PreparedGaussianEntanglement(StrictModule, NonTrainableState):
         minimum = jnp.min(margins)
         scaled = 2.0 * transposed_spectrum / state.hbar
         negativity_value = jnp.sum(jnp.maximum(-jnp.log(scaled), 0.0))
-        physical = jnp.asarray(state.valid, dtype=bool) & jnp.all(
+        physical = jnp.asarray(state.valid, dtype=jnp.bool_) & jnp.all(
             physical_spectrum >= 0.5 * state.hbar - self.plan.tolerance
         )
         entropy_value = _entropy_from_physical_spectrum(physical_spectrum, state.hbar)

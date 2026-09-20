@@ -10,7 +10,7 @@ from phydrax.stochastic._trajectory import StochasticTrajectory
 
 
 def _trajectory():
-    states = jnp.arange(3 * 4 * 2, dtype=float).reshape((3, 4, 2))
+    states = jnp.arange(3 * 4 * 2, dtype="float64").reshape((3, 4, 2))
     valid = jnp.asarray(
         [
             [True, True, True, True],

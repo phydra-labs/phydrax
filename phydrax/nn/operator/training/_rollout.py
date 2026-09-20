@@ -176,7 +176,7 @@ def _validate_rollout_route(
         raise ValueError("Operator rollout state source has no values.")
     assert field.output_spec is not None
     expected = batch.case_shape + source.sample_shape + field.output_spec.channel_shape
-    if tuple(int(size) for size in source.values.shape) != expected:
+    if tuple(source.values.shape) != expected:
         raise ValueError("Operator rollout source values do not match the target spec.")
 
 

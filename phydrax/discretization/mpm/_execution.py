@@ -62,8 +62,7 @@ class MPMExecutionPlan(StrictModule, NonTrainableState):
     ):
         identifiers = (str(backend), str(device_mesh), str(precision_policy_id))
         capacities = tuple(
-            int(value)
-            for value in (
+            (
                 particle_capacity,
                 grid_capacity,
                 route_capacity,

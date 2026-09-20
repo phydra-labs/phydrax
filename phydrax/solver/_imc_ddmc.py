@@ -81,10 +81,10 @@ class HybridIMCDDMCPlan(StrictModule, NonTrainableState):
         transport_light_speed: float = _LIGHT_SPEED,
         maximum_packet_energy: float,
     ):
-        widths = np.asarray(cell_widths, dtype=float)
-        absorption_ = np.asarray(absorption, dtype=float)
-        scattering_ = np.asarray(scattering, dtype=float)
-        capacity = np.asarray(heat_capacity, dtype=float)
+        widths = np.asarray(cell_widths, dtype=np.float64)
+        absorption_ = np.asarray(absorption, dtype=np.float64)
+        scattering_ = np.asarray(scattering, dtype=np.float64)
+        capacity = np.asarray(heat_capacity, dtype=np.float64)
         threshold = float(ddmc_optical_depth)
         light_speed = float(transport_light_speed)
         maximum = float(maximum_packet_energy)
@@ -135,11 +135,11 @@ class HybridIMCDDMCPlan(StrictModule, NonTrainableState):
 
     @property
     def cell_count(self) -> int:
-        return int(self.cell_widths.size)
+        return self.cell_widths.size
 
     @property
     def group_count(self) -> int:
-        return int(self.absorption.shape[1])
+        return self.absorption.shape[1]
 
     def initialize(
         self,
@@ -155,7 +155,7 @@ class HybridIMCDDMCPlan(StrictModule, NonTrainableState):
         group = jnp.asarray(packet_group, dtype=jnp.int32)
         direction = jnp.asarray(packet_direction, dtype=jnp.int32)
         energy = jnp.asarray(packet_energy, dtype=self.cell_widths.dtype)
-        live = jnp.asarray(packet_live, dtype=bool)
+        live = jnp.asarray(packet_live, dtype=jnp.bool_)
         temperature = jnp.asarray(material_temperature, dtype=self.cell_widths.dtype)
         if (
             cell.ndim != 1

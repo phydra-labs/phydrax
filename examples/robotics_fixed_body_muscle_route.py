@@ -37,9 +37,7 @@ route = FixedBodyRoutePlan(("elbow-flexor",), (0, 2), (base, arm)).prepare(
 configuration = jnp.asarray([0.45])
 velocity = jnp.asarray([-0.8])
 evaluation = route.evaluate(configuration, velocity)
-load, power = route.tensile_force_pullback(
-    configuration, velocity, jnp.asarray([650.0])
-)
+load, power = route.tensile_force_pullback(configuration, velocity, jnp.asarray([650.0]))
 
 print("route length [m]", evaluation.route_lengths_m)
 print("route length rate [m/s]", evaluation.route_length_rates_m_per_s)

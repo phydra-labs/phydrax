@@ -48,7 +48,7 @@ class TensorNetworkFailure(StrEnum):
     ARCHIVE_CORRUPTION = "archive-corruption"
     ARCHIVE_MISMATCH = "archive-mismatch"
     SECURITY_LIMIT = "security-limit"
-    CANCELLED = "cancelled"
+    CANCELED = "canceled"
     REPLAY_MISMATCH = "replay-mismatch"
     EXECUTION_FAILED = "execution-failed"
     QUALIFICATION_FAILED = "qualification-failed"
@@ -414,13 +414,11 @@ def forecast_tensor_network_resources(
     if any(np.dtype(array.dtype).name != support.dtype for array in arrays):
         raise ValueError("Resource input dtype does not match the exact support tuple.")
     array_count = len(arrays)
-    total_elements = sum(int(array.size) for array in arrays)
+    total_elements = sum(array.size for array in arrays)
     maximum_rank = max(array.ndim for array in arrays)
-    storage_bytes = sum(int(array.nbytes) for array in arrays)
+    storage_bytes = sum(array.nbytes for array in arrays)
     if support.representation in ("mps", "mpo", "lpdo"):
-        maximum_bond = max(
-            max(int(array.shape[0]), int(array.shape[-1])) for array in arrays
-        )
+        maximum_bond = max(max(array.shape[0], array.shape[-1]) for array in arrays)
     else:
         maximum_bond = 0
     compile_units = sum(array.ndim + 1 for array in arrays)

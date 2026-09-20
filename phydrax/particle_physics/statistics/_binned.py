@@ -115,9 +115,9 @@ class BinnedStatisticalModel(StrictModule, NonTrainableState):
         sample_names: Sequence[str],
         bin_active: ArrayLike | None = None,
     ):
-        nominal = np.asarray(nominal_samples, dtype=float)
-        observed = np.asarray(observations, dtype=float)
-        effects = np.asarray(modifier_effects, dtype=float)
+        nominal = np.asarray(nominal_samples, dtype=np.float64)
+        observed = np.asarray(observations, dtype=np.float64)
+        effects = np.asarray(modifier_effects, dtype=np.float64)
         parameters_ = tuple(parameters)
         modes = tuple(modifier_modes)
         channels = tuple(str(value).strip() for value in channel_names)
@@ -158,9 +158,9 @@ class BinnedStatisticalModel(StrictModule, NonTrainableState):
         ):
             raise ValueError("Channel, sample, and parameter names must be unique.")
         active = (
-            np.ones(observed.shape, dtype=bool)
+            np.ones(observed.shape, dtype=np.bool_)
             if bin_active is None
-            else np.asarray(bin_active, dtype=bool)
+            else np.asarray(bin_active, dtype=np.bool_)
         )
         if active.shape != observed.shape:
             raise ValueError("bin_active must align with observations.")

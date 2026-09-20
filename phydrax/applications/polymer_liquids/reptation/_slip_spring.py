@@ -146,7 +146,7 @@ class PreparedSlipSpring(StrictModule, NonTrainableState):
         initial_pairs: ArrayLike | None = None,
     ) -> SlipSpringState:
         endpoints = np.full((self.plan.maximum_springs, 2), -1, dtype=np.int32)
-        active = np.zeros((self.plan.maximum_springs,), dtype=bool)
+        active = np.zeros((self.plan.maximum_springs,), dtype=np.bool_)
         spring_ids = np.full((self.plan.maximum_springs,), -1, dtype=np.int32)
         count = 0
         if initial_pairs is not None:

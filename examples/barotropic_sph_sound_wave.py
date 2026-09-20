@@ -39,7 +39,7 @@ compiled = phx.equations.compile_barotropic_sph_problem(
     neighborhood=neighborhood,
 )
 
-lattice = (jnp.arange(particle_count, dtype=float) + 0.5)[:, None] * spacing
+lattice = (jnp.arange(particle_count, dtype="float64") + 0.5)[:, None] * spacing
 initial_position = lattice + 1.0e-3 * jnp.sin(2.0 * jnp.pi * lattice)
 initial_velocity = jnp.zeros_like(initial_position)
 initial_neighborhood = compiled.dynamics.neighborhood_state(initial_position)
@@ -74,7 +74,7 @@ final = compiled.dynamics.diagnostics(
     None,
 )
 final_neighborhood = compiled.dynamics.neighborhood_state(final_position)
-energy_scale = jnp.maximum(jnp.abs(initial.total_energy), jnp.finfo(float).tiny)
+energy_scale = jnp.maximum(jnp.abs(initial.total_energy), jnp.finfo(jnp.float64).tiny)
 
 print("solver", solution.resolved_method)
 print("particle count", particle_count)

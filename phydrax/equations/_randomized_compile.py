@@ -638,17 +638,15 @@ class _RandomizedPDEEvaluator(StrictModule):
             )
         permutation = named_positions + output_positions
         data = jnp.transpose(jnp.asarray(evaluated.data), permutation)
-        sample_shape = tuple(
-            int(data.shape[index]) for index in range(len(named_positions))
-        )
-        if int(data.shape[len(sample_shape)]) != self.plan.num_realizations:
+        sample_shape = tuple(data.shape[index] for index in range(len(named_positions)))
+        if data.shape[len(sample_shape)] != self.plan.num_realizations:
             raise ValueError(
                 "Randomized residual realization count does not match its plan."
             )
         values = jnp.moveaxis(data, len(sample_shape), 0)
-        event_shape = tuple(int(size) for size in values.shape[1 + len(sample_shape) :])
-        mask = jnp.ones(sample_shape, dtype=bool)
-        weights = jnp.ones(sample_shape, dtype=float)
+        event_shape = tuple(values.shape[1 + len(sample_shape) :])
+        mask = jnp.ones(sample_shape, dtype=jnp.bool_)
+        weights = jnp.ones(sample_shape, dtype=jnp.float64)
         if isinstance(collocation, GridBatch):
             named_dims = tuple(evaluated.dims[index] for index in named_positions)
             mask_field = cx.AxisArray(mask, dims=named_dims)
@@ -657,8 +655,8 @@ class _RandomizedPDEEvaluator(StrictModule):
                 mask_field = mask_field * current
             for current in collocation.coord_geometry_weight_by_label.values():
                 weight_field = weight_field * current
-            mask = jnp.asarray(mask_field.data, dtype=bool)
-            weights = jnp.asarray(weight_field.data, dtype=float)
+            mask = jnp.asarray(mask_field.data, dtype=jnp.bool_)
+            weights = jnp.asarray(weight_field.data, dtype=jnp.float64)
         return RandomizedResidualSamples(
             values,
             sample_shape=sample_shape,

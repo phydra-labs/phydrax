@@ -24,7 +24,7 @@ def _canonical_passthrough(
     in_dim: int,
     /,
 ) -> tuple[int, ...]:
-    indices = tuple(int(index) for index in passthrough)
+    indices = tuple(passthrough)
     if len(set(indices)) != len(indices):
         raise ValueError(f"`passthrough` indices must be unique, got {indices}.")
     if any(index < 0 or index >= in_dim for index in indices):
@@ -41,7 +41,7 @@ def _as_wavevectors(
     *,
     name: str,
 ) -> Array:
-    matrix = jnp.asarray(wavevectors, dtype=float)
+    matrix = jnp.asarray(wavevectors, dtype=jnp.float64)
     if matrix.ndim == 0:
         if in_dim != 1:
             raise ValueError(
@@ -72,14 +72,13 @@ def _as_phases(
     /,
 ) -> Array:
     if phases is None:
-        return jnp.zeros((num_wavevectors,), dtype=float)
-    values = jnp.asarray(phases, dtype=float)
+        return jnp.zeros((num_wavevectors,), dtype=jnp.float64)
+    values = jnp.asarray(phases, dtype=jnp.float64)
     if values.ndim == 0:
         return jnp.broadcast_to(values, (num_wavevectors,))
     if values.shape != (num_wavevectors,):
         raise ValueError(
-            f"`phases` must be scalar or have shape ({num_wavevectors},), "
-            f"got {values.shape}."
+            f"`phases` must be scalar or have shape ({num_wavevectors},), got {values.shape}."
         )
     return values
 
@@ -125,8 +124,7 @@ def _random_wavevectors(
     if feature_size % (2 * num_blocks) != 0:
         divisor = 2 * num_blocks
         raise ValueError(
-            "`feature_size` must be divisible by "
-            f"`2 * (len(mu) * len(sigma)) = {divisor}`, got {feature_size}."
+            f"`feature_size` must be divisible by `2 * (len(mu) * len(sigma)) = {divisor}`, got {feature_size}."
         )
     rows_per_block = feature_size // (2 * num_blocks)
     keys = jr.split(key, num_blocks)
@@ -173,10 +171,10 @@ class _AbstractFourierFeatureEmbeddings(_AbstractBaseModel):
 
         self.in_size = in_size_c
         self.out_size = (
-            2 * int(matrix.shape[0]) + len(passthrough_indices) + int(include_constant)
+            2 * matrix.shape[0] + len(passthrough_indices) + int(include_constant)
         )
         self.embedding_matrix = matrix
-        self.phases = _as_phases(phases, int(matrix.shape[0]))
+        self.phases = _as_phases(phases, matrix.shape[0])
         self.passthrough = passthrough_indices
         self.include_constant = bool(include_constant)
         self.trainable = bool(trainable)
@@ -198,8 +196,7 @@ class _AbstractFourierFeatureEmbeddings(_AbstractBaseModel):
                 x_vec = x_arr
             else:
                 raise ValueError(
-                    "`x` must have scalar shape () or (1,) for "
-                    f"in_size='scalar', got {x_arr.shape}."
+                    f"`x` must have scalar shape () or (1,) for in_size='scalar', got {x_arr.shape}."
                 )
         else:
             if x_arr.shape != in_shape:
@@ -277,7 +274,7 @@ class ExplicitFourierFeatureEmbeddings(_AbstractFourierFeatureEmbeddings):
         period = float(period)
         if period <= 0.0:
             raise ValueError(f"`period` must be positive, got {period}.")
-        mode_values = tuple(int(mode) for mode in modes)
+        mode_values = tuple(modes)
         if not mode_values or any(mode <= 0 for mode in mode_values):
             raise ValueError(
                 f"`modes` must contain positive integers, got {mode_values}."
@@ -285,9 +282,9 @@ class ExplicitFourierFeatureEmbeddings(_AbstractFourierFeatureEmbeddings):
         if len(set(mode_values)) != len(mode_values):
             raise ValueError(f"`modes` must be unique, got {mode_values}.")
 
-        wavevectors = jnp.zeros((len(mode_values), in_dim), dtype=float)
+        wavevectors = jnp.zeros((len(mode_values), in_dim), dtype=jnp.float64)
         angular_frequencies = (
-            2.0 * jnp.pi * jnp.asarray(mode_values, dtype=float) / period
+            2.0 * jnp.pi * jnp.asarray(mode_values, dtype=jnp.float64) / period
         )
         wavevectors = wavevectors.at[:, coordinate].set(angular_frequencies)
         return cls(
@@ -330,7 +327,7 @@ class MultiscaleFourierFeatureEmbeddings(_AbstractFourierFeatureEmbeddings):
         - `include_constant`: Append a constant-one feature.
         """
         in_dim = _get_size(_canonical_size(in_size))
-        scale_values = jnp.asarray(scales, dtype=float)
+        scale_values = jnp.asarray(scales, dtype=jnp.float64)
         if scale_values.ndim == 0:
             scale_values = scale_values.reshape((1,))
         if scale_values.ndim != 1 or scale_values.shape[0] == 0:
@@ -343,7 +340,7 @@ class MultiscaleFourierFeatureEmbeddings(_AbstractFourierFeatureEmbeddings):
             raise ValueError("`scales` must contain finite positive values.")
 
         base = (
-            jnp.eye(in_dim, dtype=float)
+            jnp.eye(in_dim, dtype=jnp.float64)
             if base_wavevectors is None
             else _as_wavevectors(
                 base_wavevectors,
@@ -421,16 +418,16 @@ class HybridFourierFeatureEmbeddings(_AbstractFourierFeatureEmbeddings):
         )
         deterministic_phase_values = _as_phases(
             deterministic_phases,
-            int(deterministic.shape[0]),
+            deterministic.shape[0],
         )
         phases = jnp.concatenate(
             (
                 deterministic_phase_values,
-                jnp.zeros((random.shape[0],), dtype=float),
+                jnp.zeros((random.shape[0],), dtype=jnp.float64),
             )
         )
 
-        self.deterministic_wavevector_count = int(deterministic.shape[0])
+        self.deterministic_wavevector_count = deterministic.shape[0]
         self.random_feature_size = random_out_size
         self._initialize(
             in_size=in_size,

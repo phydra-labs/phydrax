@@ -228,7 +228,7 @@ class DistributedResourceProfile:
         dtype_ = _identifier(dtype, "dtype")
         route = _identifier(communication_route, "communication route")
         count = int(device_count)
-        shape = tuple(int(value) for value in mesh_shape)
+        shape = tuple(mesh_shape)
         axes = tuple(_identifier(value, "mesh axis") for value in mesh_axes)
         local = int(maximum_local_bytes)
         global_ = int(maximum_global_bytes)

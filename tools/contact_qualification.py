@@ -47,7 +47,7 @@ def main():
         ambient_dimension=2,
         edges=jnp.asarray(((0, 1),)),
         pair_policy=phx.discretization.ContactPairPolicy(
-            2, static_mask=jnp.ones((2,), dtype=bool)
+            2, static_mask=jnp.ones((2,), dtype="bool")
         ),
     )
     static = phx.discretization.PreparedCollisionSurface(

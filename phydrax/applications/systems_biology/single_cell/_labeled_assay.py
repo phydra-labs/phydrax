@@ -60,9 +60,9 @@ class LabeledTranscriptAssay:
         count_calibration: ReferenceArtifactManifest,
         calibration_covariance: ArrayLike | None = None,
     ):
-        capture = np.asarray(capture_probabilities, dtype=float)
-        background = np.asarray(background_rates, dtype=float)
-        confusion = np.asarray(label_confusion, dtype=float)
+        capture = np.asarray(capture_probabilities, dtype=np.float64)
+        background = np.asarray(background_rates, dtype=np.float64)
+        confusion = np.asarray(label_confusion, dtype=np.float64)
         if (
             capture.shape != (4,)
             or not np.all(np.isfinite(capture))
@@ -97,7 +97,7 @@ class LabeledTranscriptAssay:
         covariance = (
             None
             if calibration_covariance is None
-            else np.asarray(calibration_covariance, dtype=float)
+            else np.asarray(calibration_covariance, dtype=np.float64)
         )
         if covariance is not None and (
             covariance.shape != (12, 12)
@@ -109,7 +109,7 @@ class LabeledTranscriptAssay:
                 "Assay calibration covariance must be a finite positive-semidefinite "
                 "12x12 matrix over capture, background, and label-confusion parameters."
             )
-        probabilities = np.zeros((4, 4), dtype=float)
+        probabilities = np.zeros((4, 4), dtype=np.float64)
         for true in range(4):
             true_label, splice = (0 if true < 2 else 1), true % 2
             for observed_label in range(2):
@@ -154,7 +154,7 @@ class LabeledTranscriptAssay:
     def conditional_moments(self, latent_counts: ArrayLike, /) -> tuple[Array, Array]:
         """Return conditional moments, including quantified assay calibration."""
 
-        latent = jnp.asarray(latent_counts, dtype=float)
+        latent = jnp.asarray(latent_counts, dtype=jnp.float64)
         if latent.shape[-1:] != (4,):
             raise ValueError("Latent counts must end in the four declared channels.")
         probabilities = self.observation_probabilities
@@ -308,7 +308,7 @@ class LabeledTranscriptCounts:
                 "Unique cells and one culture/plate identity per snapshot are required."
             )
         raw = np.asarray(counts)
-        mask = np.ones(raw.shape, dtype=bool) if valid is None else np.asarray(valid)
+        mask = np.ones(raw.shape, dtype=np.bool_) if valid is None else np.asarray(valid)
         if raw.shape != (len(ids), 4) or raw.dtype.kind not in "ifu":
             raise ValueError("Counts must have shape (cell, 4) in labeled U/S order.")
         if mask.shape != raw.shape or mask.dtype != bool:
@@ -320,7 +320,7 @@ class LabeledTranscriptCounts:
             or np.any(active != np.floor(active))
         ):
             raise ValueError("Active pulse/chase counts must be nonnegative integers.")
-        coordinates = np.asarray(times, dtype=float)
+        coordinates = np.asarray(times, dtype=np.float64)
         if coordinates.shape != (len(ids),) or not np.all(np.isfinite(coordinates)):
             raise ValueError("Physical times must be finite with one value per cell.")
         conversion_factor(time_unit, SECOND)
@@ -329,7 +329,7 @@ class LabeledTranscriptCounts:
         object.__setattr__(self, "culture_ids", cultures)
         object.__setattr__(self, "plate_ids", plates)
         object.__setattr__(
-            self, "counts", jnp.asarray(np.where(mask, raw, 0), dtype=float)
+            self, "counts", jnp.asarray(np.where(mask, raw, 0), dtype=jnp.float64)
         )
         object.__setattr__(self, "valid", jnp.asarray(mask))
         object.__setattr__(self, "times", jnp.asarray(coordinates))

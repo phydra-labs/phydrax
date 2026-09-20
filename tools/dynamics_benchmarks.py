@@ -41,7 +41,7 @@ def _measure(
 
 def _parameter_count(tree: Any, /) -> int:
     return sum(
-        int(leaf.size)
+        leaf.size
         for leaf in jax.tree_util.tree_leaves(tree)
         if eqx.is_inexact_array(leaf)
     )
@@ -1205,8 +1205,7 @@ def run_benchmarks(
         scenario not in valid_scenarios for scenario in resolved_scenarios
     ):
         raise ValueError(
-            "scenarios must select baseline, deterministic, stochastic, learned, "
-            "sensitivity, thermodynamic, or all."
+            "scenarios must select baseline, deterministic, stochastic, learned, sensitivity, thermodynamic, or all."
         )
     supported_architectures = (
         "unstructured_mlp",
@@ -1227,7 +1226,7 @@ def run_benchmarks(
         for architecture in resolved_architectures
     ):
         raise ValueError("architectures contains an unsupported thermodynamic model.")
-    resolved_seeds = tuple(int(value) for value in seeds)
+    resolved_seeds = tuple(seeds)
     if not resolved_seeds or any(value < 0 for value in resolved_seeds):
         raise ValueError("seeds must contain nonnegative integers.")
     device = jax.devices()[0]
@@ -1328,7 +1327,7 @@ def _comma_values(value: str, /) -> tuple[str, ...]:
 
 
 def _comma_integers(value: str, /) -> tuple[int, ...]:
-    return tuple(int(item) for item in _comma_values(value))
+    return tuple(_comma_values(value))
 
 
 def main(argv: Sequence[str] | None = None) -> None:
@@ -1346,8 +1345,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         type=_comma_values,
         default=("baseline",),
         help=(
-            "Comma-separated: baseline, deterministic, stochastic, learned, "
-            "sensitivity, thermodynamic, all."
+            "Comma-separated: baseline, deterministic, stochastic, learned, sensitivity, thermodynamic, all."
         ),
     )
     parser.add_argument(

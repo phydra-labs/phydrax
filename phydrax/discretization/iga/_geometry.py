@@ -37,7 +37,7 @@ class NURBSGeometryState(StrictModule):
             weights_.dtype, jnp.complexfloating
         ):
             raise TypeError("NURBS geometry values must be real.")
-        dtype = jnp.result_type(points, weights_, float)
+        dtype = jnp.result_type(points, weights_, jnp.float64)
         points = points.astype(dtype)
         weights_ = weights_.astype(dtype)
         points = eqx.error_if(
@@ -56,11 +56,11 @@ class NURBSGeometryState(StrictModule):
 
     @property
     def ambient_dimension(self) -> int:
-        return int(self.control_points.shape[-1])
+        return self.control_points.shape[-1]
 
     @property
     def control_shape(self) -> tuple[int, ...]:
-        return tuple(int(size) for size in self.weights.shape)
+        return tuple(self.weights.shape)
 
 
 class IsogeometricRuntimeData(StrictModule):

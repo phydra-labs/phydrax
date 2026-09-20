@@ -143,7 +143,7 @@ class NestedForcePartition(StrictModule):
         *,
         substeps: int,
     ):
-        indices = tuple(int(index) for index in term_indices)
+        indices = tuple(term_indices)
         count = int(substeps)
         if not indices or any(index < 0 for index in indices):
             raise ValueError("A force partition requires non-negative term indices.")
@@ -417,11 +417,11 @@ class RHMCSampleResult(StrictModule):
 
     @property
     def num_draws(self) -> int:
-        return int(self.accepted.shape[0])
+        return self.accepted.shape[0]
 
     @property
     def acceptance_rate(self) -> Array:
-        return jnp.mean(self.accepted.astype(float))
+        return jnp.mean(self.accepted.astype("float64"))
 
 
 def plan_rhmc(
@@ -461,7 +461,7 @@ def prepare_rhmc(
     configuration = jnp.asarray(configuration_template)
     if configuration.size < 1 or not jnp.issubdtype(configuration.dtype, jnp.inexact):
         raise ValueError("configuration_template must be a nonempty inexact array.")
-    local_shape = tuple(int(size) for size in local_coordinate_shape)
+    local_shape = tuple(local_coordinate_shape)
     if not local_shape or any(size <= 0 for size in local_shape):
         raise ValueError("local_coordinate_shape must contain positive dimensions.")
     all_indices = tuple(
@@ -479,7 +479,7 @@ def prepare_rhmc(
         raise MemoryError("RHMC registry exceeds its fixed term budget.")
     coordinate_metric = _coordinate_metric(geometry, configuration.shape, local_shape)
     local_itemsize = jnp.empty((), dtype=jnp.real(configuration).dtype).dtype.itemsize
-    configuration_bytes = int(configuration.size * configuration.dtype.itemsize)
+    configuration_bytes = configuration.size * configuration.dtype.itemsize
     local_bytes = int(np.prod(local_shape) * local_itemsize)
     pseudofermion_bytes = sum(
         _space_storage_bytes(term.dirac.source) for term in registry.pseudofermion_terms
@@ -487,7 +487,7 @@ def prepare_rhmc(
     retained = 3 * configuration_bytes + 2 * local_bytes + pseudofermion_bytes
     if retained > plan.resources.maximum_retained_bytes:
         raise MemoryError("Prepared RHMC retained state exceeds its resource policy.")
-    member = jnp.asarray(geometry.contains(configuration), dtype=bool)
+    member = jnp.asarray(geometry.contains(configuration), dtype=jnp.bool_)
     valid = member & jnp.all(jnp.isfinite(configuration))
     kernel_id = canonical_fingerprint(
         {
@@ -746,12 +746,12 @@ def rhmc_transition(
     refresh_solve_error_bound_available = (
         jnp.stack(tuple(refresh_bound_available))
         if refresh_bound_available
-        else jnp.ones((0,), dtype=bool)
+        else jnp.ones((0,), dtype=jnp.bool_)
     )
     refresh_solve_error_bound_certified = (
         jnp.stack(tuple(refresh_bound_certified))
         if refresh_bound_certified
-        else jnp.ones((0,), dtype=bool)
+        else jnp.ones((0,), dtype=jnp.bool_)
     )
     momentum_key = derive_key(
         state.root_key,
@@ -903,7 +903,7 @@ def sample_rhmc(
     per_draw_bytes = (
         kernel.configuration_template.size * kernel.configuration_template.dtype.itemsize
         + (3 + solve_evidence_count) * real_itemsize
-        + (5 + 2 * solve_evidence_count) * jnp.dtype(bool).itemsize
+        + (5 + 2 * solve_evidence_count) * jnp.dtype(jnp.bool_).itemsize
         + jnp.dtype(jnp.int32).itemsize
     )
     if draws * per_draw_bytes > kernel.plan.resources.maximum_output_bytes:
@@ -999,8 +999,7 @@ def sample_rhmc(
         final_state=current,
         kernel_id=kernel.kernel_id,
         claim=(
-            "Frozen production RHMC with semantic randomness, exact endpoint "
-            "Hamiltonians, and rejection rollback"
+            "Frozen production RHMC with semantic randomness, exact endpoint Hamiltonians, and rejection rollback"
         ),
     )
 
@@ -1283,8 +1282,7 @@ def _coordinate_metric(
             )
         return metric
     raise TypeError(
-        "RHMC supports EuclideanStateGeometry, FlatTorusStateGeometry, or "
-        "pointwise LieGroupStateGeometry."
+        "RHMC supports EuclideanStateGeometry, FlatTorusStateGeometry, or pointwise LieGroupStateGeometry."
     )
 
 

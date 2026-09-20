@@ -20,16 +20,14 @@ from benchmarks._runtime import synchronize
 
 def _tree_bytes(tree: Any) -> int:
     return sum(
-        int(leaf.size * leaf.dtype.itemsize)
+        leaf.size * leaf.dtype.itemsize
         for leaf in jax.tree.leaves(tree)
         if eqx.is_array(leaf)
     )
 
 
 def _parameter_count(tree: Any) -> int:
-    return sum(
-        int(leaf.size) for leaf in jax.tree.leaves(tree) if eqx.is_inexact_array(leaf)
-    )
+    return sum(leaf.size for leaf in jax.tree.leaves(tree) if eqx.is_inexact_array(leaf))
 
 
 def _orthogonality_residual(matrix: jax.Array) -> float:

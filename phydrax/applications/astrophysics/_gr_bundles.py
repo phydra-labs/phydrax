@@ -214,8 +214,8 @@ class GRJacobiEvidence(StrictModule, NonTrainableState):
     ):
         mapping = jnp.asarray(jacobi_map)
         determinant_ = jnp.asarray(determinant, dtype=mapping.dtype)
-        caustic_ = jnp.asarray(caustic, dtype=bool)
-        valid_ = jnp.asarray(valid, dtype=bool)
+        caustic_ = jnp.asarray(caustic, dtype=jnp.bool_)
+        valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         if mapping.shape[-2:] != (2, 2):
             raise ValueError("Jacobi maps must end in shape (2, 2).")
         if any(
@@ -258,10 +258,10 @@ class GRRayBundleEvidence(StrictModule, NonTrainableState):
     ):
         values = jnp.asarray(constant_values)
         drift = jnp.asarray(constant_relative_drift, dtype=values.dtype)
-        constants_valid = jnp.asarray(constant_valid, dtype=bool)
+        constants_valid = jnp.asarray(constant_valid, dtype=jnp.bool_)
         transport_error = jnp.asarray(transport_residual, dtype=values.dtype)
-        transport_valid_ = jnp.asarray(transport_valid, dtype=bool)
-        valid_ = jnp.asarray(valid, dtype=bool)
+        transport_valid_ = jnp.asarray(transport_valid, dtype=jnp.bool_)
+        valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         names = tuple(str(name) for name in constant_names)
         if values.ndim != 3 or values.shape[-1] != len(names):
             raise ValueError(
@@ -358,7 +358,7 @@ def build_gr_ray_bundle_evidence(
     if not isinstance(metric_id, str) or not metric_id:
         raise ValueError("metric_id must be a non-empty string.")
     velocities = jnp.asarray(tangents, dtype=points.dtype)
-    mask = jnp.asarray(active, dtype=bool)
+    mask = jnp.asarray(active, dtype=jnp.bool_)
     if points.ndim != 3 or points.shape[-1] != 4 or velocities.shape != points.shape:
         raise ValueError("Ray histories must have shape (num_rays, num_history, 4).")
     if mask.shape != points.shape[:2]:
@@ -399,7 +399,7 @@ def build_gr_ray_bundle_evidence(
     else:
         constant_values = jnp.empty(points.shape[:2] + (0,), dtype=points.dtype)
         drift = jnp.empty((points.shape[0], 0), dtype=points.dtype)
-        constant_valid = jnp.empty((points.shape[0], 0), dtype=bool)
+        constant_valid = jnp.empty((points.shape[0], 0), dtype=jnp.bool_)
 
     spatial_sign = float(1 if metric.convention == "mostly_plus" else -1)
     if transported_screen_basis is None:
@@ -426,7 +426,7 @@ def build_gr_ray_bundle_evidence(
 
     if jacobi_variations is None:
         jacobi = None
-        jacobi_ray_valid = jnp.ones((points.shape[0],), dtype=bool)
+        jacobi_ray_valid = jnp.ones((points.shape[0],), dtype=jnp.bool_)
     else:
         variations = jnp.asarray(jacobi_variations, dtype=points.dtype)
         if variations.shape != points.shape[:2] + (2, 8):

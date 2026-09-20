@@ -12,7 +12,7 @@ from phydrax._array_tree import ArrayPyTreeSchema
 
 def _mixed_tree():
     return {
-        "flags": jnp.asarray([True, False, True], dtype=bool),
+        "flags": jnp.asarray([True, False, True], dtype="bool"),
         "indices": jnp.asarray([[1, 2], [3, 4], [5, 6]], dtype=jnp.int32),
         "values": jnp.asarray([[1.0, 2.0], [jnp.nan, 4.0], [5.0, 6.0]]),
         "zero": jnp.zeros((3, 0, 2), dtype=jnp.float16),
@@ -88,7 +88,7 @@ def test_finite_mask_and_case_selection_preserve_leaf_dtypes_and_shapes():
 
 def test_zero_sized_case_axes_remain_fixed_shape():
     tree = {
-        "flags": jnp.zeros((0,), dtype=bool),
+        "flags": jnp.zeros((0,), dtype="bool"),
         "values": jnp.zeros((0, 2), dtype=jnp.float32),
     }
     schema = ArrayPyTreeSchema.from_tree(tree, case_ndim=1)
@@ -117,7 +117,7 @@ def test_array_tree_schema_rejects_structure_shape_dtype_and_case_mismatch():
         schema.validate(wrong_dtype)
 
     wrong_cases = dict(tree)
-    wrong_cases["flags"] = jnp.zeros((2,), dtype=bool)
+    wrong_cases["flags"] = jnp.zeros((2,), dtype="bool")
     with pytest.raises(ValueError, match="share the case shape"):
         schema.validate(wrong_cases)
     with pytest.raises(ValueError, match="share the case shape"):
@@ -126,4 +126,4 @@ def test_array_tree_schema_rejects_structure_shape_dtype_and_case_mismatch():
     with pytest.raises(TypeError, match="boolean dtype"):
         schema.select_cases(jnp.ones((3,), dtype=jnp.int32), tree, tree)
     with pytest.raises(ValueError, match="selector shape"):
-        schema.select_cases(jnp.ones((1,), dtype=bool), tree, tree)
+        schema.select_cases(jnp.ones((1,), dtype="bool"), tree, tree)

@@ -33,9 +33,9 @@ def _ready(value):
 
 
 def _case(size: int, iterations: int) -> dict[str, object]:
-    codomain = ArrayCodomain.from_shape((size,), dtype=float)
+    codomain = ArrayCodomain.from_shape((size,), dtype="float64")
     fields = ProductFieldSpec((FieldSpec("u", codomain),))
-    matrix = jnp.eye(size, dtype=float)
+    matrix = jnp.eye(size, dtype="float64")
     target = jnp.linspace(-1.0, 1.0, size)
     condition = Condition(
         f"constraint-benchmark-{size}",

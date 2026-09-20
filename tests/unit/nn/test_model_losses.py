@@ -95,7 +95,7 @@ class CustomLossModel(_AbstractBaseModel):
     out_size: Literal["scalar"]
 
     def __init__(self, init: float = 0.0):
-        self.weight = jnp.asarray(init, dtype=float)
+        self.weight = jnp.asarray(init, dtype="float64")
         self.in_size = "scalar"
         self.out_size = "scalar"
 
@@ -114,7 +114,7 @@ class ScaleModel(_AbstractBaseModel):
     out_size: Literal["scalar"]
 
     def __init__(self, init: float = 0.0):
-        self.weight = jnp.asarray(init, dtype=float)
+        self.weight = jnp.asarray(init, dtype="float64")
         self.in_size = "scalar"
         self.out_size = "scalar"
 
@@ -193,9 +193,7 @@ def test_loss_wrapper_preserves_domain_model_metadata():
     assert u.func.binding.batch_mode == "blockwise"
 
 
-def test_solver_logs_model_losses_to_events_and_tensorboard(
-    tmp_path, phydrax_events
-):
+def test_solver_logs_model_losses_to_events_and_tensorboard(tmp_path, phydrax_events):
     model = MLP(
         in_size=1,
         out_size="scalar",
@@ -217,8 +215,7 @@ def test_solver_logs_model_losses_to_events_and_tensorboard(
     events = phydrax_events.records("training.step.completed")
     metrics = events[-1]["fields"]["metrics"]
     assert any(
-        metric["name"] == "train/model_losses/000_unit_penalty/loss"
-        for metric in metrics
+        metric["name"] == "train/model_losses/000_unit_penalty/loss" for metric in metrics
     )
 
     accumulator = EventAccumulator(str(log_dir))

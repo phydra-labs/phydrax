@@ -32,7 +32,7 @@ result = plan.evaluate(relative_flux, jnp.full((2, 3), 1.0e-9))
 assert bool(jnp.all(result.valid))
 ```
 
-Wavelength is measured in metres and source spectral energy flux density in
+Wavelength is measured in meters and source spectral energy flux density in
 `W m^-2 m^-1`. Photon rates use the immutable bandpass nodes and trapezoidal weights;
 there is no evaluation-time interpolation or extrapolation. Response curves require
 source/version/checksum/license provenance.
@@ -85,7 +85,7 @@ under-specified likelihood convention. See the
 [gravitational-wave inference guide](guides_gravitational_wave_inference.md).
 
 `BinnedResponsePlan` adapts the shared `LinearObservationPlan`; CMB bandpower and
-survey windows use the same labelled response algebra. Core
+survey windows use the same labeled response algebra. Core
 Cholesky/precision covariance actions and Gaussian likelihoods are shared with
 orbit determination and cosmology, while PSF, bandpass, ray, occultation,
 antenna, and measurement geometry remain domain-specific. Observation

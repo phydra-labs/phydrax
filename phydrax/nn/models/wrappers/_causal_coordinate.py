@@ -37,7 +37,7 @@ class CausalCoordinatePlan(StrictModule):
         reset: ArrayLike | None = None,
         duplicate_rule: Literal["error", "zero_step"] = "error",
     ):
-        values = np.asarray(coordinates, dtype=float)
+        values = np.asarray(coordinates, dtype=np.float64)
         if values.ndim != 1 or values.size == 0 or not np.all(np.isfinite(values)):
             raise ValueError("Causal coordinates must be one finite nonempty schedule.")
         if duplicate_rule not in ("error", "zero_step"):
@@ -51,18 +51,18 @@ class CausalCoordinatePlan(StrictModule):
         inverse = np.empty_like(order)
         inverse[order] = np.arange(order.size)
         reset_values = (
-            np.zeros(order.size, dtype=bool)
+            np.zeros(order.size, dtype=np.bool_)
             if reset is None
-            else np.asarray(reset, dtype=bool)
+            else np.asarray(reset, dtype=np.bool_)
         )
         if reset_values.shape != values.shape:
             raise ValueError("Causal reset mask must match coordinate schedule.")
         self.coordinates = jnp.asarray(sorted_values)
         self.order = jnp.asarray(order, dtype=jnp.int32)
         self.inverse_order = jnp.asarray(inverse, dtype=jnp.int32)
-        self.reset = jnp.asarray(reset_values[order], dtype=bool)
+        self.reset = jnp.asarray(reset_values[order], dtype=jnp.bool_)
         self.duplicate_rule = duplicate_rule
-        self.sequence_length = int(order.size)
+        self.sequence_length = order.size
         reset_identity = tuple(bool(value) for value in reset_values[order])
         self.plan_id = (
             f"causal-coordinate:{tuple(sorted_values)}:{reset_identity}:{duplicate_rule}"
@@ -103,9 +103,9 @@ class CausalCoordinateNetwork(StrictModule):
         ordered_inputs = jnp.take(jnp.asarray(inputs), plan.order, axis=-2)
         case_shape = ordered_inputs.shape[:-2]
         validity = (
-            jnp.ones(case_shape + (plan.sequence_length,), dtype=bool)
+            jnp.ones(case_shape + (plan.sequence_length,), dtype=jnp.bool_)
             if valid is None
-            else jnp.take(jnp.asarray(valid, dtype=bool), plan.order, axis=-1)
+            else jnp.take(jnp.asarray(valid, dtype=jnp.bool_), plan.order, axis=-1)
         )
         reset = jnp.broadcast_to(plan.reset, validity.shape)
         coordinates = jnp.broadcast_to(plan.coordinates, validity.shape)

@@ -101,7 +101,7 @@ def _experiment(times, *, native, terminal=False):
 
 
 def prepare_campaign(sample_times_s):
-    times = np.asarray(tuple(sample_times_s), dtype=float)
+    times = np.asarray(tuple(sample_times_s), dtype="float64")
     expected = np.linspace(0.0, 2.0, 201)
     if times.shape != expected.shape or not np.allclose(
         times, expected, rtol=0.0, atol=1e-14

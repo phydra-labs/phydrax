@@ -12,9 +12,9 @@ from ._common import SmoothingPatchLayout
 
 
 def _cell_incidence(connectivity: PolygonalConnectivity):
-    face_count = int(connectivity.edges.shape[0])
+    face_count = connectivity.edges.shape[0]
     owner = np.full((face_count,), -1, dtype=np.int32)
-    neighbour = np.full((face_count,), -1, dtype=np.int32)
+    neighbor = np.full((face_count,), -1, dtype=np.int32)
     for cell in range(connectivity.cell_edges.shape[0]):
         for local in range(connectivity.cell_edges.shape[1]):
             if not bool(connectivity.cell_edge_valid[cell, local]):
@@ -23,8 +23,8 @@ def _cell_incidence(connectivity: PolygonalConnectivity):
             if owner[edge] < 0:
                 owner[edge] = cell
             else:
-                neighbour[edge] = cell
-    return owner, neighbour
+                neighbor[edge] = cell
+    return owner, neighbor
 
 
 def edge_smoothing_layout(mesh: CellMesh, /) -> SmoothingPatchLayout:
@@ -42,7 +42,7 @@ def edge_smoothing_layout(mesh: CellMesh, /) -> SmoothingPatchLayout:
         tuple(np.asarray(block.vertices, dtype=np.int32) for block in mesh.blocks),
         axis=0,
     )
-    owner, neighbour = _cell_incidence(connectivity)
+    owner, neighbor = _cell_incidence(connectivity)
     edges = np.asarray(connectivity.edges, dtype=np.int32)
     patch_count = edges.shape[0]
     max_vertices = 4
@@ -52,19 +52,19 @@ def edge_smoothing_layout(mesh: CellMesh, /) -> SmoothingPatchLayout:
     rule_weights = np.asarray([0.5, 0.5])
     owners = np.arange(patch_count, dtype=np.int32)
     dof_routes = np.zeros((patch_count, max_dofs), dtype=np.int32)
-    dof_valid = np.zeros_like(dof_routes, dtype=bool)
+    dof_valid = np.zeros_like(dof_routes, dtype=np.bool_)
     vertex_sources = np.zeros((patch_count, max_vertices, max_sources), dtype=np.int32)
-    vertex_coefficients = np.zeros_like(vertex_sources, dtype=float)
-    vertex_valid = np.zeros((patch_count, max_vertices), dtype=bool)
+    vertex_coefficients = np.zeros_like(vertex_sources, dtype=np.float64)
+    vertex_valid = np.zeros((patch_count, max_vertices), dtype=np.bool_)
     boundary_edges = np.zeros((patch_count, max_vertices, 2), dtype=np.int32)
-    boundary_valid = np.zeros((patch_count, max_vertices), dtype=bool)
+    boundary_valid = np.zeros((patch_count, max_vertices), dtype=np.bool_)
     boundary_shape_values = np.zeros(
-        (patch_count, max_vertices, rule_points.size, max_dofs), dtype=float
+        (patch_count, max_vertices, rule_points.size, max_dofs), dtype=np.float64
     )
     for edge in range(patch_count):
         incident = [owner[edge]]
-        if neighbour[edge] >= 0:
-            incident.append(neighbour[edge])
+        if neighbor[edge] >= 0:
+            incident.append(neighbor[edge])
         if owner[edge] < 0 or len(incident) > 2:
             raise ValueError("Every ES-FEM edge must have one or two incident cells.")
         edge_vertices = list(edges[edge])
@@ -97,8 +97,8 @@ def edge_smoothing_layout(mesh: CellMesh, /) -> SmoothingPatchLayout:
             centroid(owner[edge]),
             endpoint(edge_vertices[1]),
         ]
-        if neighbour[edge] >= 0:
-            patch.append(centroid(neighbour[edge]))
+        if neighbor[edge] >= 0:
+            patch.append(centroid(neighbor[edge]))
         patch_coordinates = []
         for sources, coefficients, _ in patch:
             patch_coordinates.append(

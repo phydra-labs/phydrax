@@ -61,7 +61,7 @@ class GaussianErfVortexKernel3D(StrictModule, NonTrainableState):
         self.strength_semantics = "integrated-vorticity-vector"
         self.kernel_id = canonical_fingerprint(
             {
-                "kind": "gaussian-erf-vortex-kernel-3d-v1",
+                "kind": "gaussian-erf-vortex-kernel-3d",
                 "series_threshold": threshold,
                 "core_radius_convention": self.core_radius_convention,
                 "strength_semantics": self.strength_semantics,
@@ -88,7 +88,9 @@ class GaussianErfVortexKernel3D(StrictModule, NonTrainableState):
             offset.shape[:-1], circulation.shape[:-1], radius.shape
         )
 
-        dtype = jnp.result_type(offset.dtype, circulation.dtype, radius.dtype, float)
+        dtype = jnp.result_type(
+            offset.dtype, circulation.dtype, radius.dtype, jnp.float64
+        )
         offset = jnp.broadcast_to(offset.astype(dtype), leading_shape + (3,))
         circulation = jnp.broadcast_to(circulation.astype(dtype), leading_shape + (3,))
         radius = jnp.broadcast_to(radius.astype(dtype), leading_shape)

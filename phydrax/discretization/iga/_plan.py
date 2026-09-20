@@ -108,7 +108,7 @@ def _query_configuration(
     stencils, axis_weights, entity_axes, point_axes = [], [], [], []
     entity_shape, point_shape, cursor = [], [], 0
     dimension = basis.parametric_dimension
-    zero = (0,) * dimension
+    (0,) * dimension
     multi_indices = [
         derivative for derivative in np.ndindex((3,) * dimension) if sum(derivative) <= 2
     ]
@@ -241,9 +241,9 @@ def _subset_domain(base: IntegrationDomain, rows: np.ndarray, /) -> IntegrationD
         base.support_id,
         base.entity_set_id,
         owner_cells=np.asarray(base.owner_cells)[rows],
-        neighbour_cells=np.asarray(base.neighbour_cells)[rows],
+        neighbor_cells=np.asarray(base.neighbor_cells)[rows],
         owner_local_entities=np.asarray(base.owner_local_entities)[rows],
-        neighbour_local_entities=np.asarray(base.neighbour_local_entities)[rows],
+        neighbor_local_entities=np.asarray(base.neighbor_local_entities)[rows],
         selection_id=base.selection_id,
     )
 
@@ -506,7 +506,7 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
                 {"kind": "isogeometric-exterior-facets", "basis": basis.basis_id}
             ),
             owner_cells=facet_owners,
-            neighbour_cells=np.full(facet_owners.shape, -1, dtype=np.int32),
+            neighbor_cells=np.full(facet_owners.shape, -1, dtype=np.int32),
             owner_local_entities=facet_local,
         )
         preparation = PreparationReport(
@@ -519,8 +519,8 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
             ),
             resource_counts={
                 "geometry_control_coefficients": basis.coefficient_count,
-                "integration_cells": int(cell_domain.entity_indices.size),
-                "exterior_facets": int(facet_owners.size),
+                "integration_cells": cell_domain.entity_indices.size,
+                "exterior_facets": facet_owners.size,
                 "fields": len(plan.fields),
             },
         )
@@ -702,7 +702,7 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
         if selection.entity_set_id != base.entity_set_id:
             raise ValueError("IGA selection does not match the requested domain.")
         rows = np.flatnonzero(
-            np.asarray(selection.mask, dtype=bool)[np.asarray(base.entity_indices)]
+            np.asarray(selection.mask, dtype=np.bool_)[np.asarray(base.entity_indices)]
         )
         return _subset_domain(base, rows)
 
@@ -814,7 +814,7 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
                 domain.support_id,
                 domain.entity_set_id,
                 owner_cells=np.asarray(self.exterior_facet_domain.owner_cells)[active],
-                neighbour_cells=np.full(active.shape, -1, dtype=np.int32),
+                neighbor_cells=np.full(active.shape, -1, dtype=np.int32),
                 owner_local_entities=np.asarray(
                     self.exterior_facet_domain.owner_local_entities
                 )[active],
@@ -938,7 +938,7 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
         field_index = self._field_index(field_name)
         field = self.fields[field_index]
         full_space = self.field_spaces[field_index].vector_space
-        boundary = np.zeros(field.basis.control_shape, dtype=bool)
+        boundary = np.zeros(field.basis.control_shape, dtype=np.bool_)
         for axis in range(field.basis.parametric_dimension):
             lower: list[slice | int] = [slice(None)] * field.basis.parametric_dimension
             upper: list[slice | int] = [slice(None)] * field.basis.parametric_dimension
@@ -970,7 +970,7 @@ class PreparedIsogeometricDiscretization(AbstractPreparedLocalDiscretization):
                     "kind": "isogeometric-homogeneous-trace-prolongation",
                     "prepared": self.prepared_id,
                     "field": self.field_spaces[field_index].field_space_id,
-                    "free_indices": tuple(int(value) for value in free),
+                    "free_indices": tuple(free),
                 }
             ),
         )

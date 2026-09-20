@@ -53,7 +53,7 @@ class LinearDifferentialFunctional(StrictModule):
     ):
         shape = _input_shape(input_shape)
         coordinate_count = prod(shape)
-        orders = tuple(tuple(int(order) for order in term) for term in derivative_orders)
+        orders = tuple(tuple(term) for term in derivative_orders)
         if not orders:
             raise ValueError("A differential functional needs at least one term.")
         if any(len(term) != coordinate_count for term in orders):
@@ -62,7 +62,7 @@ class LinearDifferentialFunctional(StrictModule):
             )
         if any(order < 0 for term in orders for order in term):
             raise ValueError("Derivative orders must be nonnegative.")
-        coefficient_array = jnp.asarray(coefficients, dtype=float)
+        coefficient_array = jnp.asarray(coefficients, dtype=jnp.float64)
         if coefficient_array.ndim not in (1, 2) or coefficient_array.shape[-1] != len(
             orders
         ):
@@ -139,7 +139,7 @@ class LinearDifferentialFunctional(StrictModule):
         )
 
     def __mul__(self, scale: Any) -> LinearDifferentialFunctional:
-        scale_array = jnp.asarray(scale, dtype=float)
+        scale_array = jnp.asarray(scale, dtype=jnp.float64)
         if scale_array.ndim == 0:
             coefficients = self.coefficients * scale_array
         elif scale_array.ndim == 1:
@@ -207,7 +207,7 @@ def directional_derivative_functional(
     /,
 ) -> LinearDifferentialFunctional:
     """Evaluate a first derivative along a supplied vector direction."""
-    vector = jnp.asarray(direction, dtype=float)
+    vector = jnp.asarray(direction, dtype=jnp.float64)
     if vector.ndim != 1 or vector.shape[0] <= 0:
         raise ValueError("direction must be a nonempty coordinate vector.")
     vector = eqx.error_if(
@@ -215,7 +215,7 @@ def directional_derivative_functional(
         jnp.any(~jnp.isfinite(vector)),
         "direction must be finite.",
     )
-    size = int(vector.shape[0])
+    size = vector.shape[0]
     orders = tuple(
         tuple(1 if coordinate == axis else 0 for coordinate in range(size))
         for axis in range(size)
@@ -284,8 +284,7 @@ def path_partial_derivative_functional(
         (tuple(orders),),
         jnp.ones((1,)),
         functional_id=(
-            f"PathPartialDerivativeFunctional[{knot_index},"
-            f"{channel_index},{derivative_order}]"
+            f"PathPartialDerivativeFunctional[{knot_index},{channel_index},{derivative_order}]"
         ),
     )
 
@@ -295,15 +294,15 @@ def path_directional_derivative_functional(
     /,
 ) -> LinearDifferentialFunctional:
     """Differentiate along an explicit finite path-coordinate direction."""
-    direction_array = jnp.asarray(direction, dtype=float)
-    if direction_array.ndim != 2 or any(int(size) <= 0 for size in direction_array.shape):
+    direction_array = jnp.asarray(direction, dtype=jnp.float64)
+    if direction_array.ndim != 2 or any(size <= 0 for size in direction_array.shape):
         raise ValueError("direction must have nonempty shape (knot, channel).")
     direction_array = eqx.error_if(
         direction_array,
         jnp.any(~jnp.isfinite(direction_array)),
         "Path direction must be finite.",
     )
-    shape = tuple(int(size) for size in direction_array.shape)
+    shape = tuple(direction_array.shape)
     size = prod(shape)
     orders = tuple(
         tuple(1 if coordinate == axis else 0 for coordinate in range(size))
@@ -339,7 +338,7 @@ class FunctionalObservationBlock(StrictModule):
         input_array = _as_functional_inputs(inputs, functional.input_shape)
         if input_array.shape[0] <= 0:
             raise ValueError("Functional observation blocks cannot be empty.")
-        functional.coefficient_matrix(int(input_array.shape[0]))
+        functional.coefficient_matrix(input_array.shape[0])
         if not isinstance(name, str) or not name:
             raise ValueError("Functional block name must be a nonempty string.")
         resolved_knot_count = _valid_knot_count(
@@ -357,7 +356,7 @@ class FunctionalObservationBlock(StrictModule):
 
     @property
     def num_observations(self) -> int:
-        return int(self.inputs.shape[0])
+        return self.inputs.shape[0]
 
     @property
     def input_shape(self) -> tuple[int, ...]:
@@ -434,7 +433,7 @@ class FunctionalDesign(StrictModule):
 
     @property
     def num_observations(self) -> int:
-        return int(self.block_index.shape[0])
+        return self.block_index.shape[0]
 
     @property
     def num_blocks(self) -> int:
@@ -451,12 +450,12 @@ class FunctionalDesign(StrictModule):
         if isinstance(values, tuple):
             if len(values) != self.num_blocks:
                 raise ValueError(f"{name} must contain one array per functional block.")
-            arrays = tuple(jnp.asarray(value, dtype=float) for value in values)
+            arrays = tuple(jnp.asarray(value, dtype=jnp.float64) for value in values)
             for array, block in zip(arrays, self.blocks, strict=True):
                 if array.shape != (block.num_observations,):
                     raise ValueError(f"{name} block arrays must align with block inputs.")
             return jnp.concatenate(arrays)
-        array = jnp.asarray(values, dtype=float)
+        array = jnp.asarray(values, dtype=jnp.float64)
         if array.shape != (self.num_observations,):
             raise ValueError(f"{name} must align with flattened functional observations.")
         return array
@@ -494,12 +493,12 @@ class FunctionalGaussianProcessLikelihoodState(StrictModule):
     ):
         if not isinstance(kernel, AbstractPositiveDefiniteKernel):
             raise TypeError("kernel must be a positive-definite kernel.")
-        noise = jnp.asarray(noise_scale, dtype=float)
+        noise = jnp.asarray(noise_scale, dtype=jnp.float64)
         if noise.ndim > 1 or (noise.ndim == 1 and noise.shape[0] <= 0):
             raise ValueError("noise_scale must be scalar or a nonempty vector.")
         if noise_layout not in ("block", "observation"):
             raise ValueError("noise_layout must be 'block' or 'observation'.")
-        jitter_array = jnp.asarray(jitter, dtype=float)
+        jitter_array = jnp.asarray(jitter, dtype=jnp.float64)
         if jitter_array.ndim != 0:
             raise ValueError("jitter must be scalar.")
         if inducing_design is not None and not isinstance(
@@ -562,7 +561,7 @@ class FunctionalGaussianProcessCondition(StrictModule):
             variance,
             name="conditioned functional variance",
         )
-        covariance_array = jnp.asarray(covariance, dtype=float)
+        covariance_array = jnp.asarray(covariance, dtype=jnp.float64)
         count = design.num_observations
         if covariance_array.shape != (count, count):
             raise ValueError("Conditioned functional covariance has invalid shape.")
@@ -1013,7 +1012,7 @@ def _input_shape(value: Sequence[int], /) -> tuple[int, ...]:
         not isinstance(size, Integral) or isinstance(size, bool) for size in shape_values
     ):
         raise TypeError("input_shape entries must be integers.")
-    shape = tuple(int(size) for size in shape_values)
+    shape = tuple(shape_values)
     if any(size <= 0 for size in shape):
         raise ValueError("input_shape entries must be positive.")
     return shape
@@ -1031,7 +1030,7 @@ def _as_functional_inputs(
     input_shape: tuple[int, ...],
     /,
 ) -> Array:
-    array = jnp.asarray(value, dtype=float)
+    array = jnp.asarray(value, dtype=jnp.float64)
     if len(input_shape) == 1 and input_shape == (1,) and array.ndim == 1:
         array = array[:, None]
     if array.ndim != len(input_shape) + 1 or tuple(array.shape[1:]) != input_shape:

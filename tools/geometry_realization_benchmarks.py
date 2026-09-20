@@ -76,17 +76,17 @@ def _surface_case(count: int, *, warmup: int, repeats: int):
     return {
         "accepted": bool(realization.accepted),
         "discovery_seconds": discovery_seconds,
-        "faces": int(realization.faces.shape[0]),
+        "faces": realization.faces.shape[0],
         "first_jvp_seconds": first_jvp_seconds,
         "first_realization_seconds": first_realization_seconds,
-        "intersection_pairs": int(plan.intersection_pairs.shape[0]),
+        "intersection_pairs": plan.intersection_pairs.shape[0],
         "jvp": jvp_distribution.to_seconds_dict(),
-        "lattice_points": int(plan.grid_points.shape[0]),
+        "lattice_points": plan.grid_points.shape[0],
         "logical_plan_bytes": logical_array_bytes(plan),
         "minimum_face_area": float(realization.evidence.minimum_face_area),
         "realization": realization_distribution.to_seconds_dict(),
         "resolution_per_axis": count,
-        "vertices": int(realization.vertices.shape[0]),
+        "vertices": realization.vertices.shape[0],
     }
 
 
@@ -118,18 +118,18 @@ def _finite_element_case(*, warmup: int, repeats: int):
     )
     return {
         "accepted": bool(realization.accepted),
-        "boundary_vertices": int(motion.boundary_indices.shape[0]),
+        "boundary_vertices": motion.boundary_indices.shape[0],
         "derivative": derivative_distribution.to_seconds_dict(),
         "first_derivative_seconds": first_derivative_seconds,
         "first_realization_seconds": first_realization_seconds,
-        "interior_vertices": int(motion.interior_indices.shape[0]),
+        "interior_vertices": motion.interior_indices.shape[0],
         "logical_plan_bytes": logical_array_bytes(motion),
         "minimum_relative_jacobian": float(
             realization.evidence.geometry.minimum_relative_jacobian
         ),
         "realization": realization_distribution.to_seconds_dict(),
         "shape_derivative": float(derivative),
-        "vertices": int(realization.coordinates.shape[0]),
+        "vertices": realization.coordinates.shape[0],
     }
 
 

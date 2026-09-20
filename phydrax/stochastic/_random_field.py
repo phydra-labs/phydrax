@@ -47,8 +47,7 @@ def _validate_role(role: str, /) -> RandomFieldRole:
         "observation",
     ):
         raise ValueError(
-            "role must be 'input', 'initial_condition', 'coefficient', "
-            "'boundary_data', 'forcing', or 'observation'."
+            "role must be 'input', 'initial_condition', 'coefficient', 'boundary_data', 'forcing', or 'observation'."
         )
     return role
 
@@ -87,7 +86,7 @@ class GaussianCoefficientRealization(StrictModule):
         label: str | None = None,
     ):
         identifiers = _validate_mode_ids(mode_ids)
-        values = jnp.asarray(coefficients, dtype=float)
+        values = jnp.asarray(coefficients, dtype=jnp.float64)
         if values.ndim < 1 or values.shape[-1] != len(identifiers):
             raise ValueError(
                 "coefficients must have shape sample_shape + (len(mode_ids),)."
@@ -98,13 +97,11 @@ class GaussianCoefficientRealization(StrictModule):
             raise ValueError("coupling_id must be a non-empty string.")
         if label is not None and (not isinstance(label, str) or not label):
             raise ValueError("label must be a non-empty string or None.")
-        key_data = tuple(
-            int(value) for value in np.asarray(jr.key_data(root_key)).ravel()
-        )
-        sample_shape = tuple(int(size) for size in values.shape[:-1])
+        key_data = tuple(np.asarray(jr.key_data(root_key)).ravel())
+        sample_shape = tuple(values.shape[:-1])
         identifier = (
             _digest(
-                "gaussian-coefficient-realization-v1",
+                "gaussian-coefficient-realization",
                 key_data,
                 identifiers,
                 sample_shape,
@@ -138,15 +135,15 @@ class GaussianCoefficientRealization(StrictModule):
         label: str | None = None,
     ) -> "GaussianCoefficientRealization":
         identifiers = _validate_mode_ids(mode_ids)
-        shape = tuple(int(size) for size in sample_shape)
+        shape = tuple(sample_shape)
         if any(size <= 0 for size in shape):
             raise ValueError("sample_shape dimensions must be positive.")
         resolved_coupling = (
-            _digest("gaussian-coefficient-coupling-v1", identifiers, label)
+            _digest("gaussian-coefficient-coupling", identifiers, label)
             if coupling_id is None
             else coupling_id
         )
-        values = jr.normal(key, shape + (len(identifiers),), dtype=float)
+        values = jr.normal(key, shape + (len(identifiers),), dtype=jnp.float64)
         return cls(
             values,
             key,
@@ -166,7 +163,7 @@ class GaussianCoefficientRealization(StrictModule):
             )
         indices = tuple(source_index[mode_id] for mode_id in identifiers)
         identifier = _digest(
-            "gaussian-coefficient-selection-v1",
+            "gaussian-coefficient-selection",
             self.realization_id,
             identifiers,
         )
@@ -206,26 +203,26 @@ class SpatialBasisSynthesis(StrictModule):
         discretization_id: str | None = None,
         mean: ArrayLike = 0.0,
     ):
-        mode_array = jnp.asarray(modes, dtype=float)
+        mode_array = jnp.asarray(modes, dtype=jnp.float64)
         if mode_array.ndim < 2:
             raise ValueError("modes must have shape spatial_shape + (rank,).")
-        spatial_shape = tuple(int(size) for size in mode_array.shape[:-1])
+        spatial_shape = tuple(mode_array.shape[:-1])
         identifiers = _validate_mode_ids(mode_ids)
         if mode_array.shape[-1] != len(identifiers):
             raise ValueError("modes and mode_ids must have the same rank.")
-        eigenvalue_array = jnp.asarray(eigenvalues, dtype=float).reshape((-1,))
+        eigenvalue_array = jnp.asarray(eigenvalues, dtype=jnp.float64).reshape((-1,))
         if eigenvalue_array.shape != (len(identifiers),):
             raise ValueError("eigenvalues must contain one value per mode.")
         if not bool(jnp.all(jnp.isfinite(eigenvalue_array))) or bool(
             jnp.any(eigenvalue_array < 0.0)
         ):
             raise ValueError("eigenvalues must be finite and non-negative.")
-        weights = jnp.asarray(quadrature_weights, dtype=float)
+        weights = jnp.asarray(quadrature_weights, dtype=jnp.float64)
         if weights.shape != spatial_shape:
             raise ValueError("quadrature_weights must have exact spatial_shape.")
         if not bool(jnp.all(jnp.isfinite(weights))) or bool(jnp.any(weights <= 0.0)):
             raise ValueError("quadrature_weights must be finite and positive.")
-        mean_array = jnp.asarray(mean, dtype=float)
+        mean_array = jnp.asarray(mean, dtype=jnp.float64)
         if mean_array.shape == ():
             mean_array = jnp.broadcast_to(mean_array, spatial_shape)
         if mean_array.shape != spatial_shape:
@@ -249,7 +246,7 @@ class SpatialBasisSynthesis(StrictModule):
         self.basis_id = basis_id
         self.discretization_id = discretization_id
         self.synthesis_id = _digest(
-            "spatial-basis-synthesis-v1",
+            "spatial-basis-synthesis",
             basis_id,
             discretization_id,
             identifiers,
@@ -295,7 +292,7 @@ class SpatialBasisSynthesis(StrictModule):
         return self.modes * scale
 
     def synthesize(self, coefficients: ArrayLike, /) -> Array:
-        values = jnp.asarray(coefficients, dtype=float)
+        values = jnp.asarray(coefficients, dtype=jnp.float64)
         if values.ndim < 1 or values.shape[-1] != self.rank:
             raise ValueError(
                 f"coefficients must end in rank {self.rank}; got {values.shape}."
@@ -308,7 +305,7 @@ class SpatialBasisSynthesis(StrictModule):
         return centered + self.mean
 
     def modal_coefficients(self, values: ArrayLike, /) -> Array:
-        field = jnp.asarray(values, dtype=float)
+        field = jnp.asarray(values, dtype=jnp.float64)
         if (
             field.ndim < len(self.spatial_shape)
             or tuple(field.shape[-len(self.spatial_shape) :]) != self.spatial_shape
@@ -353,8 +350,8 @@ class RandomFieldSample(StrictModule):
         transform_id: str | None = None,
     ):
         array = jnp.asarray(values)
-        sample = tuple(int(size) for size in sample_shape)
-        spatial = tuple(int(size) for size in spatial_shape)
+        sample = tuple(sample_shape)
+        spatial = tuple(spatial_shape)
         if array.shape != sample + spatial:
             raise ValueError("values must have shape sample_shape + spatial_shape.")
         self.values = array
@@ -375,7 +372,7 @@ class RandomFieldSample(StrictModule):
 
     @property
     def num_samples(self) -> int:
-        return int(np.prod(self.sample_shape, dtype=int)) if self.sample_shape else 1
+        return int(np.prod(self.sample_shape, dtype=np.int64)) if self.sample_shape else 1
 
     @property
     def case_values(self) -> Array:
@@ -391,12 +388,12 @@ class RandomFieldSample(StrictModule):
                 case_id=f"{self.field_id}:{index}",
                 identities={
                     "random_field_draw": _digest(
-                        "random-field-draw-v1",
+                        "random-field-draw",
                         self.coefficient_realization_id,
                         index,
                     ),
                     "latent_coupling": _digest(
-                        "random-field-coupled-draw-v1",
+                        "random-field-coupled-draw",
                         self.coupling_id,
                         index,
                     ),
@@ -431,7 +428,7 @@ class StaticGaussianRandomField(StrictModule):
         self.role = resolved_role
         self.source = source
         self.field_id = _digest(
-            "static-gaussian-random-field-v1",
+            "static-gaussian-random-field",
             synthesis.synthesis_id,
             resolved_role,
             source,
@@ -516,7 +513,7 @@ class TransformedRandomField(StrictModule):
         self.transform_function = transform_function
         self.transform_id = transform_id
         self.field_id = _digest(
-            "transformed-random-field-v1",
+            "transformed-random-field",
             base.field_id,
             transform_id,
         )
@@ -617,7 +614,7 @@ class GaussianFieldCoupling(StrictModule):
         self.mode_ids = union
         self.common_mode_ids = common
         self.coupling_id = _digest(
-            "gaussian-field-cross-resolution-coupling-v1",
+            "gaussian-field-cross-resolution-coupling",
             field_ids,
             union,
             common,
@@ -670,7 +667,7 @@ def gaussian_field_diagnostics(
         raise TypeError("field must be an untransformed StaticGaussianRandomField.")
     selected = realization.select(field.mode_ids)
     coefficients = selected.coefficients.reshape((-1, len(field.mode_ids)))
-    count = int(coefficients.shape[0])
+    count = coefficients.shape[0]
     if count < 2:
         raise ValueError("Diagnostics require at least two field samples.")
     centered = coefficients - jnp.mean(coefficients, axis=0)

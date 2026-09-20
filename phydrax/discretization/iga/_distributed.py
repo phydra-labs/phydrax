@@ -87,7 +87,7 @@ class IsogeometricPartition(StrictModule, NonTrainableState):
 
     @property
     def local_size(self) -> int:
-        return int(self.canonical_ids.size)
+        return self.canonical_ids.size
 
     def owned(self, values: ArrayLike, /) -> Array:
         value = jnp.asarray(values)

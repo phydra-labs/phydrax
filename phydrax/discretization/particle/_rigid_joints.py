@@ -121,7 +121,7 @@ class BallJointSetPlan(StrictModule, NonTrainableState):
 
     @property
     def count(self) -> int:
-        return int(self.joint_ids.shape[0])
+        return self.joint_ids.shape[0]
 
 
 class FixedJointSetPlan(StrictModule, NonTrainableState):
@@ -159,7 +159,7 @@ class FixedJointSetPlan(StrictModule, NonTrainableState):
 
     @property
     def count(self) -> int:
-        return int(self.joint_ids.shape[0])
+        return self.joint_ids.shape[0]
 
 
 class HingeJointSetPlan(StrictModule, NonTrainableState):
@@ -193,7 +193,7 @@ class HingeJointSetPlan(StrictModule, NonTrainableState):
         if anchors.shape[1] != 3 or axes.shape[1] != 3:
             raise ValueError("Hinge reference geometry must be three-dimensional.")
         norms = np.linalg.norm(axes, axis=-1)
-        if np.any(norms <= np.finfo(float).eps):
+        if np.any(norms <= np.finfo(np.float64).eps):
             raise ValueError("Hinge reference axes must be nonzero.")
         axes = axes / norms[:, None]
         generated = canonical_fingerprint(
@@ -221,7 +221,7 @@ class HingeJointSetPlan(StrictModule, NonTrainableState):
 
     @property
     def count(self) -> int:
-        return int(self.joint_ids.shape[0])
+        return self.joint_ids.shape[0]
 
 
 class PrismaticJointSetPlan(StrictModule, NonTrainableState):
@@ -255,7 +255,7 @@ class PrismaticJointSetPlan(StrictModule, NonTrainableState):
         if anchors.shape != axes.shape:
             raise ValueError("Prismatic anchors and axes must have matching dimensions.")
         norms = np.linalg.norm(axes, axis=-1)
-        if np.any(norms <= np.finfo(float).eps):
+        if np.any(norms <= np.finfo(np.float64).eps):
             raise ValueError("Prismatic reference axes must be nonzero.")
         axes = axes / norms[:, None]
         generated = canonical_fingerprint(
@@ -283,7 +283,7 @@ class PrismaticJointSetPlan(StrictModule, NonTrainableState):
 
     @property
     def count(self) -> int:
-        return int(self.joint_ids.shape[0])
+        return self.joint_ids.shape[0]
 
 
 class DistanceJointSetPlan(StrictModule, NonTrainableState):
@@ -321,7 +321,7 @@ class DistanceJointSetPlan(StrictModule, NonTrainableState):
         if left_anchors.shape != right_anchors.shape:
             raise ValueError("Distance anchors must have matching dimensions.")
         rest = np.linalg.norm(right_anchors - left_anchors, axis=-1)
-        if np.any(rest <= np.finfo(float).eps):
+        if np.any(rest <= np.finfo(np.float64).eps):
             raise ValueError("Distance-joint reference lengths must be positive.")
         generated = canonical_fingerprint(
             {
@@ -348,7 +348,7 @@ class DistanceJointSetPlan(StrictModule, NonTrainableState):
 
     @property
     def count(self) -> int:
-        return int(self.joint_ids.shape[0])
+        return self.joint_ids.shape[0]
 
 
 class RigidJointGraphPlan(StrictModule, NonTrainableState):
@@ -475,11 +475,11 @@ class RigidJointRowLayout(StrictModule, NonTrainableState):
 
     @property
     def joint_count(self) -> int:
-        return int(self.joint_ids.shape[0])
+        return self.joint_ids.shape[0]
 
     @property
     def row_count(self) -> int:
-        return int(self.row_joint_slots.shape[0])
+        return self.row_joint_slots.shape[0]
 
     def row_active(self, joint_active: Array, /) -> Array:
         if joint_active.shape != self.joint_ids.shape:
@@ -573,8 +573,8 @@ class PreparedRigidJointGraph(StrictModule, NonTrainableState):
                     "Joint reference geometry dimension does not match bodies."
                 )
 
-        active = np.asarray(bodies.particles.active_mask, dtype=bool)
-        fixed_mask = np.asarray(bodies.fixed_mask, dtype=bool)
+        active = np.asarray(bodies.particles.active_mask, dtype=np.bool_)
+        fixed_mask = np.asarray(bodies.fixed_mask, dtype=np.bool_)
         mobile_mask = active & ~fixed_mask
         mobile_indices = np.flatnonzero(mobile_mask).astype(np.int32)
 
@@ -923,7 +923,7 @@ class PreparedRigidJointGraph(StrictModule, NonTrainableState):
 
     @property
     def mobile_count(self) -> int:
-        return int(self.mobile_indices.shape[0])
+        return self.mobile_indices.shape[0]
 
     @property
     def constraint_count(self) -> int:

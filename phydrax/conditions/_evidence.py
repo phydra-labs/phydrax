@@ -8,7 +8,7 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from ._ir import ConditionQuantifier
 
 
@@ -77,7 +77,7 @@ class ConditionEvidence(StrictModule):
                 "ConditionEvidence.stamp must be a ConditionRealizationStamp."
             )
         satisfied_ = _scalar(satisfied, "satisfied")
-        if satisfied_.dtype != jnp.dtype(bool):
+        if satisfied_.dtype != jnp.dtype(jnp.bool_):
             raise TypeError("ConditionEvidence.satisfied must have boolean dtype.")
         self.stamp = stamp
         self.evidence_id = _identifier(evidence_id, "evidence_id")
@@ -89,11 +89,11 @@ class ConditionCertificate(StrictModule):
     """Base contract for independently checkable condition certificates."""
 
     __strict_abstract__ = True
-    stamp: AbstractAttribute[ConditionRealizationStamp]
-    certificate_id: AbstractAttribute[str]
-    residual_norm: AbstractAttribute[Array]
-    tolerance: AbstractAttribute[Array]
-    verified: AbstractAttribute[Array]
+    stamp: eqx.AbstractVar[ConditionRealizationStamp]
+    certificate_id: eqx.AbstractVar[str]
+    residual_norm: eqx.AbstractVar[Array]
+    tolerance: eqx.AbstractVar[Array]
+    verified: eqx.AbstractVar[Array]
 
 
 class AffineProjectionCertificate(ConditionCertificate):

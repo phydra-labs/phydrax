@@ -36,9 +36,7 @@ _MAX_Z4C_SNAPSHOT_STEP = (
 ) // _Z4C_SNAPSHOT_SLOTS_PER_STEP
 
 
-def z4c_snapshot_token(
-    step_index: ArrayLike, stage_slot: ArrayLike, /
-) -> Array:
+def z4c_snapshot_token(step_index: ArrayLike, stage_slot: ArrayLike, /) -> Array:
     """Encode one bounded step/stage address as an exact dynamic int32 token."""
 
     step = jnp.asarray(step_index)
@@ -82,9 +80,7 @@ def _trailing_vector(value: Array, /) -> Array:
     return jnp.moveaxis(value, 0, -1)
 
 
-def _connection(
-    inverse_metric: Array, metric_gradient: Array, /
-) -> Array:
+def _connection(inverse_metric: Array, metric_gradient: Array, /) -> Array:
     shape = metric_gradient.shape[-3:]
     connection = jnp.zeros((3, 3, 3) + shape, dtype=metric_gradient.dtype)
     for upper in range(3):
@@ -112,7 +108,10 @@ def _ricci_tensor(
     shape = connection.shape[-3:]
     ricci = jnp.zeros((3, 3) + shape, dtype=connection.dtype)
     trace = jnp.stack(
-        tuple(sum(connection[upper, first, upper] for upper in range(3)) for first in range(3)),
+        tuple(
+            sum(connection[upper, first, upper] for upper in range(3))
+            for first in range(3)
+        ),
         axis=0,
     )
     for first in range(3):
@@ -123,17 +122,14 @@ def _ricci_tensor(
                 for upper in range(3)
             )
             quadratic = sum(
-                connection[upper, first, second] * trace[upper]
-                for upper in range(3)
+                connection[upper, first, second] * trace[upper] for upper in range(3)
             ) - sum(
                 connection[upper, first, contracted]
                 * connection[contracted, second, upper]
                 for upper in range(3)
                 for contracted in range(3)
             )
-            ricci = ricci.at[first, second].set(
-                riemann_sign * (differential + quadratic)
-            )
+            ricci = ricci.at[first, second].set(riemann_sign * (differential + quadratic))
     return 0.5 * (ricci + jnp.swapaxes(ricci, 0, 1))
 
 
@@ -170,7 +166,10 @@ def _divergence_trace_reversed_extrinsic(
     shape = trace.shape
     divergence = jnp.zeros((3,) + shape, dtype=trace.dtype)
     connection_trace = jnp.stack(
-        tuple(sum(connection[upper, first, upper] for upper in range(3)) for first in range(3)),
+        tuple(
+            sum(connection[upper, first, upper] for upper in range(3))
+            for first in range(3)
+        ),
         axis=0,
     )
     for upper in range(3):
@@ -240,10 +239,7 @@ class Z4cSystem(StrictModule, NonTrainableState):
     ):
         if not isinstance(scale, RelativityScaleContract):
             raise TypeError("scale must be a RelativityScaleContract.")
-        if (
-            scale.gravitational_constant != 1
-            or scale.speed_of_light != 1
-        ):
+        if scale.gravitational_constant != 1 or scale.speed_of_light != 1:
             raise ValueError(
                 "Z4cSystem requires explicitly declared geometric G=c=1 units."
             )
@@ -338,7 +334,7 @@ def z4c_adm_geometry(
         inverse,
         jnp.sqrt(determinant),
         _trailing_matrix(state.physical_extrinsic_curvature),
-        jnp.ones(grid.shape, dtype=bool),
+        jnp.ones(grid.shape, dtype=jnp.bool_),
         valid,
         snapshot_token=snapshot_token,
         chart_id=system.chart_id,
@@ -371,16 +367,12 @@ def _matter_fields(
     )
     momentum = jnp.where(
         active[None, ...],
-        _component_vector(
-            jnp.asarray(stress_energy.momentum_covector, dtype=dtype)
-        ),
+        _component_vector(jnp.asarray(stress_energy.momentum_covector, dtype=dtype)),
         0.0,
     )
     stress = jnp.where(
         active[None, None, ...],
-        _component_matrix(
-            jnp.asarray(stress_energy.stress_covariant, dtype=dtype)
-        ),
+        _component_matrix(jnp.asarray(stress_energy.stress_covariant, dtype=dtype)),
         0.0,
     )
     source_valid = stress_energy.compatible_with(geometry) & jnp.all(
@@ -526,9 +518,7 @@ def evaluate_z4c_rhs(
     if derivatives.grid_shape != grid.shape:
         raise ValueError("derivative and grid shapes do not match.")
 
-    geometry = z4c_adm_geometry(
-        system, grid, state, snapshot_token=snapshot_token
-    )
+    geometry = z4c_adm_geometry(system, grid, state, snapshot_token=snapshot_token)
     energy, momentum_covector, stress_covariant, source_valid = _matter_fields(
         geometry, stress_energy
     )
@@ -547,9 +537,7 @@ def evaluate_z4c_rhs(
         riemann_sign=system.convention.riemann_sign,
     )
     conformal_metric_gradient = derivatives.gradient(conformal_metric)
-    conformal_christoffel = _connection(
-        conformal_inverse, conformal_metric_gradient
-    )
+    conformal_christoffel = _connection(conformal_inverse, conformal_metric_gradient)
     contracted_christoffel = ein.contract(
         "jk...,ijk...->i...",
         conformal_inverse,
@@ -606,9 +594,7 @@ def evaluate_z4c_rhs(
     )
 
     chi_rate = derivatives.advect(state.chi, state.shift) + (
-        (2.0 / 3.0)
-        * state.chi
-        * (state.lapse * trace - shift_divergence)
+        (2.0 / 3.0) * state.chi * (state.lapse * trace - shift_divergence)
     )
     metric_shift = (
         ein.contract(
@@ -623,9 +609,7 @@ def evaluate_z4c_rhs(
             shift_gradient,
             backend="jax",
         )
-        - (2.0 / 3.0)
-        * conformal_metric
-        * shift_divergence[None, None, ...]
+        - (2.0 / 3.0) * conformal_metric * shift_divergence[None, None, ...]
     )
     conformal_metric_rate = (
         derivatives.advect(conformal_metric, state.shift)
@@ -639,14 +623,9 @@ def evaluate_z4c_rhs(
         * (
             conformal_extrinsic_square
             + trace**2 / 3.0
-            + system.constraint_damping
-            * (1.0 - system.damping_coupling)
-            * state.theta
+            + system.constraint_damping * (1.0 - system.damping_coupling) * state.theta
         )
-        + 0.5
-        * system.einstein_coupling
-        * state.lapse
-        * (energy + stress_trace)
+        + 0.5 * system.einstein_coupling * state.lapse * (energy + stress_trace)
     )
     curvature_driver = -lapse_hessian + state.lapse[None, None, ...] * (
         z4c_ricci - system.einstein_coupling * stress_covariant
@@ -655,8 +634,7 @@ def evaluate_z4c_rhs(
         "ij...,ij...->...", physical_inverse, curvature_driver, backend="jax"
     )
     curvature_driver_tf = state.chi[None, None, ...] * (
-        curvature_driver
-        - physical_metric * curvature_trace[None, None, ...] / 3.0
+        curvature_driver - physical_metric * curvature_trace[None, None, ...] / 3.0
     )
     extrinsic_shift = (
         ein.contract(
@@ -671,18 +649,13 @@ def evaluate_z4c_rhs(
             shift_gradient,
             backend="jax",
         )
-        - (2.0 / 3.0)
-        * conformal_extrinsic
-        * shift_divergence[None, None, ...]
+        - (2.0 / 3.0) * conformal_extrinsic * shift_divergence[None, None, ...]
     )
     conformal_extrinsic_rate = (
         derivatives.advect(conformal_extrinsic, state.shift)
         + curvature_driver_tf
         + state.lapse[None, None, ...]
-        * (
-            trace[None, None, ...] * conformal_extrinsic
-            - 2.0 * mixed_extrinsic_square
-        )
+        * (trace[None, None, ...] * conformal_extrinsic - 2.0 * mixed_extrinsic_square)
         + extrinsic_shift
     )
     z_contravariant = ein.contract(
@@ -709,53 +682,43 @@ def evaluate_z4c_rhs(
         * system.constraint_damping
         * (2.0 + system.damping_coupling)
         * state.theta
-        - ein.contract(
-            "i...,i...->...", z_contravariant, lapse_gradient, backend="jax"
-        )
+        - ein.contract("i...,i...->...", z_contravariant, lapse_gradient, backend="jax")
     )
 
     chi_gradient = derivatives.gradient(state.chi)
-    modified_trace_gradient = derivatives.gradient(
-        2.0 * state.k_hat + state.theta
-    )
-    connection_geometric = (
-        -2.0
+    modified_trace_gradient = derivatives.gradient(2.0 * state.k_hat + state.theta)
+    connection_geometric = -2.0 * ein.contract(
+        "ij...,j...->i...",
+        raised_conformal_extrinsic,
+        lapse_gradient,
+        backend="jax",
+    ) + 2.0 * state.lapse[None, ...] * (
+        ein.contract(
+            "ijk...,jk...->i...",
+            conformal_christoffel,
+            raised_conformal_extrinsic,
+            backend="jax",
+        )
+        - (1.5 / state.chi)[None, ...]
         * ein.contract(
             "ij...,j...->i...",
             raised_conformal_extrinsic,
-            lapse_gradient,
+            chi_gradient,
             backend="jax",
         )
-        + 2.0
-        * state.lapse[None, ...]
-        * (
-            ein.contract(
-                "ijk...,jk...->i...",
-                conformal_christoffel,
-                raised_conformal_extrinsic,
-                backend="jax",
-            )
-            - (1.5 / state.chi)[None, ...]
-            * ein.contract(
-                "ij...,j...->i...",
-                raised_conformal_extrinsic,
-                chi_gradient,
-                backend="jax",
-            )
-            - (1.0 / 3.0)
-            * ein.contract(
-                "ij...,j...->i...",
-                conformal_inverse,
-                modified_trace_gradient,
-                backend="jax",
-            )
-            - system.einstein_coupling
-            * ein.contract(
-                "ij...,j...->i...",
-                conformal_inverse,
-                momentum_covector,
-                backend="jax",
-            )
+        - (1.0 / 3.0)
+        * ein.contract(
+            "ij...,j...->i...",
+            conformal_inverse,
+            modified_trace_gradient,
+            backend="jax",
+        )
+        - system.einstein_coupling
+        * ein.contract(
+            "ij...,j...->i...",
+            conformal_inverse,
+            momentum_covector,
+            backend="jax",
         )
     )
     beta_laplacian = ein.contract(
@@ -774,9 +737,7 @@ def evaluate_z4c_rhs(
             divergence_gradient,
             backend="jax",
         )
-        + (2.0 / 3.0)
-        * state.conformal_connection
-        * shift_divergence[None, ...]
+        + (2.0 / 3.0) * state.conformal_connection * shift_divergence[None, ...]
         - ein.contract(
             "j...,ji...->i...",
             state.conformal_connection,
@@ -788,13 +749,9 @@ def evaluate_z4c_rhs(
     conformal_connection_rate = (
         connection_geometric
         + connection_shift
-        - system.constraint_damping
-        * state.lapse[None, ...]
-        * connection_constraint
+        - system.constraint_damping * state.lapse[None, ...] * connection_constraint
     )
-    gauge_rates = gauge.rates(
-        state, derivatives, conformal_connection_rate
-    )
+    gauge_rates = gauge.rates(state, derivatives, conformal_connection_rate)
     rates = make_z4c_state(
         chi_rate,
         conformal_metric_rate,
@@ -807,9 +764,7 @@ def evaluate_z4c_rhs(
         gauge_rates.shift_driver,
         grid_id=grid.grid_id,
     )
-    rates = rates.with_values(
-        rates.values + derivatives.dissipation(state.values)
-    )
+    rates = rates.with_values(rates.values + derivatives.dissipation(state.values))
     derivative_valid = (
         jnp.all(conformal_inverse_result.successful)
         & jnp.all(jnp.isfinite(physical_ricci))

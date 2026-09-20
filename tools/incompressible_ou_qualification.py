@@ -402,7 +402,7 @@ def _temporal_restart_and_budgets(
         & (jnp.abs(budget_defect) <= budget_tolerance)
     )
     budgets = {
-        "retained_samples": int(energies.size),
+        "retained_samples": energies.size,
         "block_count": int(block_count),
         "block_size": int(block_size),
         "mean_energy": float(jnp.mean(energies)),

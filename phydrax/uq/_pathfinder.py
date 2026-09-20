@@ -77,7 +77,7 @@ class PathfinderResult(StrictModule):
 
     @property
     def num_samples(self) -> int:
-        return int(self.log_density.shape[0])
+        return self.log_density.shape[0]
 
     @property
     def importance_log_weights(self) -> Array:
@@ -248,7 +248,7 @@ def fit_pathfinder(
 
 def _tree_nbytes(tree: PyTree[Any], /) -> int:
     return sum(
-        int(jnp.asarray(leaf).nbytes)
+        jnp.asarray(leaf).nbytes
         for leaf in jax.tree_util.tree_leaves(tree)
         if eqx.is_array(leaf)
     )

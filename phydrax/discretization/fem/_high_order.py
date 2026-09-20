@@ -52,7 +52,7 @@ def _normalize_orders(
             raise ValueError(
                 "Anisotropic polynomial orders must match the cell dimension."
             )
-        orders = tuple(int(value) for value in order)
+        orders = tuple(order)
     else:
         raise TypeError("Tensor polynomial order must be an integer or integer tuple.")
     if any(value < 0 for value in orders):
@@ -68,16 +68,16 @@ def _axis_data(
         nodes = np.linspace(0.0, 1.0, count)
         barycentric = np.asarray(
             [(-1.0) ** index * comb(order, index) for index in range(count)],
-            dtype=float,
+            dtype=np.float64,
         )
         barycentric /= np.max(np.abs(barycentric))
         return nodes, barycentric, None
     if node_set == "gauss-lobatto":
         rule = legendre_rule_data(count, "lobatto")
-        nodes = 0.5 * (np.asarray(rule.nodes, dtype=float) + 1.0)
-        quadrature = 0.5 * np.asarray(rule.weights, dtype=float)
+        nodes = 0.5 * (np.asarray(rule.nodes, dtype=np.float64) + 1.0)
+        quadrature = 0.5 * np.asarray(rule.weights, dtype=np.float64)
         barycentric = (-1.0) ** np.arange(count) * np.sqrt(
-            np.asarray(rule.weights, dtype=float)
+            np.asarray(rule.weights, dtype=np.float64)
         )
         barycentric /= np.max(np.abs(barycentric))
         return nodes, barycentric, quadrature
@@ -85,7 +85,7 @@ def _axis_data(
 
 
 def _default_barycentric_weights(nodes: Array, /) -> Array:
-    count = int(nodes.shape[0])
+    count = nodes.shape[0]
     differences = nodes[:, None] - nodes[None, :]
     safe = differences + jnp.eye(count, dtype=nodes.dtype)
     weights = jnp.reciprocal(jnp.prod(safe, axis=1))
@@ -103,9 +103,9 @@ def lagrange_1d_tabulation(
 
     nodes_ = jnp.asarray(nodes)
     points_ = jnp.asarray(points).reshape((-1,))
-    if nodes_.ndim != 1 or int(nodes_.shape[0]) == 0:
+    if nodes_.ndim != 1 or nodes_.shape[0] == 0:
         raise ValueError("Lagrange nodes must be a nonempty vector.")
-    dtype = jnp.result_type(nodes_, points_, float)
+    dtype = jnp.result_type(nodes_, points_, jnp.float64)
     nodes_ = nodes_.astype(dtype)
     points_ = points_.astype(dtype)
     weights = (
@@ -144,7 +144,7 @@ def _dense_tensor_tabulation(
         )
     else:
         raise ValueError("Tensor tabulation requires one, two, or three axes.")
-    point_count = int(values.shape[0])
+    point_count = values.shape[0]
     return values.reshape((point_count, -1)), jnp.stack(
         tuple(component.reshape((point_count, -1)) for component in components),
         axis=-1,
@@ -162,12 +162,12 @@ def _quad_entity_dofs(
         (int(index[0, py]),),
     )
     edges = (
-        tuple(int(value) for value in index[1:px, 0]),
-        tuple(int(value) for value in index[px, 1:py]),
-        tuple(int(value) for value in index[px - 1 : 0 : -1, py]),
-        tuple(int(value) for value in index[0, py - 1 : 0 : -1]),
+        tuple(index[1:px, 0]),
+        tuple(index[px, 1:py]),
+        tuple(index[px - 1 : 0 : -1, py]),
+        tuple(index[0, py - 1 : 0 : -1]),
     )
-    interior = tuple(int(value) for value in index[1:px, 1:py].reshape((-1,)))
+    interior = tuple(index[1:px, 1:py].reshape((-1,)))
     return vertices, edges, (interior,)
 
 
@@ -186,18 +186,18 @@ def _hex_entity_dofs(
         (int(index[0, py, pz]),),
     )
     edges = (
-        tuple(int(value) for value in index[1:px, 0, 0]),
-        tuple(int(value) for value in index[px, 1:py, 0]),
-        tuple(int(value) for value in index[px - 1 : 0 : -1, py, 0]),
-        tuple(int(value) for value in index[0, py - 1 : 0 : -1, 0]),
-        tuple(int(value) for value in index[1:px, 0, pz]),
-        tuple(int(value) for value in index[px, 1:py, pz]),
-        tuple(int(value) for value in index[px - 1 : 0 : -1, py, pz]),
-        tuple(int(value) for value in index[0, py - 1 : 0 : -1, pz]),
-        tuple(int(value) for value in index[0, 0, 1:pz]),
-        tuple(int(value) for value in index[px, 0, 1:pz]),
-        tuple(int(value) for value in index[px, py, 1:pz]),
-        tuple(int(value) for value in index[0, py, 1:pz]),
+        tuple(index[1:px, 0, 0]),
+        tuple(index[px, 1:py, 0]),
+        tuple(index[px - 1 : 0 : -1, py, 0]),
+        tuple(index[0, py - 1 : 0 : -1, 0]),
+        tuple(index[1:px, 0, pz]),
+        tuple(index[px, 1:py, pz]),
+        tuple(index[px - 1 : 0 : -1, py, pz]),
+        tuple(index[0, py - 1 : 0 : -1, pz]),
+        tuple(index[0, 0, 1:pz]),
+        tuple(index[px, 0, 1:pz]),
+        tuple(index[px, py, 1:pz]),
+        tuple(index[0, py, 1:pz]),
     )
     faces = (
         tuple(int(index[x, y, 0]) for y in range(1, py) for x in range(1, px)),
@@ -207,7 +207,7 @@ def _hex_entity_dofs(
         tuple(int(index[x, py, z]) for x in range(px - 1, 0, -1) for z in range(1, pz)),
         tuple(int(index[0, y, z]) for y in range(py - 1, 0, -1) for z in range(1, pz)),
     )
-    interior = tuple(int(value) for value in index[1:px, 1:py, 1:pz].reshape((-1,)))
+    interior = tuple(index[1:px, 1:py, 1:pz].reshape((-1,)))
     return vertices, edges, faces, (interior,)
 
 
@@ -219,7 +219,7 @@ def _interval_entity_dofs(
         return (((), ()), ((int(index[0]),),))
     return (
         ((int(index[0]),), (int(index[-1]),)),
-        (tuple(int(value) for value in index[1:-1]),),
+        (tuple(index[1:-1]),),
     )
 
 
@@ -354,7 +354,7 @@ class TensorProductTabulation(StrictModule, NonTrainableState):
         ):
             raise ValueError("Tensor points must be one tuple entry per cell axis.")
         point_arrays = tuple(jnp.asarray(points) for points in points_by_axis)
-        if any(points.ndim != 1 or int(points.shape[0]) == 0 for points in point_arrays):
+        if any(points.ndim != 1 or points.shape[0] == 0 for points in point_arrays):
             raise ValueError("Tensor point factors must be nonempty vectors.")
         factors = tuple(
             lagrange_1d_tabulation(
@@ -386,11 +386,11 @@ class TensorProductTabulation(StrictModule, NonTrainableState):
 
     @property
     def nodal_shape(self) -> tuple[int, ...]:
-        return tuple(int(factor.shape[1]) for factor in self.basis_factors)
+        return tuple(factor.shape[1] for factor in self.basis_factors)
 
     @property
     def evaluation_shape(self) -> tuple[int, ...]:
-        return tuple(int(factor.shape[0]) for factor in self.basis_factors)
+        return tuple(factor.shape[0] for factor in self.basis_factors)
 
 
 def _factorized_forward(factors: tuple[Array, ...], values: Array, /) -> Array:
@@ -538,7 +538,7 @@ class SimplexNodalFamily(StrictModule, NonTrainableState):
             unit_nodes = (2.0 * nodes - 1.0).T
         else:
             unit_nodes = np.asarray(
-                mp.warp_and_blend_nodes(dimension, p, node_tuples), dtype=float
+                mp.warp_and_blend_nodes(dimension, p, node_tuples), dtype=np.float64
             )
             nodes = 0.5 * (unit_nodes.T + 1.0)
         barycentric_nodes = np.concatenate(
@@ -547,14 +547,14 @@ class SimplexNodalFamily(StrictModule, NonTrainableState):
         )
         exponents = np.asarray(
             tuple((p - sum(index),) + tuple(index) for index in node_tuples),
-            dtype=int,
+            dtype=np.int64,
         )
         multinomial = np.asarray(
             tuple(
                 factorial(p) / np.prod(tuple(factorial(int(value)) for value in exponent))
                 for exponent in exponents
             ),
-            dtype=float,
+            dtype=np.float64,
         )
         modal = multinomial[None, :] * np.prod(
             barycentric_nodes[:, None, :] ** exponents[None, :, :],
@@ -586,7 +586,7 @@ class SimplexNodalFamily(StrictModule, NonTrainableState):
         if points_.ndim != 2 or points_.shape[-1] != dimension:
             raise ValueError("Simplex tabulation points have incompatible shape.")
         if not jnp.issubdtype(points_.dtype, jnp.inexact):
-            points_ = points_.astype(float)
+            points_ = points_.astype("float64")
         barycentric = jnp.concatenate(
             (1.0 - jnp.sum(points_, axis=-1, keepdims=True), points_),
             axis=-1,

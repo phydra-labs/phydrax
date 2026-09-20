@@ -114,7 +114,7 @@ class BlockAMRParticleRoutingPlan(StrictModule, NonTrainableState):
                 "Cosmological block AMR requires finite periodic tensor axes."
             )
         bounds = tuple(
-            tuple(float(value) for value in np.asarray(axis.bounds, dtype=float))
+            tuple(float(value) for value in np.asarray(axis.bounds, dtype=np.float64))
             for axis in axes
         )
         if any(
@@ -155,9 +155,9 @@ class BlockAMRParticleRoutingPlan(StrictModule, NonTrainableState):
             )
         count = position.shape[0]
         active = (
-            jnp.ones((count,), dtype=bool)
+            jnp.ones((count,), dtype=jnp.bool_)
             if active_mask is None
-            else jnp.asarray(active_mask, dtype=bool)
+            else jnp.asarray(active_mask, dtype=jnp.bool_)
         )
         if active.shape != (count,):
             raise ValueError("active_mask must contain one entry per particle.")
@@ -672,8 +672,7 @@ class BlockAMREpochPlan(StrictModule, NonTrainableState):
             )
         if runtime.plan.indicator is not None:
             raise ValueError(
-                "Cosmological epoch commits require a fixed-topology runtime; "
-                "activate regridding between epoch plans."
+                "Cosmological epoch commits require a fixed-topology runtime; activate regridding between epoch plans."
             )
         self.runtime = runtime
         self.routing = routing
@@ -788,7 +787,7 @@ class BlockAMREpochPlan(StrictModule, NonTrainableState):
             & jnp.all(jnp.isfinite(candidate_particles.canonical_momenta) | ~active)
             & jnp.isfinite(candidate_particles.scale_factor)
         )
-        runtime_accepted = jnp.asarray(advance.accepted, dtype=bool)
+        runtime_accepted = jnp.asarray(advance.accepted, dtype=jnp.bool_)
         successful = jnp.all(
             jnp.asarray(
                 runtime_accepted
@@ -797,7 +796,7 @@ class BlockAMREpochPlan(StrictModule, NonTrainableState):
                 & assignment.successful
                 & scale_consistent
                 & particles_finite,
-                dtype=bool,
+                dtype=jnp.bool_,
             )
         )
         hierarchy = self._select_hierarchy(

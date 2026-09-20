@@ -152,15 +152,15 @@ class Coregionalization(StrictModule):
         names = _output_names(output_names)
         weights_ = jnp.asarray(weights)
         if not jnp.issubdtype(weights_.dtype, jnp.inexact):
-            weights_ = weights_.astype(float)
+            weights_ = weights_.astype("float64")
         diagonal_ = jnp.asarray(diagonal_scale)
         if not jnp.issubdtype(diagonal_.dtype, jnp.inexact):
-            diagonal_ = diagonal_.astype(float)
+            diagonal_ = diagonal_.astype("float64")
         if jnp.issubdtype(diagonal_.dtype, jnp.complexfloating):
             raise TypeError("diagonal_scale must be real.")
         if weights_.ndim != 2 or weights_.shape[0] != len(names):
             raise ValueError("weights must have shape (output, latent_rank).")
-        if int(weights_.shape[1]) <= 0:
+        if weights_.shape[1] <= 0:
             raise ValueError("Coregionalization latent_rank must be positive.")
         if diagonal_.shape != (len(names),):
             raise ValueError("diagonal_scale must contain one value per output.")
@@ -192,14 +192,11 @@ class Coregionalization(StrictModule):
 
     @property
     def factor_rank(self) -> int:
-        return int(self.factor.shape[1])
+        return self.factor.shape[1]
 
     @property
     def kernel_id(self) -> str:
-        return (
-            f"Coregionalization[outputs={self.num_outputs};"
-            f"factor_rank={self.factor_rank}]"
-        )
+        return f"Coregionalization[outputs={self.num_outputs};factor_rank={self.factor_rank}]"
 
 
 class IntrinsicCoregionalizationKernel(AbstractOperatorValuedKernel):
@@ -251,10 +248,7 @@ class IntrinsicCoregionalizationKernel(AbstractOperatorValuedKernel):
 
     @property
     def kernel_id(self) -> str:
-        return (
-            "IntrinsicCoregionalizationKernel["
-            f"{self.spatial_kernel.kernel_id};{self.coregionalization.kernel_id}]"
-        )
+        return f"IntrinsicCoregionalizationKernel[{self.spatial_kernel.kernel_id};{self.coregionalization.kernel_id}]"
 
 
 class LinearModelCoregionalizationKernel(AbstractOperatorValuedKernel):
@@ -414,7 +408,7 @@ def operator_kernel_features(
             strict=True,
         ):
             spatial = kernel_features(spatial_kernel, points)
-            component_rank = int(spatial.shape[1]) * coregionalization.factor_rank
+            component_rank = spatial.shape[1] * coregionalization.factor_rank
             components.append(
                 ein.contract(
                     "pr,oq->porq",
@@ -699,10 +693,7 @@ class ProjectedDifferentialFormKernel(AbstractOperatorValuedKernel):
 
     @property
     def kernel_id(self) -> str:
-        return (
-            f"ProjectedDifferentialFormKernel[{self.scalar_kernel.kernel_id};"
-            f"degree={self.degree};{self.projector_id}]"
-        )
+        return f"ProjectedDifferentialFormKernel[{self.scalar_kernel.kernel_id};degree={self.degree};{self.projector_id}]"
 
 
 def sphere_differential_form_kernel(

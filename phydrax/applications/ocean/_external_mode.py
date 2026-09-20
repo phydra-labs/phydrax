@@ -108,7 +108,7 @@ class ExternalModeSubcyclePolicy(StrictModule, NonTrainableState):
     def empty(self, dtype, /) -> ExternalModeSubcycleSchedule:
         return ExternalModeSubcycleSchedule(
             substep_sizes=jnp.zeros((self.maximum_substeps,), dtype=dtype),
-            active_mask=jnp.zeros((self.maximum_substeps,), dtype=bool),
+            active_mask=jnp.zeros((self.maximum_substeps,), dtype=jnp.bool_),
             count=jnp.asarray(0, dtype=jnp.int32),
             maximum_courant=jnp.asarray(0.0, dtype=dtype),
             capacity_valid=jnp.asarray(True),

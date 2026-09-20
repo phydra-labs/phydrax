@@ -12,7 +12,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ...dynamics import ContinuousSystem
 from ._context import AstrodynamicsContext
 from ._state import CARTESIAN_ORBIT_STATE_LAYOUT
@@ -36,8 +36,8 @@ class AbstractAstrodynamicsForce(StrictModule):
     """Pure acceleration and potential contribution for one Cartesian state."""
 
     __strict_abstract__ = True
-    force_id: AbstractAttribute[str]
-    context: AbstractAttribute[AstrodynamicsContext]
+    force_id: eqx.AbstractVar[str]
+    context: eqx.AbstractVar[AstrodynamicsContext]
 
     @abstractmethod
     def evaluate(

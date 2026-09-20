@@ -76,7 +76,7 @@ class SparseLinearProblem:
             "dimension": self.dimension,
             "rows": self.dimension,
             "columns": self.dimension,
-            "nnz": int(self.coefficients.size),
+            "nnz": self.coefficients.size,
             "block_size": self.block_size,
             "right_hand_sides": int(rhs_count),
         }
@@ -175,7 +175,7 @@ class NonlinearProblem:
         )
 
     def sizes(self) -> dict[str, int]:
-        dimension = int(self.initial.size)
+        dimension = self.initial.size
         nnz = (
             3 * dimension - 2
             if self.variant == "root" and self.root_kind == "semilinear-poisson-1d"
@@ -272,7 +272,7 @@ class ContinuationProblem:
         )
 
     def sizes(self) -> dict[str, int]:
-        dimension = int(self.initial_state.size)
+        dimension = self.initial_state.size
         return {
             "dimension": dimension,
             "rows": dimension,
@@ -395,7 +395,7 @@ class OptimizationProblem:
         )
 
     def sizes(self) -> dict[str, int]:
-        dimension = int(self.initial.size)
+        dimension = self.initial.size
         return {
             "dimension": dimension,
             "rows": dimension,
@@ -492,11 +492,11 @@ class MathematicalProgramProblem:
         )
 
     def sizes(self) -> dict[str, int]:
-        dimension = int(self.linear.size)
+        dimension = self.linear.size
         rows = (
-            int(self.conic_matrix.shape[0])
+            self.conic_matrix.shape[0]
             if self.conic_matrix is not None
-            else int(self.equality_matrix.shape[0] + self.inequality_matrix.shape[0])
+            else self.equality_matrix.shape[0] + self.inequality_matrix.shape[0]
         )
         matrices = [self.equality_matrix, self.inequality_matrix]
         if self.quadratic is not None:

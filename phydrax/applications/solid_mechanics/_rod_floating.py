@@ -208,7 +208,7 @@ class FloatingReducedRodState(StrictModule):
         self.coefficients = values
         self.base_twist = twist
         self.coefficient_velocities = rates
-        self.coordinate_count = int(values.shape[0])
+        self.coordinate_count = values.shape[0]
 
     @property
     def configuration(self) -> Array:

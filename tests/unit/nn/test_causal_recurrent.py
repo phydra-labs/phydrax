@@ -97,7 +97,7 @@ def test_causal_recurrent_matches_serial_masks_resets_and_gradients(cell):
 def test_causal_recurrent_supports_multidimensional_cases_and_explicit_states():
     cell = layers.RNNCell(2, 3, dtype=jnp.float64, key=jax.random.key(5))
     inputs = jax.random.normal(jax.random.key(6), (2, 3, 7, 2), dtype=jnp.float64)
-    valid = jnp.ones((2, 3, 7), dtype=bool)
+    valid = jnp.ones((2, 3, 7), dtype="bool")
     reset = jnp.zeros_like(valid).at[:, :, 4].set(True)
     batch = layers.RecurrentBatch(inputs, valid, reset=reset)
     initial = jnp.full((2, 3, 3), 0.1)
@@ -124,7 +124,7 @@ def test_causal_recurrent_supports_multidimensional_cases_and_explicit_states():
 
 def test_causal_recurrent_explicit_serial_fallback_is_recorded():
     cell = layers.RNNCell(1, 1, key=jax.random.key(7))
-    batch = layers.RecurrentBatch(jnp.ones((6, 1)), jnp.ones((6,), dtype=bool))
+    batch = layers.RecurrentBatch(jnp.ones((6, 1)), jnp.ones((6,), dtype="bool"))
     serial = layers.run_recurrent(cell, batch)
     causal = layers.run_causal_recurrent(
         cell,
@@ -147,7 +147,7 @@ def test_causal_recurrent_explicit_serial_fallback_is_recorded():
 
 def test_hutchinson_recurrent_requires_explicit_probe_key():
     cell = layers.RNNCell(1, 1, key=jax.random.key(8))
-    batch = layers.RecurrentBatch(jnp.ones((4, 1)), jnp.ones((4,), dtype=bool))
+    batch = layers.RecurrentBatch(jnp.ones((4, 1)), jnp.ones((4,), dtype="bool"))
     config = layers.CausalRecurrentConfig(
         method=nl.CausalNewton(
             linearization=nl.CausalLinearizationPolicy("diagonal-hutchinson")
@@ -160,7 +160,7 @@ def test_hutchinson_recurrent_requires_explicit_probe_key():
 
 def test_timed_causal_recurrent_rejects_time_aware_cells_and_nested_stacks():
     cell = layers.CfCCell(1, 2, dtype=jnp.float64, key=jax.random.key(9))
-    valid = jnp.ones((3,), dtype=bool)
+    valid = jnp.ones((3,), dtype="bool")
     timed = layers.RecurrentBatch(
         jnp.ones((3, 1)),
         valid,

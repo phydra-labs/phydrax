@@ -160,7 +160,7 @@ class CompositeMACMarkerTransferPlan(StrictModule, NonTrainableState):
             level = jnp.asarray(candidate_level[component], dtype=jnp.int32)
             index = jnp.asarray(candidate_index[component], dtype=jnp.int32)
             center = jnp.asarray(candidate_center[component], dtype=position.dtype)
-            valid = jnp.asarray(candidate_valid[component], dtype=bool)
+            valid = jnp.asarray(candidate_valid[component], dtype=jnp.bool_)
             if (
                 level.shape != index.shape
                 or valid.shape != level.shape
@@ -235,7 +235,7 @@ class CompositeMACMarkerTransferPlan(StrictModule, NonTrainableState):
                 {
                     "kind": "composite-mac-marker-relation",
                     "transfer": self.plan_id,
-                    "route_width": int(levels[0].shape[1]),
+                    "route_width": levels[0].shape[1],
                 }
             ),
             self.plan_id,

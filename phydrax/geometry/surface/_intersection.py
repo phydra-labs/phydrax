@@ -44,7 +44,7 @@ class PlaneSectionLoop(StrictModule, NonTrainableState):
         source_cell_global_ids: ArrayLike,
         source_edge_vertex_global_ids: ArrayLike,
     ):
-        points_ = np.asarray(points, dtype=float)
+        points_ = np.asarray(points, dtype=np.float64)
         charts = np.asarray(source_chart_ids, dtype=np.int32)
         cells = np.asarray(source_cell_global_ids, dtype=np.int64)
         edges = np.asarray(source_edge_vertex_global_ids, dtype=np.int64)
@@ -63,13 +63,13 @@ class PlaneSectionLoop(StrictModule, NonTrainableState):
             raise ValueError("Plane section loop points must be finite.")
         if np.any(charts < 0) or np.any(cells < 0) or np.any(edges < 0):
             raise ValueError("Plane section provenance IDs must be non-negative.")
-        self.points = jnp.asarray(points_, dtype=float)
+        self.points = jnp.asarray(points_, dtype=jnp.float64)
         self.source_chart_ids = jnp.asarray(charts, dtype=jnp.int32)
         self.source_cell_global_ids = jnp.asarray(cells, dtype=jnp.int64)
         self.source_edge_vertex_global_ids = jnp.asarray(edges, dtype=jnp.int64)
         self.loop_id = canonical_fingerprint(
             {
-                "kind": "plane-section-loop-v1",
+                "kind": "plane-section-loop",
                 "points": array_tree_fingerprint(points_),
                 "source_chart_ids": array_tree_fingerprint(charts),
                 "source_cell_global_ids": array_tree_fingerprint(cells),
@@ -112,8 +112,8 @@ class PlaneSectionEvidence(StrictModule, NonTrainableState):
         considered_cell_count: int,
         loop_count: int,
     ):
-        origin = np.asarray(plane_origin, dtype=float)
-        normal = np.asarray(plane_normal, dtype=float)
+        origin = np.asarray(plane_origin, dtype=np.float64)
+        normal = np.asarray(plane_normal, dtype=np.float64)
         tolerance_ = float(tolerance)
         charts = np.asarray(intersected_chart_ids, dtype=np.int32)
         cells = np.asarray(intersected_cell_global_ids, dtype=np.int64)
@@ -137,9 +137,9 @@ class PlaneSectionEvidence(StrictModule, NonTrainableState):
             raise ValueError(
                 "Plane section evidence requires complete identities and reason."
             )
-        self.plane_origin = jnp.asarray(origin, dtype=float)
-        self.plane_normal = jnp.asarray(normal, dtype=float)
-        self.tolerance = jnp.asarray(tolerance_, dtype=float)
+        self.plane_origin = jnp.asarray(origin, dtype=jnp.float64)
+        self.plane_normal = jnp.asarray(normal, dtype=jnp.float64)
+        self.tolerance = jnp.asarray(tolerance_, dtype=jnp.float64)
         self.intersected_chart_ids = jnp.asarray(charts, dtype=jnp.int32)
         self.intersected_cell_global_ids = jnp.asarray(cells, dtype=jnp.int64)
         self.status = status
@@ -150,11 +150,11 @@ class PlaneSectionEvidence(StrictModule, NonTrainableState):
             self.chart_mapping_id,
         ) = identifiers
         self.considered_cell_count = int(considered_cell_count)
-        self.segment_count = int(charts.size)
+        self.segment_count = charts.size
         self.loop_count = int(loop_count)
         self.evidence_id = canonical_fingerprint(
             {
-                "kind": "plane-section-evidence-v1",
+                "kind": "plane-section-evidence",
                 "plane_origin": array_tree_fingerprint(origin),
                 "plane_normal": array_tree_fingerprint(normal),
                 "tolerance": tolerance_,
@@ -198,7 +198,7 @@ class PlaneSurfaceSection(StrictModule, NonTrainableState):
         self.evidence = evidence
         self.section_id = canonical_fingerprint(
             {
-                "kind": "plane-surface-section-v1",
+                "kind": "plane-surface-section",
                 "evidence_id": evidence.evidence_id,
                 "loop_ids": tuple(loop.loop_id for loop in loops),
             }
@@ -263,8 +263,8 @@ def intersect_plane_surface(
 
     if not isinstance(realization, SurfaceRealization):
         raise TypeError("realization must be a SurfaceRealization.")
-    origin_ = np.asarray(origin, dtype=float)
-    normal_ = np.asarray(normal, dtype=float)
+    origin_ = np.asarray(origin, dtype=np.float64)
+    normal_ = np.asarray(normal, dtype=np.float64)
     if origin_.shape != (3,) or normal_.shape != (3,):
         raise ValueError("Plane origin and normal must have shape (3,).")
     if not np.all(np.isfinite(origin_)) or not np.all(np.isfinite(normal_)):
@@ -279,10 +279,12 @@ def intersect_plane_surface(
     normal_unit = np.where(normal_unit == 0.0, 0.0, normal_unit)
     origin_ = normal_unit * float(np.dot(origin_, normal_unit))
     origin_ = np.where(origin_ == 0.0, 0.0, origin_)
-    points = np.asarray(realization.mesh.coordinates, dtype=float)
+    points = np.asarray(realization.mesh.coordinates, dtype=np.float64)
     scale = max(float(np.linalg.norm(np.ptp(points, axis=0))), 1.0)
     tolerance_ = (
-        128.0 * np.finfo(float).eps * scale if tolerance is None else float(tolerance)
+        128.0 * np.finfo(np.float64).eps * scale
+        if tolerance is None
+        else float(tolerance)
     )
     if not np.isfinite(tolerance_) or tolerance_ <= 0.0:
         raise ValueError("Plane intersection tolerance must be positive and finite.")

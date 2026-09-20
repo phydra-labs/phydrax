@@ -135,8 +135,7 @@ def prepare_sparse(problem: Any, plan: LinearSolvePlan, /) -> Any:
         )
         if not supported:
             raise ValueError(
-                "The native sparse backend requires SparseQR(provider='jax-cuda') "
-                "or SparseLU(provider='jax-cpu')."
+                "The native sparse backend requires SparseQR(provider='jax-cuda') or SparseLU(provider='jax-cpu')."
             )
         if isinstance(method, SparseQR) and storage.index_width != 32:
             raise ValueError("CUDA sparse QR execution requires 32-bit CSR indices.")

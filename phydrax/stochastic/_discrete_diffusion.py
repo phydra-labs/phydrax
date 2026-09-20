@@ -23,7 +23,7 @@ DiscreteTerminalRelationship: TypeAlias = Literal["exact", "approximate", "assum
 
 
 def _event_shape(value, /) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if not shape or any(size <= 0 for size in shape):
         raise ValueError("event_shape must contain positive dimensions.")
     return shape
@@ -73,8 +73,14 @@ class DiscreteGaussianDiffusionSchedule(StrictModule):
 
     def __init__(self, beta: ArrayLike, /, *, schedule_id: str | None = None):
         host = np.asarray(beta, dtype=np.float64).reshape((-1,))
-        if host.size <= 0 or np.any(~np.isfinite(host)) or np.any((host <= 0) | (host >= 1)):
-            raise ValueError("beta must be a finite non-empty vector strictly inside (0, 1).")
+        if (
+            host.size <= 0
+            or np.any(~np.isfinite(host))
+            or np.any((host <= 0) | (host >= 1))
+        ):
+            raise ValueError(
+                "beta must be a finite non-empty vector strictly inside (0, 1)."
+            )
         derived = _derived_schedule(host)
         if np.any(np.diff(np.asarray(derived["cumulative_alpha"])) >= 0):
             raise ValueError("cumulative signal must decrease strictly.")
@@ -88,7 +94,7 @@ class DiscreteGaussianDiffusionSchedule(StrictModule):
             raise ValueError("schedule_id must be non-empty or None.")
         for name, value in derived.items():
             setattr(self, name, value)
-        self.num_steps = int(host.size)
+        self.num_steps = host.size
         self.schedule_id = identifier
 
     @classmethod
@@ -123,7 +129,9 @@ class DiscreteGaussianDiffusionSchedule(StrictModule):
         beta = 1.0 - cumulative[1:] / cumulative[:-1]
         return cls(np.clip(beta, 1e-12, maximum_beta))
 
-    def _extract(self, values: Array, timestep: ArrayLike, shape: tuple[int, ...]) -> Array:
+    def _extract(
+        self, values: Array, timestep: ArrayLike, shape: tuple[int, ...]
+    ) -> Array:
         value = jnp.asarray(timestep)
         if not jnp.issubdtype(value.dtype, jnp.integer):
             raise TypeError("Diffusion timesteps must use an integer dtype.")
@@ -141,7 +149,9 @@ class DiscreteGaussianDiffusionSchedule(StrictModule):
         selected = values[time]
         return selected.reshape(time.shape + (1,) * (len(shape) - time.ndim))
 
-    def corrupt(self, clean: ArrayLike, noise: ArrayLike, timestep: ArrayLike, /) -> Array:
+    def corrupt(
+        self, clean: ArrayLike, noise: ArrayLike, timestep: ArrayLike, /
+    ) -> Array:
         state = jnp.asarray(clean)
         if jnp.iscomplexobj(state) or not jnp.issubdtype(state.dtype, jnp.floating):
             raise TypeError("Discrete Gaussian corruption requires real floating states.")
@@ -167,10 +177,14 @@ class DiscreteGaussianDiffusionSchedule(StrictModule):
 
     def score_from_epsilon(self, epsilon, timestep, shape, /) -> Array:
         noise = jnp.asarray(epsilon)
-        scale = self._extract(self.sqrt_one_minus_cumulative_alpha, timestep, tuple(shape))
+        scale = self._extract(
+            self.sqrt_one_minus_cumulative_alpha, timestep, tuple(shape)
+        )
         return -noise / scale
 
-    def epsilon_from_prediction(self, noisy, prediction, timestep, kind: DiffusionPredictionKind, /):
+    def epsilon_from_prediction(
+        self, noisy, prediction, timestep, kind: DiffusionPredictionKind, /
+    ):
         state = jnp.asarray(noisy)
         value = jnp.asarray(prediction, dtype=state.dtype)
         if value.shape != state.shape:
@@ -190,8 +204,12 @@ class DiscreteGaussianDiffusionSchedule(StrictModule):
     def posterior(self, clean, noisy, timestep, /):
         state = jnp.asarray(noisy)
         clean_state = jnp.asarray(clean, dtype=state.dtype)
-        mean = self._extract(self.posterior_mean_clean, timestep, state.shape) * clean_state
-        mean = mean + self._extract(self.posterior_mean_noisy, timestep, state.shape) * state
+        mean = (
+            self._extract(self.posterior_mean_clean, timestep, state.shape) * clean_state
+        )
+        mean = (
+            mean + self._extract(self.posterior_mean_noisy, timestep, state.shape) * state
+        )
         variance = self._extract(self.posterior_variance, timestep, state.shape)
         log_variance = self._extract(self.posterior_log_variance, timestep, state.shape)
         return mean, variance, log_variance
@@ -230,7 +248,9 @@ class AncestralGaussianDiffusion(StrictModule):
         terminal_relationship: DiscreteTerminalRelationship = "approximate",
         terminal_reference_id: str = "standard-normal",
     ):
-        if not isinstance(schedule, DiscreteGaussianDiffusionSchedule) or not callable(predictor):
+        if not isinstance(schedule, DiscreteGaussianDiffusionSchedule) or not callable(
+            predictor
+        ):
             raise TypeError("Ancestral diffusion requires a schedule and predictor.")
         if prediction_kind not in ("epsilon", "clean", "score", "velocity"):
             raise ValueError("Unknown prediction kind.")
@@ -255,8 +275,10 @@ class AncestralGaussianDiffusion(StrictModule):
             }
         )
 
-    def sample(self, key: Key[Array, ""], sample_shape: Sequence[int], /) -> DiscreteDiffusionSample:
-        samples = tuple(int(size) for size in sample_shape)
+    def sample(
+        self, key: Key[Array, ""], sample_shape: Sequence[int], /
+    ) -> DiscreteDiffusionSample:
+        samples = tuple(sample_shape)
         if any(size <= 0 for size in samples):
             raise ValueError("sample_shape dimensions must be positive.")
         root, initial_key = jr.split(key)
@@ -316,7 +338,9 @@ class DDIMTransport(StrictModule):
         terminal_relationship: DiscreteTerminalRelationship = "approximate",
         terminal_reference_id: str = "standard-normal",
     ):
-        if not isinstance(schedule, DiscreteGaussianDiffusionSchedule) or not callable(predictor):
+        if not isinstance(schedule, DiscreteGaussianDiffusionSchedule) or not callable(
+            predictor
+        ):
             raise TypeError("DDIM requires a schedule and predictor.")
         count = int(num_inference_steps)
         if count <= 1 or count > schedule.num_steps:
@@ -352,13 +376,17 @@ class DDIMTransport(StrictModule):
             }
         )
 
-    def sample(self, key: Key[Array, ""], sample_shape: Sequence[int], /) -> DiscreteDiffusionSample:
-        samples = tuple(int(size) for size in sample_shape)
+    def sample(
+        self, key: Key[Array, ""], sample_shape: Sequence[int], /
+    ) -> DiscreteDiffusionSample:
+        samples = tuple(sample_shape)
         if any(size <= 0 for size in samples):
             raise ValueError("sample_shape dimensions must be positive.")
         root, initial_key = jr.split(key)
         initial = jr.normal(initial_key, samples + self.event_shape)
-        previous = jnp.concatenate((self.inference_timesteps[1:], jnp.asarray([-1], dtype=jnp.int32)))
+        previous = jnp.concatenate(
+            (self.inference_timesteps[1:], jnp.asarray([-1], dtype=jnp.int32))
+        )
 
         def step(carry, pair):
             state, current_key = carry
@@ -379,7 +407,9 @@ class DDIMTransport(StrictModule):
             sigma = self.eta * jnp.sqrt(
                 (1.0 - alpha_previous) / (1.0 - alpha) * (1.0 - alpha / alpha_previous)
             )
-            direction = jnp.sqrt(jnp.maximum(1.0 - alpha_previous - sigma**2, 0.0)) * epsilon
+            direction = (
+                jnp.sqrt(jnp.maximum(1.0 - alpha_previous - sigma**2, 0.0)) * epsilon
+            )
             noise = jr.normal(noise_key, state.shape, dtype=state.dtype)
             next_state = jnp.sqrt(alpha_previous) * clean + direction + sigma * noise
             return (next_state, current_key), next_state

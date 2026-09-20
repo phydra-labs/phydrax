@@ -12,6 +12,7 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..linalg import DenseLinearOperator, LinearSystem, solve
 
 
 class SymplecticReduction(StrictModule, NonTrainableState):
@@ -122,7 +123,18 @@ class PortHamiltonianReduction(StrictModule, NonTrainableState):
         ):
             raise ValueError("Port-Hamiltonian structure is not valid.")
         gram = jnp.conj(basis.T) @ energy @ basis
-        test = energy @ basis @ jnp.linalg.inv(gram)
+        projection = solve(
+            LinearSystem(
+                DenseLinearOperator(jnp.swapaxes(gram, -1, -2)),
+            ),
+            jnp.swapaxes(energy @ basis, -1, -2),
+        )
+        test = jnp.swapaxes(projection.value, -1, -2)
+        test = eqx.error_if(
+            test,
+            ~jnp.all(projection.successful),
+            "Port-Hamiltonian projection solve failed.",
+        )
         reduced_inter = jnp.conj(test.T) @ inter @ test
         reduced_dissip = jnp.conj(test.T) @ dissip @ test
         reduced_energy = gram

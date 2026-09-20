@@ -98,7 +98,7 @@ class ModeReductionProblem(StrictModule):
         if any(operator.matrix.shape != matrix.shape for operator in operators_):
             raise ValueError("Every mode operator must match the Hamiltonian shape.")
         dtype = jnp.result_type(
-            matrix, *(operator.matrix for operator in operators_), complex
+            matrix, *(operator.matrix for operator in operators_), jnp.complex128
         )
         matrix = matrix.astype(dtype)
         operators_ = tuple(
@@ -300,7 +300,7 @@ def plan_mode_reduction(
         raise TypeError("problem must be a ModeReductionProblem.")
     if not isinstance(policy, ModeReductionPolicy):
         raise TypeError("policy must be a ModeReductionPolicy.")
-    dimension = int(problem.hamiltonian.shape[0])
+    dimension = problem.hamiltonian.shape[0]
     retained = policy.retained_dimension
     if retained > dimension:
         raise ValueError("retained_dimension must not exceed the raw dimension.")

@@ -147,7 +147,7 @@ Evidence includes:
 
 - explicit reference/target frame matches;
 - Jacobian determinant and folding mask, count, and fraction;
-- inverse-consistency availability, RMS and maximum residual in millimetres, and
+- inverse-consistency availability, RMS and maximum residual in millimeters, and
   tolerance outcome;
 - uncertainty availability, RMS scale, and non-negative finite validity; and
 - aggregate finite and fail-closed success flags.

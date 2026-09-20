@@ -284,8 +284,7 @@ class PhaseFieldResolutionEvidence(StrictModule, NonTrainableState):
     def require_supported(self, /) -> None:
         if not self.passed:
             raise ValueError(
-                "Diffuse interface is underresolved for the production phase-field "
-                "profile."
+                "Diffuse interface is underresolved for the production phase-field profile."
             )
 
 
@@ -921,7 +920,7 @@ def _validate_discretization(
 
 
 def _maximum_cell_diameter(discretization: FiniteElementDiscretization, /) -> float:
-    coordinates = np.asarray(discretization.mesh.coordinates, dtype=float)
+    coordinates = np.asarray(discretization.mesh.coordinates, dtype=np.float64)
     diameters = []
     for block in discretization.mesh.blocks:
         vertices = coordinates[np.asarray(block.vertices, dtype=np.int32)]

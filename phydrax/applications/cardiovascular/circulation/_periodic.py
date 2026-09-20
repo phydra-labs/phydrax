@@ -45,7 +45,7 @@ class PeriodicShootingPlan(StrictModule):
         maximum_steps: int = 64,
     ) -> None:
         cycle = jnp.asarray(cycle_length)
-        shape = tuple(int(value) for value in state_shape)
+        shape = tuple(state_shape)
         if (
             cycle.shape != ()
             or not bool(jnp.isfinite(cycle) & (cycle > 0.0))
@@ -161,7 +161,7 @@ def solve_periodic_shooting(
     if initial.shape != prepared.plan.state_shape:
         raise ValueError(f"initial_state must have shape {prepared.plan.state_shape}.")
     if not jnp.issubdtype(initial.dtype, jnp.inexact):
-        initial = initial.astype(float)
+        initial = initial.astype("float64")
     if not bool(jnp.all(jnp.isfinite(initial))):
         raise ValueError("initial_state must be finite.")
 

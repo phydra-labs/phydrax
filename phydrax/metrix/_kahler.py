@@ -108,9 +108,9 @@ class HermitianValidationReport(StrictModule):
         compatibility_residual: ArrayLike,
         skew_residual: ArrayLike,
     ):
-        self.valid = jnp.asarray(valid, dtype=bool)
-        self.metric_valid = jnp.asarray(metric_valid, dtype=bool)
-        self.complex_valid = jnp.asarray(complex_valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
+        self.metric_valid = jnp.asarray(metric_valid, dtype=jnp.bool_)
+        self.complex_valid = jnp.asarray(complex_valid, dtype=jnp.bool_)
         self.compatibility_residual = jnp.asarray(compatibility_residual)
         self.skew_residual = jnp.asarray(skew_residual)
 
@@ -222,10 +222,10 @@ class KahlerValidationReport(StrictModule):
         covariant_complex_residual: ArrayLike,
         minimum_symplectic_singular_value: ArrayLike,
     ):
-        self.valid = jnp.asarray(valid, dtype=bool)
-        self.hermitian_valid = jnp.asarray(hermitian_valid, dtype=bool)
-        self.integrable = jnp.asarray(integrable, dtype=bool)
-        self.closed = jnp.asarray(closed, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
+        self.hermitian_valid = jnp.asarray(hermitian_valid, dtype=jnp.bool_)
+        self.integrable = jnp.asarray(integrable, dtype=jnp.bool_)
+        self.closed = jnp.asarray(closed, dtype=jnp.bool_)
         self.compatibility_residual = jnp.asarray(compatibility_residual)
         self.nijenhuis_residual = jnp.asarray(nijenhuis_residual)
         self.closure_residual = jnp.asarray(closure_residual)

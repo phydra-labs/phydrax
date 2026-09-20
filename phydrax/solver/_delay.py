@@ -107,7 +107,7 @@ class DelayHistoryWindow(StrictModule):
         values = jnp.asarray(lags)
         if jnp.iscomplexobj(values):
             raise TypeError("Functional delay lags must be real.")
-        values = values.astype(jnp.result_type(self.time, float))
+        values = values.astype(jnp.result_type(self.time, jnp.float64))
         return eqx.error_if(
             values,
             ~jnp.all(jnp.isfinite(values))
@@ -153,7 +153,7 @@ class ConstantDelay(StrictModule):
     def __init__(self, name: str, delay: ArrayLike, /):
         if not isinstance(name, str) or not name:
             raise ValueError("ConstantDelay name must be a non-empty string.")
-        value = jnp.asarray(delay, dtype=float)
+        value = jnp.asarray(delay, dtype=jnp.float64)
         if value.shape != ():
             raise ValueError("ConstantDelay delay must be scalar.")
         value = eqx.error_if(
@@ -207,7 +207,7 @@ class StateDependentDelay(StrictModule):
             raise TypeError("monotone_argument must be a bool.")
         if not monotone_argument and root_isolation_step is None:
             raise ValueError("Nonmonotone delayed arguments require root_isolation_step.")
-        lower = jnp.asarray(minimum_delay, dtype=float)
+        lower = jnp.asarray(minimum_delay, dtype=jnp.float64)
         if lower.shape != ():
             raise ValueError("minimum_delay must be scalar.")
         lower = eqx.error_if(
@@ -218,7 +218,7 @@ class StateDependentDelay(StrictModule):
         if maximum_delay is None:
             upper = None
         else:
-            upper = jnp.asarray(maximum_delay, dtype=float)
+            upper = jnp.asarray(maximum_delay, dtype=jnp.float64)
             if upper.shape != ():
                 raise ValueError("maximum_delay must be scalar or None.")
             upper = eqx.error_if(
@@ -229,7 +229,7 @@ class StateDependentDelay(StrictModule):
         if root_isolation_step is None:
             isolation_step = None
         else:
-            isolation_step = jnp.asarray(root_isolation_step, dtype=float)
+            isolation_step = jnp.asarray(root_isolation_step, dtype=jnp.float64)
             if isolation_step.shape != ():
                 raise ValueError("root_isolation_step must be scalar or None.")
             isolation_step = eqx.error_if(
@@ -245,7 +245,7 @@ class StateDependentDelay(StrictModule):
         self.root_isolation_step = isolation_step
 
     def value(self, time: Array, state: Array, args: Any, /) -> Array:
-        delay = jnp.asarray(self.lag(time, state, args), dtype=float)
+        delay = jnp.asarray(self.lag(time, state, args), dtype=jnp.float64)
         if delay.shape != ():
             raise ValueError("State-dependent lag functions must return a scalar.")
         invalid = ~jnp.isfinite(delay) | (delay < self.minimum_delay)
@@ -295,8 +295,8 @@ class FunctionalDelay(StrictModule):
             raise ValueError(
                 "FunctionalDelay output_kind must be 'ambient', 'point', or 'tangent'."
             )
-        lower = jnp.asarray(lag_interval[0], dtype=float)
-        upper = jnp.asarray(lag_interval[1], dtype=float)
+        lower = jnp.asarray(lag_interval[0], dtype=jnp.float64)
+        upper = jnp.asarray(lag_interval[1], dtype=jnp.float64)
         if lower.shape != () or upper.shape != ():
             raise ValueError("FunctionalDelay lag interval bounds must be scalar.")
         lower = eqx.error_if(
@@ -378,8 +378,8 @@ class DistributedDelay(StrictModule):
         raw_upper = jnp.asarray(lag_interval[1])
         if jnp.iscomplexobj(raw_lower) or jnp.iscomplexobj(raw_upper):
             raise TypeError("DistributedDelay lag interval bounds must be real.")
-        lower = raw_lower.astype(float)
-        upper = raw_upper.astype(float)
+        lower = raw_lower.astype("float64")
+        upper = raw_upper.astype("float64")
         if lower.shape != () or upper.shape != ():
             raise ValueError("DistributedDelay lag interval bounds must be scalar.")
         lower = eqx.error_if(
@@ -402,11 +402,10 @@ class DistributedDelay(StrictModule):
         if (
             reference_nodes.ndim != 1
             or reference_weights.shape != reference_nodes.shape
-            or int(reference_nodes.size) == 0
+            or reference_nodes.size == 0
         ):
             raise ValueError(
-                "DistributedDelay quadrature needs equally sized, non-empty "
-                "rank-1 nodes and weights."
+                "DistributedDelay quadrature needs equally sized, non-empty rank-1 nodes and weights."
             )
         reference_nodes = eqx.error_if(
             reference_nodes,
@@ -461,7 +460,7 @@ class DistributedDelay(StrictModule):
 
     @property
     def node_count(self) -> int:
-        return int(self.nodes.shape[0])
+        return self.nodes.shape[0]
 
     @property
     def effective_lag_range(self) -> tuple[Array, Array]:
@@ -480,8 +479,7 @@ def _distributed_delay_value(
     expected_values = (term.node_count,) + state_shape
     if delayed_values.shape != expected_values:
         raise ValueError(
-            f"Distributed history values must stack to shape {expected_values}; "
-            f"got {delayed_values.shape}."
+            f"Distributed history values must stack to shape {expected_values}; got {delayed_values.shape}."
         )
     kernels = jax.vmap(lambda lag: jnp.asarray(term.kernel(time, lag, state, args)))(
         term.nodes
@@ -491,8 +489,7 @@ def _distributed_delay_value(
     state_kernel = kernels.shape == expected_values
     if not scalar_kernel and not state_kernel:
         raise ValueError(
-            f"DistributedDelay {term.name!r} kernel must return a scalar or "
-            f"the exact state shape {state_shape}."
+            f"DistributedDelay {term.name!r} kernel must return a scalar or the exact state shape {state_shape}."
         )
     if term.reducer is None:
         if scalar_kernel:
@@ -517,8 +514,7 @@ def _distributed_delay_value(
         )
     if value.shape != state_shape:
         raise ValueError(
-            f"DistributedDelay {term.name!r} reducer must return state shape "
-            f"{state_shape}; got {value.shape}."
+            f"DistributedDelay {term.name!r} reducer must return state shape {state_shape}; got {value.shape}."
         )
     return value
 
@@ -597,7 +593,7 @@ class DelayWienerTerm(StrictModule):
             raise ValueError("DelayWienerTerm name must be a non-empty string.")
         if not callable(coefficient):
             raise TypeError("DelayWienerTerm coefficient must be callable.")
-        shape = tuple(int(size) for size in noise_shape)
+        shape = tuple(noise_shape)
         if any(size <= 0 for size in shape):
             raise ValueError("DelayWienerTerm noise dimensions must be positive.")
         if structure not in ("additive", "commutative", "general"):
@@ -650,8 +646,7 @@ def _invalid_geometry_tangent(
     tangent_value = jnp.asarray(tangent)
     if tangent_value.shape != tangent_shape:
         raise ValueError(
-            f"Geometry tangent must have physical tangent shape {tangent_shape}; "
-            f"got {tangent_value.shape}."
+            f"Geometry tangent must have physical tangent shape {tangent_shape}; got {tangent_value.shape}."
         )
     if not geometry.supports_exact_differential:
         raise ValueError(
@@ -668,7 +663,7 @@ def _invalid_geometry_tangent(
         raise ValueError(
             "State geometry retraction differential changed the tangent shape."
         )
-    comparison_dtype = jnp.result_type(tangent_value, reconstructed, float)
+    comparison_dtype = jnp.result_type(tangent_value, reconstructed, jnp.float64)
     tangent_value = tangent_value.astype(comparison_dtype)
     reconstructed = reconstructed.astype(comparison_dtype)
     scale = jnp.maximum(
@@ -692,7 +687,7 @@ def _validated_geometry_point(
     message: str,
     /,
 ) -> Array:
-    membership = jnp.asarray(geometry.contains(point), dtype=bool)
+    membership = jnp.asarray(geometry.contains(point), dtype=jnp.bool_)
     if membership.shape != ():
         raise ValueError("State geometry contains() must return a scalar boolean.")
     return eqx.error_if(point, ~membership, message)
@@ -713,7 +708,7 @@ def _validated_geometry_tangent(
     )
 
 
-class _InitialDelayHistoryView(eqx.Module):
+class _InitialDelayHistoryView(StrictModule):
     history: DelayHistory
     history_derivative: DelayHistoryDerivative | None
     args: Any
@@ -825,12 +820,11 @@ def _initial_term_value(
         expected_values = (term.node_count,) + state_shape
         if values.shape != expected_values:
             raise ValueError(
-                f"Distributed history values must stack to shape {expected_values}; "
-                f"got {values.shape}."
+                f"Distributed history values must stack to shape {expected_values}; got {values.shape}."
             )
         if state_geometry is not None:
             memberships = jax.vmap(
-                lambda value: jnp.asarray(state_geometry.contains(value), dtype=bool)
+                lambda value: jnp.asarray(state_geometry.contains(value), dtype=jnp.bool_)
             )(values)
             expected_memberships = (term.node_count,)
             if memberships.shape != expected_memberships:
@@ -840,8 +834,7 @@ def _initial_term_value(
             values = eqx.error_if(
                 values,
                 ~jnp.all(memberships),
-                f"DistributedDelay {term.name!r} queried initial history outside "
-                "state_geometry.",
+                f"DistributedDelay {term.name!r} queried initial history outside state_geometry.",
             )
         return _distributed_delay_value(
             term,
@@ -866,8 +859,7 @@ def _initial_term_value(
             delayed_state = _validated_geometry_point(
                 state_geometry,
                 delayed_state,
-                f"DerivativeDelay {term.name!r} queried initial history outside "
-                "state_geometry.",
+                f"DerivativeDelay {term.name!r} queried initial history outside state_geometry.",
             )
             if not state_geometry.trivial:
                 derivative = _validated_geometry_tangent(
@@ -892,8 +884,7 @@ def _initial_term_value(
             )
         if derivative.shape != tangent_shape:
             raise ValueError(
-                f"DerivativeDelay {term.name!r} transport must preserve tangent "
-                f"shape {tangent_shape}."
+                f"DerivativeDelay {term.name!r} transport must preserve tangent shape {tangent_shape}."
             )
         if state_geometry is not None and not state_geometry.trivial:
             derivative = _validated_geometry_tangent(
@@ -901,8 +892,7 @@ def _initial_term_value(
                 state,
                 derivative,
                 tangent_shape,
-                f"DerivativeDelay {term.name!r} transport must return a tangent at "
-                "the current state.",
+                f"DerivativeDelay {term.name!r} transport must return a tangent at the current state.",
             )
         return derivative
     lag = _point_lag(term, time, state, args)
@@ -967,8 +957,8 @@ class DelayDifferentialProblem(StrictModule):
             raise TypeError("drift and history must be callable.")
         if history_derivative is not None and not callable(history_derivative):
             raise TypeError("history_derivative must be callable or None.")
-        start = jnp.asarray(t0, dtype=float)
-        end = jnp.asarray(t1, dtype=float)
+        start = jnp.asarray(t0, dtype=jnp.float64)
+        end = jnp.asarray(t1, dtype=jnp.float64)
         if start.shape != () or end.shape != ():
             raise ValueError("DelayDifferentialProblem t0 and t1 must be scalar.")
         start = eqx.error_if(
@@ -1008,13 +998,13 @@ class DelayDifferentialProblem(StrictModule):
             raise ValueError("interpretation must be 'ito' or 'stratonovich'.")
 
         state = jnp.asarray(history(start, args))
-        state_shape = tuple(int(size) for size in state.shape)
+        state_shape = tuple(state.shape)
         if state_geometry is not None:
             if not isinstance(state_geometry, AbstractStateGeometry):
                 raise TypeError(
                     "state_geometry must be an AbstractStateGeometry or None."
                 )
-            membership = jnp.asarray(state_geometry.contains(state), dtype=bool)
+            membership = jnp.asarray(state_geometry.contains(state), dtype=jnp.bool_)
             if membership.shape != ():
                 raise ValueError(
                     "State geometry contains() must return a scalar boolean."
@@ -1035,8 +1025,7 @@ class DelayDifferentialProblem(StrictModule):
                 for term in terms
             ):
                 raise ValueError(
-                    "Manifold DerivativeDelay terms require explicit or "
-                    "state-geometry tangent transport."
+                    "Manifold DerivativeDelay terms require explicit or state-geometry tangent transport."
                 )
             if not state_geometry.trivial and any(
                 isinstance(term, DistributedDelay) and term.reducer is None
@@ -1051,11 +1040,11 @@ class DelayDifferentialProblem(StrictModule):
             tangent_zero = jnp.asarray(
                 state_geometry.project_tangent(state, jnp.zeros_like(state))
             )
-            tangent_shape = tuple(int(size) for size in tangent_zero.shape)
+            tangent_shape = tuple(tangent_zero.shape)
             local_zero = jnp.asarray(
                 state_geometry.retraction_inverse_jvp(state, state, tangent_zero)
             )
-            local_shape = tuple(int(size) for size in local_zero.shape)
+            local_shape = tuple(local_zero.shape)
             retracted_zero = jnp.asarray(state_geometry.retract(state, local_zero))
             if retracted_zero.shape != state.shape:
                 raise ValueError(
@@ -1100,11 +1089,10 @@ class DelayDifferentialProblem(StrictModule):
             )
             if value.shape != expected_shape:
                 raise ValueError(
-                    f"Delay term {term.name!r} must return shape {expected_shape}; "
-                    f"got {value.shape}."
+                    f"Delay term {term.name!r} must return shape {expected_shape}; got {value.shape}."
                 )
             if state_geometry is not None and isinstance(term, DistributedDelay):
-                membership = jnp.asarray(state_geometry.contains(value), dtype=bool)
+                membership = jnp.asarray(state_geometry.contains(value), dtype=jnp.bool_)
                 if membership.shape != ():
                     raise ValueError(
                         "State geometry contains() must return a scalar boolean."
@@ -1112,8 +1100,7 @@ class DelayDifferentialProblem(StrictModule):
                 value = eqx.error_if(
                     value,
                     ~membership,
-                    f"DistributedDelay {term.name!r} reducer returned a point "
-                    "outside state_geometry.",
+                    f"DistributedDelay {term.name!r} reducer returned a point outside state_geometry.",
                 )
             checked_initial_values.append(value)
         initial_values = tuple(checked_initial_values)
@@ -1121,8 +1108,7 @@ class DelayDifferentialProblem(StrictModule):
         drift_value = jnp.asarray(drift(start, state, memory, args))
         if drift_value.shape != tangent_shape:
             raise ValueError(
-                f"drift must return physical tangent shape {tangent_shape}; "
-                f"got {drift_value.shape}."
+                f"drift must return physical tangent shape {tangent_shape}; got {drift_value.shape}."
             )
         if state_geometry is not None:
             drift_value = _validated_geometry_tangent(
@@ -1130,8 +1116,7 @@ class DelayDifferentialProblem(StrictModule):
                 state,
                 drift_value,
                 tangent_shape,
-                "DelayDifferentialProblem initial drift must be tangent-compatible "
-                "with state_geometry.",
+                "DelayDifferentialProblem initial drift must be tangent-compatible with state_geometry.",
             )
         if history_derivative is None:
             initial_left_derivative = None
@@ -1150,11 +1135,10 @@ class DelayDifferentialProblem(StrictModule):
                     state,
                     initial_left_derivative,
                     tangent_shape,
-                    "DelayDifferentialProblem history_derivative at t0 must be tangent "
-                    "to state_geometry.",
+                    "DelayDifferentialProblem history_derivative at t0 must be tangent to state_geometry.",
                 )
             comparison_dtype = jnp.result_type(
-                initial_left_derivative, drift_value, float
+                initial_left_derivative, drift_value, jnp.float64
             )
             residual = drift_value.astype(
                 comparison_dtype

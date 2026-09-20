@@ -101,7 +101,7 @@ _SCENARIOS = {
 def _parameter_count(model: eqx.Module, /) -> int:
     trainable, _ = partition_trainable(model)
     return sum(
-        int(leaf.size)
+        leaf.size
         for leaf in jax.tree_util.tree_leaves(trainable)
         if isinstance(leaf, jax.Array)
     )
@@ -342,9 +342,9 @@ def run_pinn_model_benchmark(
 
     trained = combine_trainable(parameters, fixed)
     final_total = _loss_components(trained, scenario, interior, boundary)[0]
-    evaluation = jnp.linspace(-1.0, 1.0, int(scenario.evaluation_points), dtype=float)[
-        :, None
-    ]
+    evaluation = jnp.linspace(
+        -1.0, 1.0, int(scenario.evaluation_points), dtype="float64"
+    )[:, None]
 
     inference_started = time.perf_counter()
     prediction, prediction_gradient, _ = _pointwise_derivatives(trained, evaluation)
@@ -668,7 +668,7 @@ def main() -> None:
     result = run_pinn_model_benchmarks(
         architectures=_comma_tuple(arguments.architectures),
         scenarios=_comma_tuple(arguments.scenarios),
-        seeds=tuple(int(seed) for seed in _comma_tuple(arguments.seeds)),
+        seeds=tuple(_comma_tuple(arguments.seeds)),
         width=arguments.width,
         depth=arguments.depth,
         steps=1 if arguments.quick else arguments.steps,

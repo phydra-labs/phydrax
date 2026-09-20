@@ -19,7 +19,7 @@ from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._sampling._targets import IncrementalMarkovTarget
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
 
@@ -56,8 +56,8 @@ def _last_state(path: PathBuffer, /) -> Array:
 class AbstractPathEnsemble(StrictModule):
     """Abstract normalized-support contract for a fixed-capacity path target."""
 
-    ensemble_id: AbstractAttribute[str]
-    requires_terminal_hit: AbstractAttribute[bool]
+    ensemble_id: eqx.AbstractVar[str]
+    requires_terminal_hit: eqx.AbstractVar[bool]
 
     @abc.abstractmethod
     def contains(self, path: PathBuffer, /) -> Array:
@@ -95,7 +95,7 @@ class FixedPathEnsemble(AbstractPathEnsemble, NonTrainableState):
             raise TypeError("final_region must be StateRegionPlan or None.")
         identity = ensemble_id or canonical_fingerprint(
             {
-                "kind": "fixed-path-ensemble-v1",
+                "kind": "fixed-path-ensemble",
                 "length": count,
                 "initial": None if initial_region is None else initial_region.region_id,
                 "final": None if final_region is None else final_region.region_id,
@@ -148,7 +148,7 @@ class FirstPassagePathEnsemble(AbstractPathEnsemble, NonTrainableState):
             raise ValueError("minimum_length must be at least two.")
         identity = ensemble_id or canonical_fingerprint(
             {
-                "kind": "first-passage-path-ensemble-v1",
+                "kind": "first-passage-path-ensemble",
                 "initial": initial_region.region_id,
                 "final": final_region.region_id,
                 "minimum_length": count,
@@ -214,7 +214,7 @@ class InterfacePathEnsemble(AbstractPathEnsemble, NonTrainableState):
         coordinate_identity = _nonempty(coordinate_id, "coordinate_id")
         identity = ensemble_id or canonical_fingerprint(
             {
-                "kind": "interface-path-ensemble-v1",
+                "kind": "interface-path-ensemble",
                 "initial": initial_region.region_id,
                 "final": final_region.region_id,
                 "coordinate": coordinate_identity,
@@ -292,7 +292,7 @@ class MinusPathEnsemble(AbstractPathEnsemble, NonTrainableState):
         coordinate_identity = _nonempty(coordinate_id, "coordinate_id")
         identity = ensemble_id or canonical_fingerprint(
             {
-                "kind": "minus-path-ensemble-v1",
+                "kind": "minus-path-ensemble",
                 "initial": initial_region.region_id,
                 "coordinate": coordinate_identity,
                 "interface": level.hex(),
@@ -375,7 +375,7 @@ class InterfaceNetworkPlan(StrictModule, NonTrainableState):
         coordinate_identity = _nonempty(coordinate_id, "coordinate_id")
         identity = network_id or canonical_fingerprint(
             {
-                "kind": "path-interface-network-v1",
+                "kind": "path-interface-network",
                 "initial": initial_region.region_id,
                 "final": final_region.region_id,
                 "coordinate": coordinate_identity,
@@ -417,8 +417,8 @@ class InterfaceNetworkPlan(StrictModule, NonTrainableState):
 class AbstractPathAction(StrictModule):
     """Abstract path-space action with explicit normalization semantics."""
 
-    action_id: AbstractAttribute[str]
-    normalized: AbstractAttribute[bool]
+    action_id: eqx.AbstractVar[str]
+    normalized: eqx.AbstractVar[bool]
 
     @abc.abstractmethod
     def log_weight(self, path: PathBuffer, /) -> Array:
@@ -445,7 +445,7 @@ class DeterministicPathAction(AbstractPathAction, NonTrainableState):
             raise ValueError("DeterministicPathAction requires deterministic dynamics.")
         identity = action_id or canonical_fingerprint(
             {
-                "kind": "deterministic-path-action-v1",
+                "kind": "deterministic-path-action",
                 "kernel": kernel.kernel_id,
             }
         )
@@ -503,7 +503,7 @@ class NormalizedStochasticPathAction(AbstractPathAction, NonTrainableState):
         density_identity = _nonempty(initial_density_id, "initial_density_id")
         identity = action_id or canonical_fingerprint(
             {
-                "kind": "normalized-stochastic-path-action-v1",
+                "kind": "normalized-stochastic-path-action",
                 "kernel": kernel.kernel_id,
                 "initial_density": density_identity,
             }
@@ -611,7 +611,7 @@ def make_incremental_path_target(
         refresh=evaluate,
         target_id=canonical_fingerprint(
             {
-                "kind": "incremental-path-target-v1",
+                "kind": "incremental-path-target",
                 "ensemble": ensemble.ensemble_id,
                 "action": action.action_id,
             }
@@ -648,7 +648,7 @@ class ReducedPathPotential(StrictModule, NonTrainableState):
             )
         identity = potential_id or canonical_fingerprint(
             {
-                "kind": "reduced-path-potential-v1",
+                "kind": "reduced-path-potential",
                 "ensemble": ensemble.ensemble_id,
                 "action": action.action_id,
             }
@@ -755,8 +755,8 @@ def cross_evaluate_path_potentials(
     capacity = len(path_values)
     samples = ReducedPotentialDataset(
         matrix,
-        jnp.ones(matrix.shape, dtype=bool),
-        jnp.ones((capacity,), dtype=bool),
+        jnp.ones(matrix.shape, dtype=jnp.bool_),
+        jnp.ones((capacity,), dtype=jnp.bool_),
         origins,
         chain_index,
         draw_index,

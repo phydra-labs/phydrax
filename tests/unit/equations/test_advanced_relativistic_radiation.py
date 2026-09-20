@@ -20,8 +20,8 @@ from phydrax.equations._relativistic_neutrino import (
     GRNeutrinoM1System,
 )
 from phydrax.equations._relativistic_radiation_interaction import (
-    ConstantGRGreyOpacityPlan,
-    GRGreyRadiationInteractionPlan,
+    ConstantGRGrayOpacityPlan,
+    GRGrayRadiationInteractionPlan,
 )
 from phydrax.metrix._adm_exchange import ADMGridGeometry
 from phydrax.metrix._spacetime_conventions import RelativityConvention
@@ -41,8 +41,8 @@ def _geometry(scale, convention, shape=(2,)):
         identity,
         jnp.ones(shape),
         jnp.zeros(shape + (3, 3)),
-        jnp.ones(shape, dtype=bool),
-        jnp.ones(shape, dtype=bool),
+        jnp.ones(shape, dtype="bool"),
+        jnp.ones(shape, dtype="bool"),
         snapshot_token=jnp.asarray(0, dtype=jnp.int32),
         chart_id="cartesian",
         convention_id=convention.convention_id,
@@ -53,9 +53,9 @@ def _geometry(scale, convention, shape=(2,)):
 
 
 def _absorbing_interaction(system):
-    return GRGreyRadiationInteractionPlan(
+    return GRGrayRadiationInteractionPlan(
         system,
-        ConstantGRGreyOpacityPlan(
+        ConstantGRGrayOpacityPlan(
             planck_absorption=1.0,
             planck_emission=0.0,
             rosseland_transport=1.0,

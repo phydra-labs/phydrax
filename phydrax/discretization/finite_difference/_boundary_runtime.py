@@ -148,7 +148,9 @@ class CellGhostBoundary(StrictModule, NonTrainableState):
             orientation = -1.0 if side == "lower" else 1.0
             distances = (2.0 * np.arange(width) + 1.0) * spacing_
             denominators = 0.5 * alpha + orientation * beta / distances
-            if kind == "robin" and np.any(np.abs(denominators) <= np.finfo(float).eps):
+            if kind == "robin" and np.any(
+                np.abs(denominators) <= np.finfo(np.float64).eps
+            ):
                 raise ValueError("Robin ghost relation is singular.")
         if lower_kind == "dirichlet" and coefficients[0] == 0.0:
             raise ValueError("Lower Dirichlet coefficient must be nonzero.")

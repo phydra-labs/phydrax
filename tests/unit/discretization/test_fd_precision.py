@@ -124,8 +124,6 @@ def test_distributed_fd_payload_requires_field_precision():
         partition.shard(jnp.arange(16, dtype=jnp.float64))
 
 
-
-
 def test_conservative_multigrid_uses_field_and_certification_precision():
     precision = _precision()
     diffusion_precision = phx.discretization.FiniteVolumePrecisionPolicy(

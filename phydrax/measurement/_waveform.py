@@ -46,7 +46,7 @@ class WaveformSupport:
             edges[-1] = times[-1] + 0.5 * (times[-1] - times[-2])
             widths = np.diff(edges)
         else:
-            widths = np.array(self.bin_widths, dtype=float, copy=True)
+            widths = np.array(self.bin_widths, dtype=np.float64, copy=True)
         if (
             widths.shape != (self.delay_axis.sample_count,)
             or not np.all(np.isfinite(widths))
@@ -83,8 +83,8 @@ class PulseResponse:
     response_id: str = field(init=False)
 
     def __post_init__(self) -> None:
-        times = np.array(self.times, dtype=float, copy=True)
-        amplitudes = np.array(self.amplitudes, dtype=float, copy=True)
+        times = np.array(self.times, dtype=np.float64, copy=True)
+        amplitudes = np.array(self.amplitudes, dtype=np.float64, copy=True)
         if (
             times.ndim != 1
             or times.shape != amplitudes.shape

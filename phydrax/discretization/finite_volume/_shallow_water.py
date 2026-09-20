@@ -258,7 +258,7 @@ class ShallowWaterBalancedFaceResult(StrictModule):
         speed = jnp.asarray(max_speed)
         state_left = jnp.asarray(reconstructed_left)
         state_right = jnp.asarray(reconstructed_right)
-        dry = jnp.asarray(dry_face, dtype=bool)
+        dry = jnp.asarray(dry_face, dtype=jnp.bool_)
         if left.shape != flux.shape or right.shape != flux.shape:
             raise ValueError("Hydrostatic corrections must match the shared flux shape.")
         if state_left.shape != flux.shape or state_right.shape != flux.shape:

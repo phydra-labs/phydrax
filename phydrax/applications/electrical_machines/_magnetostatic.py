@@ -19,8 +19,8 @@ from phydrax.linalg import (
     ArraySpace,
     DenseLinearOperator,
     FactorizationPolicy,
-    OperatorProperties,
     factorize,
+    OperatorProperties,
 )
 
 from ._model import PlanarMachine, VACUUM_PERMEABILITY
@@ -112,8 +112,7 @@ def _design_vector(machine: PlanarMachine, design: ArrayLike | None) -> Array:
         jnp.any(~jnp.isfinite(parameters))
         | (parameters[1] < 0.0)
         | (parameters[2] <= 0.0),
-        "Machine design requires finite nonnegative remanence and positive "
-        "winding turns.",
+        "Machine design requires finite nonnegative remanence and positive winding turns.",
     )
 
 
@@ -173,12 +172,12 @@ def _field_quantities(
     field_strength = reluctivity[:, None] * (magnetic_field - remanence)
     current_density = contract("ck,k->c", windings, currents)
     mean_potential = jnp.mean(local, axis=1)
-    flux = machine.axial_length * contract(
-        "c,ck,c->k", areas, windings, mean_potential
-    )
+    flux = machine.axial_length * contract("c,ck,c->k", areas, windings, mean_potential)
     magnetic_offset = magnetic_field - remanence
-    energy = 0.5 * machine.axial_length * contract(
-        "c,c,cd,cd->", areas, reluctivity, magnetic_offset, magnetic_offset
+    energy = (
+        0.5
+        * machine.axial_length
+        * contract("c,c,cd,cd->", areas, reluctivity, magnetic_offset, magnetic_offset)
     )
     coenergy = contract("k,k->", currents, flux) - energy
     return magnetic_field, field_strength, current_density, flux, energy, coenergy
@@ -202,17 +201,12 @@ def machine_coenergy(
         raise TypeError("machine must be a prepared PlanarMachine.")
     parameters = _design_vector(machine, design)
     values, excitation = jnp.asarray(potential), jnp.asarray(currents)
-    if (
-        values.shape != (machine.discretization.mesh.coordinates.shape[0],)
-        or excitation.shape != (machine.winding_count,)
-    ):
-        raise ValueError(
-            "Potential or current vector has an incompatible machine shape."
-        )
+    if values.shape != (
+        machine.discretization.mesh.coordinates.shape[0],
+    ) or excitation.shape != (machine.winding_count,):
+        raise ValueError("Potential or current vector has an incompatible machine shape.")
     _, areas, _, curls = _geometry(machine, parameters, angle_delta)
-    reluctivity, remanence, windings = _material_arrays(
-        machine, parameters, angle_delta
-    )
+    reluctivity, remanence, windings = _material_arrays(machine, parameters, angle_delta)
     return _field_quantities(
         machine,
         values,
@@ -247,10 +241,7 @@ def solve_planar_machine(
     parameters = _design_vector(machine, design)
     excitation = jnp.asarray(currents)
     boundary = jnp.asarray(boundary_potential)
-    if (
-        excitation.shape != (machine.winding_count,)
-        or boundary.shape != ()
-    ):
+    if excitation.shape != (machine.winding_count,) or boundary.shape != ():
         raise ValueError(
             "Currents must match winding count and boundary potential must be scalar."
         )
@@ -263,17 +254,11 @@ def solve_planar_machine(
         boundary, ~jnp.isfinite(boundary), "Boundary potential must be finite."
     )
     points, areas, gradients, curls = _geometry(machine, parameters, angle_delta)
-    reluctivity, remanence, windings = _material_arrays(
-        machine, parameters, angle_delta
-    )
+    reluctivity, remanence, windings = _material_arrays(machine, parameters, angle_delta)
     cells = machine.discretization.mesh.blocks[0].vertices
-    local_matrix = contract(
-        "c,c,cid,cjd->cij", areas, reluctivity, curls, curls
-    )
+    local_matrix = contract("c,c,cid,cjd->cij", areas, reluctivity, curls, curls)
     current_density = contract("ck,k->c", windings, excitation)
-    local_source = contract(
-        "c,c,cid,cd->ci", areas, reluctivity, curls, remanence
-    )
+    local_source = contract("c,c,cid,cd->ci", areas, reluctivity, curls, remanence)
     local_source = local_source + (areas * current_density / 3.0)[:, None]
     count = points.shape[0]
     matrix = (
@@ -285,9 +270,7 @@ def solve_planar_machine(
     free = machine.free_nodes
     reduced = matrix[free[:, None], free[None, :]]
     prescribed = jnp.zeros_like(source).at[machine.boundary_nodes].set(boundary)
-    right_hand_side = (
-        source - contract("ij,j->i", matrix, prescribed)
-    )[free]
+    right_hand_side = (source - contract("ij,j->i", matrix, prescribed))[free]
     space = ArraySpace((free.shape[0],), dtype=reduced.dtype)
     operator = DenseLinearOperator(
         reduced,
@@ -302,9 +285,7 @@ def solve_planar_machine(
             },
         ),
     )
-    linear = factorize(
-        operator, FactorizationPolicy("cholesky")
-    ).solve(right_hand_side)
+    linear = factorize(operator, FactorizationPolicy("cholesky")).solve(right_hand_side)
     potential = prescribed.at[free].set(linear.value)
     (
         magnetic_field,
@@ -336,9 +317,7 @@ def solve_planar_machine(
         )
     )(jnp.asarray(angle_delta, dtype=points.dtype))
     identity = jnp.eye(2, dtype=magnetic_field.dtype)
-    magnetic_norm_squared = contract(
-        "ci,ci->c", magnetic_field, magnetic_field
-    )
+    magnetic_norm_squared = contract("ci,ci->c", magnetic_field, magnetic_field)
     stress = (
         contract("ci,cj->cij", magnetic_field, magnetic_field)
         - 0.5 * magnetic_norm_squared[:, None, None] * identity
@@ -363,8 +342,7 @@ def solve_planar_machine(
         traction = contract("eij,ej->ei", mean_stress, normal_measure)
         midpoint = jnp.mean(endpoints, axis=1)
         contour_torque = machine.axial_length * jnp.sum(
-            midpoint[:, 0] * traction[:, 1]
-            - midpoint[:, 1] * traction[:, 0]
+            midpoint[:, 0] * traction[:, 1] - midpoint[:, 1] * traction[:, 0]
         )
     residual = contract("ij,j->i", reduced, linear.value) - right_hand_side
     residual_norm = jnp.sqrt(contract("i,i->", residual, residual))
@@ -372,18 +350,14 @@ def solve_planar_machine(
     relative_residual = residual_norm / jnp.maximum(
         source_norm, jnp.finfo(points.dtype).tiny
     )
-    gauge_error = jnp.max(
-        jnp.abs(potential[machine.boundary_nodes] - boundary)
-    )
+    gauge_error = jnp.max(jnp.abs(potential[machine.boundary_nodes] - boundary))
     discrepancy = jnp.abs(torque - stress_torque)
     linear_accepted = jnp.all(linear.successful) & (
         residual_norm
         <= controls.residual_absolute + controls.residual_relative * source_norm
     )
     contour_finite = (
-        jnp.asarray(True)
-        if contour_torque is None
-        else jnp.isfinite(contour_torque)
+        jnp.asarray(True) if contour_torque is None else jnp.isfinite(contour_torque)
     )
     accepted = (
         linear_accepted

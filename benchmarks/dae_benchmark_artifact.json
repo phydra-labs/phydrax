@@ -662,5 +662,5 @@
     "synchronization": "every measured JAX execution blocks all array leaves",
     "timing": "model setup, solver preparation, lowering, compilation, first execution, warmup, and synchronized steady executions are separate"
   },
-  "schema_version": "phydrax-dae-benchmark-v2"
+  "schema_version": "phydrax-dae-benchmark"
 }

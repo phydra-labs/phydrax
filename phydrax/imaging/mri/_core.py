@@ -15,7 +15,10 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._spectral._nufft import NUFFTPlan, PreparedNUFFT
+from ..._spectral._nonuniform_fourier import (
+    NonuniformFourierPlan,
+    PreparedNonuniformFourier,
+)
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...ein import contract
@@ -33,7 +36,7 @@ class KSpaceSupport:
     support_id: str = field(init=False)
 
     def __post_init__(self) -> None:
-        vectors = np.array(self.k_vectors, dtype=float, copy=True)
+        vectors = np.array(self.k_vectors, dtype=np.float64, copy=True)
         if (
             vectors.ndim != 2
             or vectors.shape[1] != 2
@@ -168,9 +171,9 @@ class CartesianMRIEncodingPlan(StrictModule, NonTrainableState):
     ):
         shape = coils.values.shape[1:]
         mask = (
-            jnp.ones(shape, dtype=bool)
+            jnp.ones(shape, dtype=jnp.bool_)
             if sampling_mask is None
-            else jnp.asarray(sampling_mask, dtype=bool)
+            else jnp.asarray(sampling_mask, dtype=jnp.bool_)
         )
         if mask.shape != shape:
             raise ValueError("sampling_mask must match the image shape.")
@@ -207,10 +210,10 @@ class CartesianMRIEncodingPlan(StrictModule, NonTrainableState):
         return jnp.sum(jnp.conj(self.coils.values) * coil_images, axis=0)
 
 
-class NUFFTMRIEncodingPlan(StrictModule, NonTrainableState):
+class NonuniformMRIEncodingPlan(StrictModule, NonTrainableState):
     coils: CoilSensitivityField
     support: KSpaceSupport = eqx.field(static=True)
-    tolerance: float = eqx.field(static=True)
+    chunk_size: int = eqx.field(static=True)
     operator_id: str = eqx.field(static=True)
 
     def __init__(
@@ -219,19 +222,22 @@ class NUFFTMRIEncodingPlan(StrictModule, NonTrainableState):
         support: KSpaceSupport,
         /,
         *,
-        tolerance: float = 1.0e-6,
+        chunk_size: int = 256,
     ):
         if tuple(coils.coil_ids) != tuple(support.coil_ids):
             raise ValueError("Coil sensitivity and k-space coil identities differ.")
+        chunk = int(chunk_size)
+        if chunk < 1:
+            raise ValueError("chunk_size must be positive.")
         self.coils = coils
         self.support = support
-        self.tolerance = float(tolerance)
+        self.chunk_size = chunk
         self.operator_id = canonical_fingerprint(
             {
-                "kind": "nufft-mri-encoding",
+                "kind": "nonuniform-mri-encoding",
                 "coils": coils.field_id,
                 "support": support.support_id,
-                "tolerance": self.tolerance,
+                "chunk_size": chunk,
             }
         )
 
@@ -241,14 +247,14 @@ class NUFFTMRIEncodingPlan(StrictModule, NonTrainableState):
             raise ValueError("image has the wrong shape.")
         coordinates = jnp.asarray(self.support.k_vectors)
         points = jnp.stack((coordinates[:, 1], coordinates[:, 0]), axis=-1)
-        transform = PreparedNUFFT(
-            NUFFTPlan(
+        transform = PreparedNonuniformFourier(
+            NonuniformFourierPlan(
                 self.coils.values.shape[1:],
                 2,
                 sign=-1,
                 centered=True,
-                tolerance=self.tolerance,
-                method="chunked",
+                route="chunked",
+                chunk_size=self.chunk_size,
             ),
             dtype=points.dtype,
         )
@@ -268,14 +274,14 @@ class NUFFTMRIEncodingPlan(StrictModule, NonTrainableState):
         coordinates = jnp.asarray(self.support.k_vectors)
         points = jnp.stack((coordinates[:, 1], coordinates[:, 0]), axis=-1)
         shape = self.coils.values.shape[1:]
-        transform = PreparedNUFFT(
-            NUFFTPlan(
+        transform = PreparedNonuniformFourier(
+            NonuniformFourierPlan(
                 shape,
                 1,
                 sign=1,
                 centered=True,
-                tolerance=self.tolerance,
-                method="chunked",
+                route="chunked",
+                chunk_size=self.chunk_size,
             ),
             dtype=points.dtype,
         )
@@ -294,7 +300,7 @@ class MRIReconstructionResult(StrictModule, NonTrainableState):
 
 @dataclass(frozen=True, slots=True)
 class CGSensePlan:
-    encoding: CartesianMRIEncodingPlan | NUFFTMRIEncodingPlan
+    encoding: CartesianMRIEncodingPlan | NonuniformMRIEncodingPlan
     iteration_count: int
     l2_regularization: float = 0.0
 
@@ -373,13 +379,13 @@ class RegularizedMRIPlan:
 
 
 class OffResonanceMRIEncodingPlan(StrictModule, NonTrainableState):
-    base: NUFFTMRIEncodingPlan
+    base: NonuniformMRIEncodingPlan
     off_resonance_hz: Array
     translations: Array
 
     def __init__(
         self,
-        base: NUFFTMRIEncodingPlan,
+        base: NonuniformMRIEncodingPlan,
         off_resonance_hz: ArrayLike,
         /,
         *,
@@ -534,7 +540,7 @@ __all__ = [
     "KSpaceSupport",
     "MRIEncodingEvidence",
     "MRIReconstructionResult",
-    "NUFFTMRIEncodingPlan",
+    "NonuniformMRIEncodingPlan",
     "OffResonanceMRIEncodingPlan",
     "PhaseContrastMRIPlan",
     "QuantitativeMRIPlan",

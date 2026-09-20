@@ -39,7 +39,7 @@ class ExactSelection(StrictModule):
 
     def __init__(self, indices: Any, selected: Any, scores: Any, /):
         indices_ = jnp.asarray(indices, dtype=jnp.int32)
-        selected_ = jnp.asarray(selected, dtype=bool)
+        selected_ = jnp.asarray(selected, dtype=jnp.bool_)
         if indices_.ndim != 1 or selected_.shape != indices_.shape:
             raise ValueError(
                 "indices and selected must be aligned one-dimensional arrays."
@@ -76,7 +76,7 @@ class FeatureSelectionDiagnostics(StrictModule):
             )
         self.selection = selection
         self.relaxed_gates = None if relaxed_gates is None else jnp.asarray(relaxed_gates)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32)
         self.estimator_status = jnp.asarray(estimator_status, dtype=jnp.int32)
@@ -96,7 +96,7 @@ class ExactFeatureSelectorModel(AbstractArrayModel):
             raise TypeError("selection must be an ExactSelection.")
         self.selection = selection
         self.in_size = int(input_size)
-        self.out_size = int(selection.indices.shape[0])
+        self.out_size = selection.indices.shape[0]
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
@@ -124,8 +124,8 @@ class ContinuousFeatureGateModel(AbstractArrayModel):
             | jnp.any(gates_ > 1.0),
             "gates must be finite values in [0, 1].",
         )
-        self.in_size = int(gates_.shape[0])
-        self.out_size = int(gates_.shape[0])
+        self.in_size = gates_.shape[0]
+        self.out_size = gates_.shape[0]
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         del key
@@ -167,7 +167,7 @@ def _target_vector(batch: MLBatch) -> tuple[Array, Array]:
         raise ValueError("This selector requires scalar targets per sample.")
     target_mask = batch.target_mask
     if target_mask is None:
-        target_mask = jnp.ones_like(targets, dtype=bool)
+        target_mask = jnp.ones_like(targets, dtype=jnp.bool_)
     valid = batch.sample_mask & target_mask
     safe_targets = jnp.where(valid, targets, 0)
     return safe_targets.reshape((-1,)), valid.reshape((-1,))
@@ -196,7 +196,7 @@ def _gate_hyperparameter(value: Any, name: str, /) -> Array:
         raise ValueError(f"{name} must be a scalar.")
     if jnp.issubdtype(scalar.dtype, jnp.complexfloating):
         raise TypeError(f"{name} must be real-valued.")
-    return scalar.astype(jnp.result_type(scalar.dtype, float))
+    return scalar.astype(jnp.result_type(scalar.dtype, jnp.float64))
 
 
 def _selection(scores: Array, eligible: Array, capacity: int) -> ExactSelection:
@@ -414,8 +414,7 @@ def _importance(
         feature_axis = axes[0]
     else:
         raise ValueError(
-            "Importance array has ambiguous feature axes; supply importance_getter "
-            "returning a feature vector."
+            "Importance array has ambiguous feature axes; supply importance_getter returning a feature vector."
         )
     reduce_axes = tuple(index for index in range(value.ndim) if index != feature_axis)
     return jnp.mean(jnp.abs(value), axis=reduce_axes) if reduce_axes else jnp.abs(value)
@@ -447,7 +446,7 @@ class RecursiveFeatureEliminationRecipe(AbstractRecipe):
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
         if self.num_features > batch.feature_count:
             raise ValueError("num_features cannot exceed the feature count.")
-        active = jnp.ones((batch.feature_count,), dtype=bool)
+        active = jnp.ones((batch.feature_count,), dtype=jnp.bool_)
         statuses = []
         scores = jnp.zeros((batch.feature_count,))
         for step in range(batch.feature_count - self.num_features):
@@ -465,7 +464,9 @@ class RecursiveFeatureEliminationRecipe(AbstractRecipe):
                 jnp.full((batch.feature_count,), jnp.inf).at[indices].set(local_scores)
             )
             removed = jnp.argmin(jnp.where(active, scores, jnp.inf))
-            active = active & ~jax.nn.one_hot(removed, batch.feature_count, dtype=bool)
+            active = active & ~jax.nn.one_hot(
+                removed, batch.feature_count, dtype=jnp.bool_
+            )
         indices = _active_indices(active, self.num_features)
         final = self.estimator.fit_batch(
             _take_features(batch, indices),
@@ -477,7 +478,9 @@ class RecursiveFeatureEliminationRecipe(AbstractRecipe):
         )
         scores = jnp.zeros((batch.feature_count,)).at[indices].set(local_scores)
         return _exact_result(
-            ExactSelection(indices, jnp.ones((self.num_features,), dtype=bool), scores),
+            ExactSelection(
+                indices, jnp.ones((self.num_features,), dtype=jnp.bool_), scores
+            ),
             batch.feature_count,
             method="recursive-feature-elimination",
             iterations=batch.feature_count - self.num_features,
@@ -546,9 +549,9 @@ class SequentialFeatureSelectionRecipe(AbstractRecipe):
         validation = batch.take_samples(permutation[:validation_size])
         training = batch.take_samples(permutation[validation_size:])
         active = (
-            jnp.zeros((batch.feature_count,), dtype=bool)
+            jnp.zeros((batch.feature_count,), dtype=jnp.bool_)
             if self.direction == "forward"
-            else jnp.ones((batch.feature_count,), dtype=bool)
+            else jnp.ones((batch.feature_count,), dtype=jnp.bool_)
         )
         steps = (
             self.num_features
@@ -566,7 +569,7 @@ class SequentialFeatureSelectionRecipe(AbstractRecipe):
                 else batch.feature_count - step - 1
             )
             for feature in range(batch.feature_count):
-                bit = jax.nn.one_hot(feature, batch.feature_count, dtype=bool)
+                bit = jax.nn.one_hot(feature, batch.feature_count, dtype=jnp.bool_)
                 candidate = active | bit if self.direction == "forward" else active & ~bit
                 indices = _active_indices(candidate, capacity)
                 training_candidate = _take_features(training, indices)
@@ -586,7 +589,7 @@ class SequentialFeatureSelectionRecipe(AbstractRecipe):
             last_scores = jnp.stack(candidate_scores)
             statuses.extend(candidate_status)
             chosen = jnp.argmax(last_scores)
-            chosen_bit = jax.nn.one_hot(chosen, batch.feature_count, dtype=bool)
+            chosen_bit = jax.nn.one_hot(chosen, batch.feature_count, dtype=jnp.bool_)
             active = (
                 active | chosen_bit
                 if self.direction == "forward"
@@ -595,7 +598,7 @@ class SequentialFeatureSelectionRecipe(AbstractRecipe):
         indices = jnp.nonzero(active, size=self.num_features, fill_value=0)[0]
         return _exact_result(
             ExactSelection(
-                indices, jnp.ones((self.num_features,), dtype=bool), last_scores
+                indices, jnp.ones((self.num_features,), dtype=jnp.bool_), last_scores
             ),
             batch.feature_count,
             method=f"sequential-{self.direction}",
@@ -688,10 +691,10 @@ class ContinuousSparseGateRecipe(AbstractRecipe):
         finite_scores = jnp.where(jnp.isfinite(scores), scores, 0.0)
         minimum = jnp.min(finite_scores)
         maximum = jnp.max(finite_scores)
-        normalised = (finite_scores - minimum) / jnp.maximum(
+        normalized = (finite_scores - minimum) / jnp.maximum(
             maximum - minimum, jnp.finfo(finite_scores.dtype).eps
         )
-        gates = jax.nn.sigmoid((normalised - self.sparsity) / self.temperature)
+        gates = jax.nn.sigmoid((normalized - self.sparsity) / self.temperature)
         valid = jnp.all(jnp.isfinite(gates))
         status = jnp.where(valid, ML_SUCCESS, ML_NONFINITE)
         diagnostics = FeatureSelectionDiagnostics(

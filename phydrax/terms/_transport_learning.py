@@ -78,8 +78,8 @@ class MongeMapTerm(AbstractScalarTerm):
         self.source_realization = source_realization
         self.cost = cost
         self.discrepancy_provider = discrepancy_provider
-        self.transport_weight = jnp.asarray(transport_weight, dtype=float)
-        self.discrepancy_weight = jnp.asarray(discrepancy_weight, dtype=float)
+        self.transport_weight = jnp.asarray(transport_weight, dtype=jnp.float64)
+        self.discrepancy_weight = jnp.asarray(discrepancy_weight, dtype=jnp.float64)
         self.label = label
 
     def loss(
@@ -147,7 +147,7 @@ class NeuralDualTransportTerm(AbstractScalarTerm):
         self.target_realization = target_realization
         self.cost = cost
         self.pair_source = pair_source
-        self.constraint_weight = jnp.asarray(constraint_weight, dtype=float)
+        self.constraint_weight = jnp.asarray(constraint_weight, dtype=jnp.float64)
         self.full_pair_coverage = bool(full_pair_coverage)
         self.label = label
 

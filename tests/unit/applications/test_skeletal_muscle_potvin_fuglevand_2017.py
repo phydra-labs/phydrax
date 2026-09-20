@@ -44,6 +44,7 @@ def test_default_population_reproduces_published_endpoints():
     np.testing.assert_allclose(runtime.maximum_excitation(), 67.0)
     np.testing.assert_allclose(runtime.rested_maximum_force(), 2215.9811474699964)
 
+
 def test_float32_population_preserves_requested_runtime_dtype():
     runtime = PotvinFuglevand2017Plan(dtype=np.float32).prepare()
     candidate = runtime.candidate(runtime.initialize(), 20.125, 0.1)
@@ -71,9 +72,7 @@ def test_recruitment_threshold_and_saturation_boundaries_are_exact():
     assert not bool(jnp.any(at.recruited[1:]))
     assert bool(jnp.all(maximum.recruited))
     assert bool(jnp.all(maximum.saturated))
-    np.testing.assert_allclose(
-        np.asarray(maximum.firing_rate_hz)[[0, -1]], [35.0, 25.0]
-    )
+    np.testing.assert_allclose(np.asarray(maximum.firing_rate_hz)[[0, -1]], [35.0, 25.0])
 
 
 def test_force_frequency_branches_are_continuous_at_point_four():
@@ -159,11 +158,17 @@ def test_fatigue_mechanism_selections_are_static_and_independent():
     peripheral_state = peripheral.candidate(source, 20.0, 0.1).commit()
 
     np.testing.assert_allclose(neither_state.recruitment_duration_s, 0.0)
-    np.testing.assert_allclose(neither_state.current_twitch_force, source.current_twitch_force)
+    np.testing.assert_allclose(
+        neither_state.current_twitch_force, source.current_twitch_force
+    )
     assert bool(jnp.any(central_state.recruitment_duration_s > 0.0))
-    np.testing.assert_allclose(central_state.current_twitch_force, source.current_twitch_force)
+    np.testing.assert_allclose(
+        central_state.current_twitch_force, source.current_twitch_force
+    )
     np.testing.assert_allclose(peripheral_state.recruitment_duration_s, 0.0)
-    assert bool(jnp.any(peripheral_state.current_twitch_force < source.current_twitch_force))
+    assert bool(
+        jnp.any(peripheral_state.current_twitch_force < source.current_twitch_force)
+    )
 
 
 @pytest.mark.parametrize(
@@ -190,15 +195,14 @@ def test_invalid_interval_inputs_roll_back(excitation, step_s, status):
         committed.current_twitch_force, source.current_twitch_force
     )
 
+
 def test_direct_evaluation_refuses_inputs_outside_the_model_domain():
     runtime = PotvinFuglevand2017Plan().prepare()
     with pytest.raises(
         (ValueError, eqx.EquinoxRuntimeError),
         match="outside the model domain",
     ):
-        jax.block_until_ready(
-            runtime.evaluate(runtime.initialize(), -1.0).total_force
-        )
+        jax.block_until_ready(runtime.evaluate(runtime.initialize(), -1.0).total_force)
 
 
 def test_invalid_state_and_trained_parameters_roll_back():
@@ -209,9 +213,7 @@ def test_invalid_state_and_trained_parameters_roll_back():
         source.current_twitch_force.at[0].set(jnp.nan),
     )
     state_candidate = runtime.candidate(invalid_state, 20.0, 0.1)
-    assert int(state_candidate.evidence.status) & int(
-        PotvinFuglevand2017Status.NONFINITE
-    )
+    assert int(state_candidate.evidence.status) & int(PotvinFuglevand2017Status.NONFINITE)
     assert int(state_candidate.evidence.status) & int(
         PotvinFuglevand2017Status.INVALID_STATE
     )
@@ -244,7 +246,9 @@ def test_array_dynamics_view_matches_typed_candidate():
     )
     typed = runtime.candidate(source, 20.0, 0.1)
 
-    np.testing.assert_allclose(result.candidate_state, runtime.pack_state(typed.candidate_state))
+    np.testing.assert_allclose(
+        result.candidate_state, runtime.pack_state(typed.candidate_state)
+    )
     np.testing.assert_allclose(result.accepted_state, runtime.pack_state(typed.commit()))
     assert bool(result.successful)
     assert int(result.status) == int(typed.evidence.status)
@@ -262,7 +266,9 @@ def test_jit_vmap_pathwise_gradient_and_parameter_partitioning():
     assert batched.shape == (3,)
     assert bool(jnp.all(jnp.diff(batched) > 0.0))
 
-    derivative = jax.grad(lambda drive: runtime.evaluate(state, drive).total_force)(20.125)
+    derivative = jax.grad(lambda drive: runtime.evaluate(state, drive).total_force)(
+        20.125
+    )
     assert jnp.isfinite(derivative)
     assert derivative > 0.0
     assert eager.evidence.minimum_recruitment_margin > 0.0

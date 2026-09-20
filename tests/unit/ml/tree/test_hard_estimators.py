@@ -287,8 +287,8 @@ def test_masks_statistical_weights_measure_policy_target_and_case_axes_are_prese
             jnp.stack((2.0 * x[1, :, 0], x[1, :, 0] + 1.0), axis=-1),
         )
     )
-    feature_mask = jnp.ones_like(x, dtype=bool).at[:, 3, 1].set(False)
-    target_mask = jnp.ones_like(y, dtype=bool).at[:, 2, 1].set(False)
+    feature_mask = jnp.ones_like(x, dtype="bool").at[:, 3, 1].set(False)
+    target_mask = jnp.ones_like(y, dtype="bool").at[:, 2, 1].set(False)
     batch = MLBatch(
         x,
         y,
@@ -375,7 +375,9 @@ def test_categorical_fit_records_membership_and_routes_unseen_and_missing_rows_o
 
 def test_exact_split_ties_are_deterministic_and_choose_the_first_feature():
     feature = jnp.arange(8.0)
-    batch = MLBatch(jnp.stack((feature, feature), axis=-1), (feature > 3).astype(float))
+    batch = MLBatch(
+        jnp.stack((feature, feature), axis=-1), (feature > 3).astype("float64")
+    )
     first = DecisionTreeRegressor(max_depth=1).fit_batch(batch)
     second = DecisionTreeRegressor(max_depth=1).fit_batch(batch)
     first_model = first.as_trainable()
@@ -462,7 +464,7 @@ def test_invalid_weights_complex_features_and_recipe_parameters_fail_explicitly(
         )
     with pytest.raises(TypeError, match="complex"):
         DecisionTreeRegressor().fit_batch(
-            MLBatch(batch.features.astype(complex) + 1j, batch.targets)
+            MLBatch(batch.features.astype("complex128") + 1j, batch.targets)
         )
     with pytest.raises(ValueError, match="Monotonic constraints"):
         DecisionTreeRegressor(monotonic_constraints=(2, 0))

@@ -110,8 +110,7 @@ class ChemicalConditionalAffineDriverLoss(AbstractOperatorLossTerm):
         del prediction, batch, targets, step, training
         if not isinstance(model, ChemicalConditionalAffineOperator):
             raise TypeError(
-                "ChemicalConditionalAffineDriverLoss requires "
-                "ChemicalConditionalAffineOperator."
+                "ChemicalConditionalAffineDriverLoss requires ChemicalConditionalAffineOperator."
             )
         _, physical_batch, _ = context.view("physical")
         truth = _driver_source(
@@ -178,8 +177,7 @@ class ChemicalConditionalAffineTeacherForcedLoss(AbstractOperatorLossTerm):
         del prediction, batch, targets, step, training
         if not isinstance(model, ChemicalConditionalAffineOperator):
             raise TypeError(
-                "ChemicalConditionalAffineTeacherForcedLoss requires "
-                "ChemicalConditionalAffineOperator."
+                "ChemicalConditionalAffineTeacherForcedLoss requires ChemicalConditionalAffineOperator."
             )
         _, physical_batch, physical_targets = context.view("physical")
         state_truth = physical_targets.field(self.state_target_field)

@@ -91,7 +91,7 @@ class UniformFiberArchitecturePlan(StrictModule, NonTrainableState):
             raise ValueError("reference_direction must have shape (3,).")
         if jnp.issubdtype(direction.dtype, jnp.complexfloating):
             raise ValueError("reference_direction must be real-valued.")
-        support_ = jnp.asarray(support, dtype=bool)
+        support_ = jnp.asarray(support, dtype=jnp.bool_)
         if support_.shape != ():
             raise ValueError("Uniform fiber support must be one scalar mask.")
         norm = jnp.linalg.norm(direction)

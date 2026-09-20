@@ -14,8 +14,8 @@ from .._numerics import log_normalize, weight_ess
 
 def normalized_log_weights(log_weights: Array, valid: Array, /) -> Array:
     """Normalize finite log weights over valid entries only."""
-    values = jnp.asarray(log_weights, dtype=float)
-    validity = jnp.asarray(valid, dtype=bool)
+    values = jnp.asarray(log_weights, dtype=jnp.float64)
+    validity = jnp.asarray(valid, dtype=jnp.bool_)
     if values.shape != validity.shape:
         raise ValueError("log_weights and valid must have identical shapes.")
     weights, _, successful = log_normalize(
@@ -33,7 +33,7 @@ def normalized_log_weights(log_weights: Array, valid: Array, /) -> Array:
 def weighted_mean(values: Array, weights: Array, /) -> Array:
     """Reduce every weight axis while preserving trailing value axes."""
     array = jnp.asarray(values)
-    mass = jnp.asarray(weights, dtype=float)
+    mass = jnp.asarray(weights, dtype=jnp.float64)
     if array.shape[: mass.ndim] != mass.shape:
         raise ValueError("values must begin with the complete weight shape.")
     expanded = mass.reshape(mass.shape + (1,) * (array.ndim - mass.ndim))
@@ -43,7 +43,7 @@ def weighted_mean(values: Array, weights: Array, /) -> Array:
 def effective_sample_size(weights: Array, /) -> Array:
     """Return inverse squared mass for already-normalized nonnegative weights."""
     return weight_ess(
-        jnp.asarray(weights, dtype=float),
+        jnp.asarray(weights, dtype=jnp.float64),
         axis=tuple(range(jnp.asarray(weights).ndim)),
     )
 
@@ -57,7 +57,7 @@ def clustered_standard_error(
 ) -> Array:
     """Estimate uncertainty from weighted independent cluster aggregates."""
     node_values = jnp.asarray(values)
-    mass = jnp.asarray(weights, dtype=float)
+    mass = jnp.asarray(weights, dtype=jnp.float64)
     indices = jnp.asarray(cluster_indices, dtype=jnp.int32)
     count = int(num_clusters)
     if node_values.shape != mass.shape or indices.shape != mass.shape:

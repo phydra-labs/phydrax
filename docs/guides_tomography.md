@@ -9,7 +9,7 @@ polychromatic route is intentionally more explicit: `MaterialBasisProjectionPlan
 projects density-weighted material fractions to areal masses, while
 `PolychromaticDetectorPlan` binds an ordered diagnostic coefficient table to
 per-view tube spectrum, filtration, bowtie, AEC, detector response, exposure
-basis, and explicitly labelled scatter. Relative acquisition produces only
+basis, and explicitly labeled scatter. Relative acquisition produces only
 relative expected signal; absolute counts require absolute exposure calibration.
 
 `FilteredBackprojectionPlan` is limited to parallel-beam geometry. `IterativeCTPlan`

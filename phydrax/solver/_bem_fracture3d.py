@@ -44,8 +44,8 @@ class BEMFractureProblem3D(StrictModule, NonTrainableState):
             raise TypeError(
                 "traction_operator must be a prepared conforming BEM operator."
             )
-        normal = np.asarray(normals, dtype=float)
-        gap = np.asarray(initial_gap, dtype=float)
+        normal = np.asarray(normals, dtype=np.float64)
+        gap = np.asarray(initial_gap, dtype=np.float64)
         if (
             normal.ndim != 2
             or normal.shape[1] != 3

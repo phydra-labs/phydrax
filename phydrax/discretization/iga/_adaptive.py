@@ -96,7 +96,7 @@ class DWREstimate(StrictModule, NonTrainableState):
         pollution: Sequence[tuple[str, float]],
     ):
         cells = tuple(cell_ids)
-        indicators = np.asarray(signed_indicators, dtype=float)
+        indicators = np.asarray(signed_indicators, dtype=np.float64)
         pollution_ = tuple((str(name), float(value)) for name, value in pollution)
         if (
             not cells

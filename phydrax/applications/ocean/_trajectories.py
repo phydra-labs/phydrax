@@ -137,7 +137,7 @@ class PassiveOceanTrajectoryPlan(StrictModule, NonTrainableState):
         )
         horizontal_valid = (
             (
-                jnp.ones_like(first, dtype=bool)
+                jnp.ones_like(first, dtype=jnp.bool_)
                 if geometry.periodic[0]
                 else (first >= first_nodes[0]) & (first <= first_nodes[-1])
             )

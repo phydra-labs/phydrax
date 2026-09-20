@@ -158,7 +158,7 @@ def reference_map_jacobian(
     if values.shape[-1:] != (dimension,):
         raise ValueError("Map values must end in one component per reference axis.")
     sample_shape = tuple(axis.size for axis in reference.axes)
-    if tuple(int(size) for size in values.shape[-dimension - 1 : -1]) != sample_shape:
+    if tuple(values.shape[-dimension - 1 : -1]) != sample_shape:
         raise ValueError("Map values do not match the reference tensor-grid shape.")
     nodes = tuple(axis.nodes for axis in reference.axes)
     lattice = jnp.stack(jnp.meshgrid(*nodes, indexing="ij"), axis=-1)
@@ -212,7 +212,7 @@ def pullback_scalar_gradient(
     gradient = jnp.asarray(reference_gradient)
     if matrix.ndim < 2 or matrix.shape[-1] != matrix.shape[-2]:
         raise ValueError("jacobian must end in square matrix axes.")
-    dimension = int(matrix.shape[-1])
+    dimension = matrix.shape[-1]
     plan = SmallLinearSolvePlan(
         dimension,
         singular_tolerance=singular_tolerance,
@@ -245,7 +245,7 @@ def reference_map_constraint_loss(
     next_det = jnp.linalg.det(next_jacobian)
     midpoint = 0.5 * (current_jacobian + next_jacobian)
     rate = (next_jacobian - current_jacobian) / dt
-    dimension = int(midpoint.shape[-1])
+    dimension = midpoint.shape[-1]
     solve = solve_small_linear(
         SmallLinearSolvePlan(dimension),
         midpoint,
@@ -442,7 +442,7 @@ def jax_relu(value: ArrayLike, /) -> Array:
 
 
 def _point_coordinates(value: ArrayLike, name: str, /) -> Array:
-    coordinates = jnp.asarray(value, dtype=float)
+    coordinates = jnp.asarray(value, dtype=jnp.float64)
     if coordinates.ndim != 2 or min(coordinates.shape) <= 0:
         raise ValueError(f"{name} must have non-empty shape (point, coordinate).")
     if not bool(jnp.all(jnp.isfinite(coordinates))):
@@ -451,7 +451,7 @@ def _point_coordinates(value: ArrayLike, name: str, /) -> Array:
 
 
 def _point_weights(value: ArrayLike, count: int, name: str, /) -> Array:
-    weights = jnp.asarray(value, dtype=float)
+    weights = jnp.asarray(value, dtype=jnp.float64)
     if (
         weights.shape != (count,)
         or not bool(jnp.all(jnp.isfinite(weights)))

@@ -109,7 +109,7 @@ class ILQRPolicy(AbstractControlParameterization):
         if not state_layout.geometry.supports_exact_inverse:
             raise ValueError("ILQRPolicy requires exact inverse-retraction geometry.")
         state_shape_ = state_layout.shape
-        control_shape_ = tuple(int(size) for size in control_shape)
+        control_shape_ = tuple(control_shape)
         state_size = state_layout.local_size
         control_size = int(np.prod(control_shape_))
         trailing_states = (time_grid.num_times,) + state_shape_
@@ -118,8 +118,7 @@ class ILQRPolicy(AbstractControlParameterization):
             or tuple(states.shape[-len(trailing_states) :]) != trailing_states
         ):
             raise ValueError(
-                "ILQRPolicy nominal_states must end with "
-                f"{trailing_states}; got {states.shape}."
+                f"ILQRPolicy nominal_states must end with {trailing_states}; got {states.shape}."
             )
         case_shape_ = tuple(states.shape[: -len(trailing_states)])
         expected_controls = case_shape_ + (time_grid.num_steps,) + control_shape_
@@ -130,13 +129,11 @@ class ILQRPolicy(AbstractControlParameterization):
         )
         if tuple(controls.shape) != expected_controls:
             raise ValueError(
-                f"ILQRPolicy nominal_controls must have shape {expected_controls}; "
-                f"got {controls.shape}."
+                f"ILQRPolicy nominal_controls must have shape {expected_controls}; got {controls.shape}."
             )
         if tuple(gains.shape) != expected_feedback:
             raise ValueError(
-                f"ILQRPolicy feedback must have shape {expected_feedback}; "
-                f"got {gains.shape}."
+                f"ILQRPolicy feedback must have shape {expected_feedback}; got {gains.shape}."
             )
         self.time_grid = time_grid
         self.nominal_states = states
@@ -182,7 +179,7 @@ class ILQRPolicy(AbstractControlParameterization):
         case_shape: tuple[int, ...] = (),
         state: ArrayLike | None = None,
     ) -> Array:
-        cases = tuple(int(size) for size in case_shape)
+        cases = tuple(case_shape)
         if cases != self.case_shape:
             raise ValueError(
                 f"ILQRPolicy case_shape must be {self.case_shape}; got {cases}."
@@ -196,7 +193,7 @@ class ILQRPolicy(AbstractControlParameterization):
         query = jnp.asarray(time)
         if jnp.issubdtype(query.dtype, jnp.complexfloating):
             raise TypeError("ILQRPolicy evaluation times must be real-valued.")
-        query = query.astype(jnp.result_type(query, float))
+        query = query.astype(jnp.result_type(query, jnp.float64))
         query = eqx.error_if(
             query,
             jnp.any(~jnp.isfinite(query))
@@ -216,8 +213,7 @@ class ILQRPolicy(AbstractControlParameterization):
         expected_state_shape = self.case_shape + tuple(query.shape) + self.state_shape
         if tuple(states.shape) != expected_state_shape:
             raise ValueError(
-                f"ILQRPolicy state must have shape {expected_state_shape}; "
-                f"got {states.shape}."
+                f"ILQRPolicy state must have shape {expected_state_shape}; got {states.shape}."
             )
         nominal_nodes = jnp.take(
             self.nominal_states,
@@ -392,8 +388,7 @@ def _flow_map(
         raise TypeError("Unsupported control dynamics type for iLQR.")
     if not isinstance(differential_flow, DifferentialControlFlow):
         raise ValueError(
-            "DifferentialControlDynamics requires an explicit "
-            "DifferentialControlFlow for iLQR."
+            "DifferentialControlDynamics requires an explicit DifferentialControlFlow for iLQR."
         )
 
     def differential_step(

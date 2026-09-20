@@ -52,9 +52,9 @@ class MonteCarloPathBatch(StrictModule):
     def __init__(
         self, times: ArrayLike, values: ArrayLike, valid: ArrayLike, /, *, path_id: str
     ):
-        times_ = jnp.asarray(times, dtype=float)
-        values_ = jnp.asarray(values, dtype=float)
-        valid_ = jnp.asarray(valid, dtype=bool)
+        times_ = jnp.asarray(times, dtype=jnp.float64)
+        values_ = jnp.asarray(values, dtype=jnp.float64)
+        valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         if times_.ndim != 1 or times_.size < 2:
             raise ValueError("times must be a vector with at least two nodes.")
         if (
@@ -288,7 +288,7 @@ def prepare_monte_carlo(
         raise TypeError("paths and plan must be Monte Carlo records.")
     _validate_payoff(payoff)
     _validate_metadata(currency, evidence_binding, pricing_law)
-    discount = jnp.asarray(discount_factor, dtype=float)
+    discount = jnp.asarray(discount_factor, dtype=jnp.float64)
     if discount.shape != ():
         raise ValueError("discount_factor must be scalar.")
     discount = eqx.error_if(
@@ -388,7 +388,7 @@ def prepare_qmc_monte_carlo(
         raise ValueError("each QMC replicate must contain plan.num_samples paths.")
     _validate_payoff(payoff)
     _validate_metadata(currency, evidence_binding, pricing_law)
-    discount = jnp.asarray(discount_factor, dtype=float)
+    discount = jnp.asarray(discount_factor, dtype=jnp.float64)
     if discount.shape != ():
         raise ValueError("discount_factor must be scalar.")
     discount = eqx.error_if(
@@ -479,7 +479,7 @@ def evaluate_mlmc(
         )
     _validate_payoff(payoff)
     _validate_metadata(currency, evidence_binding, pricing_law)
-    discount = jnp.asarray(discount_factor, dtype=float)
+    discount = jnp.asarray(discount_factor, dtype=jnp.float64)
     if discount.shape != ():
         raise ValueError("discount_factor must be scalar.")
     discount = eqx.error_if(

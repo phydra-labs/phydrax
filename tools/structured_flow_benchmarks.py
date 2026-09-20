@@ -102,7 +102,7 @@ def _projection_record(
         "hybrid_line_axis": result.hybrid_line_axis,
         "resources": {
             "maximum_resource_bytes": int(result.maximum_resource_bytes),
-            "pressure_state_bytes": int(result.pressure.nbytes),
+            "pressure_state_bytes": result.pressure.nbytes,
             "velocity_state_bytes": int(sum(value.nbytes for value in result.velocity)),
             "hybrid": hybrid_resources,
         },
@@ -440,8 +440,7 @@ def run_structured_flow_benchmark(
 def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
-            "Record raw compact, SBP, and MAC route smoke/resource evidence; "
-            "this is not scientific qualification."
+            "Record raw compact, SBP, and MAC route smoke/resource evidence; this is not scientific qualification."
         )
     )
     parser.add_argument("--compact-count", type=int, default=64)

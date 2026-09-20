@@ -71,7 +71,7 @@ class SeriesPairView(StrictModule):
 
     @property
     def pair_count(self) -> int:
-        return int(self.source_indices.shape[0])
+        return self.source_indices.shape[0]
 
     @property
     def source_coordinates(self) -> Array:

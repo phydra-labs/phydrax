@@ -21,7 +21,7 @@ from jaxtyping import Array, ArrayLike, Key
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._sampling._addressing import derive_key, SampleAddress
 from .._sampling._chain import AbstractChainSampleResult
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import (
     DenseLinearOperator,
@@ -73,7 +73,7 @@ def _identifier(value: str, name: str, /) -> str:
 
 
 def _positive_shape(value: Sequence[int], name: str, /) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if not shape or any(size <= 0 for size in shape):
         raise ValueError(f"{name} must contain positive dimensions.")
     return shape
@@ -113,8 +113,8 @@ class LearnedSupportTuple(StrictModule, NonTrainableState):
         )
         if len(set(names)) != len(names):
             raise ValueError("parameter_names must be unique.")
-        lower = np.asarray(parameter_lower, dtype=float)
-        upper = np.asarray(parameter_upper, dtype=float)
+        lower = np.asarray(parameter_lower, dtype=np.float64)
+        upper = np.asarray(parameter_upper, dtype=np.float64)
         if lower.shape != (len(names),) or upper.shape != lower.shape:
             raise ValueError("Parameter bounds must have one entry per parameter name.")
         if np.any(~np.isfinite(lower)) or np.any(~np.isfinite(upper)):
@@ -177,7 +177,7 @@ def assess_learned_support(
     geometry = _identifier(geometry_id, "geometry_id")
     shape = _positive_shape(configuration_shape, "configuration_shape")
     dtype = np.dtype(coordinate_dtype).name
-    parameters = np.asarray(parameter_values, dtype=float)
+    parameters = np.asarray(parameter_values, dtype=np.float64)
     if parameters.shape != support.parameter_lower.shape or np.any(
         ~np.isfinite(parameters)
     ):
@@ -252,8 +252,7 @@ def require_learned_support(
     )
     if qualification.status != "qualified":
         raise ValueError(
-            "Learned artifact refused support query with status "
-            f"{qualification.status!r}."
+            f"Learned artifact refused support query with status {qualification.status!r}."
         )
     return qualification
 
@@ -296,11 +295,11 @@ class FrozenLearnedCoarseSpace(StrictModule, NonTrainableState):
 
     @property
     def dimension(self) -> int:
-        return int(self.basis.shape[0])
+        return self.basis.shape[0]
 
     @property
     def coarse_rank(self) -> int:
-        return int(self.basis.shape[1])
+        return self.basis.shape[1]
 
     def restrict(self, fine_coordinates: ArrayLike, /) -> Array:
         value = jnp.asarray(fine_coordinates, dtype=self.basis.dtype)
@@ -402,7 +401,7 @@ def freeze_learned_coarse_space(
     basis_host = np.asarray(basis)
     if basis_host.ndim != 2 or basis_host.shape[0] != support.dimension:
         raise ValueError("basis must have shape (support.dimension, coarse_rank).")
-    rank = int(basis_host.shape[1])
+    rank = basis_host.shape[1]
     if rank <= 0 or rank > maximum_rank:
         raise ValueError("Coarse-space rank exceeds maximum_coarse_rank.")
     if basis_host.dtype.name != support.coordinate_dtype:
@@ -544,11 +543,11 @@ class DelayedAcceptanceHMCResult(AbstractChainSampleResult):
 
     @property
     def num_chains(self) -> int:
-        return int(self.exact_log_target.shape[0])
+        return self.exact_log_target.shape[0]
 
     @property
     def num_draws(self) -> int:
-        return int(self.exact_log_target.shape[1])
+        return self.exact_log_target.shape[1]
 
     @property
     def chain_provenance(self) -> str:
@@ -556,7 +555,7 @@ class DelayedAcceptanceHMCResult(AbstractChainSampleResult):
 
     @property
     def acceptance_rate(self) -> Array:
-        return jnp.mean(self.accepted.astype(float), axis=1)
+        return jnp.mean(self.accepted.astype("float64"), axis=1)
 
 
 def prepare_delayed_acceptance_hmc(
@@ -927,9 +926,9 @@ class GaugeFlowEvaluation(StrictModule):
 class AbstractGaugeEquivariantFlow(StrictModule, NonTrainableState):
     """Invertible flow protocol with explicit Jacobian and equivariance evidence."""
 
-    flow_id: AbstractAttribute[str]
-    support_id: AbstractAttribute[str]
-    configuration_shape: AbstractAttribute[tuple[int, ...]]
+    flow_id: eqx.AbstractVar[str]
+    support_id: eqx.AbstractVar[str]
+    configuration_shape: eqx.AbstractVar[tuple[int, ...]]
 
     @abc.abstractmethod
     def forward(self, base_value: Array, /) -> GaugeFlowEvaluation:
@@ -1077,11 +1076,11 @@ class GaugeFlowProposalResult(AbstractChainSampleResult):
 
     @property
     def num_chains(self) -> int:
-        return int(self.log_target.shape[0])
+        return self.log_target.shape[0]
 
     @property
     def num_draws(self) -> int:
-        return int(self.log_target.shape[1])
+        return self.log_target.shape[1]
 
     @property
     def chain_provenance(self) -> str:

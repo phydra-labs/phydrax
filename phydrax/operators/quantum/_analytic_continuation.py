@@ -443,7 +443,7 @@ def prepare_pade_continuation(
     if not isinstance(plan, PadeContinuationPlan):
         raise TypeError("plan must be a PadeContinuationPlan.")
     frequency, values, active = _active_scalar_samples(samples)
-    count = int(values.shape[0])
+    count = values.shape[0]
     unknowns = plan.numerator_degree + plan.denominator_degree + 1
     if count > plan.maximum_samples:
         raise ValueError("Padé samples exceed plan.maximum_samples.")
@@ -618,7 +618,7 @@ def pade_continuation(
     """Plan, fit, and evaluate multipoint Padé continuation."""
 
     plan = plan_pade_continuation(
-        int(samples.values.shape[0]),
+        samples.values.shape[0],
         numerator_degree=numerator_degree,
         denominator_degree=denominator_degree,
         maximum_bytes=maximum_bytes,
@@ -717,7 +717,7 @@ def _whitened_spectral_system(
     /,
 ) -> tuple[Array, Array, Array]:
     frequency, values, active = _active_scalar_samples(samples)
-    count = int(values.shape[0])
+    count = values.shape[0]
     noise_ = _noise_array(noise, count)
     safe_noise = jnp.where(active, noise_, 1.0)
     z = 1j * frequency[:, None]
@@ -745,7 +745,7 @@ def prepare_maximum_entropy(
     if not isinstance(plan, MaximumEntropyPlan):
         raise TypeError("plan must be a MaximumEntropyPlan.")
     _, values, _ = _active_scalar_samples(samples)
-    if int(values.shape[0]) > plan.maximum_samples:
+    if values.shape[0] > plan.maximum_samples:
         raise ValueError("Maximum-entropy samples exceed plan.maximum_samples.")
     design, target, noise_ = _whitened_spectral_system(samples, plan.grid, noise)
     count = plan.grid.plan.point_count
@@ -950,7 +950,7 @@ def maximum_entropy_continuation(
         gradient_tolerance=gradient_tolerance,
         residual_tolerance=residual_tolerance,
         learning_rate=learning_rate,
-        maximum_samples=int(samples.values.shape[0]),
+        maximum_samples=samples.values.shape[0],
         maximum_bytes=maximum_bytes,
     )
     prepared = prepare_maximum_entropy(plan, samples, noise=noise, prior=prior)
@@ -1029,7 +1029,7 @@ def prepare_sparse_continuation(
     if not isinstance(plan, SparseContinuationPlan):
         raise TypeError("plan must be a SparseContinuationPlan.")
     _, values, _ = _active_scalar_samples(samples)
-    if int(values.shape[0]) > plan.maximum_samples:
+    if values.shape[0] > plan.maximum_samples:
         raise ValueError("Sparse-continuation samples exceed plan.maximum_samples.")
     design, target, noise_ = _whitened_spectral_system(samples, plan.grid, noise)
     factor = _native_factor(design, 64 * np.finfo(np.dtype(design.dtype)).eps)
@@ -1280,7 +1280,7 @@ def sparse_continuation(
         maximum_iterations=maximum_iterations,
         gradient_tolerance=gradient_tolerance,
         residual_tolerance=residual_tolerance,
-        maximum_samples=int(samples.values.shape[0]),
+        maximum_samples=samples.values.shape[0],
         maximum_bytes=maximum_bytes,
     )
     prepared = prepare_sparse_continuation(plan, samples, noise=noise)
@@ -1458,7 +1458,7 @@ def scalar_fermionic_maximum_entropy(
         gradient_tolerance=gradient_tolerance,
         residual_tolerance=residual_tolerance,
         learning_rate=learning_rate,
-        maximum_samples=int(samples.values.shape[0]),
+        maximum_samples=samples.values.shape[0],
         maximum_bytes=maximum_bytes,
     )
     prepared = prepare_scalar_fermionic_maximum_entropy(

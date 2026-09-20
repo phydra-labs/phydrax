@@ -37,7 +37,7 @@ def conservative_radiation(
 ) -> tuple[Array, Array]:
     """Newtonian cooling W/area and its opposite environmental-reservoir rate.
 
-    ``heat_capacity`` is J/(kg K); this is a grey relaxation parameterization,
+    ``heat_capacity`` is J/(kg K); this is a gray relaxation parameterization,
     not spectrally resolved radiation. The environment receives exactly the
     negative sum of layer heat sources. ``relaxation_time`` must be positive.
     """

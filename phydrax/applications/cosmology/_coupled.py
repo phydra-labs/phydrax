@@ -301,7 +301,7 @@ class CosmologicalGasParticleGravityPlan(StrictModule, NonTrainableState):
             != gravity.transfer.plan.target.prepared_id
         ):
             raise ValueError("Gas and particle gravity must share one prepared grid.")
-        schedule = np.asarray(scale_factors, dtype=float).reshape((-1,))
+        schedule = np.asarray(scale_factors, dtype=np.float64).reshape((-1,))
         if (
             schedule.size < 2
             or np.any(~np.isfinite(schedule))

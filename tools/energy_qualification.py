@@ -172,8 +172,7 @@ def run_opendss_reference(version, license_id):
         "Clear",
         "New Circuit.qualification basekv=12.47 pu=1 phases=3 bus1=source",
         (
-            "New Line.feed bus1=source bus2=load phases=3 r1=0.1 x1=0.2 "
-            "r0=0.3 x0=0.4 c1=0 c0=0 length=1 units=km"
+            "New Line.feed bus1=source bus2=load phases=3 r1=0.1 x1=0.2 r0=0.3 x0=0.4 c1=0 c0=0 length=1 units=km"
         ),
         "New Load.demand bus1=load phases=3 conn=wye kv=12.47 kw=100 kvar=25",
         "Set voltagebases=[12.47]",
@@ -249,8 +248,7 @@ def run_scenario(name, args, execution):
         return {
             **row,
             "scope": (
-                "authored weather-independent adiabatic 100W ideal-load steady reference; "
-                "not transient equivalence"
+                "authored weather-independent adiabatic 100W ideal-load steady reference; not transient equivalence"
             ),
             "executable_path": str(args.energyplus.resolve()),
             "declared_version": args.energyplus_version,

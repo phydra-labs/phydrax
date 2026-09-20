@@ -54,10 +54,7 @@ def test_mhd_executes_through_nodal_conservation_compiler():
             component_shape=(system.component_count,),
         ),
     ).prepare()
-    exterior = tuple(
-        int(value)
-        for value in np.asarray(discretization.exterior_facet_domain.entity_indices)
-    )
+    exterior = tuple(np.asarray(discretization.exterior_facet_domain.entity_indices))
     boundaries = phx.discretization.fem.FiniteElementBoundarySet(
         discretization,
         {"outflow": (exterior, phx.discretization.ExtrapolationBoundary())},

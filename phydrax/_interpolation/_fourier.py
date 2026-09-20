@@ -4,9 +4,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
-from math import isfinite, prod
-from typing import Literal, TypeAlias
+from collections.abc import Sequence
+from math import prod
 
 import equinox as eqx
 import jax
@@ -14,10 +13,11 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._spectral._fourier import resize_fourier_axis as _resize_fourier_axis
+from .._spectral._nonuniform_fourier import (
+    NonuniformFourierPlan,
+    PreparedNonuniformFourier,
+)
 from ._types import InterpolationCapabilities, InterpolationResult
-
-
-FourierEvaluationMethod: TypeAlias = Literal["direct", "nufft"]
 
 
 FOURIER_CAPABILITIES = InterpolationCapabilities(
@@ -33,7 +33,7 @@ FOURIER_CAPABILITIES = InterpolationCapabilities(
 def _as_inexact(values: ArrayLike, /) -> Array:
     array = jnp.asarray(values)
     if not jnp.issubdtype(array.dtype, jnp.inexact):
-        return array.astype(float)
+        return array.astype("float64")
     return array
 
 
@@ -143,7 +143,7 @@ def _expanded_coefficients(
     /,
 ) -> tuple[Array, tuple[int, ...]]:
     axes = tuple(range(batch_ndim, batch_ndim + spatial_ndim))
-    source_shape = tuple(int(values.shape[axis]) for axis in axes)
+    source_shape = tuple(values.shape[axis] for axis in axes)
     coefficients = jnp.fft.fftn(values, axes=axes, norm="forward")
     for axis, size in zip(axes, source_shape, strict=True):
         if size % 2 == 0:
@@ -166,15 +166,13 @@ def _normalize_queries(
     query = jnp.asarray(raw, dtype=dtype)
     if query.ndim < len(batch_shape) + 1 or query.shape[-1:] != (spatial_ndim,):
         raise ValueError(
-            "coordinates must have shape batch_shape + query_shape + "
-            f"({spatial_ndim},); got {query.shape}."
+            f"coordinates must have shape batch_shape + query_shape + ({spatial_ndim},); got {query.shape}."
         )
-    if tuple(int(size) for size in query.shape[: len(batch_shape)]) != batch_shape:
+    if tuple(query.shape[: len(batch_shape)]) != batch_shape:
         raise ValueError(
-            f"Coordinate batch shape must be {batch_shape}; got "
-            f"{query.shape[: len(batch_shape)]}."
+            f"Coordinate batch shape must be {batch_shape}; got {query.shape[: len(batch_shape)]}."
         )
-    query_shape = tuple(int(size) for size in query.shape[len(batch_shape) : -1])
+    query_shape = tuple(query.shape[len(batch_shape) : -1])
     if any(size <= 0 for size in query_shape):
         raise ValueError("Fourier query axes must be nonempty.")
     query = eqx.error_if(
@@ -205,13 +203,13 @@ def _canonical_coefficients(
     arranged = jnp.transpose(coefficients, order)
     batch_count = prod(batch_shape) if batch_shape else 1
     payload_count = prod(payload_shape) if payload_shape else 1
-    mode_shape = tuple(int(coefficients.shape[axis]) for axis in spatial_axes)
+    mode_shape = tuple(coefficients.shape[axis] for axis in spatial_axes)
     return arranged.reshape((batch_count, payload_count, *mode_shape))
 
 
 def _direct_fourier_evaluate(coordinates: Array, coefficients: Array, /) -> Array:
-    dimensions = int(coordinates.shape[-1])
-    mode_shape = tuple(int(size) for size in coefficients.shape[-dimensions:])
+    dimensions = coordinates.shape[-1]
+    mode_shape = tuple(coefficients.shape[-dimensions:])
     modes = tuple(
         jnp.fft.fftfreq(size).astype(coordinates.dtype) * size for size in mode_shape
     )
@@ -231,46 +229,32 @@ def _direct_fourier_evaluate(coordinates: Array, coefficients: Array, /) -> Arra
     return jax.vmap(evaluate_case)(coordinates, coefficients)
 
 
-def _nufft_fourier_evaluate(
+def _chunked_fourier_evaluate(
     coordinates: Array,
     coefficients: Array,
     /,
     *,
-    tolerance: float,
+    chunk_size: int,
 ) -> Array:
-    del tolerance
-    return _direct_fourier_evaluate(coordinates, coefficients)
-
-
-def _evaluate_query_chunks(
-    evaluator: Callable[[Array, Array], Array],
-    coordinates: Array,
-    coefficients: Array,
-    chunk_size: int | None,
-    /,
-) -> Array:
-    if chunk_size is None:
-        return evaluator(coordinates, coefficients)
-
-    query_count = int(coordinates.shape[1])
-    chunk_count = (query_count + chunk_size - 1) // chunk_size
-    padded_count = chunk_count * chunk_size
-    if padded_count != query_count:
-        padding = jnp.broadcast_to(
-            coordinates[:, :1, :],
-            (coordinates.shape[0], padded_count - query_count, coordinates.shape[-1]),
-        )
-        coordinates = jnp.concatenate((coordinates, padding), axis=1)
-
-    chunks = coordinates.reshape(
-        (coordinates.shape[0], chunk_count, chunk_size, coordinates.shape[-1])
+    dimensions = coordinates.shape[-1]
+    mode_shape = coefficients.shape[-dimensions:]
+    prepared = PreparedNonuniformFourier(
+        NonuniformFourierPlan(
+            mode_shape,
+            2,
+            sign=1,
+            route="chunked",
+            chunk_size=chunk_size,
+        ),
+        dtype=coordinates.dtype,
     )
-    chunks = jnp.moveaxis(chunks, 1, 0)
-    evaluated = jax.lax.map(lambda chunk: evaluator(chunk, coefficients), chunks)
-    evaluated = jnp.transpose(evaluated, (1, 2, 0, 3)).reshape(
-        (coordinates.shape[0], coefficients.shape[1], padded_count)
-    )
-    return evaluated[..., :query_count]
+
+    def evaluate_case(points: Array, case_coefficients: Array) -> Array:
+        mode_first = jnp.moveaxis(case_coefficients, 0, -1)
+        evaluated = prepared.type2(points, mode_first)
+        return jnp.swapaxes(evaluated, 0, 1)
+
+    return jax.vmap(evaluate_case)(coordinates, coefficients)
 
 
 def fourier_interpolate(
@@ -282,16 +266,14 @@ def fourier_interpolate(
     payload_ndim: int = 1,
     axis_nodes: Sequence[ArrayLike] | None = None,
     periods: Sequence[ArrayLike] | None = None,
-    method: FourierEvaluationMethod = "direct",
-    tolerance: float | None = None,
     query_chunk_size: int | None = None,
 ) -> InterpolationResult:
     """Evaluate a periodic tensor-grid field at paired arbitrary coordinates.
 
     Values have shape ``batch_shape + source_shape + payload_shape`` and queries
-    have shape ``batch_shape + query_shape + (spatial_ndim,)``. The direct method
-    evaluates the finite Fourier series exactly up to floating-point roundoff;
-    ``method="nufft"`` uses the prepared native finite Fourier operator.
+    have shape ``batch_shape + query_shape + (spatial_ndim,)``. Evaluation is
+    exact up to floating-point roundoff. ``query_chunk_size`` selects the
+    bounded nonuniform Fourier route without changing numerical semantics.
     """
     dimensions = int(spatial_ndim)
     payload_dimensions = int(payload_ndim)
@@ -299,20 +281,6 @@ def fourier_interpolate(
         raise ValueError("spatial_ndim must be positive.")
     if payload_dimensions < 0:
         raise ValueError("payload_ndim must be nonnegative.")
-    if method not in ("direct", "nufft"):
-        raise ValueError("method must be 'direct' or 'nufft'.")
-    if method == "direct":
-        if tolerance is not None:
-            raise ValueError("The direct Fourier method does not accept a tolerance.")
-        tolerance_ = None
-    else:
-        if dimensions not in (1, 2, 3):
-            raise ValueError("NUFFT Fourier interpolation supports one to three axes.")
-        if tolerance is None:
-            raise ValueError("NUFFT Fourier interpolation requires a tolerance.")
-        tolerance_ = float(tolerance)
-        if not isfinite(tolerance_) or not 0.0 < tolerance_ < 1.0:
-            raise ValueError("NUFFT tolerance must be finite and lie in (0, 1).")
     if query_chunk_size is not None:
         query_chunk_size = int(query_chunk_size)
         if query_chunk_size <= 0:
@@ -325,13 +293,11 @@ def fourier_interpolate(
             "values must contain the declared spatial and payload dimensions."
         )
     batch_ndim = array.ndim - minimum_rank
-    batch_shape = tuple(int(size) for size in array.shape[:batch_ndim])
-    source_shape = tuple(
-        int(size) for size in array.shape[batch_ndim : batch_ndim + dimensions]
-    )
+    batch_shape = tuple(array.shape[:batch_ndim])
+    source_shape = tuple(array.shape[batch_ndim : batch_ndim + dimensions])
     if any(size <= 0 for size in source_shape):
         raise ValueError("Fourier source axes must be nonempty.")
-    payload_shape = tuple(int(size) for size in array.shape[batch_ndim + dimensions :])
+    payload_shape = tuple(array.shape[batch_ndim + dimensions :])
 
     coefficients, actual_source_shape = _expanded_coefficients(
         array,
@@ -366,20 +332,14 @@ def fourier_interpolate(
         spatial_ndim=dimensions,
     )
 
-    if method == "direct":
-        evaluator = _direct_fourier_evaluate
-    else:
-        assert tolerance_ is not None
-        evaluator = lambda query, coeff: _nufft_fourier_evaluate(
-            query,
-            coeff,
-            tolerance=tolerance_,
+    evaluated = (
+        _direct_fourier_evaluate(normalized, canonical)
+        if query_chunk_size is None
+        else _chunked_fourier_evaluate(
+            normalized,
+            canonical,
+            chunk_size=query_chunk_size,
         )
-    evaluated = _evaluate_query_chunks(
-        evaluator,
-        normalized,
-        canonical,
-        query_chunk_size,
     )
     if not jnp.issubdtype(array.dtype, jnp.complexfloating):
         evaluated = evaluated.real
@@ -389,12 +349,8 @@ def fourier_interpolate(
     payload_axes = tuple(range(len(batch_shape), len(batch_shape) + len(payload_shape)))
     query_axes = tuple(range(len(batch_shape) + len(payload_shape), grouped.ndim))
     output = jnp.transpose(grouped, batch_axes + query_axes + payload_axes)
-    support = jnp.ones(batch_shape + query_shape, dtype=bool)
+    support = jnp.ones(batch_shape + query_shape, dtype=jnp.bool_)
     return InterpolationResult(values=output, support=support)
 
 
-__all__ = [
-    "FOURIER_CAPABILITIES",
-    "FourierEvaluationMethod",
-    "fourier_interpolate",
-]
+__all__ = ["FOURIER_CAPABILITIES", "fourier_interpolate"]

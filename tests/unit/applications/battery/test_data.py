@@ -414,7 +414,7 @@ def test_transformation_binds_corpus_then_fits_only_train_content():
 
     transformed = fitted.apply(original[1])
     assert transformed.values.shape == (3, 3)
-    np.testing.assert_array_equal(transformed.valid_mask, np.ones((3, 3), dtype=bool))
+    np.testing.assert_array_equal(transformed.valid_mask, np.ones((3, 3), dtype="bool"))
 
 
 def test_canonical_arrays_and_sampling_are_jit_ready_and_records_are_immutable():

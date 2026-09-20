@@ -78,7 +78,7 @@ def plan_linear_routes(
         target_size=target_count,
     )
     route_bytes = sum(
-        int(value.size * value.dtype.itemsize)
+        value.size * value.dtype.itemsize
         for value in (
             relation.source_indices,
             relation.target_indices,
@@ -118,7 +118,7 @@ def plan_block_diagonal_routes(
     *,
     plan_id: str | None = None,
 ) -> LinearRoutePlan:
-    sizes = tuple(int(value) for value in block_sizes)
+    sizes = tuple(block_sizes)
     if not sizes or any(value <= 0 for value in sizes):
         raise ValueError("block_sizes must contain positive sizes.")
     sources: list[int] = []
@@ -153,7 +153,7 @@ def bind_linear_relation(
     if values.shape[-1:] != (plan.cost.structural_entries,):
         raise ValueError("Linear relation coefficients have the wrong route count.")
     if not jnp.issubdtype(values.dtype, jnp.inexact):
-        values = values.astype(float)
+        values = values.astype("float64")
     version = jnp.asarray(numeric_version, dtype=jnp.int32)
     if version.shape != () or bool(version < 0):
         raise ValueError("numeric_version must be one nonnegative scalar.")
@@ -187,7 +187,7 @@ def bind_block_diagonal_relation(
     batch_shape = arrays[0].shape[:-2]
     if any(block.shape[:-2] != batch_shape for block in arrays):
         raise ValueError("Block relation batches must match.")
-    expected = sum(int(block.shape[-1]) ** 2 for block in arrays)
+    expected = sum(block.shape[-1] ** 2 for block in arrays)
     if expected != plan.cost.structural_entries:
         raise ValueError("Block sizes do not match the route plan.")
     coefficients = jnp.concatenate(

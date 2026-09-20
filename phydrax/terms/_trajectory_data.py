@@ -59,7 +59,7 @@ class TrajectoryCaseDataBatch(StrictModule):
         self.points = points
         self.target = jnp.asarray(target)
         self.case_indices = jnp.asarray(case_indices, dtype=jnp.int32)
-        self.times = jnp.asarray(times, dtype=float)
+        self.times = jnp.asarray(times, dtype=jnp.float64)
 
 
 def _validate_case_values(domain: TrajectoryDatasetDomain, values: ArrayLike, /) -> Array:
@@ -77,9 +77,9 @@ def _time_selection(
     /,
 ) -> tuple[Array, Array]:
     if time == "start":
-        n = int(case_indices.shape[0])
+        n = case_indices.shape[0]
         return (
-            jnp.full((n,), domain.start, dtype=float),
+            jnp.full((n,), domain.start, dtype=jnp.float64),
             jnp.zeros((n,), dtype=jnp.int32),
         )
     if time == "end":
@@ -87,9 +87,9 @@ def _time_selection(
 
     value = _fixed_case_time_value(time)
     time_indices = jnp.rint((value - domain.start) / domain.dt).astype(jnp.int32)
-    n = int(case_indices.shape[0])
+    n = case_indices.shape[0]
     return (
-        jnp.full((n,), value, dtype=float),
+        jnp.full((n,), value, dtype=jnp.float64),
         jnp.full((n,), time_indices, dtype=jnp.int32),
     )
 
@@ -116,17 +116,17 @@ def _sample_case_indices(
     if indices is not None:
         allowed = jnp.asarray(indices, dtype=jnp.int32).reshape((-1,))
         valid = valid[allowed]
-        probs = valid.astype(float) / jnp.sum(valid.astype(float))
-        positions = jr.choice(key, int(allowed.shape[0]), shape=(n,), p=probs)
+        probs = valid.astype("float64") / jnp.sum(valid.astype("float64"))
+        positions = jr.choice(key, allowed.shape[0], shape=(n,), p=probs)
         return allowed[positions].astype(jnp.int32)
-    probs = valid.astype(float) / jnp.sum(valid.astype(float))
+    probs = valid.astype("float64") / jnp.sum(valid.astype("float64"))
     return jr.choice(key, domain.size, shape=(n,), p=probs).astype(jnp.int32)
 
 
 def _fixed_case_time_value(time: TrajectoryCaseTime, /) -> Array:
     if isinstance(time, str):
         raise ValueError("case_time must be 'start', 'end', or a floating time value.")
-    return jnp.asarray(float(time), dtype=float).reshape(())
+    return jnp.asarray(float(time), dtype=jnp.float64).reshape(())
 
 
 class TrajectoryCaseDataTerm(AbstractSamplingTerm):
@@ -225,14 +225,14 @@ class TrajectoryCaseDataTerm(AbstractSamplingTerm):
         self.values = _validate_case_values(domain, values)
         self.case_time = case_time
         if isinstance(weight, DomainFunction):
-            self.weight = jnp.asarray(1.0, dtype=float)
+            self.weight = jnp.asarray(1.0, dtype=jnp.float64)
             self.pointwise_weight = weight
         else:
-            self.weight = jnp.asarray(weight, dtype=float)
+            self.weight = jnp.asarray(weight, dtype=jnp.float64)
             self.pointwise_weight = None
         self.case_indices = case_indices_arr
         self.label = None if label is None else str(label)
-        self.data_accuracy_eps = jnp.asarray(float(data_accuracy_eps), dtype=float)
+        self.data_accuracy_eps = jnp.asarray(float(data_accuracy_eps), dtype=jnp.float64)
 
     @property
     def domain(self) -> TrajectoryDatasetDomain:
@@ -301,7 +301,7 @@ class TrajectoryCaseDataTerm(AbstractSamplingTerm):
         batch_ = self.sample(key=key) if batch is None else batch
         prediction = self._prediction(functions, batch_, key=key, **kwargs)
         return supervised_data_metrics(
-            jnp.asarray(prediction.data, dtype=float),
+            jnp.asarray(prediction.data, dtype=jnp.float64),
             batch_.target,
             eps=self.data_accuracy_eps,
         )
@@ -321,7 +321,7 @@ class TrajectoryCaseDataTerm(AbstractSamplingTerm):
         batch_ = self.sample(key=key) if batch is None else batch
         prediction = self._prediction(functions, batch_, key=key, **kwargs)
         per_sample = supervised_per_sample_squared_error(
-            jnp.asarray(prediction.data, dtype=float),
+            jnp.asarray(prediction.data, dtype=jnp.float64),
             batch_.target,
         )
 
@@ -329,14 +329,14 @@ class TrajectoryCaseDataTerm(AbstractSamplingTerm):
             w = self.pointwise_weight(batch_.points, key=key, **kwargs)
             if not isinstance(w, cx.AxisArray):
                 raise TypeError("pointwise weight must return a phydrax.axes.AxisArray.")
-            w_arr = jnp.asarray(w.data, dtype=float)
+            w_arr = jnp.asarray(w.data, dtype=jnp.float64)
             if w_arr.ndim == 0:
                 per_sample = per_sample * w_arr
             else:
                 per_sample = per_sample * jnp.squeeze(w_arr).reshape((-1,))
 
         reduced = reduce_supervised_loss(per_sample, reduction=self.reduction)
-        return self.weight * jnp.asarray(reduced, dtype=float).reshape(())
+        return self.weight * jnp.asarray(reduced, dtype=jnp.float64).reshape(())
 
 
 __all__ = [

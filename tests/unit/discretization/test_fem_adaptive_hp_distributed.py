@@ -38,7 +38,7 @@ def _mesh():
     )
 
 
-def test_children_inherit_owners_and_adaptive_halos_include_mortar_neighbours():
+def test_children_inherit_owners_and_adaptive_halos_include_mortar_neighbors():
     topology, geometry = initial_finite_element_hp_topology(_mesh(), 2, 16)
     source_epoch = prepare_finite_element_hp_epoch(
         topology,

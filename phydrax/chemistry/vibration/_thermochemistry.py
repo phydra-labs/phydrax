@@ -83,7 +83,7 @@ class MolecularThermochemistryResult(StrictModule, NonTrainableState):
         )
         if not isinstance(units, AtomisticUnitSystem):
             raise TypeError("units must be AtomisticUnitSystem.")
-        successful_ = jnp.asarray(successful, dtype=bool).reshape(())
+        successful_ = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.component_internal_energies = energies
         self.component_entropies = entropies
         (
@@ -276,7 +276,7 @@ class HarmonicThermochemistryPlan(StrictModule, NonTrainableState):
         pressure_si = self.pressure * float(units.pressure_unit.scale_to_reference)
         energy_scale = float(units.scale.energy_unit.scale_to_reference)
         entropy_scale = energy_scale / float(units.temperature_unit.scale_to_reference)
-        active = np.asarray(self.system.active_mask, dtype=bool)
+        active = np.asarray(self.system.active_mask, dtype=np.bool_)
         masses_si = np.asarray(self.system.masses)[active] * float(
             units.mass_unit.scale_to_reference
         )
@@ -294,7 +294,7 @@ class HarmonicThermochemistryPlan(StrictModule, NonTrainableState):
         s_translation = _BOLTZMANN_J_PER_K * (np.log(q_translation) + 2.5)
         center = np.sum(masses_si[:, None] * positions_si, axis=0) / total_mass
         relative = positions_si - center
-        inertia = np.zeros((3, 3), dtype=float)
+        inertia = np.zeros((3, 3), dtype=np.float64)
         for mass, position in zip(masses_si, relative, strict=True):
             radius_squared = float(position @ position)
             inertia += mass * (radius_squared * np.eye(3) - np.outer(position, position))

@@ -143,7 +143,11 @@ class IsotropicRiemannianDiffusion(StrictModule):
     ):
         if not isinstance(manifold, AbstractRiemannianManifold):
             raise TypeError("manifold must implement AbstractRiemannianManifold.")
-        if not callable(drift) or not callable(diffusion_rate) or not callable(tangent_noise):
+        if (
+            not callable(drift)
+            or not callable(diffusion_rate)
+            or not callable(tangent_noise)
+        ):
             raise TypeError("drift, diffusion_rate, and tangent_noise must be callable.")
         horizon = float(terminal_time)
         if not isfinite(horizon) or horizon <= 0.0:
@@ -168,8 +172,12 @@ class IsotropicRiemannianDiffusion(StrictModule):
         return self.manifold.project_tangent(value, drift)
 
     def rate(self, time, /) -> Array:
-        value = jnp.asarray(self.diffusion_rate(jnp.asarray(time)), dtype=float).reshape(())
-        return eqx.error_if(value, ~jnp.isfinite(value) | (value < 0.0), "Invalid diffusion rate.")
+        value = jnp.asarray(
+            self.diffusion_rate(jnp.asarray(time)), dtype=jnp.float64
+        ).reshape(())
+        return eqx.error_if(
+            value, ~jnp.isfinite(value) | (value < 0.0), "Invalid diffusion rate."
+        )
 
     def reverse_drift(self, reverse_time, point, score, /):
         time = self.terminal_time - jnp.asarray(reverse_time)
@@ -218,7 +226,7 @@ def sample_manifold_reverse_diffusion(
         "terminal_state lies outside the manifold.",
     )
     step_size = process.terminal_time / count
-    reverse_times = jnp.arange(count, dtype=float) * step_size
+    reverse_times = jnp.arange(count, dtype=jnp.float64) * step_size
 
     def step(carry, reverse_time):
         point, current_key = carry
@@ -230,7 +238,9 @@ def sample_manifold_reverse_diffusion(
         if noise.shape != point.shape:
             raise ValueError("Tangent noise must match the manifold point shape.")
         noise = process.manifold.project_tangent(point, noise)
-        tangent_step = step_size * drift + jnp.sqrt(step_size) * process.rate(forward_time) * noise
+        tangent_step = (
+            step_size * drift + jnp.sqrt(step_size) * process.rate(forward_time) * noise
+        )
         destination = process.manifold.retract(point, tangent_step)
         return (destination, current_key), destination
 

@@ -190,7 +190,7 @@ def test_hessian_bundle_and_atlas_geometry():
     )
 
     connection = phx.metrix.VectorBundleConnection(
-        lambda q: jnp.zeros((1, 1, 2), dtype=complex),
+        lambda q: jnp.zeros((1, 1, 2), dtype="complex128"),
         chart=chart,
         fiber_dimension=1,
     )

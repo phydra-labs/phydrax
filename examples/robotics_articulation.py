@@ -118,9 +118,7 @@ expected_twist = np.asarray(
         float(velocity[0]),
     ]
 )
-if not np.allclose(
-    np.asarray(frame_twist), expected_twist, rtol=1.0e-6, atol=1.0e-6
-):
+if not np.allclose(np.asarray(frame_twist), expected_twist, rtol=1.0e-6, atol=1.0e-6):
     raise RuntimeError("frame Jacobian action disagrees with analytic velocity")
 
 acceleration = jnp.asarray([0.12, -0.07], dtype=dtype)

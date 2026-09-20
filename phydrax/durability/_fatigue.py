@@ -67,7 +67,7 @@ def _reversals(history: np.ndarray) -> list[float]:
 
 
 def rainflow_cycles(stress_history_pa: ArrayLike, /) -> RainflowCycles:
-    history = np.asarray(stress_history_pa, dtype=float)
+    history = np.asarray(stress_history_pa, dtype=np.float64)
     if history.ndim != 1 or history.size < 2 or not np.all(np.isfinite(history)):
         raise ValueError(
             "Rainflow history must be a finite vector with at least two samples."

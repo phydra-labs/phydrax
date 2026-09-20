@@ -33,7 +33,7 @@ def _text(value: str, owner: str) -> str:
 
 
 def _scalar(value: ArrayLike, owner: str, *, positive: bool = False) -> Array:
-    x = jnp.asarray(value, dtype=jnp.result_type(value, float))
+    x = jnp.asarray(value, dtype=jnp.result_type(value, jnp.float64))
     if x.shape != ():
         raise ValueError(f"{owner} must be scalar.")
     return eqx.error_if(
@@ -80,7 +80,7 @@ class Zone(StrictModule):
 
 
 class Construction(StrictModule):
-    """Explicit single-centre wall reduction: resistance m² K/W, capacity J/(m² K).
+    """Explicit single-center wall reduction: resistance m² K/W, capacity J/(m² K).
 
     Zero areal capacity gives a direct conductance. Positive capacity creates one
     wall state with two half-resistances. Film resistances must be included by caller.
@@ -443,7 +443,7 @@ class BuildingCompilation(StrictModule):
     def reduced_affine(self, forcing: Array):
         d, a = (
             jnp.asarray(self.dynamic_indices),
-            jnp.asarray(self.algebraic_indices, dtype=int),
+            jnp.asarray(self.algebraic_indices, dtype=jnp.int64),
         )
         matrix = self.matrix[jnp.ix_(d, d)]
         force = forcing[d]

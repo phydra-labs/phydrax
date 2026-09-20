@@ -68,7 +68,7 @@ class FIRFilterPlan(StrictModule, NonTrainableState):
         dtype: jnp.dtype,
     ) -> FIRFilterState:
         """Return zero history for arrays with ``input_shape``."""
-        shape = tuple(int(size) for size in input_shape)
+        shape = tuple(input_shape)
         resolved_axis = _normalize_axis(self.axis, len(shape))
         resolved_dtype = jnp.dtype(dtype)
         if not jnp.issubdtype(resolved_dtype, jnp.inexact):
@@ -102,7 +102,7 @@ class FIRFilterPlan(StrictModule, NonTrainableState):
                 f"taps must have shape {(self.tap_count,)}; got {coefficients.shape}."
             )
         resolved_axis = _normalize_axis(self.axis, values.ndim)
-        sample_count = int(values.shape[resolved_axis])
+        sample_count = values.shape[resolved_axis]
         if sample_count <= 0:
             raise ValueError("FIR chunks must have positive sample capacity.")
         expected_history_shape = _replace_axis_size(
@@ -167,7 +167,7 @@ class FIRFilterPlan(StrictModule, NonTrainableState):
             )
             return reset, FIRFilterResult(
                 values=jnp.zeros(tail_shape, dtype=state.history.dtype),
-                active=jnp.zeros((0,), dtype=bool),
+                active=jnp.zeros((0,), dtype=jnp.bool_),
                 sample_offset=state.sample_count,
             )
         zeros = jnp.zeros(tail_shape, dtype=state.history.dtype)
@@ -189,7 +189,7 @@ def fir_filter(
 ) -> Array:
     """Apply one shared-tap zero-state causal FIR filter."""
     array, coefficients = _promote_signal_and_taps(values, taps)
-    plan = FIRFilterPlan(int(coefficients.shape[0]), axis=axis)
+    plan = FIRFilterPlan(coefficients.shape[0], axis=axis)
     state = plan.initial_state(array.shape, dtype=array.dtype)
     _, result = plan.step(state, array, coefficients)
     return result.values

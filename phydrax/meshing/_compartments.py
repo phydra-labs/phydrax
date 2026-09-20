@@ -183,7 +183,7 @@ class FTetWildCompartmentProvider:
                     MeshingFailureCategory.PROVIDER_EXECUTION_FAILED,
                     f"fTetWild {version}: {error}",
                 ) from error
-        points = np.asarray(output_points, dtype=float)
+        points = np.asarray(output_points, dtype=np.float64)
         cells = np.asarray(output_cells)
         if (
             cells.ndim != 2

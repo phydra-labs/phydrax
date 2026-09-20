@@ -86,7 +86,7 @@ class ExerciseSchedule(StrictModule, NonTrainableState):
         else:
             capacity_ = capacity
         padded = np.zeros((capacity_,), dtype=np.int32)
-        valid = np.zeros((capacity_,), dtype=bool)
+        valid = np.zeros((capacity_,), dtype=np.bool_)
         padded[: len(values)] = np.asarray(ordinals, dtype=np.int32)
         valid[: len(values)] = True
         self.exercise_ordinals = jnp.asarray(padded)

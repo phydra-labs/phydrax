@@ -144,7 +144,7 @@ def test_stochastic_fresnel_frequency_expected_split_and_tir():
         jr.PRNGKey(710),
         photon_ids=jnp.arange(count),
     )
-    reflected = jnp.mean((result.terminal_medium_indices[:, 0] == 0).astype(float))
+    reflected = jnp.mean((result.terminal_medium_indices[:, 0] == 0).astype("float64"))
     expected_reflectance = 0.04
     binomial_se = jnp.sqrt(expected_reflectance * (1.0 - expected_reflectance) / count)
     assert abs(float(reflected) - expected_reflectance) < 4.0 * float(binomial_se)

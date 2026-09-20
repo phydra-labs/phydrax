@@ -49,8 +49,8 @@ class EquationOrientedFlowsheet:
     ) -> EquationOrientedFlowsheet:
         if not callable(residual_function):
             raise TypeError("Flowsheet residual must be callable.")
-        variable = np.asarray(variable_scale, dtype=float)
-        residual = np.asarray(residual_scale, dtype=float)
+        variable = np.asarray(variable_scale, dtype=np.float64)
+        residual = np.asarray(residual_scale, dtype=np.float64)
         if variable.ndim != 1 or variable.size == 0 or np.any(variable <= 0):
             raise ValueError("Flowsheet variable scales must be a positive vector.")
         if residual.shape != variable.shape or np.any(residual <= 0):
@@ -58,12 +58,16 @@ class EquationOrientedFlowsheet:
         lower = (
             np.full_like(variable, -np.inf)
             if lower_bounds is None
-            else np.broadcast_to(np.asarray(lower_bounds, dtype=float), variable.shape)
+            else np.broadcast_to(
+                np.asarray(lower_bounds, dtype=np.float64), variable.shape
+            )
         )
         upper = (
             np.full_like(variable, np.inf)
             if upper_bounds is None
-            else np.broadcast_to(np.asarray(upper_bounds, dtype=float), variable.shape)
+            else np.broadcast_to(
+                np.asarray(upper_bounds, dtype=np.float64), variable.shape
+            )
         )
         if np.any(lower >= upper):
             raise ValueError("Flowsheet variable bounds must have nonempty interiors.")

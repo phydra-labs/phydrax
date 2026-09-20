@@ -66,7 +66,7 @@ class AirfoilSectionPlan(StrictModule, NonTrainableState):
         *,
         source_manifest: ReferenceArtifactManifest | None = None,
     ):
-        points = np.asarray(coordinates, dtype=float)
+        points = np.asarray(coordinates, dtype=np.float64)
         if points.ndim != 2 or points.shape[1] != 2 or points.shape[0] < 8:
             raise ValueError("Airfoil section requires at least eight planar points.")
         if np.allclose(points[0], points[-1], rtol=0.0, atol=1.0e-14):

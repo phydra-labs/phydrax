@@ -62,7 +62,7 @@ class AdSConformalBoundaryPlan(StrictModule):
         axis = int(spatial_axis)
         side_value = str(side)
         policy = str(radiation_policy)
-        metric = np.asarray(target_induced_metric, dtype=float)
+        metric = np.asarray(target_induced_metric, dtype=np.float64)
         incoming = float(target_incoming_radiation)
         tolerances = tuple(
             float(value)

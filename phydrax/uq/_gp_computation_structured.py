@@ -57,7 +57,7 @@ class StructuredComputationAwareGaussianProcessFactor(StrictModule):
                 "actions; pseudo-input and scalar iterative policies lack a matching "
                 "functional inducing design."
             )
-        count = int(matrix.shape[0])
+        count = matrix.shape[0]
         noise = jnp.broadcast_to(jnp.asarray(noise_scale, dtype=matrix.dtype), (count,))
         jitter_array = jnp.asarray(jitter, dtype=matrix.dtype).reshape(())
         effective = noise * noise + jitter_array
@@ -77,7 +77,7 @@ class StructuredComputationAwareGaussianProcessFactor(StrictModule):
         )
         policy = MaterializationPolicy(
             max_entries=count * resolved.num_actions,
-            max_bytes=count * resolved.num_actions * int(matrix.dtype.itemsize),
+            max_bytes=count * resolved.num_actions * matrix.dtype.itemsize,
         )
         action_matrix = materialize(resolved.operator, policy)
         active = resolved.active_mask.astype(matrix.dtype)

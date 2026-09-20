@@ -306,8 +306,8 @@ def solve_potential_flow_hydrodynamics_3d(
         density_semantics=prepared.density_semantics,
         resource_evidence=(
             prepared.assembly_report.resident_bytes,
-            int(radiation_density.nbytes),
-            int(diffraction_density.nbytes),
+            radiation_density.nbytes,
+            diffraction_density.nbytes,
         ),
         error_evidence=(
             "linear residual diagnostics are retained per right-hand side",

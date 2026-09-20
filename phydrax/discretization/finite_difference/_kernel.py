@@ -42,7 +42,7 @@ class PatchKernelPlan(StrictModule, NonTrainableState):
         execution: PatchExecutionKind = "vmap",
         plan_id: str | None = None,
     ):
-        shape = tuple(int(size) for size in kernel_shape)
+        shape = tuple(kernel_shape)
         if not shape or any(size <= 0 for size in shape):
             raise ValueError("kernel_shape dimensions must be positive.")
         functions = cast(
@@ -88,7 +88,7 @@ class PreparedPatchKernel(StrictModule, NonTrainableState):
     def __init__(self, plan: PatchKernelPlan, input_shape: Sequence[int], /):
         if not isinstance(plan, PatchKernelPlan):
             raise TypeError("plan must be a PatchKernelPlan.")
-        shape = tuple(int(size) for size in input_shape)
+        shape = tuple(input_shape)
         if len(shape) != len(plan.kernel_shape) or any(
             kernel > size
             for kernel, size in zip(

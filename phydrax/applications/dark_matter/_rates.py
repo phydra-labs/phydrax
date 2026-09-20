@@ -86,14 +86,16 @@ def _raw_weights(batch: WeightedSampleBatch, /) -> tuple[Array, Array, Array]:
     if weights.ndim != 1:
         raise ValueError("Surface crossing path log_weights must be one-dimensional.")
     mask = (
-        jnp.ones(weights.shape, dtype=bool)
+        jnp.ones(weights.shape, dtype=jnp.bool_)
         if batch.mask is None
-        else jnp.asarray(batch.mask, dtype=bool)
+        else jnp.asarray(batch.mask, dtype=jnp.bool_)
     )
     support = (
-        jnp.ones(weights.shape, dtype=bool)
+        jnp.ones(weights.shape, dtype=jnp.bool_)
         if batch.support_valid is None
-        else jnp.broadcast_to(jnp.asarray(batch.support_valid, dtype=bool), weights.shape)
+        else jnp.broadcast_to(
+            jnp.asarray(batch.support_valid, dtype=jnp.bool_), weights.shape
+        )
     )
     return weights, mask, support
 
@@ -109,8 +111,8 @@ def spherical_surface_crossings(
     grazing_tolerance_m_s: float = 1.0e-12,
 ) -> SurfaceCrossingMeasure:
     """Construct unbiased weighted surface flux and density crossing measures."""
-    states = jnp.asarray(crossing_states, dtype=float)
-    valid = jnp.asarray(crossing_valid, dtype=bool)
+    states = jnp.asarray(crossing_states, dtype=jnp.float64)
+    valid = jnp.asarray(crossing_valid, dtype=jnp.bool_)
     path_log_weights, path_mask, path_support = _raw_weights(source_paths)
     radius = jnp.asarray(radius_m, dtype=states.dtype).reshape(())
     if states.ndim != 3 or states.shape[-1] != 6:
@@ -149,7 +151,7 @@ def spherical_surface_crossings(
         if direction == "inward"
         else signed_normal_speed > tolerance
         if direction == "outward"
-        else jnp.ones(valid.shape, dtype=bool)
+        else jnp.ones(valid.shape, dtype=jnp.bool_)
     )
     admissible_weight = jnp.isfinite(path_log_weights) | jnp.isneginf(path_log_weights)
     path_included = path_mask[:, None] & path_support[:, None]

@@ -376,7 +376,7 @@ def _energy_work_ledger(
         tuple(
             source_id not in internal_source_ids for source_id in source_forces.source_ids
         ),
-        dtype=bool,
+        dtype=jnp.bool_,
     )
     external_power_before = jnp.sum(
         jnp.where(

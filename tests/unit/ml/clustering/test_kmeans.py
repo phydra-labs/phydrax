@@ -259,7 +259,7 @@ def test_kmeans_reports_empty_underfull_nonfinite_and_nonconverged_cases():
         2, initialization="first", empty_policy="error", max_iterations=3
     ).fit_batch(MLBatch(jnp.ones((3, 1))))
     empty = KMeans(1, initialization="first").fit_batch(
-        MLBatch(jnp.arange(3.0)[:, None], sample_mask=jnp.zeros(3, dtype=bool))
+        MLBatch(jnp.arange(3.0)[:, None], sample_mask=jnp.zeros(3, dtype=jnp.bool_))
     )
     singleton = KMeans(1, initialization="first").fit_batch(MLBatch(jnp.array([[4.0]])))
     nonfinite = KMeans(1, initialization="first").fit_batch(

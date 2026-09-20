@@ -52,7 +52,7 @@ class MultiAxisAirfoilPolar(StrictModule, NonTrainableState):
         endpoint: str = "error",
     ):
         axes = tuple(
-            np.asarray(axis, dtype=float)
+            np.asarray(axis, dtype=np.float64)
             for axis in (angle_axis, reynolds_axis, mach_axis, flap_axis)
         )
         if any(
@@ -65,13 +65,13 @@ class MultiAxisAirfoilPolar(StrictModule, NonTrainableState):
             raise ValueError("Polar axes must be finite strictly increasing vectors.")
         shape = tuple(axis.size for axis in axes)
         lift, drag = (
-            np.asarray(lift_table, dtype=float),
-            np.asarray(drag_table, dtype=float),
+            np.asarray(lift_table, dtype=np.float64),
+            np.asarray(drag_table, dtype=np.float64),
         )
         moment = (
             np.zeros(shape)
             if moment_table is None
-            else np.asarray(moment_table, dtype=float)
+            else np.asarray(moment_table, dtype=np.float64)
         )
         if (
             lift.shape != shape
@@ -116,7 +116,7 @@ class MultiAxisAirfoilPolar(StrictModule, NonTrainableState):
         shape = jnp.broadcast_shapes(*(query.shape for query in queries))
         queries = tuple(jnp.broadcast_to(query, shape) for query in queries)
         axes = (self.angle_axis, self.reynolds_axis, self.mach_axis, self.flap_axis)
-        lower_indices, fractions, inside = [], [], jnp.ones(shape, dtype=bool)
+        lower_indices, fractions, inside = [], [], jnp.ones(shape, dtype=jnp.bool_)
         for axis, query in zip(axes, queries, strict=True):
             inside = inside & (query >= axis[0]) & (query <= axis[-1])
             clipped = (

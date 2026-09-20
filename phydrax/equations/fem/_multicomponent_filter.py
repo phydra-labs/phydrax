@@ -35,7 +35,7 @@ class MulticomponentAdmissibilityFilterPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, node_weights: ArrayLike, /, *, iterations: int = 48):
-        weights = np.asarray(node_weights, dtype=float)
+        weights = np.asarray(node_weights, dtype=np.float64)
         count = int(iterations)
         if (
             weights.ndim != 1

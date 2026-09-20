@@ -26,7 +26,7 @@ def exact_gp_cholesky(
     diagonal = _observation_diagonal(
         noise_scale,
         jitter,
-        count=int(points.shape[0]),
+        count=points.shape[0],
     )
     covariance = kernel.matrix(points, points)
     return jnp.linalg.cholesky(covariance + jnp.diag(diagonal))
@@ -149,7 +149,7 @@ def fitc_factors_from_covariances(
     observation_diagonal = _observation_diagonal(
         noise_scale,
         jitter_array,
-        count=int(point_inducing.shape[0]),
+        count=point_inducing.shape[0],
     )
     diagonal = jnp.maximum(
         prior_diagonal - jnp.sum(features * features, axis=1) + observation_diagonal,
@@ -307,16 +307,15 @@ def _as_kernel_inputs(
     kernel: AbstractPositiveDefiniteKernel,
     name: str,
 ) -> Array:
-    array = jnp.asarray(value, dtype=float)
+    array = jnp.asarray(value, dtype=jnp.float64)
     if kernel.input_ndim == 1 and array.ndim == 1:
         array = array[:, None]
     expected_rank = kernel.input_ndim + 1
     if array.ndim != expected_rank:
         raise ValueError(
-            f"{name} must have one design axis followed by "
-            f"{kernel.input_ndim} kernel input axes."
+            f"{name} must have one design axis followed by {kernel.input_ndim} kernel input axes."
         )
-    if any(int(size) <= 0 for size in array.shape[1:]):
+    if any(size <= 0 for size in array.shape[1:]):
         raise ValueError(f"{name} must have nonempty kernel input axes.")
     return array
 

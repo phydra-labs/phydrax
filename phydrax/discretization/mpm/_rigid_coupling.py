@@ -64,9 +64,9 @@ def _mode_array(
 
 
 def _route_scalars(name: str, value: ArrayLike, count: int, /) -> np.ndarray:
-    array = np.asarray(value, dtype=float)
+    array = np.asarray(value, dtype=np.float64)
     if array.ndim == 0:
-        array = np.full((count,), float(array), dtype=float)
+        array = np.full((count,), float(array), dtype=np.float64)
     if array.shape != (count,) or np.any(~np.isfinite(array)):
         raise ValueError(f"{name} must be finite scalar or route-count data.")
     return array
@@ -185,13 +185,13 @@ class RigidMPMCouplingPlan(StrictModule, NonTrainableState):
             or not np.issubdtype(particle.dtype, np.integer)
         ):
             raise TypeError("particle_indices must be a nonempty rank-1 integer array.")
-        count = int(particle.size)
+        count = particle.size
         if body.shape != (count,) or not np.issubdtype(body.dtype, np.integer):
             raise TypeError("body_indices must be a route-count integer array.")
         dimension = int(ambient_dimension)
         if dimension not in (2, 3):
             raise ValueError("Rigid-MPM coupling requires dimension two or three.")
-        anchors = np.asarray(local_anchors, dtype=float)
+        anchors = np.asarray(local_anchors, dtype=np.float64)
         if anchors.shape != (count, dimension) or np.any(~np.isfinite(anchors)):
             raise ValueError("local_anchors must be finite route vectors.")
         modes = _mode_array(mode, count)
@@ -200,7 +200,7 @@ class RigidMPMCouplingPlan(StrictModule, NonTrainableState):
                 np.asarray((1.0,) + (0.0,) * (dimension - 1)), (count, dimension)
             ).copy()
             if local_normals is None
-            else np.asarray(local_normals, dtype=float)
+            else np.asarray(local_normals, dtype=np.float64)
         )
         if normals.shape != (count, dimension) or np.any(~np.isfinite(normals)):
             raise ValueError("local_normals must be finite route vectors.")
@@ -227,9 +227,9 @@ class RigidMPMCouplingPlan(StrictModule, NonTrainableState):
         if np.any((restitution_ < 0.0) | (restitution_ > 1.0)):
             raise ValueError("restitution must lie in [0, 1].")
         active = (
-            np.ones((count,), dtype=bool)
+            np.ones((count,), dtype=np.bool_)
             if active_mask is None
-            else np.asarray(active_mask, dtype=bool)
+            else np.asarray(active_mask, dtype=np.bool_)
         )
         if active.shape != (count,):
             raise ValueError("active_mask must have route-count shape.")
@@ -445,7 +445,7 @@ class PreparedRigidMPMCoupling(StrictModule, NonTrainableState):
 
     @property
     def route_count(self) -> int:
-        return int(self.plan.particle_indices.shape[0])
+        return self.plan.particle_indices.shape[0]
 
     @property
     def ambient_dimension(self) -> int:

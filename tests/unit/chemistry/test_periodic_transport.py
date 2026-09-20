@@ -29,7 +29,7 @@ def _two_level_kubo(shift=0.0):
     temperature = 300.0
     velocity = 2.0e5
     energies = jnp.asarray([[-0.5 * gap + shift, 0.5 * gap + shift]])
-    velocities = jnp.zeros((1, 2, 2, 1), dtype=complex)
+    velocities = jnp.zeros((1, 2, 2, 1), dtype="complex128")
     velocities = velocities.at[0, 0, 1, 0].set(velocity)
     velocities = velocities.at[0, 1, 0, 0].set(velocity)
     occupation_difference = np.tanh(gap / (4.0 * _KB * temperature))

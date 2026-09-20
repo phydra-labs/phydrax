@@ -151,7 +151,7 @@ class HermitianCoordinateEvolution(AbstractDifferentiableEvolution):
             )
         identifier = canonical_fingerprint(
             {
-                "kind": "hermitian-coordinate-evolution-v1",
+                "kind": "hermitian-coordinate-evolution",
                 "evolution": evolution.evolution_id,
                 "coordinates": coordinates.coordinate_id,
             }
@@ -350,8 +350,7 @@ class HermitianCoordinateEvolution(AbstractDifferentiableEvolution):
             pullback=pullback,
             policy=inner.policy,
             linearization_id=(
-                f"{inner.linearization_id}:hermitian-coordinate-state:"
-                f"{self.coordinates.coordinate_id}"
+                f"{inner.linearization_id}:hermitian-coordinate-state:{self.coordinates.coordinate_id}"
             ),
         )
 
@@ -399,8 +398,7 @@ class HermitianCoordinateEvolution(AbstractDifferentiableEvolution):
             pullback=pullback,
             policy=inner.policy,
             linearization_id=(
-                f"{inner.linearization_id}:hermitian-coordinates:"
-                f"{self.coordinates.coordinate_id}"
+                f"{inner.linearization_id}:hermitian-coordinates:{self.coordinates.coordinate_id}"
             ),
         )
 

@@ -73,7 +73,7 @@ class BOLDObservation(StrictModule, NonTrainableState):
         if series.value_valid is not None:
             active = active & series.value_valid
         if mask is not None:
-            explicit = jnp.asarray(mask, dtype=bool)
+            explicit = jnp.asarray(mask, dtype=jnp.bool_)
             if explicit.shape != series.values.shape:
                 raise ValueError("BOLD mask must have shape [time,region].")
             active = active & explicit
@@ -116,14 +116,14 @@ class BOLDObservation(StrictModule, NonTrainableState):
         time_scale = 0.001 if time_unit == "ms" else 1.0
         signal_scale = 0.01 if signal_unit == "percent" else 1.0
         support = SeriesSupport(
-            jnp.asarray(times, dtype=float) * time_scale,
+            jnp.asarray(times, dtype=jnp.float64) * time_scale,
             coordinate_name="time_s",
             coordinate_id="neuroscience:seconds",
         )
         series = SampledSeries(
             support,
             jnp.asarray(values) * signal_scale,
-            value_valid=None if valid is None else jnp.asarray(valid, dtype=bool),
+            value_valid=None if valid is None else jnp.asarray(valid, dtype=jnp.bool_),
             series_id="observed-bold-fraction",
         )
         return cls(

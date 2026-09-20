@@ -94,24 +94,56 @@ class LowRankUpdate(StrictModule):
         base: Array,
         /,
         *,
-        rank: int,
+        rank: int | None = None,
         alpha: float | None = None,
         scaling: LowRankScaling = "rank",
         stddev: float = 0.01,
         key: Key[Array, ""] = DOC_KEY0,
+        _factors: tuple[Array, Array] | None = None,
     ):
         value = jnp.asarray(base)
         if not eqx.is_inexact_array(value):
             raise TypeError("Low-rank base weights must be inexact JAX arrays.")
         if value.ndim != 2:
             raise ValueError("Low-rank base weights must be rank-two arrays.")
+        output_size, input_size = value.shape
+        if _factors is not None:
+            if rank is not None:
+                raise ValueError("Persisted low-rank factors determine their own rank.")
+            left, right = (jnp.asarray(factor) for factor in _factors)
+            if left.ndim != 2 or right.ndim != 2:
+                raise ValueError("Low-rank factors must be rank-two arrays.")
+            if left.shape[0] != output_size or right.shape[1] != input_size:
+                raise ValueError("Low-rank factor outer dimensions must match the base.")
+            if left.shape[1] != right.shape[0]:
+                raise ValueError(
+                    "Low-rank factors must share one positive rank dimension."
+                )
+            factor_rank = left.shape[1]
+            if factor_rank <= 0 or factor_rank > min(value.shape):
+                raise ValueError("Low-rank factor rank is invalid for the base weight.")
+            if left.dtype != value.dtype or right.dtype != value.dtype:
+                raise TypeError("Low-rank factors must have the exact base dtype.")
+            alpha_value = float(alpha) if alpha is not None else float(factor_rank)
+            scaling_value = str(scaling)
+            if not isfinite(alpha_value) or alpha_value <= 0.0:
+                raise ValueError("Low-rank adaptation alpha must be finite and positive.")
+            if scaling_value not in ("rank", "sqrt_rank"):
+                raise ValueError("Low-rank scaling must be 'rank' or 'sqrt_rank'.")
+            self.base = value
+            self.left = left
+            self.right = right
+            self.alpha = alpha_value
+            self.scaling = scaling_value
+            return
+        if rank is None:
+            raise ValueError("Random low-rank initialization requires rank.")
         spec = LowRankSpec(
             rank=rank,
             alpha=alpha,
             scaling=scaling,
             stddev=stddev,
         )
-        output_size, input_size = (int(size) for size in value.shape)
         if spec.rank > min(output_size, input_size):
             raise ValueError(
                 "Low-rank adaptation rank must not exceed either weight dimension."
@@ -144,40 +176,16 @@ class LowRankUpdate(StrictModule):
         scaling: LowRankScaling = "rank",
     ) -> LowRankUpdate:
         """Construct an update from validated persisted factors without randomness."""
-        base_ = jnp.asarray(base)
-        left_ = jnp.asarray(left)
-        right_ = jnp.asarray(right)
-        if not eqx.is_inexact_array(base_):
-            raise TypeError("Low-rank base weights must be inexact JAX arrays.")
-        if base_.ndim != 2 or left_.ndim != 2 or right_.ndim != 2:
-            raise ValueError("Low-rank bases and factors must be rank-two arrays.")
-        if left_.shape[0] != base_.shape[0] or right_.shape[1] != base_.shape[1]:
-            raise ValueError("Low-rank factor outer dimensions must match the base.")
-        if left_.shape[1] != right_.shape[0]:
-            raise ValueError("Low-rank factors must share one positive rank dimension.")
-        rank = int(left_.shape[1])
-        if rank <= 0 or rank > min(base_.shape):
-            raise ValueError("Low-rank factor rank is invalid for the base weight.")
-        if left_.dtype != base_.dtype or right_.dtype != base_.dtype:
-            raise TypeError("Low-rank factors must have the exact base dtype.")
-        alpha_ = float(alpha)
-        scaling_ = str(scaling)
-        if not isfinite(alpha_) or alpha_ <= 0.0:
-            raise ValueError("Low-rank adaptation alpha must be finite and positive.")
-        if scaling_ not in ("rank", "sqrt_rank"):
-            raise ValueError("Low-rank scaling must be 'rank' or 'sqrt_rank'.")
-        instance = object.__new__(cls)
-        object.__setattr__(instance, "base", base_)
-        object.__setattr__(instance, "left", left_)
-        object.__setattr__(instance, "right", right_)
-        object.__setattr__(instance, "alpha", alpha_)
-        object.__setattr__(instance, "scaling", scaling_)
-        object.__setattr__(instance, "_strict_initialized", True)
-        return instance
+        return cls(
+            base,
+            alpha=alpha,
+            scaling=scaling,
+            _factors=(left, right),
+        )
 
     @property
     def shape(self) -> tuple[int, int]:
-        return int(self.base.shape[0]), int(self.base.shape[1])
+        return self.base.shape[0], self.base.shape[1]
 
     @property
     def dtype(self):
@@ -185,7 +193,7 @@ class LowRankUpdate(StrictModule):
 
     @property
     def rank(self) -> int:
-        return int(self.left.shape[1])
+        return self.left.shape[1]
 
     @property
     def scale(self) -> float:
@@ -194,11 +202,11 @@ class LowRankUpdate(StrictModule):
 
     @property
     def base_parameter_count(self) -> int:
-        return int(self.base.size)
+        return self.base.size
 
     @property
     def adapter_parameter_count(self) -> int:
-        return int(self.left.size + self.right.size)
+        return self.left.size + self.right.size
 
     def apply(self, value: Array, /) -> Array:
         """Apply the effective weight without materializing its dense update."""
@@ -384,8 +392,7 @@ def prepare_low_rank_adaptation(
         weight = _validate_adaptable(site)
         if spec.rank > min(weight.shape):
             raise ValueError(
-                f"Low-rank rank {spec.rank} exceeds weight shape {weight.shape} "
-                f"at {path!r}."
+                f"Low-rank rank {spec.rank} exceeds weight shape {weight.shape} at {path!r}."
             )
         transform = site.layer.weight_transform
         weights_by_path[path] = weight

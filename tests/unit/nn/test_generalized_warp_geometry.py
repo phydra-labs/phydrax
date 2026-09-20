@@ -15,7 +15,7 @@ import phydrax as phx
 
 
 def _periodic_nodes(size):
-    return -1.0 + 2.0 * jnp.arange(size, dtype=float) / size
+    return -1.0 + 2.0 * jnp.arange(size, dtype="float64") / size
 
 
 def _lattice(nodes):
@@ -27,7 +27,7 @@ def test_rectilinear_sampling_identity_and_periodic_cell_translation(spatial_sha
     dimensions = len(spatial_shape)
     nodes = tuple(_periodic_nodes(size) for size in spatial_shape)
     coordinates = _lattice(nodes)
-    values = jnp.arange(2 * int(jnp.prod(jnp.array(spatial_shape))), dtype=float)
+    values = jnp.arange(2 * int(jnp.prod(jnp.array(spatial_shape))), dtype="float64")
     values = values.reshape(spatial_shape + (2,))
     boundary = ("periodic",) * dimensions
 

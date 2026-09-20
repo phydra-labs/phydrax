@@ -32,7 +32,7 @@ _WIGNER_NORMALIZATION = "s2fft-active-zyz-raw-haar-8pi2"
 
 def _array_bytes(tree: object, /) -> int:
     return sum(
-        int(leaf.size) * int(leaf.dtype.itemsize)
+        leaf.size * leaf.dtype.itemsize
         for leaf in jax.tree_util.tree_leaves(tree)
         if isinstance(leaf, (np.ndarray, jax.Array))
     )
@@ -44,8 +44,7 @@ def _validate_limit(limit: int, estimate: int, kind: str, /) -> int:
         raise ValueError("max_precompute_bytes must be positive.")
     if estimate > value:
         raise ValueError(
-            f"Wigner {kind} preparation exceeds max_precompute_bytes; "
-            f"estimated {estimate} bytes."
+            f"Wigner {kind} preparation exceeds max_precompute_bytes; estimated {estimate} bytes."
         )
     return value
 
@@ -90,8 +89,7 @@ class _RecursiveWignerExecution(StrictModule, NonTrainableState):
         actual = _array_bytes((forward, inverse))
         if actual > limit:
             raise ValueError(
-                "Wigner recursive preparation exceeds max_precompute_bytes; "
-                f"actual size is {actual} bytes."
+                f"Wigner recursive preparation exceeds max_precompute_bytes; actual size is {actual} bytes."
             )
         self.forward_precomputes = forward
         self.inverse_precomputes = inverse
@@ -162,7 +160,7 @@ class _PrecomputedWignerExecution(StrictModule, NonTrainableState):
             * (forward_theta + inverse_theta)
             * bandlimit
             * (2 * bandlimit - 1)
-            * np.dtype(float).itemsize
+            * np.dtype(np.float64).itemsize
         )
         limit = _validate_limit(max_precompute_bytes, estimate, "precomputed")
         forward = jnp.asarray(
@@ -186,8 +184,7 @@ class _PrecomputedWignerExecution(StrictModule, NonTrainableState):
         actual = _array_bytes((forward, inverse))
         if actual > limit:
             raise ValueError(
-                "Wigner precomputed preparation exceeds max_precompute_bytes; "
-                f"actual size is {actual} bytes."
+                f"Wigner precomputed preparation exceeds max_precompute_bytes; actual size is {actual} bytes."
             )
         self.forward_kernel = forward
         self.inverse_kernel = inverse
@@ -290,17 +287,16 @@ class WignerTransformPlan(StrictModule, NonTrainableState):
             raise ValueError("execution must be 'recursive' or 'precomputed'.")
         if selected_execution == "recursive" and selected_directional >= 8:
             raise ValueError(
-                "recursive Wigner execution is certified only for "
-                "directional_bandlimit < 8; use precomputed execution."
+                "recursive Wigner execution is certified only for directional_bandlimit < 8; use precomputed execution."
             )
         sampling_value = selected_sampling
         execution_value = selected_execution
 
         alpha = np.asarray(
-            s2_samples.phis_equiang(selected_bandlimit, sampling_value), dtype=float
+            s2_samples.phis_equiang(selected_bandlimit, sampling_value), dtype=np.float64
         )
         beta = np.asarray(
-            s2_samples.thetas(selected_bandlimit, sampling_value), dtype=float
+            s2_samples.thetas(selected_bandlimit, sampling_value), dtype=np.float64
         )
         gamma = (
             2.0
@@ -314,7 +310,7 @@ class WignerTransformPlan(StrictModule, NonTrainableState):
                 sampling_value,
                 spin=0,
             ),
-            dtype=float,
+            dtype=np.float64,
         )
         alpha_weight = 2.0 * np.pi / alpha.size
         gamma_weight = 2.0 * np.pi / gamma.size
@@ -337,16 +333,14 @@ class WignerTransformPlan(StrictModule, NonTrainableState):
             )
 
         sample_shape = tuple(
-            int(size)
-            for size in so3_samples.f_shape(
+            so3_samples.f_shape(
                 selected_bandlimit,
                 selected_directional,
                 sampling_value,
             )
         )
         coefficient_shape = tuple(
-            int(size)
-            for size in so3_samples.flmn_shape(
+            so3_samples.flmn_shape(
                 selected_bandlimit,
                 selected_directional,
             )
@@ -392,7 +386,7 @@ class WignerTransformPlan(StrictModule, NonTrainableState):
         self.normalization = _WIGNER_NORMALIZATION
         self.layout_id = canonical_fingerprint(
             {
-                "kind": "wigner-mode-layout-v1",
+                "kind": "wigner-mode-layout",
                 "bandlimit": selected_bandlimit,
                 "directional_bandlimit": selected_directional,
                 "lower_bandlimit": selected_lower,
@@ -402,7 +396,7 @@ class WignerTransformPlan(StrictModule, NonTrainableState):
         )
         self.fingerprint = canonical_fingerprint(
             {
-                "kind": "wigner-transform-plan-v1",
+                "kind": "wigner-transform-plan",
                 "s2fft": version("s2fft"),
                 "bandlimit": selected_bandlimit,
                 "directional_bandlimit": selected_directional,
@@ -427,7 +421,7 @@ class WignerTransformPlan(StrictModule, NonTrainableState):
         """Identity of one concrete Wigner execution realization."""
         return canonical_fingerprint(
             {
-                "kind": "wigner-transform-execution-v1",
+                "kind": "wigner-transform-execution",
                 "transform": self.transform_id,
                 "execution": self.execution,
                 "precompute_bytes": self.precompute_bytes,
@@ -481,23 +475,19 @@ class WignerTransformPlan(StrictModule, NonTrainableState):
     def analysis(self, values: ArrayLike, /) -> Array:
         """Transform scalar or channel-last SO(3) samples to ``(n, ell, m)``."""
         array = jnp.asarray(values)
-        scalar = tuple(int(size) for size in array.shape[-3:]) == self.sample_shape
+        scalar = tuple(array.shape[-3:]) == self.sample_shape
         if scalar:
-            leading_shape = tuple(int(size) for size in array.shape[:-3])
+            leading_shape = tuple(array.shape[:-3])
             fields = array.reshape((prod(leading_shape), *self.sample_shape))
-        elif (
-            array.ndim >= 4
-            and tuple(int(size) for size in array.shape[-4:-1]) == self.sample_shape
-        ):
-            leading_shape = tuple(int(size) for size in array.shape[:-4])
-            channels = int(array.shape[-1])
+        elif array.ndim >= 4 and tuple(array.shape[-4:-1]) == self.sample_shape:
+            leading_shape = tuple(array.shape[:-4])
+            channels = array.shape[-1]
             fields = jnp.moveaxis(array, -1, -4).reshape(
                 (prod(leading_shape) * channels, *self.sample_shape)
             )
         else:
             raise ValueError(
-                "Wigner analysis expects (..., n_gamma, n_beta, n_alpha) or "
-                "(..., n_gamma, n_beta, n_alpha, channels)."
+                "Wigner analysis expects (..., n_gamma, n_beta, n_alpha) or (..., n_gamma, n_beta, n_alpha, channels)."
             )
         coefficients = jax.vmap(self._forward_field)(fields)
         if scalar:
@@ -508,23 +498,19 @@ class WignerTransformPlan(StrictModule, NonTrainableState):
     def synthesis(self, coefficients: ArrayLike, /) -> Array:
         """Transform scalar or channel-last ``(n, ell, m)`` modes to SO(3)."""
         array = jnp.asarray(coefficients)
-        scalar = tuple(int(size) for size in array.shape[-3:]) == self.coefficient_shape
+        scalar = tuple(array.shape[-3:]) == self.coefficient_shape
         if scalar:
-            leading_shape = tuple(int(size) for size in array.shape[:-3])
+            leading_shape = tuple(array.shape[:-3])
             fields = array.reshape((prod(leading_shape), *self.coefficient_shape))
-        elif (
-            array.ndim >= 4
-            and tuple(int(size) for size in array.shape[-4:-1]) == self.coefficient_shape
-        ):
-            leading_shape = tuple(int(size) for size in array.shape[:-4])
-            channels = int(array.shape[-1])
+        elif array.ndim >= 4 and tuple(array.shape[-4:-1]) == self.coefficient_shape:
+            leading_shape = tuple(array.shape[:-4])
+            channels = array.shape[-1]
             fields = jnp.moveaxis(array, -1, -4).reshape(
                 (prod(leading_shape) * channels, *self.coefficient_shape)
             )
         else:
             raise ValueError(
-                "Wigner synthesis expects (..., 2*N-1, L, 2*L-1) or "
-                "(..., 2*N-1, L, 2*L-1, channels)."
+                "Wigner synthesis expects (..., 2*N-1, L, 2*L-1) or (..., 2*N-1, L, 2*L-1, channels)."
             )
         values = jax.vmap(self._inverse_field)(fields)
         if scalar:

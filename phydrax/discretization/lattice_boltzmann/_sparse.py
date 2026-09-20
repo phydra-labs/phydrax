@@ -116,7 +116,7 @@ class SparseLatticeBoltzmannPlan(StrictModule, NonTrainableState):
         precision_ = LatticeBoltzmannPrecisionPolicy() if precision is None else precision
         if not isinstance(precision_, LatticeBoltzmannPrecisionPolicy):
             raise TypeError("precision must be LatticeBoltzmannPrecisionPolicy.")
-        blocks = tuple(int(size) for size in block_shape)
+        blocks = tuple(block_shape)
         capacity = int(block_capacity)
         if len(blocks) != velocity_set.dimension or any(size <= 0 for size in blocks):
             raise ValueError("block_shape must match the lattice dimension.")
@@ -187,7 +187,7 @@ class PreparedSparseLatticeBoltzmann(StrictModule, NonTrainableState):
         )
         topology = topology_plan.build(
             jnp.asarray(cells),
-            jnp.ones((cells.size,), dtype=bool),
+            jnp.ones((cells.size,), dtype=jnp.bool_),
             stable_site_ids=jnp.asarray(cells),
         )
         if not bool(np.asarray(topology.evidence.successful)):
@@ -197,7 +197,7 @@ class PreparedSparseLatticeBoltzmann(StrictModule, NonTrainableState):
         fluid_lookup = topology.lookup(jnp.asarray(cells))
         storage_capacity = topology_plan.storage_capacity
         fluid_valid = (
-            jnp.zeros((storage_capacity,), dtype=bool)
+            jnp.zeros((storage_capacity,), dtype=jnp.bool_)
             .at[fluid_lookup.storage_slots]
             .set(fluid_lookup.supported)
         )

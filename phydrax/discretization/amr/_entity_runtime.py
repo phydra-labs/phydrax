@@ -40,7 +40,7 @@ class VariablePatchEntityFieldState(StrictModule):
         component_shape: Sequence[int] = (),
     ):
         degree_ = int(degree)
-        components = tuple(int(value) for value in component_shape)
+        components = tuple(component_shape)
         if (
             not isinstance(complex, VariablePatchEntityComplex)
             or degree_ < 0
@@ -147,7 +147,7 @@ class VariablePatchEntityExecutionPlan(StrictModule, NonTrainableState):
         dtype=jnp.float64,
     ):
         degree_ = int(degree)
-        components = tuple(int(value) for value in component_shape)
+        components = tuple(component_shape)
         dtype_ = jnp.dtype(dtype)
         if (
             not isinstance(complex, VariablePatchEntityComplex)

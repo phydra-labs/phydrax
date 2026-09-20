@@ -39,8 +39,7 @@ class QuantumLatticeResourcePolicy(StrictModule):
         maximum_workspace_bytes: int,
     ):
         values = tuple(
-            int(value)
-            for value in (
+            (
                 maximum_terms,
                 maximum_factors_per_term,
                 maximum_branches_per_input,

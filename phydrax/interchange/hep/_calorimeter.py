@@ -21,7 +21,6 @@ if TYPE_CHECKING:
     from ...applications.detector.calorimetry._geometry import CalorimeterGeometry
 
 
-
 @dataclass(frozen=True, slots=True)
 class CaloChallengeProfile:
     incident_energy_dataset: str
@@ -114,8 +113,8 @@ def import_calochallenge_hdf5(
             raise ValueError(
                 "CaloChallenge datasets must be resident in the bounded resource."
             )
-        incident = np.asarray(incident_dataset[()], dtype=float).reshape((-1,))
-        showers = np.asarray(shower_dataset[()], dtype=float)
+        incident = np.asarray(incident_dataset[()], dtype=np.float64).reshape((-1,))
+        showers = np.asarray(shower_dataset[()], dtype=np.float64)
     if (
         incident.size < 1
         or incident.size > profile.maximum_records

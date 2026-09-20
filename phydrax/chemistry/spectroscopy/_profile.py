@@ -99,7 +99,7 @@ class SpectralProfileResult(StrictModule, NonTrainableState):
             expected_intensity, dtype=grid_.dtype
         ).reshape(())
         self.area_residual = jnp.asarray(area_residual, dtype=grid_.dtype).reshape(())
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.plan_id = str(plan_id)
         self.result_id = canonical_fingerprint(
             {
@@ -188,8 +188,8 @@ class SpectralProfilePlan(StrictModule, NonTrainableState):
         line_intensities: ArrayLike,
         /,
     ) -> SpectralProfileResult:
-        positions = np.asarray(line_positions, dtype=float).reshape((-1,))
-        strengths = np.asarray(line_intensities, dtype=float).reshape((-1,))
+        positions = np.asarray(line_positions, dtype=np.float64).reshape((-1,))
+        strengths = np.asarray(line_intensities, dtype=np.float64).reshape((-1,))
         if positions.shape != strengths.shape or np.any(strengths < 0.0):
             raise ValueError("Spectral lines and non-negative intensities must align.")
         grid = np.linspace(self.minimum, self.maximum, self.grid_size)
@@ -214,13 +214,13 @@ class SpectralProfilePlan(StrictModule, NonTrainableState):
             profiles = voigt_profile(offsets, gaussian_sigma, gamma)
             captured = np.trapezoid(profiles, grid, axis=0)
         raw_areas = np.trapezoid(profiles, grid, axis=0)
-        valid_areas = raw_areas > np.finfo(float).tiny
+        valid_areas = raw_areas > np.finfo(np.float64).tiny
         profiles = profiles / np.where(valid_areas, raw_areas, 1.0)[None, :]
         intensity = profiles @ strengths
         integrated = np.trapezoid(intensity, grid)
         expected = float(np.sum(strengths))
         integration_residual = abs(integrated - expected) / max(
-            expected, np.finfo(float).tiny
+            expected, np.finfo(np.float64).tiny
         )
         active = strengths > 0.0
         support_residual = np.max(

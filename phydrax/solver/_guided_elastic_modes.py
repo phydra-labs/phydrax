@@ -298,7 +298,7 @@ def _guided_elastic_operators(stiffness, mass):
         raise ValueError("Guided elastic mass must be positive definite.")
     dtype = jnp.result_type(stiffness_host, mass_host)
     if not jnp.issubdtype(dtype, jnp.inexact):
-        dtype = jnp.dtype(float)
+        dtype = jnp.dtype(jnp.float64)
     space = ArraySpace((stiffness_host.shape[0],), dtype=dtype)
     stiffness_fingerprint = array_tree_fingerprint(stiffness_host)
     mass_fingerprint = array_tree_fingerprint(mass_host)

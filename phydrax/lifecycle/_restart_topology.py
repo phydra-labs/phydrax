@@ -644,8 +644,7 @@ def _validate_mappings(
             if mapping.source_offset != expected:
                 relation = "overlap" if mapping.source_offset < expected else "hole"
                 raise ValueError(
-                    f"Restart mappings for chunk {source.chunk_id!r} contain "
-                    f"a {relation}."
+                    f"Restart mappings for chunk {source.chunk_id!r} contain a {relation}."
                 )
             expected += mapping.byte_count
         if expected != source.byte_count:

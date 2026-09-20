@@ -123,7 +123,7 @@ class DistributedPairing(StrictModule, NonTrainableState):
         axis_name: str | None = None,
         pairing_id: str | None = None,
     ) -> None:
-        mask = jnp.asarray(owned_mask, dtype=bool)
+        mask = jnp.asarray(owned_mask, dtype=jnp.bool_)
         if mask.ndim < 1:
             raise ValueError("owned_mask must have at least one dimension")
         weights_ = None if weights is None else jnp.asarray(weights)
@@ -184,10 +184,10 @@ class DistributedPairing(StrictModule, NonTrainableState):
         return jax.lax.psum(local, self.axis_name)
 
     def global_all(self, value: ArrayLike, /) -> Array:
-        local = jnp.all(jnp.asarray(value, dtype=bool))
+        local = jnp.all(jnp.asarray(value, dtype=jnp.bool_))
         if self.axis_name is None:
             return local
-        return jax.lax.pmin(local.astype(jnp.int32), self.axis_name).astype(bool)
+        return jax.lax.pmin(local.astype(jnp.int32), self.axis_name).astype("bool")
 
 
 class DistributedLinearOperator(StrictModule, NonTrainableState):
@@ -211,8 +211,8 @@ class DistributedLinearOperator(StrictModule, NonTrainableState):
     ) -> None:
         if not callable(action) or not callable(transpose_action):
             raise TypeError("distributed operator actions must be callable")
-        source = tuple(int(size) for size in source_shape)
-        target = tuple(int(size) for size in target_shape)
+        source = tuple(source_shape)
+        target = tuple(target_shape)
         if not source or not target or any(size <= 0 for size in (*source, *target)):
             raise ValueError("distributed operator shapes must be positive")
         identifier = str(operator_id).strip()

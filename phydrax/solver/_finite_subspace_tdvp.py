@@ -54,7 +54,7 @@ class FiniteVariationalSubspaceTDVPProblem(StrictModule):
             raise ValueError(
                 "overlap and hamiltonian must be matching nonempty square matrices."
             )
-        dimension = int(metric.shape[0])
+        dimension = metric.shape[0]
         if coefficients.shape != (dimension,):
             raise ValueError(
                 "initial_coefficients dimension must match the finite subspace."
@@ -192,7 +192,7 @@ def solve_finite_subspace_tdvp(
         reverse_validity.append(reverse_valid)
     reversibility = jnp.max(jnp.abs(back - problem.initial_coefficients))
     valid_steps = (
-        jnp.stack(step_validity) if step_validity else jnp.empty((0,), dtype=bool)
+        jnp.stack(step_validity) if step_validity else jnp.empty((0,), dtype=jnp.bool_)
     )
     residual_array = jnp.stack(residuals) if residuals else jnp.empty((0,))
     reverse_valid = (

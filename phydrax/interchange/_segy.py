@@ -8,7 +8,7 @@ Profile: byte-stream files without tape labels, revision 1.0, fixed-length
 trace records, and format-5 IEEE samples. ASCII/CP500 textual encoding is
 caller-declared, never guessed. Big endian is standard rev1; explicitly
 requested little endian is a named nonstandard profile.
-Only length coordinates (metres/feet), seismic/pressure/dead trace IDs, and
+Only length coordinates (meters/feet), seismic/pressure/dead trace IDs, and
 unmuted source-relative delay clocks are interpreted. Other modalities, variable
 lengths, angular coordinates, mutes, ambiguous calibration, and unsupported
 header variants fail closed. Header bytes are retained exactly in the resource.
@@ -16,7 +16,7 @@ header variants fail closed. Header bytes are retained exactly in the resource.
 Reference: SEG Technical Standards Committee, SEG Y rev 1 (May 2002), Tables
 2–3; https://www.iris.edu/hq/es_course/content/2009/session1/seg_y_rev1.pdf .
 This is not a general SEG-Y reader, coordinate reprojection, or instrument-
-response removal. Raw unqualified samples are never labelled acoustic pressure.
+response removal. Raw unqualified samples are never labeled acoustic pressure.
 """
 
 from __future__ import annotations
@@ -135,7 +135,7 @@ class SEGYRev1IEEEProfile(StrictModule, NonTrainableState):
 class DecodedSEGY(StrictModule, NonTrainableState):
     """Native trace-major samples, explicit clock/validity, geometry and audit.
 
-    Coordinates are metres and Z is positive upwards: source Z equals surface
+    Coordinates are meters and Z is positive upwards: source Z equals surface
     elevation minus positive source depth; receiver Z is receiver group elevation.
     CRS/datum remain unqualified unless explicit compatible metadata was supplied.
     Sequence gaps remain explicit IDs; absent traces are never fabricated.
@@ -274,7 +274,7 @@ def decode_segy_resource(
     measurement_system = u16(54)
     if measurement_system not in (1, 2):
         raise SEGYDecodeError(
-            "SEG-Y measurement system must explicitly identify metres or feet."
+            "SEG-Y measurement system must explicitly identify meters or feet."
         )
     if u16(52) != 1:
         raise SEGYDecodeError(
@@ -291,7 +291,7 @@ def decode_segy_resource(
         spatial = coordinate_metadata.require_cartesian(dimensions=3)
         if spatial.length_unit != METER:
             raise SEGYDecodeError(
-                "SEG-Y coordinate metadata must describe the normalized metre coordinates."
+                "SEG-Y coordinate metadata must describe the normalized meter coordinates."
             )
     # Each sample and trace is counted before any decoded array is allocated.
     resource = account_bounded_resource(
@@ -318,7 +318,7 @@ def decode_segy_resource(
         np.empty(trace_count, dtype=np.int32),
     )
     delays = np.empty(trace_count)
-    valid = np.empty((trace_count, count), dtype=bool)
+    valid = np.empty((trace_count, count), dtype=np.bool_)
     qualified: bool | None = None
     for trace in range(trace_count):
         start = 3600 + trace * record_size
@@ -408,7 +408,7 @@ def decode_segy_resource(
             "coordinates",
             "import",
             "transformed",
-            "Header scalars and metres/feet are normalized to metre source/group "
+            "Header scalars and meters/feet are normalized to meter source/group "
             "XYZ; native floating precision may round. Original bytes are retained.",
             changes_interpretation=False,
         ),
@@ -451,7 +451,7 @@ def decode_segy_resource(
         coordinate_mapping=(
             "source=(scaled sx,scaled sy,scaled(surface_elevation-source_depth))",
             "receiver=(scaled gx,scaled gy,scaled group_elevation)",
-            "positive-up metre coordinates; CRS not inferred",
+            "positive-up meter coordinates; CRS not inferred",
         ),
         preserved_fields=(
             "exact resource bytes",

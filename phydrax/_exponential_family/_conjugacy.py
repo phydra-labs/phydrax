@@ -65,7 +65,9 @@ class GammaPoissonStatistics(StrictModule):
         if any(jnp.issubdtype(value.dtype, jnp.complexfloating) for value in arrays):
             raise TypeError("Gamma-Poisson statistics must be real-valued.")
         count, exposure, base_measure, observations = jnp.broadcast_arrays(*arrays)
-        declared_valid = jnp.broadcast_to(jnp.asarray(valid, dtype=bool), count.shape)
+        declared_valid = jnp.broadcast_to(
+            jnp.asarray(valid, dtype=jnp.bool_), count.shape
+        )
         canonical_valid = (
             declared_valid
             & jnp.isfinite(count)
@@ -318,7 +320,7 @@ class GammaPoissonConjugacy(StrictModule):
             statistics.num_observations,
         )
         declared_valid = jnp.broadcast_to(
-            jnp.asarray(statistics.valid, dtype=bool), prior_shape.shape
+            jnp.asarray(statistics.valid, dtype=jnp.bool_), prior_shape.shape
         )
         statistics_valid = (
             declared_valid
@@ -379,7 +381,7 @@ class DirichletCategoricalStatistics(StrictModule):
     ):
         counts = jnp.asarray(category_counts)
         observations = jnp.asarray(num_observations)
-        if counts.ndim == 0 or int(counts.shape[-1]) < 2:
+        if counts.ndim == 0 or counts.shape[-1] < 2:
             raise ValueError(
                 "Dirichlet-categorical counts require at least two categories."
             )
@@ -390,7 +392,9 @@ class DirichletCategoricalStatistics(StrictModule):
         result_shape = jnp.broadcast_shapes(counts.shape[:-1], observations.shape)
         counts = jnp.broadcast_to(counts, result_shape + (counts.shape[-1],))
         observations = jnp.broadcast_to(observations, result_shape)
-        declared_valid = jnp.broadcast_to(jnp.asarray(valid, dtype=bool), result_shape)
+        declared_valid = jnp.broadcast_to(
+            jnp.asarray(valid, dtype=jnp.bool_), result_shape
+        )
         canonical_valid = (
             declared_valid
             & jnp.all(jnp.isfinite(counts), axis=-1)
@@ -515,9 +519,7 @@ class DirichletCategoricalConjugacy(StrictModule):
         if concentration_array.ndim == 0:
             raise ValueError("Dirichlet concentration must have a category axis.")
         selected_family = (
-            DirichletFamily(int(concentration_array.shape[-1]))
-            if family is None
-            else family
+            DirichletFamily(concentration_array.shape[-1]) if family is None else family
         )
         if not isinstance(selected_family, DirichletFamily):
             raise TypeError("family must be a DirichletFamily.")
@@ -604,7 +606,7 @@ class DirichletCategoricalConjugacy(StrictModule):
             jnp.asarray(statistics.num_observations), result_shape
         )
         declared_valid = jnp.broadcast_to(
-            jnp.asarray(statistics.valid, dtype=bool), result_shape
+            jnp.asarray(statistics.valid, dtype=jnp.bool_), result_shape
         )
         valid = (
             declared_valid

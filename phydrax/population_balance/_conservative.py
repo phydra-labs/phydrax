@@ -29,7 +29,7 @@ class SectionalPopulationState:
         overflow_number: ArrayLike = 0.0,
         overflow_first_moment: ArrayLike = 0.0,
     ) -> SectionalPopulationState:
-        number = np.asarray(cell_number, dtype=float)
+        number = np.asarray(cell_number, dtype=np.float64)
         if number.ndim != 1 or np.any(number < 0) or not np.all(np.isfinite(number)):
             raise ValueError(
                 "Sectional particle numbers must be a finite non-negative vector."
@@ -84,8 +84,8 @@ class ConservativeSectionalSolver:
         daughter_number: ArrayLike | None = None,
         conservation_tolerance: float = 1e-10,
     ) -> ConservativeSectionalSolver:
-        centers = np.asarray(pivots, dtype=float)
-        kernel = np.asarray(aggregation_kernel, dtype=float)
+        centers = np.asarray(pivots, dtype=np.float64)
+        kernel = np.asarray(aggregation_kernel, dtype=np.float64)
         if (
             centers.ndim != 1
             or centers.size < 2
@@ -100,12 +100,12 @@ class ConservativeSectionalSolver:
         frequency = (
             np.zeros_like(centers)
             if breakage_frequency_s_inv is None
-            else np.asarray(breakage_frequency_s_inv, dtype=float)
+            else np.asarray(breakage_frequency_s_inv, dtype=np.float64)
         )
         daughters = (
             np.eye(centers.size)
             if daughter_number is None
-            else np.asarray(daughter_number, dtype=float)
+            else np.asarray(daughter_number, dtype=np.float64)
         )
         if frequency.shape != centers.shape or np.any(frequency < 0):
             raise ValueError("Breakage frequencies must be non-negative and aligned.")
@@ -140,7 +140,7 @@ class ConservativeSectionalSolver:
         number = state.cell_number
         if number.shape != self.pivots.shape:
             raise ValueError("Sectional state does not match population pivots.")
-        bins = int(self.pivots.size)
+        bins = self.pivots.size
         loss = number * (self.aggregation_kernel @ number)
         birth = jnp.zeros_like(number)
         overflow_number_rate = jnp.asarray(0.0, dtype=number.dtype)

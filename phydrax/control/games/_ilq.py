@@ -67,17 +67,6 @@ class ILQFeedbackGameStatus(IntEnum):
     LINE_SEARCH_FAILED = 5
     FINAL_UNREGULARIZED_LOCAL_LQ_FAILED = 6
 
-    # Explicit compatibility spellings; aliases do not create new outcomes.
-    INITIAL_EVALUATION_FAILED = INITIAL_POLICY_EVALUATION_FAILED
-    RESIDUAL_EVALUATION_FAILED = NOMINAL_RESIDUAL_FAILED
-    LOCAL_SUGGESTION_FAILED = LOCAL_LQ_FAILED
-    UNREGULARIZED_LOCAL_LQ_FAILED = FINAL_UNREGULARIZED_LOCAL_LQ_FAILED
-    INITIAL_ROLLOUT_FAILED = INITIAL_POLICY_EVALUATION_FAILED
-    RESIDUAL_FAILED = NOMINAL_RESIDUAL_FAILED
-    LOCAL_QUADRATIC_SUGGESTION_FAILED = LOCAL_LQ_FAILED
-    UNREGULARIZED_SUGGESTION_FAILED = FINAL_UNREGULARIZED_LOCAL_LQ_FAILED
-    REGULARIZED_ONLY = FINAL_UNREGULARIZED_LOCAL_LQ_FAILED
-
 
 class ILQFeedbackGameTrialReason(IntEnum):
     """Acceptance-critical outcome for one declared geometric alpha trial."""
@@ -90,18 +79,6 @@ class ILQFeedbackGameTrialReason(IntEnum):
     SCALED_STATE_STEP_GUARD_EXCEEDED = 5
     SCALED_CONTROL_STEP_GUARD_EXCEEDED = 6
     ORIGINAL_RESIDUAL_ARMIJO_FAILED = 7
-
-    INVALID_ROLLOUT = NONFINITE_OR_INVALID_ROLLOUT
-    INVALID_RESIDUAL = NONFINITE_OR_INVALID_RESIDUAL
-    NONFINITE_STEP = NONFINITE_SCALED_STEP
-    STATE_STEP_LIMIT_EXCEEDED = SCALED_STATE_STEP_GUARD_EXCEEDED
-    CONTROL_STEP_LIMIT_EXCEEDED = SCALED_CONTROL_STEP_GUARD_EXCEEDED
-    ARMIJO_FAILED = ORIGINAL_RESIDUAL_ARMIJO_FAILED
-    ROLLOUT_FAILED = NONFINITE_OR_INVALID_ROLLOUT
-    RESIDUAL_FAILED = NONFINITE_OR_INVALID_RESIDUAL
-    STATE_STEP_GUARD_EXCEEDED = SCALED_STATE_STEP_GUARD_EXCEEDED
-    CONTROL_STEP_GUARD_EXCEEDED = SCALED_CONTROL_STEP_GUARD_EXCEEDED
-    RESIDUAL_ARMIJO_FAILED = ORIGINAL_RESIDUAL_ARMIJO_FAILED
 
 
 class ILQFeedbackGamePlan(StrictModule, NonTrainableState):
@@ -1227,8 +1204,8 @@ def _history_arrays(
     trial_shape = iteration_shape + (plan.maximum_line_search_steps,)
     nan_iteration = jnp.full(iteration_shape, jnp.nan, dtype=dtype)
     nan_trial = jnp.full(trial_shape, jnp.nan, dtype=dtype)
-    false_iteration = jnp.zeros(iteration_shape, dtype=bool)
-    false_trial = jnp.zeros(trial_shape, dtype=bool)
+    false_iteration = jnp.zeros(iteration_shape, dtype=jnp.bool_)
+    false_trial = jnp.zeros(trial_shape, dtype=jnp.bool_)
     return (
         false_iteration,
         false_iteration,
@@ -1327,7 +1304,7 @@ def solve_prepared_ilq_feedback_game(
         incumbent_controls,
         plan.scaling.state_scales,
         plan.scaling.control_scales,
-        float,
+        jnp.float64,
     )
     cases = problem.case_shape
     initial_active = initial_evaluation.successful
@@ -1459,7 +1436,7 @@ def solve_prepared_ilq_feedback_game(
         current_merit = _residual_merit(residual)
 
         search_initial = (
-            jnp.zeros(cases, dtype=bool),
+            jnp.zeros(cases, dtype=jnp.bool_),
             current,
             residual,
             current_gain,
@@ -1469,15 +1446,15 @@ def solve_prepared_ilq_feedback_game(
             jnp.full(cases, jnp.nan, dtype=dtype),
             jnp.full(cases, jnp.nan, dtype=dtype),
             jnp.zeros(cases, dtype=jnp.int32),
-            jnp.zeros(cases + (plan.maximum_line_search_steps,), dtype=bool),
+            jnp.zeros(cases + (plan.maximum_line_search_steps,), dtype=jnp.bool_),
             jnp.full(
                 cases + (plan.maximum_line_search_steps,),
                 int(ILQFeedbackGameTrialReason.NOT_EVALUATED),
                 dtype=jnp.int32,
             ),
             jnp.full(cases + (plan.maximum_line_search_steps,), jnp.nan, dtype=dtype),
-            jnp.zeros(cases + (plan.maximum_line_search_steps,), dtype=bool),
-            jnp.zeros(cases + (plan.maximum_line_search_steps,), dtype=bool),
+            jnp.zeros(cases + (plan.maximum_line_search_steps,), dtype=jnp.bool_),
+            jnp.zeros(cases + (plan.maximum_line_search_steps,), dtype=jnp.bool_),
             jnp.full(cases + (plan.maximum_line_search_steps,), jnp.nan, dtype=dtype),
             jnp.full(cases + (plan.maximum_line_search_steps,), jnp.nan, dtype=dtype),
             jnp.full(cases + (plan.maximum_line_search_steps,), jnp.nan, dtype=dtype),

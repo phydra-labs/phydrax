@@ -165,7 +165,7 @@ class ResidualMonitor(StrictModule):
         if float(epsilon) <= 0.0:
             raise ValueError("ResidualMonitor.epsilon must be positive.")
         self.sampler = resolve_design(sampler)
-        self.epsilon = jnp.asarray(epsilon, dtype=float)
+        self.epsilon = jnp.asarray(epsilon, dtype=jnp.float64)
 
 
 class RefreshGuard(StrictModule):
@@ -192,17 +192,20 @@ class RefreshGuard(StrictModule):
             raise ValueError("max_consecutive_rejections must be positive.")
         if int(suspension_steps) < 0:
             raise ValueError("suspension_steps must be non-negative.")
-        self.max_relative_regression = jnp.asarray(max_relative_regression, dtype=float)
-        self.absolute_tolerance = jnp.asarray(absolute_tolerance, dtype=float)
+        self.max_relative_regression = jnp.asarray(
+            max_relative_regression, dtype=jnp.float64
+        )
+        self.absolute_tolerance = jnp.asarray(absolute_tolerance, dtype=jnp.float64)
         self.max_consecutive_rejections = int(max_consecutive_rejections)
         self.suspension_steps = int(suspension_steps)
 
     def accepts(self, baseline: Array, monitored: Array, /) -> Array:
         limit = (
-            jnp.asarray(baseline, dtype=float) * (1.0 + self.max_relative_regression)
+            jnp.asarray(baseline, dtype=jnp.float64)
+            * (1.0 + self.max_relative_regression)
             + self.absolute_tolerance
         )
-        return jnp.asarray(monitored, dtype=float) <= limit
+        return jnp.asarray(monitored, dtype=jnp.float64) <= limit
 
 
 class AdaptationBudget(StrictModule):
@@ -251,7 +254,7 @@ class CoverageAnchors(StrictModule):
     def __init__(self, fraction: float = 0.25):
         if not 0.0 <= float(fraction) < 1.0:
             raise ValueError("CoverageAnchors.fraction must lie in [0, 1).")
-        self.fraction = jnp.asarray(fraction, dtype=float)
+        self.fraction = jnp.asarray(fraction, dtype=jnp.float64)
 
 
 class ControlledCollocationPopulation(StrictModule):
@@ -306,11 +309,11 @@ class ControlledCollocationPopulation(StrictModule):
         self.monitor_batch = monitor_batch
         self.monitor_point_count = int(monitor_point_count)
         self.last_control_step = jnp.asarray(last_control_step, dtype=jnp.int32)
-        self.proposal_pending = jnp.asarray(proposal_pending, dtype=bool)
-        self.baseline_monitor_mean = jnp.asarray(baseline_monitor_mean, dtype=float)
-        self.monitor_mean = jnp.asarray(monitor_mean, dtype=float)
-        self.monitor_rms = jnp.asarray(monitor_rms, dtype=float)
-        self.monitor_max = jnp.asarray(monitor_max, dtype=float)
+        self.proposal_pending = jnp.asarray(proposal_pending, dtype=jnp.bool_)
+        self.baseline_monitor_mean = jnp.asarray(baseline_monitor_mean, dtype=jnp.float64)
+        self.monitor_mean = jnp.asarray(monitor_mean, dtype=jnp.float64)
+        self.monitor_rms = jnp.asarray(monitor_rms, dtype=jnp.float64)
+        self.monitor_max = jnp.asarray(monitor_max, dtype=jnp.float64)
         self.refresh_attempt_count = jnp.asarray(refresh_attempt_count, dtype=jnp.int32)
         self.refresh_accept_count = jnp.asarray(refresh_accept_count, dtype=jnp.int32)
         self.refresh_reject_count = jnp.asarray(refresh_reject_count, dtype=jnp.int32)
@@ -437,34 +440,34 @@ class ControlledCollocationPolicy(AbstractCollocationPolicy):
                 "control_monitor_rms": population.monitor_rms,
                 "control_monitor_max": population.monitor_max,
                 "control_refresh_attempt_count": jnp.asarray(
-                    population.refresh_attempt_count, dtype=float
+                    population.refresh_attempt_count, dtype=jnp.float64
                 ),
                 "control_refresh_accept_count": jnp.asarray(
-                    population.refresh_accept_count, dtype=float
+                    population.refresh_accept_count, dtype=jnp.float64
                 ),
                 "control_refresh_reject_count": jnp.asarray(
-                    population.refresh_reject_count, dtype=float
+                    population.refresh_reject_count, dtype=jnp.float64
                 ),
                 "control_consecutive_rejections": jnp.asarray(
-                    population.consecutive_rejections, dtype=float
+                    population.consecutive_rejections, dtype=jnp.float64
                 ),
                 "control_suspended_until": jnp.asarray(
-                    population.suspended_until, dtype=float
+                    population.suspended_until, dtype=jnp.float64
                 ),
                 "control_candidate_evaluations": jnp.asarray(
-                    population.candidate_evaluations, dtype=float
+                    population.candidate_evaluations, dtype=jnp.float64
                 ),
                 "control_monitor_evaluations": jnp.asarray(
-                    population.monitor_evaluations, dtype=float
+                    population.monitor_evaluations, dtype=jnp.float64
                 ),
                 "control_training_evaluations": jnp.asarray(
-                    population.training_evaluations, dtype=float
+                    population.training_evaluations, dtype=jnp.float64
                 ),
                 "control_anchor_fraction": jnp.asarray(
-                    self.anchors.fraction, dtype=float
+                    self.anchors.fraction, dtype=jnp.float64
                 ),
                 "control_proposal_pending": jnp.asarray(
-                    population.proposal_pending, dtype=float
+                    population.proposal_pending, dtype=jnp.float64
                 ),
             }
         )
@@ -698,7 +701,7 @@ def _monitor_statistics(
     epsilon: Array,
 ) -> tuple[Array, Array, Array, int]:
     score = constraint.pointwise_score(functions, batch, key=key)
-    values = jax.lax.stop_gradient(jnp.asarray(score.data, dtype=float))
+    values = jax.lax.stop_gradient(jnp.asarray(score.data, dtype=jnp.float64))
     values = jnp.nan_to_num(
         values,
         nan=jnp.finfo(values.dtype).max,

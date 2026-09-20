@@ -45,8 +45,7 @@ def neo_hookean_functional(
             or gradient.shape[-1] not in (2, 3)
         ):
             raise ValueError(
-                "Neo-Hookean displacement gradients must end in a 2x2 or 3x3 "
-                "square matrix."
+                "Neo-Hookean displacement gradients must end in a 2x2 or 3x3 square matrix."
             )
         dimension = gradient.shape[-1]
         deformation = jnp.eye(dimension, dtype=gradient.dtype) + gradient

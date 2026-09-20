@@ -21,7 +21,7 @@ def _runtime(*, relation_capacity: int = 2, event_capacity: int = 1):
         np.zeros((4,), dtype=np.int32),
         relation_capacity,
         2,
-        symmetric_kinds=np.ones((1,), dtype=bool),
+        symmetric_kinds=np.ones((1,), dtype="bool"),
         event_capacity=event_capacity,
     )
     return plan.prepare()
@@ -109,14 +109,14 @@ def test_capacity_and_duplicate_fail_closed_atomically():
 
 
 def test_endpoint_compatibility_and_exclusion_have_distinct_evidence():
-    compatibility = np.zeros((1, 2, 2), dtype=bool)
+    compatibility = np.zeros((1, 2, 2), dtype="bool")
     compatibility[0, 0, 1] = True
     runtime = DynamicPairRelationPlan(
         np.asarray([0, 0, 1, 1], dtype=np.int32),
         2,
         2,
         compatibility=compatibility,
-        exclusion=np.ones((1, 1), dtype=bool),
+        exclusion=np.ones((1, 1), dtype="bool"),
         event_capacity=1,
     ).prepare()
     invalid = _bind(runtime, runtime.initialize(), 0, 1, event_id=1)

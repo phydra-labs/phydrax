@@ -160,7 +160,7 @@ def _interoperability_benchmarks(
             jnp.sin(phase[:, None, None] + 2.0 * jnp.pi * axis.nodes[None, None, :])
             + times[None, :, None]
         )
-        valid = jnp.ones((budget, num_times), dtype=bool)
+        valid = jnp.ones((budget, num_times), dtype="bool")
         valid = valid.at[-1, num_times // 2 :].set(False)
         trajectory = phx.stochastic.StochasticTrajectory(
             times,
@@ -252,7 +252,7 @@ def run_integration_benchmarks(
     """Compare integration accuracy, diagnostics, and end-to-end wall time."""
     if repeats < 1:
         raise ValueError("repeats must be at least one.")
-    budgets_ = tuple(int(value) for value in budgets)
+    budgets_ = tuple(budgets)
     if not budgets_ or any(value < 8 for value in budgets_):
         raise ValueError("benchmark budgets must contain integers of at least eight.")
 

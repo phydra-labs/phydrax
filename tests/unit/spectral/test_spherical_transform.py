@@ -146,7 +146,7 @@ def test_spherical_plan_rejects_invalid_configuration_shapes_and_memory():
     with pytest.raises(ValueError, match="Spherical synthesis expects"):
         plan.synthesis(jnp.ones((4, 8)))
     with pytest.raises(TypeError, match="requires real values"):
-        plan.analysis(jnp.ones(plan.sample_shape, dtype=complex))
+        plan.analysis(jnp.ones(plan.sample_shape, dtype="complex128"))
 
 
 @pytest.mark.parametrize("execution", ("recursive", "precomputed"))

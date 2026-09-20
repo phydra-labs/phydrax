@@ -46,7 +46,7 @@ def _component_shape(value: Sequence[int], /) -> tuple[int, ...]:
 
 
 def _inverse_softplus(value: ArrayLike, /) -> Array:
-    physical = jnp.asarray(value, dtype=float)
+    physical = jnp.asarray(value, dtype=jnp.float64)
     return jnp.where(physical > 20.0, physical, jnp.log(jnp.expm1(physical)))
 
 
@@ -85,8 +85,7 @@ class _ModalCoordinateGrid(StrictModule, NonTrainableState):
             raise ValueError("maximum_query_points must be positive.")
         if point_count > maximum:
             raise ValueError(
-                f"Modal query grid has {point_count} points, exceeding "
-                f"maximum_query_points={maximum}."
+                f"Modal query grid has {point_count} points, exceeding maximum_query_points={maximum}."
             )
         dimension = len(discretization.axes)
         storage_indices = np.indices(discretization.modal_shape, dtype=np.int64).reshape(
@@ -94,7 +93,7 @@ class _ModalCoordinateGrid(StrictModule, NonTrainableState):
         )
         numbers = np.stack(
             tuple(
-                np.asarray(axis.modes.mode_numbers, dtype=float)[
+                np.asarray(axis.modes.mode_numbers, dtype=np.float64)[
                     storage_indices[axis_index]
                 ]
                 for axis_index, axis in enumerate(discretization.axes)
@@ -102,9 +101,9 @@ class _ModalCoordinateGrid(StrictModule, NonTrainableState):
             axis=-1,
         )
         scales = (
-            np.ones((dimension,), dtype=float)
+            np.ones((dimension,), dtype=np.float64)
             if mode_scales is None
-            else np.asarray(mode_scales, dtype=float).reshape((-1,))
+            else np.asarray(mode_scales, dtype=np.float64).reshape((-1,))
         )
         if scales.shape != (dimension,):
             raise ValueError(
@@ -133,7 +132,7 @@ class _FixedRates(StrictModule, NonTrainableState):
     values: Array
 
     def __init__(self, values: ArrayLike, /):
-        self.values = jnp.asarray(values, dtype=float)
+        self.values = jnp.asarray(values, dtype=jnp.float64)
 
     def __call__(self) -> Array:
         return self.values
@@ -162,7 +161,7 @@ class ExponentialSpectralEnvelope(StrictModule):
         minimum_rate: float = 0.0,
         aggregation: DecayAggregation = "sum",
     ):
-        rates = np.asarray(initial_rates, dtype=float).reshape((-1,))
+        rates = np.asarray(initial_rates, dtype=np.float64).reshape((-1,))
         minimum = float(minimum_rate)
         if rates.size == 0 or np.any(~np.isfinite(rates)):
             raise ValueError("initial_rates must contain finite values.")
@@ -180,7 +179,7 @@ class ExponentialSpectralEnvelope(StrictModule):
         else:
             parameter = _FixedRates(rates)
         self.parameter = parameter
-        self.dimension = int(rates.size)
+        self.dimension = rates.size
         self.aggregation = aggregation
         self.trainable = bool(trainable)
         self.envelope_id = canonical_fingerprint(
@@ -247,22 +246,21 @@ class _ModalFeatureTable(StrictModule, NonTrainableState):
             )
             basis_values = np.asarray(jax.vmap(axis.synthesize)(identity))[:, positions]
             selected = basis_values[multi_indices[axis_index]]
-            blocks.append(np.asarray(selected.real, dtype=float))
+            blocks.append(np.asarray(selected.real, dtype=np.float64))
             if np.iscomplexobj(selected):
-                blocks.append(np.asarray(selected.imag, dtype=float))
+                blocks.append(np.asarray(selected.imag, dtype=np.float64))
         values = np.concatenate(blocks, axis=-1)
         byte_limit = index(maximum_feature_bytes)
         if byte_limit < 1:
             raise ValueError("maximum_feature_bytes must be positive.")
         if values.nbytes > byte_limit:
             raise ValueError(
-                f"Basis feature table requires {values.nbytes} bytes, exceeding "
-                f"maximum_feature_bytes={byte_limit}."
+                f"Basis feature table requires {values.nbytes} bytes, exceeding maximum_feature_bytes={byte_limit}."
             )
         self.values = jnp.asarray(values)
         self.modal_shape = discretization.modal_shape
         self.coarse_counts = counts
-        self.feature_size = int(values.shape[-1])
+        self.feature_size = values.shape[-1]
         self.table_id = canonical_fingerprint(
             {
                 "kind": "spectral-basis-feature-table",
@@ -320,8 +318,7 @@ class SpectralBasisModulation(StrictModule):
         expected = (self.table.values.shape[0],) + self.component_shape
         if values.shape != expected:
             raise ValueError(
-                f"Basis modulation model must return batched shape {expected}; "
-                f"got {values.shape}."
+                f"Basis modulation model must return batched shape {expected}; got {values.shape}."
             )
         return values.reshape(self.table.modal_shape + self.component_shape)
 
@@ -558,7 +555,7 @@ class SparseImplicitModalField(StrictModule):
     ):
         if not isinstance(support, PreparedModalSupport):
             raise TypeError("support must be PreparedModalSupport.")
-        shape = tuple(int(value) for value in modal_shape)
+        shape = tuple(modal_shape)
         if not shape or any(value <= 0 for value in shape):
             raise ValueError("modal_shape must be positive.")
         if support.multi_indices.shape[-1] != len(shape):

@@ -67,7 +67,7 @@ class CalibrationPlan(StrictModule):
     ):
         if family not in ("svi", "essvi"):
             raise ValueError("calibration family must be svi or essvi.")
-        expiries = jnp.asarray(slice_expiries, dtype=float)
+        expiries = jnp.asarray(slice_expiries, dtype=jnp.float64)
         if expiries.ndim != 1 or expiries.size < (1 if family == "svi" else 2):
             raise ValueError("slice_expiries has insufficient slices for the family.")
         expiries = eqx.error_if(
@@ -95,7 +95,7 @@ class CalibrationPlan(StrictModule):
             )
         if not isinstance(fail_on_arbitrage, bool):
             raise TypeError("fail_on_arbitrage must be boolean.")
-        count = int(expiries.size)
+        count = expiries.size
         self.family, self.slice_expiries = family, expiries
         self.maximum_steps, self.tolerance, self.initial_damping = (
             maximum_steps,
@@ -221,7 +221,7 @@ def _inverse_softplus(value: Array) -> Array:
 def _default_initial(
     plan: CalibrationPlan, observations: VolatilityObservationSet, indices: Array
 ) -> Array:
-    count = int(plan.slice_expiries.size)
+    count = plan.slice_expiries.size
     total_variance = observations.total_variances
     theta = jnp.stack(
         tuple(
@@ -277,14 +277,12 @@ def prepare_calibration(
         "observation expiry is absent from the compiled calibration plan.",
     )
     expected_shape = (
-        (int(plan.slice_expiries.size), 5)
-        if plan.family == "svi"
-        else (plan.parameter_count,)
+        (plan.slice_expiries.size, 5) if plan.family == "svi" else (plan.parameter_count,)
     )
     initial = (
         _default_initial(plan, observations, indices)
         if initial_parameters is None
-        else jnp.asarray(initial_parameters, dtype=float)
+        else jnp.asarray(initial_parameters, dtype=jnp.float64)
     )
     if initial.shape != expected_shape:
         raise ValueError(f"initial_parameters must have shape {expected_shape}.")
@@ -314,7 +312,7 @@ def _svi_transformed(raw: Array) -> tuple[Array, Array, Array, Array, Array]:
 
 
 def _essvi_transformed(plan: CalibrationPlan, raw: Array):
-    count = int(plan.slice_expiries.size)
+    count = plan.slice_expiries.size
     theta = jnp.cumsum(jax.nn.softplus(raw[:count]) + 1.0e-10)
     rho = 0.999 * jnp.tanh(raw[count : 2 * count])
     gamma = jax.nn.sigmoid(raw[-1])
@@ -363,7 +361,7 @@ def _surface(prepared: PreparedCalibration, raw: Array) -> SVISurface | ESSVISur
                 prepared.plan.slice_expiries[index],
                 SVIParameters(*(value[index] for value in transformed)),
             )
-            for index in range(int(prepared.plan.slice_expiries.size))
+            for index in range(prepared.plan.slice_expiries.size)
         )
         return SVISurface(slices)
     theta, rho, eta, gamma = _essvi_transformed(prepared.plan, raw)
@@ -460,7 +458,7 @@ def replay_calibration(
         raise TypeError("prepared and expected must be calibration lifecycle records.")
     if expected.plan_id != prepared.plan.plan_id:
         raise ValueError("expected result was produced by a different calibration plan.")
-    tolerance_ = jnp.asarray(tolerance, dtype=float)
+    tolerance_ = jnp.asarray(tolerance, dtype=jnp.float64)
     if tolerance_.shape != ():
         raise ValueError("tolerance must be scalar.")
     tolerance_ = eqx.error_if(

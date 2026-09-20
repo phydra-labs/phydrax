@@ -24,7 +24,7 @@ def _source(nodes=17, *, radius=25.0e-6, radial_position=0.015):
         jnp.zeros((0,)),
         jnp.zeros((0,)),
         jnp.zeros((0,)),
-        jnp.zeros((0, 1, nodes), dtype=bool),
+        jnp.zeros((0, 1, nodes), dtype="bool"),
     )
     fiber = SkeletalFiberBundlePlan(("f0",), nodes, [40.0], [0.05], schedule).prepare()
     positions = jnp.zeros((1, nodes, 3)).at[..., 0].set(radial_position)

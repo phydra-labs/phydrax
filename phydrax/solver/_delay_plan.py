@@ -88,8 +88,7 @@ def stage_time_extent(solver: dfx.AbstractSolver, /) -> Array:
             )
         if not isfinite(extent) or extent <= 0.0 or any(node > extent for node in nodes):
             raise ValueError(
-                "Geometric solver causal_stage_extent must be finite, positive, "
-                "and bound every stage abscissa."
+                "Geometric solver causal_stage_extent must be finite, positive, and bound every stage abscissa."
             )
         return jnp.asarray(extent)
     if isinstance(solver, (dfx.Euler, dfx.EulerHeun, dfx.ImplicitEuler)):
@@ -137,8 +136,7 @@ def resolve_delay_solver(
                 assert geometry is not None
                 if problem.interpretation == "ito":
                     raise ValueError(
-                        "Intrinsic Itô geometry requires an explicit second-order "
-                        "geometric interpretation."
+                        "Intrinsic Itô geometry requires an explicit second-order geometric interpretation."
                     )
                 return SRKMK(geometry)
             return dfx.Euler() if problem.interpretation == "ito" else dfx.EulerHeun()
@@ -177,8 +175,7 @@ def _validate_geometry(
     if problem.stochastic and intrinsic:
         if problem.interpretation == "ito":
             raise ValueError(
-                "Intrinsic Itô geometry requires an explicit second-order geometric "
-                "interpretation."
+                "Intrinsic Itô geometry requires an explicit second-order geometric interpretation."
             )
         if not isinstance(solver, SRKMK):
             raise ValueError(
@@ -235,8 +232,7 @@ def compile_delay_execution_plan(
     bounded = maximum_delay is not None and not has_infinite_memory
     if (history_mode == "rolling" or execution == "segmented") and not bounded:
         raise ValueError(
-            "Rolling and segmented delay execution require every term to declare "
-            "a finite maximum delay."
+            "Rolling and segmented delay execution require every term to declare a finite maximum delay."
         )
 
     base_equation_kind = (
@@ -293,24 +289,24 @@ def fixed_delay_history_capacity(
 
     if not isinstance(margin, int) or isinstance(margin, bool) or margin < 1:
         raise ValueError("history margin must be a positive integer.")
-    lag = float(jax.device_get(jnp.asarray(maximum_lag, dtype=float)))
-    step = float(jax.device_get(jnp.asarray(nominal_step, dtype=float)))
+    lag = float(jax.device_get(jnp.asarray(maximum_lag, dtype=jnp.float64)))
+    step = float(jax.device_get(jnp.asarray(nominal_step, dtype=jnp.float64)))
     if not np.isfinite(lag) or lag <= 0.0:
         raise ValueError("maximum_lag must be finite and positive.")
     if not np.isfinite(step) or step <= 0.0:
         raise ValueError("nominal_step must be finite and positive.")
-    origin = float(jax.device_get(jnp.asarray(initial_time, dtype=float)))
+    origin = float(jax.device_get(jnp.asarray(initial_time, dtype=jnp.float64)))
     if not np.isfinite(origin):
         raise ValueError("initial_time must be finite.")
     extra = 0
     if breakpoints is not None:
-        values = np.asarray(jax.device_get(jnp.asarray(breakpoints, dtype=float)))
+        values = np.asarray(jax.device_get(jnp.asarray(breakpoints, dtype=jnp.float64)))
         if values.ndim != 1:
             raise ValueError("history-capacity breakpoints must be rank-1.")
         finite = np.unique(values[np.isfinite(values) & (values > origin)])
         additional = []
         previous = origin
-        epsilon = 100.0 * np.finfo(float).eps
+        epsilon = 100.0 * np.finfo(np.float64).eps
         for breakpoint in finite:
             step_count = (breakpoint - previous) / step
             tolerance = epsilon * max(1.0, abs(step_count))

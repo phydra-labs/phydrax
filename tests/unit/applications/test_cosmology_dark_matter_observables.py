@@ -157,7 +157,7 @@ def test_weighted_particle_and_scattering_statistics_have_exact_effective_sample
 
 def test_zero_rate_sidm_diagnostics_report_explicit_collisionless_evidence():
     zero = jnp.zeros((2,))
-    false = jnp.zeros((2,), dtype=bool)
+    false = jnp.zeros((2,), dtype="bool")
     true = jnp.asarray(True)
     rare = SIDMCollisionDiagnostics(
         physical_time_step=jnp.asarray(1.0),
@@ -172,7 +172,7 @@ def test_zero_rate_sidm_diagnostics_report_explicit_collisionless_evidence():
         kernel_supported=true,
         sampled_cosine=zero,
         sampled_azimuth=zero,
-        angular_sample_successful=jnp.ones((2,), dtype=bool),
+        angular_sample_successful=jnp.ones((2,), dtype="bool"),
         pair_probability=zero,
         particle_aggregate_probability=zero,
         random_uniform=jnp.ones((2,)),
@@ -357,7 +357,7 @@ def test_mixed_component_cross_power_reconstructs_direct_total_power():
         jnp.asarray((0.0, 5.0, 8.0, 12.0, 20.0, 40.0)),
         source_id="mixed-spectrum-test",
     )
-    x = jnp.arange(shape[0], dtype=float)[:, None] / shape[0]
+    x = jnp.arange(shape[0], dtype="float64")[:, None] / shape[0]
     mode = jnp.broadcast_to(jnp.sin(2.0 * jnp.pi * x), shape)
     plan = MixedComponentSpectrumPlan(
         shells,
@@ -376,7 +376,7 @@ def test_mixed_component_cross_power_reconstructs_direct_total_power():
     resolved_shell = int(jnp.argmax(product.auto_power[0]))
     resolved_power = float(product.auto_power[0, resolved_shell])
     assert resolved_power > 0.0
-    roundoff = 64.0 * np.finfo(float).eps * resolved_power
+    roundoff = 64.0 * np.finfo(np.float64).eps * resolved_power
     np.testing.assert_allclose(
         product.auto_power[1, resolved_shell],
         4.0 * product.auto_power[0, resolved_shell],

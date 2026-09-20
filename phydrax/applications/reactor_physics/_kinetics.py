@@ -117,7 +117,7 @@ class DelayedNeutronKineticsPlan:
 
     @property
     def family_count(self) -> int:
-        return int(self.delayed_fractions.size)
+        return self.delayed_fractions.size
 
     def equilibrium_state(
         self, neutron_population: float, time_s: float = 0.0, /

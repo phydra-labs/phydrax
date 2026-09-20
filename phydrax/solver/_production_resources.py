@@ -36,8 +36,7 @@ class ProductionResourceBudget(StrictModule, NonTrainableState):
         maximum_output_queue_bytes: int,
     ):
         values = tuple(
-            int(value)
-            for value in (
+            (
                 maximum_compile_units,
                 maximum_host_bytes,
                 maximum_device_bytes,
@@ -83,7 +82,7 @@ def prepare_production_resource_forecast(
         budget, ProductionResourceBudget
     ):
         raise TypeError("Resource forecast requires worksets and budget.")
-    state_bytes = int(np.asarray(state).nbytes)
+    state_bytes = np.asarray(state).nbytes
     workset_bytes = sum(bucket.resident_bytes for bucket in worksets.buckets)
     compile_units = len(worksets.buckets) * len(worksets.operator_program.nodes)
     host_bytes = state_bytes + workset_bytes

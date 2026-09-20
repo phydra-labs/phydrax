@@ -100,7 +100,7 @@ def _fit_kmeans(
     centers = initialize_centers(x, w, cluster_count, initialization, key)
     case_shape = batch.case_shape
     delta = jnp.full(case_shape, jnp.inf, dtype=w.dtype)
-    empty_seen = jnp.zeros(case_shape, dtype=bool)
+    empty_seen = jnp.zeros(case_shape, dtype=jnp.bool_)
 
     def step(_, state):
         centers, delta, empty_seen = state
@@ -375,8 +375,8 @@ class KMedoids(AbstractRecipe):
         x, w, active_samples, invalid = active_data(batch, self.weight_policy)
         medoids = initialize_centers(x, w, self.cluster_count, self.initialization, key)
         pairwise = pairwise_distances(x, self.metric)
-        changed = jnp.ones(batch.case_shape, dtype=bool)
-        empty_seen = jnp.zeros(batch.case_shape, dtype=bool)
+        changed = jnp.ones(batch.case_shape, dtype=jnp.bool_)
+        empty_seen = jnp.zeros(batch.case_shape, dtype=jnp.bool_)
 
         def step(_, state):
             medoids, changed, empty_seen = state
@@ -505,7 +505,7 @@ class StreamingKMeans(StrictModule):
         )
         active = jnp.isfinite(w) & (w >= 0.0) & jnp.all(jnp.isfinite(x), axis=-1)
         if mask is not None:
-            active &= jnp.broadcast_to(jnp.asarray(mask, dtype=bool), x.shape[:-1])
+            active &= jnp.broadcast_to(jnp.asarray(mask, dtype=jnp.bool_), x.shape[:-1])
         w = jnp.where(active, w, 0.0)
         x = jnp.where(active[..., None], x, 0)
         distances = distances_to_centers(x, self.centers, "squared-euclidean", case_shape)

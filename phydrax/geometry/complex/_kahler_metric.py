@@ -49,7 +49,7 @@ class HypersurfaceKahlerEvaluation(StrictModule):
         self.monge_ampere_residual = jnp.asarray(monge_ampere_residual)
         self.positivity_margin = jnp.asarray(positivity_margin)
         self.potential = jnp.asarray(potential)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.chart_index = int(chart_index)
         self.pivot_index = int(pivot_index)
 

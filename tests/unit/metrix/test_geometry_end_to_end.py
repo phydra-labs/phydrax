@@ -160,7 +160,7 @@ def test_dolbeault_chern_berry_and_projective_hypersurface():
     qgt = phx.operators.quantum.quantum_geometric_tensor(
         lambda parameters: jnp.asarray(
             [jnp.cos(parameters[0] / 2.0), jnp.sin(parameters[0] / 2.0)]
-        ).astype(complex),
+        ).astype("complex128"),
         jnp.asarray([0.4]),
     )
     assert bool(qgt.valid)

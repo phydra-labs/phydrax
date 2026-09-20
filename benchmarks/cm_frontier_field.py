@@ -92,7 +92,7 @@ def _two_particle_vertex(label_count: int):
         labels,
         labels,
         labels,
-        values[..., None, None, None, None].astype(complex),
+        values[..., None, None, None, None].astype("complex128"),
         fermion_label_minimum=start,
         fermion_label_count=label_count,
     )
@@ -107,7 +107,7 @@ def _parquet_case(label_count: int, repeats: int):
     result, execution = measure_repeated(prepared.iterate, warmup=0, repeats=repeats)
     return {
         "labels_per_axis": label_count,
-        "vertex_elements": int(vertex.values.size),
+        "vertex_elements": vertex.values.size,
         "prepare_seconds": prepare_seconds,
         "steady": execution.to_seconds_dict(),
         "logical_bytes": logical_array_bytes((prepared, result)),
@@ -169,7 +169,7 @@ def _monte_carlo_case(steps: int, repeats: int):
 
 def _second_born_case(time_count: int, repeats: int):
     grid = nef.ClosedTimePathPlan(jnp.linspace(0.0, 0.4, time_count)).prepare()
-    propagators = jnp.broadcast_to(jnp.eye(1, dtype=complex), (time_count, 1, 1))
+    propagators = jnp.broadcast_to(jnp.eye(1, dtype="complex128"), (time_count, 1, 1))
     free = nef.fermionic_keldysh_from_propagators(
         grid, propagators, jnp.asarray([[0.5]]), source_id=f"benchmark-free-{time_count}"
     )

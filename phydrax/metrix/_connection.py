@@ -7,13 +7,14 @@ from __future__ import annotations
 from abc import abstractmethod
 from collections.abc import Callable
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from ._chart import CoordinateChart
 from ._jet import metric_jet, MetricJet
 from ._map import DifferentiableMap
@@ -37,7 +38,7 @@ def christoffel_from_metric_jet(jet: MetricJet, /) -> Array:
 class AbstractAffineConnection(StrictModule):
     """Coordinate coefficients of a linear connection on a tangent bundle."""
 
-    chart: AbstractAttribute[CoordinateChart]
+    chart: eqx.AbstractVar[CoordinateChart]
 
     @abstractmethod
     def coefficients(self, coordinates: ArrayLike, /) -> Array:
@@ -89,8 +90,7 @@ class CallableAffineConnection(AbstractAffineConnection):
         expected = (self.chart.dimension,) * 3
         if values.shape[-3:] != expected:
             raise ValueError(
-                "Connection coefficients must have trailing shape "
-                f"{expected}; got {values.shape}."
+                f"Connection coefficients must have trailing shape {expected}; got {values.shape}."
             )
         return values
 
@@ -221,8 +221,7 @@ def connection_geodesic_acceleration(
     dimension = connection.chart.dimension
     if velocity_array.shape[-1:] != (dimension,):
         raise ValueError(
-            f"Geodesic velocity must have trailing dimension {dimension}; "
-            f"got {velocity_array.shape}."
+            f"Geodesic velocity must have trailing dimension {dimension}; got {velocity_array.shape}."
         )
     return -ein.contract(
         "...kij,...i,...j->...k",
@@ -253,8 +252,7 @@ def connection_geodesic_rhs(
     dimension = connection.chart.dimension
     if state_array.shape[-1:] != (2 * dimension,):
         raise ValueError(
-            f"Geodesic state must have trailing dimension {2 * dimension}; "
-            f"got {state_array.shape}."
+            f"Geodesic state must have trailing dimension {2 * dimension}; got {state_array.shape}."
         )
     coordinates = state_array[..., :dimension]
     velocity = state_array[..., dimension:]
@@ -282,13 +280,11 @@ def connection_parallel_transport_rhs(
     dimension = connection.chart.dimension
     if velocity_array.shape[-1:] != (dimension,):
         raise ValueError(
-            f"Path velocity must have trailing dimension {dimension}; "
-            f"got {velocity_array.shape}."
+            f"Path velocity must have trailing dimension {dimension}; got {velocity_array.shape}."
         )
     if transported_array.shape[-1:] != (dimension,):
         raise ValueError(
-            "Transported vector must have trailing dimension "
-            f"{dimension}; got {transported_array.shape}."
+            f"Transported vector must have trailing dimension {dimension}; got {transported_array.shape}."
         )
     return -ein.contract(
         "...kij,...i,...j->...k",

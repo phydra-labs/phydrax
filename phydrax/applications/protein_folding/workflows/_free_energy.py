@@ -268,8 +268,8 @@ class ProteinFreeEnergyWorkflow:
         """Convert physical cross-potentials to an authenticated dense dataset."""
         raw_beta = np.asarray(inverse_temperatures)
         if not np.issubdtype(raw_beta.dtype, np.floating):
-            raw_beta = raw_beta.astype(float)
-        beta = raw_beta.astype(float, copy=False)
+            raw_beta = raw_beta.astype("float64")
+        beta = raw_beta.astype("float64", copy=False)
         expected_beta = self.inverse_temperature
         beta_tolerance = max(1.0e-12, 128.0 * np.finfo(raw_beta.dtype).eps)
         if beta.shape != (len(self.state_ids),) or not np.allclose(

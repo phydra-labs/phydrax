@@ -81,8 +81,7 @@ class ImplicitRootDerivativePolicy(StrictModule):
         if tangent is None:
             if not isinstance(method, (NewtonKrylov, NewtonTrustRegion)):
                 raise ValueError(
-                    "A tangent linear policy is required when the nonlinear method "
-                    "has no native linear policy."
+                    "A tangent linear policy is required when the nonlinear method has no native linear policy."
                 )
             tangent = method.linear_policy
         adjoint = (
@@ -147,7 +146,7 @@ def _restore_diagnostic_types(
     return eqx.tree_at(
         lambda value: value.final_linear_converged,
         restored,
-        diagnostics.final_linear_converged.astype(bool),
+        diagnostics.final_linear_converged.astype("bool"),
     )
 
 
@@ -266,8 +265,7 @@ def implicit_root_result(
     if isinstance(problem_or_prepared, PreparedNonlinearSolve):
         if initial_state is not None or method is not None or termination is not None:
             raise ValueError(
-                "initial_state, method, and termination must be omitted for a "
-                "prepared implicit root."
+                "initial_state, method, and termination must be omitted for a prepared implicit root."
             )
         if args is not _DEFAULT_ARGS:
             raise ValueError("args must be omitted for a prepared implicit root.")
@@ -288,8 +286,7 @@ def implicit_root_result(
         runtime_args = None if args is _DEFAULT_ARGS else args
     else:
         raise TypeError(
-            "problem_or_prepared must be a NonlinearSystemProblem or "
-            "PreparedNonlinearSolve."
+            "problem_or_prepared must be a NonlinearSystemProblem or PreparedNonlinearSolve."
         )
 
     if not isinstance(method_, AbstractNonlinearMethod):

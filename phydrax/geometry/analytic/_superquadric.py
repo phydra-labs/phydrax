@@ -90,11 +90,11 @@ class Superquadric(GeometrySource):
         second_blockiness: Any = 2.0,
         feature_id: str | None = None,
     ):
-        center_ = np.asarray(center, dtype=float)
-        axes = np.asarray(semi_axes, dtype=float)
-        quaternion = np.asarray(orientation, dtype=float)
-        first = np.asarray(first_blockiness, dtype=float)
-        second = np.asarray(second_blockiness, dtype=float)
+        center_ = np.asarray(center, dtype=np.float64)
+        axes = np.asarray(semi_axes, dtype=np.float64)
+        quaternion = np.asarray(orientation, dtype=np.float64)
+        first = np.asarray(first_blockiness, dtype=np.float64)
+        second = np.asarray(second_blockiness, dtype=np.float64)
         if center_.shape != (3,) or np.any(~np.isfinite(center_)):
             raise ValueError("center must be a finite three-vector.")
         if axes.shape != (3,) or np.any(~np.isfinite(axes)) or np.any(axes <= 0.0):

@@ -99,15 +99,15 @@ def test_surface_chart_lowering_integrates_faces_without_seam_duplication(
 
 def test_bounds_property(geometry_from_cube):
     geom = geometry_from_cube
-    bounds = np.asarray(geom.bounds, dtype=float)
+    bounds = np.asarray(geom.bounds, dtype="float64")
     expected_bounds = np.array([[-0.5, -0.5, -0.5], [0.5, 0.5, 0.5]])
     assert np.allclose(bounds, expected_bounds, atol=1e-6)
 
 
 def test_contains_method(geometry_from_cube):
     geom = geometry_from_cube
-    inside_point = jnp.array([[0.0, 0.0, 0.0]], dtype=float)
-    outside_point = jnp.array([[2.0, 2.0, 2.0]], dtype=float)
+    inside_point = jnp.array([[0.0, 0.0, 0.0]], dtype="float64")
+    outside_point = jnp.array([[2.0, 2.0, 2.0]], dtype="float64")
     assert geom._contains(inside_point)[0]
     assert ~geom._contains(outside_point)[0]
 
@@ -120,7 +120,7 @@ def test_adf_batched_matches_vmap(geometry_from_cube):
         shape=(128, 3),
         minval=-0.75,
         maxval=0.75,
-        dtype=float,
+        dtype="float64",
     )
     sdf_batched = geom.adf(pts)
     sdf_vmap = jax.vmap(geom.adf)(pts)
@@ -135,9 +135,9 @@ def test_adf_jvp_batched_matches_vmap(geometry_from_cube):
         shape=(32, 3),
         minval=-0.75,
         maxval=0.75,
-        dtype=float,
+        dtype="float64",
     )
-    t_pts = jax.random.normal(key1, shape=(32, 3), dtype=float)
+    t_pts = jax.random.normal(key1, shape=(32, 3), dtype="float64")
 
     _, tval_batched = jax.jvp(geom.adf, (pts,), (t_pts,))
     tval_vmap = jax.vmap(lambda p, tp: jax.jvp(geom.adf, (p,), (tp,))[1])(pts, t_pts)
@@ -156,8 +156,8 @@ def test_compiled_mesh_region_field_has_correct_sign(geometry_from_cube):
 
 def test_on_boundary_method(geometry_from_cube):
     geom = geometry_from_cube
-    boundary_point = jnp.array([[0.5, 0.0, 0.0]], dtype=float)
-    interior_point = jnp.array([[0.0, 0.0, 0.0]], dtype=float)
+    boundary_point = jnp.array([[0.5, 0.0, 0.0]], dtype="float64")
+    interior_point = jnp.array([[0.0, 0.0, 0.0]], dtype="float64")
     assert geom._on_boundary(boundary_point)[0]
     assert ~geom._on_boundary(interior_point)[0]
 
@@ -207,7 +207,7 @@ def test_boundary_normals(geometry_from_cube):
             [0.0, 0.0, 0.5],  # +Z face
             [0.0, 0.0, -0.5],  # -Z face
         ],
-        dtype=float,
+        dtype="float64",
     )
 
     expected_normals = np.array(
@@ -233,9 +233,9 @@ def test_boundary_normals_at_nonsmooth_features_are_valid_subgradients(
             [0.5, 0.5, 0.0],
             [0.5, 0.5, 0.5],
         ],
-        dtype=float,
+        dtype="float64",
     )
-    normals = np.asarray(geometry_from_cube._boundary_normals(points), dtype=float)
+    normals = np.asarray(geometry_from_cube._boundary_normals(points), dtype="float64")
     assert np.allclose(np.linalg.norm(normals, axis=-1), 1.0)
     assert np.all(normals * np.asarray(points) >= -1e-12)
     assert np.all(np.sum(normals * np.asarray(points), axis=-1) > 0.0)
@@ -243,7 +243,7 @@ def test_boundary_normals_at_nonsmooth_features_are_valid_subgradients(
 
 def test_boundary_normals_no_grad(geometry_from_cube):
     geom = geometry_from_cube
-    point = jnp.array([0.6, 0.0, 0.0], dtype=float)
+    point = jnp.array([0.6, 0.0, 0.0], dtype="float64")
 
     def f(p):
         return jnp.sum(geom._boundary_normals(p))
@@ -261,7 +261,7 @@ def test_boundary_normals_jittable_batched(geometry_from_cube):
             [0.0, 0.0, 0.5],
             [0.6, 0.2, -0.1],
         ],
-        dtype=float,
+        dtype="float64",
     )
 
     normals = jax.jit(lambda p: geom._boundary_normals(p))(points)

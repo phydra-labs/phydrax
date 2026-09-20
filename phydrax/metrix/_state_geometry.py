@@ -16,7 +16,7 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.linalg as la
 
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -54,8 +54,7 @@ def _relative_residual(left: ArrayLike, right: ArrayLike, /) -> Array:
     right_array = jnp.asarray(right)
     if left_array.shape != right_array.shape:
         raise ValueError(
-            "Residual operands must have identical shapes; "
-            f"got {left_array.shape} and {right_array.shape}."
+            f"Residual operands must have identical shapes; got {left_array.shape} and {right_array.shape}."
         )
     scale = jnp.maximum(1.0, jnp.maximum(_norm(left_array), _norm(right_array)))
     return _norm(left_array - right_array) / scale
@@ -100,14 +99,14 @@ class AbstractStateGeometry(StrictModule):
     algebraic transposes and never silently apply a Riesz map.
     """
 
-    geometry_id: AbstractAttribute[str]
-    retraction_method: AbstractAttribute[str]
-    trivial: AbstractAttribute[bool]
-    supports_exact_inverse: AbstractAttribute[bool]
-    supports_exact_differential: AbstractAttribute[bool]
-    supports_transport: AbstractAttribute[bool]
-    supports_isometric_transport: AbstractAttribute[bool]
-    supports_commutator_free: AbstractAttribute[bool]
+    geometry_id: eqx.AbstractVar[str]
+    retraction_method: eqx.AbstractVar[str]
+    trivial: eqx.AbstractVar[bool]
+    supports_exact_inverse: eqx.AbstractVar[bool]
+    supports_exact_differential: eqx.AbstractVar[bool]
+    supports_transport: eqx.AbstractVar[bool]
+    supports_isometric_transport: eqx.AbstractVar[bool]
+    supports_commutator_free: eqx.AbstractVar[bool]
 
     @abstractmethod
     def contains(self, state: ArrayLike, /) -> Array:
@@ -241,8 +240,8 @@ class AbstractStateGeometry(StrictModule):
         local_direction = jnp.asarray(local_velocity)
         target_covector = jnp.asarray(cotangent)
         target = jnp.asarray(self.retract(source, local))
-        source_membership = jnp.asarray(self.contains(source), dtype=bool)
-        target_membership = jnp.asarray(self.contains(target), dtype=bool)
+        source_membership = jnp.asarray(self.contains(source), dtype=jnp.bool_)
+        target_membership = jnp.asarray(self.contains(target), dtype=jnp.bool_)
         dtype = jnp.result_type(source.dtype, local.dtype, jnp.float32)
         unavailable = jnp.asarray(jnp.nan, dtype=dtype)
         inverse_residual = unavailable
@@ -354,8 +353,8 @@ class AbstractStateGeometry(StrictModule):
         target = jnp.asarray(point)
         source_tangent = jnp.asarray(tangent)
         target_covector = jnp.asarray(cotangent)
-        source_membership = jnp.asarray(self.contains(source), dtype=bool)
-        target_membership = jnp.asarray(self.contains(target), dtype=bool)
+        source_membership = jnp.asarray(self.contains(source), dtype=jnp.bool_)
+        target_membership = jnp.asarray(self.contains(target), dtype=jnp.bool_)
         dtype = jnp.result_type(
             source.dtype,
             source_tangent.dtype,
@@ -468,7 +467,7 @@ class LocalRetraction(StrictModule):
         if not isinstance(geometry, AbstractStateGeometry):
             raise TypeError("LocalRetraction geometry must be an AbstractStateGeometry.")
         base = jnp.asarray(base_point)
-        membership = jnp.asarray(geometry.contains(base), dtype=bool)
+        membership = jnp.asarray(geometry.contains(base), dtype=jnp.bool_)
         if membership.shape != ():
             raise ValueError("State geometry contains() must return a scalar boolean.")
         base = eqx.error_if(
@@ -810,7 +809,7 @@ class EmbeddedStateGeometry(AbstractStateGeometry):
         self.supports_commutator_free = bool(supports_commutator_free)
 
     def contains(self, state: ArrayLike, /) -> Array:
-        membership = jnp.asarray(self.membership(jnp.asarray(state)), dtype=bool)
+        membership = jnp.asarray(self.membership(jnp.asarray(state)), dtype=jnp.bool_)
         if membership.shape != ():
             raise ValueError("Embedded membership must return a scalar boolean.")
         return membership
@@ -847,8 +846,7 @@ class EmbeddedStateGeometry(AbstractStateGeometry):
         _same_shape(point_array, state_array, "Embedded retraction point")
         if self.inverse_retraction is None:
             raise ValueError(
-                "Embedded inverse_retract requires an explicit "
-                "inverse_retraction callable."
+                "Embedded inverse_retract requires an explicit inverse_retraction callable."
             )
         return jnp.asarray(self.inverse_retraction(state_array, point_array))
 
@@ -861,8 +859,7 @@ class EmbeddedStateGeometry(AbstractStateGeometry):
     ) -> Array:
         if self.retraction_jvp_action is None:
             raise ValueError(
-                "Embedded retraction_jvp requires an explicit "
-                "retraction_jvp_action callable."
+                "Embedded retraction_jvp requires an explicit retraction_jvp_action callable."
             )
         return jnp.asarray(
             self.retraction_jvp_action(
@@ -881,8 +878,7 @@ class EmbeddedStateGeometry(AbstractStateGeometry):
     ) -> Array:
         if self.retraction_inverse_jvp_action is None:
             raise ValueError(
-                "Embedded retraction_inverse_jvp requires an explicit "
-                "retraction_inverse_jvp_action callable."
+                "Embedded retraction_inverse_jvp requires an explicit retraction_inverse_jvp_action callable."
             )
         return jnp.asarray(
             self.retraction_inverse_jvp_action(
@@ -901,8 +897,7 @@ class EmbeddedStateGeometry(AbstractStateGeometry):
     ) -> Array:
         if self.retraction_vjp_action is None:
             raise ValueError(
-                "Embedded retraction_vjp requires an explicit "
-                "retraction_vjp_action callable."
+                "Embedded retraction_vjp requires an explicit retraction_vjp_action callable."
             )
         return jnp.asarray(
             self.retraction_vjp_action(
@@ -921,8 +916,7 @@ class EmbeddedStateGeometry(AbstractStateGeometry):
     ) -> Array:
         if self.tangent_transport_action is None:
             raise ValueError(
-                "Embedded transport_tangent requires an explicit "
-                "tangent_transport_action callable."
+                "Embedded transport_tangent requires an explicit tangent_transport_action callable."
             )
         return jnp.asarray(
             self.tangent_transport_action(
@@ -969,7 +963,7 @@ class EmbeddedStateGeometry(AbstractStateGeometry):
 
 
 def _role_shape(value: Sequence[int], name: str, /) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if not shape or any(size <= 0 for size in shape):
         raise ValueError(f"{name} must contain positive dimensions.")
     return shape
@@ -1019,9 +1013,7 @@ class PointwiseStateGeometry(AbstractStateGeometry):
             point_signature
             if local == point and tangent == point
             else (
-                f"point={point_signature}:"
-                f"local={'x'.join(map(str, local))}:"
-                f"tangent={'x'.join(map(str, tangent))}"
+                f"point={point_signature}:local={'x'.join(map(str, local))}:tangent={'x'.join(map(str, tangent))}"
             )
         )
         self.geometry_id = (
@@ -1419,8 +1411,7 @@ def _principal_local_so_logarithm(value: Array, /) -> Array:
             (~jnp.all(jnp.isfinite(singular_values), axis=-1))
             | (singular_values[..., -1] <= cut_locus_tolerance)
         ),
-        "SO exponential inverse_retract requires a principal local rotation "
-        "away from the rotation-by-pi cut locus.",
+        "SO exponential inverse_retract requires a principal local rotation away from the rotation-by-pi cut locus.",
     )
     cayley = _skew(jnp.linalg.solve(value + identity, value - identity))
     for _ in range(2):

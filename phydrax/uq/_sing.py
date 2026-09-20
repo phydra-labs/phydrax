@@ -104,8 +104,7 @@ def _expectation_configuration(
 ) -> tuple[Array, int, int, int, int, float, float, float]:
     if method not in ("cubature", "unscented", "gauss-hermite", "monte-carlo"):
         raise ValueError(
-            "expectation_method must be 'cubature', 'unscented', "
-            "'gauss-hermite', or 'monte-carlo'."
+            "expectation_method must be 'cubature', 'unscented', 'gauss-hermite', or 'monte-carlo'."
         )
     samples = _positive_int(num_samples, owner="num_samples")
     order_ = _positive_int(order, owner="order")
@@ -168,11 +167,11 @@ class SINGGrid(StrictModule):
 
     @property
     def num_nodes(self) -> int:
-        return int(self.times.shape[-1])
+        return self.times.shape[-1]
 
     @property
     def num_observations(self) -> int:
-        return int(self.observation_node_indices.shape[-1])
+        return self.observation_node_indices.shape[-1]
 
 
 class SINGState(StrictModule):
@@ -1587,7 +1586,7 @@ def sing_smoother(
         raise ValueError(
             f"step_size must be scalar or have shape ({iterations},); got {steps.shape}."
         )
-    initial_converged = jnp.zeros(initial_state.grid.case_shape, dtype=bool)
+    initial_converged = jnp.zeros(initial_state.grid.case_shape, dtype=jnp.bool_)
 
     def iteration_step(carry, scheduled_step):
         current_state, converged = carry
@@ -1668,7 +1667,7 @@ def sample_sing_paths(
     """Draw coherent posterior paths aligned to the observation schedule."""
     if not isinstance(result, SINGResult):
         raise TypeError("result must be a SINGResult.")
-    samples = tuple(int(size) for size in sample_shape)
+    samples = tuple(sample_shape)
     paths = sample_gaussian_markov(key, result.moments, sample_shape=samples)
     case_count = prod(result.case_shape) if result.case_shape else 1
     state_size = result.moments.state_size

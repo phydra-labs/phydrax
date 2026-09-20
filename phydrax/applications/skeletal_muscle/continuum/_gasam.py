@@ -107,19 +107,11 @@ class EngelhardtGasam2025Parameters(StrictModule):
         weight = _scalar(isotropic_weight, "isotropic_weight")
         minimum = _positive(minimum_active_stretch, "minimum_active_stretch")
         optimal = _positive(optimal_active_stretch, "optimal_active_stretch")
-        peak = _scalar(
-            peak_active_nominal_stress_pa, "peak_active_nominal_stress_pa"
-        )
-        if not bool(jnp.isfinite(weight)) or bool(
-            (weight <= 0.0) | (weight >= 1.0)
-        ):
-            raise ValueError(
-                "isotropic_weight must lie strictly between zero and one."
-            )
+        peak = _scalar(peak_active_nominal_stress_pa, "peak_active_nominal_stress_pa")
+        if not bool(jnp.isfinite(weight)) or bool((weight <= 0.0) | (weight >= 1.0)):
+            raise ValueError("isotropic_weight must lie strictly between zero and one.")
         if bool(optimal <= minimum):
-            raise ValueError(
-                "optimal_active_stretch must exceed minimum_active_stretch."
-            )
+            raise ValueError("optimal_active_stretch must exceed minimum_active_stretch.")
         if not bool(jnp.isfinite(peak)) or bool(peak < 0.0):
             raise ValueError(
                 "peak_active_nominal_stress_pa must be finite and nonnegative."
@@ -397,9 +389,8 @@ class PreparedEngelhardtGasam2025Material(StrictModule):
             raise TypeError("commit must be GasamMaterialCommit.")
         if commit.prepared_id != self.prepared_id:
             raise ValueError("GASAM commit belongs to a different prepared material.")
-        source_mismatch = (
-            (commit.source_state_id != self.state.state_id)
-            | (commit.source_activation != self.state.activation)
+        source_mismatch = (commit.source_state_id != self.state.state_id) | (
+            commit.source_activation != self.state.activation
         )
         checked_activation = eqx.error_if(
             commit.state.activation,
@@ -424,9 +415,7 @@ class PreparedEngelhardtGasam2025Material(StrictModule):
     ) -> tuple[Array, Array, Array, Array, Array]:
         deformation = jnp.asarray(deformation_gradient)
         if deformation.shape != (3, 3):
-            raise ValueError(
-                "A GASAM material-point deformation must have shape (3, 3)."
-            )
+            raise ValueError("A GASAM material-point deformation must have shape (3, 3).")
         kinematics = finite_strain_kinematics(deformation)
         c = kinematics.right_cauchy_green
         inverse_c = ein.contract(
@@ -480,9 +469,7 @@ class PreparedEngelhardtGasam2025Material(StrictModule):
         fiber_square = fiber_stretch * fiber_stretch
         safe_square = jnp.where(fiber_square > 0.0, fiber_square, 1.0)
         activation_weight = jnp.log(phi) / (self.parameters.alpha * safe_square)
-        activation_weight = jnp.where(
-            fiber_square > 0.0, activation_weight, jnp.nan
-        )
+        activation_weight = jnp.where(fiber_square > 0.0, activation_weight, jnp.nan)
         return (
             fiber_stretch,
             passive_first,
@@ -501,11 +488,15 @@ class PreparedEngelhardtGasam2025Material(StrictModule):
             _force_length,
             integrated,
         ) = self._base_terms(deformation_gradient)
-        passive_energy = 0.25 * self.parameters.stiffness_pa * (
-            jnp.expm1(self.parameters.alpha * (passive_first - 1.0))
-            / self.parameters.alpha
-            + jnp.expm1(self.parameters.beta * (cofactor_invariant - 1.0))
-            / self.parameters.beta
+        passive_energy = (
+            0.25
+            * self.parameters.stiffness_pa
+            * (
+                jnp.expm1(self.parameters.alpha * (passive_first - 1.0))
+                / self.parameters.alpha
+                + jnp.expm1(self.parameters.beta * (cofactor_invariant - 1.0))
+                / self.parameters.beta
+            )
         )
         # Substitution of Eq. (26) into Eq. (16) reduces the complete active
         # contribution exactly to P_opt * activation * integral(f_xi).
@@ -542,12 +533,8 @@ class PreparedEngelhardtGasam2025Material(StrictModule):
             weight,
         ) = terms
         finite = jnp.all(jnp.isfinite(jnp.stack(terms)))
-        branch_distance = jnp.abs(
-            stretch - self.parameters.minimum_active_stretch
-        )
-        smooth = (
-            branch_distance > 8.0 * jnp.finfo(stretch.dtype).eps
-        )
+        branch_distance = jnp.abs(stretch - self.parameters.minimum_active_stretch)
+        smooth = branch_distance > 8.0 * jnp.finfo(stretch.dtype).eps
         evidence = GasamMaterialPointEvidence(
             stretch,
             passive_first,
@@ -634,8 +621,7 @@ class PreparedEngelhardtGasam2025Material(StrictModule):
         )
         if not bool(qualification.valid):
             raise ValueError(
-                "GASAM mixed preparation failed gauge, finite-residual, LBB, inf-sup, "
-                "or locking-safety qualification."
+                "GASAM mixed preparation failed gauge, finite-residual, LBB, inf-sup, or locking-safety qualification."
             )
         return QualifiedExactMixedGasamProblem(
             prepared,
@@ -674,9 +660,7 @@ def _force_length_terms(
     distance = stretch - minimum
     exponent = 0.5 - 0.5 * (distance / width) ** 2
     active = stretch > minimum
-    force_length = jnp.where(
-        active, distance / width * jnp.exp(exponent), 0.0
-    )
+    force_length = jnp.where(active, distance / width * jnp.exp(exponent), 0.0)
     integrated = jnp.where(
         active,
         width * (jnp.exp(jnp.asarray(0.5, dtype=stretch.dtype)) - jnp.exp(exponent)),

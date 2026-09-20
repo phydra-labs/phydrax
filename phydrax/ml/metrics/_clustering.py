@@ -66,8 +66,8 @@ def _hard_cluster_inputs(
     )
     included = _broadcast_full(
         mask,
-        tuple(int(size) for size in labels_raw.shape),
-        dtype=bool,
+        tuple(labels_raw.shape),
+        dtype=jnp.bool_,
         fill=True,
         name="mask",
     )
@@ -102,7 +102,7 @@ def _soft_cluster_inputs(
     if axis != x.ndim - 2:
         raise ValueError("Clustering inputs must have case_shape + (sample, value) axes.")
     _reject_complex(raw, metric=metric)
-    classes = int(raw.shape[-1])
+    classes = raw.shape[-1]
     if classes < 2:
         raise ValueError(f"{metric} requires at least two clusters.")
     dummy = jnp.zeros(x.shape[:-1], dtype=x.real.dtype)
@@ -116,8 +116,8 @@ def _soft_cluster_inputs(
     )
     included = _broadcast_full(
         mask,
-        tuple(int(size) for size in dummy.shape),
-        dtype=bool,
+        tuple(dummy.shape),
+        dtype=jnp.bool_,
         fill=True,
         name="mask",
     )
@@ -168,13 +168,13 @@ def silhouette_score(
         metric="silhouette_score",
     )
     distances = pairwise_distances(x, metric=distance)
-    distances = jnp.where(jnp.eye(x.shape[-2], dtype=bool), 0.0, distances)
+    distances = jnp.where(jnp.eye(x.shape[-2], dtype=jnp.bool_), 0.0, distances)
     membership = (
         jax.nn.one_hot(labels_, classes, dtype=weights.dtype) * weights[..., :, None]
     )
     cluster_mass = jnp.sum(membership, axis=-2)
     distance_total = ein.contract("...ij,...jc->...ic", distances, membership)
-    own_hot = jax.nn.one_hot(labels_, classes, dtype=bool)
+    own_hot = jax.nn.one_hot(labels_, classes, dtype=jnp.bool_)
     own_denominator = cluster_mass[..., None, :] - membership
     cluster_mean = distance_total / jnp.where(own_denominator > 0.0, own_denominator, 1.0)
     intra = jnp.sum(jnp.where(own_hot, cluster_mean, 0.0), axis=-1)
@@ -223,7 +223,7 @@ def smooth_silhouette_score(
         from_logits=from_logits,
     )
     distances = pairwise_distances(x, metric=distance)
-    distances = jnp.where(jnp.eye(x.shape[-2], dtype=bool), 0.0, distances)
+    distances = jnp.where(jnp.eye(x.shape[-2], dtype=jnp.bool_), 0.0, distances)
     weighted_membership = weights[..., :, None] * probability
     cluster_mass = jnp.sum(weighted_membership, axis=-2)
     distance_total = ein.contract("...ij,...jc->...ic", distances, weighted_membership)
@@ -294,7 +294,7 @@ def davies_bouldin_score(
     candidates = (
         represented[..., :, None]
         & represented[..., None, :]
-        & ~jnp.eye(classes, dtype=bool)
+        & ~jnp.eye(classes, dtype=jnp.bool_)
     )
     worst = jnp.max(jnp.where(candidates, ratio, -jnp.inf), axis=-1)
     represented_count = jnp.sum(represented, axis=-1)
@@ -628,7 +628,9 @@ def smooth_rand_score(
     same_pred = pred @ jnp.swapaxes(pred, -1, -2)
     agreement = same_true * same_pred + (1.0 - same_true) * (1.0 - same_pred)
     pair_weight = weights[..., :, None] * weights[..., None, :]
-    pair_weight = jnp.where(~jnp.eye(weights.shape[-1], dtype=bool), pair_weight, 0.0)
+    pair_weight = jnp.where(
+        ~jnp.eye(weights.shape[-1], dtype=jnp.bool_), pair_weight, 0.0
+    )
     denominator = jnp.sum(pair_weight, axis=(-2, -1))
     value = jnp.sum(pair_weight * agreement, axis=(-2, -1)) / jnp.where(
         denominator > 0.0, denominator, 1.0

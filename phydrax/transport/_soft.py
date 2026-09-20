@@ -664,12 +664,12 @@ def _data_axis(
             raise TypeError(f"Named {name} fields require a named axis.")
         if axis not in value.named_dims:
             raise ValueError(f"{name} is missing named axis {axis!r}.")
-        data = jnp.asarray(value.data, dtype=float)
+        data = jnp.asarray(value.data, dtype=jnp.float64)
         position = value.dims.index(axis)
         return data, position, value.dims
     if not isinstance(axis, int):
         raise TypeError(f"Raw {name} arrays require an integer axis.")
-    data = jnp.asarray(value, dtype=float)
+    data = jnp.asarray(value, dtype=jnp.float64)
     if data.ndim < 1:
         raise ValueError(f"{name} must have at least one dimension.")
     position = axis + data.ndim if axis < 0 else axis
@@ -735,7 +735,7 @@ def _restore(data: Array, dims: tuple[Any, ...] | None, /) -> Array | cx.AxisArr
 
 
 def _vector(values: ArrayLike, /, *, name: str) -> Array:
-    result = jnp.asarray(values, dtype=float)
+    result = jnp.asarray(values, dtype=jnp.float64)
     if result.ndim != 1 or result.shape[0] == 0:
         raise ValueError(f"{name} must be a nonempty rank-one array.")
     return eqx.error_if(

@@ -112,8 +112,7 @@ class SpectralPrecisionPolicy(StrictModule, NonTrainableState):
             precision_itemsize(_real_dtype(nonlinear)),
         ):
             raise ValueError(
-                "Spectral reduction precision cannot be narrower than transform or "
-                "nonlinear precision."
+                "Spectral reduction precision cannot be narrower than transform or nonlinear precision."
             )
         if precision_itemsize(certification) < precision_itemsize(reduction):
             raise ValueError(

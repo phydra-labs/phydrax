@@ -31,9 +31,9 @@ def _crossing_vertex(labels=jnp.arange(-2, 3, dtype=jnp.int32)):
         labels,
         labels,
         labels,
-        values[..., None, None, None, None].astype(complex),
+        values[..., None, None, None, None].astype("complex128"),
         fermion_label_minimum=int(labels[0]),
-        fermion_label_count=int(labels.size),
+        fermion_label_count=labels.size,
     )
 
 
@@ -109,9 +109,9 @@ def test_lattice_parquet_channels_and_schwinger_dyson_sign_close():
         labels,
         labels,
         labels,
-        jnp.ones((1, 1, 1, 1, 1, 1, 1), dtype=complex),
+        jnp.ones((1, 1, 1, 1, 1, 1, 1), dtype="complex128"),
     )
-    green = MatsubaraGreenFunction(2.0, labels, jnp.ones(1, dtype=complex))
+    green = MatsubaraGreenFunction(2.0, labels, jnp.ones(1, dtype="complex128"))
     expected_self_energy = jnp.asarray([0.5 + 0.0j])
     self_energy = MatsubaraGreenFunction(2.0, labels, expected_self_energy)
     schwinger_dyson = df.lattice_schwinger_dyson_evidence(
@@ -193,7 +193,7 @@ def test_low_order_diagram_mc_retains_order_sign_and_exact_mh_evidence():
 
 def test_fermionic_keldysh_car_causality_and_second_born_conservation():
     grid = nef.ClosedTimePathPlan(jnp.linspace(0.0, 0.3, 4)).prepare()
-    propagators = jnp.broadcast_to(jnp.eye(1, dtype=complex), (4, 1, 1))
+    propagators = jnp.broadcast_to(jnp.eye(1, dtype="complex128"), (4, 1, 1))
     free = nef.fermionic_keldysh_from_propagators(
         grid,
         propagators,

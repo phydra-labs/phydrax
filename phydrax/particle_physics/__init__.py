@@ -22,7 +22,7 @@ from ._host_events import (
     unpack_particle_events,
 )
 from ._identity import (
-    ParticleCatalogueReference,
+    ParticleCatalogReference,
     ParticleRole,
     ReproducibilityGrade,
 )
@@ -127,7 +127,7 @@ __all__ = [
     "NativeSpectrumModel",
     "NativeSpectrumModelPlan",
     "NativeSpectrumStatus",
-    "ParticleCatalogueReference",
+    "ParticleCatalogReference",
     "ParticleEventBatch",
     "ParticleEventPlan",
     "ParticleEventStatus",

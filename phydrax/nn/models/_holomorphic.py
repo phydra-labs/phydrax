@@ -53,7 +53,7 @@ class HolomorphicMLP(_AbstractBaseModel):
     ):
         input_size = int(in_size)
         output_size = int(out_size)
-        hidden = tuple(int(value) for value in hidden_sizes)
+        hidden = tuple(hidden_sizes)
         if input_size <= 0 or output_size <= 0:
             raise ValueError("HolomorphicMLP input and output sizes must be positive.")
         if not hidden or any(value <= 0 for value in hidden):

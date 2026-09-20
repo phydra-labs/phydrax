@@ -152,7 +152,7 @@ def _boundary(mesh: CellMesh, plan: FTetWildMeshingPlan) -> SurfaceModel:
 class FTetWildProvider:
     """Robust native tetrahedralization through wildmeshing's fTetWild binding.
 
-    Only whole-surface, affine, unlabelled, soft uniform-size volume requests
+    Only whole-surface, affine, unlabeled, soft uniform-size volume requests
     are supported. Source-face correspondence is nearest-surface evidence, not
     an exact constraint or lineage map. Exterior tetrahedra are always removed
     using the backend's input-surface winding-number filter.
@@ -396,7 +396,7 @@ class FTetWildProvider:
         distances = np.asarray(query.distance)
         sampled_deviation = float(distances.max())
         tolerance = (
-            128 * np.finfo(float).eps * max(diagonal, float(np.max(np.abs(points))))
+            128 * np.finfo(np.float64).eps * max(diagonal, float(np.max(np.abs(points))))
         )
         if (
             not np.all(np.isfinite(distances))
@@ -422,7 +422,7 @@ class FTetWildProvider:
             boundary.mesh.blocks[0].global_ids,
             tuple(str(int(identifier)) for identifier in nearest_faces),
             distances[len(boundary_points) :],
-            resolved=np.zeros(len(centroids), dtype=bool),
+            resolved=np.zeros(len(centroids), dtype=np.bool_),
             exact=False,
         )
         certified = certify_cell_mesh(

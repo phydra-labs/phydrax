@@ -55,7 +55,7 @@ def test_wc_sph_compiler_initializes_continuity_density_once_by_summation():
     compiled = phx.equations.compile_weakly_compressible_sph_problem(
         problem, particles, method, neighborhood=neighborhood
     )
-    position = (jnp.arange(6, dtype=float) + 0.5)[:, None] / 6.0
+    position = (jnp.arange(6, dtype="float64") + 0.5)[:, None] / 6.0
     velocity = jnp.zeros_like(position)
     state = compiled.initialize_state(position, velocity)
     density = compiled.dynamics.state_layout.density(state)
@@ -82,7 +82,7 @@ def test_wc_sph_summation_state_rejects_explicit_density():
     compiled = phx.equations.compile_weakly_compressible_sph_problem(
         problem, particles, method, neighborhood=neighborhood
     )
-    position = (jnp.arange(6, dtype=float) + 0.5)[:, None] / 6.0
+    position = (jnp.arange(6, dtype="float64") + 0.5)[:, None] / 6.0
     velocity = jnp.zeros_like(position)
 
     assert compiled.initialize_state(position, velocity).shape == (6, 2)

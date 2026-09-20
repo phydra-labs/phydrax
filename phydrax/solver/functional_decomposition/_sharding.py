@@ -79,7 +79,7 @@ class DecompositionShardingEvidence(StrictModule, NonTrainableState):
         communicated_bytes: int,
         verified: bool,
     ):
-        self.patch_counts = tuple(int(value) for value in patch_counts)
+        self.patch_counts = tuple(patch_counts)
         self.cross_device_pairings = int(cross_device_pairings)
         self.communicated_bytes = int(communicated_bytes)
         self.verified = bool(verified)

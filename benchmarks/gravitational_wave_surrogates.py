@@ -77,7 +77,7 @@ def _field(reconstruction, coefficient_scale, field_id):
         reconstruction,
         coefficients,
         orders,
-        jnp.ones((4, 4), dtype=bool),
+        jnp.ones((4, 4), dtype="bool"),
         field_id=field_id,
     )
 

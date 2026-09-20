@@ -39,8 +39,7 @@ def validate_derivative_coverage(
     for term in terms:
         if not isinstance(term, ResidualPenalty):
             raise TypeError(
-                "KFAC supports ResidualPenalty training terms only; "
-                f"got {type(term).__name__}."
+                f"KFAC supports ResidualPenalty training terms only; got {type(term).__name__}."
             )
         requests = trace_derivative_requests(term.condition.residual, functions)
         for request in requests:
@@ -49,7 +48,6 @@ def validate_derivative_coverage(
                     "KFAC supports residual derivatives through order two; "
                     f"field {request.field!r} requested order {request.order}."
                 )
-
 
 
 def _block_jacobian_chunks(
@@ -84,7 +82,7 @@ def _block_jacobian_chunks(
             iteration=iter_,
         )
 
-    residual_size = int(residual_from_block(block_params).size)
+    residual_size = residual_from_block(block_params).size
     if residual_size == 0:
         raise ValueError("KFAC requires every active term to yield residual roots.")
     padded_size = ((residual_size + int(chunk_size) - 1) // int(chunk_size)) * int(
@@ -186,8 +184,6 @@ def term_block_curvature_observations(
                 )
         observations.append(BlockCurvatureObservation(tuple(affine), uncovered))
     return flat_params, tuple(observations)
-
-
 
 
 __all__ = [

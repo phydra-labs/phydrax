@@ -97,7 +97,7 @@ class KineticShockSensorPlan(StrictModule, NonTrainableState):
         self.shock_owner = "finite_volume"
         self.sensor_id = canonical_fingerprint(
             {
-                "kind": "kinetic-shock-sensor-v1",
+                "kind": "kinetic-shock-sensor",
                 "material": material.material_id,
                 "pressure_weight": pressure_weight_,
                 "density_weight": density_weight_,
@@ -327,7 +327,7 @@ class FixedConformingFVKineticInterfacePlan(StrictModule, NonTrainableState):
         self.population_floor = floor
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "fixed-conforming-fv-kinetic-interface-v1",
+                "kind": "fixed-conforming-fv-kinetic-interface",
                 "method": method.method_id,
                 "finite_volume_system": finite_volume_system.system_id,
                 "normal": array_tree_fingerprint(normal_),

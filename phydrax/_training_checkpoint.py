@@ -29,14 +29,14 @@ def _state_checksum(path: Path, /) -> str:
 
 def _publish_state(
     directory: Path,
-    serialise: Callable[[Path], None],
+    serialize: Callable[[Path], None],
     /,
 ) -> tuple[Path, str]:
     """Serialize and atomically publish one content-addressed state file."""
 
     directory.mkdir(parents=True, exist_ok=True)
     temporary = directory / "state.tmp.eqx"
-    serialise(temporary)
+    serialize(temporary)
     checksum = _state_checksum(temporary)
     destination = directory / f"state-{checksum[:16]}.eqx"
     os.replace(temporary, destination)

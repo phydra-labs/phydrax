@@ -72,7 +72,7 @@ def _fraunhofer_case():
     image_space = _finite_space(101, -4.0, 4.0, z=1.0)
     radius = jnp.sqrt(jnp.sum(pupil_space.transverse_coordinates**2, axis=-1))
     aperture = radius <= 0.5
-    field = ScalarPlaneField(pupil_space, aperture.astype(float), 1.0, 0.0)
+    field = ScalarPlaneField(pupil_space, aperture.astype("float64"), 1.0, 0.0)
     prepared = FraunhoferImagingPlan(
         pupil_space,
         image_space,

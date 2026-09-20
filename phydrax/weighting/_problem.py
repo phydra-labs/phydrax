@@ -78,7 +78,7 @@ class QuadraticMoments(StrictModule):
         covariance: ArrayLike | AbstractLinearOperator | None = None,
     ):
         values_ = _moment_values(values)
-        count = int(values_.shape[0])
+        count = values_.shape[0]
         if covariance is None:
             operator = DiagonalLinearOperator(
                 jnp.ones_like(values_),
@@ -173,7 +173,7 @@ class GroupMassConstraints(StrictModule):
             or len(group_map.target.shape) != 1
         ):
             raise ValueError("Group maps must act between one-dimensional ArraySpaces.")
-        groups = int(group_map.target.shape[0])
+        groups = group_map.target.shape[0]
         if target.values.shape != (groups,):
             raise ValueError(f"Group target must have shape ({groups},).")
         self.group_map = group_map
@@ -194,13 +194,13 @@ def stratified_group_constraints(
     if labels_.ndim != 1 or not np.issubdtype(labels_.dtype, np.integer):
         raise TypeError("labels must be one integer vector.")
     active_ = (
-        np.ones(labels_.shape, dtype=bool)
+        np.ones(labels_.shape, dtype=np.bool_)
         if active is None
-        else np.asarray(active, dtype=bool)
+        else np.asarray(active, dtype=np.bool_)
     )
     if active_.shape != labels_.shape:
         raise ValueError("active must match labels.")
-    groups = int(target.values.shape[0])
+    groups = target.values.shape[0]
     if np.any(labels_[active_] < 0) or np.any(labels_[active_] >= groups):
         raise ValueError("Every active source point must belong to one target group.")
     sources = np.flatnonzero(active_).astype(np.int32)
@@ -208,7 +208,7 @@ def stratified_group_constraints(
     relation = EdgeRelation(
         sources,
         destinations,
-        source_size=int(labels_.shape[0]),
+        source_size=labels_.shape[0],
         target_size=groups,
     )
     group_map = SparseLinearMap(
@@ -346,12 +346,11 @@ class MomentCalibrationProblem(StrictModule):
             raise TypeError(
                 "target must be ExactMoments, IntervalMoments, or QuadraticMoments."
             )
-        source_points = int(moment_map.source.shape[0])
-        moment_count = int(moment_map.target.shape[0])
+        source_points = moment_map.source.shape[0]
+        moment_count = moment_map.target.shape[0]
         if target.values.shape != (moment_count,):
             raise ValueError(
-                f"Target moments must have shape ({moment_count},); "
-                f"got {target.values.shape}."
+                f"Target moments must have shape ({moment_count},); got {target.values.shape}."
             )
         dtype = moment_map.source.dtype
         if isinstance(target, ExactMoments):
@@ -376,9 +375,9 @@ class MomentCalibrationProblem(StrictModule):
             if prior.shape != (source_points,):
                 raise ValueError(f"prior_log_weights must have shape ({source_points},).")
         if mask is None:
-            mask_ = jnp.ones((source_points,), dtype=bool)
+            mask_ = jnp.ones((source_points,), dtype=jnp.bool_)
         else:
-            mask_ = jnp.asarray(mask, dtype=bool)
+            mask_ = jnp.asarray(mask, dtype=jnp.bool_)
             if mask_.shape != (source_points,):
                 raise ValueError(f"mask must have shape ({source_points},).")
         if group_constraints is not None:
@@ -428,7 +427,7 @@ def _moment_values(values: ArrayLike, /) -> Array:
     if jnp.issubdtype(values_.dtype, jnp.complexfloating):
         raise TypeError("Moment values must be real.")
     if not jnp.issubdtype(values_.dtype, jnp.inexact):
-        values_ = values_.astype(float)
+        values_ = values_.astype("float64")
     invalid = ~jnp.all(jnp.isfinite(values_))
     if isinstance(invalid, jax_core.Tracer):
         values_ = eqx.error_if(
@@ -456,7 +455,7 @@ def _moment_operator(
         if jnp.issubdtype(values.dtype, jnp.complexfloating):
             raise TypeError("Moment features must be real.")
         if not jnp.issubdtype(values.dtype, jnp.inexact):
-            values = values.astype(float)
+            values = values.astype("float64")
         invalid = ~jnp.all(jnp.isfinite(values))
         if isinstance(invalid, jax_core.Tracer):
             values = eqx.error_if(

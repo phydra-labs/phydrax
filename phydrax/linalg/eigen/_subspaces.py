@@ -195,8 +195,7 @@ class SpectralSubspaceResourcePolicy(StrictModule):
         max_separation_entries: int = 1_000_000,
     ):
         values = tuple(
-            int(value)
-            for value in (
+            (
                 max_dimension,
                 max_retained_bytes,
                 max_workspace_bytes,
@@ -437,13 +436,11 @@ def plan_spectral_subspace(
     resources = selected.resources
     if cost.dimension > resources.max_dimension:
         raise ValueError(
-            f"Spectral subspace dimension {cost.dimension} exceeds limit "
-            f"{resources.max_dimension}."
+            f"Spectral subspace dimension {cost.dimension} exceeds limit {resources.max_dimension}."
         )
     if cost.retained_bytes > resources.max_retained_bytes:
         raise ValueError(
-            f"Spectral subspace retained estimate {cost.retained_bytes} exceeds "
-            f"limit {resources.max_retained_bytes}."
+            f"Spectral subspace retained estimate {cost.retained_bytes} exceeds limit {resources.max_retained_bytes}."
         )
     if cost.workspace_bytes > resources.max_workspace_bytes:
         raise ValueError(

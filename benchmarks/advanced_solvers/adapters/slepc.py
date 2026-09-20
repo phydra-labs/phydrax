@@ -166,7 +166,7 @@ class SlepcAdapter(BenchmarkAdapter):
         /,
     ) -> dict[str, Any]:
         del result
-        matrix_bytes = int(prepared_state.spec.problem.matrix.nbytes)
+        matrix_bytes = prepared_state.spec.problem.matrix.nbytes
         return {
             "matrix_bytes": matrix_bytes,
             "setup_bytes": None,

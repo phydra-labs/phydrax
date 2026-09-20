@@ -110,7 +110,7 @@ class StructuralEnsembleHypothesis:
     def binary_accessibility(self) -> Array:
         """Return unpaired=1/paired=0 features on the declared construct order."""
         count = self.structures[0].construct.nucleotide_count
-        values = np.ones((len(self.structures), count), dtype=float)
+        values = np.ones((len(self.structures), count), dtype=np.float64)
         for row, state in enumerate(self.structures):
             for first, second in state.numeric_pairs:
                 values[row, first] = 0.0
@@ -163,7 +163,7 @@ class ConditionPopulationModel(StrictModule, NonTrainableState):
                 raise ValueError(
                     "A free-simplex population model has no condition design."
                 )
-            matrix = np.zeros((len(conditions), 0), dtype=float)
+            matrix = np.zeros((len(conditions), 0), dtype=np.float64)
         elif kind == "logit-linear":
             matrix = np.asarray(design, float)
             if (
@@ -426,8 +426,7 @@ class FiniteStructuralEnsembleModel(StrictModule, NonTrainableState):
             )
         ):
             raise ValueError(
-                "Observation-offset derivation requires canonical source case IDs "
-                "and optional parent case IDs."
+                "Observation-offset derivation requires canonical source case IDs and optional parent case IDs."
             )
         response_scale, population_scale, concentration = (
             float(response_prior_scale),
@@ -444,7 +443,7 @@ class FiniteStructuralEnsembleModel(StrictModule, NonTrainableState):
         variable = DiscreteVariableGroup("structural-state", num_states=states)
         factor = DenseTableFactorGroup(
             (VariableSelection.all(variable),),
-            np.zeros((1, states), dtype=float),
+            np.zeros((1, states), dtype=np.float64),
         )
         self.batch = batch
         self.hypothesis = hypothesis
@@ -714,7 +713,7 @@ class FiniteStructuralEnsembleModel(StrictModule, NonTrainableState):
         state_probability = prediction.state_mutation_probability
         difference = state_probability[:, :, None, :] - state_probability[:, None, :, :]
         separation = jnp.sqrt(jnp.mean(difference**2, axis=(0, 3)))
-        off_diagonal = ~jnp.eye(len(self.hypothesis.state_ids), dtype=bool)
+        off_diagonal = ~jnp.eye(len(self.hypothesis.state_ids), dtype=jnp.bool_)
         equivalent = off_diagonal & (separation <= policy.minimum_state_separation)
         populations = self.condition_populations(parameters)
         unsupported = jnp.max(populations, axis=0) < policy.minimum_state_population
@@ -741,7 +740,7 @@ class FiniteStructuralEnsembleModel(StrictModule, NonTrainableState):
             prediction,
             self.batch.observed_mask & selected_profiles[:, None],
         )
-        site_off_diagonal = ~jnp.eye(self.batch.nucleotide_count, dtype=bool)
+        site_off_diagonal = ~jnp.eye(self.batch.nucleotide_count, dtype=jnp.bool_)
         available = site_off_diagonal & jnp.isfinite(residual_correlation)
         maximum = jnp.where(
             jnp.any(available),
@@ -799,7 +798,7 @@ class FiniteStructuralEnsembleModel(StrictModule, NonTrainableState):
             singular,
             directions,
             rank,
-            int(flat.size),
+            flat.size,
             residual_correlation,
             selected_profiles,
             maximum,
@@ -955,7 +954,7 @@ def compare_ensemble_supports(
         )
     finite = jnp.isfinite(scores)
     if support_valid is None:
-        declared_valid = jnp.ones((len(identifiers),), dtype=bool)
+        declared_valid = jnp.ones((len(identifiers),), dtype=jnp.bool_)
     else:
         declared_valid = jnp.asarray(support_valid)
         if declared_valid.shape != (len(identifiers),) or declared_valid.dtype != bool:

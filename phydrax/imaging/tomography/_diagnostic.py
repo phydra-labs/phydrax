@@ -34,7 +34,7 @@ _MASS_ATTENUATION_UNIT = derived_unit("m2/kg", ((METER, 2), (KILOGRAM, -1)))
 
 
 def _readonly(value: ArrayLike, name: str, /) -> np.ndarray:
-    array = np.array(value, dtype=float, copy=True)
+    array = np.array(value, dtype=np.float64, copy=True)
     if array.dtype.hasobject:
         raise TypeError(f"{name} must not use object dtype.")
     array.setflags(write=False)

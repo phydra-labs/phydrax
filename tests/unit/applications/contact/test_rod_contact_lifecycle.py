@@ -113,7 +113,7 @@ def _history_witness(
         np.full((count,), 0.8, dtype=np.float64),
         np.full((count,), 0.1, dtype=np.float64),
         np.full((count,), 0.1, dtype=np.float64),
-        np.ones((count,), dtype=bool),
+        np.ones((count,), dtype="bool"),
         capacity=count,
     )
 

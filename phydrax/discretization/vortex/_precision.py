@@ -72,8 +72,7 @@ class VortexPrecisionPolicy(StrictModule, NonTrainableState):
         observed = real_precision_dtype_name(jnp.asarray(value).dtype)
         if self.coordinate_dtype is not None and observed != self.coordinate_dtype:
             raise TypeError(
-                f"Vortex coordinate dtype {observed} does not match "
-                f"{self.coordinate_dtype}."
+                f"Vortex coordinate dtype {observed} does not match {self.coordinate_dtype}."
             )
         return observed
 

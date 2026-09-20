@@ -34,11 +34,11 @@ def _case_and_state(
         raise ValueError(
             f"initial_state must end with state_shape {state_shape}; got {state.shape}."
         )
-    cases = tuple(int(size) for size in state.shape[: state.ndim - len(state_shape)])
+    cases = tuple(state.shape[: state.ndim - len(state_shape)])
     if any(size <= 0 for size in cases):
         raise ValueError("Control rollout case dimensions must be positive.")
     if not jnp.issubdtype(state.dtype, jnp.inexact):
-        state = state.astype(float)
+        state = state.astype("float64")
     return state, cases
 
 
@@ -282,7 +282,7 @@ class DiscreteControlDynamics(StrictModule):
                 state,
                 initial_valid,
                 jnp.zeros(cases, dtype=jnp.int32),
-                jnp.zeros(cases, dtype=bool),
+                jnp.zeros(cases, dtype=jnp.bool_),
             ),
             jnp.arange(time_grid.num_steps, dtype=jnp.int32),
         )
@@ -439,8 +439,7 @@ class DifferentialControlDynamics(StrictModule):
                     )
                     if tuple(all_controls.shape) != cases + self.control_shape:
                         raise ValueError(
-                            "Control parameterization returned the wrong case/control "
-                            "shape."
+                            "Control parameterization returned the wrong case/control shape."
                         )
                     control = all_controls.reshape((case_count,) + self.control_shape)[
                         case_index
@@ -454,8 +453,7 @@ class DifferentialControlDynamics(StrictModule):
                     )
                     if tuple(control.shape) != self.control_shape:
                         raise ValueError(
-                            "Control parameterization returned the wrong case/control "
-                            "shape."
+                            "Control parameterization returned the wrong case/control shape."
                         )
                 control_finite = _event_finite(control, self.control_shape)
                 safe_control = _event_where(
@@ -526,7 +524,7 @@ class DifferentialControlDynamics(StrictModule):
             backend_status = solution.backend_result
 
         state_time_axis = len(cases)
-        solution_valid = jnp.asarray(solution.valid, dtype=bool).reshape(
+        solution_valid = jnp.asarray(solution.valid, dtype=jnp.bool_).reshape(
             cases + (time_grid.num_times,)
         )
         state_finite = _event_finite(states, self.state_shape)
@@ -574,14 +572,14 @@ class DifferentialControlDynamics(StrictModule):
         control_finite = _event_finite(controls, self.control_shape)
         causal_control_valid = jnp.concatenate(
             (
-                jnp.ones(cases + (1,), dtype=bool),
-                jnp.cumprod(control_finite.astype(jnp.int32), axis=-1).astype(bool),
+                jnp.ones(cases + (1,), dtype=jnp.bool_),
+                jnp.cumprod(control_finite.astype(jnp.int32), axis=-1).astype("bool"),
             ),
             axis=-1,
         )
         valid = state_finite & causal_control_valid & solution_valid
         backend_success = jnp.asarray(
-            backend_status == dfx.RESULTS.successful, dtype=bool
+            backend_status == dfx.RESULTS.successful, dtype=jnp.bool_
         )
         status = jnp.where(
             backend_success & jnp.all(valid, axis=-1),

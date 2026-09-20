@@ -158,7 +158,7 @@ def column_flux_tasks(
 
 def column_flux_space(dry_mass: Any, support_id: str, /):
     """Native cell-average space and physical dry-mass measure (kg/m²)."""
-    mass = np.asarray(dry_mass, dtype=float)
+    mass = np.asarray(dry_mass, dtype=np.float64)
     if mass.ndim != 1 or mass.size < 2 or not np.all(np.isfinite(mass) & (mass > 0)):
         raise ValueError(
             "At least two positive finite top-to-bottom dry masses are required."

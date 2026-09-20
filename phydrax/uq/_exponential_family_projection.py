@@ -67,7 +67,7 @@ class ExponentialFamilyEstimateResult(StrictModule):
         self.conversion_iterations = jnp.broadcast_to(
             jnp.asarray(conversion_iterations, dtype=jnp.int32), shape
         )
-        self.valid = jnp.broadcast_to(jnp.asarray(valid, dtype=bool), shape)
+        self.valid = jnp.broadcast_to(jnp.asarray(valid, dtype=jnp.bool_), shape)
         self.status = jnp.broadcast_to(jnp.asarray(status, dtype=jnp.int32), shape)
         self.estimator_id = str(estimator_id)
         self.method_id = str(method_id)
@@ -134,7 +134,7 @@ class ExponentialFamilyProjectionAccumulator(StrictModule):
         if not isinstance(family, AbstractExponentialFamily):
             raise TypeError("family must implement AbstractExponentialFamily.")
         observation_array = jnp.asarray(observations)
-        weight_array = jnp.asarray(log_weights, dtype=float)
+        weight_array = jnp.asarray(log_weights, dtype=jnp.float64)
         event_shape = family.signature.event_shape
         expected_observation_shape = weight_array.shape + event_shape
         if observation_array.shape != expected_observation_shape:
@@ -169,7 +169,7 @@ class ExponentialFamilyProjectionAccumulator(StrictModule):
             packed,
             weight_array,
             sample_axes,
-            None if mask is None else jnp.asarray(mask, dtype=bool),
+            None if mask is None else jnp.asarray(mask, dtype=jnp.bool_),
         )
         dimension = family.signature.dimension
         statistic_values = canonical[..., :dimension]
@@ -258,10 +258,10 @@ class ExponentialFamilyProjectionAccumulator(StrictModule):
         ess = self.moments.weight_ess
         positive_mass = self.moments.weight_sum > 0.0
         log_total_weight = self.moments.log_scale + jnp.log(
-            jnp.maximum(self.moments.weight_sum, jnp.finfo(float).tiny)
+            jnp.maximum(self.moments.weight_sum, jnp.finfo(jnp.float64).tiny)
         )
         mean_log_weight = self.weighted_log_weight_sum / jnp.maximum(
-            self.moments.weight_sum, jnp.finfo(float).tiny
+            self.moments.weight_sum, jnp.finfo(jnp.float64).tiny
         )
         entropy = jnp.where(
             positive_mass,
@@ -270,7 +270,7 @@ class ExponentialFamilyProjectionAccumulator(StrictModule):
         )
         coefficient = jnp.sqrt(
             jnp.maximum(
-                count / jnp.maximum(ess, jnp.finfo(float).tiny) - 1.0,
+                count / jnp.maximum(ess, jnp.finfo(jnp.float64).tiny) - 1.0,
                 0.0,
             )
         )
@@ -354,9 +354,9 @@ def project_exponential_family(
     """Project weighted observations onto a regular exponential family."""
     batch_shape = _observation_batch_shape(family, observations)
     configured_weights = (
-        jnp.zeros(batch_shape, dtype=float)
+        jnp.zeros(batch_shape, dtype=jnp.float64)
         if log_weights is None
-        else jnp.asarray(log_weights, dtype=float)
+        else jnp.asarray(log_weights, dtype=jnp.float64)
     )
     return ExponentialFamilyProjectionAccumulator.from_log_weights(
         family,
@@ -379,9 +379,9 @@ def fit_exponential_family(
     """Fit a regular exponential family by weighted sufficient-statistic MLE."""
     batch_shape = _observation_batch_shape(family, observations)
     if weights is None:
-        log_weights = jnp.zeros(batch_shape, dtype=float)
+        log_weights = jnp.zeros(batch_shape, dtype=jnp.float64)
     else:
-        weight_array = jnp.asarray(weights, dtype=float)
+        weight_array = jnp.asarray(weights, dtype=jnp.float64)
         log_weights = jnp.where(
             weight_array > 0.0,
             jnp.log(weight_array),

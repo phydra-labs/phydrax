@@ -160,7 +160,7 @@ def _damped_causal_least_squares(
         (num_steps, state_size, state_size),
     )
     observations = jnp.zeros((num_steps, state_size), dtype=dtype)
-    masks = jnp.ones((num_steps, state_size), dtype=bool)
+    masks = jnp.ones((num_steps, state_size), dtype=jnp.bool_)
     initial_mean = -residuals[0]
     initial_covariance = identity
 
@@ -201,7 +201,7 @@ def _damped_causal_least_squares(
         predicted_means[:, None, :],
         predicted_covariances[:, None, :, :],
         filter_transitions[:, None, :, :],
-        jnp.ones((num_steps, 1), dtype=bool),
+        jnp.ones((num_steps, 1), dtype=jnp.bool_),
     )
     return smoothed_means[:, 0]
 

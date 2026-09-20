@@ -59,8 +59,7 @@ class _RiemannianMapCallable(StrictModule):
             expected = (self.target_metric.chart.dimension,)
             if value.shape != expected:
                 raise ValueError(
-                    "Riemannian map field must have pointwise target shape "
-                    f"{expected}; got {value.shape}."
+                    f"Riemannian map field must have pointwise target shape {expected}; got {value.shape}."
                 )
             return value
 

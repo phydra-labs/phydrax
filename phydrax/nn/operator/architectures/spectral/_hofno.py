@@ -101,16 +101,15 @@ class _DepthwiseSpectralConvND(StrictModule):
         ndim = len(self.n_modes)
         if values.ndim < ndim + 1:
             raise ValueError(
-                f"Depthwise Fourier convolution expects at least {ndim + 1} axes; "
-                f"got {values.ndim}."
+                f"Depthwise Fourier convolution expects at least {ndim + 1} axes; got {values.ndim}."
             )
-        if int(values.shape[-1]) != self.channels:
+        if values.shape[-1] != self.channels:
             raise ValueError(
                 f"Expected {self.channels} channels, got {values.shape[-1]}."
             )
 
         spatial_axes = tuple(range(values.ndim - ndim - 1, values.ndim - 1))
-        spatial_shape = tuple(int(values.shape[axis]) for axis in spatial_axes)
+        spatial_shape = tuple(values.shape[axis] for axis in spatial_axes)
         transformed = jnp.fft.rfftn(values, axes=spatial_axes, norm="ortho")
         output_ft = jnp.zeros_like(transformed)
         modes = tuple(
@@ -235,18 +234,18 @@ class _ProjectedProductFourierMixer(StrictModule):
     def __call__(self, values: Array, /) -> Array:
         array = jnp.asarray(values)
         ndim = len(self.n_modes)
-        if array.ndim < ndim + 1 or int(array.shape[-1]) != self.channels:
+        if array.ndim < ndim + 1 or array.shape[-1] != self.channels:
             raise ValueError(
                 "Higher-order Fourier mixer expects trailing spatial axes and "
                 f"{self.channels} channels; got {array.shape}."
             )
-        spatial_shape = tuple(int(size) for size in array.shape[-ndim - 1 : -1])
+        spatial_shape = tuple(array.shape[-ndim - 1 : -1])
         factors = self.projection(array)
         working_shape = spatial_shape
         if self.aliasing == "dealiased":
             working_shape = self._dealiased_shape(spatial_shape)
             if working_shape != spatial_shape:
-                leading_shape = tuple(int(size) for size in factors.shape[: -ndim - 2])
+                leading_shape = tuple(factors.shape[: -ndim - 2])
                 flattened = factors.reshape(
                     leading_shape
                     + spatial_shape
@@ -270,7 +269,7 @@ class _RMSNorm(StrictModule):
     eps: float
 
     def __init__(self, channels: int, /, *, eps: float):
-        self.scale = jnp.ones((int(channels),), dtype=float)
+        self.scale = jnp.ones((int(channels),), dtype=jnp.float64)
         self.eps = float(eps)
         if self.eps <= 0.0:
             raise ValueError("norm_epsilon must be positive.")
@@ -592,8 +591,7 @@ class HOFNO(AbstractOperatorModel):
         for axis in axes:
             if axis.size <= 1:
                 raise ValueError(
-                    "HOFNO expects coord-separable grid evaluation with at least two "
-                    "nodes per spatial axis."
+                    "HOFNO expects coord-separable grid evaluation with at least two nodes per spatial axis."
                 )
             if not axis.periodic:
                 raise ValueError("HOFNO requires periodic tensor-grid axes.")
@@ -612,19 +610,19 @@ class HOFNO(AbstractOperatorModel):
         )
         implicit_scalar = array.ndim >= ndim and tuple(array.shape[-ndim:]) == shape
         expected_channels = _get_size(self.in_size)
-        if explicit_channels and int(array.shape[-1]) == expected_channels:
-            case_shape = tuple(int(size) for size in array.shape[: -ndim - 1])
+        if explicit_channels and array.shape[-1] == expected_channels:
+            case_shape = tuple(array.shape[: -ndim - 1])
         elif implicit_scalar:
             array = array[..., None]
-            case_shape = tuple(int(size) for size in array.shape[: -ndim - 1])
+            case_shape = tuple(array.shape[: -ndim - 1])
         elif explicit_channels:
-            case_shape = tuple(int(size) for size in array.shape[: -ndim - 1])
+            case_shape = tuple(array.shape[: -ndim - 1])
         else:
             raise ValueError(
                 "HOFNO values must end in the spatial sample shape, optionally followed "
                 f"by channels; got {array.shape} for spatial shape {shape}."
             )
-        if int(array.shape[-1]) != expected_channels:
+        if array.shape[-1] != expected_channels:
             raise ValueError(
                 f"Expected {expected_channels} input channels, got {array.shape[-1]}."
             )
@@ -647,7 +645,7 @@ class HOFNO(AbstractOperatorModel):
 
     def _pad(self, values: Array, /) -> tuple[Array, tuple[int, ...]]:
         ndim = len(self.n_modes)
-        spatial_shape = tuple(int(size) for size in values.shape[-ndim - 1 : -1])
+        spatial_shape = tuple(values.shape[-ndim - 1 : -1])
         pad_counts = tuple(
             int(round(fraction * size))
             for fraction, size in zip(self.domain_padding, spatial_shape, strict=True)

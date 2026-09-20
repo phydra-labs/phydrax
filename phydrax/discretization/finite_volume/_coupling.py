@@ -104,7 +104,7 @@ def _overset_masks(
         default: np.ndarray,
     ) -> np.ndarray:
         result = default if value is None else np.asarray(value)
-        if result.shape != (count,) or result.dtype != np.dtype(bool):
+        if result.shape != (count,) or result.dtype != np.dtype(np.bool_):
             raise ValueError(f"{name} must be a boolean mask with shape ({count},).")
         return result
 
@@ -112,25 +112,25 @@ def _overset_masks(
         getattr(overset, "donor_hole_mask", None),
         donor_count,
         "overset.donor_hole_mask",
-        np.zeros((donor_count,), dtype=bool),
+        np.zeros((donor_count,), dtype=np.bool_),
     )
     receptor_hole = mask(
         getattr(overset, "receptor_hole_mask", getattr(overset, "hole_mask", None)),
         receptor_count,
         "overset.receptor_hole_mask",
-        np.zeros((receptor_count,), dtype=bool),
+        np.zeros((receptor_count,), dtype=np.bool_),
     )
     donor_fringe = mask(
         getattr(overset, "donor_fringe_mask", None),
         donor_count,
         "overset.donor_fringe_mask",
-        np.zeros((donor_count,), dtype=bool),
+        np.zeros((donor_count,), dtype=np.bool_),
     )
     receptor_fringe = mask(
         getattr(overset, "receptor_fringe_mask", None),
         receptor_count,
         "overset.receptor_fringe_mask",
-        np.asarray(overset.receptor_mask, dtype=bool),
+        np.asarray(overset.receptor_mask, dtype=np.bool_),
     )
     donor_active = mask(
         getattr(overset, "donor_active_mask", None),
@@ -268,8 +268,7 @@ class UnstructuredFiniteVolumeCouplingPlan(StrictModule, NonTrainableState):
         )
         if (embedded_boundary_ is None) != (embedded_boundaries_ is None):
             raise ValueError(
-                "Embedded-boundary coupling requires both an EmbeddedBoundaryPlan "
-                "and UnstructuredEmbeddedBoundarySet."
+                "Embedded-boundary coupling requires both an EmbeddedBoundaryPlan and UnstructuredEmbeddedBoundarySet."
             )
         vof_ = _optional_plan(vof, UnstructuredVOFPlan, "vof")
         phase_change_ = _optional_plan(phase_change, VOFPhaseChangePlan, "phase_change")
@@ -301,7 +300,6 @@ class UnstructuredFiniteVolumeCouplingPlan(StrictModule, NonTrainableState):
             else canonical_fingerprint(
                 {
                     "kind": "unstructured-finite-volume-topology-events",
-                    "schema_version": 1,
                     "capacity": capacity,
                     "policy": policy,
                 }
@@ -328,7 +326,6 @@ class UnstructuredFiniteVolumeCouplingPlan(StrictModule, NonTrainableState):
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "unstructured-finite-volume-coupling-plan",
-                "schema_version": 3,
                 "motion": None if motion_ is None else motion_.plan_id,
                 "embedded_boundary": (
                     None if embedded_boundary_ is None else embedded_boundary_.plan_id
@@ -640,7 +637,7 @@ class PreparedUnstructuredFiniteVolumeCoupling(StrictModule, NonTrainableState):
                 receptor_fringe,
             ) = _overset_masks(
                 overset,
-                int(np.asarray(overset.donor_covered_measures).size),
+                np.asarray(overset.donor_covered_measures).size,
                 int(discretization.cell_count),
             )
             del donor_active, donor_hole, donor_fringe, receptor_fringe
@@ -693,22 +690,21 @@ class PreparedUnstructuredFiniteVolumeCoupling(StrictModule, NonTrainableState):
                 or int(np.asarray(current_sliding_coupling.status)) != 0
             ):
                 raise ValueError(
-                    "Explicit sliding coupling is stale or does not belong to the "
-                    "prepared sliding interface plan."
+                    "Explicit sliding coupling is stale or does not belong to the prepared sliding interface plan."
                 )
             if overset is None or not _has_certified_receptor_face_routes(overset):
                 raise ValueError(
                     "Sliding coupling requires a fully certified overset "
                     "receptor-face artifact with explicit physical face IDs."
                 )
-            if int(np.asarray(current_sliding_coupling.left_measures).size) != int(
-                np.asarray(overset.donor_indices).size
-            ) or int(np.asarray(current_sliding_coupling.right_measures).size) != int(
-                np.asarray(overset.receptor_face_ids).size
+            if (
+                np.asarray(current_sliding_coupling.left_measures).size
+                != np.asarray(overset.donor_indices).size
+                or np.asarray(current_sliding_coupling.right_measures).size
+                != np.asarray(overset.receptor_face_ids).size
             ):
                 raise ValueError(
-                    "Sliding left/right interval routes must match overset donor "
-                    "routes and certified receptor faces."
+                    "Sliding left/right interval routes must match overset donor routes and certified receptor faces."
                 )
 
         self.motion = motion
@@ -738,7 +734,6 @@ class PreparedUnstructuredFiniteVolumeCoupling(StrictModule, NonTrainableState):
         self.prepared_id = canonical_fingerprint(
             {
                 "kind": "prepared-unstructured-finite-volume-coupling",
-                "schema_version": 5,
                 "plan": plan.plan_id,
                 "topology": discretization.topology_id,
                 "geometry": discretization.geometry_id,

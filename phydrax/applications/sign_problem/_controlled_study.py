@@ -123,7 +123,7 @@ def evaluate_controlled_sign_study(
     ):
         raise ValueError("weights and observables need leading (chain, draw>=4) axes.")
     if not jnp.issubdtype(weights.dtype, jnp.complexfloating):
-        weights = weights.astype(complex)
+        weights = weights.astype("complex128")
     if not str(study_id):
         raise ValueError("study_id must be non-empty.")
     magnitude = jnp.abs(weights)
@@ -173,14 +173,14 @@ def evaluate_controlled_sign_study(
     enough_draws = (
         weights.shape[0] >= plan.minimum_chains and weights.shape[1] >= plan.minimum_draws
     )
-    phase_cancelled = jnp.isfinite(average_sign) & (
+    phase_canceled = jnp.isfinite(average_sign) & (
         average_sign < plan.minimum_average_phase
     )
     status = jnp.where(
         ~finite,
         int(ControlledSignStudyStatus.NONFINITE),
         jnp.where(
-            phase_cancelled,
+            phase_canceled,
             int(ControlledSignStudyStatus.PHASE_CANCELLATION),
             jnp.where(
                 not enough_draws,

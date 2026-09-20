@@ -868,8 +868,8 @@ def _contract_gates(
     expected_output_dtypes = (
         population_dtype,
         population_dtype,
-        np.dtype(bool).str,
-        np.dtype(bool).str,
+        np.dtype(np.bool_).str,
+        np.dtype(np.bool_).str,
         np.dtype(np.int32).str,
         np.dtype(np.int32).str,
         *(population_dtype,) * 5,
@@ -909,7 +909,7 @@ def _contract_gates(
             for mode, contract in contracts.items()
         ),
         "bool_int_abi_separation": all(
-            contract.output_dtypes[2:4] == (np.dtype(bool).str,) * 2
+            contract.output_dtypes[2:4] == (np.dtype(np.bool_).str,) * 2
             and contract.output_dtypes[4:6] == (np.dtype(np.int32).str,) * 2
             and contract.output_dtypes[2] != contract.output_dtypes[4]
             for contract in contracts.values()
@@ -1259,7 +1259,7 @@ def qualification_report(
             for case in native_rollback
         ),
         "native_bool_int_separation": all(
-            mode_case["output_dtypes"][2:4] == [np.dtype(bool).str] * 2
+            mode_case["output_dtypes"][2:4] == [np.dtype(np.bool_).str] * 2
             and mode_case["output_dtypes"][4:6] == [np.dtype(np.int32).str] * 2
             and mode_case["output_dtypes"][2] != mode_case["output_dtypes"][4]
             for mode_cases in native_cases.values()
@@ -1389,8 +1389,7 @@ def qualification_report(
 def _parse_arguments() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Qualify frozen learned-energy D2V17 forward IREE export without "
-            "claiming VJP or training export."
+            "Qualify frozen learned-energy D2V17 forward IREE export without claiming VJP or training export."
         )
     )
     parser.add_argument(

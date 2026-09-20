@@ -31,9 +31,7 @@ DenoisingScoreSamplingMode: TypeAlias = Literal["fixed", "resample"]
 DenoisingScoreWeighting: TypeAlias = Literal[
     "unit", "conditional-variance", "diffusion-rate"
 ]
-DenoisingScoreDataProvider: TypeAlias = Callable[
-    [Key[Array, ""]], WeightedSampleTarget
-]
+DenoisingScoreDataProvider: TypeAlias = Callable[[Key[Array, ""]], WeightedSampleTarget]
 
 
 def _canonical_target(
@@ -51,14 +49,14 @@ def _canonical_target(
         raise ValueError(
             "Denoising score matching initially requires every weight axis to be sampled."
         )
-    expected = (int(log_weights.shape[0]),) + state_shape
+    expected = (log_weights.shape[0],) + state_shape
     if values.shape != expected:
         raise ValueError(
             f"Denoising score states must have shape {expected}; got {values.shape}."
         )
-    valid = jnp.asarray(included, dtype=bool)
+    valid = jnp.asarray(included, dtype=jnp.bool_)
     if batch.support_valid is not None:
-        support = jnp.asarray(batch.support_valid, dtype=bool)
+        support = jnp.asarray(batch.support_valid, dtype=jnp.bool_)
         if support.shape != ():
             raise ValueError(
                 "Denoising score support_valid must be scalar when no case axes remain."
@@ -66,7 +64,7 @@ def _canonical_target(
         valid = valid & support
     return (
         jnp.asarray(values),
-        jnp.asarray(log_weights, dtype=float),
+        jnp.asarray(log_weights, dtype=jnp.float64),
         valid,
         batch.independent,
         batch.provenance,
@@ -121,15 +119,14 @@ class DenoisingScoreMatchingBatch(StrictModule):
             clean.shape == perturbed.shape == noise_array.shape == target.shape
         ):
             raise ValueError(
-                "Denoising states, noise, and targets require one sample axis and "
-                "one vector event axis."
+                "Denoising states, noise, and targets require one sample axis and one vector event axis."
             )
-        count = int(clean.shape[0])
+        count = clean.shape[0]
         expected = (count,)
         times = jnp.asarray(time, dtype=clean.dtype)
         weights = jnp.asarray(objective_weight, dtype=clean.dtype)
-        validity = jnp.asarray(valid, dtype=bool)
-        log_mass = jnp.asarray(log_weights, dtype=float)
+        validity = jnp.asarray(valid, dtype=jnp.bool_)
+        log_mass = jnp.asarray(log_weights, dtype=jnp.float64)
         indices = jnp.asarray(source_indices, dtype=jnp.int32)
         if not (
             times.shape
@@ -265,7 +262,7 @@ class DenoisingScoreMatchingTerm(AbstractSamplingTerm):
                 raise TypeError("Resampled denoising score matching requires a provider.")
             fixed = None
             provider = cast(DenoisingScoreDataProvider, data)
-        weight = jnp.asarray(scalar_weight, dtype=float).reshape(())
+        weight = jnp.asarray(scalar_weight, dtype=jnp.float64).reshape(())
         if not bool(jnp.isfinite(weight)) or float(weight) < 0.0:
             raise ValueError("scalar_weight must be finite and nonnegative.")
         self.fixed_target = fixed
@@ -300,7 +297,7 @@ class DenoisingScoreMatchingTerm(AbstractSamplingTerm):
         clean, log_weights, valid, independent, provenance = _canonical_target(
             target, self.process.state_shape
         )
-        count = int(clean.shape[0])
+        count = clean.shape[0]
         time = self.policy.sample(time_key, (count,), dtype=clean.real.dtype)
         noise = jr.normal(noise_key, clean.shape, dtype=clean.dtype)
         mean_scale, scale = jax.vmap(
@@ -314,9 +311,7 @@ class DenoisingScoreMatchingTerm(AbstractSamplingTerm):
         target_score = -noise / scale.reshape(factors)
         objective_weight = self._objective_weight(time, scale)
         event_finite = jnp.all(
-            jnp.isfinite(clean)
-            & jnp.isfinite(perturbed)
-            & jnp.isfinite(target_score),
+            jnp.isfinite(clean) & jnp.isfinite(perturbed) & jnp.isfinite(target_score),
             axis=-1,
         )
         valid = valid & event_finite & jnp.isfinite(log_weights)
@@ -412,7 +407,7 @@ class DenoisingScoreMatchingTerm(AbstractSamplingTerm):
         )
         predicted_norm = jnp.sum(weights * evaluation.predicted_norm)
         target_norm = jnp.sum(weights * evaluation.target_norm)
-        valid_fraction = jnp.mean(evaluation.valid.astype(float))
+        valid_fraction = jnp.mean(evaluation.valid.astype("float64"))
         effective = effective_sample_size(weights)
         minimum_time = jnp.min(jnp.where(evaluation.valid, batch.time, jnp.inf))
         maximum_time = jnp.max(jnp.where(evaluation.valid, batch.time, -jnp.inf))

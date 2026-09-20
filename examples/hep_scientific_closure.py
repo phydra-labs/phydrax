@@ -16,7 +16,7 @@ def main() -> None:
         jnp.asarray(
             [[[10.0, 6.0, 0.0, 8.0], [5.0, 3.0, 0.0, 4.0], [4.0, -4.0, 0.0, 0.0]]]
         ),
-        jnp.ones((1, 3), dtype=bool),
+        jnp.ones((1, 3), dtype="bool"),
         source_collection_id="particles",
         momentum_unit_id="GeV",
     )

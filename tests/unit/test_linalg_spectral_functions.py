@@ -150,9 +150,7 @@ def test_fermi_dirac_values_and_trainable_parameters_match_scalar_reference():
     )
     reference_gradient = jax.grad(
         lambda current_chemical_potential, current_temperature: jnp.sum(
-            jax.nn.sigmoid(
-                (current_chemical_potential - diagonal) / current_temperature
-            )
+            jax.nn.sigmoid((current_chemical_potential - diagonal) / current_temperature)
         ),
         argnums=(0, 1),
     )(chemical_potential, temperature)
@@ -431,9 +429,7 @@ def test_batched_spectral_functions_preserve_batch_axes_mixed_status_and_loewner
     assert jnp.allclose(tangent[1], finite_difference[1], rtol=5e-6, atol=5e-7)
     assert jnp.allclose(tangent[2], finite_difference[2], rtol=5e-6, atol=5e-7)
 
-    mixed_matrices = positive.at[1].set(
-        jnp.diag(jnp.asarray([-1.0, 2.0, 4.0]))
-    )
+    mixed_matrices = positive.at[1].set(jnp.diag(jnp.asarray([-1.0, 2.0, 4.0])))
     mixed_problem = eigen.Eigenproblem(
         la.DenseLinearOperator(
             mixed_matrices,

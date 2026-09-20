@@ -101,7 +101,7 @@ def _floating_array(value: ArrayLike, name: str, /) -> Array:
     if jnp.iscomplexobj(array):
         raise TypeError(f"{name} must be real-valued.")
     if not jnp.issubdtype(array.dtype, jnp.floating):
-        array = array.astype(float)
+        array = array.astype("float64")
     return array
 
 
@@ -240,8 +240,8 @@ class ReducedPotentialDataset(StrictModule, NonTrainableState):
                 "values must have shape (states, capacity) with at least two states."
             )
         state_count, capacity = potential.shape
-        covered = jnp.asarray(coverage, dtype=bool)
-        active = jnp.asarray(sample_active, dtype=bool)
+        covered = jnp.asarray(coverage, dtype=jnp.bool_)
+        active = jnp.asarray(sample_active, dtype=jnp.bool_)
         origin = _index_array(origin_state, "origin_state")
         chain = _index_array(chain_index, "chain_index")
         draw = _index_array(draw_index, "draw_index")
@@ -439,8 +439,8 @@ class ReducedWorkDataset(StrictModule, NonTrainableState):
         if work.ndim != 1 or work.size < 1:
             raise ValueError("values must be a non-empty capacity vector.")
         capacity = work.size
-        covered = jnp.asarray(coverage, dtype=bool)
-        active = jnp.asarray(sample_active, dtype=bool)
+        covered = jnp.asarray(coverage, dtype=jnp.bool_)
+        active = jnp.asarray(sample_active, dtype=jnp.bool_)
         source = _index_array(source_state, "source_state")
         destination = _index_array(destination_state, "destination_state")
         chain = _index_array(chain_index, "chain_index")
@@ -645,8 +645,8 @@ class ThermodynamicDerivativeDataset(StrictModule, NonTrainableState):
                 "values must have shape (states, capacity) with at least two states."
             )
         state_count, capacity = derivative.shape
-        covered = jnp.asarray(coverage, dtype=bool)
-        active = jnp.asarray(sample_active, dtype=bool)
+        covered = jnp.asarray(coverage, dtype=jnp.bool_)
+        active = jnp.asarray(sample_active, dtype=jnp.bool_)
         chain = _index_array(chain_index, "chain_index")
         draw = _index_array(draw_index, "draw_index")
         repeat = _index_array(repeat_index, "repeat_index")
@@ -908,7 +908,7 @@ class FreeEnergySelectionEvidence(StrictModule, NonTrainableState):
     ):
         if not isinstance(plan, FreeEnergySelectionPlan):
             raise TypeError("plan must be FreeEnergySelectionPlan.")
-        kept = jnp.asarray(retained, dtype=bool)
+        kept = jnp.asarray(retained, dtype=jnp.bool_)
         block = _index_array(block_index, "block_index")
         group = _index_array(block_group_index, "block_group_index")
         stratum = _index_array(stratum_index, "stratum_index")
@@ -926,7 +926,7 @@ class FreeEnergySelectionEvidence(StrictModule, NonTrainableState):
         inefficiency = _floating_array(
             statistical_inefficiency, "statistical_inefficiency"
         )
-        resolved_correlation = jnp.asarray(correlation_resolved, dtype=bool)
+        resolved_correlation = jnp.asarray(correlation_resolved, dtype=jnp.bool_)
         effective = _floating_array(
             correlation_effective_sample_size, "correlation_effective_sample_size"
         )
@@ -1036,7 +1036,7 @@ class FreeEnergySelectionEvidence(StrictModule, NonTrainableState):
         self.resolved_block_length = resolved
         self.block_count = total_blocks
         self.dataset_kind = kind
-        self.observation_shape = tuple(int(size) for size in kept.shape)
+        self.observation_shape = tuple(kept.shape)
         self.dataset_id = identity
         self.selection_id = selection_id
 
@@ -1097,7 +1097,7 @@ class FreeEnergyResult(StrictModule, NonTrainableState):
         gauge_index = states.index(gauge)
         covariance_ = _floating_array(covariance, "covariance")
         overlap_ = _floating_array(overlap, "overlap")
-        connectivity_ = jnp.asarray(connectivity, dtype=bool)
+        connectivity_ = jnp.asarray(connectivity, dtype=jnp.bool_)
         raw_ess = _floating_array(raw_effective_sample_size, "raw_effective_sample_size")
         ess = _floating_array(effective_sample_size, "effective_sample_size")
         influence = _floating_array(influence_values, "influence_values")
@@ -1288,8 +1288,8 @@ def _correlation_inefficiency(
     maximum_lag: int | None,
     /,
 ) -> tuple[np.ndarray, np.ndarray]:
-    result = np.ones((stratum_count,), dtype=float)
-    resolved = np.ones((stratum_count,), dtype=bool)
+    result = np.ones((stratum_count,), dtype=np.float64)
+    resolved = np.ones((stratum_count,), dtype=np.bool_)
     for stratum in range(stratum_count):
         selected_state = retained & (strata == stratum)
         if not np.any(selected_state):
@@ -1427,10 +1427,10 @@ def _select_free_energy_dataset(
         potential = np.asarray(dataset.values)
         safe_origin = np.clip(strata, 0, stratum_count - 1)
         origin_value = potential[safe_origin, np.arange(potential.shape[1])]
-        inefficiency = np.ones((stratum_count,), dtype=float)
+        inefficiency = np.ones((stratum_count,), dtype=np.float64)
         correlation_resolved = np.asarray(
             [np.any(retained & (strata == state)) for state in range(stratum_count)],
-            dtype=bool,
+            dtype=np.bool_,
         )
         for target in range(stratum_count):
             work = potential[target] - origin_value
@@ -1543,7 +1543,7 @@ def _selection(
         raise TypeError("selection must be FreeEnergySelectionPlan, evidence, or None.")
     observations = _dataset_observations(dataset)
     expected_kind = observations[7]
-    expected_shape = tuple(int(size) for size in observations[1].shape)
+    expected_shape = tuple(observations[1].shape)
     if (
         evidence.dataset_id != dataset.dataset_id
         or evidence.dataset_kind != expected_kind
@@ -1624,14 +1624,14 @@ def _bootstrap_observation_weights(
     retained = np.asarray(evidence.retained).reshape((-1,))
     groups = sorted(set(int(value) for value in group[retained]))
     keys = jr.split(jnp.asarray(key), max(len(groups), 1))
-    multiplicity = jnp.zeros((replicates, block_count), dtype=float)
+    multiplicity = jnp.zeros((replicates, block_count), dtype=jnp.float64)
     for key_index, group_id in enumerate(groups):
         group_blocks = sorted(
             set(int(value) for value in block[retained & (group == group_id)])
         )
         count = len(group_blocks)
         draws = jr.randint(keys[key_index], (replicates, count), 0, count)
-        local = jnp.sum(jax.nn.one_hot(draws, count, dtype=float), axis=1)
+        local = jnp.sum(jax.nn.one_hot(draws, count, dtype=jnp.float64), axis=1)
         multiplicity = multiplicity.at[:, jnp.asarray(group_blocks, dtype=jnp.int32)].set(
             local
         )
@@ -1661,7 +1661,9 @@ def _covariance_rank(covariance: Array, tolerance: float = 0.0, /) -> Array:
 
 def _transitive_connectivity(overlap: Array, minimum: float, /) -> Array:
     host = np.asarray(overlap)
-    connected = (np.maximum(host, host.T) >= minimum) | np.eye(host.shape[0], dtype=bool)
+    connected = (np.maximum(host, host.T) >= minimum) | np.eye(
+        host.shape[0], dtype=np.bool_
+    )
     for intermediate in range(host.shape[0]):
         connected |= connected[:, intermediate, None] & connected[None, intermediate, :]
     return jnp.asarray(connected)
@@ -1923,13 +1925,13 @@ def thermodynamic_integration(
         covariance, factor, finite = _bootstrap_factor(estimates)
         if not finite or bool(jnp.any(bootstrap_count == 0.0)):
             numerical_status |= FreeEnergyStatus.NONFINITE
-    required = np.ones((state_count,), dtype=bool)
+    required = np.ones((state_count,), dtype=np.bool_)
     statistical_status = FreeEnergyStatus(_selection_status(evidence, required))
     if not dataset.sampling_exact:
         statistical_status |= FreeEnergyStatus.UNQUALIFIED_KERNEL
     raw_ess = counts.astype(dataset.values.dtype)
     adjusted = raw_ess / evidence.statistical_inefficiency
-    connectivity = jnp.ones((state_count, state_count), dtype=bool)
+    connectivity = jnp.ones((state_count, state_count), dtype=jnp.bool_)
     return FreeEnergyResult(
         free,
         covariance,

@@ -29,7 +29,7 @@ def _array(value, name, *, positive=False):
     raw = np.asarray(value)
     if np.iscomplexobj(raw):
         raise ValueError(f"{name} must be real for the admitted scalar cell basis.")
-    host = np.asarray(raw, dtype=float)
+    host = np.asarray(raw, dtype=np.float64)
     if not np.all(np.isfinite(host)) or (positive and np.any(host <= 0)):
         raise ValueError(
             f"{name} must be finite" + (" and positive." if positive else ".")
@@ -78,7 +78,7 @@ class QuantumResources(StrictModule):
             for value in raw
         ):
             raise ValueError("Quantum resource bounds must be positive integers.")
-        values = tuple(int(value) for value in raw)
+        values = tuple(raw)
         (
             self.max_nodes,
             self.max_modes,

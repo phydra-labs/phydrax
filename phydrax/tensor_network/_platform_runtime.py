@@ -36,7 +36,7 @@ class TensorNetworkRunStatus(StrEnum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
-    CANCELLED = "cancelled"
+    CANCELED = "canceled"
 
 
 class TensorNetworkCheckpointError(RuntimeError):
@@ -54,13 +54,13 @@ class TensorNetworkCheckpointError(RuntimeError):
         super().__init__(f"{failure_.value}: {self.detail}")
 
 
-class TensorNetworkCancelledError(RuntimeError):
-    failure = TensorNetworkFailure.CANCELLED
+class TensorNetworkCanceledError(RuntimeError):
+    failure = TensorNetworkFailure.CANCELED
 
     def __init__(self, run_id: str, detail: str, /):
         self.run_id = _identifier(run_id, "run_id")
         self.detail = _identifier(detail, "cancellation detail")
-        super().__init__(f"cancelled tensor-network run {self.run_id}: {self.detail}")
+        super().__init__(f"canceled tensor-network run {self.run_id}: {self.detail}")
 
 
 class TensorNetworkCheckpointRecord(StrictModule, NonTrainableState):
@@ -504,13 +504,13 @@ class TensorNetworkSupervisorState(StrictModule, NonTrainableState):
             else _identifier(last_checkpoint_id, "last_checkpoint_id")
         )
         replay = None if replay_id is None else _identifier(replay_id, "replay_id")
-        if status_ == TensorNetworkRunStatus.CANCELLED:
-            if failure_ != TensorNetworkFailure.CANCELLED:
+        if status_ == TensorNetworkRunStatus.CANCELED:
+            if failure_ != TensorNetworkFailure.CANCELED:
                 raise ValueError(
-                    "Cancelled supervisor state requires cancellation failure."
+                    "Canceled supervisor state requires cancellation failure."
                 )
         elif status_ == TensorNetworkRunStatus.FAILED:
-            if failure_ in (TensorNetworkFailure.NONE, TensorNetworkFailure.CANCELLED):
+            if failure_ in (TensorNetworkFailure.NONE, TensorNetworkFailure.CANCELED):
                 raise ValueError(
                     "Failed supervisor state requires a non-cancellation failure."
                 )
@@ -593,8 +593,8 @@ class TensorNetworkRunSupervisor(NonTrainableState):
                 raise RuntimeError("Only a ready tensor-network run can start.")
             if self._cancel.is_set():
                 return self._replace(
-                    TensorNetworkRunStatus.CANCELLED,
-                    TensorNetworkFailure.CANCELLED,
+                    TensorNetworkRunStatus.CANCELED,
+                    TensorNetworkFailure.CANCELED,
                     "cancellation requested before execution",
                 )
             return self._replace(
@@ -612,15 +612,15 @@ class TensorNetworkRunSupervisor(NonTrainableState):
                 TensorNetworkRunStatus.RUNNING,
             ):
                 return self._replace(
-                    TensorNetworkRunStatus.CANCELLED,
-                    TensorNetworkFailure.CANCELLED,
+                    TensorNetworkRunStatus.CANCELED,
+                    TensorNetworkFailure.CANCELED,
                     detail_,
                 )
             return self._state
 
-    def raise_if_cancelled(self) -> None:
+    def raise_if_canceled(self) -> None:
         if self._cancel.is_set():
-            raise TensorNetworkCancelledError(
+            raise TensorNetworkCanceledError(
                 self.execution.manifest_id, self.state.detail
             )
 
@@ -683,7 +683,7 @@ class TensorNetworkRunSupervisor(NonTrainableState):
         self, failure: TensorNetworkFailure, detail: str, /
     ) -> TensorNetworkSupervisorState:
         failure_ = TensorNetworkFailure(failure)
-        if failure_ in (TensorNetworkFailure.NONE, TensorNetworkFailure.CANCELLED):
+        if failure_ in (TensorNetworkFailure.NONE, TensorNetworkFailure.CANCELED):
             raise ValueError("fail requires a non-cancellation failure category.")
         with self._lock:
             if self._state.status not in (
@@ -881,7 +881,7 @@ def redact_tensor_network_telemetry(
 
 __all__ = [
     "TensorNetworkAcceptedCheckpointBoundary",
-    "TensorNetworkCancelledError",
+    "TensorNetworkCanceledError",
     "TensorNetworkCheckpointError",
     "TensorNetworkCheckpointPublication",
     "TensorNetworkCheckpointRecord",

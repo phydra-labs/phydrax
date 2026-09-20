@@ -453,7 +453,7 @@ def compile_ac_opf(
     voltage_columns = [{i} for i in range(n)]
     for k, i in enumerate(nonrefs):
         voltage_columns[i].add(n + k)
-    neighbours = [{i} for i in range(n)]
+    neighbors = [{i} for i in range(n)]
     for branch_spec, f, t in zip(
         compiled.network.branches,
         np.asarray(compiled.from_indices),
@@ -461,16 +461,16 @@ def compile_ac_opf(
         strict=True,
     ):
         if branch_spec.in_service:
-            neighbours[f].add(int(t))
-            neighbours[t].add(int(f))
+            neighbors[f].add(int(t))
+            neighbors[t].add(int(f))
     rows = [set() for _ in sources]
     hessian_entries = {(i, i) for i in range(size)}
     for i in range(n):
-        columns = set().union(*(voltage_columns[j] for j in neighbours[i]))
+        columns = set().union(*(voltage_columns[j] for j in neighbors[i]))
         rows[i].update(columns)
         rows[n + i].update(columns)
         # Power is bilinear only between a bus and its adjacent buses.
-        for j in neighbours[i]:
+        for j in neighbors[i]:
             pair = voltage_columns[i] | voltage_columns[j]
             hessian_entries.update((a, b) for a in pair for b in pair)
     for k, g in enumerate(free_p_ids):

@@ -54,26 +54,24 @@ class BMSQuadraturePlan(StrictModule, NonTrainableState):
         quadrature_tolerance: float = 1.0e-10,
         plan_name: str = "bms-scri-quadrature",
     ):
-        directions_host = np.asarray(directions, dtype=float)
-        weights_host = np.asarray(weights, dtype=float)
-        basis_host = np.asarray(charge_basis, dtype=float)
-        gram_host = np.asarray(charge_basis_gram, dtype=float)
+        directions_host = np.asarray(directions, dtype=np.float64)
+        weights_host = np.asarray(weights, dtype=np.float64)
+        basis_host = np.asarray(charge_basis, dtype=np.float64)
+        gram_host = np.asarray(charge_basis_gram, dtype=np.float64)
         if (
             directions_host.ndim != 2
             or directions_host.shape[1] != 3
             or directions_host.shape[0] < 4
         ):
             raise ValueError("directions must contain at least four unit vectors.")
-        direction_count = int(directions_host.shape[0])
+        direction_count = directions_host.shape[0]
         if weights_host.shape != (direction_count,):
             raise ValueError("weights must contain one value per direction.")
         if basis_host.ndim != 2 or basis_host.shape[1] != direction_count:
             raise ValueError("charge_basis must have shape (charges, directions).")
-        charge_count = int(basis_host.shape[0])
+        charge_count = basis_host.shape[0]
         if gram_host.shape != (charge_count, charge_count):
-            raise ValueError(
-                "charge_basis_gram must declare the analytic Gram matrix."
-            )
+            raise ValueError("charge_basis_gram must declare the analytic Gram matrix.")
         raw_bandlimit = np.asarray(supported_bandlimit)
         if (
             raw_bandlimit.shape != ()
@@ -100,35 +98,28 @@ class BMSQuadraturePlan(StrictModule, NonTrainableState):
             or abs(float(np.sum(weights_host)) - 4.0 * np.pi) > tolerance
         ):
             raise ValueError(
-                "BMS quadrature requires finite unit directions and positive "
-                "weights summing to 4π."
+                "BMS quadrature requires finite unit directions and positive weights summing to 4π."
             )
         canonical_l_one = np.concatenate(
             (np.ones((1, direction_count)), directions_host.T), axis=0
         )
-        if charge_count < 4 or np.max(
-            np.abs(basis_host[:4] - canonical_l_one)
-        ) > tolerance:
-            raise ValueError(
-                "The first four charge-basis rows must be (1, nx, ny, nz)."
-            )
-        first_moment = np.einsum("n,ni->i", weights_host, directions_host)
-        second_moment = np.einsum(
+        if (
+            charge_count < 4
+            or np.max(np.abs(basis_host[:4] - canonical_l_one)) > tolerance
+        ):
+            raise ValueError("The first four charge-basis rows must be (1, nx, ny, nz).")
+        first_moment = ein.contract("n,ni->i", weights_host, directions_host)
+        second_moment = ein.contract(
             "n,ni,nj->ij", weights_host, directions_host, directions_host
         )
         expected_second_moment = (4.0 * np.pi / 3.0) * np.eye(3)
-        sampled_gram = np.einsum(
-            "qn,rn,n->qr", basis_host, basis_host, weights_host
-        )
+        sampled_gram = ein.contract("qn,rn,n->qr", basis_host, basis_host, weights_host)
         first_error = float(np.max(np.abs(first_moment)))
-        second_error = float(
-            np.max(np.abs(second_moment - expected_second_moment))
-        )
+        second_error = float(np.max(np.abs(second_moment - expected_second_moment)))
         gram_error = float(np.max(np.abs(sampled_gram - gram_host)))
         if max(first_error, second_error, gram_error) > tolerance:
             raise ValueError(
-                "BMS quadrature does not satisfy its weighted l=0,1 moments "
-                "and declared charge-basis Gram exactness."
+                "BMS quadrature does not satisfy its weighted l=0,1 moments and declared charge-basis Gram exactness."
             )
         if not isinstance(plan_name, str) or not plan_name:
             raise ValueError("plan_name must be a nonempty string.")
@@ -159,9 +150,7 @@ class BMSQuadraturePlan(StrictModule, NonTrainableState):
             raise ValueError("Scri data does not match BMS direction capacity.")
         normalization_error = jnp.abs(jnp.sum(self.weights) - 4.0 * jnp.pi)
         unit_error = jnp.max(
-            jnp.abs(
-                ein.contract("ni,ni->n", self.directions, self.directions) - 1.0
-            )
+            jnp.abs(ein.contract("ni,ni->n", self.directions, self.directions) - 1.0)
         )
         first_moment_error = jnp.max(
             jnp.abs(ein.contract("n,ni->i", self.weights, self.directions))
@@ -175,9 +164,7 @@ class BMSQuadraturePlan(StrictModule, NonTrainableState):
         sampled_gram = ein.contract(
             "qn,rn,n->qr", self.charge_basis, self.charge_basis, self.weights
         )
-        charge_basis_gram_error = jnp.max(
-            jnp.abs(sampled_gram - self.charge_basis_gram)
-        )
+        charge_basis_gram_error = jnp.max(jnp.abs(sampled_gram - self.charge_basis_gram))
         roundoff = (
             64.0
             * jnp.finfo(self.weights.dtype).eps
@@ -193,23 +180,24 @@ class BMSQuadraturePlan(StrictModule, NonTrainableState):
         )
 
         normalization = 4.0 * jnp.pi
-        energy = ein.contract(
-            "tn,n->t", data.mass_aspect, self.weights
-        ) / normalization
-        momentum = ein.contract(
-            "tn,ni,n->ti", data.mass_aspect, self.directions, self.weights
-        ) / normalization
+        energy = ein.contract("tn,n->t", data.mass_aspect, self.weights) / normalization
+        momentum = (
+            ein.contract("tn,ni,n->ti", data.mass_aspect, self.directions, self.weights)
+            / normalization
+        )
         four_momentum = jnp.concatenate((energy[:, None], momentum), axis=-1)
-        supermomentum = ein.contract(
-            "qn,tn,n->tq", self.charge_basis, data.mass_aspect, self.weights
-        ) / normalization
-        lorentz_charges = ein.contract(
-            "tnab,n->tab", data.lorentz_charge_aspect, self.weights
-        ) / normalization
+        supermomentum = (
+            ein.contract("qn,tn,n->tq", self.charge_basis, data.mass_aspect, self.weights)
+            / normalization
+        )
+        lorentz_charges = (
+            ein.contract("tnab,n->tab", data.lorentz_charge_aspect, self.weights)
+            / normalization
+        )
         news_norm = jnp.real(data.news * jnp.conj(data.news))
-        news_energy_flux = ein.contract(
-            "tn,n->t", news_norm, self.weights
-        ) / (16.0 * jnp.pi)
+        news_energy_flux = ein.contract("tn,n->t", news_norm, self.weights) / (
+            16.0 * jnp.pi
+        )
 
         finite = (
             jnp.all(jnp.isfinite(four_momentum))
@@ -225,9 +213,7 @@ class BMSQuadraturePlan(StrictModule, NonTrainableState):
         derivative_valid = finite
         qualified = finite & converged & physically_valid & derivative_valid
         status = jnp.asarray(int(BMSStatus.SUCCESS), dtype=jnp.int32)
-        status = status | jnp.where(finite, 0, int(BMSStatus.NONFINITE)).astype(
-            jnp.int32
-        )
+        status = status | jnp.where(finite, 0, int(BMSStatus.NONFINITE)).astype(jnp.int32)
         status = status | jnp.where(
             converged, 0, int(BMSStatus.QUADRATURE_INVALID)
         ).astype(jnp.int32)
@@ -336,8 +322,8 @@ class BMSScriData(StrictModule, NonTrainableState):
         self.mass_aspect = jnp.asarray(mass)
         self.news = jnp.asarray(news_host)
         self.lorentz_charge_aspect = jnp.asarray(lorentz)
-        self.time_capacity = int(times.size)
-        self.direction_capacity = int(mass.shape[1])
+        self.time_capacity = times.size
+        self.direction_capacity = mass.shape[1]
         self.data_id = canonical_fingerprint(
             {
                 "kind": "completed-bondi-scri-data",
@@ -429,10 +415,12 @@ class BMSFrameTransformation(StrictModule, NonTrainableState):
         *,
         frame_name: str = "bms-poincare-frame",
     ):
-        boost = np.asarray(boost_velocity, dtype=float)
-        shift = np.asarray(translation, dtype=float)
+        boost = np.asarray(boost_velocity, dtype=np.float64)
+        shift = np.asarray(translation, dtype=np.float64)
         if boost.shape != (3,) or shift.shape != (4,):
-            raise ValueError("boost_velocity and translation require shapes (3,) and (4,).")
+            raise ValueError(
+                "boost_velocity and translation require shapes (3,) and (4,)."
+            )
         speed_squared = float(np.dot(boost, boost))
         if (
             np.any(~np.isfinite(boost))
@@ -477,9 +465,7 @@ class BMSFrameTransformation(StrictModule, NonTrainableState):
             or np.any(~np.isfinite(times_host))
             or (times_host.size > 1 and np.any(np.diff(times_host) <= 0.0))
         ):
-            raise ValueError(
-                "retarded_times must be finite real increasing values."
-            )
+            raise ValueError("retarded_times must be finite real increasing values.")
         times = jnp.asarray(times_host)
         beta = self.boost_velocity
         speed_squared = ein.contract("i,i->", beta, beta)
@@ -488,9 +474,7 @@ class BMSFrameTransformation(StrictModule, NonTrainableState):
         denominator = gamma * (1.0 - direction_dot)
         conformal_factor = 1.0 / denominator
         safe_speed_squared = jnp.where(speed_squared > 0.0, speed_squared, 1.0)
-        aberration_factor = (
-            (gamma - 1.0) * direction_dot / safe_speed_squared - gamma
-        )
+        aberration_factor = (gamma - 1.0) * direction_dot / safe_speed_squared - gamma
         transformed_directions = (
             plan.directions + aberration_factor[:, None] * beta
         ) / denominator[:, None]
@@ -508,9 +492,7 @@ class BMSFrameTransformation(StrictModule, NonTrainableState):
         )
         norm_error = jnp.max(
             jnp.abs(
-                ein.contract(
-                    "ni,ni->n", transformed_directions, transformed_directions
-                )
+                ein.contract("ni,ni->n", transformed_directions, transformed_directions)
                 - 1.0
             )
         )
@@ -519,9 +501,7 @@ class BMSFrameTransformation(StrictModule, NonTrainableState):
         derivative_valid = finite & physically_valid
         qualified = finite & converged & physically_valid & derivative_valid
         status = jnp.asarray(int(BMSStatus.SUCCESS), dtype=jnp.int32)
-        status = status | jnp.where(finite, 0, int(BMSStatus.NONFINITE)).astype(
-            jnp.int32
-        )
+        status = status | jnp.where(finite, 0, int(BMSStatus.NONFINITE)).astype(jnp.int32)
         status = status | jnp.where(
             converged & physically_valid, 0, int(BMSStatus.FRAME_INVALID)
         ).astype(jnp.int32)
@@ -552,13 +532,9 @@ class BMSFrameTransformation(StrictModule, NonTrainableState):
             map_id,
         )
 
-    def transform_charges(
-        self, charges: BMSChargeProduct, /
-    ) -> TransformedBMSCharges:
+    def transform_charges(self, charges: BMSChargeProduct, /) -> TransformedBMSCharges:
         transform = self.lorentz_matrix()
-        four_momentum = ein.contract(
-            "ab,tb->ta", transform, charges.four_momentum
-        )
+        four_momentum = ein.contract("ab,tb->ta", transform, charges.four_momentum)
         translation_wedge = ein.contract(
             "a,tb->tab", self.translation, charges.four_momentum
         ) - ein.contract("b,ta->tab", self.translation, charges.four_momentum)
@@ -578,15 +554,11 @@ class BMSFrameTransformation(StrictModule, NonTrainableState):
         converged = charges.converged
         derivative_valid = charges.derivative_valid & finite
         qualified = (
-            charges.qualified
-            & finite
-            & converged
-            & physically_valid
-            & derivative_valid
+            charges.qualified & finite & converged & physically_valid & derivative_valid
         )
-        status = charges.status | jnp.where(
-            finite, 0, int(BMSStatus.NONFINITE)
-        ).astype(jnp.int32)
+        status = charges.status | jnp.where(finite, 0, int(BMSStatus.NONFINITE)).astype(
+            jnp.int32
+        )
         status = status | jnp.where(
             physically_valid, 0, int(BMSStatus.ACAUSAL_FOUR_MOMENTUM)
         ).astype(jnp.int32)

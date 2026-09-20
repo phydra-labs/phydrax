@@ -7,6 +7,8 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 
+from phydrax._strict import StrictModule
+
 from .._index import add_self_loops, maybe_num_nodes
 from .._kernels import scatter_max, scatter_mean, scatter_min, segment_sum
 from .._mp import MessagePassing
@@ -33,7 +35,7 @@ def _aggregate(
     raise ValueError(f"Unsupported aggregation mode: {aggr!r}.")
 
 
-class GCNConv(eqx.Module):
+class GCNConv(StrictModule):
     """Graph Convolution layer with symmetric degree normalization."""
 
     linear: eqx.nn.Linear
@@ -114,7 +116,7 @@ class GCNConv(eqx.Module):
         return segment_sum(messages, col, n_nodes)
 
 
-class SAGEConv(eqx.Module):
+class SAGEConv(StrictModule):
     """GraphSAGE convolution with configurable neighborhood aggregation."""
 
     lin_neigh: eqx.nn.Linear
@@ -169,7 +171,7 @@ class SAGEConv(eqx.Module):
 
         src_proj = _apply_linear(self.lin_neigh, x_src)
         messages = src_proj[row]
-        out = _aggregate(messages, col, int(x_dst.shape[0]), self.aggr)
+        out = _aggregate(messages, col, x_dst.shape[0], self.aggr)
 
         if self.lin_root is not None:
             out = out + _apply_linear(self.lin_root, x_dst)
@@ -181,11 +183,12 @@ class SAGEConv(eqx.Module):
         return out
 
 
-class GINConv(MessagePassing):
+class GINConv(StrictModule):
     """Graph Isomorphism Network convolution."""
 
     mlp: Callable[[jnp.ndarray], jnp.ndarray]
     eps: jnp.ndarray
+    message_passing: MessagePassing = eqx.field(static=True)
 
     def __init__(
         self,
@@ -193,9 +196,9 @@ class GINConv(MessagePassing):
         *,
         eps: float = 0.0,
     ):
-        super().__init__(aggr="add")
         self.mlp = mlp
         self.eps = jnp.asarray(eps)
+        self.message_passing = MessagePassing(aggr="add")
 
     def __call__(
         self,
@@ -204,21 +207,13 @@ class GINConv(MessagePassing):
         edge_attr: jnp.ndarray | None = None,
         size: tuple[int, int] | None = None,
     ) -> jnp.ndarray:
-        del edge_attr
-        edge_index = jnp.asarray(edge_index)
-        if edge_index.ndim != 2 or edge_index.shape[0] != 2:
-            raise ValueError("`edge_index` must have shape (2, num_edges).")
-
-        if isinstance(x, tuple):
-            x_src, x_dst = x
-        else:
-            x_src = x
-            x_dst = x
-
-        row = edge_index[0].astype(jnp.int32)
-        col = edge_index[1].astype(jnp.int32)
-        num_targets = int(x_dst.shape[0]) if size is None else int(size[1])
-        neigh = segment_sum(x_src[row], col, num_targets)
+        neigh = self.message_passing(
+            x,
+            edge_index,
+            edge_attr,
+            size,
+        )
+        x_dst = x[1] if isinstance(x, tuple) else x
         out = (1.0 + self.eps) * x_dst + neigh
         return jax.vmap(self.mlp)(out)
 

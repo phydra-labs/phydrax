@@ -22,7 +22,9 @@ def _pic_transfer(*, particle_count=2):
     charged = phx.discretization.ChargedParticlePlan(
         -jnp.ones((particle_count,)), "electrons"
     ).prepare(particles)
-    transfer = phx.discretization.pic.PICParticleCochainTransferPlan(bridge).prepare(charged)
+    transfer = phx.discretization.pic.PICParticleCochainTransferPlan(bridge).prepare(
+        charged
+    )
     return bridge, charged, transfer
 
 
@@ -80,7 +82,7 @@ def test_pic_charge_and_field_transfer_preserve_layout_and_fixed_route_ad():
     np.testing.assert_allclose(gathered.values, jnp.asarray([[1.0, 2.0, 3.0]] * 2))
 
     objective = lambda current: jnp.sum(
-        transfer.deposit_charge(transfer.build(current)).density**2
+        transfer.deposit_charge(transfer.build(current)).density ** 2
     )
     gradient = jax.jit(jax.grad(objective))(position)
     assert jnp.all(jnp.isfinite(gradient))

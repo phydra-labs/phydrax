@@ -36,13 +36,15 @@ def sample_unit_directions(
     dimension_ = int(dimension)
     if count_ <= 0 or dimension_ < 2:
         raise ValueError("Direction count must be positive and dimension at least two.")
-    values = jr.normal(key, (count_, dimension_), dtype=float)
+    values = jr.normal(key, (count_, dimension_), dtype=jnp.float64)
     norms = jnp.linalg.norm(values, axis=-1, keepdims=True)
     return values / norms
 
 
-def _canonical_directions(directions: ArrayLike, dimension: int) -> tuple[np.ndarray, float]:
-    values = np.asarray(directions, dtype=float)
+def _canonical_directions(
+    directions: ArrayLike, dimension: int
+) -> tuple[np.ndarray, float]:
+    values = np.asarray(directions, dtype=np.float64)
     if values.ndim != 2 or values.shape[1] != dimension or values.shape[0] == 0:
         raise ValueError(
             f"directions must have shape (num_directions, {dimension}) with positive count."
@@ -56,8 +58,7 @@ def _canonical_directions(directions: ArrayLike, dimension: int) -> tuple[np.nda
     tolerance = 256.0 * np.finfo(np.float64).eps * max(dimension, 1)
     if residual > tolerance:
         raise ValueError(
-            "Helmholtz directions must already be unit length; "
-            f"maximum norm residual is {residual:.3e}."
+            f"Helmholtz directions must already be unit length; maximum norm residual is {residual:.3e}."
         )
     values = values / norms[:, None]
 
@@ -70,7 +71,9 @@ def _canonical_directions(directions: ArrayLike, dimension: int) -> tuple[np.nda
         oriented = -row if row[int(significant[0])] < 0.0 else row
         canonical.append(oriented)
     canonical_array = np.asarray(canonical)
-    order = sorted(range(canonical_array.shape[0]), key=lambda index: tuple(canonical_array[index]))
+    order = sorted(
+        range(canonical_array.shape[0]), key=lambda index: tuple(canonical_array[index])
+    )
     canonical_array = canonical_array[np.asarray(order, dtype=np.int32)]
     for index in range(1, canonical_array.shape[0]):
         if np.allclose(
@@ -112,7 +115,7 @@ class HelmholtzPlaneWaveBasis(AbstractTrefftzBasis):
         if not math.isfinite(wavenumber_) or wavenumber_ <= 0.0:
             raise ValueError("Helmholtz wavenumber must be finite and positive.")
         normalization_ = (
-            SimilarityNormalization(np.zeros((dimension_,), dtype=float), 1.0)
+            SimilarityNormalization(np.zeros((dimension_,), dtype=np.float64), 1.0)
             if normalization is None
             else normalization
         )
@@ -120,22 +123,24 @@ class HelmholtzPlaneWaveBasis(AbstractTrefftzBasis):
             raise TypeError("normalization must be a SimilarityNormalization or None.")
         if normalization_.dimension != dimension_:
             raise ValueError("Normalization dimension must match the plane-wave basis.")
-        directions_host, direction_residual = _canonical_directions(directions, dimension_)
+        directions_host, direction_residual = _canonical_directions(
+            directions, dimension_
+        )
         budget = TrefftzResourceBudget() if resources is None else resources
         if not isinstance(budget, TrefftzResourceBudget):
             raise TypeError("resources must be a TrefftzResourceBudget or None.")
-        direction_count = int(directions_host.shape[0])
+        direction_count = directions_host.shape[0]
         rank = 2 * direction_count
         evidence = budget.check(
             rank=rank,
             monomials=direction_count,
-            basis_entries=int(directions_host.size),
-            basis_bytes=int(directions_host.nbytes),
+            basis_entries=directions_host.size,
+            basis_bytes=directions_host.nbytes,
         )
-        directions_ = jnp.asarray(directions_host, dtype=float)
+        directions_ = jnp.asarray(directions_host, dtype=jnp.float64)
         basis_id = canonical_fingerprint(
             {
-                "kind": "helmholtz-real-plane-wave-basis-v1",
+                "kind": "helmholtz-real-plane-wave-basis",
                 "dimension": dimension_,
                 "physical_wavenumber": wavenumber_,
                 "normalization_id": normalization_.normalization_id,
@@ -160,12 +165,12 @@ class HelmholtzPlaneWaveBasis(AbstractTrefftzBasis):
             construction_tolerance=(256.0 * np.finfo(np.float64).eps * dimension_),
         )
         self.normalization = normalization_
-        self.physical_wavenumber = jnp.asarray(wavenumber_, dtype=float).reshape(())
-        self.normalized_wavenumber = (
-            self.physical_wavenumber * normalization_.scale
-        )
+        self.physical_wavenumber = jnp.asarray(wavenumber_, dtype=jnp.float64).reshape(())
+        self.normalized_wavenumber = self.physical_wavenumber * normalization_.scale
         self.directions = directions_
-        self.direction_norm_residual = jnp.asarray(direction_residual, dtype=float).reshape(())
+        self.direction_norm_residual = jnp.asarray(
+            direction_residual, dtype=jnp.float64
+        ).reshape(())
         self._basis_id = basis_id
         self._certificate = certificate
         self._resource_evidence = evidence

@@ -120,14 +120,14 @@ def _retained_storage(value, /) -> tuple[int, int]:
     for leaf in jax.tree.leaves(value):
         if isinstance(leaf, jax.Array) and id(leaf) not in identities:
             identities.add(id(leaf))
-            elements += int(leaf.size)
-            bytes_ += int(leaf.size) * int(leaf.dtype.itemsize)
+            elements += leaf.size
+            bytes_ += leaf.size * leaf.dtype.itemsize
     return elements, bytes_
 
 
 def _scaling_slope(sizes, values):
-    coordinates = np.log(np.asarray(sizes, dtype=float))
-    measurements = np.log(np.asarray(values, dtype=float))
+    coordinates = np.log(np.asarray(sizes, dtype="float64"))
+    measurements = np.log(np.asarray(values, dtype="float64"))
     return float(np.polyfit(coordinates, measurements, 1)[0])
 
 
@@ -222,7 +222,7 @@ def run_state_space_gp_benchmarks(
     sizes=(128, 256, 512, 1024, 2048),
     repeats=5,
 ):
-    resolved_sizes = tuple(int(size) for size in sizes)
+    resolved_sizes = tuple(sizes)
     if len(resolved_sizes) < 3 or any(size <= 0 for size in resolved_sizes):
         raise ValueError("sizes must contain at least three positive schedule sizes.")
     if tuple(sorted(set(resolved_sizes))) != resolved_sizes:
@@ -296,7 +296,7 @@ def run_state_space_gp_benchmarks(
             StateSpaceGaussianProcessBenchmarkRecord(
                 kernel=kernel.kernel_id,
                 training_size=size,
-                query_size=int(query_times.size),
+                query_size=query_times.size,
                 schedule_size=plan.schedule_size,
                 state_dimension=plan.state_dimension,
                 dense_compile_seconds=dense_compile_seconds,
@@ -331,7 +331,7 @@ def run_state_space_gp_benchmarks(
     return {
         "configuration": {
             "sizes": list(resolved_sizes),
-            "query_size": int(query_times.size),
+            "query_size": query_times.size,
             "repeats": repeat_count,
             "kernel": kernel.kernel_id,
             "noise_scale": float(noise_scale),

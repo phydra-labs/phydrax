@@ -26,7 +26,7 @@ class ImplicitGenerator(StrictModule):
     def __init__(self, generator, event_shape, /, *, generator_id: str):
         if not callable(generator) or not generator_id:
             raise TypeError("generator must be callable with a non-empty ID.")
-        shape = tuple(int(size) for size in event_shape)
+        shape = tuple(event_shape)
         if not shape or any(size <= 0 for size in shape):
             raise ValueError("event_shape must contain positive dimensions.")
         self.generator = generator
@@ -34,7 +34,7 @@ class ImplicitGenerator(StrictModule):
         self.generator_id = generator_id
 
     def sample(self, key: Key[Array, ""], sample_shape, /) -> Array:
-        samples = tuple(int(size) for size in sample_shape)
+        samples = tuple(sample_shape)
         value = jnp.asarray(self.generator(key, samples))
         expected = samples + self.event_shape
         if value.shape != expected:
@@ -66,10 +66,10 @@ def wasserstein_adversarial_evaluation(
     if not callable(critic):
         raise TypeError("critic must be callable.")
     real_array = jnp.asarray(real)
-    if jnp.iscomplexobj(real_array) or not jnp.issubdtype(
-        real_array.dtype, jnp.floating
-    ):
-        raise TypeError("Wasserstein adversarial evaluation requires real floating events.")
+    if jnp.iscomplexobj(real_array) or not jnp.issubdtype(real_array.dtype, jnp.floating):
+        raise TypeError(
+            "Wasserstein adversarial evaluation requires real floating events."
+        )
     fake_array = jnp.asarray(fake, dtype=real_array.dtype)
     if real_array.shape != fake_array.shape or real_array.ndim < 2:
         raise ValueError("Real and fake events require identical sample-first shapes.")
@@ -78,12 +78,12 @@ def wasserstein_adversarial_evaluation(
         raise ValueError("gradient_penalty_weight must be finite and nonnegative.")
     real_keys = jr.split(jr.fold_in(key, 0), real_array.shape[0])
     fake_keys = jr.split(jr.fold_in(key, 1), fake_array.shape[0])
-    real_score = jax.vmap(lambda value, local: jnp.asarray(critic(value, key=local)).reshape(()))(
-        real_array, real_keys
-    )
-    fake_score = jax.vmap(lambda value, local: jnp.asarray(critic(value, key=local)).reshape(()))(
-        fake_array, fake_keys
-    )
+    real_score = jax.vmap(
+        lambda value, local: jnp.asarray(critic(value, key=local)).reshape(())
+    )(real_array, real_keys)
+    fake_score = jax.vmap(
+        lambda value, local: jnp.asarray(critic(value, key=local)).reshape(())
+    )(fake_array, fake_keys)
     penalty = jnp.asarray(0.0, dtype=real_array.dtype)
     if weight > 0.0:
         alpha = jr.uniform(
@@ -105,9 +105,7 @@ def wasserstein_adversarial_evaluation(
     critic_loss = jnp.mean(fake_score) - jnp.mean(real_score) + penalty
     generator_loss = -jnp.mean(fake_score)
     finite = (
-        jnp.isfinite(critic_loss)
-        & jnp.isfinite(generator_loss)
-        & jnp.isfinite(penalty)
+        jnp.isfinite(critic_loss) & jnp.isfinite(generator_loss) & jnp.isfinite(penalty)
     )
     identifier = objective_id or canonical_fingerprint(
         {

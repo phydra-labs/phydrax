@@ -123,7 +123,7 @@ def test_callable_waveform_uses_declared_polarization_order(wave_problem):
     waveform = gw.CallableFrequencyDomainWaveform(
         lambda frequency, _: {
             "cross": 2.0j * jnp.ones_like(frequency),
-            "plus": jnp.ones_like(frequency, dtype=complex),
+            "plus": jnp.ones_like(frequency, dtype="complex128"),
         },
         capabilities,
         provenance,
@@ -178,7 +178,7 @@ def test_data_contract_rejects_active_endpoints_and_mismatched_grids(wave_proble
             provenance,
             sample_count=32,
             sample_interval=1.0 / 32.0,
-            active=jnp.ones_like(frequency, dtype=bool),
+            active=jnp.ones_like(frequency, dtype="bool"),
         )
     with pytest.raises(ValueError, match="canonical"):
         gw.OneSidedPowerSpectralDensity(

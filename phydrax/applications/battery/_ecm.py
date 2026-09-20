@@ -43,7 +43,7 @@ def _real_array(value: ArrayLike, name: str, /) -> Array:
     if jnp.issubdtype(result.dtype, jnp.complexfloating):
         raise TypeError(f"{name} must be real-valued.")
     if not jnp.issubdtype(result.dtype, jnp.inexact):
-        result = result.astype(float)
+        result = result.astype("float64")
     return result
 
 
@@ -60,7 +60,7 @@ def _positive_scalar(value: ArrayLike, name: str, /) -> Array:
 
 def _positive_vector(value: ArrayLike, name: str, /) -> Array:
     result = _real_array(value, name)
-    if result.ndim != 1 or int(result.size) < 1:
+    if result.ndim != 1 or result.size < 1:
         raise ValueError(f"{name} must be a nonempty rank-one array.")
     return eqx.error_if(
         result,
@@ -184,7 +184,7 @@ class ThermalEquivalentCircuitParameters(StrictModule):
         self.parameter_id = canonical_fingerprint(
             {
                 "kind": "battery-thermal-equivalent-circuit-parameters",
-                "branch_count": int(resistances.size),
+                "branch_count": resistances.size,
                 "ocv_law_id": ocv.law_id,
                 "entropic_law_id": entropic.law_id,
             }
@@ -212,8 +212,7 @@ class ThermalEquivalentCircuitInitialCondition(StrictModule):
             raise TypeError("relaxed must be boolean.")
         if relaxed == (polarization_voltages_v is not None):
             raise ValueError(
-                "Specify polarization_voltages_v or explicitly request relaxed=True, "
-                "but not both."
+                "Specify polarization_voltages_v or explicitly request relaxed=True, but not both."
             )
         charge = _real_array(charge_c, "charge_c")
         temperature = _real_array(temperature_k, "temperature_k")
@@ -355,7 +354,7 @@ class ThermalEquivalentCircuitLedger(StrictModule):
             raise ValueError(
                 f"Thermal ECM ledger field {names[0]!r} and peers must be scalar."
             )
-        success = jnp.asarray(successful, dtype=bool)
+        success = jnp.asarray(successful, dtype=jnp.bool_)
         if success.shape != ():
             raise ValueError("Thermal ECM ledger successful flag must be scalar.")
         (
@@ -693,7 +692,7 @@ class ThermalEquivalentCircuitAdapter(StrictModule, NonTrainableState):
         states = native_solution.states
         _check_state_shape(prepared_model, states)
         times = jnp.asarray(native_solution.times)
-        valid = jnp.asarray(native_solution.valid, dtype=bool)
+        valid = jnp.asarray(native_solution.valid, dtype=jnp.bool_)
         if times.ndim != 1 or valid.shape != times.shape:
             raise ValueError("Thermal ECM ledger requires one native saved-time axis.")
         if (
@@ -783,7 +782,7 @@ class ThermalEquivalentCircuitAdapter(StrictModule, NonTrainableState):
             )
         )
         backend_successful = jnp.all(
-            jnp.asarray(native_solution.backend_successful, dtype=bool)
+            jnp.asarray(native_solution.backend_successful, dtype=jnp.bool_)
         )
         successful = (
             backend_successful

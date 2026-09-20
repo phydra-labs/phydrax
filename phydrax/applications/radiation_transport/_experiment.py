@@ -29,7 +29,7 @@ class CorrelatedKDistributionPlan(StrictModule, NonTrainableState):
         band_ids: tuple[str, ...],
         /,
     ):
-        weights = np.asarray(quadrature_weights, dtype=float)
+        weights = np.asarray(quadrature_weights, dtype=np.float64)
         bands = tuple(str(value).strip() for value in band_ids)
         if (
             weights.ndim != 2
@@ -59,7 +59,7 @@ class CorrelatedKDistributionPlan(StrictModule, NonTrainableState):
 
     @property
     def ordinate_count(self) -> int:
-        return int(self.quadrature_weights.shape[1])
+        return self.quadrature_weights.shape[1]
 
 
 class RadiativeSensorPlan(StrictModule, NonTrainableState):
@@ -67,7 +67,7 @@ class RadiativeSensorPlan(StrictModule, NonTrainableState):
     sensor_id: str = eqx.field(static=True)
 
     def __init__(self, response_weights: ArrayLike, /, *, sensor_id: str):
-        weights = np.asarray(response_weights, dtype=float)
+        weights = np.asarray(response_weights, dtype=np.float64)
         identifier = str(sensor_id).strip()
         if (
             weights.ndim != 1
@@ -210,7 +210,7 @@ class PolarizedRadiativeExperimentPlan(StrictModule, NonTrainableState):
         sensor: RadiativeSensorPlan,
         /,
     ):
-        lengths = np.asarray(segment_lengths, dtype=float)
+        lengths = np.asarray(segment_lengths, dtype=np.float64)
         if (
             lengths.ndim != 2
             or lengths.shape[0] < 1

@@ -294,7 +294,7 @@ def test_masked_nonfinite_targets_are_inert_before_residual_squaring():
     batch = _batch()
     energy, forces = _targets(batch)
     energy = energy.at[1].set(jnp.nan)
-    force_mask = jnp.ones_like(forces, dtype=bool).at[2, 1, 2].set(False)
+    force_mask = jnp.ones_like(forces, dtype="bool").at[2, 1, 2].set(False)
     forces = forces.at[2, 1, 2].set(jnp.nan)
     problem = AtomisticTrainingProblem(
         batch,
@@ -347,14 +347,14 @@ def test_local_rmd17_parser_and_split_are_explicit_disjoint_and_reproducible(tmp
     sample_count = 12
     atom_count = 3
     path = tmp_path / "rmd17_synthetic_layout.npz"
-    coordinates = np.arange(sample_count * atom_count * 3, dtype=float).reshape(
+    coordinates = np.arange(sample_count * atom_count * 3, dtype="float64").reshape(
         sample_count, atom_count, 3
     )
     np.savez(
         path,
         nuclear_charges=np.asarray([8, 1, 1]),
         coords=coordinates,
-        energies=np.arange(sample_count, dtype=float),
+        energies=np.arange(sample_count, dtype="float64"),
         forces=np.ones_like(coordinates),
         old_indices=np.arange(100, 100 + sample_count),
     )

@@ -158,7 +158,7 @@ rising-thermal and density-current onset, closed-box energy accounting,
 restart agreement, near-vacuum admissibility, atomic unstable-step rejection,
 and separate first-run versus warm execution time. The stationary manufactured
 shear has hydrostatic p/rho, arbitrary horizontal u(z), and zero vertical
-velocity; no numerical-residual-cancelling manufactured source is inserted.
+velocity; no numerical-residual-canceling manufactured source is inserted.
 The regression suite additionally exercises prescribed-boundary mass and
 gas-plus-potential-energy transport with restart-complete budget ledgers.
 

@@ -89,7 +89,7 @@ class DEMBarrierCapillaryPlan(StrictModule, NonTrainableState):
         radius = jnp.asarray(particle_radius)
         curvature = jnp.asarray(wall_curvature, dtype=radius.dtype)
         defect = jnp.asarray(isotropy_defect, dtype=radius.dtype)
-        certified = jnp.asarray(curvature_valid, dtype=bool)
+        certified = jnp.asarray(curvature_valid, dtype=jnp.bool_)
         if curvature.shape != radius.shape or defect.shape != radius.shape:
             raise ValueError("Barrier curvature arrays must match particle radii.")
         if self.geometry_policy == "planar":
@@ -211,7 +211,7 @@ class ConservedLiquidBridgeProcessPlan(StrictModule, NonTrainableState):
         self, capacity: int, dtype, active_mask: ArrayLike, /
     ) -> DEMLiquidState:
         count = int(capacity)
-        active = jnp.asarray(active_mask, dtype=bool)
+        active = jnp.asarray(active_mask, dtype=jnp.bool_)
         if active.shape != (count,):
             raise ValueError("Liquid active mask must have particle-capacity shape.")
         if self.initial_film_volume.ndim == 0:
@@ -382,7 +382,7 @@ class ConservedLiquidBridgeProcessPlan(StrictModule, NonTrainableState):
 
         if not isinstance(state, DEMLiquidState):
             raise TypeError("state must be DEMLiquidState.")
-        width = int(requested_volume.shape[0])
+        width = requested_volume.shape[0]
         expected = (width,)
         if (
             particle_indices.shape != expected
@@ -493,7 +493,7 @@ class ConservedLiquidBridgeProcessPlan(StrictModule, NonTrainableState):
 
         if not isinstance(allocation, DEMBarrierLiquidAllocation):
             raise TypeError("allocation must be DEMBarrierLiquidAllocation.")
-        width = int(bridge_volume.shape[0])
+        width = bridge_volume.shape[0]
         expected = (width,)
         if (
             particle_indices.shape != expected

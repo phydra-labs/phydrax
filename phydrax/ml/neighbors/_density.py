@@ -55,9 +55,9 @@ class KernelDensityModel(AbstractArrayModel):
     ):
         support_ = jnp.asarray(support)
         weight_ = jnp.asarray(support_weight)
-        mask_ = jnp.asarray(support_mask, dtype=bool)
+        mask_ = jnp.asarray(support_mask, dtype=jnp.bool_)
         features = int(feature_count)
-        cases = tuple(int(value) for value in case_shape)
+        cases = tuple(case_shape)
         if (
             support_.ndim != len(cases) + 2
             or support_.shape[: len(cases)] != cases
@@ -70,7 +70,7 @@ class KernelDensityModel(AbstractArrayModel):
             raise ValueError(
                 "Support weights and masks must align with the support axis."
             )
-        bandwidth_ = jnp.asarray(bandwidth, dtype=float)
+        bandwidth_ = jnp.asarray(bandwidth, dtype=jnp.float64)
         if bandwidth_.ndim != 0:
             raise ValueError("bandwidth must be scalar.")
         self.support = support_
@@ -95,7 +95,7 @@ class KernelDensityModel(AbstractArrayModel):
         mask = broadcast_support(self.support_mask, len(query_shape), self.case_shape)
         weight = broadcast_support(self.support_weight, len(query_shape), self.case_shape)
         active = mask & (weight > 0)
-        logits = jnp.log(jnp.maximum(weight, jnp.finfo(float).tiny))
+        logits = jnp.log(jnp.maximum(weight, jnp.finfo(jnp.float64).tiny))
         logits = logits - 0.5 * squared / (self.bandwidth * self.bandwidth)
         any_active = jnp.any(active, axis=-1, keepdims=True)
         safe_logits = jnp.where(active, logits, -jnp.inf)
@@ -104,7 +104,7 @@ class KernelDensityModel(AbstractArrayModel):
         total = jnp.sum(jnp.where(self.support_mask, self.support_weight, 0.0), axis=-1)
         total = total.reshape(self.case_shape + (1,) * len(query_shape))
         normalizer = (
-            jnp.log(jnp.maximum(total, jnp.finfo(float).tiny))
+            jnp.log(jnp.maximum(total, jnp.finfo(jnp.float64).tiny))
             + self.feature_count * jnp.log(self.bandwidth)
             + 0.5 * self.feature_count * jnp.log(2.0 * jnp.pi)
         )
@@ -136,7 +136,7 @@ class KernelDensityRecipe(AbstractRecipe):
         capacity: int | None = None,
         weight_policy: WeightPolicy = "measure",
     ):
-        bandwidth_ = jnp.asarray(bandwidth, dtype=float)
+        bandwidth_ = jnp.asarray(bandwidth, dtype=jnp.float64)
         if bandwidth_.ndim != 0:
             raise ValueError("bandwidth must be scalar.")
         self.bandwidth = eqx.error_if(
@@ -240,12 +240,12 @@ class LocalOutlierFactorModel(AbstractArrayModel):
         case_shape: tuple[int, ...],
     ):
         support_ = jnp.asarray(support)
-        mask_ = jnp.asarray(support_mask, dtype=bool)
+        mask_ = jnp.asarray(support_mask, dtype=jnp.bool_)
         weight_ = jnp.asarray(support_weight)
         lrd_ = jnp.asarray(local_reachability_density)
         k_distance_ = jnp.asarray(k_distance)
         features = int(feature_count)
-        cases = tuple(int(value) for value in case_shape)
+        cases = tuple(case_shape)
         if (
             support_.ndim != len(cases) + 2
             or support_.shape[: len(cases)] != cases

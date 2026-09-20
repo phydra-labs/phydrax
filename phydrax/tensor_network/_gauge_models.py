@@ -41,7 +41,7 @@ class AbelianFusionBasis(StrictModule):
         right_boundary_charge: int = 0,
         maximum_configurations: int = 1 << 20,
     ):
-        charges = tuple(tuple(int(value) for value in site) for site in local_charges)
+        charges = tuple(tuple(site) for site in local_charges)
         if not charges or any(not site for site in charges):
             raise ValueError(
                 "local_charges must provide a nonempty charge basis per site."
@@ -51,8 +51,7 @@ class AbelianFusionBasis(StrictModule):
         maximum = int(maximum_configurations)
         if maximum <= 0 or configurations > maximum:
             raise ValueError(
-                f"Fusion enumeration requires {configurations} configurations; "
-                f"capacity is {maximum}."
+                f"Fusion enumeration requires {configurations} configurations; capacity is {maximum}."
             )
         left = int(left_boundary_charge)
         right = int(right_boundary_charge)
@@ -163,7 +162,7 @@ class SU2FusionBasis(StrictModule):
         *,
         maximum_paths: int = 1 << 20,
     ):
-        spins = tuple(int(value) for value in site_twice_spins)
+        spins = tuple(site_twice_spins)
         total = int(total_twice_spin)
         if len(spins) < 2 or any(value < 0 for value in spins) or total < 0:
             raise ValueError(
@@ -430,11 +429,11 @@ def gauge_invariant_peps_tensor(
     The orientation convention is ``right + down - left - up + q - rho = 0``.
     """
 
-    up = tuple(int(value) for value in up_fluxes)
-    right = tuple(int(value) for value in right_fluxes)
-    down = tuple(int(value) for value in down_fluxes)
-    left = tuple(int(value) for value in left_fluxes)
-    physical = tuple(int(value) for value in physical_charges)
+    up = tuple(up_fluxes)
+    right = tuple(right_fluxes)
+    down = tuple(down_fluxes)
+    left = tuple(left_fluxes)
+    physical = tuple(physical_charges)
     if any(not values for values in (up, right, down, left, physical)):
         raise ValueError("Every PEPS leg requires a nonempty finite charge basis.")
     shape = (len(up), len(right), len(down), len(left), len(physical))
@@ -516,8 +515,8 @@ def build_gauge_invariant_peps(
     rows_, columns_ = int(rows), int(columns)
     if rows_ < 1 or columns_ < 1:
         raise ValueError("Gauge PEPS rows and columns must be positive.")
-    virtual = tuple(int(value) for value in virtual_fluxes)
-    physical = tuple(int(value) for value in physical_charges)
+    virtual = tuple(virtual_fluxes)
+    physical = tuple(physical_charges)
     if not virtual or not physical or 0 not in virtual:
         raise ValueError("Virtual fluxes must be nonempty and contain zero.")
     background = (
@@ -545,8 +544,7 @@ def build_gauge_invariant_peps(
     maximum = int(maximum_tensor_elements)
     if maximum <= 0 or required > maximum:
         raise ValueError(
-            f"Gauge PEPS construction requires {required} tensor elements; "
-            f"capacity is {maximum}."
+            f"Gauge PEPS construction requires {required} tensor elements; capacity is {maximum}."
         )
     results = []
     for row in range(rows_):

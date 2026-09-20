@@ -277,7 +277,7 @@ def _configuration_fingerprint(
         raise ValueError(f"{identity_name} requires a corresponding {owner}.")
     return canonical_fingerprint(
         {
-            "kind": "stochastic-path-ensemble-solve-setting-v1",
+            "kind": "stochastic-path-ensemble-solve-setting",
             "owner": owner,
             "caller_identity": caller_identity,
             "configuration": _configuration_payload(
@@ -382,7 +382,7 @@ class StochasticPathEnsemblePlan(StrictModule):
         event_fingerprint = _configuration_fingerprint(event, event_id, owner="event")
         configuration_id = canonical_fingerprint(
             {
-                "kind": "stochastic-path-ensemble-configuration-v2",
+                "kind": "stochastic-path-ensemble-configuration",
                 "time_grid": {
                     "identity": time_grid.time_id,
                     "content": array_tree_fingerprint(time_grid.times),
@@ -480,7 +480,7 @@ def prepare_stochastic_path_ensemble(
         raise ValueError("StochasticPathEnsemblePlan requires stochastic forcing.")
     if not isinstance(plan, StochasticPathEnsemblePlan):
         raise TypeError("plan must be a StochasticPathEnsemblePlan.")
-    grid = np.asarray(plan.time_grid.times, dtype=float)
+    grid = np.asarray(plan.time_grid.times, dtype=np.float64)
     if grid[0] < float(problem.t0) or grid[-1] > float(problem.t1):
         raise ValueError("The output TimeGrid must lie inside the problem interval.")
     if realization is None:
@@ -529,7 +529,7 @@ def prepare_stochastic_path_ensemble(
     )
     prepared_id = canonical_fingerprint(
         {
-            "kind": "prepared-stochastic-path-ensemble-v2",
+            "kind": "prepared-stochastic-path-ensemble",
             "problem": problem.problem_id,
             "plan": plan.plan_id,
             "execution_configuration": plan.configuration_id,
@@ -592,7 +592,7 @@ def solve_stochastic_path_ensemble(
     )
     result_id = canonical_fingerprint(
         {
-            "kind": "stochastic-path-ensemble-result-v2",
+            "kind": "stochastic-path-ensemble-result",
             "prepared": prepared.prepared_id,
             "execution_configuration": plan.configuration_id,
         }

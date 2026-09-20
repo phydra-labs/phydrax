@@ -18,7 +18,7 @@ from ._cochain_homology import validate_hodge_homology
 
 
 class HarmonicClassFrame(StrictModule, NonTrainableState):
-    """Metric harmonic cochains labelled by exact rational homology classes."""
+    """Metric harmonic cochains labeled by exact rational homology classes."""
 
     exact_basis: RationalClassBasis
     harmonic_subspace: HarmonicSubspace
@@ -60,7 +60,7 @@ class HarmonicClassFrame(StrictModule, NonTrainableState):
         )
 
     def periods(self, cochain: Array, /) -> Array:
-        cycles = _rational_dense(self.exact_basis, int(cochain.shape[-1]))
+        cycles = _rational_dense(self.exact_basis, cochain.shape[-1])
         return jnp.asarray(cycles.T) @ jnp.asarray(cochain)
 
     def with_periods(self, cochain: Array, target: Array, /) -> Array:
@@ -72,7 +72,7 @@ class HarmonicClassFrame(StrictModule, NonTrainableState):
 
 
 def _rational_dense(basis: RationalClassBasis, cell_count: int, /) -> np.ndarray:
-    matrix = np.zeros((cell_count, basis.generator_count), dtype=float)
+    matrix = np.zeros((cell_count, basis.generator_count), dtype=np.float64)
     for cell, generator, numerator, denominator in zip(
         np.asarray(basis.cell_indices),
         np.asarray(basis.generator_indices),
@@ -89,7 +89,7 @@ def _dense_inverse(matrix: np.ndarray, tolerance: float, /) -> np.ndarray:
     if matrix.shape != (size, size):
         raise ValueError("Harmonic period matrix must be square.")
     augmented = np.concatenate(
-        (matrix.astype(complex), np.eye(size, dtype=complex)),
+        (matrix.astype("complex128"), np.eye(size, dtype=np.complex128)),
         axis=1,
     )
     for column in range(size):

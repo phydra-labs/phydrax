@@ -44,7 +44,7 @@ def _benchmark(
 
 def _parameter_count(model: phx.nn.models.KAN) -> int:
     trainable, _ = partition_trainable(model)
-    return sum(int(leaf.size) for leaf in jax.tree.leaves(trainable))
+    return sum(leaf.size for leaf in jax.tree.leaves(trainable))
 
 
 def _basis_matrix(grid: phx.nn.models.BSplineGrid, query: jax.Array) -> jax.Array:

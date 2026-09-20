@@ -84,20 +84,22 @@ class CutCellCochainTransferPlan(StrictModule, NonTrainableState):
         def derivative(topology, degree: int) -> np.ndarray:
             incidence = topology.incidences[degree]
             relation = incidence.relation
-            valid = np.asarray(relation.valid, dtype=bool)
-            matrix = np.zeros((relation.target_size, relation.source_size), dtype=float)
+            valid = np.asarray(relation.valid, dtype=np.bool_)
+            matrix = np.zeros(
+                (relation.target_size, relation.source_size), dtype=np.float64
+            )
             np.add.at(
                 matrix,
                 (
                     np.asarray(relation.target_indices, dtype=np.int32)[valid],
                     np.asarray(relation.source_indices, dtype=np.int32)[valid],
                 ),
-                np.asarray(incidence.signs, dtype=float)[valid],
+                np.asarray(incidence.signs, dtype=np.float64)[valid],
             )
             return matrix
 
         if not topology_changed and source_counts == target_counts:
-            primal = [np.eye(count, dtype=float) for count in source_counts]
+            primal = [np.eye(count, dtype=np.float64) for count in source_counts]
         else:
             if (
                 not isinstance(cell_transition, MultivaluedCutCellTransition)
@@ -108,7 +110,9 @@ class CutCellCochainTransferPlan(StrictModule, NonTrainableState):
                     "Changed cut topology requires its exact cell common refinement."
                 )
             remap = cell_transition.remap
-            cell_matrix = np.zeros((target_counts[-1], source_counts[-1]), dtype=float)
+            cell_matrix = np.zeros(
+                (target_counts[-1], source_counts[-1]), dtype=np.float64
+            )
             weights = (
                 np.asarray(remap.intersection_measures)
                 / np.asarray(remap.source_volumes)[
@@ -140,7 +144,7 @@ class CutCellCochainTransferPlan(StrictModule, NonTrainableState):
                     int(identifier): index for index, identifier in enumerate(source_ids)
                 }
                 geometric = np.zeros(
-                    (target_counts[degree], source_counts[degree]), dtype=float
+                    (target_counts[degree], source_counts[degree]), dtype=np.float64
                 )
                 for target_index, identifier in enumerate(target_ids):
                     source_index = source_by_id.get(int(identifier))
@@ -165,10 +169,10 @@ class CutCellCochainTransferPlan(StrictModule, NonTrainableState):
         adjoints = []
         for degree, matrix in enumerate(primal):
             source_metric = np.asarray(
-                source_state.metrics.hodge_stars[degree], dtype=float
+                source_state.metrics.hodge_stars[degree], dtype=np.float64
             )
             target_metric = np.asarray(
-                target_state.metrics.hodge_stars[degree], dtype=float
+                target_state.metrics.hodge_stars[degree], dtype=np.float64
             )
             adjoints.append((matrix.T * target_metric[None, :]) / source_metric[:, None])
         evidence = CutCellCochainTransferEvidence(

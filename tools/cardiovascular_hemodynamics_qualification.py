@@ -83,7 +83,7 @@ def _workflow(shape=(6, 8, 4)):
     plan = FixedWallLBMPlan(
         discretization,
         scaling,
-        FixedWallLumenRegion(np.ones(shape, dtype=bool)),
+        FixedWallLumenRegion(np.ones(shape, dtype="bool")),
         terminals,
         NewtonianRheology(0.004, maximum_shear_rate_per_ms=2.0),
         limits=HemodynamicsValidityLimits(

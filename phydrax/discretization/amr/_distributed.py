@@ -93,7 +93,7 @@ def _active_costs(
 def _contiguous_owners(costs: np.ndarray, part_count: int, /) -> np.ndarray:
     """Split one locality order into deterministic, nonempty contiguous ranges."""
 
-    count = int(costs.size)
+    count = costs.size
     if count == 0:
         return np.empty((0,), dtype=np.int32)
     used_parts = min(count, part_count)
@@ -145,9 +145,7 @@ class _BlockAMRLevelLayout(StrictModule, NonTrainableState):
         axis_name: str,
     ):
         identities = tuple(
-            tuple(
-                int(value) for value in local_block_slots[part, local_block_valid[part]]
-            )
+            tuple(local_block_slots[part, local_block_valid[part]])
             for part in range(local_block_slots.shape[0])
         )
         self.block_owner = jnp.asarray(block_owner, dtype=jnp.int32)
@@ -155,15 +153,15 @@ class _BlockAMRLevelLayout(StrictModule, NonTrainableState):
             local_block_slots, mesh, axis_name, dtype=jnp.int32
         )
         self.local_block_valid = _place_by_part(
-            local_block_valid, mesh, axis_name, dtype=bool
+            local_block_valid, mesh, axis_name, dtype=jnp.bool_
         )
         self.canonical_to_local = jnp.asarray(canonical_to_local, dtype=jnp.int32)
         self.stable_block_ids = jnp.asarray(stable_block_ids, dtype=jnp.int32)
         self.slot_identities = identities
         self.active_count = int(np.count_nonzero(block_owner >= 0))
-        self.maximum_blocks = int(block_owner.size)
-        self.part_count = int(local_block_slots.shape[0])
-        self.local_block_capacity = int(local_block_slots.shape[1])
+        self.maximum_blocks = block_owner.size
+        self.part_count = local_block_slots.shape[0]
+        self.local_block_capacity = local_block_slots.shape[1]
         self.layout_id = canonical_fingerprint(
             {
                 "kind": "distributed-block-amr-level-layout",
@@ -233,22 +231,24 @@ class _PackedBlockRoutePlan(StrictModule, NonTrainableState):
         self.receive_local_indices = _place_by_part(
             receive_local_indices, mesh, axis_name, dtype=jnp.int32
         )
-        self.send_valid = _place_by_part(send_valid, mesh, axis_name, dtype=bool)
-        self.receive_valid = _place_by_part(receive_valid, mesh, axis_name, dtype=bool)
+        self.send_valid = _place_by_part(send_valid, mesh, axis_name, dtype=jnp.bool_)
+        self.receive_valid = _place_by_part(
+            receive_valid, mesh, axis_name, dtype=jnp.bool_
+        )
         self.received_block_slots = _place_by_part(
             received_block_slots, mesh, axis_name, dtype=jnp.int32
         )
         self.received_block_valid = _place_by_part(
-            received_block_valid, mesh, axis_name, dtype=bool
+            received_block_valid, mesh, axis_name, dtype=jnp.bool_
         )
         self.permutations = permutations
         self.reverse_permutations = tuple(
             tuple((target, source) for source, target in phase) for phase in permutations
         )
-        self.part_count = int(send_local_indices.shape[0])
-        self.phase_count = int(send_local_indices.shape[1])
-        self.message_capacity = int(send_local_indices.shape[2])
-        self.receive_capacity = int(received_block_slots.shape[1])
+        self.part_count = send_local_indices.shape[0]
+        self.phase_count = send_local_indices.shape[1]
+        self.message_capacity = send_local_indices.shape[2]
+        self.receive_capacity = received_block_slots.shape[1]
         self.route_count = int(route_count)
         self.plan_id = canonical_fingerprint(
             {
@@ -338,7 +338,7 @@ def _level_layout(
 ) -> _BlockAMRLevelLayout:
     metadata = topology.levels[level]
     level_plan = topology.plan.levels[level]
-    active = np.asarray(metadata.active, dtype=bool)
+    active = np.asarray(metadata.active, dtype=np.bool_)
     active_slots = np.flatnonzero(active)
     logical = np.asarray(metadata.logical_indices, dtype=np.int32)
     stable_ids = np.asarray(metadata.block_ids, dtype=np.int32)
@@ -366,7 +366,7 @@ def _level_layout(
     ]
     local_capacity = max(1, max((len(slots) for slots in per_part), default=0))
     local_slots = np.full((part_count, local_capacity), -1, dtype=np.int32)
-    local_valid = np.zeros((part_count, local_capacity), dtype=bool)
+    local_valid = np.zeros((part_count, local_capacity), dtype=np.bool_)
     canonical_to_local = np.full((level_plan.maximum_blocks,), -1, dtype=np.int32)
     for part, slots in enumerate(per_part):
         local_slots[part, : len(slots)] = slots
@@ -431,8 +431,8 @@ def _route_plan(
     phase_count = len(permutations)
     send = np.zeros((parts, phase_count, message_capacity), dtype=np.int32)
     receive = np.zeros_like(send)
-    send_valid = np.zeros_like(send, dtype=bool)
-    receive_valid = np.zeros_like(send, dtype=bool)
+    send_valid = np.zeros_like(send, dtype=np.bool_)
+    receive_valid = np.zeros_like(send, dtype=np.bool_)
     for phase, permutation in enumerate(permutations):
         for source, target in permutation:
             messages = pair_messages[(source, target)]
@@ -443,7 +443,7 @@ def _route_plan(
             receive_valid[target, phase, :count] = True
     receive_capacity = max(1, max((len(slots) for slots in received_by_part), default=0))
     received_slots = np.full((parts, receive_capacity), -1, dtype=np.int32)
-    received_valid = np.zeros((parts, receive_capacity), dtype=bool)
+    received_valid = np.zeros((parts, receive_capacity), dtype=np.bool_)
     for part, slots in enumerate(received_by_part):
         received_slots[part, : len(slots)] = slots
         received_valid[part, : len(slots)] = True
@@ -570,10 +570,10 @@ def _distributed_fill_routes(
     source_slots_global = np.asarray(fill.source_slots, dtype=np.int32)
     source_local_global = np.asarray(fill.source_local_indices, dtype=np.int32)
     coarse_slots_global = np.asarray(fill.coarse_donor_slots, dtype=np.int32)
-    coarse_valid_global = np.asarray(fill.coarse_donor_valid, dtype=bool)
+    coarse_valid_global = np.asarray(fill.coarse_donor_valid, dtype=np.bool_)
     coarse_child_global = np.asarray(fill.coarse_child_indices, dtype=np.int32)
     coarse_local_global = np.asarray(fill.coarse_donor_local_indices, dtype=np.int32)
-    physical_global = np.asarray(fill.physical_boundary_mask, dtype=bool)
+    physical_global = np.asarray(fill.physical_boundary_mask, dtype=np.bool_)
     parts = target_layout.part_count
     local_capacity = target_layout.local_block_capacity
     padded_shape = tuple(source_class_global.shape[1:])
@@ -583,17 +583,17 @@ def _distributed_fill_routes(
     source_class = np.full(route_shape, int(FillPatchSource.INACTIVE), dtype=np.int8)
     same_local = np.zeros(route_shape, dtype=np.int32)
     same_remote_indices = np.zeros(route_shape, dtype=np.int32)
-    same_remote = np.zeros(route_shape, dtype=bool)
+    same_remote = np.zeros(route_shape, dtype=np.bool_)
     same_cell = np.zeros(route_shape + (dimension,), dtype=np.int32)
     coarse_shape = route_shape + (donor_count,)
     coarse_local = np.zeros(coarse_shape, dtype=np.int32)
     coarse_remote_indices = np.zeros(coarse_shape, dtype=np.int32)
-    coarse_remote = np.zeros(coarse_shape, dtype=bool)
-    coarse_valid = np.zeros(coarse_shape, dtype=bool)
+    coarse_remote = np.zeros(coarse_shape, dtype=np.bool_)
+    coarse_valid = np.zeros(coarse_shape, dtype=np.bool_)
     coarse_cell = np.zeros(coarse_shape + (dimension,), dtype=np.int32)
     coarse_child = np.zeros(route_shape + (dimension,), dtype=np.int32)
-    physical = np.zeros(route_shape, dtype=bool)
-    target_valid = np.zeros((parts, local_capacity), dtype=bool)
+    physical = np.zeros(route_shape, dtype=np.bool_)
+    target_valid = np.zeros((parts, local_capacity), dtype=np.bool_)
     same_owner = np.asarray(target_layout.block_owner, dtype=np.int32)
     same_canonical_to_local = np.asarray(target_layout.canonical_to_local, dtype=np.int32)
     coarse_owner = (
@@ -619,7 +619,7 @@ def _distributed_fill_routes(
                 | (source_class_global[target_slot] == int(FillPatchSource.PERIODIC))
             )
             for padded_index in np.argwhere(same_mask):
-                index = destination + tuple(int(value) for value in padded_index)
+                index = destination + tuple(padded_index)
                 source_slot = int(
                     source_slots_global[(target_slot,) + tuple(padded_index)]
                 )
@@ -635,7 +635,7 @@ def _distributed_fill_routes(
             if coarse_layout is None or coarse_lookup is None:
                 continue
             for route_index in np.argwhere(coarse_valid_global[target_slot]):
-                padded_index = tuple(int(value) for value in route_index[:-1])
+                padded_index = tuple(route_index[:-1])
                 donor = int(route_index[-1])
                 index = destination + padded_index + (donor,)
                 source_slot = int(
@@ -875,11 +875,9 @@ class DistributedBlockAMRResourceEvidence(StrictModule, NonTrainableState):
         self.same_level_phases = tuple(route.phase_count for route in same)
         self.coarse_fine_phases = tuple(route.phase_count for route in coarse)
         self.interface_phases = tuple(route.phase_count for route in interfaces)
-        self.dynamic_route_array_entries = sum(
-            int(array.size) for array in dynamic_arrays
-        )
+        self.dynamic_route_array_entries = sum(array.size for array in dynamic_arrays)
         self.dynamic_route_array_bytes = sum(
-            int(array.size) * int(array.dtype.itemsize) for array in dynamic_arrays
+            array.size * array.dtype.itemsize for array in dynamic_arrays
         )
         self.static_permutation_pairs = sum(
             len(phase)
@@ -1089,7 +1087,7 @@ class PreparedDistributedBlockAMRHierarchy(StrictModule, NonTrainableState):
                 coarse_source_layout = layout
             else:
                 donor_slots = np.asarray(fill.coarse_donor_slots, dtype=np.int32)
-                donor_valid = np.asarray(fill.coarse_donor_valid, dtype=bool)
+                donor_valid = np.asarray(fill.coarse_donor_valid, dtype=np.bool_)
                 coarse_requirements = _route_requirements(
                     fill, layout, donor_slots, donor_valid
                 )
@@ -1105,7 +1103,7 @@ class PreparedDistributedBlockAMRHierarchy(StrictModule, NonTrainableState):
             interface_requirements = [set() for _ in range(partition.part_count)]
             interface_source_layout = layout
             if level > 0:
-                fine_interfaces = np.asarray(topology.interfaces[level], dtype=bool)
+                fine_interfaces = np.asarray(topology.interfaces[level], dtype=np.bool_)
                 fine_parents = np.asarray(
                     topology.levels[level].parent_ids, dtype=np.int32
                 )
@@ -1901,7 +1899,6 @@ class PreparedDistributedBlockAMRHierarchy(StrictModule, NonTrainableState):
         """Canonical restore identity; partition changes still require migration."""
 
         return {
-            "schema_version": 1,
             "kind": "distributed-block-amr-compatibility",
             "hierarchy_plan_id": self.topology.plan.plan_id,
             "fd_hierarchy_plan_id": self.fd_hierarchy.plan.plan_id,

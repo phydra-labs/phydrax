@@ -16,7 +16,7 @@ from jaxtyping import Array, PyTree
 
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._tree_math import tree_allfinite, tree_norm, validate_real_inexact_tree
 from ..conditions._evidence import (
     ConditionEvidence,
@@ -69,7 +69,7 @@ RetractionObjective: TypeAlias = Literal["local-root", "minimum-distance"]
 class AbstractCorrectionChart(StrictModule):
     """Local coordinates whose origin reconstructs the supplied field mapping."""
 
-    chart_id: AbstractAttribute[str]
+    chart_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def origin(self, fields: FieldMap, /) -> PyTree[Array]:
@@ -407,8 +407,7 @@ class NonlinearFieldRetraction(AbstractFieldRealization):
             problem = NonlinearSystemProblem(
                 kkt_residual,
                 problem_id=(
-                    f"{context.condition_id}/minimum-distance-retraction/"
-                    f"{self.chart.chart_id}"
+                    f"{context.condition_id}/minimum-distance-retraction/{self.chart.chart_id}"
                 ),
             )
             nonlinear_result = self.method.solve(
@@ -601,10 +600,10 @@ def _relation_residual(bound: BoundCondition, value: Any, /) -> PyTree[Array]:
             axis = relation.axis % array.ndim
             moved = jnp.moveaxis(array, axis, -1)
             projected = jnp.moveaxis(
-                SecondOrderCone(int(moved.shape[-1])).project(moved), -1, axis
+                SecondOrderCone(moved.shape[-1]).project(moved), -1, axis
             )
         else:
-            projected = PositiveSemidefiniteProjection(int(array.shape[-1])).apply(array)
+            projected = PositiveSemidefiniteProjection(array.shape[-1]).apply(array)
         residual = array - projected
     elif isinstance(relation, Complementarity):
         left, right = value

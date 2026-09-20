@@ -76,8 +76,7 @@ def assemble_diagonal(
         diagonal = jnp.asarray(_assemble_operator_diagonal(operator))
         if diagonal.shape != expected or diagonal.dtype != abstract.dtype:
             raise ValueError(
-                "Diagonal assembly changed shape or dtype between abstract "
-                "evaluation and execution."
+                "Diagonal assembly changed shape or dtype between abstract evaluation and execution."
             )
         return diagonal
 
@@ -233,8 +232,7 @@ class SparseAssemblyCostEstimate(StrictModule):
         numeric_workspace_bytes: int,
     ):
         values = tuple(
-            int(value)
-            for value in (
+            (
                 result_nnz,
                 maximum_intermediate_nnz,
                 maximum_contributions,
@@ -343,7 +341,7 @@ class SparseAssemblyPlan(StrictModule):
 
     @property
     def nnz(self) -> int:
-        return int(self._recipe.rows.size)
+        return self._recipe.rows.size
 
     @property
     def row_indices(self) -> Array:
@@ -402,7 +400,7 @@ def plan_sparse_assembly(
 
     recipe = _plan_sparse_recipe(operator, policy_)
     recipe_bytes = _array_storage_bytes(recipe)
-    maximum_intermediate_nnz = max(int(node.rows.size) for node in _walk_recipes(recipe))
+    maximum_intermediate_nnz = max(node.rows.size for node in _walk_recipes(recipe))
     maximum_contributions = max(node.contribution_count for node in _walk_recipes(recipe))
     symbolic_workspace_bytes = max(
         node.symbolic_workspace_bytes for node in _walk_recipes(recipe)
@@ -417,11 +415,11 @@ def plan_sparse_assembly(
         )
     output_bytes = _sparse_output_bytes(
         recipe.shape,
-        int(recipe.rows.size),
+        recipe.rows.size,
         _coordinate_dtype(operator.target).itemsize,
     )
     cost = SparseAssemblyCostEstimate(
-        result_nnz=int(recipe.rows.size),
+        result_nnz=recipe.rows.size,
         maximum_intermediate_nnz=maximum_intermediate_nnz,
         maximum_contributions=maximum_contributions,
         output_bytes=output_bytes,
@@ -507,8 +505,7 @@ def _prepare_sparse_assembly(
     )
     if values.shape != (plan.nnz,):
         raise ValueError(
-            f"Sparse assembly recipe returned shape {values.shape}; "
-            f"expected {(plan.nnz,)}."
+            f"Sparse assembly recipe returned shape {values.shape}; expected {(plan.nnz,)}."
         )
     relation = EdgeRelation(
         plan.column_indices,
@@ -721,7 +718,7 @@ def _plan_sparse_recipe(
             np.asarray(child.columns),
             policy,
             children=(child,),
-            contribution_count=int(child.rows.size),
+            contribution_count=child.rows.size,
         )
     if isinstance(operator, SumLinearOperator):
         children = (
@@ -740,7 +737,7 @@ def _plan_sparse_recipe(
             (operator.target.size, operator.source.size),
             policy,
         )
-        split = int(children[0].rows.size)
+        split = children[0].rows.size
         return _make_sparse_recipe(
             "sum",
             operator,
@@ -769,7 +766,7 @@ def _plan_sparse_recipe(
             policy,
             children=(child,),
             output_indices=(mapping,),
-            contribution_count=int(child.rows.size),
+            contribution_count=child.rows.size,
         )
     if isinstance(operator, AdjointLinearOperator):
         if not (
@@ -792,7 +789,7 @@ def _plan_sparse_recipe(
             policy,
             children=(child,),
             output_indices=(mapping,),
-            contribution_count=int(child.rows.size),
+            contribution_count=child.rows.size,
         )
     if isinstance(operator, BlockDiagonalLinearOperator):
         return _plan_sparse_block_diagonal(operator, policy)
@@ -876,12 +873,11 @@ def _make_sparse_recipe(
         raise LinearCapabilityError(
             "Sparse assembly currently requires 32-bit route indices."
         )
-    nnz = int(rows_.size)
+    nnz = rows_.size
     contributions = int(contribution_count)
     if nnz > policy.max_nnz:
         raise LinearCapabilityError(
-            f"Sparse assembly requires {nnz} nonzeros, exceeding the "
-            f"limit {policy.max_nnz}."
+            f"Sparse assembly requires {nnz} nonzeros, exceeding the limit {policy.max_nnz}."
         )
     if contributions > policy.max_contributions:
         raise LinearCapabilityError(
@@ -895,8 +891,7 @@ def _make_sparse_recipe(
     )
     if output_bytes > policy.max_bytes:
         raise LinearCapabilityError(
-            f"Sparse assembly output requires {output_bytes} bytes, exceeding "
-            f"the limit {policy.max_bytes}."
+            f"Sparse assembly output requires {output_bytes} bytes, exceeding the limit {policy.max_bytes}."
         )
     mapping_entries = sum(
         np.asarray(indices).size for indices in (*input_indices, *output_indices)
@@ -946,7 +941,7 @@ def _canonical_pattern(
     columns_ = np.asarray(columns, dtype=np.int64).reshape((-1,))
     if rows_.shape != columns_.shape:
         raise ValueError("Sparse contribution rows and columns must match.")
-    _check_contribution_budget(policy, int(rows_.size), arrays=8)
+    _check_contribution_budget(policy, rows_.size, arrays=8)
     if rows_.size == 0:
         empty = np.zeros((0,), dtype=np.int64)
         return empty, empty, empty
@@ -983,8 +978,7 @@ def _check_contribution_budget(
     count = int(contributions)
     if count > policy.max_contributions:
         raise LinearCapabilityError(
-            f"Sparse assembly requires {count} symbolic contributions, "
-            f"exceeding the limit {policy.max_contributions}."
+            f"Sparse assembly requires {count} symbolic contributions, exceeding the limit {policy.max_contributions}."
         )
     required = count * int(arrays) * np.dtype(np.int64).itemsize
     if required > policy.max_workspace_bytes:
@@ -1076,7 +1070,7 @@ def _plan_sparse_block_diagonal(
     output_indices = []
     offset = 0
     for child in children:
-        stop = offset + int(child.rows.size)
+        stop = offset + child.rows.size
         output_indices.append(mapping[offset:stop])
         offset = stop
     return _make_sparse_recipe(
@@ -1097,7 +1091,7 @@ def _plan_sparse_kronecker(
     /,
 ) -> _SparseAssemblyRecipe:
     children = tuple(_plan_sparse_recipe(factor, policy) for factor in operator.factors)
-    counts = tuple(int(child.rows.size) for child in children)
+    counts = tuple(child.rows.size for child in children)
     contributions = prod(counts)
     _check_contribution_budget(
         policy,
@@ -1151,7 +1145,7 @@ def _plan_sparse_kronecker_sum(
     children = tuple(_plan_sparse_recipe(factor, policy) for factor in operator.factors)
     sizes = tuple(factor.source.size for factor in operator.factors)
     term_counts = tuple(
-        int(child.rows.size) * prod(sizes[:axis] + sizes[axis + 1 :])
+        child.rows.size * prod(sizes[:axis] + sizes[axis + 1 :])
         for axis, child in enumerate(children)
     )
     contributions = sum(term_counts)
@@ -1165,7 +1159,7 @@ def _plan_sparse_kronecker_sum(
     column_parts = []
     input_indices = []
     for axis, (child, term_count) in enumerate(zip(children, term_counts, strict=True)):
-        child_nnz = int(child.rows.size)
+        child_nnz = child.rows.size
         if not term_count:
             row_parts.append(np.zeros((0,), dtype=np.int64))
             column_parts.append(np.zeros((0,), dtype=np.int64))
@@ -1237,7 +1231,7 @@ def _sparse_output_bytes(
 
 def _array_storage_bytes(value: Any, /) -> int:
     arrays = {id(leaf): leaf for leaf in jax.tree.leaves(value) if eqx.is_array(leaf)}
-    return sum(int(array.size * array.dtype.itemsize) for array in arrays.values())
+    return sum(array.size * array.dtype.itemsize for array in arrays.values())
 
 
 def _walk_recipes(
@@ -1405,7 +1399,7 @@ def _evaluate_sparse_recipe(
         return _scatter_recipe_values(
             contributions,
             recipe.output_indices[0],
-            int(rows.size),
+            rows.size,
         )
     if kind == "transpose":
         transposed = cast(TransposeLinearOperator, operator)
@@ -1417,7 +1411,7 @@ def _evaluate_sparse_recipe(
         return _scatter_recipe_values(
             child_values,
             recipe.output_indices[0],
-            int(rows.size),
+            rows.size,
         )
     if kind == "adjoint":
         adjointed = cast(AdjointLinearOperator, operator)
@@ -1434,7 +1428,7 @@ def _evaluate_sparse_recipe(
         return _scatter_recipe_values(
             contributions,
             recipe.output_indices[0],
-            int(rows.size),
+            rows.size,
         )
     if kind == "block-diagonal":
         blocked = cast(BlockDiagonalLinearOperator, operator)
@@ -1470,7 +1464,7 @@ def _evaluate_sparse_recipe(
         return _scatter_recipe_values(
             contributions,
             recipe.output_indices[0],
-            int(rows.size),
+            rows.size,
         )
     if kind == "kronecker-sum":
         kronecker_sum = cast(KroneckerSumLinearOperator, operator)

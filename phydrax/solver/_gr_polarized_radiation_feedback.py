@@ -114,7 +114,7 @@ class GRPolarizedRadiationFeedbackPlan(StrictModule, NonTrainableState):
             raise TypeError("Polarized feedback requires relativity contracts.")
         if convention.metric_signature != "mostly_plus":
             raise ValueError("Polarized GR feedback requires mostly-plus signature.")
-        weights = np.asarray(beam_weights, dtype=float)
+        weights = np.asarray(beam_weights, dtype=np.float64)
         tolerance = float(cone_tolerance)
         if (
             weights.ndim != 1
@@ -129,7 +129,7 @@ class GRPolarizedRadiationFeedbackPlan(StrictModule, NonTrainableState):
         self.scale = scale
         self.convention = convention
         self.beam_weights = jnp.asarray(normalized)
-        self.beam_count = int(weights.size)
+        self.beam_count = weights.size
         self.cone_tolerance = tolerance
         self.plan_id = canonical_fingerprint(
             {

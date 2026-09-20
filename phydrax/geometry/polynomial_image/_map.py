@@ -63,7 +63,7 @@ class SparsePolynomialMap(StrictModule):
         self.exact_system = exact_system
         self.map_id = canonical_fingerprint(
             {
-                "kind": "sparse-polynomial-map-v1",
+                "kind": "sparse-polynomial-map",
                 "numeric_system": system.system_id,
                 "exact_system": (
                     None if exact_system is None else exact_system.system_id
@@ -77,7 +77,7 @@ class SparsePolynomialMap(StrictModule):
         system: ExactSparsePolynomialSystem,
         /,
         *,
-        dtype: Any = float,
+        dtype: Any = jnp.float64,
     ) -> SparsePolynomialMap:
         """Construct matching numerical evaluation data from one exact QQ system."""
 

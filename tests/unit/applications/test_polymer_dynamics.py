@@ -114,9 +114,9 @@ def test_generalized_langevin_runtime_enforces_discrete_fdt_and_replays():
 
 
 def test_equilibrium_rheology_retains_correlation_uncertainty_evidence():
-    time = np.arange(64, dtype=float)
+    time = np.arange(64, dtype="float64")
     shear = np.sin(0.2 * time) + 0.2 * np.cos(0.7 * time)
-    stress = np.zeros((64, 3, 3), dtype=float)
+    stress = np.zeros((64, 3, 3), dtype="float64")
     stress[:, 0, 1] = shear
     stress[:, 1, 0] = shear
     result = pl.polymer_green_kubo_viscosity(

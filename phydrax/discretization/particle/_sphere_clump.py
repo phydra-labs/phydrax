@@ -161,9 +161,9 @@ class RigidSphereClumpSetPlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("Owner template/material IDs are out of range.")
         fixed = (
-            np.zeros(template_ids.shape, dtype=bool)
+            np.zeros(template_ids.shape, dtype=np.bool_)
             if fixed_mask is None
-            else np.asarray(fixed_mask, dtype=bool)
+            else np.asarray(fixed_mask, dtype=np.bool_)
         )
         if fixed.shape != template_ids.shape:
             raise ValueError("fixed_mask must have owner-capacity shape.")
@@ -235,7 +235,7 @@ class PreparedRigidSphereClumpSet(StrictModule, NonTrainableState):
         offset = np.zeros((template_count, maximum, dimension))
         radius = np.ones((template_count, maximum))
         material = np.zeros((template_count, maximum), dtype=np.int32)
-        valid = np.zeros((template_count, maximum), dtype=bool)
+        valid = np.zeros((template_count, maximum), dtype=np.bool_)
         bounds = np.zeros((template_count,))
         for index, template in enumerate(plan.templates):
             count = template.component_count

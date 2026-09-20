@@ -28,7 +28,7 @@ class ComplexEuclideanManifold(AbstractGeodesicManifold):
     transport_is_parallel: bool = eqx.field(static=True)
 
     def __init__(self, point_shape: Sequence[int], /):
-        shape = tuple(int(size) for size in point_shape)
+        shape = tuple(point_shape)
         if not shape or any(size <= 0 for size in shape):
             raise ValueError(
                 "ComplexEuclideanManifold point_shape must be nonempty and positive."

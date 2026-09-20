@@ -51,11 +51,13 @@ def _problem(
     measures = []
     for index in range(num_measures):
         count = atoms - index % max(1, min(atoms // 4, num_measures))
-        coordinates = jnp.arange(count * dimension, dtype=float).reshape(
+        coordinates = jnp.arange(count * dimension, dtype="float64").reshape(
             (count, dimension)
         )
         points = jnp.sin(0.013 * coordinates + 0.2 * index)
-        raw_weights = 1.0 + jnp.cos(0.017 * jnp.arange(count, dtype=float) + index) ** 2
+        raw_weights = (
+            1.0 + jnp.cos(0.017 * jnp.arange(count, dtype="float64") + index) ** 2
+        )
         measures.append(
             _measure(
                 points,
@@ -63,25 +65,25 @@ def _problem(
                 provenance=f"barycenter-benchmark-measure-{index}",
             )
         )
-    support_coordinates = jnp.arange(support_atoms * dimension, dtype=float).reshape(
+    support_coordinates = jnp.arange(support_atoms * dimension, dtype="float64").reshape(
         (support_atoms, dimension)
     )
     support = _measure(
         jnp.cos(0.019 * support_coordinates),
-        jnp.ones((support_atoms,), dtype=float),
+        jnp.ones((support_atoms,), dtype="float64"),
         provenance="barycenter-benchmark-initial-support",
     )
     return phx.transport.fixed_support_barycenter_problem(
         tuple(measures),
         support,
-        measure_weights=jnp.ones((num_measures,), dtype=float) / num_measures,
+        measure_weights=jnp.ones((num_measures,), dtype="float64") / num_measures,
         cost=phx.transport.SquaredEuclideanCost(),
     )
 
 
 def _bytes(tree) -> int:
     return sum(
-        int(leaf.size * leaf.dtype.itemsize)
+        leaf.size * leaf.dtype.itemsize
         for leaf in jax.tree.leaves(tree)
         if isinstance(leaf, jax.Array)
     )

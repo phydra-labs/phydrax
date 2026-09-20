@@ -140,7 +140,7 @@ class MultipoleFarLocal3D(StrictModule, NonTrainableState):
     prepared_id: str = eqx.field(static=True)
 
 
-class LaplaceMultipoleEvaluation3D(eqx.Module, NonTrainableState):
+class AbstractLaplaceMultipoleEvaluation3D(StrictModule, NonTrainableState):
     """Complete FMM values with exact near completion and bounded far evidence."""
 
     values: Array
@@ -162,6 +162,10 @@ class LaplaceMultipoleEvaluation3D(eqx.Module, NonTrainableState):
     source_convention: str = eqx.field(static=True)
     local_convention: str = eqx.field(static=True)
     evaluation_id: str = eqx.field(static=True)
+
+
+class LaplaceMultipoleEvaluation3D(AbstractLaplaceMultipoleEvaluation3D):
+    """Final complete Laplace FMM evaluation."""
 
 
 class LaplaceMultipolePlan3D(StrictModule, NonTrainableState):
@@ -220,11 +224,13 @@ class LaplaceMultipolePlan3D(StrictModule, NonTrainableState):
         plane_opening_angle: float = 0.6,
         plane_maximum_node_radius: float | None = None,
     ):
-        sources = np.asarray(reference_sources, dtype=float)
-        lower_ = np.asarray(lower, dtype=float)
-        upper_ = np.asarray(upper, dtype=float)
+        sources = np.asarray(reference_sources, dtype=np.float64)
+        lower_ = np.asarray(lower, dtype=np.float64)
+        upper_ = np.asarray(upper, dtype=np.float64)
         same_support = reference_targets is None
-        targets = sources if same_support else np.asarray(reference_targets, dtype=float)
+        targets = (
+            sources if same_support else np.asarray(reference_targets, dtype=np.float64)
+        )
         depth_ = index(depth)
         order = index(expansion_order)
         displacement = float(maximum_reference_displacement)
@@ -292,7 +298,7 @@ class LaplaceMultipolePlan3D(StrictModule, NonTrainableState):
             not math.isfinite(maximum_node_radius) or maximum_node_radius <= 0.0
         ):
             raise ValueError("plane_maximum_node_radius must be finite and positive.")
-        combined = int(sources.shape[0] + targets.shape[0])
+        combined = sources.shape[0] + targets.shape[0]
         if execution == "plane_dual":
             source_leaf_count = math.ceil(sources.shape[0] / source_leaf)
             target_leaf_count = math.ceil(targets.shape[0] / target_leaf)
@@ -325,8 +331,8 @@ class LaplaceMultipolePlan3D(StrictModule, NonTrainableState):
         self.upper = tuple(float(value) for value in upper_)
         self.depth = depth_
         self.expansion_order = order
-        self.source_capacity = int(sources.shape[0])
-        self.target_capacity = int(targets.shape[0])
+        self.source_capacity = sources.shape[0]
+        self.target_capacity = targets.shape[0]
         self.target_topology = "same-support" if same_support else "rectangular"
         self.maximum_reference_displacement = displacement
         self.far_interaction_capacity = far
@@ -372,7 +378,7 @@ class LaplaceMultipolePlan3D(StrictModule, NonTrainableState):
         return PreparedLaplaceMultipole3D(self)
 
 
-class PreparedLaplaceMultipole3D(eqx.Module, NonTrainableState):
+class AbstractPreparedLaplaceMultipole3D(StrictModule, NonTrainableState):
     """Prepared complete Laplace FMM with level-octree or plane execution."""
 
     plan: LaplaceMultipolePlan3D
@@ -430,8 +436,7 @@ class PreparedLaplaceMultipole3D(eqx.Module, NonTrainableState):
             )
             if not bool(topology.evidence.successful):
                 raise ValueError(
-                    "SparseLevelOctreePlan capacity is exhausted by the "
-                    "reference topology."
+                    "SparseLevelOctreePlan capacity is exhausted by the reference topology."
                 )
         else:
             address = MortonAddressPlan(plan.lower, plan.upper, plan.depth)
@@ -482,14 +487,13 @@ class PreparedLaplaceMultipole3D(eqx.Module, NonTrainableState):
                 & plane_interactions.evidence.successful
             ):
                 raise ValueError(
-                    "Plane schedule or interaction capacity is exhausted by "
-                    "the reference topology."
+                    "Plane schedule or interaction capacity is exhausted by the reference topology."
                 )
 
         padded = math.prod(layout.coefficient_shape)
         coefficient_bytes = padded * np.dtype(np.complex128).itemsize
         if topology is not None:
-            node_capacity = int(topology.hierarchy.node_active.size)
+            node_capacity = topology.hierarchy.node_active.size
             required_bytes = 2 * node_capacity * coefficient_bytes
             topology_id = topology.tree_id
         else:
@@ -522,7 +526,7 @@ class PreparedLaplaceMultipole3D(eqx.Module, NonTrainableState):
                 "coefficient_bytes_per_expansion": coefficient_bytes,
                 "required_coefficient_bytes": required_bytes,
                 "maximum_coefficient_bytes": plan.maximum_coefficient_bytes,
-                "quadrature_node_count": int(directions.shape[0]),
+                "quadrature_node_count": directions.shape[0],
                 "node_capacity": node_capacity,
                 "far_interaction_capacity": plan.far_interaction_capacity,
                 "near_interaction_capacity": plan.near_interaction_capacity,
@@ -542,7 +546,7 @@ class PreparedLaplaceMultipole3D(eqx.Module, NonTrainableState):
             coefficient_bytes_per_expansion=coefficient_bytes,
             required_coefficient_bytes=required_bytes,
             maximum_coefficient_bytes=plan.maximum_coefficient_bytes,
-            quadrature_node_count=int(directions.shape[0]),
+            quadrature_node_count=directions.shape[0],
             node_capacity=node_capacity,
             far_interaction_capacity=plan.far_interaction_capacity,
             near_interaction_capacity=plan.near_interaction_capacity,
@@ -812,7 +816,7 @@ class PreparedLaplaceMultipole3D(eqx.Module, NonTrainableState):
             raise ValueError("P2P targets must have shape (target_count, 3).")
         if strengths.ndim < 1 or strengths.shape[0] != sources.shape[0]:
             raise ValueError("P2P strengths must begin with source_count.")
-        pair_mask = jnp.ones((targets.shape[0], sources.shape[0]), dtype=bool)
+        pair_mask = jnp.ones((targets.shape[0], sources.shape[0]), dtype=jnp.bool_)
         if target_source_indices is not None:
             identities = jnp.asarray(target_source_indices, dtype=jnp.int32)
             if identities.shape != (targets.shape[0],):
@@ -1084,7 +1088,7 @@ class PreparedLaplaceMultipole3D(eqx.Module, NonTrainableState):
         source_normals: ArrayLike | None,
         active_mask: ArrayLike | None,
         target_source_indices: ArrayLike | None,
-    ) -> LaplaceMultipoleEvaluation3D:
+    ) -> AbstractLaplaceMultipoleEvaluation3D:
         sources, strengths, targets, active, normals, displacement, stale = (
             self._validate_evaluation_inputs(
                 source_positions,
@@ -1112,7 +1116,7 @@ class PreparedLaplaceMultipole3D(eqx.Module, NonTrainableState):
         )
         source_leaf = self.source_plane.logical_point_leaf_slots
         pair_mask = jnp.zeros(
-            (self.plan.target_capacity, self.plan.source_capacity), dtype=bool
+            (self.plan.target_capacity, self.plan.source_capacity), dtype=jnp.bool_
         )
         near = self.plane_interactions.near
         for route in range(self.plan.near_interaction_capacity):
@@ -1153,7 +1157,7 @@ class PreparedLaplaceMultipole3D(eqx.Module, NonTrainableState):
             & finite
             & ~stale
         )
-        return LaplaceMultipoleEvaluation3D(
+        return AbstractLaplaceMultipoleEvaluation3D(
             values=values,
             far_values=far_values,
             near_values=near_values,
@@ -1236,9 +1240,9 @@ class PreparedLaplaceMultipole3D(eqx.Module, NonTrainableState):
         if strengths.ndim < 1 or strengths.shape[0] != self.plan.source_capacity:
             raise ValueError("source_strengths must begin with source_capacity.")
         active = (
-            jnp.ones((self.plan.source_capacity,), dtype=bool)
+            jnp.ones((self.plan.source_capacity,), dtype=jnp.bool_)
             if active_mask is None
-            else jnp.asarray(active_mask, dtype=bool)
+            else jnp.asarray(active_mask, dtype=jnp.bool_)
         )
         if active.shape != (self.plan.source_capacity,):
             raise ValueError("active_mask must match source_capacity.")
@@ -1559,7 +1563,7 @@ class PreparedLaplaceMultipole3D(eqx.Module, NonTrainableState):
         source_normals: ArrayLike | None = None,
         active_mask: ArrayLike | None = None,
         target_source_indices: ArrayLike | None = None,
-    ) -> LaplaceMultipoleEvaluation3D:
+    ) -> AbstractLaplaceMultipoleEvaluation3D:
         """Execute every FMM pass with exact direct completion of near routes."""
         if self.plan.execution == "plane_dual":
             return self._plane_evaluate(
@@ -1593,7 +1597,7 @@ class PreparedLaplaceMultipole3D(eqx.Module, NonTrainableState):
             target_local, hierarchy.node_centers[jnp.maximum(target_leaf, 0)], targets
         )
         pair_mask = jnp.zeros(
-            (self.plan.target_capacity, self.plan.source_capacity), dtype=bool
+            (self.plan.target_capacity, self.plan.source_capacity), dtype=jnp.bool_
         )
         for route in range(self.plan.near_interaction_capacity):
             pair_mask = pair_mask | (
@@ -1625,7 +1629,7 @@ class PreparedLaplaceMultipole3D(eqx.Module, NonTrainableState):
         capacity = self._capacity_evidence()
         finite = jnp.all(jnp.isfinite(values))
         successful = capacity.successful & truncation.well_separated & finite & ~stale
-        return LaplaceMultipoleEvaluation3D(
+        return AbstractLaplaceMultipoleEvaluation3D(
             values=values,
             far_values=far_values,
             near_values=near_values,
@@ -1664,6 +1668,10 @@ class PreparedLaplaceMultipole3D(eqx.Module, NonTrainableState):
         return self.evaluate(
             source_positions, source_strengths, target_positions, **kwargs
         ).values
+
+
+class PreparedLaplaceMultipole3D(AbstractPreparedLaplaceMultipole3D):
+    """Final prepared complete Laplace FMM pipeline."""
 
 
 __all__ = [

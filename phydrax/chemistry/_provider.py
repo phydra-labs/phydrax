@@ -14,7 +14,7 @@ import equinox as eqx
 from jaxtyping import ArrayLike
 
 from .._fingerprint import canonical_fingerprint
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._context import ElectronicEvaluationContext
 from ._model import ElectronicMethodFamily, ElectronicReferenceKind
@@ -405,10 +405,10 @@ class ElectronicProviderCapabilities(StrictModule, NonTrainableState):
 
 
 class AbstractPreparedElectronicCalculation(StrictModule, NonTrainableState):
-    calculation: AbstractAttribute[ElectronicCalculationPlan]
-    capabilities: AbstractAttribute[ElectronicProviderCapabilities]
-    provider_id: AbstractAttribute[str]
-    prepared_id: AbstractAttribute[str]
+    calculation: eqx.AbstractVar[ElectronicCalculationPlan]
+    capabilities: eqx.AbstractVar[ElectronicProviderCapabilities]
+    provider_id: eqx.AbstractVar[str]
+    prepared_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def evaluate(
@@ -425,7 +425,7 @@ class AbstractPreparedElectronicCalculation(StrictModule, NonTrainableState):
         if not isinstance(context, ElectronicEvaluationContext):
             raise TypeError("context must be ElectronicEvaluationContext.")
         expected_shape = (
-            int(self.calculation.system.particle_ids.shape[0]),
+            self.calculation.system.particle_ids.shape[0],
             3,
         )
         if context.positions.shape != expected_shape:
@@ -482,8 +482,8 @@ class AbstractPreparedElectronicCalculation(StrictModule, NonTrainableState):
 
 
 class AbstractElectronicProvider(StrictModule, NonTrainableState):
-    provider_id: AbstractAttribute[str]
-    capabilities: AbstractAttribute[ElectronicProviderCapabilities]
+    provider_id: eqx.AbstractVar[str]
+    capabilities: eqx.AbstractVar[ElectronicProviderCapabilities]
 
     @abc.abstractmethod
     def prepare(

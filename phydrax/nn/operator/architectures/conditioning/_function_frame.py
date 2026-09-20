@@ -175,7 +175,7 @@ class FunctionProjectionReport(StrictModule):
         frame_id: str,
         method: str,
     ):
-        shape = tuple(int(size) for size in case_shape)
+        shape = tuple(case_shape)
         coefficient_array = jnp.asarray(coefficients)
         if coefficient_array.shape[: len(shape)] != shape:
             raise ValueError("Projection coefficients do not start with case_shape.")
@@ -213,9 +213,9 @@ class FunctionProjectionReport(StrictModule):
         self.rank = jnp.asarray(rank, dtype=jnp.int32)
         self.condition_number = jnp.asarray(condition_number)
         self.normal_equation_error = jnp.asarray(normal_equation_error)
-        self.solved = jnp.asarray(solved, dtype=bool)
-        self.identified = jnp.asarray(identified, dtype=bool)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.solved = jnp.asarray(solved, dtype=jnp.bool_)
+        self.identified = jnp.asarray(identified, dtype=jnp.bool_)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.case_shape = shape
         self.frame_id = str(frame_id)
@@ -237,7 +237,7 @@ def _frame_coordinates(
     /,
 ) -> tuple[Array, Array]:
     coordinates = query.coordinates_array(case_shape=case_shape)
-    if int(coordinates.shape[-1]) != coord_dim:
+    if coordinates.shape[-1] != coord_dim:
         raise ValueError(
             "Function frame coordinate dimension does not match its model; got "
             f"{coordinates.shape[-1]} and {coord_dim}."
@@ -258,7 +258,7 @@ def _evaluate_pointwise_model(
     *,
     key: EvalKey,
 ) -> Array:
-    flat_coordinates = coordinates.reshape((-1, int(coordinates.shape[-1])))
+    flat_coordinates = coordinates.reshape((-1, coordinates.shape[-1]))
     evaluated = jax.vmap(lambda point: model(point, key=key))(flat_coordinates)
     values = jnp.asarray(evaluated).reshape(coordinates.shape[:-1] + (output_size,))
     return jnp.where(usable[..., None], values, jnp.zeros((), dtype=values.dtype))
@@ -274,17 +274,16 @@ def _canonical_sample_values(
         raise ValueError("Function projection requires observed sample values.")
     values = jnp.asarray(samples.values)
     base_shape = case_shape + samples.sample_shape
-    if tuple(int(size) for size in values.shape) == base_shape:
+    if tuple(values.shape) == base_shape:
         if channels != 1:
             raise ValueError(
                 "Vector-valued frame samples require an explicit channel axis."
             )
         return values[..., None]
     expected = base_shape + (channels,)
-    if tuple(int(size) for size in values.shape) != expected:
+    if tuple(values.shape) != expected:
         raise ValueError(
-            f"Function sample values must have shape {base_shape} or {expected}; "
-            f"got {values.shape}."
+            f"Function sample values must have shape {base_shape} or {expected}; got {values.shape}."
         )
     return values
 
@@ -506,7 +505,7 @@ class LearnedFunctionFrame(AbstractBasisTrunk):
         case_shape: tuple[int, ...] = (),
         key: EvalKey = None,
     ) -> Array:
-        cases = tuple(int(size) for size in case_shape)
+        cases = tuple(case_shape)
         if self.evaluator is not None:
             values = self.evaluator.evaluate(
                 query,
@@ -536,10 +535,12 @@ class LearnedFunctionFrame(AbstractBasisTrunk):
         case_shape: tuple[int, ...] = (),
         key: EvalKey = None,
     ) -> Array:
-        cases = tuple(int(size) for size in case_shape)
+        cases = tuple(case_shape)
         offset_model = self.offset_model
         if offset_model is None:
-            return jnp.zeros(cases + query.sample_shape + (self.channels,), dtype=float)
+            return jnp.zeros(
+                cases + query.sample_shape + (self.channels,), dtype=jnp.float64
+            )
         coordinates, usable = _frame_coordinates(query, self.coord_dim, cases)
         return _evaluate_pointwise_model(
             offset_model,
@@ -558,13 +559,12 @@ class LearnedFunctionFrame(AbstractBasisTrunk):
         case_shape: tuple[int, ...] = (),
         key: EvalKey = None,
     ) -> Array:
-        cases = tuple(int(size) for size in case_shape)
+        cases = tuple(case_shape)
         coefficient_array = jnp.asarray(coefficients)
         expected = cases + (self.rank,)
-        if tuple(int(size) for size in coefficient_array.shape) != expected:
+        if tuple(coefficient_array.shape) != expected:
             raise ValueError(
-                f"Function coefficients must have shape {expected}; "
-                f"got {coefficient_array.shape}."
+                f"Function coefficients must have shape {expected}; got {coefficient_array.shape}."
             )
         basis = self.evaluate(query, case_shape=cases, key=key)
         offset = self.evaluate_offset(query, case_shape=cases, key=key)
@@ -588,13 +588,17 @@ class LearnedFunctionFrame(AbstractBasisTrunk):
         policy: FunctionProjectionPolicy | None = None,
         key: EvalKey = None,
     ) -> FunctionProjectionReport:
-        cases = tuple(int(size) for size in case_shape)
+        cases = tuple(case_shape)
         resolved_policy = FunctionProjectionPolicy() if policy is None else policy
         if not isinstance(resolved_policy, FunctionProjectionPolicy):
             raise TypeError("policy must be a FunctionProjectionPolicy or None.")
         if (
             resolved_policy.channel_metric is not None
-            and resolved_policy.channel_metric.shape != (self.channels, self.channels)
+            and resolved_policy.channel_metric.shape
+            != (
+                self.channels,
+                self.channels,
+            )
         ):
             raise ValueError("channel_metric size must match the frame output channels.")
 
@@ -623,7 +627,7 @@ class LearnedFunctionFrame(AbstractBasisTrunk):
             resolved_policy.require_physical_quadrature
             and not samples.has_physical_quadrature
         ):
-            invalid_measure = jnp.ones(cases, dtype=bool)
+            invalid_measure = jnp.ones(cases, dtype=jnp.bool_)
         nonfinite = _case_any(measure_active & ~finite_site, axes)
 
         safe_target = jnp.where(active[..., None], target, 0.0)
@@ -905,7 +909,7 @@ class ProjectionBranchEncoder(AbstractBranchEncoder):
         if samples.values is None:
             raise ValueError("Projection branch requires source function values.")
         values = jnp.asarray(samples.values)
-        case_shape = tuple(int(size) for size in values.shape[: int(case_ndim)])
+        case_shape = tuple(values.shape[: int(case_ndim)])
         report = self.project(samples, case_shape=case_shape, key=key)
         return self.map_coefficients(report.require_coefficients(), key=key)
 
@@ -974,7 +978,7 @@ class FunctionFrameEncoding(StrictModule):
         report_values = frozendict(reports)
         if tuple(coefficient_values) != tuple(report_values):
             raise ValueError("Encoding coefficient and report source order must agree.")
-        shape = tuple(int(size) for size in case_shape)
+        shape = tuple(case_shape)
         if any(value.shape[:-1] != shape for value in coefficient_values.values()):
             raise ValueError(
                 "Every source coefficient must have the encoding case shape."
@@ -1177,29 +1181,29 @@ class FunctionFrameReconstructor(AbstractEncodedOperatorModel):
 
 
 for _artifact_id, _artifact_value in (
-    ("phydrax.operator.function_frame:FunctionFrameEncoding@1", FunctionFrameEncoding),
+    ("phydrax.operator.function_frame:FunctionFrameEncoding", FunctionFrameEncoding),
     (
-        "phydrax.operator.function_frame:FunctionProjectionPolicy@1",
+        "phydrax.operator.function_frame:FunctionProjectionPolicy",
         FunctionProjectionPolicy,
     ),
     (
-        "phydrax.operator.function_frame:FunctionProjectionReport@1",
+        "phydrax.operator.function_frame:FunctionProjectionReport",
         FunctionProjectionReport,
     ),
     (
-        "phydrax.operator.function_frame:LearnedFunctionFrame@1",
+        "phydrax.operator.function_frame:LearnedFunctionFrame",
         LearnedFunctionFrame,
     ),
     (
-        "phydrax.operator.function_frame:ProjectionBranchEncoder@1",
+        "phydrax.operator.function_frame:ProjectionBranchEncoder",
         ProjectionBranchEncoder,
     ),
     (
-        "phydrax.operator.function_frame:FunctionFrameSource@1",
+        "phydrax.operator.function_frame:FunctionFrameSource",
         FunctionFrameSource,
     ),
     (
-        "phydrax.operator.function_frame:TopologyFunctionFrameEvaluator@1",
+        "phydrax.operator.function_frame:TopologyFunctionFrameEvaluator",
         TopologyFunctionFrameEvaluator,
     ),
 ):

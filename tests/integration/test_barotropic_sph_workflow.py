@@ -47,7 +47,7 @@ def _compiled_problem(count=8, *, backend="dense"):
 
 def _initial_state(count, amplitude):
     spacing = 1.0 / count
-    lattice = (jnp.arange(count, dtype=float) + 0.5)[:, None] * spacing
+    lattice = (jnp.arange(count, dtype="float64") + 0.5)[:, None] * spacing
     mode = jnp.sin(2.0 * jnp.pi * lattice)
     return lattice + amplitude * mode, jnp.zeros_like(lattice)
 

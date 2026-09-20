@@ -49,7 +49,7 @@ def attach_terminal_optimization_iteration(
     capabilities = IterationCapabilities.terminal_only()
     scope = bind_iteration_scope(iteration, capabilities, algorithm_id)
     diagnostics = result.diagnostics
-    active = jnp.ones_like(result.status, dtype=bool)
+    active = jnp.ones_like(result.status, dtype=jnp.bool_)
     initial = IterationRecord(
         IterationCoordinates(IterationPhase.START, 0, active=active),
         result.status,

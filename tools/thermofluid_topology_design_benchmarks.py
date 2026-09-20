@@ -312,12 +312,10 @@ def run_thermofluid_topology_benchmark(*, smoke=False):
     return {
         "case": "heated-periodic-channel-material-and-resistance-design",
         "envelope": (
-            "2D fixed uniform grid; unit-density Newtonian/Boussinesq; "
-            "constant heat capacity; no dissipation heating"
+            "2D fixed uniform grid; unit-density Newtonian/Boussinesq; constant heat capacity; no dissipation heating"
         ),
         "continuation": (
-            "raw design prolonged and volume-feasibly scaled between grids; "
-            "resistance continuation within each grid"
+            "raw design prolonged and volume-feasibly scaled between grids; resistance continuation within each grid"
         ),
         "records": records,
         "passed": all(record["passed"] for record in records)

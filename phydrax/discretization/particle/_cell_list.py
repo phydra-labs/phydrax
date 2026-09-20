@@ -146,11 +146,11 @@ class PreparedCellListParticleNeighborhood(AbstractPreparedParticleNeighborhood)
             raise TypeError("particles must be a ParticleDiscretization.")
         if plan.box.ambient_dimension != particles.ambient_dimension:
             raise ValueError("ParticleBox dimension does not match particle support.")
-        lengths = np.asarray(plan.box.lengths, dtype=float)
+        lengths = np.asarray(plan.box.lengths, dtype=np.float64)
         shape = tuple(
             max(int(np.floor(length / plan.search_radius)), 1) for length in lengths
         )
-        widths = lengths / np.asarray(shape, dtype=float)
+        widths = lengths / np.asarray(shape, dtype=np.float64)
         if any(
             cells > 1 and width < plan.search_radius
             for cells, width in zip(shape, widths, strict=True)
@@ -163,7 +163,7 @@ class PreparedCellListParticleNeighborhood(AbstractPreparedParticleNeighborhood)
             tuple(product((-1, 0, 1), repeat=particles.ambient_dimension)),
             dtype=np.int32,
         )
-        neighbor_cell_capacity = int(neighbor_offsets.shape[0])
+        neighbor_cell_capacity = neighbor_offsets.shape[0]
         candidate_slots = (
             particles.capacity * neighbor_cell_capacity * plan.maximum_particles_per_cell
         )
@@ -322,7 +322,7 @@ class PreparedCellListParticleNeighborhood(AbstractPreparedParticleNeighborhood)
             raise ValueError(f"Particle positions must have shape {expected}.")
         active = self.active_mask
         if active_mask is not None:
-            requested = jnp.asarray(active_mask, dtype=bool)
+            requested = jnp.asarray(active_mask, dtype=jnp.bool_)
             if requested.shape != (self.particle_capacity,):
                 raise ValueError("active_mask must have particle-capacity shape.")
             active = active & requested

@@ -50,7 +50,7 @@ def _apply_coefficients(
         return matrix @ coefficients + intercept
     cases = _size(case_shape)
     query_shape = matrix.shape[len(case_shape) : -1]
-    q = _size(tuple(int(s) for s in query_shape)) if query_shape else 1
+    q = _size(tuple(query_shape)) if query_shape else 1
     m = matrix.reshape((cases, q, matrix.shape[-1]))
     c = coefficients.reshape((cases, coefficients.shape[-2], coefficients.shape[-1]))
     b = intercept.reshape((cases, intercept.shape[-1]))
@@ -91,8 +91,8 @@ class AbstractKernelLinearModel(AbstractArrayModel):
         self.support_mask = support_mask
         self.kernel = kernel
         self.feature_count = int(feature_count)
-        self.output_shape = tuple(int(size) for size in output_shape)
-        self.case_shape = tuple(int(size) for size in case_shape)
+        self.output_shape = tuple(output_shape)
+        self.case_shape = tuple(case_shape)
         self.method = str(method)
         self.in_size = self.feature_count
         self.out_size = "scalar" if not self.output_shape else self.output_shape
@@ -183,7 +183,7 @@ class KernelRidgeRecipe(AbstractRecipe):
         weight_policy: WeightPolicy = "statistical",
     ):
         self.kernel = validate_kernel(kernel)
-        alpha_ = jnp.asarray(alpha, dtype=float)
+        alpha_ = jnp.asarray(alpha, dtype=jnp.float64)
         if alpha_.ndim != 0:
             raise ValueError("alpha must be scalar.")
         self.alpha = eqx.error_if(
@@ -383,8 +383,8 @@ class SupportVectorClassifierRecipe(AbstractRecipe):
         weight_policy: WeightPolicy = "statistical",
     ):
         self.kernel = validate_kernel(kernel)
-        self.c = jnp.asarray(c, dtype=float)
-        self.learning_rate = jnp.asarray(learning_rate, dtype=float)
+        self.c = jnp.asarray(c, dtype=jnp.float64)
+        self.learning_rate = jnp.asarray(learning_rate, dtype=jnp.float64)
         if self.c.ndim != 0 or self.learning_rate.ndim != 0 or iterations <= 0:
             raise ValueError(
                 "c and learning_rate must be scalar and iterations positive."
@@ -510,9 +510,9 @@ class SupportVectorRegressorRecipe(AbstractRecipe):
         weight_policy: WeightPolicy = "statistical",
     ):
         self.kernel = validate_kernel(kernel)
-        self.c = jnp.asarray(c, dtype=float)
-        self.epsilon = jnp.asarray(epsilon, dtype=float)
-        self.learning_rate = jnp.asarray(learning_rate, dtype=float)
+        self.c = jnp.asarray(c, dtype=jnp.float64)
+        self.epsilon = jnp.asarray(epsilon, dtype=jnp.float64)
+        self.learning_rate = jnp.asarray(learning_rate, dtype=jnp.float64)
         if (
             any(v.ndim != 0 for v in (self.c, self.epsilon, self.learning_rate))
             or iterations <= 0
@@ -649,8 +649,8 @@ class OneClassSVMRecipe(AbstractRecipe):
         weight_policy: WeightPolicy = "statistical",
     ):
         self.kernel = validate_kernel(kernel)
-        self.nu = jnp.asarray(nu, dtype=float)
-        self.learning_rate = jnp.asarray(learning_rate, dtype=float)
+        self.nu = jnp.asarray(nu, dtype=jnp.float64)
+        self.learning_rate = jnp.asarray(learning_rate, dtype=jnp.float64)
         if self.nu.ndim != 0 or self.learning_rate.ndim != 0 or iterations <= 0:
             raise ValueError(
                 "nu and learning_rate must be scalar and iterations positive."

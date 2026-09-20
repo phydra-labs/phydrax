@@ -118,7 +118,7 @@ class EnsembleKalmanResult(StrictModule):
 
     @property
     def ensemble_size(self) -> int:
-        return int(self.residuals.shape[0])
+        return self.residuals.shape[0]
 
     @property
     def mean(self) -> PyTree[Array]:
@@ -451,7 +451,7 @@ def _validate_ensemble(problem, ensemble, expected_count):
 
 def _ensemble_to_matrix(ensemble, count):
     leaves, tree_definition = jax.tree_util.tree_flatten(ensemble)
-    shapes = tuple(tuple(int(size) for size in leaf.shape[1:]) for leaf in leaves)
+    shapes = tuple(tuple(leaf.shape[1:]) for leaf in leaves)
     sizes = tuple(int(jnp.prod(jnp.asarray(shape))) if shape else 1 for shape in shapes)
     matrix = jnp.concatenate(
         [jnp.asarray(leaf).reshape(count, size) for leaf, size in zip(leaves, sizes)],
@@ -488,7 +488,7 @@ def _effective_rank(parameters, tolerance):
 
 def _tree_nbytes(tree: PyTree[Any], /) -> int:
     return sum(
-        int(jnp.asarray(leaf).nbytes)
+        jnp.asarray(leaf).nbytes
         for leaf in jax.tree_util.tree_leaves(tree)
         if eqx.is_array(leaf)
     )

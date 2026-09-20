@@ -92,7 +92,7 @@ def partition_contact_epoch(
     else:
         route_owner = jnp.empty((0,), dtype=jnp.int32)
         ranks = jnp.empty((0, 2), dtype=jnp.int32)
-        valid = jnp.empty((0,), dtype=bool)
+        valid = jnp.empty((0,), dtype=jnp.bool_)
     local_count = jnp.stack(
         tuple(
             jnp.sum(valid & (route_owner == rank), dtype=jnp.int32)

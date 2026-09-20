@@ -15,16 +15,16 @@ def _batch(
     cases: int = 2,
     mask=None,
 ) -> phx.nn.operator.OperatorBatch:
-    nodes = jnp.asarray(coordinates, dtype=float)
+    nodes = jnp.asarray(coordinates, dtype="float64")
     query_coordinates = jnp.broadcast_to(nodes[None, :, None], (cases, nodes.size, 1))
     query = phx.nn.operator.FunctionSamples(
         values=None,
         coordinates=query_coordinates,
         quadrature_weights=jnp.broadcast_to(
-            jnp.asarray(weights, dtype=float),
+            jnp.asarray(weights, dtype="float64"),
             (cases, nodes.size),
         ),
-        mask=None if mask is None else jnp.asarray(mask, dtype=bool),
+        mask=None if mask is None else jnp.asarray(mask, dtype="bool"),
     )
     source = phx.nn.operator.FunctionSamples(
         values=jnp.ones((cases, nodes.size)),
@@ -40,7 +40,7 @@ def _batch(
 
 def _predictive(samples, batch):
     return phx.uq.operator_predictive_from_samples(
-        jnp.asarray(samples, dtype=float),
+        jnp.asarray(samples, dtype="float64"),
         batch,
         phx.nn.operator.OperatorOutputSpec("scalar"),
         sample_axes=(phx.uq.SampleAxis("member", "epistemic"),),

@@ -122,7 +122,7 @@ def run_qualification() -> dict[str, object]:
         supersymmetric_lattice.ScalablePfaffianPlan(maximum_dimension=16),
     )
 
-    metric = np.tile(np.eye(2, dtype=complex), (2, 1, 1))
+    metric = np.tile(np.eye(2, dtype="complex128"), (2, 1, 1))
     ricci = complex_geometry.evaluate_calabi_yau_ricci(
         complex_geometry.KahlerMetricJet(
             metric,
@@ -149,7 +149,7 @@ def run_qualification() -> dict[str, object]:
         ),
         np.asarray(
             ((1.0, np.exp(1j * np.pi / 5.0), 0.0, 0.0, 0.0),),
-            dtype=complex,
+            dtype="complex128",
         ),
     )
 

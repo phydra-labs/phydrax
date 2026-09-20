@@ -288,8 +288,8 @@ def evaluate_fused_coordinate_derivatives(
     point_ = jnp.asarray(point)
     if point_.ndim != 1:
         raise ValueError("Fused coordinate derivatives require one rank-one point.")
-    first = tuple(int(axis) for axis in first_axes)
-    second = tuple(int(axis) for axis in second_axes)
+    first = tuple(first_axes)
+    second = tuple(second_axes)
     if any(axis < 0 or axis >= point_.size for axis in first + second):
         raise ValueError("Fused derivative axis is out of range.")
     value, pushforward = jax.linearize(function, point_)
@@ -327,12 +327,12 @@ def evaluate_fused_coordinate_derivatives(
     ) + tuple(
         DerivativeRequest("__fused__", "__coordinate__", (axis, axis)) for axis in second
     )
-    output_size = sum(int(jnp.size(leaf)) for leaf in jax.tree.leaves(value))
+    output_size = sum(jnp.size(leaf) for leaf in jax.tree.leaves(value))
     plan = (
         plan_derivative_execution(
             requests,
             output_size=output_size,
-            coordinate_size=int(point_.size),
+            coordinate_size=point_.size,
             directional=True,
         )
         if requests

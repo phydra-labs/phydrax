@@ -67,7 +67,7 @@ def _identifier(value: str, name: str, /) -> str:
 def _functional_fingerprint(functional: KernelFunctional, /) -> str:
     return canonical_fingerprint(
         {
-            "kind": "kernel-functional-v1",
+            "kind": "kernel-functional",
             "functional_id": functional.functional_id,
             "exactness": functional.exactness,
             "realization_id": functional.realization_id,
@@ -237,9 +237,7 @@ class JetKernelRepresenter(StrictModule):
         self.field_name = _identifier(field_name, "field_name")
         self.functional_id = _identifier(functional_id, "functional_id")
         self.points = jnp.asarray(points)
-        self.derivative_orders = tuple(
-            tuple(int(value) for value in order) for order in derivative_orders
-        )
+        self.derivative_orders = tuple(tuple(order) for order in derivative_orders)
         self.coefficients = jnp.asarray(coefficients)
 
     def functional(self, metric: ProductFieldKernelMetric, /) -> KernelFunctional:
@@ -283,12 +281,11 @@ class IntegralKernelRepresenter(StrictModule):
             raise TypeError("reduction must be a PreparedLinearReduction.")
         if len(reduction.coefficient_fields) != 1 or reduction.schema.retained_axes:
             raise ValueError(
-                "Kernel integral representers require one scalar, fully reduced "
-                "coefficient field."
+                "Kernel integral representers require one scalar, fully reduced coefficient field."
             )
         points_ = jnp.asarray(points)
-        coefficient_count = int(reduction.coefficient_fields[0].data.size)
-        if points_.ndim < 2 or int(points_.shape[0]) != coefficient_count:
+        coefficient_count = reduction.coefficient_fields[0].data.size
+        if points_.ndim < 2 or points_.shape[0] != coefficient_count:
             raise ValueError(
                 "Integral representer points must align exactly with frozen coefficients."
             )
@@ -402,7 +399,7 @@ class KernelCorrectionEvidence(StrictModule):
         if version < 0 or rank_ < 0 or rows <= 0 or coefficients <= 0:
             raise ValueError("Kernel correction dimensions and versions are invalid.")
         self.numeric_version = jnp.asarray(version, dtype=jnp.int32)
-        self.finite = jnp.asarray(finite, dtype=bool)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
         self.hermitian_residual = jnp.asarray(hermitian_residual)
         self.minimum_diagonal = jnp.asarray(minimum_diagonal)
         self.rank = rank_
@@ -435,7 +432,7 @@ class _KernelFieldEvaluator(StrictModule):
             )
         flattened = tuple(jnp.asarray(value).reshape((-1,)) for value in args)
         point = flattened[0] if len(flattened) == 1 else jnp.concatenate(flattened)
-        if int(point.size) != prod(self.input_shape):
+        if point.size != prod(self.input_shape):
             raise ValueError(
                 f"Kernel query has {point.size} coordinates; expected {prod(self.input_shape)}."
             )
@@ -556,7 +553,7 @@ class _BaseKernelCorrectionPlan(StrictModule):
         self.representation = representation
         self.provider_id = canonical_fingerprint(
             {
-                "kind": "kernel-correction-plan-v1",
+                "kind": "kernel-correction-plan",
                 "representation": representation,
                 "metric": metric.metric_id,
                 "functional": _functional_fingerprint(resolved),
@@ -586,8 +583,7 @@ class _BaseKernelCorrectionPlan(StrictModule):
             != self.functional.row_count
         ):
             raise ValueError(
-                "Kernel functional rows must match the finite affine condition "
-                "codomains exactly."
+                "Kernel functional rows must match the finite affine condition codomains exactly."
             )
         domains: list[Domain] = []
         metric_fields: list[str] = []
@@ -609,11 +605,11 @@ class _BaseKernelCorrectionPlan(StrictModule):
             domains.append(codomain.support.domain)
         shapes_by_field: dict[str, tuple[int, ...]] = {}
         for term in self.functional.terms:
-            shape = tuple(int(size) for size in term.points.shape[1:])
+            shape = tuple(term.points.shape[1:])
             previous = shapes_by_field.setdefault(term.field_name, shape)
             if previous != shape:
                 raise ValueError("One field cannot mix physical kernel input shapes.")
-        fallback = tuple(int(size) for size in self.functional.terms[0].points.shape[1:])
+        fallback = tuple(self.functional.terms[0].points.shape[1:])
         input_shapes = tuple(
             shapes_by_field.get(name, fallback) for name in metric_fields
         )
@@ -645,7 +641,7 @@ class _BaseKernelCorrectionPlan(StrictModule):
         )
         preparation_id = canonical_fingerprint(
             {
-                "kind": "prepared-kernel-correction-v1",
+                "kind": "prepared-kernel-correction",
                 "provider": self.provider_id,
                 "assembly": assembly.assembly_id,
                 "representation": representation,
@@ -800,7 +796,7 @@ class FiniteFeatureKernelCorrectionPlan(_BaseKernelCorrectionPlan):
             basis_functional=None,
             direct_operator=prepared,
             rank=prepared.rank,
-            coefficient_count=int(features.shape[1]),
+            coefficient_count=features.shape[1],
             finite=jnp.all(jnp.isfinite(features)),
             hermitian_residual=jnp.max(jnp.abs(skew), initial=0.0),
             minimum_diagonal=jnp.min(jnp.real(jnp.diag(gram)), initial=jnp.inf),
@@ -828,7 +824,7 @@ class SectionKernelCorrectionPlan(_BaseKernelCorrectionPlan):
         self.require_exact = bool(require_exact)
         self.provider_id = canonical_fingerprint(
             {
-                "kind": "selected-section-kernel-correction-v1",
+                "kind": "selected-section-kernel-correction",
                 "metric": metric.metric_id,
                 "functional": _functional_fingerprint(self.functional),
                 "sections": _functional_fingerprint(self.sections),

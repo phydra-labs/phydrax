@@ -48,7 +48,7 @@ class Translation(GeometrySource):
     ):
         if not isinstance(child, GeometrySource):
             raise TypeError("Translation.child must be a GeometrySource.")
-        offset_ = np.asarray(offset, dtype=float)
+        offset_ = np.asarray(offset, dtype=np.float64)
         if offset_.ndim != 1 or offset_.size == 0:
             raise ValueError("Translation.offset must be a non-empty vector.")
         if not np.all(np.isfinite(offset_)):
@@ -56,7 +56,7 @@ class Translation(GeometrySource):
         if feature_id is not None and not feature_id:
             raise ValueError("feature_id must be non-empty.")
         self.child = child
-        self.offset = jnp.asarray(offset_, dtype=float)
+        self.offset = jnp.asarray(offset_, dtype=jnp.float64)
         self.feature_id = feature_id or f"translation-{uuid4().hex}"
 
     def _compile(self, context: _ParameterCollector, /) -> GeometryKernel:

@@ -159,7 +159,7 @@ def _provider_case():
         phx.chemistry.ExternalElectronicMethodPlan(
             "provider-scalar-relativistic",
             phx.chemistry.ElectronicReferenceKind.RESTRICTED,
-            definition_ids=("scalar-relativistic-v1", "gth-fixture-v1"),
+            definition_ids=("scalar-relativistic", "gth-fixture"),
         ),
         basis=phx.chemistry.BasisSetReference("periodic-fixture", "qualification"),
     )

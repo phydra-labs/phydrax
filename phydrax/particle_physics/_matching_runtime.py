@@ -82,7 +82,7 @@ class NamedWeightSnapshot(StrictModule, NonTrainableState):
         correlation_groups: Sequence[str],
     ):
         values_ = jnp.asarray(values)
-        active = jnp.asarray(event_active, dtype=bool)
+        active = jnp.asarray(event_active, dtype=jnp.bool_)
         names_ = tuple(str(value).strip() for value in names)
         kinds = tuple(WeightVariationKind(value) for value in variation_kinds)
         groups = tuple(str(value).strip() for value in correlation_groups)
@@ -160,8 +160,8 @@ def assign_exclusive_matching_bins(
     """Assign disjoint jet bins; the largest declared bin is inclusive above its edge."""
 
     scales = jnp.asarray(resolution_scales)
-    active = jnp.asarray(scale_active, dtype=bool)
-    bins = tuple(int(value) for value in multiplicities)
+    active = jnp.asarray(scale_active, dtype=jnp.bool_)
+    bins = tuple(multiplicities)
     threshold = float(merging_scale)
     if scales.ndim != 2 or active.shape != scales.shape:
         raise ValueError(

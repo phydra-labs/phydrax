@@ -147,8 +147,7 @@ class ConstrainedFeedbackGameProblem(StrictModule):
         partition = model.partition
         if constraints.partition.partition_id != partition.partition_id:
             raise ValueError(
-                "constraints and the local suggestion must use the same player "
-                "control partition."
+                "constraints and the local suggestion must use the same player control partition."
             )
         if any(block.site is not GameConstraintSite.PATH for block in constraints.blocks):
             raise ValueError(
@@ -204,7 +203,7 @@ class ConstrainedFeedbackGameProblem(StrictModule):
             default_dtype=residuals.dtype,
         )
         if active_set is None:
-            active = jnp.zeros(expected_residual, dtype=bool)
+            active = jnp.zeros(expected_residual, dtype=jnp.bool_)
         else:
             active = jnp.asarray(active_set)
             if active.dtype != jnp.bool_:
@@ -213,7 +212,7 @@ class ConstrainedFeedbackGameProblem(StrictModule):
                 raise ValueError(
                     f"active_set must have shape {expected_residual}; got {active.shape}."
                 )
-        equality_mask = jnp.asarray(equality, dtype=bool)
+        equality_mask = jnp.asarray(equality, dtype=jnp.bool_)
         if num_constraints:
             missing_equalities = jnp.any(equality_mask & ~active, axis=-1)
             active = eqx.error_if(
@@ -237,8 +236,8 @@ class ConstrainedFeedbackGameProblem(StrictModule):
         licq_incidence = []
         for player in copy_players:
             if player < 0:
-                stationarity_incidence.append(jnp.ones((control_size,), dtype=bool))
-                licq_incidence.append(jnp.ones((control_size,), dtype=bool))
+                stationarity_incidence.append(jnp.ones((control_size,), dtype=jnp.bool_))
+                licq_incidence.append(jnp.ones((control_size,), dtype=jnp.bool_))
             else:
                 owned_controls = control_owner == player
                 stationarity_incidence.append(owned_controls)
@@ -246,18 +245,18 @@ class ConstrainedFeedbackGameProblem(StrictModule):
         stationarity_mask = (
             jnp.stack(stationarity_incidence, axis=-1)
             if stationarity_incidence
-            else jnp.zeros((control_size, 0), dtype=bool)
+            else jnp.zeros((control_size, 0), dtype=jnp.bool_)
         )
         licq_mask = (
             jnp.stack(licq_incidence, axis=0)
             if licq_incidence
-            else jnp.zeros((0, control_size), dtype=bool)
+            else jnp.zeros((0, control_size), dtype=jnp.bool_)
         )
-        constraint_mask = jnp.ones((num_multipliers, control_size), dtype=bool)
+        constraint_mask = jnp.ones((num_multipliers, control_size), dtype=jnp.bool_)
         multiplier_equalities = (
             equality_mask[jnp.asarray(copy_constraints, dtype=jnp.int32)]
             if copy_constraints
-            else jnp.zeros((0,), dtype=bool)
+            else jnp.zeros((0,), dtype=jnp.bool_)
         )
 
         dtype = jnp.result_type(
@@ -265,7 +264,7 @@ class ConstrainedFeedbackGameProblem(StrictModule):
             state_jacobians,
             control_jacobians,
             model.nominal_controls,
-            float,
+            jnp.float64,
         )
         self.suggestion = suggestion
         self.constraints = constraints
@@ -483,7 +482,7 @@ def _optional_array(
         raise TypeError(f"{name} must be real-valued.")
     if tuple(array.shape) != shape:
         raise ValueError(f"{name} must have shape {shape}; got {array.shape}.")
-    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype(float)
+    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype("float64")
 
 
 def _positive(value: float, name: str, /) -> float:
@@ -882,7 +881,7 @@ def solve_feedback_quasi_nash_model(
         curvature_valid = jnp.all(own_minimum > plan.curvature_tolerance, axis=-1)
         kkt_rank_valid = kkt_rank == (m + multipliers_count)
         condition_valid = (
-            jnp.ones_like(condition, dtype=bool)
+            jnp.ones_like(condition, dtype=jnp.bool_)
             if plan.maximum_condition is None
             else condition <= plan.maximum_condition
         )

@@ -15,7 +15,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...ein import contract
 from ...linalg import DenseLinearOperator, OperatorProperties
@@ -75,7 +75,7 @@ class ExcitedStateDerivativeResult(StrictModule, NonTrainableState):
         self.derivative_couplings = couplings
         self.energy_weighted_couplings = weighted
         self.residuals = residual
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.route = route_
         self.manifold_id = manifold
         self.result_id = canonical_fingerprint(
@@ -101,7 +101,7 @@ class ExcitedStateDerivativeResult(StrictModule, NonTrainableState):
 
 
 class AbstractExcitedDerivativeProvider(StrictModule, NonTrainableState):
-    provider_id: AbstractAttribute[str]
+    provider_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def evaluate(
@@ -296,7 +296,7 @@ class TDAPropertyDerivativeResult(StrictModule, NonTrainableState):
         self.transition_dipole_derivatives = dipole
         self.oscillator_strength_derivatives = oscillator
         self.eigenvector_derivative_residuals = residual
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.representation_id = str(representation_id)
         self.result_id = canonical_fingerprint(
             {

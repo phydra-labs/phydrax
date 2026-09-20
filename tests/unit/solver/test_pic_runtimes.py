@@ -105,7 +105,9 @@ def test_electromagnetic_pic_preserves_gauss_with_charge_separation_and_current(
     field = pic.electrostatic.solve(charge)
     weights = pic.electrostatic.bridge.cochain.hodge_stars[0]
     assert jnp.sum(weights * charge * field.potential) > 0.0
-    np.testing.assert_allclose(maxwell.electric_constraint(state.maxwell), 0.0, atol=1e-10)
+    np.testing.assert_allclose(
+        maxwell.electric_constraint(state.maxwell), 0.0, atol=1e-10
+    )
 
     result = pic.step_detailed(state, dt)
     assert result.successful

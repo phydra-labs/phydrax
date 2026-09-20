@@ -109,7 +109,7 @@ class CashflowBatch(StrictModule, NonTrainableState):
         payment = np.zeros((capacity_,), dtype=np.int32)
         amount_values = np.zeros((capacity_,), dtype=amount_host.dtype)
         currency_indices = np.zeros((capacity_,), dtype=np.int32)
-        valid = np.zeros((capacity_,), dtype=bool)
+        valid = np.zeros((capacity_,), dtype=np.bool_)
         status = np.zeros((capacity_,), dtype=np.int32)
         if count:
             payment[:count] = np.asarray(

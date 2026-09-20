@@ -133,7 +133,7 @@ class KernelCertificate(StrictModule):
         )
         right_mask = jnp.arange(right.capacity) < right.dimension
         left_mask = (
-            jnp.zeros((0,), dtype=bool)
+            jnp.zeros((0,), dtype=jnp.bool_)
             if left is None
             else jnp.arange(left.capacity) < left.dimension
         )

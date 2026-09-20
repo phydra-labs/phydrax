@@ -321,7 +321,7 @@ def build_unstructured_conservative_remap(
     )
 
     empty_ids = np.empty((0,), dtype=np.int64)
-    empty_defects = np.empty((0,), dtype=float)
+    empty_defects = np.empty((0,), dtype=np.float64)
     empty = np.asarray((0,), dtype=np.int32)
     try:
         tol = float(tolerance)
@@ -337,7 +337,7 @@ def build_unstructured_conservative_remap(
             plan=None,
             offsets=empty,
             indices=np.empty((0,), dtype=np.int32),
-            measures=np.empty((0,), dtype=float),
+            measures=np.empty((0,), dtype=np.float64),
             target_routes=np.empty((0,), dtype=np.int32),
             source_ids=empty_ids,
             target_ids=empty_ids,
@@ -357,7 +357,7 @@ def build_unstructured_conservative_remap(
             plan=None,
             offsets=empty,
             indices=np.empty((0,), dtype=np.int32),
-            measures=np.empty((0,), dtype=float),
+            measures=np.empty((0,), dtype=np.float64),
             target_routes=np.empty((0,), dtype=np.int32),
             source_ids=empty_ids,
             target_ids=empty_ids,
@@ -378,13 +378,13 @@ def build_unstructured_conservative_remap(
             plan=None,
             offsets=np.zeros((target.cell_count + 1,), dtype=np.int32),
             indices=np.empty((0,), dtype=np.int32),
-            measures=np.empty((0,), dtype=float),
+            measures=np.empty((0,), dtype=np.float64),
             target_routes=np.empty((0,), dtype=np.int32),
             source_ids=empty_ids,
             target_ids=empty_ids,
             pair_ids=(),
-            target_defects=np.empty((target.cell_count,), dtype=float),
-            source_defects=np.empty((source.cell_count,), dtype=float),
+            target_defects=np.empty((target.cell_count,), dtype=np.float64),
+            source_defects=np.empty((source.cell_count,), dtype=np.float64),
             candidate_count=0,
             accepted_count=0,
             provenance=prov,
@@ -403,8 +403,8 @@ def build_unstructured_conservative_remap(
             target.cell_count,
             target.cell_global_ids,
         )
-        vertices_source = np.asarray(source.vertices, dtype=float)
-        vertices_target = np.asarray(target.vertices, dtype=float)
+        vertices_source = np.asarray(source.vertices, dtype=np.float64)
+        vertices_target = np.asarray(target.vertices, dtype=np.float64)
         source_cells = (
             [
                 vertices_source[cell]
@@ -436,16 +436,16 @@ def build_unstructured_conservative_remap(
             ]
         )
         source_min = np.asarray(
-            [np.min(cell, axis=0) for cell in source_cells], dtype=float
+            [np.min(cell, axis=0) for cell in source_cells], dtype=np.float64
         )
         source_max = np.asarray(
-            [np.max(cell, axis=0) for cell in source_cells], dtype=float
+            [np.max(cell, axis=0) for cell in source_cells], dtype=np.float64
         )
         target_min = np.asarray(
-            [np.min(cell, axis=0) for cell in target_cells], dtype=float
+            [np.min(cell, axis=0) for cell in target_cells], dtype=np.float64
         )
         target_max = np.asarray(
-            [np.max(cell, axis=0) for cell in target_cells], dtype=float
+            [np.max(cell, axis=0) for cell in target_cells], dtype=np.float64
         )
     except Exception as error:
         return _result(
@@ -453,13 +453,13 @@ def build_unstructured_conservative_remap(
             plan=None,
             offsets=np.zeros((target.cell_count + 1,), dtype=np.int32),
             indices=np.empty((0,), dtype=np.int32),
-            measures=np.empty((0,), dtype=float),
+            measures=np.empty((0,), dtype=np.float64),
             target_routes=np.empty((0,), dtype=np.int32),
             source_ids=empty_ids,
             target_ids=empty_ids,
             pair_ids=(),
-            target_defects=np.zeros((target.cell_count,), dtype=float),
-            source_defects=np.zeros((source.cell_count,), dtype=float),
+            target_defects=np.zeros((target.cell_count,), dtype=np.float64),
+            source_defects=np.zeros((source.cell_count,), dtype=np.float64),
             candidate_count=0,
             accepted_count=0,
             provenance=prov,
@@ -488,13 +488,13 @@ def build_unstructured_conservative_remap(
             plan=None,
             offsets=np.zeros((target.cell_count + 1,), dtype=np.int32),
             indices=np.empty((0,), dtype=np.int32),
-            measures=np.empty((0,), dtype=float),
+            measures=np.empty((0,), dtype=np.float64),
             target_routes=np.empty((0,), dtype=np.int32),
             source_ids=empty_ids,
             target_ids=empty_ids,
             pair_ids=(),
-            target_defects=np.zeros((target.cell_count,), dtype=float),
-            source_defects=np.zeros((source.cell_count,), dtype=float),
+            target_defects=np.zeros((target.cell_count,), dtype=np.float64),
+            source_defects=np.zeros((source.cell_count,), dtype=np.float64),
             candidate_count=0,
             accepted_count=0,
             provenance=prov,
@@ -527,13 +527,13 @@ def build_unstructured_conservative_remap(
             plan=None,
             offsets=np.zeros((target.cell_count + 1,), dtype=np.int32),
             indices=np.empty((0,), dtype=np.int32),
-            measures=np.empty((0,), dtype=float),
+            measures=np.empty((0,), dtype=np.float64),
             target_routes=np.empty((0,), dtype=np.int32),
             source_ids=empty_ids,
             target_ids=empty_ids,
             pair_ids=(),
-            target_defects=np.zeros((target.cell_count,), dtype=float),
-            source_defects=np.zeros((source.cell_count,), dtype=float),
+            target_defects=np.zeros((target.cell_count,), dtype=np.float64),
+            source_defects=np.zeros((source.cell_count,), dtype=np.float64),
             candidate_count=candidate_count,
             accepted_count=0,
             provenance=prov,
@@ -585,7 +585,7 @@ def build_unstructured_conservative_remap(
                         evidence.uncertain_count,
                     )
                 )
-                intersection_vertices += int(artifact.vertices.shape[0])
+                intersection_vertices += artifact.vertices.shape[0]
                 if intersection_vertices > resource_limits.max_intersection_vertices:
                     raise OverflowError("intersection vertex resource limit exceeded")
                 if artifact.status is IntersectionStatus.SUCCESS:
@@ -662,7 +662,7 @@ def build_unstructured_conservative_remap(
                     float(source_volume_values[source_index]),
                     float(target_volume_values[target_index]),
                 ),
-                np.finfo(float).tiny,
+                np.finfo(np.float64).tiny,
             )
             if measure / scale < tol:
                 predicate_uncertain += 1
@@ -676,13 +676,13 @@ def build_unstructured_conservative_remap(
             plan=None,
             offsets=np.zeros((target.cell_count + 1,), dtype=np.int32),
             indices=np.empty((0,), dtype=np.int32),
-            measures=np.empty((0,), dtype=float),
+            measures=np.empty((0,), dtype=np.float64),
             target_routes=np.empty((0,), dtype=np.int32),
             source_ids=empty_ids,
             target_ids=empty_ids,
             pair_ids=(),
-            target_defects=np.zeros((target.cell_count,), dtype=float),
-            source_defects=np.zeros((source.cell_count,), dtype=float),
+            target_defects=np.zeros((target.cell_count,), dtype=np.float64),
+            source_defects=np.zeros((source.cell_count,), dtype=np.float64),
             candidate_count=candidate_count,
             accepted_count=0,
             provenance=prov,
@@ -699,13 +699,13 @@ def build_unstructured_conservative_remap(
             plan=None,
             offsets=np.zeros((target.cell_count + 1,), dtype=np.int32),
             indices=np.empty((0,), dtype=np.int32),
-            measures=np.empty((0,), dtype=float),
+            measures=np.empty((0,), dtype=np.float64),
             target_routes=np.empty((0,), dtype=np.int32),
             source_ids=empty_ids,
             target_ids=empty_ids,
             pair_ids=(),
-            target_defects=np.zeros((target.cell_count,), dtype=float),
-            source_defects=np.zeros((source.cell_count,), dtype=float),
+            target_defects=np.zeros((target.cell_count,), dtype=np.float64),
+            source_defects=np.zeros((source.cell_count,), dtype=np.float64),
             candidate_count=candidate_count,
             accepted_count=0,
             provenance=prov,
@@ -719,17 +719,17 @@ def build_unstructured_conservative_remap(
     records.sort(
         key=lambda record: (int(target_ids[record[0]]), int(source_ids[record[1]]))
     )
-    target_coverage = np.zeros((target.cell_count,), dtype=float)
-    source_coverage = np.zeros((source.cell_count,), dtype=float)
+    target_coverage = np.zeros((target.cell_count,), dtype=np.float64)
+    source_coverage = np.zeros((source.cell_count,), dtype=np.float64)
     for target_index, source_index, measure in records:
         target_coverage[target_index] += measure
         source_coverage[source_index] += measure
-    target_volumes = np.asarray(target.cell_volumes, dtype=float)
-    source_volumes = np.asarray(source.cell_volumes, dtype=float)
+    target_volumes = np.asarray(target.cell_volumes, dtype=np.float64)
+    source_volumes = np.asarray(source.cell_volumes, dtype=np.float64)
     target_defects = target_coverage - target_volumes
     source_defects = source_coverage - source_volumes
-    target_scale = np.maximum(target_volumes, np.finfo(float).tiny)
-    source_scale = np.maximum(source_volumes, np.finfo(float).tiny)
+    target_scale = np.maximum(target_volumes, np.finfo(np.float64).tiny)
+    source_scale = np.maximum(source_volumes, np.finfo(np.float64).tiny)
     coverage_ok = bool(
         np.all(np.isfinite(target_defects))
         and np.all(np.isfinite(source_defects))
@@ -754,7 +754,7 @@ def build_unstructured_conservative_remap(
         offsets[target_index + 1] += 1
     np.cumsum(offsets, out=offsets)
     indices = np.asarray([source_index for _, source_index, _ in records], dtype=np.int32)
-    measures = np.asarray([measure for _, _, measure in records], dtype=float)
+    measures = np.asarray([measure for _, _, measure in records], dtype=np.float64)
     target_routes = np.asarray(
         [target_index for target_index, _, _ in records], dtype=np.int32
     )

@@ -363,7 +363,7 @@ def _validate_descriptor(
         if (
             arrays[payload].shape != shape
             or arrays[valid_ref].shape != shape
-            or arrays[valid_ref].dtype != np.dtype(bool)
+            or arrays[valid_ref].dtype != np.dtype(np.bool_)
         ):
             raise ValueError(f"Payload shape or mask mismatch for {name!r}.")
         if not np.all(np.isfinite(arrays[payload][arrays[valid_ref]])):
@@ -569,7 +569,10 @@ def from_cf_dataset(
             )
         if var.attrs.get("GRIB_uvRelativeToGrid", 0) and var.attrs.get(
             "standard_name"
-        ) in {"eastward_wind", "northward_wind"}:
+        ) in {
+            "eastward_wind",
+            "northward_wind",
+        }:
             _fail("Grid-relative GRIB winds require an explicit vector-frame conversion.")
         if (
             var.attrs.get("GRIB_typeOfLevel") in {"hybrid", "hybridLayer"}
@@ -615,7 +618,7 @@ def from_cf_dataset(
     _bound_metadata(metadata, limits)
     # Check shape/dtype metadata BEFORE triggering any lazy reads or decompression.
     eager_bytes = sum(
-        int(dataset[name].size) * (max(8, dataset[name].dtype.itemsize) + 1)
+        dataset[name].size * (max(8, dataset[name].dtype.itemsize) + 1)
         for name in selected
     )
     if eager_bytes > limits.max_bytes:

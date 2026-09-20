@@ -82,8 +82,8 @@ class OneSidedPowerSpectralDensity(StrictModule, NonTrainableState):
         interval = float(sample_interval)
         if count < 4 or not np.isfinite(interval) or interval <= 0.0:
             raise ValueError("PSD sample count and interval must be finite and positive.")
-        frequency_host = np.asarray(frequency, dtype=float)
-        values_host = np.asarray(values, dtype=float)
+        frequency_host = np.asarray(frequency, dtype=np.float64)
+        values_host = np.asarray(values, dtype=np.float64)
         expected = _canonical_frequency(count, interval)
         if (
             frequency_host.shape != expected.shape
@@ -94,15 +94,17 @@ class OneSidedPowerSpectralDensity(StrictModule, NonTrainableState):
                 frequency_host,
                 expected,
                 rtol=0.0,
-                atol=16.0 * np.finfo(float).eps / interval,
+                atol=16.0 * np.finfo(np.float64).eps / interval,
             )
         ):
             raise ValueError("PSD must use the exact canonical one-sided FFT grid.")
-        default_active = np.ones(expected.shape, dtype=bool)
+        default_active = np.ones(expected.shape, dtype=np.bool_)
         default_active[0] = False
         if count % 2 == 0:
             default_active[-1] = False
-        active_host = default_active if active is None else np.asarray(active, dtype=bool)
+        active_host = (
+            default_active if active is None else np.asarray(active, dtype=np.bool_)
+        )
         if active_host.shape != expected.shape or not np.any(active_host):
             raise ValueError("PSD active mask must select at least one frequency bin.")
         if active_host[0] or (count % 2 == 0 and active_host[-1]):
@@ -173,7 +175,7 @@ class DetectorStrainData(StrictModule, NonTrainableState):
         start = float(start_time_gps)
         power = float(window_power)
         values = np.asarray(strain)
-        active_host = np.asarray(psd.active if active is None else active, dtype=bool)
+        active_host = np.asarray(psd.active if active is None else active, dtype=np.bool_)
         if (
             values.shape != tuple(psd.frequency.shape)
             or not np.issubdtype(values.dtype, np.complexfloating)

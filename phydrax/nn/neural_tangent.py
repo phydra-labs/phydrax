@@ -73,9 +73,7 @@ class PreparedEmpiricalNTK(StrictModule):
         def inverse_metric(cotangent):
             if parameter_geometry is None:
                 return cotangent
-            return parameter_geometry.egrad_to_rgrad(
-                linearization.point, cotangent
-            )
+            return parameter_geometry.egrad_to_rgrad(linearization.point, cotangent)
 
         def kernel_action(cotangent):
             parameter_cotangent = linearization.vjp(cotangent)
@@ -250,8 +248,7 @@ class NTKDiagnosticsPolicy(StrictModule):
         rank_tolerance: float = 1e-8,
     ):
         integers = tuple(
-            int(value)
-            for value in (
+            (
                 dense_max_dimension,
                 num_probes,
                 eigenvalue_count,
@@ -259,7 +256,11 @@ class NTKDiagnosticsPolicy(StrictModule):
             )
         )
         tolerance = float(rank_tolerance)
-        if any(value < 1 for value in integers) or not isfinite(tolerance) or tolerance < 0:
+        if (
+            any(value < 1 for value in integers)
+            or not isfinite(tolerance)
+            or tolerance < 0
+        ):
             raise ValueError("NTK diagnostic capacities or rank tolerance are invalid.")
         (
             self.dense_max_dimension,
@@ -304,7 +305,7 @@ def _dense_diagnostics(
     diagonal = jnp.real(jnp.diag(matrix))
     values = jnp.real(jnp.linalg.eigvalsh(matrix))
     descending = values[::-1]
-    count = min(policy.eigenvalue_count, int(values.size))
+    count = min(policy.eigenvalue_count, values.size)
     leading = descending[:count]
     trace = jnp.sum(values)
     trace_square = jnp.sum(values**2)

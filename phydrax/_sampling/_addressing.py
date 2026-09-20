@@ -15,7 +15,7 @@ from jaxtyping import Array, Key
 from .._strict import StrictModule
 
 
-_ADDRESS_NAMESPACE = b"phydrax-sample-address-v1\0"
+_ADDRESS_NAMESPACE = b"phydrax-sample-address\0"
 
 
 class SampleAddress(StrictModule):
@@ -23,7 +23,6 @@ class SampleAddress(StrictModule):
 
     namespace: str = eqx.field(static=True)
     operation: str = eqx.field(static=True)
-    algorithm_version: int = eqx.field(static=True)
     target: tuple[str, ...] = eqx.field(static=True)
     role: str = eqx.field(static=True)
     token: int = eqx.field(static=True)
@@ -34,15 +33,11 @@ class SampleAddress(StrictModule):
         operation: str,
         /,
         *,
-        algorithm_version: int = 1,
         target: str | Sequence[str] = (),
         role: str = "sample",
     ):
         namespace_ = _nonempty(namespace, "namespace")
         operation_ = _nonempty(operation, "operation")
-        version = int(algorithm_version)
-        if version < 1:
-            raise ValueError("algorithm_version must be positive.")
         if isinstance(target, str):
             target_ = (_nonempty(target, "target"),)
         else:
@@ -50,13 +45,11 @@ class SampleAddress(StrictModule):
         role_ = _nonempty(role, "role")
         self.namespace = namespace_
         self.operation = operation_
-        self.algorithm_version = version
         self.target = target_
         self.role = role_
         self.token = _address_token(
             namespace_,
             operation_,
-            str(version),
             *target_,
             role_,
         )

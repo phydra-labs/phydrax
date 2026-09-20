@@ -54,10 +54,10 @@ class BatchedBeliefPropagationState(StrictModule):
         evidence_values = jnp.asarray(evidence)
         if message_values.ndim != 2 or evidence_values.ndim != 2:
             raise ValueError("Batched BP messages/evidence require leading case axes.")
-        if int(message_values.shape[0]) != int(evidence_values.shape[0]):
+        if message_values.shape[0] != evidence_values.shape[0]:
             raise ValueError("Batched BP messages and evidence must share case count.")
         index = jnp.asarray(step_index, dtype=jnp.int32)
-        if index.shape not in ((), (int(message_values.shape[0]),)):
+        if index.shape not in ((), (message_values.shape[0],)):
             raise ValueError("step_index must be scalar or one value per case.")
         self.messages = message_values
         self.evidence = evidence_values
@@ -66,7 +66,7 @@ class BatchedBeliefPropagationState(StrictModule):
 
     @property
     def num_cases(self) -> int:
-        return int(self.messages.shape[0])
+        return self.messages.shape[0]
 
 
 class BatchedBeliefPropagationResult(StrictModule):
@@ -132,7 +132,7 @@ def batch_belief_propagation(
         raise ValueError("Batched state structure does not match the prepared graph.")
     if state.messages.shape[1:] != (prepared.message_count,):
         raise ValueError("Batched message width does not match the prepared plan.")
-    if state.evidence.shape[1:] != (int(prepared.state_variable_indices.shape[0]),):
+    if state.evidence.shape[1:] != (prepared.state_variable_indices.shape[0],):
         raise ValueError("Batched evidence width does not match the prepared graph.")
 
     def one(messages, evidence, step):
@@ -175,7 +175,7 @@ def pack_factor_graphs(
         variable_offsets.append(variable_offsets[-1] + graph.num_variables)
         factor_offsets.append(factor_offsets[-1] + graph.num_factors)
         incidence_offsets.append(
-            incidence_offsets[-1] + int(graph.topology.incidence_edges.shape[0])
+            incidence_offsets[-1] + graph.topology.incidence_edges.shape[0]
         )
     batch_id = canonical_fingerprint(
         {
@@ -218,7 +218,7 @@ def sample_gibbs_per_chain_clamps(
     clamped: ArrayLike,
 ) -> tuple[GibbsSampleResult, ...]:
     """Run independent persistent chains with distinct clamped-site masks."""
-    masks = jnp.asarray(clamped, dtype=bool)
+    masks = jnp.asarray(clamped, dtype=jnp.bool_)
     expected = (state.num_chains, prepared.graph.num_variables)
     if masks.shape != expected:
         raise ValueError(f"clamped must have shape {expected}; got {masks.shape}.")

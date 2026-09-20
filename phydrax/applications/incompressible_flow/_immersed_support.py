@@ -443,8 +443,7 @@ class ImmersedBodyRegimePlan(StrictModule, NonTrainableState):
             constraint_count <= 0 or constraint_count > full_constraint_count
         ):
             raise ValueError(
-                "marker_constraint_count must be positive and cannot exceed the "
-                "owner marker coordinate count."
+                "marker_constraint_count must be positive and cannot exceed the owner marker coordinate count."
             )
         self.owner = owner
         self.sharp_epoch_owner = sharp_epoch_owner

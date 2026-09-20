@@ -17,13 +17,10 @@ from ._chunks import (
     sample_markov_chunked,
 )
 from ._designs import (
-    get_sampler,
-    get_sampler_host,
     host_design,
     host_design_factory,
     materialize_design,
     seed_from_key,
-    unit_design,
 )
 from ._hamiltonian import (
     adapt_hamiltonian_kernel,
@@ -63,7 +60,6 @@ from ._targets import (
 from ._transports import UnitCubeTransport
 from ._types import (
     AntitheticDesign,
-    DESIGN_ALGORITHM_VERSION,
     design_capabilities,
     design_name,
     design_signature,
@@ -89,7 +85,6 @@ __all__ = [
     "AbstractProposal",
     "AntitheticDesign",
     "CallableProposal",
-    "DESIGN_ALGORITHM_VERSION",
     "DesignCapabilities",
     "DesignLike",
     "DesignName",
@@ -133,8 +128,6 @@ __all__ = [
     "adapt_proposal_scale",
     "design_capabilities",
     "design_name",
-    "get_sampler",
-    "get_sampler_host",
     "host_design",
     "host_design_factory",
     "initialize_hamiltonian_state",
@@ -147,5 +140,4 @@ __all__ = [
     "sample_markov",
     "sample_hamiltonian",
     "sample_markov_chunked",
-    "unit_design",
 ]

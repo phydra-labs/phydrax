@@ -36,6 +36,24 @@ class ConservativeSmallCellRedistributionEvidence(NamedTuple):
     route_count: int
 
 
+class _PreparedSmallCellData(NamedTuple):
+    active_cells: Array
+    small_cells: Array
+    source_cells: Array
+    recipient_cells: Array
+    recipient_face_ids: Array
+    recipient_mask: Array
+    weights: Array
+    local_retention_fractions: Array
+    report: ConservativeSmallCellRedistributionReport
+    plan_id: str
+    evidence: ConservativeSmallCellRedistributionEvidence
+    redistribution_owner_cells: tuple[int, ...]
+    redistribution_neighbor_cells: tuple[int, ...]
+    redistribution_route_indices: tuple[int, ...]
+    redistribution_block_id: str
+
+
 class ConservativeSmallCellRedistributionReport(StrictModule, NonTrainableState):
     small_cell_count: Array
     route_count: Array
@@ -75,17 +93,36 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     evidence: ConservativeSmallCellRedistributionEvidence = eqx.field(static=True)
     redistribution_owner_cells: tuple[int, ...] = eqx.field(static=True)
-    redistribution_neighbour_cells: tuple[int, ...] = eqx.field(static=True)
+    redistribution_neighbor_cells: tuple[int, ...] = eqx.field(static=True)
     redistribution_route_indices: tuple[int, ...] = eqx.field(static=True)
     redistribution_block_id: str = eqx.field(static=True)
 
     def __init__(
         self,
-        discretization: UnstructuredFiniteVolumeDiscretization,
-        metrics: EmbeddedBoundaryMetrics,
-        policy: EmbeddedBoundaryStabilizationPolicy,
+        discretization: UnstructuredFiniteVolumeDiscretization | None,
+        metrics: EmbeddedBoundaryMetrics | None,
+        policy: EmbeddedBoundaryStabilizationPolicy | None,
         /,
+        *,
+        _prepared: _PreparedSmallCellData | None = None,
     ):
+        if _prepared is not None:
+            self.active_cells = _prepared.active_cells
+            self.small_cells = _prepared.small_cells
+            self.source_cells = _prepared.source_cells
+            self.recipient_cells = _prepared.recipient_cells
+            self.recipient_face_ids = _prepared.recipient_face_ids
+            self.recipient_mask = _prepared.recipient_mask
+            self.weights = _prepared.weights
+            self.local_retention_fractions = _prepared.local_retention_fractions
+            self.report = _prepared.report
+            self.plan_id = _prepared.plan_id
+            self.evidence = _prepared.evidence
+            self.redistribution_owner_cells = _prepared.redistribution_owner_cells
+            self.redistribution_neighbor_cells = _prepared.redistribution_neighbor_cells
+            self.redistribution_route_indices = _prepared.redistribution_route_indices
+            self.redistribution_block_id = _prepared.redistribution_block_id
+            return
         if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
             raise TypeError(
                 "Small-cell redistribution requires prepared unstructured FV geometry."
@@ -120,9 +157,9 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
             )
 
         cell_count = discretization.cell_count
-        face_count = int(discretization.face_measures.size)
+        face_count = discretization.face_measures.size
         owner_cells = np.asarray(discretization.owner_cells)
-        neighbour_cells = np.asarray(discretization.neighbour_cells)
+        neighbor_cells = np.asarray(discretization.neighbor_cells)
         stable_cell_ids = np.asarray(discretization.cell_global_ids)
         base_face_measures = np.asarray(discretization.face_measures)
         open_face_measures = np.asarray(metrics.open_face_measures)
@@ -131,19 +168,19 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
 
         if (
             owner_cells.shape != (face_count,)
-            or neighbour_cells.shape != (face_count,)
+            or neighbor_cells.shape != (face_count,)
             or open_face_measures.shape != (face_count,)
             or base_face_measures.shape != (face_count,)
         ):
             raise ValueError(
                 "Face routes and open face measures must contain one entry per face."
             )
-        if owner_cells.dtype.kind not in "iu" or neighbour_cells.dtype.kind not in "iu":
+        if owner_cells.dtype.kind not in "iu" or neighbor_cells.dtype.kind not in "iu":
             raise TypeError("Unstructured face routes must be integer arrays.")
         if (
             np.any(owner_cells < 0)
             or np.any(owner_cells >= cell_count)
-            or np.any((neighbour_cells < -1) | (neighbour_cells >= cell_count))
+            or np.any((neighbor_cells < -1) | (neighbor_cells >= cell_count))
         ):
             raise ValueError("Unstructured face routes contain an invalid cell index.")
         if (
@@ -181,7 +218,7 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
         stable_recipient_cells = active_cells & (volume_fractions >= minimum_fraction)
         source_cells = np.flatnonzero(small_cells).astype(np.int32)
         evidence_small_cell_count = int(np.asarray(metrics.evidence.small_cell_count))
-        if evidence_small_cell_count != int(source_cells.size):
+        if evidence_small_cell_count != source_cells.size:
             raise ValueError(
                 "Embedded-boundary small-cell evidence does not match the policy."
             )
@@ -191,25 +228,25 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
         recipient_face_ids = np.full(
             (source_cells.size, maximum_recipients), -1, dtype=np.int32
         )
-        recipient_mask = np.zeros((source_cells.size, maximum_recipients), dtype=bool)
+        recipient_mask = np.zeros((source_cells.size, maximum_recipients), dtype=np.bool_)
         weights = np.zeros(
             (source_cells.size, maximum_recipients), dtype=open_face_measures.dtype
         )
 
         incident_faces: list[list[int]] = [[] for _ in range(cell_count)]
-        for face, (owner, neighbour) in enumerate(
-            zip(owner_cells, neighbour_cells, strict=True)
+        for face, (owner, neighbor) in enumerate(
+            zip(owner_cells, neighbor_cells, strict=True)
         ):
-            if neighbour >= 0:
+            if neighbor >= 0:
                 incident_faces[int(owner)].append(face)
-                incident_faces[int(neighbour)].append(face)
+                incident_faces[int(neighbor)].append(face)
 
         for row, source in enumerate(source_cells):
             candidates: list[tuple[float, int, int, int]] = []
             for face in incident_faces[int(source)]:
                 owner = int(owner_cells[face])
-                neighbour = int(neighbour_cells[face])
-                recipient = neighbour if owner == source else owner
+                neighbor = int(neighbor_cells[face])
+                recipient = neighbor if owner == source else owner
                 measure = float(open_face_measures[face])
                 if measure > 0.0 and stable_recipient_cells[recipient]:
                     candidates.append(
@@ -219,8 +256,7 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
             selected = candidates[:maximum_recipients]
             if not selected:
                 raise ValueError(
-                    f"Small active cell {int(stable_cell_ids[source])} has no "
-                    "non-small open-face recipient."
+                    f"Small active cell {int(stable_cell_ids[source])} has no non-small open-face recipient."
                 )
             measures = np.asarray(
                 [candidate[0] for candidate in selected], dtype=open_face_measures.dtype
@@ -272,7 +308,7 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
         route_count = int(np.sum(recipient_mask))
         route_rows, route_slots = np.nonzero(recipient_mask)
         redistribution_owner_cells = source_cells[route_rows]
-        redistribution_neighbour_cells = recipient_cells[route_rows, route_slots]
+        redistribution_neighbor_cells = recipient_cells[route_rows, route_slots]
         redistribution_face_ids = recipient_face_ids[route_rows, route_slots]
         redistribution_weights = weights[route_rows, route_slots]
         if route_count:
@@ -291,9 +327,9 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
                 "policy": policy.policy_id,
                 "plan": plan_id,
                 "owner_cells": array_tree_fingerprint(redistribution_owner_cells),
-                "neighbour_cells": array_tree_fingerprint(redistribution_neighbour_cells),
+                "neighbor_cells": array_tree_fingerprint(redistribution_neighbor_cells),
                 "active_mask": array_tree_fingerprint(
-                    np.ones((route_count,), dtype=bool)
+                    np.ones((route_count,), dtype=np.bool_)
                 ),
                 "recipient_face_ids": array_tree_fingerprint(redistribution_face_ids),
                 "weights": array_tree_fingerprint(redistribution_weights),
@@ -306,7 +342,7 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
             metrics_id=metrics.metrics_id,
             policy_id=policy.policy_id,
             plan_id=plan_id,
-            small_cell_count=int(source_cells.size),
+            small_cell_count=source_cells.size,
             route_count=route_count,
         )
         self.active_cells = jnp.asarray(active_cells)
@@ -317,15 +353,9 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
         self.recipient_mask = jnp.asarray(recipient_mask)
         self.weights = jnp.asarray(weights)
         self.local_retention_fractions = jnp.asarray(local_retention)
-        self.redistribution_owner_cells = tuple(
-            int(cell) for cell in redistribution_owner_cells
-        )
-        self.redistribution_neighbour_cells = tuple(
-            int(cell) for cell in redistribution_neighbour_cells
-        )
-        self.redistribution_route_indices = tuple(
-            int(index) for index in redistribution_route_indices
-        )
+        self.redistribution_owner_cells = tuple(redistribution_owner_cells)
+        self.redistribution_neighbor_cells = tuple(redistribution_neighbor_cells)
+        self.redistribution_route_indices = tuple(redistribution_route_indices)
         self.redistribution_block_id = redistribution_block_id
         self.report = ConservativeSmallCellRedistributionReport(
             small_cell_count=jnp.asarray(source_cells.size, dtype=jnp.int32),
@@ -360,23 +390,23 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
             numeric_version="multivalued-small-cell"
         )
         cell_count = complex_.component_count
-        active_cells = np.ones((cell_count,), dtype=bool)
+        active_cells = np.ones((cell_count,), dtype=np.bool_)
         volume_fractions = np.asarray(complex_.component_volume_fractions)[:cell_count]
         small_cells = volume_fractions < policy.minimum_volume_fraction
         stable_recipient_cells = ~small_cells
         source_cells = np.flatnonzero(small_cells).astype(np.int32)
         stable_cell_ids = np.asarray(discretization.cell_global_ids)
-        face_active = np.asarray(complex_.face_active, dtype=bool)
+        face_active = np.asarray(complex_.face_active, dtype=np.bool_)
         owner_cells = np.asarray(complex_.face_owner_components)[face_active]
-        neighbour_cells = np.asarray(complex_.face_neighbour_components)[face_active]
+        neighbor_cells = np.asarray(complex_.face_neighbor_components)[face_active]
         face_measures = np.asarray(complex_.face_measures)[face_active]
         incident_faces: list[list[int]] = [[] for _ in range(cell_count)]
-        for face, (owner, neighbour) in enumerate(
-            zip(owner_cells, neighbour_cells, strict=True)
+        for face, (owner, neighbor) in enumerate(
+            zip(owner_cells, neighbor_cells, strict=True)
         ):
-            if neighbour >= 0:
+            if neighbor >= 0:
                 incident_faces[int(owner)].append(face)
-                incident_faces[int(neighbour)].append(face)
+                incident_faces[int(neighbor)].append(face)
         maximum_recipients = policy.maximum_recipients
         recipient_cells = np.zeros(
             (source_cells.size, maximum_recipients), dtype=np.int32
@@ -384,7 +414,7 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
         recipient_face_ids = np.full(
             (source_cells.size, maximum_recipients), -1, dtype=np.int32
         )
-        recipient_mask = np.zeros((source_cells.size, maximum_recipients), dtype=bool)
+        recipient_mask = np.zeros((source_cells.size, maximum_recipients), dtype=np.bool_)
         weights = np.zeros(
             (source_cells.size, maximum_recipients), dtype=face_measures.dtype
         )
@@ -392,8 +422,8 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
             candidates = []
             for face in incident_faces[int(source)]:
                 owner = int(owner_cells[face])
-                neighbour = int(neighbour_cells[face])
-                recipient = neighbour if owner == source else owner
+                neighbor = int(neighbor_cells[face])
+                recipient = neighbor if owner == source else owner
                 measure = float(face_measures[face])
                 if measure > 0.0 and stable_recipient_cells[recipient]:
                     candidates.append(
@@ -403,8 +433,7 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
             selected = candidates[:maximum_recipients]
             if not selected:
                 raise ValueError(
-                    f"Small cut component {int(stable_cell_ids[source])} has no "
-                    "non-small aperture-connected recipient."
+                    f"Small cut component {int(stable_cell_ids[source])} has no non-small aperture-connected recipient."
                 )
             selected_measures = np.asarray(
                 [candidate[0] for candidate in selected], dtype=face_measures.dtype
@@ -430,7 +459,7 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
             raise ValueError("Multivalued redistribution weights fail conservation.")
         route_rows, route_slots = np.nonzero(recipient_mask)
         redistribution_owner_cells = source_cells[route_rows]
-        redistribution_neighbour_cells = recipient_cells[route_rows, route_slots]
+        redistribution_neighbor_cells = recipient_cells[route_rows, route_slots]
         redistribution_face_ids = recipient_face_ids[route_rows, route_slots]
         redistribution_weights = weights[route_rows, route_slots]
         redistribution_route_indices = (
@@ -455,7 +484,7 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
                 "kind": "multivalued-small-cell-redistribution-rate-block",
                 "plan": plan_id,
                 "owners": array_tree_fingerprint(redistribution_owner_cells),
-                "neighbours": array_tree_fingerprint(redistribution_neighbour_cells),
+                "neighbors": array_tree_fingerprint(redistribution_neighbor_cells),
                 "faces": array_tree_fingerprint(redistribution_face_ids),
                 "weights": array_tree_fingerprint(redistribution_weights),
             }
@@ -467,60 +496,44 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
             metrics_id=complex_.geometry_id,
             policy_id=policy.policy_id,
             plan_id=plan_id,
-            small_cell_count=int(source_cells.size),
-            route_count=int(route_rows.size),
+            small_cell_count=source_cells.size,
+            route_count=route_rows.size,
         )
-        result = object.__new__(cls)
-        object.__setattr__(result, "active_cells", jnp.asarray(active_cells))
-        object.__setattr__(result, "small_cells", jnp.asarray(small_cells))
-        object.__setattr__(result, "source_cells", jnp.asarray(source_cells))
-        object.__setattr__(result, "recipient_cells", jnp.asarray(recipient_cells))
-        object.__setattr__(result, "recipient_face_ids", jnp.asarray(recipient_face_ids))
-        object.__setattr__(result, "recipient_mask", jnp.asarray(recipient_mask))
-        object.__setattr__(result, "weights", jnp.asarray(weights))
-        object.__setattr__(
-            result, "local_retention_fractions", jnp.asarray(local_retention)
+        report = ConservativeSmallCellRedistributionReport(
+            small_cell_count=jnp.asarray(source_cells.size, dtype=jnp.int32),
+            route_count=jnp.asarray(route_rows.size, dtype=jnp.int32),
+            maximum_route_weight_sum_defect=jnp.asarray(weight_defect),
+            prepared_geometry_id=discretization.prepared_id,
+            topology_id=discretization.topology_id,
+            geometry_id=discretization.geometry_id,
+            metrics_id=complex_.geometry_id,
+            policy_id=policy.policy_id,
+            plan_id=plan_id,
         )
-        object.__setattr__(
-            result,
-            "redistribution_owner_cells",
-            tuple(int(value) for value in redistribution_owner_cells),
+        prepared = _PreparedSmallCellData(
+            active_cells=jnp.asarray(active_cells),
+            small_cells=jnp.asarray(small_cells),
+            source_cells=jnp.asarray(source_cells),
+            recipient_cells=jnp.asarray(recipient_cells),
+            recipient_face_ids=jnp.asarray(recipient_face_ids),
+            recipient_mask=jnp.asarray(recipient_mask),
+            weights=jnp.asarray(weights),
+            local_retention_fractions=jnp.asarray(local_retention),
+            report=report,
+            plan_id=plan_id,
+            evidence=evidence,
+            redistribution_owner_cells=tuple(redistribution_owner_cells),
+            redistribution_neighbor_cells=tuple(redistribution_neighbor_cells),
+            redistribution_route_indices=tuple(redistribution_route_indices),
+            redistribution_block_id=block_id,
         )
-        object.__setattr__(
-            result,
-            "redistribution_neighbour_cells",
-            tuple(int(value) for value in redistribution_neighbour_cells),
-        )
-        object.__setattr__(
-            result,
-            "redistribution_route_indices",
-            tuple(int(value) for value in redistribution_route_indices),
-        )
-        object.__setattr__(result, "redistribution_block_id", block_id)
-        object.__setattr__(
-            result,
-            "report",
-            ConservativeSmallCellRedistributionReport(
-                small_cell_count=jnp.asarray(source_cells.size, dtype=jnp.int32),
-                route_count=jnp.asarray(route_rows.size, dtype=jnp.int32),
-                maximum_route_weight_sum_defect=jnp.asarray(weight_defect),
-                prepared_geometry_id=discretization.prepared_id,
-                topology_id=discretization.topology_id,
-                geometry_id=discretization.geometry_id,
-                metrics_id=complex_.geometry_id,
-                policy_id=policy.policy_id,
-                plan_id=plan_id,
-            ),
-        )
-        object.__setattr__(result, "plan_id", plan_id)
-        object.__setattr__(result, "evidence", evidence)
-        return result
+        return cls(None, None, None, _prepared=prepared)
 
     def _redistribution_terms(
         self, content_rate: ArrayLike, /
     ) -> tuple[Array, Array, Array, Array, Array]:
         rate = jnp.asarray(content_rate)
-        cell_count = int(self.active_cells.size)
+        cell_count = self.active_cells.size
         if rate.ndim < 1 or rate.shape[0] != cell_count:
             raise ValueError(
                 "content_rate must have a leading axis with one entry per cell."
@@ -541,7 +554,7 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
         )
         active_rate = jnp.where(active, rate, jnp.zeros((), dtype=rate.dtype))
         source_rate = active_rate[self.source_cells]
-        source_count = int(self.source_cells.size)
+        source_count = self.source_cells.size
         retention_shape = (source_count,) + (1,) * (rate.ndim - 1)
         retained = (
             self.local_retention_fractions[self.source_cells]
@@ -560,8 +573,7 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
         cast_weights = eqx.error_if(
             cast_weights,
             jnp.any(recipient_mask & ~cast_weight_is_valid),
-            "Small-cell recipient weights underflow or are not positive and finite "
-            "in the content-rate dtype.",
+            "Small-cell recipient weights underflow or are not positive and finite in the content-rate dtype.",
         )
         cast_weights = jnp.where(
             recipient_mask, cast_weights, jnp.zeros((), dtype=rate.dtype)
@@ -574,8 +586,7 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
         row_weight_sums = eqx.error_if(
             row_weight_sums,
             jnp.any(~row_sum_is_valid),
-            "Small-cell recipient weight rows must have finite positive sums in "
-            "the content-rate dtype.",
+            "Small-cell recipient weight rows must have finite positive sums in the content-rate dtype.",
         )
         normalized_weights = jnp.where(
             recipient_mask,
@@ -613,8 +624,7 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
                     | ~normalized_weight_is_positive_real
                 )
             ),
-            "Small-cell recipient weight normalization is not representable in "
-            "the content-rate dtype.",
+            "Small-cell recipient weight normalization is not representable in the content-rate dtype.",
         )
 
         weight_shape = (
@@ -639,7 +649,7 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
         return ConservationStageFluxRateBlock(
             route_flux_rate,
             self.redistribution_owner_cells,
-            self.redistribution_neighbour_cells,
+            self.redistribution_neighbor_cells,
             (True,) * route_count,
             self.redistribution_block_id,
             "small-cell-redistribution",
@@ -652,8 +662,8 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
         rate, active, active_rate, excess, contributions = self._redistribution_terms(
             content_rate
         )
-        cell_count = int(self.active_cells.size)
-        source_count = int(self.source_cells.size)
+        cell_count = self.active_cells.size
+        source_count = self.source_cells.size
         maximum_recipients = self.recipient_cells.shape[1]
         redistributed = active_rate.at[self.source_cells].add(-excess)
         flat_recipients = self.recipient_cells.reshape((-1,))
@@ -687,8 +697,7 @@ class ConservativeSmallCellRedistributionPlan(StrictModule, NonTrainableState):
         redistributed = eqx.error_if(
             redistributed,
             jnp.any(conservation_failed),
-            "Small-cell redistribution exceeds the content-rate dtype conservation "
-            "tolerance.",
+            "Small-cell redistribution exceeds the content-rate dtype conservation tolerance.",
         )
         return ConservativeSmallCellRedistributionResult(
             redistributed_rate=redistributed,

@@ -163,8 +163,7 @@ class GameConstraintBlock(StrictModule):
             owner_ = _identifier(owner, "owner") if owner is not None else None
             if owner_ is None or owner_ not in participants_ or len(participants_) < 2:
                 raise ValueError(
-                    "PLAYER_OWNED_COUPLED blocks require an owner and at least "
-                    "two participants including that owner."
+                    "PLAYER_OWNED_COUPLED blocks require an owner and at least two participants including that owner."
                 )
         else:
             if owner is not None:
@@ -186,8 +185,7 @@ class GameConstraintBlock(StrictModule):
             standard = jnp.all(jnp.isneginf(lower)) & jnp.all(upper == 0.0)
             if not bool(standard):
                 raise ValueError(
-                    "Inequality blocks require residual <= 0 bounds "
-                    "(lower=-inf, upper=0)."
+                    "Inequality blocks require residual <= 0 bounds (lower=-inf, upper=0)."
                 )
 
         self.constraint = constraint
@@ -242,16 +240,14 @@ class OpenLoopGameConstraints(StrictModule):
             )
             if participant_positions != tuple(sorted(participant_positions)):
                 raise ValueError(
-                    f"Constraint {block.constraint_id!r} participants must follow "
-                    "partition order."
+                    f"Constraint {block.constraint_id!r} participants must follow partition order."
                 )
             dependency_positions = tuple(
                 positions[player_id] for player_id in block.control_dependencies
             )
             if dependency_positions != tuple(sorted(dependency_positions)):
                 raise ValueError(
-                    f"Constraint {block.constraint_id!r} control_dependencies must "
-                    "follow partition order."
+                    f"Constraint {block.constraint_id!r} control_dependencies must follow partition order."
                 )
 
         payload = {
@@ -339,9 +335,9 @@ class GameConstraintLayout(StrictModule):
             incidence_rows.append(tuple(player_id in relevant for player_id in players))
 
         incidence = (
-            jnp.asarray(incidence_rows, dtype=bool)
+            jnp.asarray(incidence_rows, dtype=jnp.bool_)
             if incidence_rows
-            else jnp.zeros((0, constraints.partition.num_players), dtype=bool)
+            else jnp.zeros((0, constraints.partition.num_players), dtype=jnp.bool_)
         )
         payload = {
             "constraints_id": constraints.constraints_id,
@@ -537,19 +533,19 @@ class GameFeasibilityEvidence(StrictModule):
         player_shape = cases + (layout.constraints.partition.num_players,)
         case_arrays = (
             jnp.asarray(maximum_violation),
-            jnp.asarray(finite, dtype=bool),
-            jnp.asarray(feasible, dtype=bool),
-            jnp.asarray(valid, dtype=bool),
+            jnp.asarray(finite, dtype=jnp.bool_),
+            jnp.asarray(feasible, dtype=jnp.bool_),
+            jnp.asarray(valid, dtype=jnp.bool_),
             jnp.asarray(status),
         )
         block_arrays = (
             jnp.asarray(block_maximum_violation),
-            jnp.asarray(block_finite, dtype=bool),
-            jnp.asarray(block_feasible, dtype=bool),
+            jnp.asarray(block_finite, dtype=jnp.bool_),
+            jnp.asarray(block_feasible, dtype=jnp.bool_),
         )
         player_arrays = (
-            jnp.asarray(player_valid, dtype=bool),
-            jnp.asarray(player_feasible, dtype=bool),
+            jnp.asarray(player_valid, dtype=jnp.bool_),
+            jnp.asarray(player_feasible, dtype=jnp.bool_),
         )
         if any(value.shape != cases for value in case_arrays):
             raise ValueError("Case-level feasibility evidence must have case_shape.")
@@ -583,7 +579,7 @@ class GameFeasibilityEvidence(StrictModule):
         self.feasibility_scope = "declared-open-loop-blocks-at-supplied-trajectory-sites"
         self.sampled_only = True
         self.certified = False
-        self.method_id = "game-constraint:sampled-open-loop-evaluation:v1"
+        self.method_id = "game-constraint:sampled-open-loop-evaluation"
 
     @property
     def equality_violations(self) -> tuple[Array, ...]:
@@ -619,7 +615,7 @@ def _dependency_finite(
     /,
 ) -> Array:
     cases = trajectory.case_shape
-    finite = jnp.ones(cases, dtype=bool)
+    finite = jnp.ones(cases, dtype=jnp.bool_)
     if block.time_dependent:
         finite = finite & jnp.all(jnp.isfinite(trajectory.times))
     if block.state_dependent:
@@ -693,8 +689,7 @@ def _evaluate_trajectory_block(
     expected = trajectory.case_shape + block.residual_shape
     if values.shape != expected:
         raise ValueError(
-            f"Constraint {block.constraint_id!r} callback must return shape "
-            f"{expected}; got {values.shape}."
+            f"Constraint {block.constraint_id!r} callback must return shape {expected}; got {values.shape}."
         )
     return values
 
@@ -772,10 +767,10 @@ def evaluate_game_feasibility(
     else:
         dtype = trajectory.states.real.dtype
         block_maximum_array = jnp.zeros(cases + (0,), dtype=dtype)
-        block_finite_array = jnp.ones(cases + (0,), dtype=bool)
-        block_feasible_array = jnp.ones(cases + (0,), dtype=bool)
-        finite = jnp.ones(cases, dtype=bool)
-        feasible = jnp.ones(cases, dtype=bool)
+        block_finite_array = jnp.ones(cases + (0,), dtype=jnp.bool_)
+        block_feasible_array = jnp.ones(cases + (0,), dtype=jnp.bool_)
+        finite = jnp.ones(cases, dtype=jnp.bool_)
+        feasible = jnp.ones(cases, dtype=jnp.bool_)
         maximum = jnp.zeros(cases, dtype=dtype)
 
     incidence = layout.feasibility_incidence.astype(jnp.int32)

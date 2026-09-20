@@ -11,6 +11,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
 
+from phydrax._strict import StrictModule
+
 from .._fingerprint import canonical_fingerprint
 from ..discretization.finite_volume import PreparedFiniteVolumeDynamics
 from ..equations import CompressibleNavierStokesSystem, EulerSystem, IdealMHDSystem
@@ -27,7 +29,7 @@ from ._balance_law_transport import (
 )
 
 
-class SpectralOUForcingDiagnostics(eqx.Module):
+class SpectralOUForcingDiagnostics(StrictModule):
     acceleration: Array
     rms_acceleration: Array
     mean_acceleration: Array

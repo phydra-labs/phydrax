@@ -24,7 +24,7 @@ def test_mode_sum_subtracts_regularization_and_sums_fitted_tail():
         component_basis="Schwarzschild-coordinate",
     )
     ell_max = 14
-    angular_order = jnp.arange(ell_max + 1, dtype=float) + 0.5
+    angular_order = jnp.arange(ell_max + 1, dtype="float64") + 0.5
     coefficient_2 = jnp.asarray((0.2, -0.05))
     coefficient_4 = jnp.asarray((0.05, 0.025))
     retarded = (
@@ -77,7 +77,7 @@ def test_mode_sum_reports_unresolved_tail_instead_of_claiming_convergence():
         component_basis="orthonormal-tetrad",
     )
     ell_max = 10
-    angular_order = jnp.arange(ell_max + 1, dtype=float) + 0.5
+    angular_order = jnp.arange(ell_max + 1, dtype="float64") + 0.5
     unresolved_modes = (-1.0) ** jnp.arange(ell_max + 1) / angular_order
     calculator = FirstOrderSelfForceModeSum(
         regularization,

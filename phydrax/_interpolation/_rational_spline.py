@@ -35,7 +35,7 @@ def _rational_quotient_jets(
     """Apply the multivariate quotient recurrence on a downward-closed jet."""
     numerator = jnp.asarray(numerator_jets)
     denominator = jnp.asarray(denominator_jets)
-    indices = tuple(tuple(int(order) for order in value) for value in multi_indices)
+    indices = tuple(tuple(value) for value in multi_indices)
     if not indices:
         raise ValueError("Rational spline jets require at least the value multi-index.")
     axis = int(jet_axis)
@@ -133,7 +133,7 @@ class RationalSplineJet(StrictModule):
         if jnp.issubdtype(weights_.dtype, jnp.complexfloating):
             raise TypeError("Rational spline weights must be real-valued.")
         if not jnp.issubdtype(weights_.dtype, jnp.inexact):
-            weights_ = weights_.astype(float)
+            weights_ = weights_.astype("float64")
         scale = jnp.max(jnp.abs(weights_))
         scale = eqx.error_if(
             scale,
@@ -167,7 +167,7 @@ class RationalSplineJet(StrictModule):
         return self.plan.tensor_indices
 
     def derivative(self, multi_index: Sequence[int], /) -> Array:
-        derivative = tuple(int(order) for order in multi_index)
+        derivative = tuple(multi_index)
         if derivative not in self.plan.multi_indices:
             raise ValueError("Requested rational derivative is absent from this jet.")
         index = self.plan.multi_indices.index(derivative)
@@ -216,9 +216,7 @@ class RationalSplineJet(StrictModule):
     ) -> Array:
         """Apply one rational basis derivative to tensor-control payloads."""
         derivative = (
-            (0,) * self.plan.dimension
-            if multi_index is None
-            else tuple(int(order) for order in multi_index)
+            (0,) * self.plan.dimension if multi_index is None else tuple(multi_index)
         )
         basis = self.derivative(derivative)
         local = self.plan.gather(coefficients)
@@ -243,17 +241,14 @@ class RationalSplineJet(StrictModule):
     ) -> Array:
         """Apply the exact coefficient transpose of one rational derivative."""
         derivative = (
-            (0,) * self.plan.dimension
-            if multi_index is None
-            else tuple(int(order) for order in multi_index)
+            (0,) * self.plan.dimension if multi_index is None else tuple(multi_index)
         )
         basis = self.derivative(derivative)
         messages_ = jnp.asarray(messages)
         query_rank = len(self.plan.query_shape)
         if (
             messages_.ndim < query_rank
-            or tuple(int(size) for size in messages_.shape[:query_rank])
-            != self.plan.query_shape
+            or tuple(messages_.shape[:query_rank]) != self.plan.query_shape
         ):
             raise ValueError(
                 f"Rational spline messages must begin with {self.plan.query_shape}."
@@ -294,7 +289,7 @@ class RationalSplineJet(StrictModule):
         expected = self.plan.query_shape + (len(self.plan.multi_indices),)
         if (
             messages_.ndim < len(expected)
-            or tuple(int(size) for size in messages_.shape[: len(expected)]) != expected
+            or tuple(messages_.shape[: len(expected)]) != expected
         ):
             raise ValueError(
                 "Rational jet messages have incompatible query and jet axes."

@@ -79,7 +79,7 @@ class SamplingReport(StrictModule):
         self.complete = accepted_ == int(requested)
         self.acceptance_rate = jnp.where(
             proposed_ > 0,
-            accepted_.astype(float) / proposed_.astype(float),
+            accepted_.astype("float64") / proposed_.astype("float64"),
             jnp.asarray(0.0),
         )
 
@@ -105,7 +105,7 @@ class SamplingResult(StrictModule):
         points_ = jnp.asarray(points)
         if points_.ndim != 2:
             raise ValueError("SamplingResult.points must have shape (num_points, dim).")
-        valid_ = jnp.asarray(valid, dtype=bool).reshape((points_.shape[0],))
+        valid_ = jnp.asarray(valid, dtype=jnp.bool_).reshape((points_.shape[0],))
         if report.requested != points_.shape[0]:
             raise ValueError("SamplingReport.requested must match the sample count.")
         count = points_.shape[0]
@@ -113,7 +113,7 @@ class SamplingResult(StrictModule):
             denominator = jnp.maximum(jnp.sum(valid_, dtype=jnp.int32), 1)
             weights_ = jnp.where(valid_, 1.0 / denominator, 0.0)
         else:
-            weights_ = jnp.asarray(weights, dtype=float).reshape((count,))
+            weights_ = jnp.asarray(weights, dtype=jnp.float64).reshape((count,))
         strata_ = (
             -jnp.ones((count,), dtype=jnp.int32)
             if strata is None
@@ -146,7 +146,7 @@ def complete_sampling_result(
     )
     return SamplingResult(
         points_,
-        jnp.ones((count,), dtype=bool),
+        jnp.ones((count,), dtype=jnp.bool_),
         report,
         weights=weights,
         strata=strata,
@@ -176,7 +176,7 @@ def bounded_rejection_sample(
     if dimension <= 0:
         raise ValueError("point_dimension must be positive.")
 
-    sample_dtype = jnp.dtype(float if dtype is None else dtype)
+    sample_dtype = jnp.dtype(jnp.float64 if dtype is None else dtype)
     initial_points = jnp.zeros((count, dimension), dtype=sample_dtype)
     requested_count = jnp.asarray(count, dtype=jnp.int32)
     maximum_rounds = jnp.asarray(plan.maximum_rounds, dtype=jnp.int32)
@@ -202,14 +202,12 @@ def bounded_rejection_sample(
         )
         if candidates.shape != (plan.proposals_per_round, dimension):
             raise ValueError(
-                "proposal must return shape "
-                f"({plan.proposals_per_round}, {dimension}), got {candidates.shape}."
+                f"proposal must return shape ({plan.proposals_per_round}, {dimension}), got {candidates.shape}."
             )
-        accepted_mask = jnp.asarray(accept(candidates), dtype=bool)
+        accepted_mask = jnp.asarray(accept(candidates), dtype=jnp.bool_)
         if accepted_mask.shape != (plan.proposals_per_round,):
             raise ValueError(
-                "accept must return shape "
-                f"({plan.proposals_per_round},), got {accepted_mask.shape}."
+                f"accept must return shape ({plan.proposals_per_round},), got {accepted_mask.shape}."
             )
 
         ranks = jnp.cumsum(
@@ -264,7 +262,7 @@ def sample_boundary_atlas(
         raise ValueError("num_points must be non-negative.")
     if count == 0:
         return complete_sampling_result(
-            jnp.empty((0, atlas.ambient_dimension), dtype=float),
+            jnp.empty((0, atlas.ambient_dimension), dtype=jnp.float64),
             strata=jnp.empty((0,), dtype=jnp.int32),
         )
     candidate_count = max(
@@ -305,7 +303,7 @@ def sample_boundary_atlas(
     )
     selected_charts = charts[selected]
     accepted = jnp.where(available, count, 0).astype(jnp.int32)
-    valid = jnp.full((count,), available, dtype=bool)
+    valid = jnp.full((count,), available, dtype=jnp.bool_)
     report = SamplingReport(
         requested=count,
         proposed=jnp.asarray(candidate_count, dtype=jnp.int32),

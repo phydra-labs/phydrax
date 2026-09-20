@@ -391,7 +391,7 @@ class NequIPPotential(AbstractAtomisticPotential):
         tensor = jnp.sqrt(jnp.asarray(1.5, dtype=dtype)) * (
             outer - identity[None, :, :] / 3.0
         )
-        edge_count = int(unit.shape[0])
+        edge_count = unit.shape[0]
         empty_scalar = jnp.zeros((edge_count, 0), dtype=dtype)
         empty_vector = jnp.zeros((edge_count, 0, 3), dtype=dtype)
         empty_tensor = jnp.zeros((edge_count, 0, 3, 3), dtype=dtype)
@@ -427,11 +427,11 @@ class NequIPPotential(AbstractAtomisticPotential):
             "Species ID exceeds NequIPPotential.maximum_species_id.",
         )
         node_mask = (
-            jnp.asarray(atom_mask, dtype=bool)
+            jnp.asarray(atom_mask, dtype=jnp.bool_)
             .reshape((-1,))
             .astype(self.precision.compute_dtype)
         )
-        node_count = int(numbers.shape[0])
+        node_count = numbers.shape[0]
         packed_size = self.configuration.hidden_representation.packed_size
         values = jnp.zeros((node_count, packed_size), dtype=self.precision.compute_dtype)
         scalar = self.embedding[numbers].astype(self.precision.compute_dtype)

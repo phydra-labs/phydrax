@@ -183,8 +183,8 @@ class PeriodicVorticityReconstructionPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, shape: tuple[int, ...], periods: ArrayLike, /):
-        shape_ = tuple(int(value) for value in shape)
-        periods_ = jnp.asarray(periods, dtype=float)
+        shape_ = tuple(shape)
+        periods_ = jnp.asarray(periods, dtype=jnp.float64)
         if (
             len(shape_) not in (2, 3)
             or periods_.shape != (len(shape_),)

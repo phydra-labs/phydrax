@@ -76,12 +76,12 @@ class CameraCalibrationProblem(StrictModule, NonTrainableState):
     ):
         if not isinstance(initial_rig, CameraRig):
             raise TypeError("initial_rig must be a CameraRig.")
-        points_host = np.asarray(world_points, dtype=float)
-        pixels_host = np.asarray(observed_pixels, dtype=float)
-        valid_host = np.asarray(observation_valid, dtype=bool)
+        points_host = np.asarray(world_points, dtype=np.float64)
+        pixels_host = np.asarray(observed_pixels, dtype=np.float64)
+        valid_host = np.asarray(observation_valid, dtype=np.bool_)
         if points_host.ndim != 2 or points_host.shape[1:] != (3,):
             raise ValueError("world_points must have shape (observations, 3).")
-        observations = int(points_host.shape[0])
+        observations = points_host.shape[0]
         if observations < 1:
             raise ValueError("Calibration observation capacity must be positive.")
         expected_pixels = (initial_rig.capacity, observations, 2)
@@ -91,18 +91,18 @@ class CameraCalibrationProblem(StrictModule, NonTrainableState):
         if valid_host.shape != expected_mask:
             raise ValueError(f"observation_valid must have shape {expected_mask}.")
         if observation_weights is None:
-            weights_host = np.ones(expected_mask, dtype=float)
+            weights_host = np.ones(expected_mask, dtype=np.float64)
         else:
-            weights_host = np.asarray(observation_weights, dtype=float)
+            weights_host = np.asarray(observation_weights, dtype=np.float64)
             if weights_host.shape != expected_mask:
                 raise ValueError(f"observation_weights must have shape {expected_mask}.")
         if holdout is None:
-            holdout_host = np.zeros(expected_mask, dtype=bool)
+            holdout_host = np.zeros(expected_mask, dtype=np.bool_)
         else:
-            holdout_host = np.asarray(holdout, dtype=bool)
+            holdout_host = np.asarray(holdout, dtype=np.bool_)
             if holdout_host.shape != expected_mask:
                 raise ValueError(f"holdout must have shape {expected_mask}.")
-        rig_valid = np.asarray(initial_rig.camera_valid, dtype=bool)[:, None]
+        rig_valid = np.asarray(initial_rig.camera_valid, dtype=np.bool_)[:, None]
         if np.any(valid_host & ~rig_valid):
             raise ValueError("Inactive cameras cannot own valid observations.")
         if np.any(holdout_host & ~valid_host):
@@ -163,10 +163,10 @@ class CameraCalibrationPlan(StrictModule, NonTrainableState):
         rank_tolerance: float = 1e-8,
         maximum_condition: float = 1e10,
     ):
-        mask_host = np.asarray(free_parameter_mask, dtype=bool)
+        mask_host = np.asarray(free_parameter_mask, dtype=np.bool_)
         if mask_host.ndim != 2 or mask_host.shape[1:] != (CAMERA_PARAMETER_COUNT,):
             raise ValueError("free_parameter_mask must have shape (camera_capacity, 16).")
-        camera_capacity = int(mask_host.shape[0])
+        camera_capacity = mask_host.shape[0]
         if camera_capacity < 1 or not np.any(mask_host):
             raise ValueError("At least one calibration parameter must be free.")
         if gauge not in ("world-points", "reference-camera"):
@@ -196,7 +196,7 @@ class CameraCalibrationPlan(StrictModule, NonTrainableState):
         if not math.isfinite(maximum_condition) or maximum_condition <= 1.0:
             raise ValueError("maximum_condition must be finite and greater than one.")
         flat_mask = mask_host.reshape(-1)
-        indices = tuple(int(index) for index in np.flatnonzero(flat_mask))
+        indices = tuple(np.flatnonzero(flat_mask))
         self.free_parameter_mask = jnp.asarray(mask_host)
         self.robust_loss = loss
         self.camera_capacity = camera_capacity
@@ -419,7 +419,7 @@ def _calibration_evidence(
     )
     free_jacobian = jacobian[:, plan.free_parameter_indices]
     weighted_jacobian = jnp.sqrt(flat_weights)[:, None] * free_jacobian
-    row_count = int(weighted_jacobian.shape[0])
+    row_count = weighted_jacobian.shape[0]
     linear = solve(
         LeastSquaresProblem(DenseLinearOperator(weighted_jacobian)),
         jnp.eye(row_count, dtype=weighted_jacobian.dtype),
@@ -487,7 +487,7 @@ def calibrate_camera_rig(
         raise TypeError("plan must be a CameraCalibrationPlan.")
     if problem.initial_rig.capacity != plan.camera_capacity:
         raise ValueError("Calibration plan and rig capacities differ.")
-    inactive = ~np.asarray(problem.initial_rig.camera_valid, dtype=bool)
+    inactive = ~np.asarray(problem.initial_rig.camera_valid, dtype=np.bool_)
     if np.any(np.asarray(plan.free_parameter_mask)[inactive]):
         raise ValueError("Inactive cameras cannot have free parameters.")
     initial = jnp.zeros(

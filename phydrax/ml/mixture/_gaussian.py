@@ -219,8 +219,8 @@ def _fit_gaussian_mixture(
         batch.case_shape + (component_count,), 1.0 / component_count, dtype=w.dtype
     )
     initial_objective = jnp.full(batch.case_shape, jnp.inf, dtype=w.dtype)
-    empty_seen = jnp.zeros(batch.case_shape, dtype=bool)
-    singular_seen = jnp.zeros(batch.case_shape, dtype=bool)
+    empty_seen = jnp.zeros(batch.case_shape, dtype=jnp.bool_)
+    singular_seen = jnp.zeros(batch.case_shape, dtype=jnp.bool_)
     concentration_ = 0.0 if concentration is None else concentration
 
     def em_step(_, state):
@@ -417,16 +417,18 @@ class MixtureDiagnostics(StrictModule):
         converged: Array,
         method: str,
     ):
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.negative_log_likelihood = jnp.asarray(negative_log_likelihood)
         self.objective_delta = jnp.asarray(objective_delta)
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32)
         self.effective_samples = jnp.asarray(effective_samples)
         self.component_mass = jnp.asarray(component_mass)
-        self.empty_components_seen = jnp.asarray(empty_components_seen, dtype=bool)
-        self.singular_components_seen = jnp.asarray(singular_components_seen, dtype=bool)
-        self.converged = jnp.asarray(converged, dtype=bool)
+        self.empty_components_seen = jnp.asarray(empty_components_seen, dtype=jnp.bool_)
+        self.singular_components_seen = jnp.asarray(
+            singular_components_seen, dtype=jnp.bool_
+        )
+        self.converged = jnp.asarray(converged, dtype=jnp.bool_)
         self.method = str(method)
 
 

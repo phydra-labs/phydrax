@@ -101,7 +101,7 @@ def _dual_objective(
     variable_scores = evidence + segment_sum(
         messages,
         indices,
-        int(prepared.state_variable_indices.shape[0]),
+        prepared.state_variable_indices.shape[0],
     )
     offsets = np.asarray(graph.variable_state_offsets)
     objective = jnp.asarray(0.0, dtype=variable_scores.dtype)
@@ -120,7 +120,7 @@ def _dual_objective(
                 values = messages[start:stop].reshape((count, cardinality))
                 indices = jnp.broadcast_to(
                     group.configurations[:, position][None, :],
-                    (count, int(group.configurations.shape[0])),
+                    (count, group.configurations.shape[0]),
                 )
                 joint = joint - jnp.take_along_axis(values, indices, axis=-1)
             objective = objective + jnp.sum(_smooth_max(joint, temperature, axis=-1))
@@ -177,7 +177,7 @@ def solve_smooth_dual_lp(
     variable_scores = evidence_values + segment_sum(
         messages,
         prepared.message_variable_state_indices,
-        int(prepared.state_variable_indices.shape[0]),
+        prepared.state_variable_indices.shape[0],
     )
     offsets = np.asarray(graph.variable_state_offsets)
     assignment = jnp.stack(

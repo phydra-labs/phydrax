@@ -65,7 +65,7 @@ class ThermalLatticeBoltzmannProblemIR(StrictModule, NonTrainableState):
     ):
         name_ = str(name)
         boundary_values = tuple(boundaries)
-        source = np.asarray(volumetric_source, dtype=float)
+        source = np.asarray(volumetric_source, dtype=np.float64)
         if not name_:
             raise ValueError("Thermal LBM problem name must be nonempty.")
         if not isinstance(transport, ThermalLatticeBoltzmannPlan):
@@ -128,10 +128,10 @@ class CompiledThermalLatticeBoltzmannProblem(StrictModule, NonTrainableState):
         cell_measure: ArrayLike,
         /,
     ):
-        shape = tuple(int(value) for value in spatial_shape)
+        shape = tuple(spatial_shape)
         dx = float(spacing)
         dt = float(step_size)
-        measure = np.asarray(cell_measure, dtype=float)
+        measure = np.asarray(cell_measure, dtype=np.float64)
         if not isinstance(problem, ThermalLatticeBoltzmannProblemIR):
             raise TypeError("problem must be a ThermalLatticeBoltzmannProblemIR.")
         if not isinstance(lattice, LatticeBoltzmannVelocitySet):
@@ -250,7 +250,7 @@ def compile_thermal_lattice_boltzmann_problem(
     step_size: float,
     cell_measure: ArrayLike | None = None,
 ) -> CompiledThermalLatticeBoltzmannProblem:
-    shape = tuple(int(value) for value in spatial_shape)
+    shape = tuple(spatial_shape)
     measure = spacing ** len(shape) if cell_measure is None else cell_measure
     return CompiledThermalLatticeBoltzmannProblem(
         problem, lattice, precision, shape, spacing, step_size, measure

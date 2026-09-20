@@ -70,7 +70,7 @@ class OptimizerStateCompressionPolicy(StrictModule):
                 raise ValueError(
                     "Optimizer resident compression requires FP8, FP16, BF16, or MX."
                 )
-        axes = tuple(int(axis) for axis in block_axes)
+        axes = tuple(block_axes)
         exact = tuple(str(path) for path in exact_roles)
         if any(not path for path in exact) or len(set(exact)) != len(exact):
             raise ValueError("exact_roles paths must be unique and non-empty.")
@@ -200,8 +200,7 @@ def prepare_optimizer_state_compression(
         else:
             if jnp.issubdtype(array.dtype, jnp.complexfloating):
                 raise TypeError(
-                    "Complex optimizer leaves require explicit exact storage or a "
-                    "complex training-state layout."
+                    "Complex optimizer leaves require explicit exact storage or a complex training-state layout."
                 )
             effective_roles.append(role)
             compressed.append(index)
@@ -221,7 +220,7 @@ def prepare_optimizer_state_compression(
     return OptimizerStateCompressionPlan(
         treedef=treedef,
         paths=paths,
-        shapes=tuple(tuple(int(size) for size in array.shape) for array in arrays),
+        shapes=tuple(tuple(array.shape) for array in arrays),
         dtypes=tuple(array.dtype.name for array in arrays),
         leaf_roles=tuple(effective_roles),
         compressed_indices=tuple(compressed),
@@ -300,7 +299,7 @@ def compress_optimizer_state(
             reconstructed = payload.astype(array.dtype)
             scale_minimum = jnp.asarray(1.0, dtype=jnp.float32)
             scale_maximum = jnp.asarray(1.0, dtype=jnp.float32)
-            payload_bytes = int(payload.size * payload.dtype.itemsize)
+            payload_bytes = payload.size * payload.dtype.itemsize
         error = jnp.max(
             jnp.concatenate(
                 (

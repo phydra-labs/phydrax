@@ -71,7 +71,7 @@ An optional exponential high-degree filter acts on vorticity, divergence and tem
 
 ## Terrain and the upper boundary
 
-Terrain is a supplied surface geopotential in square metres per square second. The pressure force is evaluated as the gradient of `surface_geopotential + R_reference T_reference log(surface_pressure/reference_pressure)`, plus hydrostatic thermal anomalies and their remaining pressure metric. Thus uniform-temperature hydrostatic cancellation is discretely paired rather than subtracting large unrelated gradients.
+Terrain is a supplied surface geopotential in square meters per square second. The pressure force is evaluated as the gradient of `surface_geopotential + R_reference T_reference log(surface_pressure/reference_pressure)`, plus hydrostatic thermal anomalies and their remaining pressure metric. Thus uniform-temperature hydrostatic cancellation is discretely paired rather than subtracting large unrelated gradients.
 
 Preparation actually projects the isothermal rest pressure `reference_pressure × exp(−terrain/(R_reference T_reference))`, evaluates its residual acceleration, and rejects terrain failing `terrain_rest_tolerance`. This is a concrete **isothermal-rest admission gate**. It is not a general well-balanced terrain guarantee, does not cover moist stratified resting atmospheres, and cannot rescue under-resolved topography.
 
@@ -84,7 +84,7 @@ The positive-pressure top is an impermeable moving isobaric lid, not a rigid fix
 The composition provides:
 
 - prescribed sensible heat and evaporation at the bottom layer;
-- grey Newtonian radiative cooling with an equal-and-opposite environment-energy transfer;
+- gray Newtonian radiative cooling with an equal-and-opposite environment-energy transfer;
 - closed-boundary conservative vertical exchanges of phase inventories, enthalpy and momentum;
 - liquid/ice precipitation tendencies removing actual mass, with corresponding surface-water and energy deposits;
 - optional standard-form Held–Suarez thermal relaxation and boundary Rayleigh drag.

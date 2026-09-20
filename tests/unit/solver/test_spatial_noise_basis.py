@@ -36,6 +36,7 @@ def test_spectral_noise_modes_are_weighted_orthonormal_and_scaled():
         basis.modes * jnp.sqrt(basis.eigenvalues)[None, :],
     )
 
+
 def test_spherical_spectral_noise_uses_complete_real_degree_blocks():
     discretization = phx.discretization.SphericalSpectralPlan(4).prepare(radius=1.5)
     basis = phx.stochastic.SpatialNoiseBasis.from_spectrum(

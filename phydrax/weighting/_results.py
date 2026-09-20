@@ -139,8 +139,7 @@ def require_converged(result: MomentCalibrationResult, /) -> MomentCalibrationRe
     if not isinstance(failed, jax_core.Tracer):
         if bool(failed):
             raise eqx.EquinoxRuntimeError(
-                "Moment calibration did not converge: "
-                f"{moment_calibration_status_message(result.status)}."
+                f"Moment calibration did not converge: {moment_calibration_status_message(result.status)}."
             )
         return result
     checked = eqx.error_if(

@@ -232,7 +232,7 @@ class GRMHDConstrainedTransportPlan(StrictModule, NonTrainableState):
         self.electromotive_plan = electromotive
         self.divergence_tolerance = divergence
         self.compatibility_tolerance = compatibility
-        self.cell_shape = tuple(int(value) for value in bridge.grid.shape)
+        self.cell_shape = tuple(bridge.grid.shape)
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "grmhd-compatible-constrained-transport",

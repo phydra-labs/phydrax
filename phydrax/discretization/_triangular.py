@@ -45,7 +45,7 @@ def triangle_connectivity(
         raise ValueError("faces must index a positive covered vertex set.")
     edge_keys: dict[tuple[int, int], int] = {}
     cell_edges = np.empty(cells.shape, dtype=np.int32)
-    cell_signs = np.empty(cells.shape, dtype=float)
+    cell_signs = np.empty(cells.shape, dtype=np.float64)
     for cell_index, face in enumerate(cells):
         oriented = ((face[0], face[1]), (face[1], face[2]), (face[2], face[0]))
         for local_index, (start, stop) in enumerate(oriented):
@@ -60,7 +60,7 @@ def triangle_connectivity(
     if np.any(counts > 2):
         raise ValueError("Triangular cell blocks must be edge-manifold.")
     boundary_edges = counts == 1
-    boundary_vertices = np.zeros((vertices,), dtype=bool)
+    boundary_vertices = np.zeros((vertices,), dtype=np.bool_)
     if np.any(boundary_edges):
         boundary_vertices[np.unique(edges[boundary_edges].reshape((-1,)))] = True
     return TriangleConnectivity(
@@ -99,7 +99,7 @@ def triangle_cell_complex(
         "faces",
         2,
         np.arange(cells.shape[0], dtype=np.int32),
-        subsets=(EntitySubset("boundary", np.zeros((cells.shape[0],), dtype=bool)),),
+        subsets=(EntitySubset("boundary", np.zeros((cells.shape[0],), dtype=np.bool_)),),
     )
     vertex_edge_relation = EdgeRelation(
         edges.reshape((-1,)),

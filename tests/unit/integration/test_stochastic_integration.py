@@ -476,7 +476,7 @@ def test_importance_sampling_requires_an_explicit_random_key():
 
 
 def test_large_measure_monte_carlo_rejects_overflowed_standard_error():
-    upper = float(jnp.finfo(float).max / 4.0)
+    upper = float(jnp.finfo(jnp.float64).max / 4.0)
     domain = phx.domain.ScalarInterval(0.0, upper, label="x")
     target = phx.integration.over(domain.component())
     function = domain.Function("x")(_AlternatingBatchIntegrand())

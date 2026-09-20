@@ -79,7 +79,7 @@ G5 must cite one current `CardiovascularArtifactReference` for every required ki
 
 - SBOM;
 - build provenance;
-- separate commercial-licence authorization;
+- separate commercial-license authorization;
 - notice audit;
 - data-rights determination;
 - supply-chain attestation.
@@ -111,7 +111,7 @@ Call `evaluate_cardiovascular_release_candidate` with:
 - the approved `ReleaseTrustPolicy`;
 - `CardiovascularSignatureVerifier` instances keyed by every trusted gate, non-claim, and release-decision signer ID;
 - the evaluation timestamp;
-- a case manifest whose support-profile, build, SBOM, commercial-licence, data-rights, and explicit non-PHI bindings match the dossier;
+- a case manifest whose support-profile, build, SBOM, commercial-license, data-rights, and explicit non-PHI bindings match the dossier;
 - every referenced dependency `CapabilityProfile`.
 
 The returned candidate contains deterministic blockers in evaluation order. Missing prerequisite records are reported rather than inferred. Duplicate gates, artifact kinds, tuple decisions, lifecycle IDs, exclusions, or independent role identities are rejected at construction.
@@ -129,7 +129,7 @@ After a qualified candidate exists, the named release approver calls `make_cardi
 
 A refusal is a valid immutable decision. Do not alter a refusal; create a new evidence bundle, candidate, and decision after remediation.
 
-Call `assess_cardiovascular_release` with the candidate, signed decision, approved trust policy, and verifier mapping. It verifies the approver signature without re-signing, reapplies trust at decision time, and rejects rejected or stale evidence, mismatched candidates, mismatched approvers, stale decisions, and non-approval. Only a blocker-free assessment marks its generic capability profile released. The assessment still states that it grants no commercial licence and makes no regulated-device claim.
+Call `assess_cardiovascular_release` with the candidate, signed decision, approved trust policy, and verifier mapping. It verifies the approver signature without re-signing, reapplies trust at decision time, and rejects rejected or stale evidence, mismatched candidates, mismatched approvers, stale decisions, and non-approval. Only a blocker-free assessment marks its generic capability profile released. The assessment still states that it grants no commercial license and makes no regulated-device claim.
 
 ## Repository qualification tool
 
@@ -139,7 +139,7 @@ Run:
 python tools/cardiovascular_release_qualification.py
 ```
 
-The tool audits regular, non-empty on-disk records for the repository licence and notice; six artifact kinds; eight reviewer-signed gate evidence files; four signed non-claims; and the separately signed decision. For signed JSON it also requires signer and algorithm fields, hexadecimal signature encoding, gate dossier/reviewer/evidence bindings, and reviewer/signer equality. It records SHA-256 for every present file, prints deterministic JSON, and exits 2 while preflight blockers exist.
+The tool audits regular, non-empty on-disk records for the repository license and notice; six artifact kinds; eight reviewer-signed gate evidence files; four signed non-claims; and the separately signed decision. For signed JSON it also requires signer and algorithm fields, hexadecimal signature encoding, gate dossier/reviewer/evidence bindings, and reviewer/signer equality. It records SHA-256 for every present file, prints deterministic JSON, and exits 2 while preflight blockers exist.
 
 Expected default release records are below `release/cardiovascular/`. Sealed records may be supplied with `--artifact KIND=PATH`, `--gate-evidence-directory`, `--non-claim-directory`, and `--release-decision`. The tool does not mutate the dossier.
 
@@ -149,9 +149,9 @@ Preflight checks file identity and presence only. It deliberately never sets `co
 
 `--build-artifacts DIRECTORY` resolves every package and dependency edge in
 `uv.lock`. The emitted SPDX 2.3 document carries package source/download
-locations, all locked SHA-256 checksums, licence conclusions, a document
+locations, all locked SHA-256 checksums, license conclusions, a document
 `DESCRIBES` relationship, and package `DEPENDS_ON` relationships. The
-CycloneDX 1.6 document carries corresponding hashes, licences, and a complete
+CycloneDX 1.6 document carries corresponding hashes, licenses, and a complete
 dependency graph. Build provenance hashes each exact wheel, sdist, or
 container supplied through repeatable `--distribution-artifact KIND=PATH`
 arguments. The build also emits a dependency-complete supply-chain evidence
@@ -164,8 +164,8 @@ The builder accepts only externally produced release authority and evidence:
 `--supply-chain-attestation`. Each JSON envelope has `schema_version: 1` and
 binds its expected kind, exact source commit and lock SHA-256, signer identity,
 signature algorithm, and hexadecimal signature. Scanner records must identify
-their tool/version and cover every locked package and hash. Licence results
-must conclude and declare a non-`NOASSERTION` licence and copyright text.
+their tool/version and cover every locked package and hash. License results
+must conclude and declare a non-`NOASSERTION` license and copyright text.
 Vulnerability results must explicitly pass with an empty vulnerability list.
 The verifier record must bind every signed external record by SHA-256, and the
 attestation must bind the lock, authority records, scan reports, signer
@@ -175,7 +175,7 @@ Any absent package, unresolved graph edge, missing source or hash,
 `NOASSERTION`, incomplete or non-passing scan, stale source/lock binding,
 missing signature metadata, or mismatched verified/attested subject is a
 blocker and leaves `g5_evidence_ready` false. The builder hashes and references
-external records but never creates commercial licence authority, data rights,
+external records but never creates commercial license authority, data rights,
 scanner results, signatures, verification, attestations, notices, or release approval.
 The SING and ASDEX MIT notices are now present; PNPL authorization and the
 remaining signed evidence still block commercial release.
@@ -184,7 +184,7 @@ remains false until the typed evaluation and independent release decision.
 
 ## Current source-distribution status
 
-The current repository `LICENSE` is the Phydra Non-Production License and explicitly requires a separate licence for commercial or production use. The source distribution does not contain the sealed cardiovascular commercial-licence authorization, signed G0–G7 dossier, signed non-claims, or supply-chain release attestations expected by the preflight tool. Therefore the current source distribution is **not commercial-ready**. This is an intentional, deterministic refusal, not an incomplete implied approval.
+The current repository `LICENSE` is the Phydra Non-Production License and explicitly requires a separate license for commercial or production use. The source distribution does not contain the sealed cardiovascular commercial-license authorization, signed G0–G7 dossier, signed non-claims, or supply-chain release attestations expected by the preflight tool. Therefore the current source distribution is **not commercial-ready**. This is an intentional, deterministic refusal, not an incomplete implied approval.
 
 Do not add synthetic attestations, placeholder signatures, empty records, unchecked fallback evidence, or a hard-coded pass to change that result.
 
@@ -193,11 +193,11 @@ Do not add synthetic attestations, placeholder signatures, empty records, unchec
 Before publishing an authorized release:
 
 1. verify the final source commit, clean build environment, dependency lock, SBOM, and build provenance;
-2. verify licence authority, root and third-party notices, and data/model rights with the responsible owners;
+2. verify license authority, root and third-party notices, and data/model rights with the responsible owners;
 3. verify every signed record and trust-policy identity from sealed storage;
 4. archive the exact candidate, decision, capability profile, and all transitive artifacts;
 5. publish checksums and only the artifacts authorized for distribution;
 6. retain revocation and incident-response contacts;
-7. invalidate the profile if a signer, artifact, dependency, licence, data right, security finding, validation limit, or material release assumption changes.
+7. invalidate the profile if a signer, artifact, dependency, license, data right, security finding, validation limit, or material release assumption changes.
 
 Any post-release change to the exact tuple or evidence creates a new candidate. Never edit a released record in place.

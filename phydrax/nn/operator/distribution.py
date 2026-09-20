@@ -7,6 +7,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from math import prod
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
@@ -15,7 +16,7 @@ from jaxtyping import Array, Key
 import phydrax.ein as ein
 
 from ..._doc import DOC_KEY0
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._uncertainty import UncertaintySource, validate_uncertainty_source
 from .._keys import EvalKey
 from .data import (
@@ -30,11 +31,11 @@ from .engine import AbstractOperatorModel
 class AbstractOperatorDistribution(StrictModule):
     """Distribution over one complete operator-output field per physical case."""
 
-    query: AbstractAttribute[FunctionSamples]
-    output_spec: AbstractAttribute[OperatorOutputSpec]
-    case_axes: AbstractAttribute[tuple[str, ...]]
-    case_shape: AbstractAttribute[tuple[int, ...]]
-    uncertainty_source: AbstractAttribute[UncertaintySource]
+    query: eqx.AbstractVar[FunctionSamples]
+    output_spec: eqx.AbstractVar[OperatorOutputSpec]
+    case_axes: eqx.AbstractVar[tuple[str, ...]]
+    case_shape: eqx.AbstractVar[tuple[int, ...]]
+    uncertainty_source: eqx.AbstractVar[UncertaintySource]
 
     @property
     @abstractmethod
@@ -205,7 +206,7 @@ class GaussianOperatorDistribution(AbstractOperatorDistribution):
         mean_array = jnp.asarray(mean)
         scale_array = jnp.asarray(scale)
         axes = tuple(str(axis) for axis in case_axes)
-        cases = tuple(int(size) for size in case_shape)
+        cases = tuple(case_shape)
         expected = cases + query.sample_shape + output_spec.channel_shape
         if mean_array.shape != expected or scale_array.shape != expected:
             raise ValueError(
@@ -238,7 +239,7 @@ class GaussianOperatorDistribution(AbstractOperatorDistribution):
 
     @property
     def rank(self) -> int:
-        return int(self.factors.shape[-1])
+        return self.factors.shape[-1]
 
     @property
     def location(self) -> Array:
@@ -248,7 +249,7 @@ class GaussianOperatorDistribution(AbstractOperatorDistribution):
         mask = self.query.mask_array(case_shape=self.case_shape)
         if self.output_spec.channels != "scalar":
             mask = jnp.broadcast_to(mask[..., None], self.mean.shape)
-        return jnp.asarray(mask, dtype=bool).reshape((-1, self.event_size))
+        return jnp.asarray(mask, dtype=jnp.bool_).reshape((-1, self.event_size))
 
     def marginal_variance(self) -> Array:
         """Return pointwise variance including the shared latent factors."""
@@ -274,7 +275,7 @@ class GaussianOperatorDistribution(AbstractOperatorDistribution):
         sample_shape: tuple[int, ...] = (),
     ) -> Array:
         """Draw coherent full-function samples with leading sample dimensions."""
-        shape = tuple(int(size) for size in sample_shape)
+        shape = tuple(sample_shape)
         if any(size <= 0 for size in shape):
             raise ValueError("Gaussian operator sample dimensions must be positive.")
         samples = prod(shape) if shape else 1
@@ -305,8 +306,7 @@ class GaussianOperatorDistribution(AbstractOperatorDistribution):
         target_array = jnp.asarray(target)
         if target_array.shape != self.mean.shape:
             raise ValueError(
-                f"Gaussian operator target must have shape {self.mean.shape}; "
-                f"got {target_array.shape}."
+                f"Gaussian operator target must have shape {self.mean.shape}; got {target_array.shape}."
             )
         cases = prod(self.case_shape) if self.case_shape else 1
         mean = self.mean.reshape((cases, self.event_size))

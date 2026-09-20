@@ -85,21 +85,23 @@ class LagrangianMarkerSetPlan(AbstractDiscretizationPlan):
             raise ValueError(
                 "reference_position must have shape (marker_capacity,dimension)."
             )
-        dimension = int(reference.shape[1])
+        dimension = reference.shape[1]
         if dimension not in (2, 3):
-            raise ValueError("Lagrangian markers currently require dimension two or three.")
+            raise ValueError(
+                "Lagrangian markers currently require dimension two or three."
+            )
         if not np.issubdtype(reference.dtype, np.inexact):
-            reference = reference.astype(float)
+            reference = reference.astype("float64")
 
         weights = np.asarray(quadrature_weight)
         if weights.shape != ids.shape:
             raise ValueError("quadrature_weight must have the marker-capacity shape.")
         if not np.issubdtype(weights.dtype, np.inexact):
-            weights = weights.astype(float)
+            weights = weights.astype("float64")
         active = (
-            np.ones(ids.shape, dtype=bool)
+            np.ones(ids.shape, dtype=np.bool_)
             if active_mask is None
-            else np.asarray(active_mask, dtype=bool)
+            else np.asarray(active_mask, dtype=np.bool_)
         )
         if active.shape != ids.shape:
             raise ValueError("active_mask must have the marker-capacity shape.")
@@ -132,7 +134,7 @@ class LagrangianMarkerSetPlan(AbstractDiscretizationPlan):
         self.marker_ids = jnp.asarray(ids, dtype=jnp.int64)
         self.reference_position = jnp.asarray(reference, dtype=dtype)
         self.quadrature_weight = jnp.asarray(weights, dtype=dtype)
-        self.active_mask = jnp.asarray(active, dtype=bool)
+        self.active_mask = jnp.asarray(active, dtype=jnp.bool_)
         self.subsets = subsets_
         self.ambient_dimension = dimension
         self.coordinate_dtype = dtype
@@ -158,9 +160,7 @@ class LagrangianMarkerSetPlan(AbstractDiscretizationPlan):
             },
         )
 
-    def prepare(
-        self, /, *, numeric_version: str = "0"
-    ) -> LagrangianMarkerDiscretization:
+    def prepare(self, /, *, numeric_version: str = "0") -> LagrangianMarkerDiscretization:
         return LagrangianMarkerDiscretization(self, numeric_version=numeric_version)
 
 
@@ -192,16 +192,14 @@ class LagrangianMarkerDiscretization(AbstractPreparedDiscretization):
     numeric_version: str = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
-    def __init__(
-        self, plan: LagrangianMarkerSetPlan, /, *, numeric_version: str = "0"
-    ):
+    def __init__(self, plan: LagrangianMarkerSetPlan, /, *, numeric_version: str = "0"):
         if not isinstance(plan, LagrangianMarkerSetPlan):
             raise TypeError("plan must be a LagrangianMarkerSetPlan.")
         version = str(numeric_version)
         if not version:
             raise ValueError("numeric_version must be nonempty.")
         ids = np.asarray(plan.marker_ids, dtype=np.int64)
-        active = np.asarray(plan.active_mask, dtype=bool)
+        active = np.asarray(plan.active_mask, dtype=np.bool_)
         weights = np.asarray(plan.quadrature_weight)
         active_indices = np.flatnonzero(active).astype(np.int32)
         stable_order = np.argsort(ids[active_indices], kind="stable").astype(np.int32)
@@ -217,8 +215,8 @@ class LagrangianMarkerDiscretization(AbstractPreparedDiscretization):
             {
                 "kind": "lagrangian-marker-geometry-layout",
                 "topology": topology.topology_id,
-                "capacity": int(ids.size),
-                "active": int(active_indices.size),
+                "capacity": ids.size,
+                "active": active_indices.size,
                 "ambient_dimension": plan.ambient_dimension,
                 "coordinate_dtype": plan.coordinate_dtype,
             }
@@ -227,16 +225,16 @@ class LagrangianMarkerDiscretization(AbstractPreparedDiscretization):
         safe_weights = np.where(active, weights, 1.0)
         full_vector_weights = jnp.broadcast_to(
             jnp.asarray(safe_weights, dtype=plan.coordinate_dtype)[:, None],
-            (int(ids.size), plan.ambient_dimension),
+            (ids.size, plan.ambient_dimension),
         )
         vector_layout = EntityDofLayout(
             entities.entity_set_id,
-            int(ids.size),
-            int(ids.size),
+            ids.size,
+            ids.size,
             component_shape=(plan.ambient_dimension,),
         )
         full_space = ArraySpace(
-            (int(ids.size), plan.ambient_dimension),
+            (ids.size, plan.ambient_dimension),
             dtype=plan.coordinate_dtype,
             pairing=DiagonalPairing(full_vector_weights),
         )
@@ -264,10 +262,10 @@ class LagrangianMarkerDiscretization(AbstractPreparedDiscretization):
         )
         active_weights = jnp.broadcast_to(
             jnp.asarray(weights[active_indices], dtype=plan.coordinate_dtype)[:, None],
-            (int(active_indices.size), plan.ambient_dimension),
+            (active_indices.size, plan.ambient_dimension),
         )
         active_space = ArraySpace(
-            (int(active_indices.size), plan.ambient_dimension),
+            (active_indices.size, plan.ambient_dimension),
             dtype=plan.coordinate_dtype,
             pairing=DiagonalPairing(active_weights),
         )
@@ -280,11 +278,10 @@ class LagrangianMarkerDiscretization(AbstractPreparedDiscretization):
                 "KKT coordinates contain active markers only",
             ),
             resource_counts={
-                "marker_capacity": int(ids.size),
-                "active_markers": int(active_indices.size),
+                "marker_capacity": ids.size,
+                "active_markers": active_indices.size,
                 "ambient_dimension": plan.ambient_dimension,
-                "active_constraint_values": int(active_indices.size)
-                * plan.ambient_dimension,
+                "active_constraint_values": active_indices.size * plan.ambient_dimension,
             },
         )
         field_spaces, measures, capabilities = validate_prepared_metadata(
@@ -371,9 +368,7 @@ class LagrangianMarkerDiscretization(AbstractPreparedDiscretization):
 
     def expand_active(self, values: ArrayLike, /) -> Array:
         array = self.active_velocity_space.validate(jnp.asarray(values))
-        output = jnp.zeros(
-            (self.capacity, self.ambient_dimension), dtype=array.dtype
-        )
+        output = jnp.zeros((self.capacity, self.ambient_dimension), dtype=array.dtype)
         return output.at[self.active_indices].set(array)
 
     def kinematics(

@@ -180,11 +180,11 @@ class CochainDiscretization(AbstractPreparedDiscretization):
         )
         boundaries = self._degree_arrays(
             "boundary_masks",
-            tuple(np.zeros((count,), dtype=bool) for count in counts)
+            tuple(np.zeros((count,), dtype=np.bool_) for count in counts)
             if boundary_masks is None
             else boundary_masks,
             counts,
-            dtype=bool,
+            dtype=jnp.bool_,
         )
         coordinates_ = self._coordinates(coordinates, counts)
         key_ = (
@@ -205,7 +205,7 @@ class CochainDiscretization(AbstractPreparedDiscretization):
                 for value in coordinates_
             ],
         }
-        dimensions = {int(value.shape[1]) for value in coordinates_ if value is not None}
+        dimensions = {value.shape[1] for value in coordinates_ if value is not None}
         ambient_dimension = (
             next(iter(dimensions)) if dimensions else max(1, topology.dimension)
         )
@@ -376,7 +376,7 @@ class CochainDiscretization(AbstractPreparedDiscretization):
         /,
         *,
         positive: bool = False,
-        dtype: Any = float,
+        dtype: Any = jnp.float64,
     ) -> tuple[Array, ...]:
         resolved = tuple(values)
         if len(resolved) != len(counts):
@@ -453,12 +453,12 @@ class CochainDiscretization(AbstractPreparedDiscretization):
             if value is None:
                 arrays.append(None)
                 continue
-            array = np.asarray(value, dtype=float)
+            array = np.asarray(value, dtype=np.float64)
             if array.ndim != 2 or array.shape[0] != count or np.any(~np.isfinite(array)):
                 raise ValueError(
                     f"coordinates[{degree}] must be finite with leading size {count}."
                 )
-            dimensions.add(int(array.shape[1]))
+            dimensions.add(array.shape[1])
             arrays.append(jnp.asarray(array))
         if len(dimensions) > 1 or (dimensions and any(value is None for value in arrays)):
             raise ValueError(
@@ -490,7 +490,7 @@ class CochainDiscretization(AbstractPreparedDiscretization):
         if value < 0 or value > self.max_degree:
             raise ValueError(f"degree must lie in [0, {self.max_degree}].")
         if boundary_policy == "absolute":
-            return jnp.ones((self.cell_counts[value],), dtype=bool)
+            return jnp.ones((self.cell_counts[value],), dtype=jnp.bool_)
         if boundary_policy == "relative":
             return ~self.boundary_masks[value]
         raise ValueError("boundary_policy must be 'absolute' or 'relative'.")

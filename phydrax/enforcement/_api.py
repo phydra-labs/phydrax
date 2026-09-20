@@ -90,8 +90,7 @@ def compile(
     )
     if invalid_local:
         raise TypeError(
-            "Local ansatz fields must be DomainFunction values; "
-            f"invalid={invalid_local!r}."
+            f"Local ansatz fields must be DomainFunction values; invalid={invalid_local!r}."
         )
     invalid_interior = tuple(
         anchors.field
@@ -101,8 +100,7 @@ def compile(
     )
     if invalid_interior:
         raise TypeError(
-            "Interior anchor fields must be DomainFunction values; "
-            f"invalid={invalid_interior!r}."
+            f"Interior anchor fields must be DomainFunction values; invalid={invalid_interior!r}."
         )
     missing_targets = tuple(
         spec.field for spec in resolved_specs if spec.field not in resolved_functions

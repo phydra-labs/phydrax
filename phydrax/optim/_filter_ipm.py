@@ -12,6 +12,8 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import PyTree
 
+from phydrax._strict import StrictModule
+
 from .._nonlinear_precision import NonlinearPrecisionPolicy
 from .._tree_math import validate_real_inexact_tree
 from ..linalg import (
@@ -55,7 +57,7 @@ def _fraction_to_boundary(value, direction, fraction):
     return jnp.minimum(1.0, fraction * jnp.min(ratios, initial=jnp.inf))
 
 
-class _IPMDirection(eqx.Module):
+class _IPMDirection(StrictModule):
     primal: jax.Array
     equality_dual: jax.Array
     inequality_dual: jax.Array
@@ -63,7 +65,7 @@ class _IPMDirection(eqx.Module):
     kkt: KKTSolveResult
 
 
-class FilterInteriorPointEvidence(eqx.Module):
+class FilterInteriorPointEvidence(StrictModule):
     """KKT reuse and restoration evidence for one interior-point solve."""
 
     kkt_plan_id: str = eqx.field(static=True)
@@ -595,9 +597,7 @@ class FilterInteriorPoint(AbstractMinimizationMethod):
             implicit_differentiation=True,
             precision_policy_id=self.precision.policy_id,
             notes=(
-                f"restorations={restorations};"
-                f"kkt-plan={kkt_plan.plan_id};"
-                f"internal-status={status}"
+                f"restorations={restorations};kkt-plan={kkt_plan.plan_id};internal-status={status}"
             ),
         )
         objective, auxiliary = problem.value(parameters, args)

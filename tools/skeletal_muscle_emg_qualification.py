@@ -28,9 +28,7 @@ def qualify() -> dict[str, object]:
         template_source_id="qualification-explicit-template",
     ).prepare()
     times = jnp.arange(8) * 0.001
-    single = templates.synthesize(
-        jnp.asarray(((0.0,),)), jnp.asarray(((True,),)), times
-    )
+    single = templates.synthesize(jnp.asarray(((0.0,),)), jnp.asarray(((True,),)), times)
     double = templates.synthesize(
         jnp.asarray(((0.0, 0.002),)), jnp.asarray(((True, True),)), times
     )

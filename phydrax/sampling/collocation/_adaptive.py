@@ -72,8 +72,8 @@ def _normalized_importance(
     epsilon: Array,
 ) -> tuple[Array, Array, Array, Array]:
     """Normalize nonnegative residual scores with a uniform ESS guard."""
-    values = jnp.asarray(scores, dtype=float)
-    count = int(values.shape[0])
+    values = jnp.asarray(scores, dtype=jnp.float64)
+    count = values.shape[0]
     values = jnp.nan_to_num(
         values,
         nan=0.0,
@@ -220,17 +220,17 @@ def _collocation_population_metrics(
 ) -> dict[str, Array]:
     _, size = _single_axis_and_size(population.batch)
     active_count = (
-        jnp.asarray(size, dtype=float)
+        jnp.asarray(size, dtype=jnp.float64)
         if population.active is None
-        else jnp.sum(jnp.asarray(population.active.data, dtype=float))
+        else jnp.sum(jnp.asarray(population.active.data, dtype=jnp.float64))
     )
     return {
-        "refresh_count": jnp.asarray(population.refresh_count, dtype=float),
-        "last_refresh": jnp.asarray(population.last_refresh, dtype=float),
-        "point_count": jnp.asarray(size, dtype=float),
+        "refresh_count": jnp.asarray(population.refresh_count, dtype=jnp.float64),
+        "last_refresh": jnp.asarray(population.last_refresh, dtype=jnp.float64),
+        "point_count": jnp.asarray(size, dtype=jnp.float64),
         "active_point_count": active_count,
         "effective_sample_size": active_count,
-        "mean_age": jnp.mean(jnp.asarray(population.age.data, dtype=float)),
+        "mean_age": jnp.mean(jnp.asarray(population.age.data, dtype=jnp.float64)),
     }
 
 
@@ -286,13 +286,15 @@ class CollocationPolicy(AbstractCollocationPolicy):
         self.refresh_every = int(refresh_every)
         self.sampler = resolve_design(sampler)
         self.candidate_multiplier = int(candidate_multiplier)
-        self.exponent = jnp.asarray(exponent, dtype=float)
-        self.uniform_floor = jnp.asarray(uniform_floor, dtype=float)
-        self.min_replace_fraction = jnp.asarray(min_replace_fraction, dtype=float)
-        self.max_retain_fraction = jnp.asarray(max_retain_fraction, dtype=float)
-        self.initial_active_fraction = jnp.asarray(initial_active_fraction, dtype=float)
-        self.refinement_fraction = jnp.asarray(refinement_fraction, dtype=float)
-        self.epsilon = jnp.asarray(epsilon, dtype=float)
+        self.exponent = jnp.asarray(exponent, dtype=jnp.float64)
+        self.uniform_floor = jnp.asarray(uniform_floor, dtype=jnp.float64)
+        self.min_replace_fraction = jnp.asarray(min_replace_fraction, dtype=jnp.float64)
+        self.max_retain_fraction = jnp.asarray(max_retain_fraction, dtype=jnp.float64)
+        self.initial_active_fraction = jnp.asarray(
+            initial_active_fraction, dtype=jnp.float64
+        )
+        self.refinement_fraction = jnp.asarray(refinement_fraction, dtype=jnp.float64)
+        self.epsilon = jnp.asarray(epsilon, dtype=jnp.float64)
 
     def should_refresh(
         self,
@@ -318,7 +320,7 @@ class CollocationPolicy(AbstractCollocationPolicy):
         if self.algorithm == "rar_d":
             n_active = max(1, int(round(n * float(self.initial_active_fraction))))
             active = cx.AxisArray(
-                (jnp.arange(n) < n_active).astype(float),
+                (jnp.arange(n) < n_active).astype("float64"),
                 dims=(axis,),
             )
         return CollocationPopulation(batch, active=active)
@@ -392,7 +394,7 @@ class CollocationPolicy(AbstractCollocationPolicy):
         score = constraint.pointwise_score(functions, batch, key=key)
         axis, n = _single_axis_and_size(batch)
         _validate_axis_field(score, axis=axis, size=n, name="pointwise score")
-        data = jax.lax.stop_gradient(jnp.asarray(score.data, dtype=float))
+        data = jax.lax.stop_gradient(jnp.asarray(score.data, dtype=jnp.float64))
         data = jnp.nan_to_num(
             data,
             nan=0.0,
@@ -410,14 +412,14 @@ class CollocationPolicy(AbstractCollocationPolicy):
             population.batch,
             key=jr.fold_in(key, 1),
         )
-        score_data = jnp.asarray(scores.data, dtype=float)
+        score_data = jnp.asarray(scores.data, dtype=jnp.float64)
         retain = score_data > jnp.mean(score_data)
         max_retain = int(round(n * float(self.max_retain_fraction)))
         min_replace = int(round(n * float(self.min_replace_fraction)))
         max_retain = min(max_retain, n - min_replace)
         order = jnp.argsort(score_data)[::-1]
         eligible = order[retain[order]]
-        keep_n = min(int(eligible.shape[0]), max_retain)
+        keep_n = min(eligible.shape[0], max_retain)
         keep_idx = eligible[:keep_n]
         new_n = n - keep_n
         replacement = constraint.component.sample(
@@ -474,7 +476,7 @@ class CollocationPolicy(AbstractCollocationPolicy):
             candidate,
             key=jr.fold_in(key, 2),
         )
-        score_data = jnp.asarray(scores.data, dtype=float)
+        score_data = jnp.asarray(scores.data, dtype=jnp.float64)
         powered = jnp.power(score_data + self.epsilon, self.exponent)
         density = (
             powered / jnp.maximum(jnp.mean(powered), self.epsilon) + self.uniform_floor

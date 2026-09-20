@@ -88,8 +88,7 @@ class NearestNeighborBaseline(eqx.Module):
         query_dim = _coordinate_dimension(batch.require_single_query())
         if source_dim != query_dim:
             raise ValueError(
-                "NearestNeighborBaseline requires source and query coordinate "
-                "dimensions to match."
+                "NearestNeighborBaseline requires source and query coordinate dimensions to match."
             )
         case_count = prod(batch.case_shape) if batch.case_shape else 1
         source_coordinates = source.coordinates_array(
@@ -140,7 +139,7 @@ class ConstantOutputBaseline(eqx.Module):
             1,
         )
         mean = jnp.sum(jnp.where(mask, target, 0.0), axis=reduced_axes) / denominator
-        self.output_shape = tuple(int(size) for size in mean.shape)
+        self.output_shape = tuple(mean.shape)
         self.value = tuple(float(value) for value in mean.reshape(-1))
 
     def __call__(self, batch: phx.nn.operator.OperatorBatch):
@@ -240,7 +239,7 @@ class PODLinearROMBaseline(eqx.Module):
         self.output_mean = jnp.mean(targets, axis=0)
         centered = targets - self.output_mean
         _, _, right = jnp.linalg.svd(centered, full_matrices=False)
-        retained = max(1, min(int(rank), int(right.shape[0])))
+        retained = max(1, min(int(rank), right.shape[0]))
         self.basis = right[:retained].T
         coefficients = centered @ self.basis
         design = jnp.concatenate(
@@ -253,7 +252,7 @@ class PODLinearROMBaseline(eqx.Module):
         if batch.require_single_query().sample_shape != self.query_shape:
             raise ValueError("PODLinearROMBaseline requires its fitted query geometry.")
         features = _flatten_batch_inputs(batch, self.input_names)
-        if int(features.shape[-1]) + 1 != int(self.coefficient_map.shape[0]):
+        if features.shape[-1] + 1 != self.coefficient_map.shape[0]:
             raise ValueError("PODLinearROMBaseline input shape differs from its fit.")
         design = jnp.concatenate(
             (features, jnp.ones((features.shape[0], 1), dtype=features.dtype)),
@@ -612,7 +611,7 @@ def _coordinate_dimension(samples: phx.nn.operator.FunctionSamples) -> int:
     if samples.axes:
         return len(samples.axes)
     if samples.coordinates is not None:
-        return int(samples.coordinates.shape[-1])
+        return samples.coordinates.shape[-1]
     raise ValueError("Sample geometry has no coordinates.")
 
 
@@ -1406,7 +1405,7 @@ def _training_delta_range(
         )
     _, source = _primary_source(scenario)
     coordinates = source.coordinates_array(case_shape=scenario.train_batch.case_shape)
-    if int(coordinates.shape[-1]) != 1:
+    if coordinates.shape[-1] != 1:
         raise ValueError(
             "Temporal state-space benchmarks require scalar time coordinates."
         )
@@ -2165,7 +2164,7 @@ def _field_channels_compatible(scenario: OperatorBenchmarkScenario, /) -> bool:
 
 
 def _uniform_axis(axis: phx.nn.operator.OperatorAxis) -> bool:
-    if int(axis.nodes.shape[0]) < 2:
+    if axis.nodes.shape[0] < 2:
         return False
     spacing = jnp.diff(axis.nodes)
     return bool(

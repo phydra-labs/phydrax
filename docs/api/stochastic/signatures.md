@@ -84,7 +84,7 @@ output; a valid reset starts a new path segment. Passing `result.final_state` as
 next call's `initial_state` gives chunked streaming without changing the result.
 
 ```python
-valid = jnp.ones(path.shape[:-1], dtype=bool)
+valid = jnp.ones(path.shape[:-1], dtype="bool")
 batch = phx.nn.layers.RecurrentBatch(path, valid)
 cell = phx.stochastic.SignatureRecurrentCell(2, 4, include_scalar=True)
 result = phx.nn.layers.run_recurrent(cell, batch)

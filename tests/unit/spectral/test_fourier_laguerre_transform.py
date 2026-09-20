@@ -59,7 +59,7 @@ def test_radial_laguerre_matches_order_two_basis_columns_and_exact_small_cases()
 
     plan = RadialLaguerrePlan(8, tau=tau)
     nodes = [mp.mpf(str(value)) for value in np.asarray(plan.dimensionless_nodes)]
-    expected = np.zeros((8, 8), dtype=float)
+    expected = np.zeros((8, 8), dtype="float64")
     for node_index, node in enumerate(nodes):
         terminal = _generalized_laguerre(9, 2, node)
         gauss_weight = 10 * node / (9 * terminal**2)
@@ -72,7 +72,7 @@ def test_radial_laguerre_matches_order_two_basis_columns_and_exact_small_cases()
             )
 
     assert jnp.allclose(plan.balanced_basis, expected, rtol=2e-11, atol=2e-11)
-    assert plan.orthogonality_defect <= 256 * 8 * np.finfo(float).eps
+    assert plan.orthogonality_defect <= 256 * 8 * np.finfo(np.float64).eps
 
 
 def test_radial_laguerre_roundtrips_parseval_tau_and_channel_contracts():

@@ -40,7 +40,6 @@ OutputDiscretization = (
     | UnstructuredFiniteVolumeDiscretization
     | PreparedBlockAMRRuntime
 )
-_OUTPUT_SCHEMA_VERSION = 4
 
 
 def _h5py():
@@ -221,7 +220,6 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
         self.output_id = canonical_fingerprint(
             {
                 "kind": "finite-volume-output",
-                "schema_version": _OUTPUT_SCHEMA_VERSION,
                 "hdf5": str(hdf5_path),
                 "geometry_kind": geometry_kind,
                 "discretization": discretization_id,
@@ -289,7 +287,6 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
         topology = runtime.dynamics.topology
         hierarchy = topology.plan
         block_group = handle.create_group("block_hierarchy")
-        block_group.attrs["schema_version"] = 1
         block_group.attrs["hierarchy_plan_id"] = hierarchy.plan_id
         block_group.attrs["topology_epoch_id"] = topology.epoch.epoch_id
         block_group.attrs["topology_epoch_index"] = topology.epoch.index
@@ -361,7 +358,6 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
         target = Path(self.hdf5_path)
         target.parent.mkdir(parents=True, exist_ok=True)
         with h5py.File(target, "w") as handle:
-            handle.attrs["schema_version"] = _OUTPUT_SCHEMA_VERSION
             handle.attrs["geometry_kind"] = self.geometry_kind
             handle.attrs["discretization_id"] = self.discretization_id
             handle.attrs["topology_id"] = self.topology_id
@@ -485,7 +481,6 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
             self.initialize(runtime)
         with h5py.File(target, "a") as handle:
             expected_attrs = {
-                "schema_version": _OUTPUT_SCHEMA_VERSION,
                 "geometry_kind": "block_amr",
                 "discretization_id": self.discretization_id,
                 "topology_id": self.topology_id,
@@ -530,7 +525,7 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
                     raise ValueError("Block output level metadata identity changed.")
                 level_group = levels.create_group(f"{level:04d}")
                 level_group.attrs["metadata_id"] = metadata.metadata_id
-                active = np.asarray(metadata.active, dtype=bool)
+                active = np.asarray(metadata.active, dtype=np.bool_)
                 level_group.attrs["active_stable_block_ids"] = np.asarray(
                     metadata.block_ids, dtype=np.int32
                 )[active]
@@ -567,7 +562,7 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
             raise TypeError("runtime_state must be FiniteVolumeRuntimeState.")
         content_state = runtime_state.content_state
         self.precision.validate_state(content_state.conservative_content)
-        cell_count = int(np.asarray(discretization.cell_volumes).size)
+        cell_count = np.asarray(discretization.cell_volumes).size
         content_shape = (cell_count, discretization.component_count)
         if content_state.conservative_content.shape != content_shape:
             raise ValueError("Output conservative content shape changed.")
@@ -581,8 +576,6 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
         if not target.exists():
             self.initialize(discretization)
         with h5py.File(target, "a") as handle:
-            if int(handle.attrs.get("schema_version", -1)) != _OUTPUT_SCHEMA_VERSION:
-                raise ValueError("Unsupported finite-volume output schema.")
             geometry_points_path = self._store_geometry_points(
                 handle,
                 runtime_state,
@@ -780,13 +773,9 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
                 for name, group in handle["steps"].items()
             )
             output_precision = (
-                int(
-                    handle[
-                        f"steps/{records[0][0]}/levels/0000/cell_average"
-                    ].dtype.itemsize
-                )
+                handle[f"steps/{records[0][0]}/levels/0000/cell_average"].dtype.itemsize
                 if records
-                else int(self.precision.numpy_dtype("output").itemsize)
+                else self.precision.numpy_dtype("output").itemsize
             )
         step_grids = []
         for step_name, time in records:
@@ -799,7 +788,7 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
                     strict=True,
                 )
             ):
-                active = np.asarray(metadata.active, dtype=bool)
+                active = np.asarray(metadata.active, dtype=np.bool_)
                 logical = np.asarray(metadata.logical_indices, dtype=np.int32)
                 stable_ids = np.asarray(metadata.block_ids, dtype=np.int32)
                 lower = np.asarray(
@@ -843,14 +832,8 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
                     state_path = (
                         f"{hdf5_name}:/steps/{step_name}/levels/{level:04d}/cell_average"
                     )
-                    grid_open = (
-                        f'        <Grid Name="level-{level}-'
-                        f'block-{int(stable_ids[slot])}" GridType="Uniform">'
-                    )
-                    topology_element = (
-                        f'          <Topology TopologyType="{topology_type}" '
-                        f'Dimensions="{point_dimensions}"/>'
-                    )
+                    grid_open = f'        <Grid Name="level-{level}-block-{int(stable_ids[slot])}" GridType="Uniform">'
+                    topology_element = f'          <Topology TopologyType="{topology_type}" Dimensions="{point_dimensions}"/>'
                     origin_item = (
                         f'            <DataItem Dimensions="{rank}" '
                         'NumberType="Float" Precision="8" Format="XML">'
@@ -863,18 +846,12 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
                         + " ".join(f"{value:.17g}" for value in spacing)
                         + "</DataItem>"
                     )
-                    attribute_open = (
-                        '          <Attribute Name="cell_average" '
-                        'AttributeType="Vector" Center="Cell">'
-                    )
+                    attribute_open = '          <Attribute Name="cell_average" AttributeType="Vector" Center="Cell">'
                     hyperslab_open = (
                         '            <DataItem ItemType="HyperSlab" '
                         f'Dimensions="{attribute_dimensions}" Type="HyperSlab">'
                     )
-                    selector_item = (
-                        f'              <DataItem Dimensions="3 {rank + 2}" '
-                        f'Format="XML">{hyperslab}</DataItem>'
-                    )
+                    selector_item = f'              <DataItem Dimensions="3 {rank + 2}" Format="XML">{hyperslab}</DataItem>'
                     source_item = (
                         f'              <DataItem Dimensions="{source_dimensions}" '
                         f'NumberType="Float" Precision="{output_precision}" '
@@ -940,7 +917,7 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
                         raise ValueError(
                             "Unstructured output step has no accepted geometry."
                         )
-                    geometry_precision = int(handle[geometry_path].dtype.itemsize)
+                    geometry_precision = handle[geometry_path].dtype.itemsize
                 records.append(
                     (
                         name,
@@ -951,9 +928,9 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
                 )
             records = tuple(records)
             state_precision = (
-                int(handle["steps"][records[0][0]]["cell_average"].dtype.itemsize)
+                handle["steps"][records[0][0]]["cell_average"].dtype.itemsize
                 if records
-                else int(self.precision.numpy_dtype("output").itemsize)
+                else self.precision.numpy_dtype("output").itemsize
             )
         return records, state_precision
 
@@ -973,9 +950,9 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
             ("quadrilaterals", "Quadrilateral", discretization.quadrilaterals),
             ("tetrahedra", "Tetrahedron", discretization.tetrahedra),
         ):
-            count = int(cells.shape[0])
+            count = cells.shape[0]
             if count:
-                blocks.append((name, topology_type, count, offset, int(cells.shape[1])))
+                blocks.append((name, topology_type, count, offset, cells.shape[1]))
                 offset += count
         grids = []
         for step_name, time, geometry_path, geometry_precision in records:
@@ -996,10 +973,8 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
                             (
                                 f'          <Attribute Name="{html.escape(component)}" '
                                 'AttributeType="Scalar" Center="Cell">',
-                                f'            <DataItem ItemType="HyperSlab" '
-                                f'Dimensions="{count}" Type="HyperSlab">',
-                                '              <DataItem Dimensions="3 2" '
-                                f'Format="XML">{selection}</DataItem>',
+                                f'            <DataItem ItemType="HyperSlab" Dimensions="{count}" Type="HyperSlab">',
+                                f'              <DataItem Dimensions="3 2" Format="XML">{selection}</DataItem>',
                                 state_item,
                                 "            </DataItem>",
                                 "          </Attribute>",
@@ -1023,8 +998,7 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
                     "\n".join(
                         (
                             f'        <Grid Name="{block_name}" GridType="Uniform">',
-                            f'          <Topology TopologyType="{topology_type}" '
-                            f'NumberOfElements="{count}">',
+                            f'          <Topology TopologyType="{topology_type}" NumberOfElements="{count}">',
                             topology_item,
                             "          </Topology>",
                             f'          <Geometry GeometryType="{geometry_type}">',
@@ -1061,7 +1035,7 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
         h5py = _h5py()
         with h5py.File(hdf5_path, "r") as handle:
             coordinate_precision = {
-                name: int(dataset.dtype.itemsize)
+                name: dataset.dtype.itemsize
                 for name, dataset in handle["coordinates"].items()
             }
         vertex_counts = [
@@ -1076,9 +1050,7 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
         geometry_items = []
         for index, axis_name in enumerate(axis_names[:3]):
             if index < len(discretization.cell_shape):
-                size = int(
-                    discretization.grid.structured_axes[index].point_coordinates.size
-                )
+                size = discretization.grid.structured_axes[index].point_coordinates.size
                 geometry_items.append(
                     f'<DataItem Dimensions="{size}" NumberType="Float" '
                     f'Precision="{coordinate_precision[axis_name]}" Format="HDF">'
@@ -1086,8 +1058,7 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
                 )
             else:
                 geometry_items.append(
-                    '<DataItem Dimensions="1" NumberType="Float" Precision="8" '
-                    'Format="XML">0</DataItem>'
+                    '<DataItem Dimensions="1" NumberType="Float" Precision="8" Format="XML">0</DataItem>'
                 )
         state_dimensions = " ".join(
             str(int(value))
@@ -1109,15 +1080,13 @@ class FiniteVolumeOutputPlan(StrictModule, NonTrainableState):
                     (
                         f'      <Grid Name="step-{name}" GridType="Uniform">',
                         f'        <Time Value="{time:.17g}"/>',
-                        f'        <Topology TopologyType="3DRectMesh" '
-                        f'Dimensions="{topology_dimensions}"/>',
+                        f'        <Topology TopologyType="3DRectMesh" Dimensions="{topology_dimensions}"/>',
                         '        <Geometry GeometryType="VXVYVZ">',
                         f"          {geometry_items[0]}",
                         f"          {geometry_items[1]}",
                         f"          {geometry_items[2]}",
                         "        </Geometry>",
-                        '        <Attribute Name="cell_average" '
-                        'AttributeType="Vector" Center="Cell">',
+                        '        <Attribute Name="cell_average" AttributeType="Vector" Center="Cell">',
                         state_item,
                         "        </Attribute>",
                         "      </Grid>",

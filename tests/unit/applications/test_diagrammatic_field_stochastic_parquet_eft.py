@@ -11,11 +11,11 @@ import numpy as np
 from phydrax.applications import diagrammatic_field as df
 
 
-def _catalogue_diagram(order):
-    phi = df.FieldSpec("catalogue-phi", statistics="boson")
+def _catalog_diagram(order):
+    phi = df.FieldSpec("catalog-phi", statistics="boson")
     propagator = df.PropagatorSpec(phi, mass=1.0)
     rule = df.VertexRule(
-        f"catalogue-phi4-{order}",
+        f"catalog-phi4-{order}",
         (phi, phi, phi, phi),
         1.0,
         perturbative_order=order,
@@ -37,7 +37,7 @@ def _eft_basis():
 
 
 def test_diagram_monte_carlo_satisfies_birth_death_and_worm_detailed_balance():
-    diagrams = (_catalogue_diagram(1), _catalogue_diagram(2))
+    diagrams = (_catalog_diagram(1), _catalog_diagram(2))
     prepared = df.DiagramMonteCarloPlan(
         steps=2_000,
         maximum_diagrams=2,

@@ -30,7 +30,7 @@ BSDERegressionScheme: TypeAlias = Literal["explicit", "implicit"]
 
 
 def _shape(value: Sequence[int], /, *, owner: str) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if not shape or any(size <= 0 for size in shape):
         raise ValueError(f"{owner} must contain positive dimensions.")
     return shape
@@ -216,7 +216,7 @@ def _basis_matrix(
     return matrix
 
 
-def _normalise_design(
+def _normalize_design(
     design: Array,
     mask: Array,
     /,
@@ -434,7 +434,7 @@ def solve_bsde_least_squares(
         terminal_design_count,
         terminal_rank,
         terminal_condition,
-    ) = _normalise_design(
+    ) = _normalize_design(
         terminal_design,
         path_valid,
         standardize=standardize,
@@ -486,7 +486,7 @@ def solve_bsde_least_squares(
             design_count,
             rank,
             condition,
-        ) = _normalise_design(
+        ) = _normalize_design(
             design,
             path_valid,
             standardize=standardize,

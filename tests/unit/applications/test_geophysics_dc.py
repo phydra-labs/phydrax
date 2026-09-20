@@ -103,9 +103,9 @@ def test_conductivity_current_and_three_dimensional_length_scaling():
         base / 2,
         atol=1e-9,
     )
-    millimetres = _tetrahedron(scale=1000.0)
+    millimeters = _tetrahedron(scale=1000.0)
     assert jnp.allclose(
-        FinitePatchDCPlan(millimetres, _survey(millimetres), length_unit=MILLIMETER)
+        FinitePatchDCPlan(millimeters, _survey(millimeters), length_unit=MILLIMETER)
         .prepare()
         .predict(1.0),
         base,

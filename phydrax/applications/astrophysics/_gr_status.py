@@ -66,7 +66,7 @@ class GRRayStatusEvidence(StrictModule):
         /,
     ):
         values = tuple(
-            jnp.asarray(value, dtype=bool)
+            jnp.asarray(value, dtype=jnp.bool_)
             for value in (
                 finite,
                 converged,

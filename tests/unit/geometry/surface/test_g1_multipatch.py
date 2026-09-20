@@ -141,7 +141,7 @@ def test_native_nullspace_reconstructs_and_projects_g1_coefficients():
     assert jnp.max(jnp.abs(constraints.residual(reconstructed))) < 2.0e-5
     assert jnp.allclose(basis.coordinates(reconstructed), free, atol=2.0e-5)
 
-    raw = jnp.sin(jnp.arange(2 * 6 * 6 * 2, dtype=float)).reshape((2, 6, 6, 2))
+    raw = jnp.sin(jnp.arange(2 * 6 * 6 * 2, dtype="float64")).reshape((2, 6, 6, 2))
     projection = basis.project(raw)
     assert projection.finite
     assert projection.coefficients.shape == raw.shape

@@ -57,12 +57,12 @@ def prepare_case(residues: int, steps: int):
     )
     material = AtomisticSystemPlan(
         ids,
-        np.zeros(residues, dtype=int),
+        np.zeros(residues, dtype="int64"),
         np.ones(residues),
         AtomisticUnitSystem.reduced(),
-        element_mask=np.zeros(residues, dtype=bool),
-        atom_type_ids=np.zeros(residues, dtype=int),
-        molecule_ids=np.zeros(residues, dtype=int),
+        element_mask=np.zeros(residues, dtype="bool"),
+        atom_type_ids=np.zeros(residues, dtype="int64"),
+        molecule_ids=np.zeros(residues, dtype="int64"),
         topology=topology,
     ).prepare()
     stages = []

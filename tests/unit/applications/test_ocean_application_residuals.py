@@ -212,8 +212,8 @@ def test_cubed_sphere_cross_metric_drives_manufactured_gradients_and_transports(
     )
     assert float(jnp.max(jnp.abs(covariant[..., 0, 1]))) > 0.1
 
-    xi = (jnp.arange(count, dtype=float) + 0.5) / count
-    eta = (jnp.arange(count, dtype=float) + 0.5) / count
+    xi = (jnp.arange(count, dtype="float64") + 0.5) / count
+    eta = (jnp.arange(count, dtype="float64") + 0.5) / count
     potential = xi[:, None] + 2.0 * eta[None, :]
     gradient = geometry.surface_gradient(potential)
     cell_gradient = (

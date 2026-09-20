@@ -32,9 +32,7 @@ def _compiled(cells=16):
         phx.discretization.PiecewiseConstantReconstruction(),
         phx.discretization.RusanovFluxPlan(),
     )
-    return phx.equations.compile_conservation_problem(
-        problem, discretization, method
-    )
+    return phx.equations.compile_conservation_problem(problem, discretization, method)
 
 
 def test_named_sharding_plan_validates_local_extent_and_shards_state():
@@ -80,9 +78,7 @@ def test_decomposition_rejects_nondivisible_or_halo_dominated_domains():
             (10,), (3,), ("x",), halo_width=1
         )
     with pytest.raises(ValueError, match="smaller"):
-        phx.discretization.FiniteVolumeDecompositionPlan(
-            (8,), (4,), ("x",), halo_width=2
-        )
+        phx.discretization.FiniteVolumeDecompositionPlan((8,), (4,), ("x",), halo_width=2)
 
 
 @pytest.mark.skipif(
@@ -104,6 +100,4 @@ def test_two_device_routes_and_residual_match_single_device():
         "lower",
         "upper",
     }
-    np.testing.assert_allclose(
-        distributed, compiled(0.0, state), rtol=1e-12, atol=1e-12
-    )
+    np.testing.assert_allclose(distributed, compiled(0.0, state), rtol=1e-12, atol=1e-12)

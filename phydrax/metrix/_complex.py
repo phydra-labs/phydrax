@@ -162,11 +162,11 @@ class AlmostComplexValidationReport(StrictModule):
         nijenhuis_residual: ArrayLike,
         integrable: ArrayLike,
     ):
-        self.valid = jnp.asarray(valid, dtype=bool)
-        self.finite = jnp.asarray(finite, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
         self.algebra_residual = jnp.asarray(algebra_residual)
         self.nijenhuis_residual = jnp.asarray(nijenhuis_residual)
-        self.integrable = jnp.asarray(integrable, dtype=bool)
+        self.integrable = jnp.asarray(integrable, dtype=jnp.bool_)
 
 
 def standard_complex_structure(

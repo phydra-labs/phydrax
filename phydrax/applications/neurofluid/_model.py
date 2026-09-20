@@ -323,7 +323,7 @@ class NeurofluidTransportParameters:
             ("reservoir_coefficients", self.reservoir_coefficients),
         )
         for name, raw in raw_values:
-            value = np.asarray(raw, dtype=float)
+            value = np.asarray(raw, dtype=np.float64)
             if np.any(~np.isfinite(value)):
                 raise ValueError(f"{name} must be finite.")
             value = np.array(value, copy=True)

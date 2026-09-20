@@ -51,11 +51,10 @@ def test_training_signal_guard_records_sigint_and_restores_handler():
     assert signal.getsignal(signal.SIGINT) == previous
 
 
-def test_optax_solve_returns_after_signal_stop_request(
-    monkeypatch, phydrax_events
-):
+def test_optax_solve_returns_after_signal_stop_request(monkeypatch, phydrax_events):
     class StopAfterFirstStep:
         signal_name = "SIGTERM"
+
         def __init__(self):
             self.calls = 0
 

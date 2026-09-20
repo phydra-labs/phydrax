@@ -59,7 +59,7 @@ class SimplexInversionStepPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "reference_positions must be finite with dimension two or three."
             )
-        dimension = int(reference.shape[1])
+        dimension = reference.shape[1]
         expected_arity = dimension + 1
         if (
             topology.ndim != 2

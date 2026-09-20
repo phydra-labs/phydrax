@@ -54,9 +54,11 @@ class _NarrowBandTermProxy:
         )(batch, key=key)
         if band.dims != residual.dims or band.data.shape != residual.data.shape:
             raise ValueError("Level-set band and residual collocation axes must match.")
-        residual_data = jax.lax.stop_gradient(jnp.asarray(residual.data, dtype=float))
+        residual_data = jax.lax.stop_gradient(
+            jnp.asarray(residual.data, dtype=jnp.float64)
+        )
         band_data = jax.lax.stop_gradient(
-            self.narrow_band_policy.band_width * jnp.asarray(band.data, dtype=float)
+            self.narrow_band_policy.band_width * jnp.asarray(band.data, dtype=jnp.float64)
         )
         epsilon = self.narrow_band_policy.normalization_epsilon
         score = self.narrow_band_policy.residual_strength * residual_data / (

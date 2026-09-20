@@ -117,7 +117,7 @@ class PyamgAdapter(BenchmarkAdapter):
                 "iterations": total_iterations,
                 "matvecs": total_iterations + rhs.shape[1],
                 "preconditioner_applications": total_iterations,
-                "linear_solves": int(rhs.shape[1]),
+                "linear_solves": rhs.shape[1],
                 "nonlinear_evaluations": 0,
                 "jacobian_evaluations": 0,
             },
@@ -149,7 +149,7 @@ def _version_evidence() -> dict[str, str]:
 
 
 def _sparse_bytes(matrix: Any) -> int:
-    return int(matrix.data.nbytes + matrix.indices.nbytes + matrix.indptr.nbytes)
+    return matrix.data.nbytes + matrix.indices.nbytes + matrix.indptr.nbytes
 
 
 __all__ = ["PyamgAdapter"]

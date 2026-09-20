@@ -11,7 +11,7 @@ from phydrax.signal import frame, overlap_add
 
 
 def test_frame_and_overlap_add_have_explicit_adjacent_axis_layout():
-    values = jnp.arange(2 * 10 * 3, dtype=float).reshape((2, 10, 3))
+    values = jnp.arange(2 * 10 * 3, dtype="float64").reshape((2, 10, 3))
 
     framed = frame(values, 4, 2, axis=1)
     restored_sum = overlap_add(framed, 2, frame_axis=1, sample_axis=2)

@@ -61,11 +61,11 @@ class VehicleConfiguration(StrictModule, NonTrainableState):
         context,
         /,
     ):
-        inertia = np.asarray(dry_inertia, dtype=float)
-        tanks = np.asarray(tank_locations, dtype=float)
-        capacities = np.asarray(tank_capacities, dtype=float)
-        axes = np.asarray(wheel_axes, dtype=float)
-        wheel_values = np.asarray(wheel_inertias, dtype=float)
+        inertia = np.asarray(dry_inertia, dtype=np.float64)
+        tanks = np.asarray(tank_locations, dtype=np.float64)
+        capacities = np.asarray(tank_capacities, dtype=np.float64)
+        axes = np.asarray(wheel_axes, dtype=np.float64)
+        wheel_values = np.asarray(wheel_inertias, dtype=np.float64)
         if (
             inertia.shape != (3, 3)
             or tanks.ndim != 2
@@ -97,8 +97,8 @@ class VehicleConfiguration(StrictModule, NonTrainableState):
             {
                 "kind": "vehicle-configuration",
                 "context": context.context_id,
-                "tanks": int(tanks.shape[0]),
-                "wheels": int(axes.shape[0]),
+                "tanks": tanks.shape[0],
+                "wheels": axes.shape[0],
             }
         )
 
@@ -139,7 +139,7 @@ class CoupledVehiclePlan(StrictModule, NonTrainableState):
         items = tuple(effectors)
         if len(items) != len(effector_ids) or any(not callable(value) for value in items):
             raise ValueError("Vehicle effectors and IDs are inconsistent.")
-        times_host = np.asarray(times, dtype=float)
+        times_host = np.asarray(times, dtype=np.float64)
         if (
             times_host.ndim != 1
             or times_host.size < 2
@@ -154,7 +154,7 @@ class CoupledVehiclePlan(StrictModule, NonTrainableState):
                 "kind": "coupled-vehicle-plan",
                 "configuration": configuration.configuration_id,
                 "effectors": list(effector_ids),
-                "steps": int(times_host.size),
+                "steps": times_host.size,
             }
         )
 
@@ -295,8 +295,8 @@ class FswSchedule(StrictModule, NonTrainableState):
     modes: Array
 
     def __init__(self, breakpoints, commands, modes, /):
-        points = np.asarray(breakpoints, dtype=float)
-        command_values = np.asarray(commands, dtype=float)
+        points = np.asarray(breakpoints, dtype=np.float64)
+        command_values = np.asarray(commands, dtype=np.float64)
         mode_values = np.asarray(modes, dtype=np.int32)
         if (
             points.ndim != 1
@@ -313,7 +313,7 @@ class FswSchedule(StrictModule, NonTrainableState):
         index = jnp.clip(
             jnp.searchsorted(self.breakpoints, time, side="right") - 1,
             0,
-            int(self.breakpoints.size) - 1,
+            self.breakpoints.size - 1,
         )
         return self.commands[index]
 

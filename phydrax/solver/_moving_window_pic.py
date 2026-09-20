@@ -137,7 +137,7 @@ class PICMovingWindowPlan(StrictModule, NonTrainableState):
         injection_position: ArrayLike | None = None,
         injection_velocity: ArrayLike | None = None,
     ) -> PICMovingWindowResult:
-        predicate = jnp.asarray(apply_shift, dtype=bool).reshape(())
+        predicate = jnp.asarray(apply_shift, dtype=jnp.bool_).reshape(())
         distance = self.shift_cells * self.interval
         position = state.particles.position.at[:, self.axis].add(-distance)
         lower = self.bridge.grid.structured_axes[self.axis].bounds[0]
@@ -178,14 +178,10 @@ class PICMovingWindowPlan(StrictModule, NonTrainableState):
             slots = jnp.maximum(allocation.slots, 0)
             use = allocation.allocated
             shifted_position = shifted_position.at[slots].set(
-                jnp.where(
-                    use[:, None], injected_position, shifted_position[slots]
-                )
+                jnp.where(use[:, None], injected_position, shifted_position[slots])
             )
             shifted_velocity = shifted_velocity.at[slots].set(
-                jnp.where(
-                    use[:, None], injected_velocity, shifted_velocity[slots]
-                )
+                jnp.where(use[:, None], injected_velocity, shifted_velocity[slots])
             )
             next_population = allocation.accepted_state
             injection_success = allocation.successful

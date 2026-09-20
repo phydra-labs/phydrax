@@ -38,7 +38,7 @@ def _problem(order: int, atoms: int):
         source,
         phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(order)),
     )
-    support = (jnp.arange(atoms, dtype=float) + 0.5) / atoms
+    support = (jnp.arange(atoms, dtype="float64") + 0.5) / atoms
     target = phx.integration.discrete(
         support,
         cx.Field(jnp.full((atoms,), 1.0 / atoms), dims=("atom",)),
@@ -56,7 +56,7 @@ def _problem(order: int, atoms: int):
 
 def _bytes(tree) -> int:
     return sum(
-        int(leaf.size * leaf.dtype.itemsize)
+        leaf.size * leaf.dtype.itemsize
         for leaf in jax.tree.leaves(tree)
         if isinstance(leaf, jax.Array)
     )

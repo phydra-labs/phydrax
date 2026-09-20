@@ -20,7 +20,9 @@ motion = phx.operators.RigidPanelMotion2D(
 )
 moving_result = plan.solve(jnp.asarray((1.0, 0.0)), motion=motion)
 wall = phx.discretization.BoundarySheetParticleTransferPlan2D(64, 0.08, 0.1)
-wall_result = wall.transfer(wall.initialize(dtype=float), geometry, result.sheet_strength)
+wall_result = wall.transfer(
+    wall.initialize(dtype="float64"), geometry, result.sheet_strength
+)
 
 print("boundary residual", result.boundary_residual_norm)
 print("constraint residual", result.constraint_residual)

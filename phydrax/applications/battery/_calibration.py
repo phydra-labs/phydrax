@@ -99,8 +99,7 @@ class BatteryCalibrationParameterBranches(StrictModule):
 def _identity_unpack(value: PyTree[Any], /) -> BatteryCalibrationParameterBranches:
     if not isinstance(value, BatteryCalibrationParameterBranches):
         raise TypeError(
-            "The default calibration projection requires "
-            "BatteryCalibrationParameterBranches physical parameters."
+            "The default calibration projection requires BatteryCalibrationParameterBranches physical parameters."
         )
     return value
 
@@ -140,8 +139,7 @@ class BatteryCalibrationProjection(StrictModule, NonTrainableState):
         branches = self.unpack_fn(physical)
         if not isinstance(branches, BatteryCalibrationParameterBranches):
             raise TypeError(
-                "Calibration projection unpack must return "
-                "BatteryCalibrationParameterBranches."
+                "Calibration projection unpack must return BatteryCalibrationParameterBranches."
             )
         return branches
 
@@ -226,24 +224,23 @@ def _protocol_values_from_observation(
         raise ValueError(
             "Guard thresholds cannot be inferred from observations; provide protocol_values."
         )
-    times = np.asarray(observation.time_s, dtype=float)
-    currents = np.asarray(observation.current_a, dtype=float)
-    current_mask = np.asarray(observation.current_mask, dtype=bool)
-    boundaries = np.asarray(protocol.boundary_times_s, dtype=float)
+    times = np.asarray(observation.time_s, dtype=np.float64)
+    currents = np.asarray(observation.current_a, dtype=np.float64)
+    current_mask = np.asarray(observation.current_mask, dtype=np.bool_)
+    boundaries = np.asarray(protocol.boundary_times_s, dtype=np.float64)
     side = "left" if protocol.node_side == "left" else "right"
     interval_indices = np.searchsorted(boundaries, times, side=side) - 1
     interval_indices = np.clip(interval_indices, 0, len(protocol.steps) - 1)
     amplitudes: list[float] = []
     for step_index, current_index in enumerate(
-        np.asarray(protocol.interval_current_indices, dtype=int)
+        np.asarray(protocol.interval_current_indices, dtype=np.int64)
     ):
         selected = (interval_indices == step_index) & current_mask
         values = currents[selected]
         if current_index >= 0:
             if values.size == 0:
                 raise ValueError(
-                    "Each prescribed-current step needs a retained current observation "
-                    "or explicit protocol_values."
+                    "Each prescribed-current step needs a retained current observation or explicit protocol_values."
                 )
             if np.any(values != values[0]):
                 raise ValueError(
@@ -255,7 +252,7 @@ def _protocol_values_from_observation(
             raise ValueError(
                 "Observed passive terminal current must be zero during a rest step."
             )
-    return BatteryProtocolValues(protocol, np.asarray(amplitudes, dtype=float))
+    return BatteryProtocolValues(protocol, np.asarray(amplitudes, dtype=np.float64))
 
 
 def _channel_arrays(
@@ -269,9 +266,9 @@ def _channel_arrays(
         np.asarray(observation.temperature_k),
     )
     masks = (
-        np.asarray(observation.current_mask, dtype=bool),
-        np.asarray(observation.voltage_mask, dtype=bool),
-        np.asarray(observation.temperature_mask, dtype=bool),
+        np.asarray(observation.current_mask, dtype=np.bool_),
+        np.asarray(observation.voltage_mask, dtype=np.bool_),
+        np.asarray(observation.temperature_mask, dtype=np.bool_),
     )
     return (
         np.stack(tuple(values[_CHANNEL_INDEX[name]] for name in names), axis=-1),
@@ -310,9 +307,9 @@ def _resolve_scales(
             raise ValueError(
                 "channel_scales mapping must exactly cover observed channels."
             )
-        values = np.asarray(tuple(scales[name] for name in names), dtype=float)
+        values = np.asarray(tuple(scales[name] for name in names), dtype=np.float64)
     else:
-        values = np.asarray(scales, dtype=float)
+        values = np.asarray(scales, dtype=np.float64)
         if values.shape == ():
             values = np.broadcast_to(values, (len(names),)).copy()
     if values.shape != (len(names),):
@@ -373,8 +370,8 @@ class BatteryCalibrationExperiment(StrictModule, NonTrainableState):
             raise TypeError("prepared must be a PreparedBatteryExperiment.")
         if not isinstance(observation, BatteryTimeSeriesRecord):
             raise TypeError("observation must be a BatteryTimeSeriesRecord.")
-        save_times = np.asarray(prepared.plan.save_times_s, dtype=float)
-        observation_times = np.asarray(observation.time_s, dtype=float)
+        save_times = np.asarray(prepared.plan.save_times_s, dtype=np.float64)
+        observation_times = np.asarray(observation.time_s, dtype=np.float64)
         if not np.array_equal(save_times, observation_times):
             raise ValueError(
                 "Prepared battery save times must exactly equal observation sample times."
@@ -429,13 +426,11 @@ class BatteryCalibrationExperiment(StrictModule, NonTrainableState):
         else:
             if not isinstance(covariance_action, _COVARIANCE_ACTIONS):
                 raise TypeError(
-                    "covariance_action must be a CholeskyCovarianceAction or "
-                    "PrecisionCovarianceAction."
+                    "covariance_action must be a CholeskyCovarianceAction or PrecisionCovarianceAction."
                 )
             if covariance_action.layout.layout_id != coordinate_layout.layout_id:
                 raise ValueError(
-                    "Covariance action layout must exactly match retained "
-                    "sample-channel coordinates."
+                    "Covariance action layout must exactly match retained sample-channel coordinates."
                 )
             scales_array = None
             supplied_logdet = float(np.asarray(covariance_action.logdet_covariance))
@@ -499,7 +494,7 @@ class BatteryCalibrationExperiment(StrictModule, NonTrainableState):
                 "Unknown battery adapters must declare ledger_success and "
                 "ledger_success_id during calibration preparation."
             )
-        residual_size = int(retained_indices_host.size)
+        residual_size = retained_indices_host.size
         self.prepared = prepared
         self.observation = observation
         self.protocol_values = values
@@ -508,13 +503,13 @@ class BatteryCalibrationExperiment(StrictModule, NonTrainableState):
             jnp.asarray(retained_indices_host, dtype=jnp.int32)
         )
         self.required_sample_mask = jax.lax.stop_gradient(
-            jnp.asarray(required_samples, dtype=bool)
+            jnp.asarray(required_samples, dtype=jnp.bool_)
         )
         self.coordinate_layout = coordinate_layout
         self.channel_scales = scales_array
         self.covariance_action = covariance_action
         self.precision_cholesky = precision_cholesky
-        dtype = jnp.result_type(self.observed_values, float)
+        dtype = jnp.result_type(self.observed_values, jnp.float64)
         self.gaussian_log_normalizer = jax.lax.stop_gradient(
             jnp.asarray(
                 0.5 * (residual_size * np.log(2.0 * np.pi) + logdet),
@@ -574,18 +569,17 @@ class BatteryCalibrationExperiment(StrictModule, NonTrainableState):
 
     def _ledger_is_successful(self, ledger: Any, /) -> Array:
         if isinstance(ledger, _BUILTIN_LEDGER_TYPES):
-            successful = jnp.asarray(ledger.successful, dtype=bool)
+            successful = jnp.asarray(ledger.successful, dtype=jnp.bool_)
             if successful.shape != ():
                 raise ValueError("Battery ledger successful evidence must be scalar.")
         elif self.ledger_success is None:
             raise TypeError(
-                "Battery adapter returned an unsupported ledger without an "
-                "explicit ledger_success contract."
+                "Battery adapter returned an unsupported ledger without an explicit ledger_success contract."
             )
         else:
             successful = jnp.asarray(True)
         if self.ledger_success is not None:
-            declared = jnp.asarray(self.ledger_success(ledger), dtype=bool)
+            declared = jnp.asarray(self.ledger_success(ledger), dtype=jnp.bool_)
             if declared.shape != ():
                 raise ValueError("ledger_success must return one scalar boolean.")
             successful = successful & declared
@@ -612,9 +606,12 @@ class BatteryCalibrationExperiment(StrictModule, NonTrainableState):
         whitened = self._whiten(selected_prediction - self.observed_values)
         finite = jnp.all(jnp.isfinite(prediction)) & jnp.all(jnp.isfinite(whitened))
         required_valid = jnp.all(
-            (~self.required_sample_mask) | jnp.asarray(result.outputs.valid, dtype=bool)
+            (~self.required_sample_mask)
+            | jnp.asarray(result.outputs.valid, dtype=jnp.bool_)
         )
-        successful = jnp.asarray(result.successful, dtype=bool) & required_valid & finite
+        successful = (
+            jnp.asarray(result.successful, dtype=jnp.bool_) & required_valid & finite
+        )
         if require_ledger_success:
             successful = successful & self._ledger_is_successful(result.ledger)
         safe_residual = jnp.where(jnp.isfinite(whitened), whitened, 0.0)
@@ -652,8 +649,7 @@ class BatteryCalibrationPlan(StrictModule):
             not isinstance(value, BatteryCalibrationExperiment) for value in experiments_
         ):
             raise TypeError(
-                "experiments must be a non-empty sequence of "
-                "BatteryCalibrationExperiment values."
+                "experiments must be a non-empty sequence of BatteryCalibrationExperiment values."
             )
         experiment_ids = tuple(value.calibration_experiment_id for value in experiments_)
         if len(set(experiment_ids)) != len(experiment_ids):
@@ -662,8 +658,7 @@ class BatteryCalibrationPlan(StrictModule):
             raise TypeError("group_split must be a BatteryGroupSplit.")
         if fit_partition not in ("train", "calibration"):
             raise ValueError(
-                "fit_partition must be 'train' or 'calibration'; test data "
-                "cannot enter calibration objectives."
+                "fit_partition must be 'train' or 'calibration'; test data cannot enter calibration objectives."
             )
         if fit_partition == "train":
             partition_record_ids = group_split.train_record_ids
@@ -682,24 +677,21 @@ class BatteryCalibrationPlan(StrictModule):
                 or binding.raw_digest != record.raw_digest
             ):
                 raise ValueError(
-                    "Calibration observation does not match the split's "
-                    "immutable record content binding."
+                    "Calibration observation does not match the split's immutable record content binding."
                 )
             if (
                 record.record_id in group_split.test_record_ids
                 or record.cell_id in group_split.test_cell_ids
             ):
                 raise ValueError(
-                    "Test-partition battery records and cells cannot enter "
-                    "calibration objectives."
+                    "Test-partition battery records and cells cannot enter calibration objectives."
                 )
             if (
                 record.record_id not in partition_record_ids
                 or record.cell_id not in partition_cell_ids
             ):
                 raise ValueError(
-                    "Every calibration record and cell must belong to the "
-                    "declared fit_partition."
+                    "Every calibration record and cell must belong to the declared fit_partition."
                 )
         if not isinstance(parameter_space, ParameterSpace):
             raise TypeError("parameter_space must be a ParameterSpace.")

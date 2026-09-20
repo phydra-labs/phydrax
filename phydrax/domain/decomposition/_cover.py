@@ -470,7 +470,7 @@ class SubdomainCover(StrictModule, NonTrainableState):
         return SubdomainCoverEvidence(
             cover_id=self.cover_id,
             scope="sampled",
-            num_points=int(coverage.size),
+            num_points=coverage.size,
             min_coverage=minimum,
             max_coverage=maximum,
             uncovered_points=uncovered,

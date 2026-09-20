@@ -20,7 +20,7 @@ from jaxtyping import Array, ArrayLike
 from phydrax.ein import contract
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic import AtomicStructure
 from ...discretization import PeriodicCell
@@ -38,9 +38,9 @@ from ._local import (
 class AbstractPeriodicElectronicAmplitude(StrictModule):
     """Boundary/resource contract consumed by the periodic local Hamiltonian."""
 
-    configuration_shape: AbstractAttribute[tuple[int, int]]
-    boundary_id: AbstractAttribute[str]
-    resource_plan: AbstractAttribute[ElectronicVMCResourcePlan]
+    configuration_shape: eqx.AbstractVar[tuple[int, int]]
+    boundary_id: eqx.AbstractVar[str]
+    resource_plan: eqx.AbstractVar[ElectronicVMCResourcePlan]
 
     @abstractmethod
     def __call__(self, coordinates: ArrayLike, /) -> LogAmplitude:
@@ -114,8 +114,8 @@ class PeriodicElectronicEwaldPolicy(StrictModule, NonTrainableState):
         self.uniform_background = bool(uniform_background)
         self.maximum_real_pair_terms = maximum_real
         self.maximum_reciprocal_structure_terms = maximum_reciprocal
-        self.real_image_count = int(real_shifts.shape[0])
-        self.reciprocal_mode_count = int(reciprocal_modes.shape[0])
+        self.real_image_count = real_shifts.shape[0]
+        self.reciprocal_mode_count = reciprocal_modes.shape[0]
         self.policy_id = canonical_fingerprint(
             {
                 "kind": "periodic-electronic-ewald-policy",
@@ -323,7 +323,7 @@ class PeriodicElectronicCoulombHamiltonian(AbstractLocalQuantumOperator):
             raise ValueError(
                 "twist must be a finite three-vector in radians per cell translation."
             )
-        active = np.asarray(nuclei.active_mask, dtype=bool)
+        active = np.asarray(nuclei.active_mask, dtype=np.bool_)
         nuclear_positions = nuclei.positions[active]
         nuclear_charges = nuclei.atomic_numbers[active].astype(policy.compute_dtype)
         nucleus_count = int(np.count_nonzero(active))
@@ -409,7 +409,7 @@ class PeriodicElectronicCoulombHamiltonian(AbstractLocalQuantumOperator):
         raw_difference = fractional[:, None, :] - fractional[None, :, :]
         periodically_equal = jnp.all(raw_difference == jnp.rint(raw_difference), axis=-1)
         periodic_coincidence = jnp.any(
-            periodically_equal & ~jnp.eye(fractional.shape[0], dtype=bool)
+            periodically_equal & ~jnp.eye(fractional.shape[0], dtype=jnp.bool_)
         )
         wrapped = fractional - jax.lax.stop_gradient(jnp.floor(fractional))
         cartesian = contract(
@@ -440,7 +440,7 @@ class PeriodicElectronicCoulombHamiltonian(AbstractLocalQuantumOperator):
         )
         squared_distance = jnp.sum(displacement * displacement, axis=-1)
         self_zero = (
-            jnp.eye(fractional.shape[0], dtype=bool)[:, :, None]
+            jnp.eye(fractional.shape[0], dtype=jnp.bool_)[:, :, None]
             & jnp.all(self.ewald.real_shifts == 0, axis=-1)[None, None, :]
         )
         real_coincidence = jnp.any((squared_distance == 0.0) & ~self_zero)
@@ -543,10 +543,9 @@ class PeriodicElectronicCoulombHamiltonian(AbstractLocalQuantumOperator):
         values = jnp.asarray(configurations)
         if values.ndim < 2 or tuple(values.shape[-2:]) != self.configuration_shape:
             raise ValueError(
-                "Periodic electron configurations must end in "
-                f"{self.configuration_shape}; got {values.shape}."
+                f"Periodic electron configurations must end in {self.configuration_shape}; got {values.shape}."
             )
-        batch_shape = tuple(int(size) for size in values.shape[:-2])
+        batch_shape = tuple(values.shape[:-2])
         count = math.prod(batch_shape) if batch_shape else 1
         flat = values.reshape((count,) + self.configuration_shape)
         result = jax.vmap(self._potential_one)(flat)
@@ -568,7 +567,7 @@ class PeriodicElectronicCoulombHamiltonian(AbstractLocalQuantumOperator):
         self._require_amplitude(model)
         values = jnp.asarray(configurations)
         potential = self.potential(values)
-        batch_shape = tuple(int(size) for size in values.shape[:-2])
+        batch_shape = tuple(values.shape[:-2])
         count = math.prod(batch_shape) if batch_shape else 1
         flat = values.reshape((count,) + self.configuration_shape)
         kinetic, amplitude_valid = jax.vmap(

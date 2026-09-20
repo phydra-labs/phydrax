@@ -105,7 +105,9 @@ class LaggedLinearSolveUpdate(AbstractNonlinearUpdate):
         maximum_steps = self.linear_policy.tolerance.max_steps
         bounded_steps = 0 if maximum_steps is None else maximum_steps
         action_bound = 0 if maximum_steps is None else 4 * maximum_steps + 4
-        complete = maximum_steps is not None and self.linear_policy.preconditioning is None
+        complete = (
+            maximum_steps is not None and self.linear_policy.preconditioning is None
+        )
         return NonlinearWork(
             residual_evaluations=2,
             validity_evaluations=1,
@@ -122,9 +124,7 @@ class LaggedLinearSolveUpdate(AbstractNonlinearUpdate):
             raise ValueError("Lagged linear updates require bound vector spaces.")
         operator = self.operator_function(state, args)
         if not isinstance(operator, AbstractLinearOperator):
-            raise TypeError(
-                "operator_function must return an AbstractLinearOperator."
-            )
+            raise TypeError("operator_function must return an AbstractLinearOperator.")
         if not problem.state_space.compatible(operator.source):
             raise ValueError(
                 "Lagged operator source must match the nonlinear state space."

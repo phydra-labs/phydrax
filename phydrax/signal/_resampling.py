@@ -36,9 +36,9 @@ def _raw_output_length(
 
 
 def _phase_taps(taps: Array, up: int, /) -> Array:
-    phase_length = (int(taps.shape[0]) + up - 1) // up
+    phase_length = (taps.shape[0] + up - 1) // up
     padded_length = phase_length * up
-    padded = jnp.pad(taps, (0, padded_length - int(taps.shape[0])))
+    padded = jnp.pad(taps, (0, padded_length - taps.shape[0]))
     return padded.reshape((phase_length, up)).T
 
 
@@ -54,7 +54,7 @@ def _evaluate_polyphase_outputs(
 ) -> Array:
     """Evaluate global downsampled convolution indices from a local input window."""
     phases = _phase_taps(taps, up)
-    phase_length = int(phases.shape[1])
+    phase_length = phases.shape[1]
     high_rate_indices = output_indices * down
     phase_indices = jnp.mod(high_rate_indices, up)
     base_inputs = high_rate_indices // up
@@ -66,7 +66,7 @@ def _evaluate_polyphase_outputs(
         )[None, :]
     )
     local_inputs = global_inputs - input_origin
-    local_count = int(values.shape[-1])
+    local_count = values.shape[-1]
     clipped = jnp.clip(local_inputs, 0, local_count - 1)
     gathered = jnp.take(values, clipped, axis=-1)
     valid = (
@@ -101,12 +101,12 @@ def upfirdn(
     array, coefficients = _promote_signal_and_taps(values, taps)
     resolved_axis = _normalize_axis(axis, array.ndim)
     canonical = jnp.moveaxis(array, resolved_axis, -1)
-    sample_count = int(canonical.shape[-1])
+    sample_count = canonical.shape[-1]
     if sample_count <= 0:
         raise ValueError("The signal axis must contain at least one sample.")
     output_length = _raw_output_length(
         sample_count,
-        int(coefficients.shape[0]),
+        coefficients.shape[0],
         up_factor,
         down_factor,
     )
@@ -177,9 +177,9 @@ def resample_poly(
     down_factor //= common
     array = jnp.asarray(values)
     if not jnp.issubdtype(array.dtype, jnp.inexact):
-        array = array.astype(float)
+        array = array.astype("float64")
     resolved_axis = _normalize_axis(axis, array.ndim)
-    sample_count = int(array.shape[resolved_axis])
+    sample_count = array.shape[resolved_axis]
     if sample_count <= 0:
         raise ValueError("The signal axis must contain at least one sample.")
     if up_factor == down_factor == 1:
@@ -193,21 +193,21 @@ def resample_poly(
         )
     else:
         _, prototype = _promote_signal_and_taps(array, taps)
-    if int(prototype.shape[0]) % 2 == 0:
+    if prototype.shape[0] % 2 == 0:
         raise ValueError("Centered rational resampling requires an odd tap count.")
     dtype = jnp.result_type(array.dtype, prototype.dtype)
     array = array.astype(dtype)
     prototype = prototype.astype(dtype)
 
     output_length = (sample_count * up_factor + down_factor - 1) // down_factor
-    half_length = (int(prototype.shape[0]) - 1) // 2
+    half_length = (prototype.shape[0] - 1) // 2
     pre_padding = down_factor - half_length % down_factor
     pre_remove = (half_length + pre_padding) // down_factor
     post_padding = 0
     while (
         _raw_output_length(
             sample_count,
-            int(prototype.shape[0]) + pre_padding + post_padding,
+            prototype.shape[0] + pre_padding + post_padding,
             up_factor,
             down_factor,
         )
@@ -302,12 +302,11 @@ class RationalResamplingPlan(StrictModule, NonTrainableState):
         dtype: jnp.dtype,
     ) -> RationalResamplingState:
         """Return zero history for fixed-capacity chunks with ``input_shape``."""
-        shape = tuple(int(size) for size in input_shape)
+        shape = tuple(input_shape)
         resolved_axis = _normalize_axis(self.axis, len(shape))
         if shape[resolved_axis] != self.chunk_length:
             raise ValueError(
-                f"The input sample axis must have length {self.chunk_length}; "
-                f"got {shape[resolved_axis]}."
+                f"The input sample axis must have length {self.chunk_length}; got {shape[resolved_axis]}."
             )
         resolved_dtype = jnp.dtype(dtype)
         if not jnp.issubdtype(resolved_dtype, jnp.inexact):
@@ -344,8 +343,7 @@ class RationalResamplingPlan(StrictModule, NonTrainableState):
         resolved_axis = _normalize_axis(self.axis, values.ndim)
         if values.shape[resolved_axis] != self.chunk_length:
             raise ValueError(
-                f"The input sample axis must have length {self.chunk_length}; "
-                f"got {values.shape[resolved_axis]}."
+                f"The input sample axis must have length {self.chunk_length}; got {values.shape[resolved_axis]}."
             )
         expected_history_shape = _replace_axis_size(
             values.shape,
@@ -425,7 +423,7 @@ class RationalResamplingPlan(StrictModule, NonTrainableState):
             raise ValueError("Resampling state was created by a different plan.")
         prototype = jnp.asarray(taps)
         if not jnp.issubdtype(prototype.dtype, jnp.inexact):
-            prototype = prototype.astype(float)
+            prototype = prototype.astype("float64")
         if prototype.shape != (self.tap_count,):
             raise ValueError(
                 f"taps must have shape {(self.tap_count,)}; got {prototype.shape}."

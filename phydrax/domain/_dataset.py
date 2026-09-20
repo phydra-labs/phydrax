@@ -65,7 +65,7 @@ class DatasetDomain(JointFactor):
         first = jnp.asarray(leaves_arr[0])
         if first.ndim == 0:
             raise ValueError("DatasetDomain leaves must have a leading dataset axis.")
-        n = int(first.shape[0])
+        n = first.shape[0]
         if n <= 0:
             raise ValueError("DatasetDomain dataset axis must be non-empty.")
 
@@ -73,10 +73,9 @@ class DatasetDomain(JointFactor):
             arr = jnp.asarray(leaf)
             if arr.ndim == 0:
                 raise ValueError("DatasetDomain leaves must have a leading dataset axis.")
-            if int(arr.shape[0]) != n:
+            if arr.shape[0] != n:
                 raise ValueError(
-                    "DatasetDomain requires all leaves to share the same leading axis; "
-                    f"got {int(arr.shape[0])} and {n}."
+                    f"DatasetDomain requires all leaves to share the same leading axis; got {arr.shape[0]} and {n}."
                 )
 
         self.data = arrays
@@ -129,8 +128,8 @@ class DatasetDomain(JointFactor):
     @property
     def measure(self) -> Array:
         if self._measure_mode == "count":
-            return jnp.asarray(float(self._size), dtype=float)
-        return jnp.asarray(1.0, dtype=float)
+            return jnp.asarray(float(self._size), dtype=jnp.float64)
+        return jnp.asarray(1.0, dtype=jnp.float64)
 
     def field(self, values: ArrayLike, /) -> "DomainFunction":
         """Expose row-aligned target values as a non-trainable domain function."""

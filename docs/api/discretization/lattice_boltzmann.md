@@ -258,7 +258,7 @@
 
 ## Multiphysics distributions
 
-::: phydrax.discretization.ColourGradientLBMMethod
+::: phydrax.discretization.ColorGradientLBMMethod
 
 ---
 
@@ -421,7 +421,7 @@ compressible total-energy or solid-mechanics model.
 
 ---
 
-::: phydrax.equations.ColourGradientLatticeBoltzmannProblem
+::: phydrax.equations.ColorGradientLatticeBoltzmannProblem
 
 ---
 

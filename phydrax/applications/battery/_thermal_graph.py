@@ -55,7 +55,7 @@ class ThermalGraphPlan(StrictModule, NonTrainableState):
                 raise ValueError("Every resistor link requires explicit heat allocation.")
             weights = np.zeros((len(nodes), 0))
         else:
-            weights = np.asarray(heat_allocation, dtype=float)
+            weights = np.asarray(heat_allocation, dtype=np.float64)
         if weights.shape != (len(nodes), len(links)):
             raise ValueError(
                 "Heat allocation must have one row per node and column per link."
@@ -119,7 +119,7 @@ class ThermalGraphParameters(StrictModule):
             not isinstance(p, ThermalEquivalentCircuitParameters) for p in owners
         ):
             raise TypeError("Thermal graph cells must be ECM parameter owners.")
-        edges = jnp.asarray(edge_conductance_w_per_k, dtype=float)
+        edges = jnp.asarray(edge_conductance_w_per_k, dtype=jnp.float64)
         if edges.shape != (len(owners) - 1,):
             raise ValueError("Thermal edge conductance must match adjacent edges.")
         self.cells = owners

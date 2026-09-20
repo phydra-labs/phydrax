@@ -63,8 +63,8 @@ def _canonical_forecasts(
     case_axis: int | None,
     horizon_axis: int,
 ) -> tuple[Array, Array, tuple[int, ...]]:
-    sample_values = jnp.asarray(samples, dtype=float)
-    target_values = jnp.asarray(targets, dtype=float)
+    sample_values = jnp.asarray(samples, dtype=jnp.float64)
+    target_values = jnp.asarray(targets, dtype=jnp.float64)
     if sample_values.ndim != target_values.ndim + 1:
         raise ValueError("samples must have exactly one more axis than targets.")
     sample_position = _axis(sample_axis, sample_values.ndim, name="sample_axis")
@@ -103,7 +103,7 @@ def _canonical_forecasts(
             (0,) + tuple(index + 1 for index in permutation),
         )
 
-    event_shape = tuple(int(size) for size in target_values.shape[2:])
+    event_shape = tuple(target_values.shape[2:])
     target_values = target_values.reshape(
         (
             target_values.shape[0],
@@ -211,7 +211,7 @@ def horizon_score_diagnostics(
         case_axis=case_axis,
         horizon_axis=horizon_axis,
     )
-    horizon_values = jnp.asarray(horizons, dtype=float)
+    horizon_values = jnp.asarray(horizons, dtype=jnp.float64)
     if horizon_values.ndim != 1 or horizon_values.shape[0] != target_values.shape[1]:
         raise ValueError("horizons must be a vector aligned with target horizon_axis.")
     if bool(jnp.any(~jnp.isfinite(horizon_values))) or bool(
@@ -225,17 +225,17 @@ def horizon_score_diagnostics(
         name="mask",
         case_axis=case_axis,
         horizon_axis=horizon_axis,
-        dtype=bool,
+        dtype=jnp.bool_,
     )
     if declared_mask is None:
-        declared_mask = jnp.ones_like(target_values, dtype=bool)
+        declared_mask = jnp.ones_like(target_values, dtype=jnp.bool_)
     declared_weights = _canonical_target_value(
         weights,
         target_shape,
         name="weights",
         case_axis=case_axis,
         horizon_axis=horizon_axis,
-        dtype=float,
+        dtype=jnp.float64,
     )
     if declared_weights is None:
         declared_weights = jnp.ones_like(target_values)
@@ -261,7 +261,7 @@ def horizon_score_diagnostics(
     pointwise_by_horizon: list[Array] = []
     simultaneous_by_horizon: list[Array] = []
     width_by_horizon: list[Array] = []
-    for index in range(int(horizon_values.shape[0])):
+    for index in range(horizon_values.shape[0]):
         horizon_mask = active_mask[:, index]
         horizon_weights = declared_weights[:, index]
         crps_by_horizon.append(
@@ -273,7 +273,7 @@ def horizon_score_diagnostics(
         )
         pointwise_by_horizon.append(
             _weighted_mean(
-                covered[:, index].astype(float),
+                covered[:, index].astype("float64"),
                 horizon_mask,
                 horizon_weights,
             )
@@ -288,7 +288,7 @@ def horizon_score_diagnostics(
         per_case_simultaneous = jnp.all(
             covered[:, index] | ~horizon_mask,
             axis=-1,
-        ).astype(float)
+        ).astype("float64")
         simultaneous_by_horizon.append(
             _weighted_mean(
                 per_case_simultaneous,
@@ -298,7 +298,7 @@ def horizon_score_diagnostics(
         )
 
         per_case_energy: list[Array] = []
-        for case_index in range(int(target_values.shape[0])):
+        for case_index in range(target_values.shape[0]):
             event_mask = horizon_mask[case_index]
             event_weights = jnp.where(
                 event_mask,
@@ -368,12 +368,12 @@ def _uniform_rank_summary(
     clipped = jnp.clip(values, 0.0, jnp.nextafter(1.0, 0.0))
     indices = jnp.floor(clipped * bins).astype(jnp.int32)
     histogram = jnp.sum(
-        jax.nn.one_hot(indices, bins, dtype=float) * valid[..., None],
+        jax.nn.one_hot(indices, bins, dtype=jnp.float64) * valid[..., None],
         axis=tuple(range(valid.ndim)),
     )
     expected = jnp.full((bins,), count / float(bins))
     empirical_cdf = jnp.cumsum(histogram) / jnp.maximum(count, 1)
-    reference_cdf = jnp.arange(1, bins + 1, dtype=float) / float(bins)
+    reference_cdf = jnp.arange(1, bins + 1, dtype=jnp.float64) / float(bins)
     deviation = jnp.max(jnp.abs(empirical_cdf - reference_cdf))
     alpha = 1.0 - confidence
     bound = jnp.sqrt(jnp.log(2.0 / alpha) / (2.0 * jnp.maximum(count, 1)))
@@ -402,7 +402,7 @@ def pit_diagnostics(
     """Assess uniformity of scalar probability-integral-transform values."""
 
     level = _confidence(confidence)
-    pit = jnp.asarray(values, dtype=float)
+    pit = jnp.asarray(values, dtype=jnp.float64)
     valid = jnp.isfinite(pit) & (pit >= 0.0) & (pit <= 1.0)
     return _uniform_rank_summary(
         pit,
@@ -429,13 +429,13 @@ def observable_rank_diagnostics(
     """
 
     level = _confidence(confidence)
-    sample_values = jnp.asarray(samples, dtype=float)
-    target_values = jnp.asarray(targets, dtype=float)
+    sample_values = jnp.asarray(samples, dtype=jnp.float64)
+    target_values = jnp.asarray(targets, dtype=jnp.float64)
     position = _axis(sample_axis, sample_values.ndim, name="sample_axis")
     sample_values = jnp.moveaxis(sample_values, position, 0)
     if sample_values.shape[1:] != target_values.shape:
         raise ValueError("Observable samples and targets have incompatible shapes.")
-    count = int(sample_values.shape[0])
+    count = sample_values.shape[0]
     if count <= 0:
         raise ValueError("Observable samples must be non-empty.")
     valid = jnp.isfinite(target_values) & jnp.all(jnp.isfinite(sample_values), axis=0)
@@ -447,7 +447,7 @@ def observable_rank_diagnostics(
         uniform = jr.uniform(key, target_values.shape)
         offset = jnp.floor(uniform * (equal + 1)).astype(equal.dtype)
     ranks = less + offset
-    values = (ranks.astype(float) + 0.5) / float(count + 1)
+    values = (ranks.astype("float64") + 0.5) / float(count + 1)
     return _uniform_rank_summary(
         values,
         valid,
@@ -477,7 +477,7 @@ def monte_carlo_estimate(
     """Summarize independent leading-axis Monte Carlo replicates."""
 
     level = _confidence(confidence)
-    replicates = jnp.asarray(values, dtype=float)
+    replicates = jnp.asarray(values, dtype=jnp.float64)
     if replicates.ndim < 1 or replicates.shape[0] < 2:
         raise ValueError("At least two leading-axis Monte Carlo replicates are required.")
     mean = jnp.mean(replicates, axis=0)
@@ -608,7 +608,7 @@ def temporal_moment_diagnostics(
 ) -> TemporalMomentDiagnostics:
     """Compute dependence diagnostics from complete, shared-path trajectories."""
 
-    values = jnp.asarray(samples, dtype=float)
+    values = jnp.asarray(samples, dtype=jnp.float64)
     sample_position = _axis(sample_axis, values.ndim, name="sample_axis")
     values = jnp.moveaxis(values, sample_position, 0)
     reduced_time_position = _axis(time_axis, jnp.asarray(samples).ndim, name="time_axis")
@@ -618,7 +618,7 @@ def temporal_moment_diagnostics(
         reduced_time_position -= 1
     values = jnp.moveaxis(values, reduced_time_position + 1, 1)
     if observable is not None:
-        values = jnp.asarray(observable(values), dtype=float)
+        values = jnp.asarray(observable(values), dtype=jnp.float64)
         if values.ndim < 2 or values.shape[:2] != (
             jnp.asarray(samples).shape[sample_position],
             jnp.asarray(times).shape[0],
@@ -626,12 +626,12 @@ def temporal_moment_diagnostics(
             raise ValueError("observable must preserve leading sample and time axes.")
     if values.shape[0] < 2:
         raise ValueError("Temporal covariance requires at least two trajectories.")
-    time_values = jnp.asarray(times, dtype=float)
+    time_values = jnp.asarray(times, dtype=jnp.float64)
     if time_values.ndim != 1 or values.shape[1] != time_values.shape[0]:
         raise ValueError("times must align with the trajectory time axis.")
     if bool(jnp.any(~jnp.isfinite(values))):
         raise ValueError("Temporal diagnostics require finite complete trajectories.")
-    event_shape = tuple(int(size) for size in values.shape[2:])
+    event_shape = tuple(values.shape[2:])
     flat = values.reshape((values.shape[0], values.shape[1], -1))
     mean = jnp.mean(flat, axis=0)
     centered = flat - mean
@@ -643,7 +643,7 @@ def temporal_moment_diagnostics(
     scale = jnp.sqrt(jnp.maximum(variances[:, None, :] * variances[None, :, :], 0.0))
     correlation = jnp.where(scale > 0.0, covariance / scale, 0.0)
     lag_values: list[Array] = []
-    for lag in range(int(time_values.shape[0])):
+    for lag in range(time_values.shape[0]):
         diagonal = jnp.diagonal(correlation, offset=lag, axis1=0, axis2=1)
         lag_values.append(jnp.mean(diagonal, axis=-1))
     lag_autocorrelation = jnp.stack(lag_values)
@@ -654,13 +654,13 @@ def temporal_moment_diagnostics(
     )
     mean_error = None
     if reference_mean is not None:
-        reference = jnp.asarray(reference_mean, dtype=float)
+        reference = jnp.asarray(reference_mean, dtype=jnp.float64)
         if reference.shape != mean_values.shape:
             raise ValueError("reference_mean must match the time-indexed mean shape.")
         mean_error = _relative_error(mean_values, reference)
     covariance_error = None
     if reference_covariance is not None:
-        reference = jnp.asarray(reference_covariance, dtype=float)
+        reference = jnp.asarray(reference_covariance, dtype=jnp.float64)
         if reference.shape != covariance_values.shape:
             raise ValueError(
                 "reference_covariance must match the componentwise covariance shape."
@@ -684,7 +684,7 @@ def temporal_moment_diagnostics(
         mean_relative_error=mean_error,
         covariance_relative_error=covariance_error,
         event_shape=event_shape,
-        num_samples=int(flat.shape[0]),
+        num_samples=flat.shape[0],
     )
 
 
@@ -711,23 +711,23 @@ def paired_refinement_uncertainty(
 ) -> PairedNumericalUncertainty:
     """Estimate fine-grid error from pathwise- or casewise-coupled refinements."""
 
-    coarse_values = jnp.asarray(coarse, dtype=float)
-    fine_values = jnp.asarray(fine, dtype=float)
+    coarse_values = jnp.asarray(coarse, dtype=jnp.float64)
+    fine_values = jnp.asarray(fine, dtype=jnp.float64)
     if coarse_values.shape != fine_values.shape or coarse_values.ndim == 0:
         raise ValueError("coarse and fine must have equal non-scalar shapes.")
     position = _axis(pair_axis, coarse_values.ndim, name="pair_axis")
     coarse_values = jnp.moveaxis(coarse_values, position, 0)
     fine_values = jnp.moveaxis(fine_values, position, 0)
-    if int(coarse_values.shape[0]) < 2:
+    if coarse_values.shape[0] < 2:
         raise ValueError("Paired refinement estimation requires at least two pairs.")
     ratio, order = float(refinement_ratio), float(convergence_order)
     if not isfinite(ratio) or ratio <= 1.0:
         raise ValueError("refinement_ratio must be finite and greater than one.")
     if not isfinite(order) or order <= 0.0:
         raise ValueError("convergence_order must be finite and positive.")
-    active = jnp.ones_like(coarse_values, dtype=bool)
+    active = jnp.ones_like(coarse_values, dtype=jnp.bool_)
     if mask is not None:
-        active = jnp.broadcast_to(jnp.asarray(mask, dtype=bool), jnp.shape(coarse))
+        active = jnp.broadcast_to(jnp.asarray(mask, dtype=jnp.bool_), jnp.shape(coarse))
         active = jnp.moveaxis(active, position, 0)
     active = active & jnp.isfinite(coarse_values) & jnp.isfinite(fine_values)
     valid_pairs = jnp.sum(active, axis=0)
@@ -737,7 +737,7 @@ def paired_refinement_uncertainty(
         )
     correction = (fine_values - coarse_values) / (ratio**order - 1.0)
     correction = jnp.where(active, correction, 0.0)
-    denominator = valid_pairs.astype(float)
+    denominator = valid_pairs.astype("float64")
     mean = jnp.sum(correction, axis=0) / denominator
     second = jnp.sum(correction**2, axis=0) / denominator
     variance = jnp.maximum(second - mean**2, 0.0)
@@ -819,12 +819,12 @@ def predictive_variance_decomposition(
                 "order must contain every explicit predictive uncertainty source exactly once."
             )
 
-    values = jnp.asarray(prediction.samples.data, dtype=float)
+    values = jnp.asarray(prediction.samples.data, dtype=jnp.float64)
     if prediction.valid is not None:
-        valid = jnp.asarray(prediction.valid.data, dtype=bool)
+        valid = jnp.asarray(prediction.valid.data, dtype=jnp.bool_)
         valid_dims = prediction.valid.dims
         reshape = tuple(
-            int(valid.shape[valid_dims.index(dim)]) if dim in valid_dims else 1
+            valid.shape[valid_dims.index(dim)] if dim in valid_dims else 1
             for dim in prediction.samples.dims
         )
         values = jnp.where(valid.reshape(reshape), values, jnp.nan)
@@ -835,10 +835,10 @@ def predictive_variance_decomposition(
     components: dict[str, Array] = {}
 
     if prediction.conditional_variance is not None:
-        conditional = jnp.asarray(prediction.conditional_variance.data, dtype=float)
+        conditional = jnp.asarray(prediction.conditional_variance.data, dtype=jnp.float64)
         conditional_dims = prediction.conditional_variance.dims
         reshape = tuple(
-            int(conditional.shape[conditional_dims.index(dim)])
+            conditional.shape[conditional_dims.index(dim)]
             if dim in conditional_dims
             else 1
             for dim in prediction.samples.dims
@@ -886,7 +886,7 @@ def predictive_variance_decomposition(
                 "numerical_uncertainty must be PairedNumericalUncertainty or None."
             )
         numerical_component = jnp.asarray(
-            numerical_uncertainty.mean_squared_error, dtype=float
+            numerical_uncertainty.mean_squared_error, dtype=jnp.float64
         )
         if jnp.broadcast_shapes(numerical_component.shape, total.shape) != total.shape:
             raise ValueError(

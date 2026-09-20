@@ -103,8 +103,8 @@ def benchmark(
         None,
         species=species,
         statistics=jnp.asarray((-1,), dtype=jnp.int8),
-        spatial_active=jnp.ones((cells,), dtype=bool),
-        momentum_active=jnp.ones((momenta,), dtype=bool),
+        spatial_active=jnp.ones((cells,), dtype="bool"),
+        momentum_active=jnp.ones((momenta,), dtype="bool"),
         units=units,
         frame=frame,
     )
@@ -201,8 +201,8 @@ def benchmark(
             "species": 1,
             "energy_nodes": energy_nodes,
             "memory_depth": memory_depth,
-            "spectral_elements_per_field": int(state.spectral_function.size),
-            "spectral_bytes_per_field": int(state.spectral_function.nbytes),
+            "spectral_elements_per_field": state.spectral_function.size,
+            "spectral_bytes_per_field": state.spectral_function.nbytes,
             "spectral_state_bytes": int(sum(value.nbytes for value in spectral_arrays)),
             "memory_history_elements": int(
                 memory.source_history.size

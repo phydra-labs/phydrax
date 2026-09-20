@@ -208,7 +208,7 @@ class SmoothCompressibleRolloutTrajectory(StrictModule, NonTrainableState):
         valid_ = jnp.asarray(valid)
         if f_.ndim < 2:
             raise ValueError("Rollout populations require a leading time dimension.")
-        count = int(f_.shape[0])
+        count = f_.shape[0]
         if count <= 0:
             raise ValueError("A rollout trajectory must contain at least one state.")
         if f_.shape != (count, *schema.f_shape):
@@ -219,7 +219,7 @@ class SmoothCompressibleRolloutTrajectory(StrictModule, NonTrainableState):
             raise ValueError(
                 "U history does not match the exact schema shape and ordering."
             )
-        if valid_.dtype != jnp.dtype(bool) or valid_.shape != (count,):
+        if valid_.dtype != jnp.dtype(jnp.bool_) or valid_.shape != (count,):
             raise ValueError("Trajectory validity must be one boolean per time state.")
         expected_dtype = jnp.dtype(schema.dtype)
         if any(value.dtype != expected_dtype for value in (f_, g_, U_)):
@@ -533,7 +533,7 @@ def _channel_moments(
     second: Array | None = None
     for array in arrays:
         values = array.reshape((-1, channels))
-        local_count = int(values.shape[0])
+        local_count = values.shape[0]
         local_mean = jnp.mean(values, axis=0)
         local_second = jnp.sum(jnp.square(values - local_mean), axis=0)
         if mean is None:

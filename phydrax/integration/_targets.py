@@ -27,7 +27,7 @@ def _axes(
     if not axes:
         raise ValueError("sample_axes must contain at least one axis.")
     if all(isinstance(axis, int) for axis in axes):
-        return tuple(int(axis) for axis in axes)
+        return tuple(axes)
     if all(isinstance(axis, str) and axis for axis in axes):
         return tuple(str(axis) for axis in axes)
     raise TypeError("sample_axes must contain only integers or only non-empty names.")
@@ -36,7 +36,7 @@ def _axes(
 def _target_mass(value: Array | None, /) -> Array | None:
     if value is None:
         return None
-    mass = jnp.asarray(value, dtype=float)
+    mass = jnp.asarray(value, dtype=jnp.float64)
     if bool(jnp.any(~jnp.isfinite(mass) | (mass <= 0.0))):
         raise ValueError("target_mass must be finite and strictly positive.")
     return mass
@@ -274,7 +274,7 @@ class WeightedSampleTarget(StrictModule):
                 else _aligned_field(
                     mask,
                     log_weights,
-                    dtype=bool,
+                    dtype=jnp.bool_,
                     name="mask",
                 )
             )
@@ -293,7 +293,7 @@ class WeightedSampleTarget(StrictModule):
                 sample_count *= int(log_weights.named_shape[axis])
             resolved_axes: tuple[int, ...] | tuple[str, ...] = named_axes
         else:
-            weights = jnp.asarray(log_weights, dtype=float)
+            weights = jnp.asarray(log_weights, dtype=jnp.float64)
             if weights.ndim < 1:
                 raise ValueError("Weighted samples require at least one weight axis.")
             if not all(isinstance(axis, int) for axis in axes):
@@ -310,7 +310,7 @@ class WeightedSampleTarget(StrictModule):
             mask_ = (
                 None
                 if mask is None
-                else jnp.broadcast_to(jnp.asarray(mask, dtype=bool), weights.shape)
+                else jnp.broadcast_to(jnp.asarray(mask, dtype=jnp.bool_), weights.shape)
             )
             ancestry_ = (
                 None
@@ -321,7 +321,7 @@ class WeightedSampleTarget(StrictModule):
             )
             sample_count = 1
             for axis in resolved:
-                sample_count *= int(weights.shape[axis])
+                sample_count *= weights.shape[axis]
         provenance_ = str(provenance)
         if not provenance_:
             raise ValueError("provenance must be non-empty.")
@@ -331,7 +331,7 @@ class WeightedSampleTarget(StrictModule):
         self.target_mass = _target_mass(target_mass)
         self.ancestry = ancestry_
         self.support_valid = (
-            None if support_valid is None else jnp.asarray(support_valid, dtype=bool)
+            None if support_valid is None else jnp.asarray(support_valid, dtype=jnp.bool_)
         )
         self.stratum_ids = _sample_identifiers(stratum_ids, sample_count, "stratum_ids")
         self.pair_ids = _sample_identifiers(pair_ids, sample_count, "pair_ids")

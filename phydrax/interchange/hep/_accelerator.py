@@ -18,7 +18,6 @@ if TYPE_CHECKING:
     )
 
 
-
 def accelerator_bunch_from_openpmd_columns(
     columns: Mapping[str, object],
     /,

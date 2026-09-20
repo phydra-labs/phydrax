@@ -61,14 +61,13 @@ class _BoundedVectorDomain(StrictModule):
         self.lower = jnp.asarray(lower)
         self.upper = jnp.asarray(upper)
         self.affine_scale = jnp.asarray(scale)
-        self.dimension = int(initial.size)
+        self.dimension = initial.size
 
     def to_unit(self, physical: ArrayLike, /) -> Array:
         value = jnp.asarray(physical, dtype=self.initial.dtype)
         if value.shape[-1:] != (self.dimension,):
             raise ValueError(
-                "Physical search vectors must have trailing shape "
-                f"({self.dimension},), got {value.shape}."
+                f"Physical search vectors must have trailing shape ({self.dimension},), got {value.shape}."
             )
         scale = self.affine_scale
         lower = self.lower / scale
@@ -79,8 +78,7 @@ class _BoundedVectorDomain(StrictModule):
         value = jnp.asarray(unit, dtype=self.initial.dtype)
         if value.shape[-1:] != (self.dimension,):
             raise ValueError(
-                "Unit search vectors must have trailing shape "
-                f"({self.dimension},), got {value.shape}."
+                f"Unit search vectors must have trailing shape ({self.dimension},), got {value.shape}."
             )
         scale = self.affine_scale
         lower = self.lower / scale

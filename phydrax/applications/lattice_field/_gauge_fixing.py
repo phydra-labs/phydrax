@@ -87,7 +87,9 @@ class GaugeFixingPlan(StrictModule, NonTrainableState):
             raise TypeError("Gauge fixing requires U(N) or SU(N) matrix links.")
         if condition not in ("landau", "coulomb"):
             raise ValueError("condition must be 'landau' or 'coulomb'.")
-        active_edges = np.asarray(link_space.topology.entities(1).active_mask, dtype=bool)
+        active_edges = np.asarray(
+            link_space.topology.entities(1).active_mask, dtype=np.bool_
+        )
         if condition == "landau":
             if spatial_edges is not None:
                 raise ValueError("Landau fixing selects all active edges implicitly.")
@@ -95,7 +97,7 @@ class GaugeFixingPlan(StrictModule, NonTrainableState):
         else:
             if spatial_edges is None:
                 raise ValueError("Coulomb fixing requires an explicit spatial edge mask.")
-            spatial = np.asarray(spatial_edges, dtype=bool)
+            spatial = np.asarray(spatial_edges, dtype=np.bool_)
             if spatial.shape != (link_space.num_edges,):
                 raise ValueError("spatial_edges must contain one flag per gauge link.")
             if np.any(spatial & ~active_edges):
@@ -305,7 +307,7 @@ class PreparedGaugeFixing(StrictModule, NonTrainableState):
                 "initial_transformations must have shape "
                 f"(copy_count, {expected_tail[0]}, {expected_tail[1]}, {expected_tail[2]})."
             )
-        copy_count = int(starts.shape[0])
+        copy_count = starts.shape[0]
         if copy_count < 1 or copy_count > plan.maximum_gribov_copies:
             raise ValueError("Gribov copy count exceeds maximum_gribov_copies.")
         if not bool(np.asarray(plan.link_space.group.contains(jnp.asarray(starts)))):

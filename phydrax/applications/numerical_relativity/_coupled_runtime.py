@@ -165,7 +165,7 @@ class CoupledEvolutionState(StrictModule, NonTrainableState):
             "coupled state consecutive_failures",
             dtype=jnp.int32,
         )
-        self.terminal = _scalar(terminal, "coupled state terminal", dtype=bool)
+        self.terminal = _scalar(terminal, "coupled state terminal", dtype=jnp.bool_)
         self.topology_id = topology_id
         self.runtime_id = runtime_id
 

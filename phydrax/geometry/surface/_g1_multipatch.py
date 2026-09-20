@@ -104,8 +104,7 @@ class UnsupportedG1TopologyError(ValueError):
         self.unsupported_vertex_labels = tuple(unsupported_vertex_labels)
         labels = ", ".join(self.unsupported_vertex_labels) or "none"
         super().__init__(
-            f"G1 basis preparation status is {status.value}; "
-            f"classified vertices: {labels}."
+            f"G1 basis preparation status is {status.value}; classified vertices: {labels}."
         )
 
 
@@ -139,7 +138,7 @@ def _patch_status(
 class PreparedHalfEdgePatchTopology(StrictModule, NonTrainableState):
     """Canonical immutable half-edge topology for oriented quadrilateral patches.
 
-    ``patch_vertices`` uses the tensor order ``(v00, v10, v11, v01)``. Patch and
+    ``patch_vertices`` uses the tensor order ``(canonical, canonical, canonical, canonical)``. Patch and
     vertex labels are canonicalized lexicographically. Local half-edges traverse
     the patch boundary counter-clockwise; every shared edge must therefore occur
     once in each direction. ``halfedge_orientation`` is +1 when a half-edge runs
@@ -182,7 +181,7 @@ class PreparedHalfEdgePatchTopology(StrictModule, NonTrainableState):
             )
         if any(len(patch) != 4 for patch in corners):
             raise PatchTopologyError(
-                "Each patch must provide vertices in (v00, v10, v11, v01) order."
+                "Each patch must provide vertices in (canonical, canonical, canonical, canonical) order."
             )
         if any(any(not vertex for vertex in patch) for patch in corners):
             raise PatchTopologyError("Patch vertex labels must be non-empty.")
@@ -310,7 +309,7 @@ class PreparedHalfEdgePatchTopology(StrictModule, NonTrainableState):
         boundary_array = np.asarray(boundary, dtype=np.int32)
         topology_id = canonical_fingerprint(
             {
-                "kind": "prepared-biquintic-halfedge-topology-v1",
+                "kind": "prepared-biquintic-halfedge-topology",
                 "patch_labels": canonical_patch_labels,
                 "vertex_labels": vertex_labels,
                 "patch_vertices": array_tree_fingerprint(patch_vertex_indices),
@@ -355,7 +354,7 @@ class PreparedHalfEdgePatchTopology(StrictModule, NonTrainableState):
 
     @property
     def shared_edge_count(self) -> int:
-        return int(self.shared_halfedges.shape[0])
+        return self.shared_halfedges.shape[0]
 
     def vertex_kind(self, label: str, /) -> PatchVertexKind:
         label_ = str(label)
@@ -464,7 +463,7 @@ def _assemble_constraint_routes(
     return (
         np.asarray(source, dtype=np.int32),
         np.asarray(target, dtype=np.int32),
-        np.asarray(values, dtype=float),
+        np.asarray(values, dtype=np.float64),
         row_count,
     )
 
@@ -476,10 +475,10 @@ def _coefficient_value(
 ) -> Array:
     value = jnp.asarray(coefficients)
     expected = (topology.patch_count, _CONTROL_COUNT, _CONTROL_COUNT)
-    if value.ndim < 3 or tuple(int(size) for size in value.shape[:3]) != expected:
+    if value.ndim < 3 or tuple(value.shape[:3]) != expected:
         raise ValueError(f"Biquintic coefficients must begin with shape {expected}.")
     if not jnp.issubdtype(value.dtype, jnp.inexact):
-        value = value.astype(float)
+        value = value.astype("float64")
     return value
 
 
@@ -517,7 +516,7 @@ class BiquinticGluingConstraints(StrictModule, NonTrainableState):
         rows_per_seam = _CONTROL_COUNT * (2 if continuity is GluingContinuity.G1 else 1)
         identifier = canonical_fingerprint(
             {
-                "kind": "biquintic-linear-gluing-constraints-v1",
+                "kind": "biquintic-linear-gluing-constraints",
                 "topology": topology.topology_id,
                 "continuity": continuity.value,
                 "source_indices": array_tree_fingerprint(source),
@@ -549,7 +548,7 @@ class BiquinticGluingConstraints(StrictModule, NonTrainableState):
 
     def residual(self, coefficients: ArrayLike, /) -> Array:
         value = _coefficient_value(coefficients, self.topology)
-        payload = tuple(int(size) for size in value.shape[3:])
+        payload = tuple(value.shape[3:])
         flattened = value.reshape((self.coefficient_count, *payload))
         return self.operator.mv(flattened)
 
@@ -617,7 +616,7 @@ class BiquinticGluingBasis(StrictModule, NonTrainableState):
         residual_norm = jnp.max(jnp.abs(residual))
         identifier = canonical_fingerprint(
             {
-                "kind": "biquintic-gluing-nullspace-basis-v1",
+                "kind": "biquintic-gluing-nullspace-basis",
                 "constraints": constraints.constraint_id,
                 "relative_rank_tolerance": tolerance,
                 "rank": rank,
@@ -638,7 +637,7 @@ class BiquinticGluingBasis(StrictModule, NonTrainableState):
 
     def reconstruct(self, free_coefficients: ArrayLike, /) -> Array:
         coordinates = jnp.asarray(free_coefficients)
-        if coordinates.ndim < 1 or int(coordinates.shape[0]) != self.nullity:
+        if coordinates.ndim < 1 or coordinates.shape[0] != self.nullity:
             raise ValueError(f"Free coefficients must begin with nullity {self.nullity}.")
         if not jnp.issubdtype(coordinates.dtype, jnp.inexact):
             coordinates = coordinates.astype(self.active_basis.dtype)
@@ -648,7 +647,7 @@ class BiquinticGluingBasis(StrictModule, NonTrainableState):
             coordinates,
             backend="jax",
         )
-        payload = tuple(int(size) for size in coordinates.shape[1:])
+        payload = tuple(coordinates.shape[1:])
         shape = (
             self.constraints.topology.patch_count,
             _CONTROL_COUNT,
@@ -659,7 +658,7 @@ class BiquinticGluingBasis(StrictModule, NonTrainableState):
 
     def coordinates(self, coefficients: ArrayLike, /) -> Array:
         value = _coefficient_value(coefficients, self.constraints.topology)
-        payload = tuple(int(size) for size in value.shape[3:])
+        payload = tuple(value.shape[3:])
         flattened = value.reshape((self.constraints.coefficient_count, *payload))
         basis = self.active_basis.astype(flattened.dtype)
         return contract(
@@ -776,13 +775,13 @@ def _seam_evidence(
             (),
         )
     value = _coefficient_value(coefficients, constraints.topology)
-    if value.ndim != 4 or int(value.shape[-1]) < 1:
+    if value.ndim != 4 or value.shape[-1] < 1:
         raise ValueError(
             "Seam geometry coefficients must have shape (patches, 6, 6, dimension)."
         )
     if jnp.issubdtype(value.dtype, jnp.complexfloating):
         raise TypeError("Seam geometry coefficients must be real-valued.")
-    sample_host = np.asarray(parameters, dtype=float)
+    sample_host = np.asarray(parameters, dtype=np.float64)
     if sample_host.ndim != 1 or sample_host.size == 0:
         raise ValueError("Seam parameters must be one non-empty rank-one array.")
     if not np.all(np.isfinite(sample_host)) or np.any(
@@ -843,7 +842,7 @@ def _seam_evidence(
     g1_accepted = g0_accepted & (maximum_first <= tolerance_)
     evidence_id = canonical_fingerprint(
         {
-            "kind": "sampled-biquintic-seam-evidence-v1",
+            "kind": "sampled-biquintic-seam-evidence",
             "constraint": constraints.constraint_id,
             "parameters": array_tree_fingerprint(sample_host),
             "tolerance": tolerance_,

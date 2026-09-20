@@ -87,7 +87,7 @@ class PortfolioPlan(StrictModule):
             left[2] != right[1] for left, right in zip(slices, slices[1:], strict=False)
         ):
             raise ValueError("variable_slices must be contiguous.")
-        shape = tuple(int(size) for size in weight_shape)
+        shape = tuple(weight_shape)
         if (
             not shape
             or any(size <= 0 for size in shape)
@@ -97,8 +97,8 @@ class PortfolioPlan(StrictModule):
         identifier, objective = str(structure_id), str(objective_kind)
         if not identifier or not objective:
             raise ValueError("structure_id and objective_kind must be non-empty.")
-        integers = tuple(int(index) for index in integer_indices)
-        binaries = tuple(int(index) for index in binary_indices)
+        integers = tuple(integer_indices)
+        binaries = tuple(binary_indices)
         variable_count = slices[-1][2]
         if (
             len(set(integers)) != len(integers)
@@ -271,15 +271,15 @@ def _objective_auxiliaries(problem: PortfolioProblem, layout: _Layout) -> None:
         layout.add("entropy_scale", 1)
         layout.add("entropy_perspective", scenarios)
     elif isinstance(objective, SpectralRiskObjective):
-        atoms = int(objective.confidences.shape[0])
+        atoms = objective.confidences.shape[0]
         layout.add("spectral_thresholds", atoms)
         layout.add("spectral_excess", atoms * scenarios)
     elif isinstance(objective, DrawdownRiskObjective):
         returns = problem.forecast.scenario_returns
-        entries = int(returns.shape[0] * returns.shape[1])
+        entries = returns.shape[0] * returns.shape[1]
         layout.add("running_peak", entries)
         layout.add("drawdown", entries)
-        layout.add("maximum_drawdown", int(returns.shape[0]))
+        layout.add("maximum_drawdown", returns.shape[0])
 
 
 def _weight_topology(problem: PortfolioProblem) -> tuple[tuple[int, ...], int, int]:
@@ -722,7 +722,7 @@ def compile_portfolio_problem(problem: PortfolioProblem, /) -> PortfolioCompiled
     for copy in range(copies):
         start = copy * assets
         for robust in constraints.robust:
-            factors = int(robust.factor_loading.shape[1])
+            factors = robust.factor_loading.shape[1]
             rows = np.zeros((factors + 1, variables), dtype=dtype)
             rhs = np.zeros((factors + 1,), dtype=dtype)
             rows[0, start : start + assets] = np.asarray(robust.nominal) * asset_scale

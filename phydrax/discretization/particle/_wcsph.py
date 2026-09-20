@@ -664,7 +664,7 @@ class PreparedWeaklyCompressibleSPHDynamics(StrictModule, NonTrainableState):
 
     @staticmethod
     def _angular_sum(position: Array, vector: Array, /) -> Array:
-        dimension = int(position.shape[-1])
+        dimension = position.shape[-1]
         if dimension == 1:
             return jnp.zeros((), dtype=position.dtype)
         if dimension == 2:

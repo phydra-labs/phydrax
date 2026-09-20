@@ -208,7 +208,7 @@ def adjust_for_corporate_actions(
 
     times = np.asarray(event_time_ns, dtype=np.int64)
     values = np.asarray(prices)
-    valid = np.asarray(valid_mask, dtype=bool)
+    valid = np.asarray(valid_mask, dtype=np.bool_)
     if times.ndim != 1 or values.shape != times.shape or valid.shape != times.shape:
         raise ValueError("Corporate-action inputs must be equal-length vectors.")
     if values.dtype.kind not in "fiu":
@@ -301,7 +301,7 @@ def price_returns(
 
     times = np.asarray(event_time_ns, dtype=np.int64)
     values = np.asarray(prices)
-    valid = np.asarray(valid_mask, dtype=bool)
+    valid = np.asarray(valid_mask, dtype=np.bool_)
     if (
         times.ndim != 1
         or times.size < 2
@@ -397,7 +397,7 @@ def build_time_bars(
     times = np.asarray(event_time_ns, dtype=np.int64)
     price_values = np.asarray(prices)
     volume_values = np.asarray(volumes)
-    source_valid = np.asarray(valid_mask, dtype=bool)
+    source_valid = np.asarray(valid_mask, dtype=np.bool_)
     starts = np.asarray(starts_ns, dtype=np.int64)
     ends = np.asarray(ends_ns, dtype=np.int64)
     if (
@@ -422,7 +422,7 @@ def build_time_bars(
     closes = np.zeros((count,), dtype=price_values.dtype)
     aggregated_volume = np.zeros((count,), dtype=volume_values.dtype)
     observation_count = np.zeros((count,), dtype=np.int32)
-    valid = np.zeros((count,), dtype=bool)
+    valid = np.zeros((count,), dtype=np.bool_)
     status = np.zeros((count,), dtype=np.int32)
     finite = np.isfinite(price_values) & np.isfinite(volume_values)
     for index, (start, end) in enumerate(zip(starts, ends, strict=True)):

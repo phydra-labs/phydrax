@@ -20,7 +20,7 @@ SecondOrderResidual: TypeAlias = Callable[[Array, Array, Array, Array, Any], Arr
 
 
 def _scale(value: ArrayLike | None, shape: tuple[int, ...], owner: str) -> Array:
-    result = jnp.ones(shape) if value is None else jnp.asarray(value, dtype=float)
+    result = jnp.ones(shape) if value is None else jnp.asarray(value, dtype=jnp.float64)
     result = jnp.broadcast_to(result, shape)
     return eqx.error_if(
         result,
@@ -54,7 +54,7 @@ class SecondOrderDifferentialSystem(StrictModule):
     ):
         if not callable(residual):
             raise TypeError("Second-order residual must be callable.")
-        shape = tuple(int(size) for size in state_shape)
+        shape = tuple(state_shape)
         if not shape or any(size <= 0 for size in shape):
             raise ValueError("state_shape must contain positive dimensions.")
         identifier = str(system_id)

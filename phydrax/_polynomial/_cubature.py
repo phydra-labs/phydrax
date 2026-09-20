@@ -100,7 +100,7 @@ class CubatureRuleData(StrictModule, NonTrainableState):
         reference_domain: CubatureReference,
         backend: str,
         source_id: str,
-        dtype=float,
+        dtype=jnp.float64,
         maximum_rule_bytes: int = _DEFAULT_RULE_BYTES,
     ):
         degree = _degree(exact_degree)
@@ -131,8 +131,7 @@ class CubatureRuleData(StrictModule, NonTrainableState):
             or weights_host.shape != points_host.shape[:1]
         ):
             raise ValueError(
-                "Cubature points must have shape (num_points, reference_dimension) "
-                "with one aligned weight per point."
+                "Cubature points must have shape (num_points, reference_dimension) with one aligned weight per point."
             )
         if (
             np.any(~np.isfinite(points_host))
@@ -142,7 +141,7 @@ class CubatureRuleData(StrictModule, NonTrainableState):
             raise ValueError(
                 "Cubature points must be finite and weights positive finite."
             )
-        point_dimension = int(points_host.shape[1])
+        point_dimension = points_host.shape[1]
         order = np.lexsort(
             tuple(points_host[:, axis] for axis in range(point_dimension - 1, -1, -1))
         )
@@ -162,7 +161,7 @@ class CubatureRuleData(StrictModule, NonTrainableState):
             atol=tolerance,
         ):
             raise ValueError("Cubature weights do not have their declared measure mass.")
-        storage_bytes = int(points_host.nbytes + weights_host.nbytes)
+        storage_bytes = points_host.nbytes + weights_host.nbytes
         if (
             isinstance(maximum_rule_bytes, bool)
             or not isinstance(maximum_rule_bytes, Integral)
@@ -185,7 +184,7 @@ class CubatureRuleData(StrictModule, NonTrainableState):
         self.storage_bytes = storage_bytes
         self.rule_id = canonical_fingerprint(
             {
-                "kind": "cubature-rule-v1",
+                "kind": "cubature-rule",
                 "family": family,
                 "reference_domain": reference_domain,
                 "integration_measure": self.integration_measure,
@@ -345,7 +344,7 @@ def periodic_circle_rule_data(
 ) -> CubatureRuleData:
     requested = _degree(degree)
     count = max(2, 2 * math.ceil((requested + 1) / 2))
-    angles = 2.0 * math.pi * np.arange(count, dtype=float) / float(count)
+    angles = 2.0 * math.pi * np.arange(count, dtype=np.float64) / float(count)
     points = np.stack((np.cos(angles), np.sin(angles)), axis=-1)
     weights = np.full((count,), 2.0 * math.pi / float(count))
     return CubatureRuleData(

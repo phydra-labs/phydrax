@@ -15,7 +15,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._tree_math import tree_add_scaled, tree_norm
 from ..linalg import AbstractVectorSpace
 from ..nonlinear import (
@@ -345,7 +345,7 @@ class CorrectedBranchSeed(StrictModule):
         self.nonlinear_result = nonlinear_result
         self.residual_norm = jnp.asarray(residual_norm)
         self.constraint_residual = jnp.asarray(constraint_residual)
-        self.successful = jnp.asarray(successful, dtype=bool)
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_)
         self.correction_id = identifier
 
 
@@ -467,10 +467,10 @@ class ExtendedSystemCertificate(StrictModule):
         self.block_norms = norms
         self.total_residual_norm = jnp.asarray(total_residual_norm)
         self.residual_tolerance = jnp.asarray(residual_tolerance)
-        self.nonlinear_success = jnp.asarray(nonlinear_success, dtype=bool)
-        self.parameter_valid = jnp.asarray(parameter_valid, dtype=bool)
-        self.frequency_valid = jnp.asarray(frequency_valid, dtype=bool)
-        self.finite = jnp.asarray(finite, dtype=bool)
+        self.nonlinear_success = jnp.asarray(nonlinear_success, dtype=jnp.bool_)
+        self.parameter_valid = jnp.asarray(parameter_valid, dtype=jnp.bool_)
+        self.frequency_valid = jnp.asarray(frequency_valid, dtype=jnp.bool_)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
 
     @property
@@ -825,8 +825,8 @@ def _extended_certificate(
     finite = jnp.all(jnp.isfinite(block_norms)) & jnp.isfinite(total)
     within_tolerance = jnp.all(block_norms <= residual_tolerance)
     nonlinear_success = nonlinear_result.successful
-    parameter_valid_ = jnp.asarray(parameter_valid, dtype=bool)
-    frequency_valid_ = jnp.asarray(frequency_valid, dtype=bool)
+    parameter_valid_ = jnp.asarray(parameter_valid, dtype=jnp.bool_)
+    frequency_valid_ = jnp.asarray(frequency_valid, dtype=jnp.bool_)
     status = jnp.where(
         ~finite,
         int(ExtendedSystemStatus.NONFINITE),
@@ -1073,7 +1073,7 @@ class NullspaceEvidence(StrictModule):
         self.left_right_pairing = jnp.asarray(left_right_pairing)
         self.eigenvalue_condition = jnp.asarray(eigenvalue_condition)
         self.source_status = jnp.asarray(source_status, dtype=jnp.int32)
-        self.source_success = jnp.asarray(source_success, dtype=bool)
+        self.source_success = jnp.asarray(source_success, dtype=jnp.bool_)
         self.analyzer_id = identifier
         self.full_spectrum = bool(full_spectrum)
 
@@ -1081,7 +1081,7 @@ class NullspaceEvidence(StrictModule):
 class AbstractNullspaceAnalyzer(StrictModule):
     """Hook from a general eigensolver/SVD implementation to nullspace evidence."""
 
-    analyzer_id: AbstractAttribute[str]
+    analyzer_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def analyze(
@@ -1246,7 +1246,7 @@ class HopfEigenEvidence(StrictModule):
         self.crossing_speed = jnp.asarray(crossing_speed)
         self.pair_condition = jnp.asarray(pair_condition)
         self.source_status = jnp.asarray(source_status, dtype=jnp.int32)
-        self.source_success = jnp.asarray(source_success, dtype=bool)
+        self.source_success = jnp.asarray(source_success, dtype=jnp.bool_)
         self.analyzer_id = identifier
         self.full_spectrum = bool(full_spectrum)
 
@@ -1254,7 +1254,7 @@ class HopfEigenEvidence(StrictModule):
 class AbstractHopfAnalyzer(StrictModule):
     """Hook from a general eigensolver to a complete critical-pair analysis."""
 
-    analyzer_id: AbstractAttribute[str]
+    analyzer_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def analyze(
@@ -1913,7 +1913,7 @@ def certify_pitchfork(
     cubic = jnp.asarray(cubic_coefficient)
     solve_residual = jnp.asarray(normal_form_solve_residual)
     condition = jnp.asarray(normal_form_condition)
-    normal_success = jnp.asarray(normal_form_success, dtype=bool)
+    normal_success = jnp.asarray(normal_form_success, dtype=jnp.bool_)
     branch_evidence = branch_certificate.evidence
     if not isinstance(branch_evidence, BranchPointEvidence):
         raise TypeError("branch certificate evidence must be BranchPointEvidence.")
@@ -2023,7 +2023,7 @@ def certify_transcritical(
     mixed = jnp.asarray(mixed_coefficient)
     tangent_residual = jnp.asarray(reference_tangent_residual)
     tangent_condition = jnp.asarray(reference_tangent_condition)
-    tangent_success = jnp.asarray(reference_tangent_success, dtype=bool)
+    tangent_success = jnp.asarray(reference_tangent_success, dtype=jnp.bool_)
     separation = jnp.asarray(family_separation)
     evidence = TranscriticalEvidence(
         branch_point=branch_evidence,

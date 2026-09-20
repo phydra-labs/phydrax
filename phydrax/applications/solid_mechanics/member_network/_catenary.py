@@ -197,8 +197,8 @@ class ElasticCatenaryBlock(AbstractMemberBlock):
             jnp.zeros((count, 2), dtype=energy.dtype),
             jnp.zeros((count, 2), dtype=energy.dtype),
             jnp.zeros((count,), dtype=energy.dtype),
-            jnp.ones((count,), dtype=bool),
-            jnp.ones((count,), dtype=bool),
+            jnp.ones((count,), dtype=jnp.bool_),
+            jnp.ones((count,), dtype=jnp.bool_),
             jnp.stack(tuple(state.minimum_tension for state in states)),
             valid,
         )

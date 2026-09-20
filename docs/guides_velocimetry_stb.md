@@ -35,4 +35,4 @@ predict active tracks
 
 Short, active, and terminated tracks remain distinguishable. Image detections, reconstructed particles, and track identities use separate IDs. Capacity overflow is a result status rather than truncation.
 
-The native implementation covers point tracers. Finite bubbles/fibres and online volume self-calibration require different image and calibration contracts and are intentionally outside this surface.
+The native implementation covers point tracers. Finite bubbles/fibers and online volume self-calibration require different image and calibration contracts and are intentionally outside this surface.

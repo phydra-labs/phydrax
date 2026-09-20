@@ -53,7 +53,7 @@ def _case(fibers: int, nodes: int, repeats: int) -> dict[str, object]:
     positions = (
         jnp.zeros((fibers, nodes, 3)).at[:, :, 0].set(jnp.linspace(0.0, 10.0, nodes))
     )
-    mask = jnp.zeros((1, fibers, nodes), dtype=bool).at[0, :, 0].set(True)
+    mask = jnp.zeros((1, fibers, nodes), dtype="bool").at[0, :, 0].set(True)
     stimulus = PrescribedFiberStimulusSchedule(
         jnp.asarray([0.0]),
         jnp.asarray([0.1]),

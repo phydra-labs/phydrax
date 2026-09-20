@@ -107,7 +107,7 @@ def _positive_integer(value: int, name: str, /) -> int:
 
 
 def _as_host_float_array(value: ArrayLike, name: str, /) -> np.ndarray:
-    array = np.asarray(value, dtype=float)
+    array = np.asarray(value, dtype=np.float64)
     if not np.all(np.isfinite(array)):
         raise ValueError(f"{name} must be finite.")
     return array
@@ -168,7 +168,7 @@ class PhysicalEquilibriumSupportProvenance(StrictModule, NonTrainableState):
         self.authorized_use_ids = uses
         self.provenance_id = canonical_fingerprint(
             {
-                "kind": "physical-equilibrium-support-provenance-v1",
+                "kind": "physical-equilibrium-support-provenance",
                 "source_id": source,
                 "reference_manifest_id": reference,
                 "equilibrium_sampling_method_id": method,
@@ -253,7 +253,7 @@ class EnsembleSupport(StrictModule, NonTrainableState):
         self.physical_provenance = physical_provenance
         self.support_id = canonical_fingerprint(
             {
-                "kind": "ensemble-support-v2",
+                "kind": "ensemble-support",
                 "source_kind": kind,
                 "source_id": identifier,
                 "physical_provenance_id": (
@@ -269,7 +269,7 @@ class EnsembleSupport(StrictModule, NonTrainableState):
 
     @property
     def sample_count(self) -> int:
-        return int(self.log_reference_weights.shape[0])
+        return self.log_reference_weights.shape[0]
 
     @property
     def physical_equilibrium(self) -> bool:
@@ -308,7 +308,7 @@ class EnsembleSupportPolicy(StrictModule, NonTrainableState):
         self.minimum_effective_sample_fraction = minimum_fraction
         self.policy_id = canonical_fingerprint(
             {
-                "kind": "ensemble-support-policy-v1",
+                "kind": "ensemble-support-policy",
                 "minimum_effective_sample_size": minimum_size.hex(),
                 "minimum_effective_sample_fraction": minimum_fraction.hex(),
                 "boundary": "less-than-or-equal-is-invalid",
@@ -355,8 +355,7 @@ class EnsembleObservablePlan(StrictModule, NonTrainableState):
             covariance, (CholeskyCovarianceAction, PrecisionCovarianceAction)
         ):
             raise TypeError(
-                "covariance must be a CholeskyCovarianceAction or "
-                "PrecisionCovarianceAction."
+                "covariance must be a CholeskyCovarianceAction or PrecisionCovarianceAction."
             )
         per_sample = _as_host_float_array(
             per_sample_observables, "Per-sample observables"
@@ -364,8 +363,7 @@ class EnsembleObservablePlan(StrictModule, NonTrainableState):
         aggregate = _as_host_float_array(observed, "Observed aggregate")
         if per_sample.ndim != 2 or per_sample.shape[0] < 2:
             raise ValueError(
-                "Per-sample observables must have shape (sample, observable) "
-                "with at least two samples."
+                "Per-sample observables must have shape (sample, observable) with at least two samples."
             )
         if aggregate.shape != (per_sample.shape[1],):
             raise ValueError("Observed aggregate must match the observable axis exactly.")
@@ -395,7 +393,7 @@ class EnsembleObservablePlan(StrictModule, NonTrainableState):
         self.usage = usage_  # type: ignore[assignment]
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "ensemble-observable-plan-v2",
+                "kind": "ensemble-observable-plan",
                 "observation_id": identifier,
                 "source_ids": list(sources),
                 "case_ids": list(cases),
@@ -410,11 +408,11 @@ class EnsembleObservablePlan(StrictModule, NonTrainableState):
 
     @property
     def sample_count(self) -> int:
-        return int(self.per_sample_observables.shape[0])
+        return self.per_sample_observables.shape[0]
 
     @property
     def observable_count(self) -> int:
-        return int(self.per_sample_observables.shape[1])
+        return self.per_sample_observables.shape[1]
 
     @property
     def lineage_ids(self) -> tuple[str, ...]:
@@ -852,8 +850,7 @@ def predict_held_out_observables(
     )
     if set(plan.lineage_ids) & set(fit_lineage):
         raise ValueError(
-            "Held-out observation lineage must be disjoint from fitted and "
-            "model-selection lineages."
+            "Held-out observation lineage must be disjoint from fitted and model-selection lineages."
         )
     if plan.sample_count != result.support.sample_count:
         raise ValueError("Held-out plan and fitted support sample axes must match.")
@@ -1063,7 +1060,7 @@ class TwoStateEquilibriumStateAssignment(StrictModule, NonTrainableState):
         self.assignment_evidence_id = evidence
         self.record_id = canonical_fingerprint(
             {
-                "kind": "two-state-equilibrium-state-assignment-v1",
+                "kind": "two-state-equilibrium-state-assignment",
                 "support_id": support.support_id,
                 "support_provenance_id": provenance_id,
                 "condition_id": condition,
@@ -1142,14 +1139,14 @@ class TwoStateEquilibriumRecord(StrictModule, NonTrainableState):
                 "Equilibrium assignment must exactly match result support, provenance, "
                 "condition, state order, and replicas."
             )
-        weights = np.exp(np.asarray(result.log_weights, dtype=float))
+        weights = np.exp(np.asarray(result.log_weights, dtype=np.float64))
         inefficiency = float(np.asarray(support.statistical_inefficiency))
         replica_probabilities: list[np.ndarray] = []
         replica_ess: list[float] = []
         for replica in replicas:
             mask = np.asarray(
                 [value == replica for value in assignment.sample_replica_ids],
-                dtype=bool,
+                dtype=np.bool_,
             )
             local_weights = weights[mask]
             local_weights = local_weights / np.sum(local_weights)
@@ -1175,7 +1172,7 @@ class TwoStateEquilibriumRecord(StrictModule, NonTrainableState):
         )
         reweighting_id = canonical_fingerprint(
             {
-                "kind": "bound-ensemble-reweighting-v1",
+                "kind": "bound-ensemble-reweighting",
                 "support_id": support.support_id,
                 "fit_plan_id": result.fit_plan_id,
                 "support_policy_id": result.support_policy_id,
@@ -1204,7 +1201,7 @@ class TwoStateEquilibriumRecord(StrictModule, NonTrainableState):
         self.population_aggregation = "replica-effective-sample-size-weighted"
         self.record_id = canonical_fingerprint(
             {
-                "kind": "two-state-equilibrium-record-v3",
+                "kind": "two-state-equilibrium-record",
                 "condition_id": condition,
                 "state_ids": list(states),
                 "replica_ids": list(replicas),
@@ -1276,7 +1273,7 @@ class TwoStateKineticRecord(StrictModule, NonTrainableState):
                 source=forward_rate_unit,
                 target=_RATE_PER_SECOND,
             ),
-            dtype=float,
+            dtype=np.float64,
         )
         reverse = np.asarray(
             convert_value(
@@ -1284,7 +1281,7 @@ class TwoStateKineticRecord(StrictModule, NonTrainableState):
                 source=reverse_rate_unit,
                 target=_RATE_PER_SECOND,
             ),
-            dtype=float,
+            dtype=np.float64,
         )
         if forward.shape != () or reverse.shape != ():
             raise ValueError("Two-state rates must be scalar.")
@@ -1305,7 +1302,7 @@ class TwoStateKineticRecord(StrictModule, NonTrainableState):
         self.canonical_rate_unit = _RATE_PER_SECOND
         self.record_id = canonical_fingerprint(
             {
-                "kind": "two-state-kinetic-record-v2",
+                "kind": "two-state-kinetic-record",
                 "condition_id": condition,
                 "state_ids": list(states),
                 "observation_id": observation,
@@ -1398,7 +1395,7 @@ class TwoStateThermodynamicClosurePlan(StrictModule, NonTrainableState):
         self.maximum_combined_standard_error = maximum_uncertainty
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "two-state-thermodynamic-closure-plan-v2",
+                "kind": "two-state-thermodynamic-closure-plan",
                 "condition_id": condition,
                 "state_ids": list(states_),
                 "replica_ids": list(replicas),
@@ -1552,8 +1549,7 @@ def evaluate_two_state_thermodynamic_closure(
         or held_out_prediction.observation_source_ids != plan.equilibrium_source_ids
     ):
         raise ValueError(
-            "Held-out prediction does not match the closure equilibrium observation "
-            "and sources."
+            "Held-out prediction does not match the closure equilibrium observation and sources."
         )
     equilibrium_identity = (
         equilibrium_record.condition_id,
@@ -1576,7 +1572,7 @@ def evaluate_two_state_thermodynamic_closure(
         )
     expected_reweighting_id = canonical_fingerprint(
         {
-            "kind": "bound-ensemble-reweighting-v1",
+            "kind": "bound-ensemble-reweighting",
             "support_id": result.support.support_id,
             "fit_plan_id": result.fit_plan_id,
             "support_policy_id": result.support_policy_id,
@@ -1610,8 +1606,7 @@ def evaluate_two_state_thermodynamic_closure(
     )
     if kinetic_identity != planned_kinetic_identity:
         raise ValueError(
-            "Kinetic record condition, state order, observation, and sources "
-            "must exactly match the closure plan."
+            "Kinetic record condition, state order, observation, and sources must exactly match the closure plan."
         )
 
     equilibrium = equilibrium_record.state_probabilities

@@ -48,7 +48,7 @@ def compile_convex_hull_support(
         raise ValueError(
             "support_points must have shape (samples, binding.feature_count)."
         )
-    samples = int(points.shape[0])
+    samples = points.shape[0]
     if samples < 1 or not np.all(np.isfinite(np.asarray(points))):
         raise ValueError("support_points must be nonempty and finite.")
     identifier = str(support_id)

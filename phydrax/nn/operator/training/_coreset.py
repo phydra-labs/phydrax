@@ -72,9 +72,11 @@ def compress_operator_cases(
     source_log_weights = (
         dataset.case_log_weights
         if log_weights is None
-        else jnp.asarray(log_weights, dtype=float)
+        else jnp.asarray(log_weights, dtype=jnp.float64)
     )
-    source_mask = dataset.case_mask if mask is None else jnp.asarray(mask, dtype=bool)
+    source_mask = (
+        dataset.case_mask if mask is None else jnp.asarray(mask, dtype=jnp.bool_)
+    )
     selection = _select(
         feature_values,
         method,
@@ -130,7 +132,7 @@ def compress_operator_queries(
     )
     feature_values = jnp.asarray(features)
     case_count = dataset.size
-    point_count = int(coordinates.shape[-2])
+    point_count = coordinates.shape[-2]
     if feature_values.shape[:1] == (point_count,) and feature_values.ndim == 2:
         shared = True
         selection = _select(

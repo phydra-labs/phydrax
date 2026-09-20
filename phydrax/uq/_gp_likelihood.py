@@ -29,10 +29,10 @@ class GaussianProcessLikelihoodState(StrictModule):
     ):
         if kernel is not None and not isinstance(kernel, AbstractPositiveDefiniteKernel):
             raise TypeError("kernel must be an AbstractPositiveDefiniteKernel or None.")
-        noise = jnp.asarray(noise_scale, dtype=float)
+        noise = jnp.asarray(noise_scale, dtype=jnp.float64)
         if noise.ndim > 1 or (noise.ndim == 1 and noise.shape[0] == 0):
             raise ValueError("noise_scale must be scalar or a nonempty vector.")
-        jitter_array = jnp.asarray(jitter, dtype=float)
+        jitter_array = jnp.asarray(jitter, dtype=jnp.float64)
         if jitter_array.ndim != 0:
             raise ValueError("jitter must be scalar.")
         self.kernel = Matern32Kernel() if kernel is None else kernel

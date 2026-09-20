@@ -233,10 +233,10 @@ def diagnose_posterior(
     gradient_norm = jnp.sqrt(
         sum(
             (
-                jnp.sum(jnp.asarray(leaf, dtype=float) ** 2)
+                jnp.sum(jnp.asarray(leaf, dtype=jnp.float64) ** 2)
                 for leaf in jax.tree_util.tree_leaves(gradient)
             ),
-            jnp.zeros((), dtype=float),
+            jnp.zeros((), dtype=jnp.float64),
         )
     )
     failures: list[str] = []

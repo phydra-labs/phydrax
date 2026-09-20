@@ -28,7 +28,7 @@ from phydrax.signal import fourier_resample
 
 
 def _output_bytes(tree: Any) -> int:
-    return sum(int(leaf.size * leaf.dtype.itemsize) for leaf in jax.tree.leaves(tree))
+    return sum(leaf.size * leaf.dtype.itemsize for leaf in jax.tree.leaves(tree))
 
 
 def _stencil_bytes(stencil: Any, /) -> int:
@@ -38,7 +38,7 @@ def _stencil_bytes(stencil: Any, /) -> int:
         stencil.valid,
         stencil.support,
     )
-    return sum(int(array.size * array.dtype.itemsize) for array in arrays)
+    return sum(array.size * array.dtype.itemsize for array in arrays)
 
 
 def _open_uniform_knots(control_count: int, degree: int, /) -> jax.Array:
@@ -93,7 +93,7 @@ def run_benchmarks(*, repeats: int = 10) -> dict[str, Any]:
         jnp.arange(8192, dtype=jnp.int32)[:, None]
         + jnp.arange(16, dtype=jnp.int32)[None, :]
     ) % source.shape[0]
-    candidate_distances = (0.01 + jnp.arange(16, dtype=float)[None, :]) ** 2
+    candidate_distances = (0.01 + jnp.arange(16, dtype=jnp.float64)[None, :]) ** 2
     candidate_distances = jnp.broadcast_to(
         candidate_distances,
         candidate_indices.shape,
@@ -125,8 +125,8 @@ def run_benchmarks(*, repeats: int = 10) -> dict[str, Any]:
         axis=-1,
     )
 
-    point_x = jnp.arange(32, dtype=float) / 32.0
-    point_y = jnp.arange(32, dtype=float) / 32.0
+    point_x = jnp.arange(32, dtype=jnp.float64) / 32.0
+    point_y = jnp.arange(32, dtype=jnp.float64) / 32.0
     point_xx, point_yy = jnp.meshgrid(point_x, point_y, indexing="ij")
     point_values = jnp.stack(
         (
@@ -160,7 +160,7 @@ def run_benchmarks(*, repeats: int = 10) -> dict[str, Any]:
                     inverse_distance_stencil(
                         candidate_indices,
                         candidate_distances,
-                        source_size=int(source.shape[0]),
+                        source_size=source.shape[0],
                         regularization=1e-12,
                     ),
                 ).values
@@ -208,28 +208,24 @@ def run_benchmarks(*, repeats: int = 10) -> dict[str, Any]:
             point_query,
             repeats=repeats,
         ),
-        "fourier_points_nufft_2d": _benchmark(
+        "fourier_points_chunked_2d": _benchmark(
             lambda query: (
                 fourier_interpolate(
                     point_values,
                     query,
                     spatial_ndim=2,
-                    method="nufft",
-                    tolerance=1e-6,
                     query_chunk_size=2048,
                 ).values
             ),
             point_query,
             repeats=repeats,
         ),
-        "fourier_points_nufft_3d": _benchmark(
+        "fourier_points_chunked_3d": _benchmark(
             lambda query: (
                 fourier_interpolate(
                     point_3d_values,
                     query,
                     spatial_ndim=3,
-                    method="nufft",
-                    tolerance=1e-6,
                     query_chunk_size=512,
                 ).values
             ),
@@ -418,17 +414,15 @@ def run_benchmarks(*, repeats: int = 10) -> dict[str, Any]:
         point_query,
         spatial_ndim=2,
     ).values
-    nufft_values = fourier_interpolate(
+    chunked_values = fourier_interpolate(
         point_values,
         point_query,
         spatial_ndim=2,
-        method="nufft",
-        tolerance=1e-6,
         query_chunk_size=2048,
     ).values
     direct_norm = jnp.linalg.norm(direct_reference)
-    records["fourier_points_nufft_2d"]["relative_error"] = float(
-        jnp.linalg.norm(nufft_values - direct_reference) / direct_norm
+    records["fourier_points_chunked_2d"]["relative_error"] = float(
+        jnp.linalg.norm(chunked_values - direct_reference) / direct_norm
     )
     return {
         "jax_version": jax.__version__,

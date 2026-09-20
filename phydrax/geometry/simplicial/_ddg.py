@@ -87,7 +87,7 @@ class DDGOperators(StrictModule):
             )
             / doubled_area[:, None, None]
         )
-        boundary_vertices = jnp.zeros((vertices.shape[0],), dtype=bool)
+        boundary_vertices = jnp.zeros((vertices.shape[0],), dtype=jnp.bool_)
         if mesh.topology.boundary_halfedges.shape[0]:
             boundary_vertices = boundary_vertices.at[
                 mesh.topology.halfedge_origin[mesh.topology.boundary_halfedges]

@@ -386,8 +386,7 @@ def assert_benchmark_thresholds(
         aggregate = lookup[key]
         if aggregate.relative_l2_mean > threshold.maximum_relative_l2:
             violations.append(
-                f"{key} relative_l2={aggregate.relative_l2_mean:.6g} exceeds "
-                f"{threshold.maximum_relative_l2:.6g}"
+                f"{key} relative_l2={aggregate.relative_l2_mean:.6g} exceeds {threshold.maximum_relative_l2:.6g}"
             )
         if (
             threshold.maximum_inference_seconds is not None

@@ -64,8 +64,8 @@ def test_exact_affine_map_produces_constant_generalized_work():
     count = evaluation.forward_work.size
     work = phx.uq.ReducedWorkDataset(
         evaluation.forward_work,
-        jnp.ones((count,), dtype=bool),
-        jnp.ones((count,), dtype=bool),
+        jnp.ones((count,), dtype="bool"),
+        jnp.ones((count,), dtype="bool"),
         jnp.zeros((count,), dtype=jnp.int32),
         jnp.ones((count,), dtype=jnp.int32),
         jnp.zeros((count,), dtype=jnp.int32),

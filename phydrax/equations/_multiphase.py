@@ -89,10 +89,9 @@ class TwoMaterialVOFDiagnostics(StrictModule, NonTrainableState):
 
     def _state(self, state: ArrayLike, /) -> Array:
         value = jnp.asarray(state)
-        if value.ndim == 0 or int(value.shape[-1]) != self.layout.component_count:
+        if value.ndim == 0 or value.shape[-1] != self.layout.component_count:
             raise ValueError(
-                "Two-material VOF state must end in "
-                f"{self.layout.component_count} components; got {value.shape}."
+                f"Two-material VOF state must end in {self.layout.component_count} components; got {value.shape}."
             )
         return value
 
@@ -121,7 +120,7 @@ class TwoMaterialVOFDiagnostics(StrictModule, NonTrainableState):
         finite = jnp.all(jnp.isfinite(value), axis=-1)
         alpha = value[..., self.layout.alpha_index]
         bounded_alpha = (alpha >= 0.0) & (alpha <= 1.0)
-        closure_valid = jnp.asarray(self.eos.admissible(value), dtype=bool)
+        closure_valid = jnp.asarray(self.eos.admissible(value), dtype=jnp.bool_)
         return finite & bounded_alpha & closure_valid
 
 
@@ -131,10 +130,9 @@ def _primitive_array(primitive: Any, dimension: int, /) -> Array:
         primitive = primitive.as_array()
     value = jnp.asarray(primitive)
     expected = dimension + 4
-    if value.ndim == 0 or int(value.shape[-1]) != expected:
+    if value.ndim == 0 or value.shape[-1] != expected:
         raise ValueError(
-            "Two-material primitive state must end in "
-            f"{expected} components; got {value.shape}."
+            f"Two-material primitive state must end in {expected} components; got {value.shape}."
         )
     return value
 
@@ -186,10 +184,9 @@ class TwoMaterialVOFSystem(AbstractAdmissibleSystem):
 
     def _state(self, state: ArrayLike, /) -> Array:
         value = jnp.asarray(state)
-        if value.ndim == 0 or int(value.shape[-1]) != self.component_count:
+        if value.ndim == 0 or value.shape[-1] != self.component_count:
             raise ValueError(
-                "Two-material VOF state must end in "
-                f"{self.component_count} components; got {value.shape}."
+                f"Two-material VOF state must end in {self.component_count} components; got {value.shape}."
             )
         return value
 
@@ -201,10 +198,9 @@ class TwoMaterialVOFSystem(AbstractAdmissibleSystem):
 
     def _normal(self, normal: ArrayLike, /) -> Array:
         value = jnp.asarray(normal)
-        if value.ndim == 0 or int(value.shape[-1]) != self.dimension:
+        if value.ndim == 0 or value.shape[-1] != self.dimension:
             raise ValueError(
-                "Two-material VOF normals must have a trailing dimension of "
-                f"{self.dimension}; got {value.shape}."
+                f"Two-material VOF normals must have a trailing dimension of {self.dimension}; got {value.shape}."
             )
         return value
 
@@ -229,10 +225,9 @@ class TwoMaterialVOFSystem(AbstractAdmissibleSystem):
 
     def primitive_to_conserved(self, primitive: Array, /) -> Array:
         value = jnp.asarray(primitive)
-        if value.ndim == 0 or int(value.shape[-1]) != self.component_count:
+        if value.ndim == 0 or value.shape[-1] != self.component_count:
             raise ValueError(
-                "Two-material primitive state must end in "
-                f"{self.component_count} components; got {value.shape}."
+                f"Two-material primitive state must end in {self.component_count} components; got {value.shape}."
             )
         return jnp.asarray(self.eos.primitive_to_conserved(value))
 
@@ -273,13 +268,12 @@ class TwoMaterialVOFSystem(AbstractAdmissibleSystem):
         alpha = jnp.asarray(alpha_face)
         flux = jnp.asarray(volume_flux)
         if not jnp.issubdtype(alpha.dtype, jnp.inexact):
-            alpha = alpha.astype(jnp.result_type(alpha, flux, float))
+            alpha = alpha.astype(jnp.result_type(alpha, flux, jnp.float64))
         if not jnp.issubdtype(flux.dtype, jnp.inexact):
-            flux = flux.astype(jnp.result_type(alpha, flux, float))
+            flux = flux.astype(jnp.result_type(alpha, flux, jnp.float64))
         if alpha.shape != flux.shape:
             raise ValueError(
-                "alpha_face and volume_flux must have matching shapes; "
-                f"got {alpha.shape} and {flux.shape}."
+                f"alpha_face and volume_flux must have matching shapes; got {alpha.shape} and {flux.shape}."
             )
         valid = jnp.isfinite(alpha) & jnp.isfinite(flux) & (alpha >= 0.0) & (alpha <= 1.0)
         return jnp.where(
@@ -357,7 +351,9 @@ class TwoMaterialVOFSystem(AbstractAdmissibleSystem):
     ) -> tuple[Array, Array]:
         del args
         axis_ = self._axis(axis)
-        basis = jnp.eye(self.dimension, dtype=jnp.result_type(left, right, float))[axis_]
+        basis = jnp.eye(self.dimension, dtype=jnp.result_type(left, right, jnp.float64))[
+            axis_
+        ]
         return self.normal_signal_bounds(left, right, basis)
 
     def max_wave_speed(

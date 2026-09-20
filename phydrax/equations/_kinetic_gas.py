@@ -44,8 +44,8 @@ class MolecularVelocityQuadrature(StrictModule, NonTrainableState):
         streaming_projection: ArrayLike | None = None,
         quadrature_id: str | None = None,
     ) -> None:
-        velocity = np.asarray(velocities, dtype=float)
-        weight = np.asarray(weights, dtype=float)
+        velocity = np.asarray(velocities, dtype=np.float64)
+        weight = np.asarray(weights, dtype=np.float64)
         dimension = int(spatial_dimension)
         if (
             velocity.ndim != 2
@@ -61,7 +61,7 @@ class MolecularVelocityQuadrature(StrictModule, NonTrainableState):
         projection = (
             velocity[:, :dimension]
             if streaming_projection is None
-            else np.asarray(streaming_projection, dtype=float)
+            else np.asarray(streaming_projection, dtype=np.float64)
         )
         if projection.shape != (velocity.shape[0], dimension) or np.any(
             ~np.isfinite(projection)
@@ -506,8 +506,8 @@ class MaxwellGasSurfaceBoundary(StrictModule):
     ) -> None:
         if not isinstance(quadrature, MolecularVelocityQuadrature):
             raise TypeError("quadrature must be MolecularVelocityQuadrature.")
-        normal = np.asarray(outward_normal, dtype=float)
-        velocity = np.asarray(wall_velocity, dtype=float)
+        normal = np.asarray(outward_normal, dtype=np.float64)
+        velocity = np.asarray(wall_velocity, dtype=np.float64)
         temperature = float(wall_temperature)
         alpha = float(accommodation)
         if (

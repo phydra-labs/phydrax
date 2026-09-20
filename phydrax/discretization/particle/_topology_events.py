@@ -95,12 +95,12 @@ def initialize_topology_event_record(
     events = plan.event_capacity
     return TopologyEventRecord(
         -jnp.ones((events,), dtype=jnp.int64),
-        jnp.zeros((events,), dtype=bool),
+        jnp.zeros((events,), dtype=jnp.bool_),
         -jnp.ones((events,), dtype=jnp.int32),
         jnp.zeros((events,), dtype=dtype),
         -jnp.ones((events,), dtype=jnp.int32),
         -jnp.ones((events, plan.maximum_children), dtype=jnp.int32),
-        jnp.zeros((events, plan.maximum_children), dtype=bool),
+        jnp.zeros((events, plan.maximum_children), dtype=jnp.bool_),
         -jnp.ones((events,), dtype=jnp.int64),
         jnp.zeros((events,), dtype=dtype),
         jnp.zeros((events, plan.dimension), dtype=dtype),
@@ -131,7 +131,7 @@ def split_preallocated_owner(
         raise ValueError("Topology event record does not match plan.")
     source = jnp.asarray(source_owner, dtype=jnp.int32)
     children = jnp.asarray(child_owners, dtype=jnp.int32)
-    valid_children = jnp.asarray(child_valid, dtype=bool)
+    valid_children = jnp.asarray(child_valid, dtype=jnp.bool_)
     masses = jnp.asarray(child_mass, dtype=state.mass.dtype)
     offsets = jnp.asarray(child_offset, dtype=state.position.dtype)
     inertias = jnp.asarray(child_inertia_body, dtype=state.inertia_body.dtype)

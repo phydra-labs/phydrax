@@ -57,7 +57,7 @@ def test_geometry_epoch_and_population_transfer_are_conservative():
     )
     source_links = LatticeBoltzmannLinkEpoch(discretization, source_snapshot)
     source = LatticeBoltzmannGeometryEpoch(discretization, source_snapshot, source_links)
-    target_mask = np.ones(discretization.grid.shape, dtype=bool)
+    target_mask = np.ones(discretization.grid.shape, dtype="bool")
     target_mask[3, 4] = False
     target_snapshot = phx.discretization.LatticeBoltzmannGeometrySnapshot(
         discretization, target_mask
@@ -99,7 +99,7 @@ def test_ratio_two_amr_subcycles_only_active_fine_blocks():
     prepared, rates, _ = _prepare_amr(plan)
     coarse = jnp.broadcast_to(lattice.weights, (4, 4, 9))
     fine_equilibrium = jnp.broadcast_to(lattice.weights, (8, 8, 9))
-    fine_active = jnp.zeros((8, 8), dtype=bool).at[:4, :4].set(True)
+    fine_active = jnp.zeros((8, 8), dtype="bool").at[:4, :4].set(True)
     dormant_perturbation = (
         jnp.asarray((0.0, 1.0, 1.0, -1.0, -1.0, 0.5, 0.5, -0.5, -0.5)) * 1.0e-3
     )
@@ -110,7 +110,7 @@ def test_ratio_two_amr_subcycles_only_active_fine_blocks():
     )
     state = phx.discretization.LatticeBoltzmannAMRState(
         (coarse, fine),
-        (jnp.ones((4, 4), dtype=bool), fine_active),
+        (jnp.ones((4, 4), dtype="bool"), fine_active),
     )
     increment = jnp.asarray(1.0e-4)
     weights = jnp.asarray(lattice.weights)
@@ -175,7 +175,7 @@ def test_ratio_three_three_level_amr_recurses_with_static_substeps():
     )
     state = phx.discretization.LatticeBoltzmannAMRState(
         populations,
-        tuple(jnp.ones(value.shape[:-1], dtype=bool) for value in populations),
+        tuple(jnp.ones(value.shape[:-1], dtype="bool") for value in populations),
     )
     result = prepared.advance(
         state,
@@ -222,8 +222,8 @@ def test_collision_aware_amr_transfer_roundtrips_nonequilibrium_and_half_time():
     state = phx.discretization.LatticeBoltzmannAMRState(
         (coarse, fine),
         (
-            jnp.ones(coarse.shape[:-1], dtype=bool),
-            jnp.ones(fine.shape[:-1], dtype=bool),
+            jnp.ones(coarse.shape[:-1], dtype="bool"),
+            jnp.ones(fine.shape[:-1], dtype="bool"),
         ),
     )
     plan = phx.discretization.LatticeBoltzmannAMRPlan(

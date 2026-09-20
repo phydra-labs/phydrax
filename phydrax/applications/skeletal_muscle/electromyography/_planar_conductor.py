@@ -55,7 +55,7 @@ class PlanarConductorParameters(StrictModule):
         if any(value.shape != () for value in values):
             raise ValueError("Planar conductor parameters must be scalar.")
         values = tuple(
-            value if jnp.issubdtype(value.dtype, jnp.inexact) else value.astype(float)
+            value if jnp.issubdtype(value.dtype, jnp.inexact) else value.astype("float64")
             for value in values
         )
         (
@@ -183,8 +183,7 @@ class PetersenRostalski2019PlanarConductorPlan(StrictModule):
         omega_ya = jnp.sqrt(wx * wx + anisotropy * wz * wz)
         skin_fat_ratio = p.skin_conductivity_S_per_m / p.fat_conductivity_S_per_m
         fat_muscle_ratio = (
-            p.fat_conductivity_S_per_m
-            / p.muscle_transverse_conductivity_S_per_m
+            p.fat_conductivity_S_per_m / p.muscle_transverse_conductivity_S_per_m
         )
         plus = omega_y * (p.fat_thickness_m + p.skin_thickness_m)
         minus = omega_y * (p.fat_thickness_m - p.skin_thickness_m)
@@ -192,10 +191,9 @@ class PetersenRostalski2019PlanarConductorPlan(StrictModule):
         def nu(value):
             return omega_ya + value * fat_muscle_ratio * jnp.tanh(value)
 
-        denominator = (
-            (1.0 + skin_fat_ratio) * jnp.cosh(plus) * nu(plus)
-            + (1.0 - skin_fat_ratio) * jnp.cosh(minus) * nu(minus)
-        )
+        denominator = (1.0 + skin_fat_ratio) * jnp.cosh(plus) * nu(plus) + (
+            1.0 - skin_fat_ratio
+        ) * jnp.cosh(minus) * nu(minus)
         nonzero = omega_y > self.zero_tolerance
         safe_denominator = jnp.where(nonzero, denominator, 1.0)
         volume = (
@@ -209,14 +207,10 @@ class PetersenRostalski2019PlanarConductorPlan(StrictModule):
             wx[..., None] * self.electrode_positions_m[:, 0]
             + wz[..., None] * self.electrode_positions_m[:, 1]
         )
-        montage = jnp.sum(
-            self.electrode_weights[None, None, :] * jnp.exp(phase), axis=-1
-        )
+        montage = jnp.sum(self.electrode_weights[None, None, :] * jnp.exp(phase), axis=-1)
         return volume * self.electrode_transfer * montage
 
-    def evaluate(
-        self, source_current_spectrum_A: ArrayLike, /
-    ) -> PlanarConductorResult:
+    def evaluate(self, source_current_spectrum_A: ArrayLike, /) -> PlanarConductorResult:
         source = jnp.asarray(source_current_spectrum_A)
         expected = (
             self.frequency_x_rad_per_m.size,
@@ -245,13 +239,9 @@ class PetersenRostalski2019PlanarConductorPlan(StrictModule):
             & jnp.all(parameter_values[:6] > 0.0)
             & (p.source_depth_m <= 0.0)
         )
-        montage_neutral = (
-            jnp.abs(jnp.sum(self.electrode_weights)) <= self.zero_tolerance
-        )
+        montage_neutral = jnp.abs(jnp.sum(self.electrode_weights)) <= self.zero_tolerance
         source_neutral = jnp.abs(source[0, 0]) <= self.zero_tolerance
-        finite = jnp.all(jnp.isfinite(potential)) & jnp.all(
-            jnp.isfinite(voltage)
-        )
+        finite = jnp.all(jnp.isfinite(potential)) & jnp.all(jnp.isfinite(voltage))
         zero_removed = jnp.abs(transfer[0, 0]) <= self.zero_tolerance
         real_signal_residual = jnp.max(jnp.abs(jnp.imag(spatial_potential)))
         successful = (

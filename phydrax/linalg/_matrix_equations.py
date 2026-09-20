@@ -141,7 +141,7 @@ class MatrixEquationLinearOperator(AbstractLinearOperator):
             )
         )
         if not np.issubdtype(dtype_, np.inexact):
-            dtype_ = np.dtype(float)
+            dtype_ = np.dtype(np.float64)
         matrix_space = ArraySpace(
             (row_space.size, column_space.size),
             dtype=dtype_,
@@ -271,8 +271,8 @@ class MatrixEquationProblem(StrictModule):
                 {
                     "kind": "matrix-equation-problem",
                     "equation_kind": kind,
-                    "rows": int(rhs.shape[0]),
-                    "columns": int(rhs.shape[1]),
+                    "rows": rhs.shape[0],
+                    "columns": rhs.shape[1],
                     "terms": [
                         {
                             "left": term.left.operator_id,
@@ -718,7 +718,7 @@ def _matrix_equation_cost(
         id(leaf): leaf for leaf in jax.tree.leaves(problem.operator) if eqx.is_array(leaf)
     }
     coefficient_bytes = sum(
-        int(array.size * array.dtype.itemsize) for array in arrays.values()
+        array.size * array.dtype.itemsize for array in arrays.values()
     )
     unknowns = problem.row_dimension * problem.column_dimension
     itemsize = problem.operator.source.dtype.itemsize
@@ -730,7 +730,7 @@ def _matrix_equation_cost(
         primitive_actions_per_matvec=len(problem.terms)
         * (problem.row_dimension + problem.column_dimension),
         coefficient_storage_bytes=coefficient_bytes,
-        right_hand_side_bytes=int(problem.right_hand_side.nbytes),
+        right_hand_side_bytes=problem.right_hand_side.nbytes,
         explicit_kronecker_bytes=unknowns * unknowns * itemsize,
         selected_backend=linear_plan.backend,
         selected_method=linear_plan.method,

@@ -47,7 +47,7 @@ def _real_array(value: ArrayLike, name: str, /) -> Array:
     if jnp.issubdtype(result.dtype, jnp.complexfloating):
         raise TypeError(f"{name} must be real-valued.")
     if not jnp.issubdtype(result.dtype, jnp.floating):
-        result = result.astype(float)
+        result = result.astype("float64")
     return result
 
 
@@ -69,7 +69,7 @@ def _crystal_rotation(value: ArrayLike, /) -> Array:
     raw = np.asarray(value)
     if np.iscomplexobj(raw):
         raise TypeError("crystal_to_sample must be real-valued.")
-    rotation = np.asarray(raw, dtype=float)
+    rotation = np.asarray(raw, dtype=np.float64)
     if rotation.shape != (3, 3) or not np.all(np.isfinite(rotation)):
         raise ValueError("crystal_to_sample must be one finite 3x3 rotation.")
     orthogonality = rotation.T @ rotation - np.eye(3)
@@ -93,13 +93,12 @@ def _crystal_rotation_field(
     expected = site_shape + (3, 3)
     if raw.shape == (3, 3):
         _crystal_rotation(raw)
-        rotation = np.broadcast_to(np.asarray(raw, dtype=float), expected).copy()
+        rotation = np.broadcast_to(np.asarray(raw, dtype=np.float64), expected).copy()
     elif raw.shape == expected:
-        rotation = np.asarray(raw, dtype=float)
+        rotation = np.asarray(raw, dtype=np.float64)
     else:
         raise ValueError(
-            "Routed crystal_to_sample must be one 3x3 rotation or have "
-            f"exact site shape {expected}."
+            f"Routed crystal_to_sample must be one 3x3 rotation or have exact site shape {expected}."
         )
     tolerance = _host_rotation_tolerance(raw)
     gram = np.swapaxes(rotation, -1, -2) @ rotation
@@ -111,8 +110,7 @@ def _crystal_rotation_field(
     )
     if np.any(invalid):
         raise ValueError(
-            "Every routed crystal_to_sample value must belong to SO(3); "
-            "reflections are invalid."
+            "Every routed crystal_to_sample value must belong to SO(3); reflections are invalid."
         )
     return jnp.asarray(rotation)
 
@@ -173,8 +171,8 @@ class CrystalSlipSystem(StrictModule, NonTrainableState):
         normal_raw = np.asarray(normal)
         if np.iscomplexobj(direction_raw) or np.iscomplexobj(normal_raw):
             raise TypeError("Crystal slip direction and normal must be real-valued.")
-        direction_host = np.asarray(direction_raw, dtype=float)
-        normal_host = np.asarray(normal_raw, dtype=float)
+        direction_host = np.asarray(direction_raw, dtype=np.float64)
+        normal_host = np.asarray(normal_raw, dtype=np.float64)
         if (
             direction_host.shape != (3,)
             or normal_host.shape != (3,)
@@ -257,8 +255,7 @@ class CrystalPlasticityParameters(StrictModule, NonTrainableState):
         )
         if any(bool(value <= 0.0) for value in values[:4] + values[5:]):
             raise ValueError(
-                "CPFEM elastic, rate, strength, and increment-bound data "
-                "must be positive."
+                "CPFEM elastic, rate, strength, and increment-bound data must be positive."
             )
         if bool(values[4] < 0.0):
             raise ValueError("CPFEM hardening modulus must be nonnegative.")
@@ -802,7 +799,7 @@ class CrystalPlasticityRoute(StrictModule, NonTrainableState):
             rule_data = reference_rule_data(rule)
             shape = (
                 block.cell_count,
-                int(rule_data.weights.shape[0]),
+                rule_data.weights.shape[0],
                 model.state_width,
             )
             orientation = _crystal_rotation_field(orientation_value, shape[:2])

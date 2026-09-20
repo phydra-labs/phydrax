@@ -117,7 +117,7 @@ def _packed_affine_batch():
             [[0.9, 0.8], [0.7, 0.6], [0.5, 0.4], [0.3, 0.2], [0.1, 0.05]],
         ]
     )
-    additions = jnp.arange(20, dtype=float).reshape(2, 5, 2) / 10.0
+    additions = jnp.arange(20, dtype="float64").reshape(2, 5, 2) / 10.0
     valid = jnp.asarray(
         [[True, True, True, False, False], [True, True, True, True, True]]
     )
@@ -181,8 +181,8 @@ def test_affine_chunking_preserves_canonical_reset_state():
             [0.5, 0.4],
         ]
     )
-    additions = jnp.arange(12, dtype=float).reshape(6, 2) / 10.0
-    valid = jnp.ones((6,), dtype=bool)
+    additions = jnp.arange(12, dtype="float64").reshape(6, 2) / 10.0
+    valid = jnp.ones((6,), dtype="bool")
     reset = jnp.asarray([False, False, False, True, False, False])
     initial_state = jnp.asarray([4.0, -3.0])
 
@@ -225,7 +225,7 @@ def test_affine_composition_order_matches_dense_matrix_serial_execution():
         ]
     )
     additions = jnp.asarray([[0.1, 0.2], [-0.3, 0.4], [0.2, -0.1]])
-    batch = RecurrentBatch((transitions, additions), jnp.ones(3, dtype=bool))
+    batch = RecurrentBatch((transitions, additions), jnp.ones(3, dtype="bool"))
 
     serial = run_affine_recurrence(recurrence, batch, execution="serial")
     associative = run_affine_recurrence(recurrence, batch, execution="associative")
@@ -280,7 +280,7 @@ def test_generic_recurrent_cell_masks_outputs_and_propagates_keys_deterministica
 
 def test_physical_time_and_intervals_reach_serial_and_associative_dispatch():
     inputs = jnp.ones((3,))
-    valid = jnp.ones((3,), dtype=bool)
+    valid = jnp.ones((3,), dtype="bool")
 
     def evaluate(times):
         batch = RecurrentBatch(inputs, valid, time=times)
@@ -313,7 +313,7 @@ def test_physical_time_and_intervals_reach_serial_and_associative_dispatch():
 
 def test_time_aware_streaming_context_preserves_the_boundary_interval_exactly():
     inputs = jnp.ones((5,))
-    valid = jnp.ones((5,), dtype=bool)
+    valid = jnp.ones((5,), dtype="bool")
     times = jnp.asarray((0.0, 1.0, 3.0, 6.0, 10.0))
     split = 2
 

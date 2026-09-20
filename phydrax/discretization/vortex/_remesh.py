@@ -47,9 +47,9 @@ class ConservativeVortexRemeshPlan2D(StrictModule, NonTrainableState):
         *,
         boundary: str = "reject",
     ):
-        lower_ = np.asarray(lower, dtype=float)
-        upper_ = np.asarray(upper, dtype=float)
-        shape_ = tuple(int(value) for value in shape)
+        lower_ = np.asarray(lower, dtype=np.float64)
+        upper_ = np.asarray(upper, dtype=np.float64)
+        shape_ = tuple(shape)
         if lower_.shape != (2,) or upper_.shape != (2,) or np.any(upper_ <= lower_):
             raise ValueError("Remesh bounds must be increasing two-vectors.")
         if len(shape_) != 2 or any(value < 2 for value in shape_):
@@ -92,9 +92,9 @@ class ConservativeVortexRemeshPlan2D(StrictModule, NonTrainableState):
         points = jnp.asarray(position)
         gamma = jnp.asarray(circulation, dtype=points.dtype)
         mask = (
-            jnp.ones(gamma.shape, dtype=bool)
+            jnp.ones(gamma.shape, dtype=jnp.bool_)
             if active is None
-            else jnp.asarray(active, dtype=bool)
+            else jnp.asarray(active, dtype=jnp.bool_)
         )
         if (
             points.ndim != 2

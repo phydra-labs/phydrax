@@ -55,7 +55,7 @@ class _ConstantMACFlowTargetSchedule(StrictModule, NonTrainableState):
     schedule_id: str = eqx.field(static=True)
 
     def __init__(self, value: ArrayLike, /):
-        values = np.asarray(value, dtype=float)
+        values = np.asarray(value, dtype=np.float64)
         if values.ndim == 0:
             values = values.reshape((1,))
         if values.ndim != 1 or values.size == 0 or np.any(~np.isfinite(values)):
@@ -143,7 +143,7 @@ class MACFlowControlTarget(StrictModule, NonTrainableState):
                 raise ValueError(
                     "A frozen-density mass-flux target requires frozen_density."
                 )
-            raw_density = np.asarray(frozen_density, dtype=float)
+            raw_density = np.asarray(frozen_density, dtype=np.float64)
             if (
                 raw_density.ndim not in (2, 3)
                 or raw_density.size == 0

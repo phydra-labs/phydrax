@@ -48,8 +48,7 @@ def _broadcast_time_array(
         return jnp.broadcast_to(array, leading_shape + (num_times,))
     if array.shape != leading_shape + (num_times,):
         raise ValueError(
-            f"{name} must have shape {(num_times,)} or "
-            f"{leading_shape + (num_times,)}; got {array.shape}."
+            f"{name} must have shape {(num_times,)} or {leading_shape + (num_times,)}; got {array.shape}."
         )
     return array
 
@@ -103,9 +102,9 @@ class _TrajectoryRecord:
     metadata: Mapping[str, Any] | None = None
 
     def __post_init__(self):
-        cases = tuple(int(size) for size in self.case_shape)
-        realizations = tuple(int(size) for size in self.realization_shape)
-        state = tuple(int(size) for size in self.state_shape)
+        cases = tuple(self.case_shape)
+        realizations = tuple(self.realization_shape)
+        state = tuple(self.state_shape)
         if any(size <= 0 for size in cases + realizations + state):
             raise ValueError("Trajectory record dimensions must be positive.")
         values = jnp.asarray(self.states)
@@ -113,8 +112,7 @@ class _TrajectoryRecord:
         expected_rank = len(leading) + 1 + len(state)
         if values.ndim != expected_rank:
             raise ValueError(
-                "Trajectory record states must have rank "
-                "case + realization + time + state."
+                "Trajectory record states must have rank case + realization + time + state."
             )
         if tuple(values.shape[: len(leading)]) != leading:
             raise ValueError(f"Trajectory record states must begin with shape {leading}.")
@@ -122,7 +120,7 @@ class _TrajectoryRecord:
             raise ValueError(
                 f"Trajectory record states must end with state shape {state}."
             )
-        num_times = int(values.shape[len(leading)])
+        num_times = values.shape[len(leading)]
         times = _broadcast_time_array(
             self.times,
             leading_shape=leading,
@@ -133,7 +131,7 @@ class _TrajectoryRecord:
             None
             if self.valid is None
             else _broadcast_time_array(
-                jnp.asarray(self.valid, dtype=bool),
+                jnp.asarray(self.valid, dtype=jnp.bool_),
                 leading_shape=leading,
                 num_times=num_times,
                 name="valid",
@@ -157,8 +155,7 @@ class _TrajectoryRecord:
             initial = jnp.broadcast_to(initial, expected)
         if initial.shape != expected:
             raise ValueError(
-                f"initial_state must have shape {expected} or {self.state_shape}; "
-                f"got {initial.shape}."
+                f"initial_state must have shape {expected} or {self.state_shape}; got {initial.shape}."
             )
         saved_times = jnp.asarray(self.times)
         saved_states = jnp.asarray(self.states)
@@ -277,7 +274,7 @@ class StochasticTrajectory(StrictModule):
         approximation_id: str | None = None,
         metadata: Mapping[str, Any] | None = None,
     ):
-        cases = tuple(int(size) for size in case_shape)
+        cases = tuple(case_shape)
         if any(size <= 0 for size in cases):
             raise ValueError("case_shape dimensions must be positive.")
         case_names = _names(case_axes, owner="case_axes")
@@ -294,11 +291,10 @@ class StochasticTrajectory(StrictModule):
             if realization_rank < 0:
                 raise ValueError("states has insufficient rank for its declared axes.")
             inferred_realizations = tuple(
-                int(size)
-                for size in array.shape[len(cases) : len(cases) + realization_rank]
+                array.shape[len(cases) : len(cases) + realization_rank]
             )
         else:
-            inferred_realizations = tuple(int(size) for size in realization_shape)
+            inferred_realizations = tuple(realization_shape)
         if any(size <= 0 for size in inferred_realizations):
             raise ValueError("realization_shape dimensions must be positive.")
         realization_names = _names(realization_axes, owner="realization_axes")
@@ -320,17 +316,16 @@ class StochasticTrajectory(StrictModule):
         prefix_rank = len(leading)
         if array.ndim != prefix_rank + 1 + len(state_names):
             raise ValueError(
-                "states must have rank case + realization + time + state; "
-                f"got shape {array.shape}."
+                f"states must have rank case + realization + time + state; got shape {array.shape}."
             )
-        if tuple(int(size) for size in array.shape[:prefix_rank]) != leading:
+        if tuple(array.shape[:prefix_rank]) != leading:
             raise ValueError(
                 f"states must begin with leading shape {leading}; got {array.shape}."
             )
-        num_times = int(array.shape[prefix_rank])
+        num_times = array.shape[prefix_rank]
         if num_times <= 0:
             raise ValueError("Trajectories require at least one saved time.")
-        state_shape = tuple(int(size) for size in array.shape[prefix_rank + 1 :])
+        state_shape = tuple(array.shape[prefix_rank + 1 :])
         time_values = _broadcast_time_array(
             times,
             leading_shape=leading,
@@ -346,7 +341,7 @@ class StochasticTrajectory(StrictModule):
             & jnp.isfinite(time_values)
             if valid is None
             else _broadcast_time_array(
-                jnp.asarray(valid, dtype=bool),
+                jnp.asarray(valid, dtype=jnp.bool_),
                 leading_shape=leading,
                 num_times=num_times,
                 name="valid",
@@ -394,7 +389,7 @@ class StochasticTrajectory(StrictModule):
 
         self.times = time_values
         self.states = array
-        self.valid = jnp.asarray(valid_values, dtype=bool)
+        self.valid = jnp.asarray(valid_values, dtype=jnp.bool_)
         self.realizations = resolved_realizations
         self.metadata = frozendict({} if metadata is None else metadata)
         self.case_axes = case_names
@@ -416,7 +411,7 @@ class StochasticTrajectory(StrictModule):
 
     @property
     def num_times(self) -> int:
-        return int(self.states.shape[len(self.leading_shape)])
+        return self.states.shape[len(self.leading_shape)]
 
     @property
     def num_cases(self) -> int:
@@ -664,9 +659,9 @@ class StochasticTrajectory(StrictModule):
         reference = shared[0]
         if not bool(jnp.allclose(shared, reference[None, :], rtol=0.0, atol=atol)):
             raise ValueError("Explicit time pairs require one shared saved-time grid.")
-        sources = jnp.asarray(source_times, dtype=float).reshape((-1,))
-        targets = jnp.asarray(target_times, dtype=float).reshape((-1,))
-        if sources.shape != targets.shape or int(sources.size) <= 0:
+        sources = jnp.asarray(source_times, dtype=jnp.float64).reshape((-1,))
+        targets = jnp.asarray(target_times, dtype=jnp.float64).reshape((-1,))
+        if sources.shape != targets.shape or sources.size <= 0:
             raise ValueError(
                 "source_times and target_times must be equal non-empty vectors."
             )
@@ -699,7 +694,7 @@ class StochasticTransitionView(StrictModule):
             raise TypeError("trajectory must be a StochasticTrajectory.")
         sources = jnp.asarray(source_indices, dtype=jnp.int32).reshape((-1,))
         targets = jnp.asarray(target_indices, dtype=jnp.int32).reshape((-1,))
-        if sources.shape != targets.shape or int(sources.size) <= 0:
+        if sources.shape != targets.shape or sources.size <= 0:
             raise ValueError("Transition indices must be equal non-empty vectors.")
         if bool(jnp.any(sources < 0)) or bool(jnp.any(targets >= trajectory.num_times)):
             raise ValueError("Transition indices lie outside the saved-time axis.")
@@ -711,7 +706,7 @@ class StochasticTransitionView(StrictModule):
 
     @property
     def num_pairs(self) -> int:
-        return int(self.source_indices.size)
+        return self.source_indices.size
 
     @property
     def transition_shape(self) -> tuple[int, ...]:
@@ -803,14 +798,14 @@ class StochasticTransitionView(StrictModule):
         if weighting == "transition":
             candidates = jnp.flatnonzero(mask.reshape((-1,)), size=mask.size)
             candidate_mask = jnp.arange(mask.size) < jnp.sum(mask)
-            probabilities = candidate_mask.astype(float) / jnp.sum(candidate_mask)
+            probabilities = candidate_mask.astype("float64") / jnp.sum(candidate_mask)
             return jr.choice(key, candidates, shape=(count,), p=probabilities)
         if weighting != "trajectory":
             raise ValueError("weighting must be 'trajectory' or 'transition'.")
         trajectory_key, pair_key = jr.split(key)
         counts = jnp.sum(mask, axis=-1)
         active = counts > 0
-        probabilities = active.astype(float) / jnp.sum(active)
+        probabilities = active.astype("float64") / jnp.sum(active)
         trajectories = jr.choice(
             trajectory_key,
             mask.shape[0],
@@ -876,13 +871,13 @@ class StochasticTransitionView(StrictModule):
 
         axes = tuple(source_axes)
         targets_axes = axes if query_axes is None else tuple(query_axes)
-        expected_shape = tuple(int(axis.size) for axis in axes)
+        expected_shape = tuple(axis.size for axis in axes)
         if expected_shape != self.trajectory.state_shape:
             raise ValueError(
                 f"source_axes imply state shape {expected_shape}; "
                 f"trajectory state shape is {self.trajectory.state_shape}."
             )
-        target_shape = tuple(int(axis.size) for axis in targets_axes)
+        target_shape = tuple(axis.size for axis in targets_axes)
         if target_shape != self.trajectory.state_shape:
             raise ValueError("query_axes must match the trajectory state shape.")
         mask = self.valid.reshape((-1,))
@@ -893,7 +888,7 @@ class StochasticTransitionView(StrictModule):
         source_times = self.source_times.reshape((-1,))[selected]
         inputs: dict[str, Array] = {str(input_name): source}
         source_axis_map: dict[str, tuple[Any, ...]] = {str(input_name): axes}
-        broadcast_shape = (int(selected.size),) + self.trajectory.state_shape
+        broadcast_shape = (selected.size,) + self.trajectory.state_shape
         if duration_name is not None:
             name = str(duration_name)
             inputs[name] = jnp.broadcast_to(
@@ -924,8 +919,7 @@ class StochasticTransitionView(StrictModule):
                 identities["parameters"] = reference.parameter_id
             provenance.append(
                 OperatorCaseProvenance(
-                    f"{reference.trajectory_id}:transition:{reference.source_index}:"
-                    f"{reference.target_index}:{index}",
+                    f"{reference.trajectory_id}:transition:{reference.source_index}:{reference.target_index}:{index}",
                     identities=identities,
                     order={
                         "source_time": reference.source_time,
@@ -933,7 +927,7 @@ class StochasticTransitionView(StrictModule):
                     },
                 )
             )
-        if len(provenance) != int(selected.size):
+        if len(provenance) != selected.size:
             raise AssertionError(
                 "Transition provenance and valid state selection diverged."
             )

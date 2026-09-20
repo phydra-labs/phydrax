@@ -93,8 +93,8 @@ class ImmersedRuntimePreflightEvidence(StrictModule, NonTrainableState):
         support = _identifier(support_tuple_id, "support_tuple_id")
         rank = jnp.asarray(marker_numerical_rank, dtype=jnp.int32)
         condition = jnp.asarray(marker_condition)
-        certified = jnp.asarray(rank_certified, dtype=bool)
-        qualified = jnp.asarray(campaign_qualified, dtype=bool)
+        certified = jnp.asarray(rank_certified, dtype=jnp.bool_)
+        qualified = jnp.asarray(campaign_qualified, dtype=jnp.bool_)
         if any(value.shape != () for value in (rank, condition, certified, qualified)):
             raise ValueError("Runtime preflight predicates must be scalar.")
         resources = int(observed_resource_bytes)
@@ -192,7 +192,7 @@ class ImmersedRuntimeEvidence(StrictModule, NonTrainableState):
         load_record: HydrodynamicLoadRecord | None = None,
     ):
         predicates = tuple(
-            jnp.asarray(value, dtype=bool)
+            jnp.asarray(value, dtype=jnp.bool_)
             for value in (
                 topology_changed,
                 geometry_refresh_required,
@@ -202,7 +202,7 @@ class ImmersedRuntimeEvidence(StrictModule, NonTrainableState):
         )
         if any(value.shape != () for value in predicates):
             raise ValueError("Runtime epoch/certificate predicates must be scalar.")
-        truncated = jnp.asarray(support_truncated, dtype=bool)
+        truncated = jnp.asarray(support_truncated, dtype=jnp.bool_)
         gap_ = None if gap is None else jnp.asarray(gap)
         if gap_ is not None and gap_.size == 0:
             raise ValueError("Runtime gap evidence cannot be empty.")

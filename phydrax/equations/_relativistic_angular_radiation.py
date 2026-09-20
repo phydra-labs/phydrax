@@ -362,8 +362,8 @@ class DiscreteOrdinatesRadiationPlan(StrictModule, NonTrainableState):
             raise TypeError("Discrete ordinates require relativity scale and convention.")
         if convention.metric_signature != "mostly_plus":
             raise ValueError("GR angular radiation requires mostly-plus signature.")
-        direction_values = np.asarray(directions, dtype=float)
-        weight_values = np.asarray(weights, dtype=float)
+        direction_values = np.asarray(directions, dtype=np.float64)
+        weight_values = np.asarray(weights, dtype=np.float64)
         tolerance_ = float(tolerance)
         if (
             direction_values.ndim != 2
@@ -383,7 +383,7 @@ class DiscreteOrdinatesRadiationPlan(StrictModule, NonTrainableState):
         self.convention = convention
         self.directions = jnp.asarray(direction_values)
         self.weights = jnp.asarray(normalized_weights)
-        self.ordinate_count = int(direction_values.shape[0])
+        self.ordinate_count = direction_values.shape[0]
         self.tolerance = tolerance_
         self.plan_id = canonical_fingerprint(
             {

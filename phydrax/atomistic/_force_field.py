@@ -406,10 +406,10 @@ class GeneralForceFieldTerm(AbstractAtomisticEnergyTerm, NonTrainableState):
             ForceFieldTermKind.CMAP,
         }
         route_count = (
-            int(system.topology.improper_indices.shape[0])
+            system.topology.improper_indices.shape[0]
             if self.kind is ForceFieldTermKind.HARMONIC_IMPROPER
             and not self.route_indices.size
-            else int(self.route_indices.shape[0])
+            else self.route_indices.shape[0]
         )
         if self.kind in bonded_kinds and route_count == 0:
             raise ValueError(f"{self.kind.value} has no interaction routes.")
@@ -907,8 +907,8 @@ def LennardJonesDispersionCorrection(coefficient, *, name=None, force_group=0):
 
 
 def LennardJonesPMEPotential(c6, alpha, cutoff, grid_shape, *, name=None, force_group=0):
-    matrix = np.asarray(c6, dtype=float)
-    shape = tuple(int(value) for value in grid_shape)
+    matrix = np.asarray(c6, dtype=np.float64)
+    shape = tuple(grid_shape)
     if (
         matrix.ndim != 2
         or matrix.shape[0] != matrix.shape[1]
@@ -920,7 +920,7 @@ def LennardJonesPMEPotential(c6, alpha, cutoff, grid_shape, *, name=None, force_
     ):
         raise ValueError("Lennard-Jones PME coefficients, alpha, or grid are invalid.")
     eigenvalues, eigenvectors = np.linalg.eigh(matrix)
-    tolerance = np.finfo(float).eps * max(float(np.max(np.abs(eigenvalues))), 1.0)
+    tolerance = np.finfo(np.float64).eps * max(float(np.max(np.abs(eigenvalues))), 1.0)
     if np.any(eigenvalues < -tolerance):
         raise ValueError("Lennard-Jones PME C6 matrix must be positive semidefinite.")
     positive = eigenvalues > tolerance

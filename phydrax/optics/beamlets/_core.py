@@ -150,9 +150,9 @@ class GaussianBeamletState(StrictModule):
             else jnp.asarray(topology_index, dtype=jnp.int32)
         )
         requested_valid = (
-            jnp.ones(leading, dtype=bool)
+            jnp.ones(leading, dtype=jnp.bool_)
             if valid is None
-            else jnp.asarray(valid, dtype=bool)
+            else jnp.asarray(valid, dtype=jnp.bool_)
         )
         requested_status = (
             jnp.zeros(leading, dtype=jnp.int32)
@@ -276,7 +276,7 @@ class GaussianWaistSpecification(StrictModule):
     def __init__(self, radii: ArrayLike, rotation_angle: ArrayLike = 0.0):
         radii_ = jnp.asarray(radii)
         if not jnp.issubdtype(radii_.dtype, jnp.floating):
-            radii_ = radii_.astype(float)
+            radii_ = radii_.astype("float64")
         if radii_.shape[-1:] != (2,):
             raise ValueError("Gaussian waist radii must have shape (..., 2).")
         angle = jnp.asarray(rotation_angle, dtype=radii_.dtype)
@@ -368,7 +368,7 @@ def _host_moving_basis(
     *,
     previous_first: ArrayLike | None = None,
 ) -> np.ndarray:
-    direction_host = np.asarray(direction, dtype=float)
+    direction_host = np.asarray(direction, dtype=np.float64)
     if direction_host.shape != (3,) or not np.all(np.isfinite(direction_host)):
         raise ValueError("Beamlet-frame direction must be a finite three-vector.")
     norm = np.linalg.norm(direction_host)
@@ -379,11 +379,11 @@ def _host_moving_basis(
         reference = np.eye(3)[int(np.argmin(np.abs(normal)))]
         first = reference - np.dot(reference, normal) * normal
     else:
-        previous = np.asarray(previous_first, dtype=float)
+        previous = np.asarray(previous_first, dtype=np.float64)
         if previous.shape != (3,) or not np.all(np.isfinite(previous)):
             raise ValueError("Previous frame direction must be a finite three-vector.")
         first = previous - np.dot(previous, normal) * normal
-        if np.linalg.norm(first) <= 32.0 * np.finfo(float).eps:
+        if np.linalg.norm(first) <= 32.0 * np.finfo(np.float64).eps:
             reference = np.eye(3)[int(np.argmin(np.abs(normal)))]
             first = reference - np.dot(reference, normal) * normal
     first = first / np.linalg.norm(first)
@@ -398,7 +398,7 @@ def deterministic_beamlet_frame(
     /,
 ) -> BeamletFrame:
     """Create a deterministic right-handed ray frame at one chief-ray point."""
-    origin_host = np.asarray(origin, dtype=float)
+    origin_host = np.asarray(origin, dtype=np.float64)
     if origin_host.shape != (3,) or not np.all(np.isfinite(origin_host)):
         raise ValueError("Beamlet-frame origin must be a finite three-vector.")
     rotation = _host_moving_basis(direction)
@@ -414,7 +414,7 @@ def transport_beamlet_frame(
     """Construct the deterministic rotation-minimizing next chief-ray frame."""
     if not isinstance(previous, BeamletFrame):
         raise TypeError("previous must be a BeamletFrame.")
-    origin_host = np.asarray(origin, dtype=float)
+    origin_host = np.asarray(origin, dtype=np.float64)
     if origin_host.shape != (3,) or not np.all(np.isfinite(origin_host)):
         raise ValueError("Beamlet-frame origin must be a finite three-vector.")
     rotation = _host_moving_basis(
@@ -654,7 +654,7 @@ def transport_gaussian_beamlets(
         & jnp.isfinite(symplectic_error)
         & jnp.isfinite(caustic_distance)
     )
-    map_valid = jnp.asarray(differential_map.valid, dtype=bool)
+    map_valid = jnp.asarray(differential_map.valid, dtype=jnp.bool_)
     roundoff_tolerance = 64.0 * jnp.finfo(jacobian.dtype).eps
     invariant_valid = invariant_error <= jnp.maximum(
         invariant_tolerance, roundoff_tolerance

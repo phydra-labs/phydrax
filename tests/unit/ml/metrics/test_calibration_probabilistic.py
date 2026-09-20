@@ -265,7 +265,7 @@ def test_hard_calibration_is_local_while_smooth_calibration_crosses_bins():
     assert jnp.any(jnp.abs(smooth_gradient) > 0.0)
 
     empty = metrics.expected_calibration_error(
-        target, probability, mask=jnp.zeros(2, dtype=bool)
+        target, probability, mask=jnp.zeros(2, dtype="bool")
     )
     single_class = metrics.expected_calibration_error(
         jnp.zeros(2, dtype=jnp.int32), probability, num_bins=2
@@ -421,17 +421,17 @@ def test_probabilistic_invalid_empty_and_zero_denominator_states():
     )
     invalid_spherical = metrics.spherical_score(jnp.array([0, 1]), jnp.zeros((2, 2)))
     empty = metrics.gaussian_negative_log_likelihood(
-        target, mean, jnp.ones(2), mask=jnp.zeros(2, dtype=bool)
+        target, mean, jnp.ones(2), mask=jnp.zeros(2, dtype="bool")
     )
     empty_members = metrics.crps_ensemble(
         jnp.array([0.0]),
         jnp.array([[-1.0, 1.0]]),
-        member_mask=jnp.zeros(2, dtype=bool),
+        member_mask=jnp.zeros(2, dtype="bool"),
     )
     empty_energy_members = metrics.energy_score(
         jnp.array([[0.0, 0.0]]),
         jnp.array([[[-1.0, 1.0], [0.0, 0.0]]]),
-        member_mask=jnp.zeros(2, dtype=bool),
+        member_mask=jnp.zeros(2, dtype="bool"),
     )
 
     for result in (

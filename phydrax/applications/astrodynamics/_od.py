@@ -74,7 +74,7 @@ class BatchOrbitDeterminationPlan(StrictModule, NonTrainableState):
             {
                 "kind": "batch-orbit-determination",
                 "model": str(model_id),
-                "observations": int(observed_.size),
+                "observations": observed_.size,
             }
         )
 
@@ -113,7 +113,7 @@ class BatchOrbitDeterminationPlan(StrictModule, NonTrainableState):
             ),
             estimate,
         )
-        entry_count = max(1, int(self.observed.size) * int(initial.size))
+        entry_count = max(1, self.observed.size * initial.size)
         jacobian = la.materialize(
             la.JacobianLinearOperator(linearization),
             la.MaterializationPolicy(
@@ -134,7 +134,7 @@ class BatchOrbitDeterminationPlan(StrictModule, NonTrainableState):
         valid = (
             optimization.successful
             & covariance_result.successful
-            & (rank == int(initial.size))
+            & (rank == initial.size)
         )
         status = jnp.where(
             valid,
@@ -190,7 +190,7 @@ class SequentialOrbitDeterminationPlan(StrictModule, NonTrainableState):
         def step(carry, item):
             state, covariance, previous_time = carry
             time, measurement = item
-            tolerance = 128.0 * int(state.size) * float(jnp.finfo(state.dtype).eps)
+            tolerance = 128.0 * state.size * float(jnp.finfo(state.dtype).eps)
             state_factor = gaussian_factor_from_covariance(
                 0.5 * (covariance + covariance.T),
                 rank_tolerance=tolerance,

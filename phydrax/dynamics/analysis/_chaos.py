@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from ..._interpolation import linear_interpolate
 from ..._strict import StrictModule
 from .._evolution import AbstractEvolution
 from .._grid import EvolutionGrid, IterationGrid, TimeGrid
@@ -188,7 +189,7 @@ def _weighted_quantiles(
     levels: np.ndarray,
     /,
 ) -> np.ndarray:
-    result = np.empty((levels.size, values.shape[1]), dtype=float)
+    result = np.empty((levels.size, values.shape[1]), dtype=np.float64)
     for metric in range(values.shape[1]):
         order = np.argsort(values[:, metric])
         ordered_values = values[order, metric]
@@ -196,12 +197,15 @@ def _weighted_quantiles(
         cumulative = (np.cumsum(ordered_weights) - 0.5 * ordered_weights) / np.sum(
             ordered_weights
         )
-        result[:, metric] = np.interp(
-            levels,
-            cumulative,
-            ordered_values,
-            left=ordered_values[0],
-            right=ordered_values[-1],
+        result[:, metric] = np.asarray(
+            linear_interpolate(
+                cumulative,
+                ordered_values,
+                levels,
+                bounds="fill",
+                left_fill_value=ordered_values[0],
+                right_fill_value=ordered_values[-1],
+            ).values
         )
     return result
 
@@ -214,7 +218,7 @@ def _longest_segment(
     best_start = 0
     best_end = 0
     start = 0
-    size = int(sample_valid.size)
+    size = sample_valid.size
     while start < size:
         while start < size and not sample_valid[start]:
             start += 1
@@ -266,13 +270,13 @@ def finite_size_growth(
         vectors = jax.random.normal(
             jax.random.PRNGKey(int(seed)),
             (count,) + evolution.state_layout.shape,
-            dtype=jnp.result_type(state, float),
+            dtype=jnp.result_type(state, jnp.float64),
         )
     else:
         vectors = jnp.asarray(directions)
         if vectors.ndim < 1 or vectors.shape[1:] != evolution.state_layout.shape:
             raise ValueError("directions must have shape (direction,) + state_shape.")
-        count = int(vectors.shape[0])
+        count = vectors.shape[0]
         if num_directions is not None and int(num_directions) != count:
             raise ValueError("num_directions conflicts with supplied directions.")
     flat = vectors.reshape((count, -1))
@@ -289,11 +293,11 @@ def finite_size_growth(
     ]
     growth = jnp.full((count, len(report_steps)), jnp.nan)
     separations = jnp.full((count, len(report_steps)), jnp.nan)
-    report_valid = jnp.zeros((count, len(report_steps)), dtype=bool)
-    accumulated_log = jnp.zeros((count,), dtype=jnp.result_type(state, float))
+    report_valid = jnp.zeros((count, len(report_steps)), dtype=jnp.bool_)
+    accumulated_log = jnp.zeros((count,), dtype=jnp.result_type(state, jnp.float64))
     accumulated_time = jnp.asarray(0.0, dtype=grid.coordinates.dtype)
     interval_start = grid.coordinates[0]
-    run_valid = jnp.ones((count,), dtype=bool)
+    run_valid = jnp.ones((count,), dtype=jnp.bool_)
     report_index = 0
     reference = state
     for step_index in range(grid.num_steps):
@@ -405,7 +409,7 @@ def recurrence_quantification(
         raise ValueError("Theiler and line-length controls are invalid.")
     if data.capacity > int(max_samples):
         raise ValueError("Trajectory exceeds max_samples for dense recurrence analysis.")
-    radius_value = np.asarray(radius, dtype=float)
+    radius_value = np.asarray(radius, dtype=np.float64)
     expected_radius_shape = data.case_shape
     if radius_value.shape == ():
         radius_value = np.broadcast_to(radius_value, expected_radius_shape or (1,))
@@ -420,13 +424,13 @@ def recurrence_quantification(
     states = np.asarray(data.states).reshape((case_count, samples, -1))
     sample_valid = np.asarray(data.sample_valid).reshape((case_count, samples))
     radii = np.asarray(radius_value).reshape((case_count,))
-    recurrence = np.zeros((case_count, samples, samples), dtype=bool)
+    recurrence = np.zeros((case_count, samples, samples), dtype=np.bool_)
     eligible = np.zeros_like(recurrence)
     distances = np.full((case_count, samples, samples), np.nan)
     scalar_outputs = [np.full((case_count,), np.nan) for _ in range(10)]
     diagonal_histogram = np.zeros((case_count, samples + 1), dtype=np.int32)
     vertical_histogram = np.zeros((case_count, samples + 1), dtype=np.int32)
-    valid_output = np.zeros((case_count,), dtype=bool)
+    valid_output = np.zeros((case_count,), dtype=np.bool_)
     status = np.full((case_count,), CHAOS_DIAGNOSTIC_INSUFFICIENT_SAMPLES, dtype=np.int32)
     index = np.arange(samples)
     theiler_mask = np.abs(index[:, None] - index[None, :]) > theiler
@@ -596,14 +600,14 @@ def zero_one_test(
     displacement = np.full(
         (data.num_cases, frequency_count, maximum_lag_capacity), np.nan
     )
-    displacement_valid = np.zeros_like(displacement, dtype=bool)
+    displacement_valid = np.zeros_like(displacement, dtype=np.bool_)
     frequency_statistics = np.full((data.num_cases, frequency_count), np.nan)
     statistic = np.full((data.num_cases,), np.nan)
     deviation = np.full((data.num_cases,), np.nan)
-    used_mask = np.zeros((data.num_cases, data.capacity), dtype=bool)
+    used_mask = np.zeros((data.num_cases, data.capacity), dtype=np.bool_)
     starts = np.zeros((data.num_cases,), dtype=np.int32)
     ends = np.zeros((data.num_cases,), dtype=np.int32)
-    result_valid = np.zeros((data.num_cases,), dtype=bool)
+    result_valid = np.zeros((data.num_cases,), dtype=np.bool_)
     statuses = np.full(
         (data.num_cases,), CHAOS_DIAGNOSTIC_INSUFFICIENT_SAMPLES, dtype=np.int32
     )
@@ -618,14 +622,14 @@ def zero_one_test(
         starts[case], ends[case] = start, end
         used_mask[case, start:end] = True
         series = values[case, start:end]
-        size = int(series.size)
+        size = series.size
         maximum_lag = min(maximum_lag_capacity, max(1, size // 10))
         fit_start = resolved_fit_start
         fit_end = min(resolved_fit_end, maximum_lag)
         if size < minimum or fit_end - fit_start < 3 or not np.all(np.isfinite(series)):
             continue
-        time_index = np.arange(1, size + 1, dtype=float)
-        lags = np.arange(1, maximum_lag + 1, dtype=float)
+        time_index = np.arange(1, size + 1, dtype=np.float64)
+        lags = np.arange(1, maximum_lag + 1, dtype=np.float64)
         mean = float(np.mean(series))
         for frequency_index, frequency in enumerate(frequencies):
             phase = time_index * frequency
@@ -712,7 +716,7 @@ def correlation_dimension(
         raise ValueError("Unsupported distance metric.")
     if data.capacity > int(max_samples):
         raise ValueError("Trajectory exceeds max_samples for pairwise distances.")
-    radius_values = np.asarray(radii, dtype=float)
+    radius_values = np.asarray(radii, dtype=np.float64)
     if (
         radius_values.ndim != 1
         or radius_values.size < 4
@@ -721,7 +725,7 @@ def correlation_dimension(
         or np.any(np.diff(radius_values) <= 0.0)
     ):
         raise ValueError("radii must be a strictly increasing positive rank-1 array.")
-    radius_count = int(radius_values.size)
+    radius_count = radius_values.size
     fit_start = 0 if fit_indices is None else int(fit_indices[0])
     fit_end = radius_count if fit_indices is None else int(fit_indices[1])
     if fit_start < 0 or fit_end > radius_count or fit_end - fit_start < 3:
@@ -738,9 +742,9 @@ def correlation_dimension(
     r_squared = np.full((cases,), np.nan)
     correlation_sum = np.full((cases, radius_count), np.nan)
     local_slope = np.full((cases, radius_count), np.nan)
-    fit_mask = np.zeros((cases, radius_count), dtype=bool)
+    fit_mask = np.zeros((cases, radius_count), dtype=np.bool_)
     pair_count = np.zeros((cases,), dtype=np.int64)
-    result_valid = np.zeros((cases,), dtype=bool)
+    result_valid = np.zeros((cases,), dtype=np.bool_)
     statuses = np.full((cases,), CHAOS_DIAGNOSTIC_INSUFFICIENT_SAMPLES, dtype=np.int32)
     row, column = np.triu_indices(samples, k=1)
     separated = np.abs(row - column) > theiler
@@ -842,7 +846,7 @@ def surrogate_significance(
     minimum_samples: int = 32,
 ) -> SurrogateSignificanceResult:
     """Evaluate a scalar statistic against an explicit surrogate null protocol."""
-    series = np.asarray(values, dtype=float)
+    series = np.asarray(values, dtype=np.float64)
     if series.ndim != 1:
         raise ValueError("values must be rank one.")
     if not callable(statistic):
@@ -858,12 +862,12 @@ def surrogate_significance(
         raise ValueError("num_surrogates must be positive.")
     mask = np.isfinite(series)
     if sample_valid is not None:
-        supplied = np.asarray(sample_valid, dtype=bool)
+        supplied = np.asarray(sample_valid, dtype=np.bool_)
         if supplied.shape != series.shape:
             raise ValueError("sample_valid must have the series shape.")
         mask &= supplied
     start, end = _longest_segment(mask, None)
-    used = np.zeros(series.shape, dtype=bool)
+    used = np.zeros(series.shape, dtype=np.bool_)
     used[start:end] = True
     segment = series[start:end]
     surrogate_statistics = np.full((count,), np.nan)
@@ -947,13 +951,13 @@ def summarize_chaos_uncertainty(
     seed: int = 0,
 ) -> ChaosUncertaintyResult:
     """Aggregate scalar diagnostics across declared uncertainty-source case axes."""
-    values = np.asarray(samples, dtype=float)
+    values = np.asarray(samples, dtype=np.float64)
     names = tuple(str(name) for name in metric_names)
     axes = tuple(str(name) for name in case_axes)
     sources = tuple(source_kinds)
     if values.ndim < 1 or values.shape[-1] != len(names) or not names:
         raise ValueError("samples must have shape case_shape + (num_metrics,).")
-    case_shape = tuple(int(size) for size in values.shape[:-1])
+    case_shape = tuple(values.shape[:-1])
     if (
         len(axes) != len(case_shape)
         or len(sources) != len(case_shape)
@@ -978,14 +982,14 @@ def summarize_chaos_uncertainty(
         raise ValueError("confidence and bootstrap_samples are invalid.")
     valid = np.all(np.isfinite(values), axis=-1)
     if sample_valid is not None:
-        supplied_valid = np.asarray(sample_valid, dtype=bool)
+        supplied_valid = np.asarray(sample_valid, dtype=np.bool_)
         if supplied_valid.shape != case_shape:
             raise ValueError("sample_valid must have case_shape.")
         valid &= supplied_valid
     sample_weights = (
-        np.ones(case_shape, dtype=float)
+        np.ones(case_shape, dtype=np.float64)
         if weights is None
-        else np.asarray(weights, dtype=float)
+        else np.asarray(weights, dtype=np.float64)
     )
     if sample_weights.shape != case_shape:
         raise ValueError("weights must have case_shape.")

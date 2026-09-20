@@ -163,7 +163,7 @@ class NativePanelFieldPlan2D(StrictModule):
                 {
                     "kind": "native-panel-field-evaluation-2d",
                     "field": self.field_id,
-                    "target_count": int(target.shape[0]),
+                    "target_count": target.shape[0],
                     "kind_name": kind,
                 }
             ),

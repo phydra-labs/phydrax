@@ -38,7 +38,7 @@ def test_published_feline_parameters_and_equilibrium_initialization():
 
 def test_dynamic_and_static_gamma_drive_distinct_branches():
     runtime = MileusnicSpindle2006Plan().prepare()
-    state = runtime.initialize(_input())
+    runtime.initialize(_input())
     dynamic = runtime._fusimotor_targets(_input(dynamic=70.0))
     static = runtime._fusimotor_targets(_input(static=70.0))
 
@@ -74,9 +74,11 @@ def test_ramp_stretch_increases_primary_afferent_and_is_jittable():
     stretched = runtime.output(state, ramp)
     assert stretched.primary_afferent_pps > resting
     derivative = jax.grad(
-        lambda length: runtime.output(
-            state, _input(length=length, velocity=0.1, dynamic=70.0)
-        ).primary_afferent_pps
+        lambda length: (
+            runtime.output(
+                state, _input(length=length, velocity=0.1, dynamic=70.0)
+            ).primary_afferent_pps
+        )
     )(jnp.asarray(1.02))
     assert jnp.isfinite(derivative)
 

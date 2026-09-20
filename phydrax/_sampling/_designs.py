@@ -48,7 +48,7 @@ def _first_primes(count: int, /) -> tuple[int, ...]:
 
 
 def _radical_inverse(indices: np.ndarray, base: int, /) -> np.ndarray:
-    values = np.zeros(indices.shape, dtype=float)
+    values = np.zeros(indices.shape, dtype=np.float64)
     remaining = np.asarray(indices, dtype=np.int64).copy()
     factor = 1.0 / float(base)
     while np.any(remaining > 0):
@@ -97,12 +97,12 @@ def host_design(
     if start_ and not capabilities.random_access:
         raise ValueError(f"{design_name(resolved)} does not support a start index.")
     if count_ == 0:
-        return np.empty((0, dimension_), dtype=float)
+        return np.empty((0, dimension_), dtype=np.float64)
     if isinstance(resolved, IIDDesign):
         generator = (
             seed if isinstance(seed, np.random.Generator) else np.random.default_rng(seed)
         )
-        return np.asarray(generator.random((count_, dimension_)), dtype=float)
+        return np.asarray(generator.random((count_, dimension_)), dtype=np.float64)
     if isinstance(resolved, HammersleyDesign):
         indices = np.arange(1, count_ + 1, dtype=np.int64)
         columns = [(indices - 0.5) / float(count_)]
@@ -117,7 +117,9 @@ def host_design(
         engine = _qmc_engine(resolved, dimension_, seed)
         if start_:
             engine.fast_forward(start_)
-    return np.asarray(engine.random(count_), dtype=float).reshape((count_, dimension_))
+    return np.asarray(engine.random(count_), dtype=np.float64).reshape(
+        (count_, dimension_)
+    )
 
 
 def host_design_factory(
@@ -136,7 +138,7 @@ def host_design_factory(
             seed if isinstance(seed, np.random.Generator) else np.random.default_rng(seed)
         )
         return lambda count: np.asarray(
-            generator.random((int(count), dimension_)), dtype=float
+            generator.random((int(count), dimension_)), dtype=np.float64
         )
     if isinstance(resolved, HammersleyDesign):
         return lambda count: host_design(
@@ -149,7 +151,7 @@ def host_design_factory(
         engine = LatinHypercube(dimension_, seed=seed)
     else:
         engine = _qmc_engine(resolved, dimension_, seed)
-    return lambda count: np.asarray(engine.random(int(count)), dtype=float).reshape(
+    return lambda count: np.asarray(engine.random(int(count)), dtype=np.float64).reshape(
         (int(count), dimension_)
     )
 
@@ -177,11 +179,11 @@ def materialize_design(
     if start_ and not capabilities.random_access:
         raise ValueError(f"{design_name(resolved)} does not support a start index.")
     if count_ == 0:
-        return jnp.zeros((0, dimension_), dtype=float)
+        return jnp.zeros((0, dimension_), dtype=jnp.float64)
     if isinstance(resolved, IIDDesign):
         if key is None:
             raise ValueError("uniform randomized designs require a key.")
-        return jr.uniform(key, (count_, dimension_), dtype=float)
+        return jr.uniform(key, (count_, dimension_), dtype=jnp.float64)
     if capabilities.randomized and key is None:
         raise ValueError(f"{design_name(resolved)} requires a key.")
     if key is None:
@@ -193,10 +195,10 @@ def materialize_design(
                 seed=0,
                 start=start_,
             ),
-            dtype=float,
+            dtype=jnp.float64,
         )
 
-    prototype = jnp.zeros((count_, dimension_), dtype=float)
+    prototype = jnp.zeros((count_, dimension_), dtype=jnp.float64)
     result_spec = jax.ShapeDtypeStruct(prototype.shape, prototype.dtype)
 
     def materialize_host(key_value):
@@ -214,57 +216,9 @@ def materialize_design(
     return jax.pure_callback(materialize_host, result_spec, key)
 
 
-def unit_design(
-    name: str,
-    *,
-    count: int,
-    dimension: int,
-    key: Key[Array, ""] | None,
-) -> Array:
-    """Compatibility wrapper for the former numerical unit-design API."""
-    resolved = resolve_design(name)
-    capabilities = design_capabilities(resolved)
-    if not capabilities.randomized and key is not None:
-        raise ValueError(f"deterministic {design_name(resolved)} does not accept a key.")
-    return materialize_design(
-        resolved,
-        count=count,
-        dimension=dimension,
-        key=key,
-    )
-
-
-def get_sampler_host(
-    design: DesignLike,
-    *,
-    dim: int,
-    seed: int | np.random.Generator,
-) -> Callable[[int], np.ndarray]:
-    """Compatibility host sampler for points in a unit cube."""
-    return host_design_factory(design, dimension=int(dim), seed=seed)
-
-
-def get_sampler(design: DesignLike):
-    """Return the historical `(count, dimension, key)` sampler callable."""
-    resolved = resolve_design(design)
-
-    def sample(n: int, dim: int, key: Key[Array, ""]):
-        return materialize_design(
-            resolved,
-            count=int(n),
-            dimension=int(dim),
-            key=key,
-        )
-
-    return sample
-
-
 __all__ = [
-    "get_sampler",
-    "get_sampler_host",
     "host_design",
     "host_design_factory",
     "materialize_design",
     "seed_from_key",
-    "unit_design",
 ]

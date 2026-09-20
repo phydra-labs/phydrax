@@ -57,7 +57,7 @@ class AlgebraResourceBudget(StrictModule, NonTrainableState):
             setattr(self, name, value)
         self.budget_id = canonical_fingerprint(
             {
-                "kind": "algebra-resource-budget-v1",
+                "kind": "algebra-resource-budget",
                 **dict(zip(names, values, strict=True)),
             }
         )
@@ -66,16 +66,14 @@ class AlgebraResourceBudget(StrictModule, NonTrainableState):
         value = index(count)
         if value <= 0 or value > self.maximum_coordinates:
             raise ValueError(
-                f"Algebra requires {value} coordinates; maximum is "
-                f"{self.maximum_coordinates}."
+                f"Algebra requires {value} coordinates; maximum is {self.maximum_coordinates}."
             )
 
     def admit_product_pairs(self, count: int, /) -> None:
         value = index(count)
         if value < 0 or value > self.maximum_product_pairs:
             raise ValueError(
-                f"Algebra product requires {value} basis pairs; maximum is "
-                f"{self.maximum_product_pairs}."
+                f"Algebra product requires {value} basis pairs; maximum is {self.maximum_product_pairs}."
             )
 
     def admit_product(self, terms: int, plan_bytes: int, /) -> None:
@@ -90,8 +88,7 @@ class AlgebraResourceBudget(StrictModule, NonTrainableState):
         value = index(work)
         if value < 0 or value > self.maximum_audit_terms:
             raise ValueError(
-                f"Algebra law audit requires {value} terms; maximum is "
-                f"{self.maximum_audit_terms}."
+                f"Algebra law audit requires {value} terms; maximum is {self.maximum_audit_terms}."
             )
 
 
@@ -148,7 +145,7 @@ class AlgebraResourceEvidence(StrictModule, NonTrainableState):
         self.budget_id = budget.budget_id
         self.evidence_id = canonical_fingerprint(
             {
-                "kind": "algebra-resource-evidence-v1",
+                "kind": "algebra-resource-evidence",
                 "coordinates": values[0],
                 "pairs": values[1],
                 "terms": values[2],

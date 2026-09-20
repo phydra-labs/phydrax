@@ -55,8 +55,8 @@ class NeighborhoodGraph(StrictModule):
     ):
         self.relation = relation
         self.distances = jnp.asarray(distances)
-        self.adjacency = jnp.asarray(adjacency, dtype=bool)
-        self.active = jnp.asarray(active, dtype=bool)
+        self.adjacency = jnp.asarray(adjacency, dtype=jnp.bool_)
+        self.active = jnp.asarray(active, dtype=jnp.bool_)
         self.components = jnp.asarray(components, dtype=jnp.int32)
         self.minimum_degree = jnp.asarray(minimum_degree, dtype=jnp.int32)
         self.maximum_degree = jnp.asarray(maximum_degree, dtype=jnp.int32)
@@ -98,7 +98,7 @@ class ManifoldDiagnostics(StrictModule):
         converged: Any = True,
         method: str,
     ):
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.objective = jnp.asarray(objective)
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32)
@@ -108,7 +108,7 @@ class ManifoldDiagnostics(StrictModule):
         self.connected_components = jnp.asarray(connected_components, dtype=jnp.int32)
         self.minimum_degree = jnp.asarray(minimum_degree, dtype=jnp.int32)
         self.maximum_degree = jnp.asarray(maximum_degree, dtype=jnp.int32)
-        self.converged = jnp.asarray(converged, dtype=bool)
+        self.converged = jnp.asarray(converged, dtype=jnp.bool_)
         self.method = str(method)
 
 
@@ -147,11 +147,11 @@ def _prepare_queries(
     feature_count: int,
 ) -> tuple[Array, tuple[int, ...], bool]:
     x = jnp.asarray(value)
-    if x.ndim == 0 or int(x.shape[-1]) != int(feature_count):
+    if x.ndim == 0 or x.shape[-1] != int(feature_count):
         raise ValueError(f"Input must end in feature axis of size {feature_count}.")
     point = x.ndim == 1
-    if case_shape and tuple(int(s) for s in x.shape[: len(case_shape)]) == case_shape:
-        query_shape = tuple(int(s) for s in x.shape[len(case_shape) : -1])
+    if case_shape and tuple(x.shape[: len(case_shape)]) == case_shape:
+        query_shape = tuple(x.shape[len(case_shape) : -1])
         shaped = x.reshape(
             (
                 _case_count(case_shape),
@@ -160,7 +160,7 @@ def _prepare_queries(
             )
         )
     else:
-        query_shape = tuple(int(s) for s in x.shape[:-1])
+        query_shape = tuple(x.shape[:-1])
         broadcast = jnp.broadcast_to(x, case_shape + x.shape)
         shaped = broadcast.reshape(
             (
@@ -196,7 +196,7 @@ def _euclidean_distances(left: ArrayLike, right: ArrayLike | None = None) -> Arr
 
 
 def _connectivity_one(adjacency: Array, active: Array) -> tuple[Array, Array, Array]:
-    n = int(active.shape[0])
+    n = active.shape[0]
     labels = jnp.where(active, jnp.arange(n, dtype=jnp.int32), n)
 
     def propagate(_iteration, current):
@@ -227,10 +227,10 @@ def build_neighbor_graph(
 ) -> NeighborhoodGraph:
     """Construct a hard k-NN relation; only edge distances retain conditional gradients."""
     x = jnp.asarray(features)
-    included = jnp.asarray(active, dtype=bool)
+    included = jnp.asarray(active, dtype=jnp.bool_)
     if x.ndim < 2 or included.shape != x.shape[:-1]:
         raise ValueError("features and active must end in (sample, feature) and sample.")
-    n = int(x.shape[-2])
+    n = x.shape[-2]
     k = int(n_neighbors)
     if k <= 0 or k >= n:
         raise ValueError(f"n_neighbors must lie in [1, {n - 1}].")
@@ -239,7 +239,7 @@ def build_neighbor_graph(
         if metric == "euclidean"
         else pairwise_distances(x, metric=metric)
     )
-    eye = jnp.eye(n, dtype=bool)
+    eye = jnp.eye(n, dtype=jnp.bool_)
     eligible = included[..., :, None] & included[..., None, :] & ~eye
     ranked = jnp.where(eligible, distances, jnp.inf)
     _negative, indices = jax.lax.top_k(-ranked, k)
@@ -250,10 +250,10 @@ def build_neighbor_graph(
     )
     row_valid = included[..., :, None] & neighbor_active & jnp.isfinite(selected)
     selected = jnp.where(row_valid, selected, 0.0)
-    one_hot = jax.nn.one_hot(indices, n, dtype=bool)
+    one_hot = jax.nn.one_hot(indices, n, dtype=jnp.bool_)
     directed = jnp.any(one_hot & row_valid[..., None], axis=-2)
     adjacency = directed | jnp.swapaxes(directed, -1, -2)
-    case_shape = tuple(int(s) for s in x.shape[:-2])
+    case_shape = tuple(x.shape[:-2])
     flat_adjacency = adjacency.reshape((_case_count(case_shape), n, n))
     flat_active = included.reshape((_case_count(case_shape), n))
     components, minimum, maximum = jax.vmap(_connectivity_one)(
@@ -282,7 +282,7 @@ def _stable_hermitian_eigh(
 ) -> tuple[Array, Array]:
     """Diagonalize Hermitian matrices after a machine-resolution spectral tie break."""
     hermitian = 0.5 * (matrix + jnp.conj(jnp.swapaxes(matrix, -1, -2)))
-    n = int(hermitian.shape[-1])
+    n = hermitian.shape[-1]
     real_dtype = hermitian.real.dtype
     magnitude = jnp.maximum(
         jnp.linalg.norm(hermitian, axis=(-2, -1), keepdims=True),

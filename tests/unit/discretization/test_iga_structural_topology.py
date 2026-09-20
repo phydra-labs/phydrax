@@ -43,10 +43,10 @@ def test_direct_and_bernstein_realization_use_exact_transposes():
     direct = DirectTensorRealization(basis, SplineSpanTopology(basis))
     coefficients = jnp.arange(
         basis.coefficient_count * 2,
-        dtype=float,
+        dtype="float64",
     ).reshape(basis.coefficient_count, 2)
     local = direct.gather(coefficients)
-    local_dual = jnp.arange(local.size, dtype=float).reshape(local.shape)
+    local_dual = jnp.arange(local.size, dtype="float64").reshape(local.shape)
     np.testing.assert_allclose(
         jnp.vdot(local, local_dual),
         jnp.vdot(coefficients, direct.gather_transpose(local_dual)),
@@ -71,7 +71,7 @@ def test_direct_and_bernstein_realization_use_exact_transposes():
         expected_realized,
     )
 
-    dual = jnp.arange(realized.size, dtype=float).reshape(realized.shape) / 3.0
+    dual = jnp.arange(realized.size, dtype="float64").reshape(realized.shape) / 3.0
     expected_local_dual = jnp.sum(
         expanded_extraction * dual[:, :, None, :],
         axis=1,

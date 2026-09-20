@@ -14,7 +14,7 @@ import numpy as np
 from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from ..series import SampledSeries, SampledSeriesReconstruction, SeriesSupport
 from ._layout import InputLayout, StateLayout
 
@@ -27,7 +27,7 @@ def _identifier(value: str, owner: str, /) -> str:
 
 def _inexact(value: ArrayLike, /) -> Array:
     array = jnp.asarray(value)
-    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype(float)
+    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype("float64")
 
 
 def _error_if(value: Array, predicate: Array, message: str, /) -> Array:
@@ -55,12 +55,11 @@ class DiscreteTransitionResult(StrictModule):
     ):
         candidate = _inexact(candidate_state)
         accepted = _inexact(accepted_state)
-        successful_array = jnp.asarray(successful, dtype=bool)
+        successful_array = jnp.asarray(successful, dtype=jnp.bool_)
         status_array = jnp.asarray(status, dtype=jnp.int32)
         if candidate.shape != accepted.shape:
             raise ValueError(
-                "Discrete transition candidate_state and accepted_state must "
-                "have matching shapes."
+                "Discrete transition candidate_state and accepted_state must have matching shapes."
             )
         if successful_array.shape != ():
             raise ValueError("Discrete transition successful must be scalar.")
@@ -99,13 +98,12 @@ class DiscreteTransitionEvidence(StrictModule):
     ):
         candidates = _inexact(candidate_states)
         accepted = _inexact(accepted_states)
-        attempted_array = jnp.asarray(attempted, dtype=bool)
-        successful_array = jnp.asarray(successful, dtype=bool)
+        attempted_array = jnp.asarray(attempted, dtype=jnp.bool_)
+        successful_array = jnp.asarray(successful, dtype=jnp.bool_)
         status_array = jnp.asarray(status, dtype=jnp.int32)
         if candidates.shape != accepted.shape:
             raise ValueError(
-                "Discrete transition evidence candidate_states and accepted_states "
-                "must have matching shapes."
+                "Discrete transition evidence candidate_states and accepted_states must have matching shapes."
             )
         if attempted_array.ndim < 1:
             raise ValueError(
@@ -122,8 +120,7 @@ class DiscreteTransitionEvidence(StrictModule):
             or candidates.shape[: attempted_array.ndim] != attempted_array.shape
         ):
             raise ValueError(
-                "Discrete transition evidence state leading axes must match "
-                "attempted, including its final step axis."
+                "Discrete transition evidence state leading axes must match attempted, including its final step axis."
             )
         successful_array = _error_if(
             successful_array,
@@ -263,8 +260,7 @@ class ContinuousSystem(StrictModule):
         output = _inexact(value)
         if output.shape != self.state_layout.shape:
             raise ValueError(
-                "ContinuousSystem vector_field returned shape "
-                f"{output.shape}; expected {self.state_layout.shape}."
+                f"ContinuousSystem vector_field returned shape {output.shape}; expected {self.state_layout.shape}."
             )
         return output
 
@@ -422,8 +418,7 @@ class DiscreteSystem(StrictModule):
         output = _inexact(value)
         if output.shape != self.state_layout.shape:
             raise ValueError(
-                "DiscreteSystem transition returned shape "
-                f"{output.shape}; expected {self.state_layout.shape}."
+                f"DiscreteSystem transition returned shape {output.shape}; expected {self.state_layout.shape}."
             )
         return DiscreteTransitionResult(
             output,
@@ -463,8 +458,8 @@ class DiscreteSystem(StrictModule):
 class AbstractInputPolicy(StrictModule):
     """State-aware input policy bound into a pathwise evolution."""
 
-    input_layout: AbstractAttribute[InputLayout]
-    policy_id: AbstractAttribute[str]
+    input_layout: eqx.AbstractVar[InputLayout]
+    policy_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def evaluate(
@@ -575,9 +570,9 @@ class HeldInputPolicy(AbstractInputPolicy):
         identifier = _identifier(policy_id, "HeldInputPolicy policy_id")
         times_ = _inexact(times)
         values_ = _inexact(values)
-        if times_.ndim != 1 or int(times_.size) < 2:
+        if times_.ndim != 1 or times_.size < 2:
             raise ValueError("HeldInputPolicy times must contain at least two nodes.")
-        expected = (int(times_.size) - 1,) + input_layout.shape
+        expected = (times_.size - 1,) + input_layout.shape
         if values_.shape != expected:
             raise ValueError(
                 f"HeldInputPolicy values must have shape {expected}; got {values_.shape}."

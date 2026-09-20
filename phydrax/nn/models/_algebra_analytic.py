@@ -137,8 +137,8 @@ class AnalyticityEvidence(StrictModule):
         side: str,
     ):
         self.residual = jnp.asarray(residual)
-        self.finite = jnp.asarray(finite, dtype=bool)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.operator_kind = str(operator_kind)
         self.side = str(side)
 

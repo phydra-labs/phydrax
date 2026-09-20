@@ -368,8 +368,8 @@ def _storage_metrics():
     }
     sparse_metrics = {
         "dense_sparse_parity": parity,
-        "compact_values": int(compact.size),
-        "dense_values": int(dense.size),
+        "compact_values": compact.size,
+        "dense_values": dense.size,
     }
     return (
         active_metrics,

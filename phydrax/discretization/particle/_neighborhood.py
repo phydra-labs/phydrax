@@ -12,7 +12,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...sparse import EdgeRelation
 from .._core import (
@@ -116,11 +116,11 @@ class ParticleNeighborhoodState(StrictModule, NonTrainableState):
         self.candidate_pair_count = jnp.asarray(candidate_pair_count, dtype=jnp.int32)
         self.pair_count = jnp.asarray(pair_count, dtype=jnp.int32)
         self.maximum_cell_occupancy = jnp.asarray(maximum_cell_occupancy, dtype=jnp.int32)
-        self.cell_overflow = jnp.asarray(cell_overflow, dtype=bool)
+        self.cell_overflow = jnp.asarray(cell_overflow, dtype=jnp.bool_)
         self.cell_overflow_count = jnp.asarray(cell_overflow_count, dtype=jnp.int32)
-        self.pair_overflow = jnp.asarray(pair_overflow, dtype=bool)
+        self.pair_overflow = jnp.asarray(pair_overflow, dtype=jnp.bool_)
         self.pair_overflow_count = jnp.asarray(pair_overflow_count, dtype=jnp.int32)
-        self.domain_violation = jnp.asarray(domain_violation, dtype=bool)
+        self.domain_violation = jnp.asarray(domain_violation, dtype=jnp.bool_)
         self.domain_violation_count = jnp.asarray(domain_violation_count, dtype=jnp.int32)
         for name, value in (
             ("candidate_pair_count", self.candidate_pair_count),
@@ -153,10 +153,10 @@ class ParticleNeighborhoodState(StrictModule, NonTrainableState):
 class AbstractParticleNeighborhoodPlan(StrictModule, NonTrainableState):
     """Structural plan for a geometry-dependent particle relation."""
 
-    key: AbstractAttribute[DiscretizationKey]
-    box: AbstractAttribute[ParticleBox | PeriodicCell | None]
-    backend: AbstractAttribute[ParticleRealization]
-    plan_id: AbstractAttribute[str]
+    key: eqx.AbstractVar[DiscretizationKey]
+    box: eqx.AbstractVar[ParticleBox | PeriodicCell | None]
+    backend: eqx.AbstractVar[ParticleRealization]
+    plan_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def prepare(
@@ -168,16 +168,16 @@ class AbstractParticleNeighborhoodPlan(StrictModule, NonTrainableState):
 class AbstractPreparedParticleNeighborhood(StrictModule, NonTrainableState):
     """Prepared fixed-shape neighborhood backend."""
 
-    plan: AbstractAttribute[AbstractParticleNeighborhoodPlan]
-    key: AbstractAttribute[DiscretizationKey]
-    box: AbstractAttribute[ParticleBox | PeriodicCell | None]
-    backend: AbstractAttribute[ParticleRealization]
-    pair_capacity: AbstractAttribute[int]
-    particle_discretization_id: AbstractAttribute[str]
-    numeric_version: AbstractAttribute[str]
-    preparation: AbstractAttribute[PreparationReport]
-    prepared_id: AbstractAttribute[str]
-    artifact_kind: AbstractAttribute[str]
+    plan: eqx.AbstractVar[AbstractParticleNeighborhoodPlan]
+    key: eqx.AbstractVar[DiscretizationKey]
+    box: eqx.AbstractVar[ParticleBox | PeriodicCell | None]
+    backend: eqx.AbstractVar[ParticleRealization]
+    pair_capacity: eqx.AbstractVar[int]
+    particle_discretization_id: eqx.AbstractVar[str]
+    numeric_version: eqx.AbstractVar[str]
+    preparation: eqx.AbstractVar[PreparationReport]
+    prepared_id: eqx.AbstractVar[str]
+    artifact_kind: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def build(
@@ -274,8 +274,7 @@ class PreparedDenseParticleNeighborhood(AbstractPreparedParticleNeighborhood):
         pair_count = capacity * (capacity - 1) // 2
         if pair_count > plan.maximum_pairs:
             raise ValueError(
-                f"Dense particle relation requires {pair_count} pairs, exceeding "
-                f"maximum_pairs={plan.maximum_pairs}."
+                f"Dense particle relation requires {pair_count} pairs, exceeding maximum_pairs={plan.maximum_pairs}."
             )
         first, second = np.triu_indices(capacity, k=1)
         particle_ids = np.asarray(particles.particle_ids, dtype=np.int64)
@@ -286,7 +285,7 @@ class PreparedDenseParticleNeighborhood(AbstractPreparedParticleNeighborhood):
         right = np.where(swap, first, second).astype(np.int64, copy=False)
         left_ids = particle_ids[left]
         right_ids = particle_ids[right]
-        active = np.asarray(particles.active_mask, dtype=bool)
+        active = np.asarray(particles.active_mask, dtype=np.bool_)
         valid = active[left] & active[right]
         relation = EdgeRelation(
             left,
@@ -357,7 +356,7 @@ class PreparedDenseParticleNeighborhood(AbstractPreparedParticleNeighborhood):
         if active_mask is None:
             route_valid = base.valid
         else:
-            active = jnp.asarray(active_mask, dtype=bool)
+            active = jnp.asarray(active_mask, dtype=jnp.bool_)
             if active.shape != (self.particle_capacity,):
                 raise ValueError("active_mask must have particle-capacity shape.")
             route_valid = (

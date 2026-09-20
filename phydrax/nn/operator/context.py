@@ -46,10 +46,10 @@ def operator_context_fingerprint(
     )
     payload = repr(
         (
-            tuple(int(size) for size in case_shape),
+            tuple(case_shape),
             samples.sample_shape,
             axes,
-            None if samples.coordinates is None else int(samples.coordinates.shape[-1]),
+            None if samples.coordinates is None else samples.coordinates.shape[-1],
             samples.mask is not None,
             samples.quadrature_weights is not None,
             str(normalization_id),
@@ -87,22 +87,22 @@ class EncodedOperatorState(StrictModule):
         projected_values: Sequence[Array] = (),
     ):
         values_ = jnp.asarray(values)
-        cases = tuple(int(size) for size in case_shape)
+        cases = tuple(case_shape)
         if values_.ndim != len(cases) + 2:
             raise ValueError(
                 "Encoded context values must have shape case_shape + (tokens, channels)."
             )
-        if tuple(int(size) for size in values_.shape[: len(cases)]) != cases:
+        if tuple(values_.shape[: len(cases)]) != cases:
             raise ValueError("Encoded context values do not begin with case_shape.")
-        tokens = int(values_.shape[-2])
+        tokens = values_.shape[-2]
         weights_ = jnp.asarray(weights)
-        mask_ = jnp.asarray(mask, dtype=bool)
+        mask_ = jnp.asarray(mask, dtype=jnp.bool_)
         expected_geometry = cases + (tokens,)
-        if tuple(int(size) for size in weights_.shape) != expected_geometry:
+        if tuple(weights_.shape) != expected_geometry:
             raise ValueError(
                 f"Encoded context weights must have shape {expected_geometry}."
             )
-        if tuple(int(size) for size in mask_.shape) != expected_geometry:
+        if tuple(mask_.shape) != expected_geometry:
             raise ValueError(f"Encoded context mask must have shape {expected_geometry}.")
         coordinates_: Array | None
         if coordinates is None:
@@ -111,10 +111,9 @@ class EncodedOperatorState(StrictModule):
             coordinates_ = jnp.asarray(coordinates)
             if coordinates_.ndim != len(cases) + 2:
                 raise ValueError(
-                    "Context coordinates must have shape case_shape + "
-                    "(tokens, coordinate_dimension)."
+                    "Context coordinates must have shape case_shape + (tokens, coordinate_dimension)."
                 )
-            if tuple(int(size) for size in coordinates_.shape[:-1]) != expected_geometry:
+            if tuple(coordinates_.shape[:-1]) != expected_geometry:
                 raise ValueError("Context coordinates do not align with context tokens.")
         layers = tuple(jnp.asarray(layer) for layer in layer_values)
         if not layers:
@@ -142,11 +141,11 @@ class EncodedOperatorState(StrictModule):
 
     @property
     def num_tokens(self) -> int:
-        return int(self.values.shape[-2])
+        return self.values.shape[-2]
 
     @property
     def channels(self) -> int:
-        return int(self.values.shape[-1])
+        return self.values.shape[-1]
 
     def at_layer(self, index: int, /) -> Array:
         return self.layer_values[int(index)]
@@ -188,7 +187,7 @@ def _flatten_values(
     has_channels = (
         array.ndim > sample_ndim
         and tuple(array.shape[-sample_ndim - 1 : -1]) == sample_shape
-        and int(array.shape[-1]) == int(channels)
+        and array.shape[-1] == int(channels)
     )
     if not has_channels:
         if int(channels) != 1 or tuple(array.shape[-sample_ndim:]) != sample_shape:
@@ -197,7 +196,7 @@ def _flatten_values(
                 f"{channels} channels; got {array.shape}."
             )
         array = array[..., None]
-    case_shape = tuple(int(size) for size in array.shape[: -sample_ndim - 1])
+    case_shape = tuple(array.shape[: -sample_ndim - 1])
     cases = prod(case_shape) if case_shape else 1
     return array.reshape((cases, prod(sample_shape), int(channels))), case_shape
 
@@ -210,7 +209,7 @@ def _flatten_geometry(
     cases = prod(case_shape) if case_shape else 1
     count = prod(samples.sample_shape)
     coordinates = samples.coordinates_array(case_shape=case_shape, flatten=True)
-    coordinates = coordinates.reshape((cases, count, int(coordinates.shape[-1])))
+    coordinates = coordinates.reshape((cases, count, coordinates.shape[-1]))
     weights = samples.quadrature(case_shape=case_shape).reshape((cases, count))
     mask = samples.mask_array(case_shape=case_shape).reshape((cases, count))
     return coordinates, weights, mask
@@ -277,7 +276,7 @@ class LearnedTokenContext(AbstractOperatorContextStrategy):
             values=context,
             coordinates=None,
             weights=jnp.ones(geometry_shape, dtype=context.dtype),
-            mask=jnp.ones(geometry_shape, dtype=bool),
+            mask=jnp.ones(geometry_shape, dtype=jnp.bool_),
             case_shape=case_shape,
             schema_fingerprint=operator_context_fingerprint(
                 samples,
@@ -311,7 +310,7 @@ class PooledGeometryContext(AbstractOperatorContextStrategy):
         del indices
         flattened, case_shape = _flatten_values(values, samples, self.channels)
         coordinates, weights, mask = _flatten_geometry(samples, case_shape)
-        count = int(flattened.shape[1])
+        count = flattened.shape[1]
         segment = jnp.minimum(
             (jnp.arange(count) * self.num_tokens) // count,
             self.num_tokens - 1,
@@ -335,7 +334,7 @@ class PooledGeometryContext(AbstractOperatorContextStrategy):
         return EncodedOperatorState(
             kind="pooled_geometry",
             values=pooled_values.reshape(shape + (self.channels,)),
-            coordinates=pooled_coordinates.reshape(shape + (int(coordinates.shape[-1]),)),
+            coordinates=pooled_coordinates.reshape(shape + (coordinates.shape[-1],)),
             weights=mass.reshape(shape),
             mask=pooled_mask.reshape(shape),
             case_shape=case_shape,
@@ -388,8 +387,7 @@ class SampledAnchorContext(AbstractOperatorContextStrategy):
                 selected = selected_.reshape((cases, self.num_anchors))
             else:
                 raise ValueError(
-                    "Anchor indices must have shape (num_anchors,) or "
-                    "case_shape + (num_anchors,)."
+                    "Anchor indices must have shape (num_anchors,) or case_shape + (num_anchors,)."
                 )
         if not isinstance(selected, jax_core.Tracer):
             if bool(jnp.any((selected < 0) | (selected >= count))):
@@ -398,7 +396,7 @@ class SampledAnchorContext(AbstractOperatorContextStrategy):
             selected[..., None], selected.shape + (self.channels,)
         )
         coordinate_index = jnp.broadcast_to(
-            selected[..., None], selected.shape + (int(coordinates.shape[-1]),)
+            selected[..., None], selected.shape + (coordinates.shape[-1],)
         )
         anchor_values = jnp.take_along_axis(flattened, channel_index, axis=1)
         anchor_coordinates = jnp.take_along_axis(coordinates, coordinate_index, axis=1)
@@ -408,7 +406,7 @@ class SampledAnchorContext(AbstractOperatorContextStrategy):
         return EncodedOperatorState(
             kind="sampled_anchor",
             values=anchor_values.reshape(shape + (self.channels,)),
-            coordinates=anchor_coordinates.reshape(shape + (int(coordinates.shape[-1]),)),
+            coordinates=anchor_coordinates.reshape(shape + (coordinates.shape[-1],)),
             weights=anchor_weights.reshape(shape),
             mask=anchor_mask.reshape(shape),
             case_shape=case_shape,

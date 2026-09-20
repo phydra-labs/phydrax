@@ -56,8 +56,7 @@ def quadrilateral_p_transfer(
         )
     ):
         raise ValueError(
-            "Quadrilateral p-transfer requires nested axis orders with at least "
-            "one strict increase."
+            "Quadrilateral p-transfer requires nested axis orders with at least one strict increase."
         )
     return finite_element_p_transfer(
         coarse.finite_element(),

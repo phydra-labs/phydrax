@@ -16,7 +16,7 @@ from jaxtyping import Array, ArrayLike, Key
 from ..._fingerprint import canonical_fingerprint
 from ..._frozendict import frozendict
 from ..._score_field import StateTimeScoreField
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ...domain import DomainFunction
 
 
@@ -36,7 +36,9 @@ class ScoreContext(StrictModule):
         *,
         context_id: str | None = None,
     ):
-        converted = tuple((str(name), jnp.asarray(value)) for name, value in values.items())
+        converted = tuple(
+            (str(name), jnp.asarray(value)) for name, value in values.items()
+        )
         names = tuple(name for name, _ in converted)
         if any(not name for name in names) or len(set(names)) != len(names):
             raise ValueError("Score context names must be unique and non-empty.")
@@ -62,8 +64,8 @@ class GuidanceEvaluation(StrictModule):
 
 
 class AbstractScoreGuidance(StrictModule):
-    exactness: AbstractAttribute[GuidanceExactness]
-    guidance_id: AbstractAttribute[str]
+    exactness: eqx.AbstractVar[GuidanceExactness]
+    guidance_id: eqx.AbstractVar[str]
 
     @abstractmethod
     def evaluate(
@@ -148,11 +150,7 @@ class _AbstractScalarFieldGradientGuidance(AbstractScoreGuidance):
             arguments = tuple(
                 current
                 if dep == self.state_label
-                else (
-                    time_array
-                    if dep == self.time_label
-                    else context.values[dep]
-                )
+                else (time_array if dep == self.time_label else context.values[dep])
                 for dep in self.field.deps
             )
             value = jnp.asarray(self.field.func(*arguments, key=key))
@@ -343,7 +341,7 @@ class GuidedScoreField(StrictModule):
         for evaluation in evaluations:
             score = score + evaluation.correction
         valid = jnp.all(jnp.isfinite(score)) & jnp.all(
-            jnp.asarray([evaluation.valid for evaluation in evaluations], dtype=bool)
+            jnp.asarray([evaluation.valid for evaluation in evaluations], dtype=jnp.bool_)
         )
         return score, evaluations, valid
 

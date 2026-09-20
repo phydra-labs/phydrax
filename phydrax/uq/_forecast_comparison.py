@@ -90,16 +90,16 @@ def _validated_losses(
     if first_.shape != second_.shape or first_.ndim < 1:
         raise ValueError("loss arrays must have one identical, non-scalar shape.")
     if not jnp.issubdtype(first_.dtype, jnp.inexact):
-        first_ = first_.astype(float)
+        first_ = first_.astype("float64")
     if not jnp.issubdtype(second_.dtype, jnp.inexact):
-        second_ = second_.astype(float)
+        second_ = second_.astype("float64")
     dtype = jnp.result_type(first_, second_)
     first_ = first_.astype(dtype)
     second_ = second_.astype(dtype)
     valid = (
-        jnp.ones(first_.shape, dtype=bool)
+        jnp.ones(first_.shape, dtype=jnp.bool_)
         if mask is None
-        else jnp.asarray(mask, dtype=bool)
+        else jnp.asarray(mask, dtype=jnp.bool_)
     )
     if valid.shape != first_.shape:
         raise ValueError("mask must have the same shape as the loss arrays.")

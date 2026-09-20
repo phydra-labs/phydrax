@@ -170,7 +170,7 @@ class LocalAffineGamePolicy(AbstractInputPolicy):
             raise TypeError("partition must be a PlayerControlPartition.")
         if not isinstance(policy_id, str) or not policy_id:
             raise ValueError("policy_id must be a non-empty string.")
-        cases = tuple(int(size) for size in case_shape)
+        cases = tuple(case_shape)
         if any(size <= 0 for size in cases):
             raise ValueError("Local policy case dimensions must be positive.")
         if len(input_layout.shape) != 1:
@@ -187,7 +187,7 @@ class LocalAffineGamePolicy(AbstractInputPolicy):
             raise ValueError(
                 "nominal_states must have shape case_shape + (T + 1, state_size)."
             )
-        state_size = int(states.shape[-1])
+        state_size = states.shape[-1]
         expected_states = cases + (horizon + 1, state_size)
         expected_controls = cases + (horizon, control_size)
         expected_gain = cases + (horizon, control_size, state_size)
@@ -197,8 +197,7 @@ class LocalAffineGamePolicy(AbstractInputPolicy):
             )
         if tuple(controls.shape) != expected_controls:
             raise ValueError(
-                "nominal_controls must have shape "
-                f"{expected_controls}; got {controls.shape}."
+                f"nominal_controls must have shape {expected_controls}; got {controls.shape}."
             )
         if tuple(gain.shape) != expected_gain:
             raise ValueError(
@@ -213,7 +212,7 @@ class LocalAffineGamePolicy(AbstractInputPolicy):
         values = (states, controls, gain, bias, scale)
         if any(jnp.issubdtype(value.dtype, jnp.complexfloating) for value in values):
             raise TypeError("Local game policies require real-valued arrays.")
-        dtype = jnp.result_type(*values, float)
+        dtype = jnp.result_type(*values, jnp.float64)
         scale = scale.astype(dtype)
         scale = eqx.error_if(
             scale,
@@ -280,7 +279,7 @@ class LocalAffineGamePolicy(AbstractInputPolicy):
         if jnp.issubdtype(state_array.dtype, jnp.complexfloating):
             raise TypeError("Physical state must be real-valued.")
         if not jnp.issubdtype(state_array.dtype, jnp.inexact):
-            state_array = state_array.astype(float)
+            state_array = state_array.astype("float64")
         axis = len(self.case_shape)
         nominal_state = jnp.take(self.nominal_states, index, axis=axis)
         nominal_control = jnp.take(self.nominal_controls, index, axis=axis)
@@ -345,8 +344,7 @@ class LocalAffineGamePolicy(AbstractInputPolicy):
 
         if self.case_shape:
             raise ValueError(
-                "rollout requires a scalar-case policy; evaluate case-shaped "
-                "policies on complete case-shaped states."
+                "rollout requires a scalar-case policy; evaluate case-shaped policies on complete case-shaped states."
             )
         return evaluate_game_policy(problem, self)
 

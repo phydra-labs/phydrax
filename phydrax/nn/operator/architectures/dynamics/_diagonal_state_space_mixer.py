@@ -275,26 +275,26 @@ class DiagonalStateSpaceMixer(AbstractOperatorModel):
         time_values = jnp.asarray(times)
         if jnp.issubdtype(time_values.dtype, jnp.complexfloating):
             raise TypeError("DiagonalStateSpaceMixer times must be real-valued.")
-        if time_values.ndim < 1 or int(time_values.shape[-1]) <= 0:
+        if time_values.ndim < 1 or time_values.shape[-1] <= 0:
             raise ValueError("times must contain a non-empty trailing sequence axis.")
-        sequence_length = int(time_values.shape[-1])
+        sequence_length = time_values.shape[-1]
         in_count = _get_size(self.in_size)
 
         if self.in_size == "scalar":
-            if values.ndim < 1 or int(values.shape[-1]) != sequence_length:
+            if values.ndim < 1 or values.shape[-1] != sequence_length:
                 raise ValueError(
                     "Scalar inputs must have shape case_shape + (sequence_length,)."
                 )
             values = values[..., None]
         elif (
             values.ndim < 2
-            or int(values.shape[-2]) != sequence_length
-            or int(values.shape[-1]) != in_count
+            or values.shape[-2] != sequence_length
+            or values.shape[-1] != in_count
         ):
             raise ValueError(
                 "inputs must have shape case_shape + (sequence_length, in_channels)."
             )
-        case_shape = tuple(int(size) for size in values.shape[:-2])
+        case_shape = tuple(values.shape[:-2])
         compute_dtype = jnp.result_type(
             values.dtype, time_values.dtype, self.raw_decay.dtype
         )
@@ -319,9 +319,7 @@ class DiagonalStateSpaceMixer(AbstractOperatorModel):
             state = jnp.asarray(initial_state, dtype=complex_dtype)
             if state.shape == (self.state_size,):
                 state = jnp.broadcast_to(state, case_shape + (self.state_size,))
-            elif tuple(int(size) for size in state.shape) != case_shape + (
-                self.state_size,
-            ):
+            elif tuple(state.shape) != case_shape + (self.state_size,):
                 raise ValueError(
                     "initial_state must be shared or have shape case_shape + (state_size,)."
                 )
@@ -358,7 +356,7 @@ class DiagonalStateSpaceMixer(AbstractOperatorModel):
         *,
         execution: Literal["serial", "associative"],
     ) -> Array:
-        if int(values.shape[-2]) == 1:
+        if values.shape[-2] == 1:
             return initial_state[..., None, :]
         transition, injection = self._affine_steps(values, times, valid)
         active = valid[..., :-1] & valid[..., 1:]
@@ -434,11 +432,10 @@ class DiagonalStateSpaceMixer(AbstractOperatorModel):
         values, time_values, valid, state0 = self._prepare_sequence(
             inputs, times, mask, initial_state
         )
-        sequence_length = int(values.shape[-2])
+        sequence_length = values.shape[-2]
         if sequence_length > self.max_direct_length:
             raise ValueError(
-                "direct_convolution sequence length exceeds max_direct_length; "
-                "use recurrent or associative execution."
+                "direct_convolution sequence length exceeds max_direct_length; use recurrent or associative execution."
             )
         _, injection = self._affine_steps(values, time_values, valid)
         complex_dtype = injection.dtype
@@ -490,7 +487,7 @@ class DiagonalStateSpaceMixer(AbstractOperatorModel):
         ):
             raise ValueError(f"{role} tensor grid requires one {self.time_axis!r} axis.")
         coordinates = samples.coordinates_array(case_shape=case_shape)
-        if int(coordinates.shape[-1]) != 1:
+        if coordinates.shape[-1] != 1:
             raise ValueError(f"{role} point coordinates must contain time only.")
         return coordinates[..., 0], samples.mask_array(case_shape=case_shape)
 

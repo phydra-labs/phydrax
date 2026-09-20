@@ -73,7 +73,7 @@ class FermionTopologySignPlan(StrictModule):
 def fermionic_swap_gate(parities: Sequence[int] = (0, 1), /) -> Array:
     """Return FSWAP in row-output/column-input tensor convention."""
 
-    values = tuple(int(value) for value in parities)
+    values = tuple(parities)
     if not values or any(value not in (0, 1) for value in values):
         raise ValueError("FSWAP basis parities must be a nonempty binary sequence.")
     dimension = len(values)
@@ -172,7 +172,7 @@ class FermionChainState(StrictModule):
     def occupation_basis(
         cls, mode_order: FermionModeOrder, occupations: Sequence[int], /
     ) -> FermionChainState:
-        values = tuple(int(value) for value in occupations)
+        values = tuple(occupations)
         if len(values) != len(mode_order.labels) or any(
             value not in (0, 1) for value in values
         ):

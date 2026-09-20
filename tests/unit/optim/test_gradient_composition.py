@@ -87,7 +87,7 @@ def test_structure_shape_nonfinite_and_active_contracts_are_checked():
     with pytest.raises(ValueError, match="shapes"):
         conflict_free_gradient((jnp.ones(1), jnp.ones(2)))
     with pytest.raises(ValueError, match="one Boolean"):
-        conflict_free_gradient((jnp.ones(1),), active=jnp.ones((2,), dtype=bool))
+        conflict_free_gradient((jnp.ones(1),), active=jnp.ones((2,), dtype="bool"))
 
     nonfinite = conflict_free_gradient((jnp.asarray((jnp.nan,)),))
     assert not bool(nonfinite.successful)

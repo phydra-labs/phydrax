@@ -89,11 +89,11 @@ def test_compiler_selects_partial_children_and_is_path_independent():
     hierarchy = _hierarchy()
     compiler = phx.discretization.BlockTopologyCompiler(hierarchy)
     initial = compiler.initial_topology()
-    tags = jnp.zeros((2, 4), dtype=bool).at[0, 1].set(True)
+    tags = jnp.zeros((2, 4), dtype="bool").at[0, 1].set(True)
 
     first = compiler.compile(initial, (tags,))
     unchanged = compiler.compile(first.topology, (tags,))
-    other_tags = jnp.zeros((2, 4), dtype=bool).at[1, 2].set(True)
+    other_tags = jnp.zeros((2, 4), dtype="bool").at[1, 2].set(True)
     other = compiler.compile(initial, (other_tags,))
     same_by_other_path = compiler.compile(other.topology, (tags,))
 
@@ -135,11 +135,11 @@ def test_proper_nesting_rejection_is_atomic():
     )
     permissive = phx.discretization.BlockTopologyCompiler(hierarchy)
     initial = permissive.initial_topology()
-    coarse_tags = jnp.zeros((2, 4), dtype=bool).at[0, 1].set(True)
+    coarse_tags = jnp.zeros((2, 4), dtype="bool").at[0, 1].set(True)
     middle = permissive.compile(
-        initial, (coarse_tags, jnp.zeros((8, 2), dtype=bool))
+        initial, (coarse_tags, jnp.zeros((8, 2), dtype="bool"))
     ).topology
-    fine_tags = jnp.zeros((8, 2), dtype=bool).at[0, 0].set(True)
+    fine_tags = jnp.zeros((8, 2), dtype="bool").at[0, 0].set(True)
 
     result = phx.discretization.BlockTopologyCompiler(
         hierarchy, proper_nesting=1
@@ -159,7 +159,7 @@ def test_capacity_failure_is_atomic_and_preserves_source_epoch():
     hierarchy = _hierarchy(fine_capacity=1)
     compiler = phx.discretization.BlockTopologyCompiler(hierarchy)
     source = compiler.initial_topology()
-    tags = jnp.zeros((2, 4), dtype=bool).at[0, 0].set(True).at[0, 2].set(True)
+    tags = jnp.zeros((2, 4), dtype="bool").at[0, 0].set(True).at[0, 2].set(True)
 
     result = compiler.compile(source, (tags,))
 

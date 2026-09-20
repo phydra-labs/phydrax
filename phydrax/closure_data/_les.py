@@ -308,8 +308,7 @@ class PeriodicLESAnalysisContext(StrictModule, NonTrainableState):
         rank = len(self.source.physical_shape)
         if array.ndim < rank or tuple(array.shape[:rank]) != self.source.physical_shape:
             raise ValueError(
-                f"{owner} must begin with source physical shape "
-                f"{self.source.physical_shape}; got {array.shape}."
+                f"{owner} must begin with source physical shape {self.source.physical_shape}; got {array.shape}."
             )
         if not jnp.issubdtype(array.dtype, jnp.inexact):
             raise TypeError(f"{owner} must use an inexact dtype.")
@@ -534,8 +533,7 @@ def _validated_derivatives(
             or derivative.operator_id != expected_id
         ):
             raise ValueError(
-                "Each derivative must be the matching exact first derivative for "
-                "its resolved Fourier axis."
+                "Each derivative must be the matching exact first derivative for its resolved Fourier axis."
             )
     return values
 

@@ -33,7 +33,7 @@ def _state(topology, level_values):
 
 def _refined_topology(prepared, tagged_cell):
     initial = prepared.initial_topology()
-    tags = jnp.zeros((2, 4), dtype=bool).at[tagged_cell // 4, tagged_cell % 4].set(True)
+    tags = jnp.zeros((2, 4), dtype="bool").at[tagged_cell // 4, tagged_cell % 4].set(True)
     result = prepared.compile_topology(initial, (tags,))
     assert result.status.successful
     return result.topology
@@ -133,7 +133,7 @@ def test_fill_patch_uses_multiple_coarse_blocks_and_old_new_time_interpolation()
 def test_fill_patch_same_level_data_precedes_available_coarse_data():
     prepared = _prepared(halo=2)
     initial = prepared.initial_topology()
-    tags = jnp.zeros((2, 4), dtype=bool).at[0, 2].set(True).at[0, 3].set(True)
+    tags = jnp.zeros((2, 4), dtype="bool").at[0, 2].set(True).at[0, 3].set(True)
     topology = prepared.compile_topology(initial, (tags,)).topology
     fine = jnp.zeros((8, 2), dtype=jnp.float64)
     fine = fine.at[0].set(7.0).at[1].set(9.0)
@@ -182,9 +182,9 @@ def test_physical_boundary_values_remain_caller_owned_and_incomplete_is_rejected
 
 def test_componentwise_topology_transition_is_conservative_and_zeroes_inactive_slots():
     prepared = _prepared()
-    initial = prepared.initial_topology()
+    prepared.initial_topology()
     source = _refined_topology(prepared, 1)
-    target_tags = jnp.zeros((2, 4), dtype=bool).at[1, 1].set(True)
+    target_tags = jnp.zeros((2, 4), dtype="bool").at[1, 1].set(True)
     target = prepared.compile_topology(source, (target_tags,)).topology
     coarse = jnp.stack(
         (
@@ -225,10 +225,10 @@ def test_fill_patch_preparation_rejects_unresolved_coarse_routes():
     )
     prepared = phx.discretization.FDAMRHierarchyPlan(hierarchy).prepare()
     initial = prepared.initial_topology()
-    coarse_tags = jnp.zeros((2, 4), dtype=bool).at[0, 1].set(True)
-    level_one_empty = jnp.zeros((8, 2), dtype=bool)
+    coarse_tags = jnp.zeros((2, 4), dtype="bool").at[0, 1].set(True)
+    level_one_empty = jnp.zeros((8, 2), dtype="bool")
     middle = prepared.compile_topology(initial, (coarse_tags, level_one_empty)).topology
-    level_one_tags = jnp.zeros((8, 2), dtype=bool).at[0, 0].set(True)
+    level_one_tags = jnp.zeros((8, 2), dtype="bool").at[0, 0].set(True)
     target = prepared.compile_topology(middle, (coarse_tags, level_one_tags)).topology
 
     with pytest.raises(ValueError, match="unresolved"):
@@ -247,7 +247,7 @@ def test_prepared_fill_patch_explicitly_refuses_noncell_entity_routes():
         ),
     )
 
-    with pytest.raises(NotImplementedError, match="cell-centred"):
+    with pytest.raises(NotImplementedError, match="cell-centered"):
         phx.discretization.FDAMRHierarchyPlan(
             hierarchy, (phx.discretization.AMREntityTransferPlan.nodes(1),)
         )

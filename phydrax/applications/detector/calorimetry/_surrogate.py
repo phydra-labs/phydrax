@@ -13,6 +13,8 @@ import jax.random as jr
 import numpy as np
 import optax
 
+from phydrax._strict import StrictModule
+
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ....domain import HyperRectangle, TimeInterval
 from ....dynamics import ContinuousSystem, StateLayout
@@ -24,7 +26,7 @@ from ._corpus import CalorimeterCorpus
 from ._geometry import CalorimeterGeometry
 
 
-class ConditionalCalorimeterVelocity(eqx.Module):
+class ConditionalCalorimeterVelocity(StrictModule):
     """Sparse shared-cell velocity over fixed heterogeneous calorimeter adjacency."""
 
     network: MLP
@@ -52,7 +54,7 @@ class ConditionalCalorimeterVelocity(eqx.Module):
             or len(set(names)) != len(names)
         ):
             raise ValueError("condition_names must be distinct non-empty strings.")
-        input_size = 2 + int(geometry.geometry_features.shape[1]) + len(names) + 1
+        input_size = 2 + geometry.geometry_features.shape[1] + len(names) + 1
         self.network = MLP(
             in_size=input_size,
             out_size=1,
@@ -118,7 +120,7 @@ def _endpoints(corpus, indices, key, count, energy_scale):
         target=target,
         source_indices=jnp.arange(count),
         target_indices=index,
-        valid=jnp.ones((count,), dtype=bool),
+        valid=jnp.ones((count,), dtype=jnp.bool_),
         log_weights=jnp.zeros((count,)),
         context={"condition": corpus.conditions[index]},
         coupling_id=corpus.dataset_id,
@@ -263,14 +265,14 @@ def fit_calorimeter_flow(
     )
 
 
-class _CalorimeterField(eqx.Module):
+class _CalorimeterField(StrictModule):
     model: ConditionalCalorimeterVelocity
 
     def __call__(self, time, state, condition):
         return self.model(state, time, condition)
 
 
-class PreparedCalorimeterSampler(eqx.Module):
+class PreparedCalorimeterSampler(StrictModule):
     evolution: DiffraxEvolution
     model: ConditionalCalorimeterVelocity
     energy_scale: float = eqx.field(static=True)
@@ -339,7 +341,7 @@ def sample_calorimeter_showers(
     context = jnp.asarray(conditions)
     if context.ndim != 2 or context.shape[1] != len(sampler.model.condition_names):
         raise ValueError("conditions must have shape (sample, condition_feature).")
-    count = int(context.shape[0])
+    count = context.shape[0]
     if not 1 <= count <= sampler.maximum_samples:
         raise ValueError("Sample count exceeds maximum_samples.")
     in_domain = jnp.all(

@@ -12,7 +12,7 @@ import numpy as np
 from jaxtyping import Array
 
 from ..._fingerprint import canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
 
@@ -26,9 +26,9 @@ class DEMMulticontactCorrection(StrictModule):
 
 
 class AbstractDEMContactGraphCorrectionPlan(StrictModule, NonTrainableState):
-    plan_id: AbstractAttribute[str]
-    iterations: AbstractAttribute[int]
-    convergence_tolerance: AbstractAttribute[float]
+    plan_id: eqx.AbstractVar[str]
+    iterations: eqx.AbstractVar[int]
+    convergence_tolerance: eqx.AbstractVar[float]
 
     @abc.abstractmethod
     def evaluate(
@@ -110,7 +110,7 @@ class ElasticHalfSpaceMulticontactPlan(AbstractDEMContactGraphCorrectionPlan):
         points = jnp.asarray(contact_points)
         normal = jnp.asarray(contact_normals)
         force = jnp.asarray(compressive_force, dtype=points.dtype)
-        mask = jnp.asarray(valid, dtype=bool)
+        mask = jnp.asarray(valid, dtype=jnp.bool_)
         if (
             left.shape != right.shape
             or left.ndim != 1

@@ -83,7 +83,7 @@ def _canonicalize_columns(columns: Array, /) -> Array:
 
 
 def _center_value(value: Array, mean: Array, case_shape: tuple[int, ...], /) -> Array:
-    leading = tuple(int(size) for size in value.shape[:-1])
+    leading = tuple(value.shape[:-1])
     if case_shape and leading[: len(case_shape)] != case_shape:
         raise ValueError(f"Input must begin with fitted case shape {case_shape}.")
     return value - mean.reshape(
@@ -97,7 +97,7 @@ def _apply_matrix(
     case_shape: tuple[int, ...],
     /,
 ) -> Array:
-    leading = tuple(int(size) for size in value.shape[:-1])
+    leading = tuple(value.shape[:-1])
     cases = _shape_product(case_shape)
     flat = value.reshape((cases, -1, value.shape[-1]))
     matrix_flat = matrix.reshape((cases, matrix.shape[-2], matrix.shape[-1]))
@@ -132,9 +132,9 @@ class FactorAnalysisModel(AbstractArrayModel):
             self.loadings.shape[-1], dtype=self.loadings.dtype
         )
         self.posterior_matrix = jnp.linalg.solve(precision, weighted)
-        self.in_size = int(self.mean.shape[-1])
-        self.out_size = int(self.loadings.shape[-1])
-        self.case_shape = tuple(int(size) for size in self.mean.shape[:-1])
+        self.in_size = self.mean.shape[-1]
+        self.out_size = self.loadings.shape[-1]
+        self.case_shape = tuple(self.mean.shape[:-1])
 
     def transform(self, x: ArrayLike, /) -> Array:
         value = jnp.asarray(x)
@@ -191,7 +191,7 @@ class FactorAnalysis(AbstractRecipe):
     def fit_batch(self, batch: MLBatch, /, *, key: Any = None) -> FitResult:
         del key
         mean, centered, weights = _masked_center(batch, self.weight_policy)
-        width = int(centered.shape[-1])
+        width = centered.shape[-1]
         if self.n_components > width:
             raise ValueError(f"n_components cannot exceed feature count {width}.")
         total = jnp.sum(weights, axis=-1)
@@ -223,7 +223,7 @@ class FactorAnalysis(AbstractRecipe):
             (
                 noise0,
                 jnp.full(total.shape, jnp.inf),
-                jnp.zeros(total.shape, dtype=bool),
+                jnp.zeros(total.shape, dtype=jnp.bool_),
                 jnp.zeros(total.shape, dtype=jnp.int32),
             ),
             xs=None,
@@ -360,9 +360,9 @@ class ICAModel(AbstractArrayModel):
             ~mixing_result.successful,
             "ICA mixing pseudoinverse failed.",
         )
-        self.in_size = int(self.mean.shape[-1])
-        self.out_size = int(self.unmixing.shape[-2])
-        self.case_shape = tuple(int(size) for size in self.mean.shape[:-1])
+        self.in_size = self.mean.shape[-1]
+        self.out_size = self.unmixing.shape[-2]
+        self.case_shape = tuple(self.mean.shape[:-1])
 
     def transform(self, x: ArrayLike, /) -> Array:
         value = jnp.asarray(x)
@@ -435,7 +435,7 @@ class ICA(AbstractRecipe):
         scale = jnp.maximum(spectral.singular_values, jnp.finfo(centered.dtype).tiny)
         whitening = spectral.components / scale[..., :, None]
         whitened = centered @ jnp.swapaxes(whitening, -1, -2)
-        case_shape = tuple(int(size) for size in batch.case_shape)
+        case_shape = tuple(batch.case_shape)
         random = jax.random.normal(
             key,
             case_shape + (self.n_components, self.n_components),
@@ -472,7 +472,7 @@ class ICA(AbstractRecipe):
             step,
             (
                 initial,
-                jnp.zeros(case_shape, dtype=bool),
+                jnp.zeros(case_shape, dtype=jnp.bool_),
                 jnp.zeros(case_shape, dtype=jnp.int32),
                 jnp.full(case_shape, jnp.inf),
             ),

@@ -53,7 +53,7 @@ class AlgebraProductEvidence(StrictModule, NonTrainableState):
         self.resource_evidence = resource_evidence
         self.evidence_id = canonical_fingerprint(
             {
-                "kind": "algebra-product-evidence-v1",
+                "kind": "algebra-product-evidence",
                 "algebra": algebra_id,
                 "layout": layout_id,
                 "backend": backend,
@@ -153,7 +153,7 @@ class AlgebraProductPlan(StrictModule, NonTrainableState):
         self.evidence = evidence
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "algebra-product-plan-v1",
+                "kind": "algebra-product-plan",
                 "evidence": evidence.evidence_id,
                 "structure": algebra.structure.table_id,
             }
@@ -252,7 +252,7 @@ class AlgebraProductPlan(StrictModule, NonTrainableState):
             LoweredOperatorProgram,
         )
 
-        leading = tuple(int(size) for size in leading_shape)
+        leading = tuple(leading_shape)
         if any(size <= 0 for size in leading):
             raise ValueError("Lowered algebra leading shape must be positive.")
         value_shape = leading + (self.algebra.coordinate_dimension,)

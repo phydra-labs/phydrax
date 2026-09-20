@@ -115,7 +115,7 @@ class QuantumIntervention(StrictModule):
 
     @property
     def dimension(self) -> int:
-        return int(self.kraus_operators.shape[-1])
+        return self.kraus_operators.shape[-1]
 
     def apply(self, density: ArrayLike, /) -> tuple[Array, Array]:
         rho = self.precision.contraction(density)
@@ -253,9 +253,7 @@ class ProcessTensorMPO(StrictModule):
             children={"initial-density": density_spectrum.precision_evidence},
         )
         self.dimension = density.shape[0]
-        self.temporal_bond_dimensions = tuple(
-            int(tensor.shape[-1]) for tensor in values[:-1]
-        )
+        self.temporal_bond_dimensions = tuple(tensor.shape[-1] for tensor in values[:-1])
         self.process_id = str(process_id)
 
     def contract(

@@ -82,8 +82,7 @@ class EmbeddedChart(StrictModule):
         )
         if values.shape[-1:] != (self.ambient_dimension,):
             raise ValueError(
-                "Embedding output must have trailing dimension "
-                f"{self.ambient_dimension}; got {values.shape}."
+                f"Embedding output must have trailing dimension {self.ambient_dimension}; got {values.shape}."
             )
         return values
 
@@ -168,8 +167,7 @@ class EmbeddedChart(StrictModule):
         )
         if values.shape[-1:] != (self.ambient_dimension,):
             raise ValueError(
-                "Retraction output must have trailing dimension "
-                f"{self.ambient_dimension}; got {values.shape}."
+                f"Retraction output must have trailing dimension {self.ambient_dimension}; got {values.shape}."
             )
         return values
 

@@ -72,7 +72,7 @@ class BeamletReconstructionPlan(StrictModule, NonTrainableState):
 
     def prepare(self, /) -> "PreparedBeamletReconstruction":
         points = self.space.world_points.reshape((-1, 3))
-        point_count = int(points.shape[0])
+        point_count = points.shape[0]
         tile_count = (point_count + self.tile_size - 1) // self.tile_size
         padded_count = tile_count * self.tile_size
         padding = padded_count - point_count
@@ -107,7 +107,7 @@ class PreparedBeamletReconstruction(StrictModule, NonTrainableState):
         if not isinstance(plan, BeamletReconstructionPlan):
             raise TypeError("plan must be a BeamletReconstructionPlan.")
         points = jnp.asarray(world_point_tiles)
-        active = jnp.asarray(active_tiles, dtype=bool)
+        active = jnp.asarray(active_tiles, dtype=jnp.bool_)
         expected_points = (int(tile_count), plan.tile_size, 3)
         expected_active = expected_points[:-1]
         if points.shape != expected_points or active.shape != expected_active:

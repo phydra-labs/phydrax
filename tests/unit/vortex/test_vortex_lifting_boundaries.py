@@ -95,7 +95,7 @@ def test_wall_transfer_and_bilinear_remesh_preserve_circulation_and_first_moment
         0.15,
     )
     transfer = wall.transfer(
-        wall.initialize(dtype=float),
+        wall.initialize(dtype="float64"),
         geometry,
         jnp.linspace(-0.4, 0.4, geometry.length.size),
     )
@@ -126,7 +126,7 @@ def test_wall_transfer_overflow_preserves_the_accepted_pool():
         0.1,
         0.15,
     )
-    initial = plan.initialize(dtype=float)
+    initial = plan.initialize(dtype="float64")
     result = plan.transfer(
         initial,
         geometry,

@@ -415,8 +415,7 @@ class AdapterReport(StrictModule, NonTrainableState):
             and not negotiation.missing_optional
         ):
             raise ValueError(
-                "A declared-loss report must enumerate losses or missing optional "
-                "requirements."
+                "A declared-loss report must enumerate losses or missing optional requirements."
             )
         enforce_negotiation = (
             source_profile is not None

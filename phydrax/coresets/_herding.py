@@ -102,16 +102,15 @@ def weighted_mmd(
     block_size: int = 256,
 ) -> Array:
     """Compute blockwise MMD between two finite nonnegative measures."""
-    source = jnp.asarray(source_points, dtype=float)
-    comparison = jnp.asarray(comparison_points, dtype=float)
+    source = jnp.asarray(source_points, dtype=jnp.float64)
+    comparison = jnp.asarray(comparison_points, dtype=jnp.float64)
     kernel_ = SquaredExponentialKernel() if kernel is None else kernel
     if not isinstance(kernel_, AbstractPositiveDefiniteKernel):
         raise TypeError("kernel must be an AbstractPositiveDefiniteKernel or None.")
     expected_rank = kernel_.input_ndim + 1
     if source.ndim != expected_rank or comparison.ndim != expected_rank:
         raise ValueError(
-            "MMD inputs must have one design axis followed by "
-            f"{kernel_.input_ndim} kernel input axes."
+            f"MMD inputs must have one design axis followed by {kernel_.input_ndim} kernel input axes."
         )
     source_rows = jnp.all(jnp.isfinite(source), axis=tuple(range(1, source.ndim)))
     comparison_rows = jnp.all(
@@ -121,13 +120,13 @@ def weighted_mmd(
     if block <= 0:
         raise ValueError("block_size must be positive.")
     source_weights, _, source_valid, _ = normalized_weights(
-        int(source.shape[0]),
+        source.shape[0],
         log_weights=source_log_weights,
         mask=source_mask,
         rows_valid=source_rows,
     )
     comparison_weights, _, comparison_valid, _ = normalized_weights(
-        int(comparison.shape[0]),
+        comparison.shape[0],
         log_weights=comparison_log_weights,
         mask=comparison_mask,
         rows_valid=comparison_rows,
@@ -154,15 +153,14 @@ def kernel_herd(
     """Select a fixed-capacity weighted empirical kernel herding coreset."""
     if not isinstance(method, KernelHerding):
         raise TypeError("method must be a KernelHerding.")
-    values = jnp.asarray(points, dtype=float)
+    values = jnp.asarray(points, dtype=jnp.float64)
     expected_rank = method.kernel.input_ndim + 1
     if values.ndim != expected_rank:
         raise ValueError(
-            "points must have one source axis followed by "
-            f"{method.kernel.input_ndim} kernel input axes."
+            f"points must have one source axis followed by {method.kernel.input_ndim} kernel input axes."
         )
-    source_points = int(values.shape[0])
-    input_shape = tuple(int(size) for size in values.shape[1:])
+    source_points = values.shape[0]
+    input_shape = tuple(values.shape[1:])
     if source_points < 1:
         raise ValueError("Kernel herding requires at least one source point.")
     if method.unique and method.num_points > source_points:
@@ -184,9 +182,9 @@ def kernel_herd(
     capacity = method.num_points
     initial = (
         jnp.zeros((capacity,), dtype=jnp.int32),
-        jnp.zeros((capacity,), dtype=bool),
+        jnp.zeros((capacity,), dtype=jnp.bool_),
         jnp.zeros((source_points,), dtype=safe_points.dtype),
-        jnp.zeros((source_points,), dtype=bool),
+        jnp.zeros((source_points,), dtype=jnp.bool_),
     )
 
     def body(iteration, state):

@@ -53,8 +53,8 @@ class ConservativeSubcellPlan(StrictModule, NonTrainableState):
             np.max(np.abs(points[:, None, :] - nodes[None, :, :]), axis=-1),
             axis=1,
         )
-        projection = np.zeros((nodes.shape[0], nodes.shape[0]), dtype=float)
-        volumes = np.zeros((nodes.shape[0],), dtype=float)
+        projection = np.zeros((nodes.shape[0], nodes.shape[0]), dtype=np.float64)
+        volumes = np.zeros((nodes.shape[0],), dtype=np.float64)
         for point, subcell in enumerate(nearest):
             weight = float(np.asarray(data.weights)[point])
             projection[subcell] += weight * basis[point]
@@ -157,10 +157,12 @@ class RobustnessSensorPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def initial_state(self, cell_count: int, dtype=float, /) -> RobustnessSensorState:
+    def initial_state(
+        self, cell_count: int, dtype=jnp.float64, /
+    ) -> RobustnessSensorState:
         return RobustnessSensorState(
             jnp.zeros((cell_count,), dtype=dtype),
-            jnp.zeros((cell_count,), dtype=bool),
+            jnp.zeros((cell_count,), dtype=jnp.bool_),
             jnp.zeros((cell_count,), dtype=jnp.int32),
         )
 
@@ -295,13 +297,13 @@ class ConservationCorrectionLadderPlan(StrictModule, NonTrainableState):
         factors = []
         for high, low in zip(high_order.blocks, low_order.blocks, strict=True):
             owner_strength = sensor.strength[high.owner_cells]
-            neighbour_index = jnp.maximum(high.neighbour_cells, 0)
-            neighbour_strength = jnp.where(
-                high.neighbour_cells >= 0,
-                sensor.strength[neighbour_index],
+            neighbor_index = jnp.maximum(high.neighbor_cells, 0)
+            neighbor_strength = jnp.where(
+                high.neighbor_cells >= 0,
+                sensor.strength[neighbor_index],
                 owner_strength,
             )
-            high_fraction = 1.0 - jnp.maximum(owner_strength, neighbour_strength)
+            high_fraction = 1.0 - jnp.maximum(owner_strength, neighbor_strength)
             shape = high_fraction.shape + (1,) * len(high.component_shape)
             rate = (
                 high_fraction.reshape(shape) * high.flux_rate

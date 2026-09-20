@@ -41,7 +41,7 @@ def main() -> None:
     n = 8 if dim == 2 else 4
     indices = tuple(product(range(n + 1), repeat=dim))
     lookup = {point: index for index, point in enumerate(indices)}
-    points = np.asarray(indices, dtype=float) / n
+    points = np.asarray(indices, dtype="float64") / n
     cells = []
     for origin in product(range(n), repeat=dim):
         for axes in permutations(range(dim)):

@@ -323,7 +323,7 @@ def prepare_point_contact_participant(
         identifiers,
         ambient_dimension=dimension,
         edges=jnp.empty((0, 2), dtype=jnp.int32),
-        codimensional_mask=jnp.ones((count,), dtype=bool),
+        codimensional_mask=jnp.ones((count,), dtype=jnp.bool_),
         pair_policy=pair_policy,
         participant_ids=participant_ids,
         body_ids=body_ids,

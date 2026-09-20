@@ -188,7 +188,7 @@ transfer.
 Memory evidence distinguishes input matrix bytes, setup bytes, and peak estimate.
 An unavailable provider metric remains `null` with a reason. Operation evidence uses
 provider counters when exposed and otherwise remains `null`; an iteration count is not
-relabelled as a matvec count unless the algorithm makes that equality exact.
+relabeled as a matvec count unless the algorithm makes that equality exact.
 
 ## Convergence and comparability
 

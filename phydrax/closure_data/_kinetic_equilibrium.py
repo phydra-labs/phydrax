@@ -256,8 +256,7 @@ class PreparedEnergyEquilibriumDataset(StrictModule, NonTrainableState):
             or normalizer.normalizer_id != authoritative_normalizer.normalizer_id
         ):
             raise ValueError(
-                "Normalizer provenance must identify the authoritative conserved "
-                "training samples."
+                "Normalizer provenance must identify the authoritative conserved training samples."
             )
 
         self.pairs = values

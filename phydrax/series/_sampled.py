@@ -43,7 +43,7 @@ def _component_masks(
         raise ValueError("SampledSeries value_valid must match the values PyTree.")
 
     def prepare(mask_value: ArrayLike, value: Array) -> Array:
-        mask = jnp.asarray(mask_value, dtype=bool)
+        mask = jnp.asarray(mask_value, dtype=jnp.bool_)
         if mask.shape == sample_shape:
             return jnp.broadcast_to(
                 mask.reshape(mask.shape + (1,) * (value.ndim - len(sample_shape))),
@@ -95,15 +95,14 @@ class SampledSeries(StrictModule):
                 or leaf.shape[: len(sample_shape)] != sample_shape
             ):
                 raise ValueError(
-                    "SampledSeries value leaves must begin with sample shape "
-                    f"{sample_shape}; got {leaf.shape}."
+                    f"SampledSeries value leaves must begin with sample shape {sample_shape}; got {leaf.shape}."
                 )
         masks = _component_masks(value_valid, values_, sample_shape)
         base_valid = support.node_valid if alignment == "node" else support.edge_valid
         bad = jnp.asarray(False)
         value_masks = (
             jax.tree_util.tree_map(
-                lambda value: jnp.ones(value.shape, dtype=bool), values_
+                lambda value: jnp.ones(value.shape, dtype=jnp.bool_), values_
             )
             if masks is None
             else masks

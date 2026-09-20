@@ -42,7 +42,7 @@ def _informationally_complete_vectors(
     design_seed: int,
     /,
 ) -> tuple[Array, ...]:
-    basis = jnp.eye(dimension, dtype=complex)
+    basis = jnp.eye(dimension, dtype=jnp.complex128)
     vectors = [basis[index] for index in range(dimension)]
     for left in range(dimension):
         for right in range(left + 1, dimension):
@@ -106,7 +106,7 @@ def _selected_choi(instrument: QuantumInstrument, outcome: int, /) -> np.ndarray
     operators = np.asarray(instrument.kraus[outcome], dtype=np.complex128)
     active = np.asarray(
         instrument.outcome_active[outcome] & instrument.kraus_active[outcome],
-        dtype=bool,
+        dtype=np.bool_,
     )
     masked = np.where(active[:, None, None], operators, 0.0)
     vectors = masked.reshape((masked.shape[0], -1))
@@ -153,7 +153,7 @@ class ProcessTomographyExperiment(StrictModule):
         experiment_id: str,
     ):
         operations = tuple(instruments)
-        selected = tuple(int(value) for value in outcomes)
+        selected = tuple(outcomes)
         if not operations or len(operations) != len(selected):
             raise ValueError("Tomography experiments require one outcome per instrument.")
         if any(not isinstance(value, QuantumInstrument) for value in operations):
@@ -187,9 +187,11 @@ class ProcessTomographyExperiment(StrictModule):
             & (jnp.min(eigenvalues) >= -1e-8)
             & (jnp.max(eigenvalues) <= 1.0 + 1e-8)
         )
-        successes = jnp.asarray(count, dtype=float).reshape(())
+        successes = jnp.asarray(count, dtype=jnp.float64).reshape(())
         attempts = (
-            successes if trials is None else jnp.asarray(trials, dtype=float).reshape(())
+            successes
+            if trials is None
+            else jnp.asarray(trials, dtype=jnp.float64).reshape(())
         )
         counts_valid = (
             jnp.isfinite(successes)
@@ -455,8 +457,7 @@ def informationally_complete_process_experiments(
     count = len(instruments) ** process.spec.slot_count * len(effects)
     if count > capacity:
         raise ValueError(
-            f"Informationally complete design requires {count} experiments; "
-            f"capacity is {capacity}."
+            f"Informationally complete design requires {count} experiments; capacity is {capacity}."
         )
     experiments = []
     for instrument_indices in product(

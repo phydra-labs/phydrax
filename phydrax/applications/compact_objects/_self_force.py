@@ -49,7 +49,7 @@ class ModeSumRegularizationParameters(StrictModule, NonTrainableState):
         worldline_id,
         component_basis,
     ):
-        values = [np.asarray(value, dtype=float) for value in (A, B, C, D)]
+        values = [np.asarray(value, dtype=np.float64) for value in (A, B, C, D)]
         if any(value.shape != values[0].shape for value in values[1:]) or any(
             np.any(~np.isfinite(value)) for value in values
         ):
@@ -149,8 +149,7 @@ class FirstOrderSelfForceModeSum(StrictModule, NonTrainableState):
         tail_window_value = int(tail_window)
         if ell_max_value < 3 or not 3 <= tail_window_value <= ell_max_value + 1:
             raise ValueError(
-                "ell_max must be at least three and tail_window must fit the "
-                "mode capacity."
+                "ell_max must be at least three and tail_window must fit the mode capacity."
             )
         if (
             not np.isfinite(tail_fit_tolerance)
@@ -182,8 +181,7 @@ class FirstOrderSelfForceModeSum(StrictModule, NonTrainableState):
         expected_shape = (self.ell_max + 1, *component_shape)
         if modes.shape != expected_shape:
             raise ValueError(
-                f"retarded_modes must have fixed shape {expected_shape}, "
-                f"got {modes.shape}."
+                f"retarded_modes must have fixed shape {expected_shape}, got {modes.shape}."
             )
         ell = jnp.arange(self.ell_max + 1, dtype=modes.real.dtype)
         angular_order = ell + 0.5

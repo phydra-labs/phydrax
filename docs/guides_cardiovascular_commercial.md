@@ -1,6 +1,6 @@
 # Cardiovascular commercial qualification
 
-The cardiovascular commercial layer is a fail-closed **technical release-readiness** system. It does not grant a commercial licence, certify a medical device, or authorize diagnosis, treatment, or clinical decision support. The repository is distributed under the licence in `LICENSE`; where that licence requires a separate commercial agreement, a passing technical assessment does not replace it.
+The cardiovascular commercial layer is a fail-closed **technical release-readiness** system. It does not grant a commercial license, certify a medical device, or authorize diagnosis, treatment, or clinical decision support. The repository is distributed under the license in `LICENSE`; where that license requires a separate commercial agreement, a passing technical assessment does not replace it.
 
 ## Supported boundary
 
@@ -41,7 +41,7 @@ Every candidate must contain every gate exactly once. Missing, failed, deviated,
 | G2 solution verification | Discretization and solver errors satisfy declared tolerances | completed lifecycle run and convergence evidence |
 | G3 validation and UQ | Validation domain, uncertainty, and data rights are acceptable | completed lifecycle run and validation evidence |
 | G4 derivative validity | Fixed-topology derivative boundaries and failure semantics are verified | completed lifecycle run and derivative evidence |
-| G5 provenance and supply chain | Build, dependencies, licences, notices, and data rights are traceable | all required artifact references |
+| G5 provenance and supply chain | Build, dependencies, licenses, notices, and data rights are traceable | all required artifact references |
 | G6 quality and operations | Resource, privacy, security, recovery, and support policies are reviewed | immutable policy records |
 | G7 independent release review | An independent reviewer confirms dossier completeness | independent role record |
 
@@ -52,7 +52,7 @@ G0, G1, and G4 are reviewed and signed by the technical reviewer; G2, G3, and G7
 The commercial layer references existing owners instead of storing payloads or introducing another archive:
 
 - `phydrax.artifacts.ArtifactManifest` owns artifact identity and SHA-256 metadata;
-- `CardiovascularCaseManifest` owns the non-identifying case, support-profile, release, build, SBOM, licence, and data-rights binding;
+- `CardiovascularCaseManifest` owns the non-identifying case, support-profile, release, build, SBOM, license, and data-rights binding;
 - `phydrax.lifecycle.RunRecord` owns immutable execution lifecycle state;
 - `CardiovascularExecutionManifest` owns the exact case, topology, numeric revision, solver, precision, backend, route, and fixed-capacity execution identity;
 - `phydrax.qualification.ReleaseGateEvidence` owns gate outcome, citations, reviewer, deviations, and validity interval;
@@ -63,12 +63,12 @@ The commercial layer references existing owners instead of storing payloads or i
 
 1. SBOM;
 2. build provenance;
-3. separate commercial-licence authorization;
+3. separate commercial-license authorization;
 4. notice audit;
 5. data-rights determination;
 6. supply-chain attestation.
 
-A filename, package metadata entry, or unchecked digest is not evidence. Each reference points to a real `ArtifactManifest`. The supply-chain attestation should depend explicitly on the SBOM and build-provenance reference IDs. The case manifest must cite the exact build, SBOM, commercial-licence, and data-rights artifact IDs and declare `data_classification=non-phi`. Every lifecycle run used by G1–G4 must bind a cardiovascular execution manifest for that case, and each of those gates cites both records. Gate evidence is accepted only through the caller's `ReleaseTrustPolicy` at evaluation and again at decision time. The final decision must occur before the earliest gate, artifact, dependency, or non-claim expiry.
+A filename, package metadata entry, or unchecked digest is not evidence. Each reference points to a real `ArtifactManifest`. The supply-chain attestation should depend explicitly on the SBOM and build-provenance reference IDs. The case manifest must cite the exact build, SBOM, commercial-license, and data-rights artifact IDs and declare `data_classification=non-phi`. Every lifecycle run used by G1–G4 must bind a cardiovascular execution manifest for that case, and each of those gates cites both records. Gate evidence is accepted only through the caller's `ReleaseTrustPolicy` at evaluation and again at decision time. The final decision must occur before the earliest gate, artifact, dependency, or non-claim expiry.
 
 ## Signed non-claims
 
@@ -84,7 +84,7 @@ The workflow has three explicit records:
 2. `make_cardiovascular_release_decision(...)` has the separately named release approver sign the decision payload. It refuses approval of a blocked or expired candidate.
 3. `assess_cardiovascular_release(...)` combines the candidate and decision, verifies the approver signature through the supplied verifier, and reapplies the release trust policy at decision time. Approval cannot erase a blocker, apply to another candidate, predate evaluation, or outlive evidence.
 
-Only the final assessment can contain a released generic `CapabilityProfile`, and only when there are no blockers. Even then, `commercial_ready` means the technical release gate passed; the record explicitly grants no licence and makes no regulated-device claim.
+Only the final assessment can contain a released generic `CapabilityProfile`, and only when there are no blockers. Even then, `commercial_ready` means the technical release gate passed; the record explicitly grants no license and makes no regulated-device claim.
 
 ## Repository preflight
 
@@ -94,7 +94,7 @@ Run the non-mutating preflight auditor from the repository root:
 python tools/cardiovascular_release_qualification.py
 ```
 
-It inspects the repository licence and notice, six external artifact paths, eight signed gate records, four signed non-claims, and the separately stored decision record. It prints canonical JSON and exits with status 2 while prerequisites are missing. Override an artifact location with a repeatable option such as:
+It inspects the repository license and notice, six external artifact paths, eight signed gate records, four signed non-claims, and the separately stored decision record. It prints canonical JSON and exits with status 2 while prerequisites are missing. Override an artifact location with a repeatable option such as:
 
 ```console
 python tools/cardiovascular_release_qualification.py \
@@ -123,37 +123,37 @@ python tools/cardiovascular_release_qualification.py \
 
 Every external JSON record uses `schema_version: 1` and binds its exact
 `kind`, `source_commit`, `lock_sha256`, non-empty `signer_id` and
-`signature_algorithm`, and hexadecimal `signature`. The licence and
+`signature_algorithm`, and hexadecimal `signature`. The license and
 vulnerability reports additionally identify the scanner and report
 `scan_status: passed`. They contain one entry for every locked name/version;
-each entry binds all locked SHA-256 values. Licence entries provide
+each entry binds all locked SHA-256 values. License entries provide
 `license_concluded`, `license_declared`, and `copyright_text`. Vulnerability
 entries provide `status: passed` and an explicitly empty `vulnerabilities`
 list. The signature-verification record uses
 `verification_status: verified` and binds the SHA-256 of every signed external
 record in `subjects`. The supply-chain attestation uses
-`attestation_status: verified` and binds the lock, licence and vulnerability
+`attestation_status: verified` and binds the lock, license and vulnerability
 reports, authority records, signer record, and every supplied distribution in
 the same way. These are evidence fields supplied by the responsible external
 systems; the builder does not infer or create them.
 
 The builder follows every runtime, optional, and development edge present in
 the lock. SPDX 2.3 contains package SHA-256 checksums, source/download
-locations, licence conclusions, `DESCRIBES`, and `DEPENDS_ON` relationships.
-CycloneDX 1.6 contains the same package hashes/licences and its complete
+locations, license conclusions, `DESCRIBES`, and `DEPENDS_ON` relationships.
+CycloneDX 1.6 contains the same package hashes/licenses and its complete
 `dependencies` graph. Build provenance hashes the exact wheel, sdist, and
 container inputs. A dependency-complete supply-chain evidence manifest binds
 the generated files to all external records. Missing packages, unresolved
-edges, absent or malformed hashes, `NOASSERTION` licence/source/copyright
+edges, absent or malformed hashes, `NOASSERTION` license/source/copyright
 values, non-passing scans, stale commit or lock bindings, missing signature
 metadata, or mismatched attestation subjects keep `g5_evidence_ready` false.
 
-The builder never manufactures licence authority, data rights, scanner
+The builder never manufactures license authority, data rights, scanner
 results, signatures, verification, attestations, notices, or approval.
 `commercial_ready` remains false even when the generated evidence can support
 G5; the typed G0–G7 evaluation and independent decision must still run. A
-dirty or non-Git tree, missing lock, PNPL repository licence, absent external
-records, and missing notice licence texts are blockers. In particular, the
+dirty or non-Git tree, missing lock, PNPL repository license, absent external
+records, and missing notice license texts are blockers. In particular, the
 current NOTICE references `SING-MIT.txt` and `ASDEX-MIT.txt`; both absent files
 are reported explicitly. The current source distribution therefore remains a
 deterministic refusal and must not be described as commercial-ready.

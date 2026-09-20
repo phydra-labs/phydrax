@@ -87,14 +87,14 @@ class OperatorDataset:
         object.__setattr__(self, "provenance", provenance)
         size = self.batch.case_shape[0]
         log_weights = (
-            jnp.zeros((size,), dtype=float)
+            jnp.zeros((size,), dtype=jnp.float64)
             if self.case_log_weights is None
-            else jnp.asarray(self.case_log_weights, dtype=float)
+            else jnp.asarray(self.case_log_weights, dtype=jnp.float64)
         )
         mask = (
-            jnp.ones((size,), dtype=bool)
+            jnp.ones((size,), dtype=jnp.bool_)
             if self.case_mask is None
-            else jnp.asarray(self.case_mask, dtype=bool)
+            else jnp.asarray(self.case_mask, dtype=jnp.bool_)
         )
         if log_weights.shape != (size,) or mask.shape != (size,):
             raise ValueError("Dataset case weights and mask must align with cases.")
@@ -355,7 +355,7 @@ def operator_dataset_from_arrays(
         name: FunctionSamples(values=jnp.asarray(value), axes=tuple(source_axes[name]))
         for name, value in inputs.items()
     }
-    sizes = {int(jnp.asarray(value).shape[0]) for value in inputs.values()}
+    sizes = {jnp.asarray(value).shape[0] for value in inputs.values()}
     if len(sizes) != 1:
         raise ValueError("All operator inputs must have the same case count.")
     size = sizes.pop()

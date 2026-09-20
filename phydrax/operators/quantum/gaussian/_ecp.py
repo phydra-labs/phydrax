@@ -14,7 +14,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ...._fingerprint import canonical_fingerprint
-from ...._strict import AbstractAttribute, StrictModule
+from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ....atomistic import AtomisticSystemPlan
 from ._basis import PreparedGaussianBasis
@@ -172,7 +172,7 @@ class ECPIntegralEvaluation(StrictModule):
 
 
 class AbstractECPIntegralProvider(StrictModule, NonTrainableState):
-    provider_id: AbstractAttribute[str]
+    provider_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def evaluate(

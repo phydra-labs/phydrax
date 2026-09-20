@@ -30,7 +30,7 @@ from ._homogeneous import (
 )
 
 
-_SIGMA_1 = jnp.asarray(((0.0, 1.0), (1.0, 0.0)), dtype=complex)
+_SIGMA_1 = jnp.asarray(((0.0, 1.0), (1.0, 0.0)), dtype=jnp.complex128)
 
 
 class HomogeneousSpinorQEDTangentState(StrictModule):
@@ -391,7 +391,7 @@ class RetardedVolterraResponsePlan(StrictModule, NonTrainableState):
         causality_tolerance: float = 0.0,
         maximum_time_points: int = 16384,
     ):
-        time = np.asarray(times, dtype=float)
+        time = np.asarray(times, dtype=np.float64)
         values = np.asarray(kernel)
         tolerance = float(causality_tolerance)
         if (

@@ -73,10 +73,10 @@ def _owner_oriented_closure(stage):
     for block in stage.face_blocks:
         area = np.asarray(block.area_vectors)
         owner = np.asarray(block.layout.owner_cells)
-        neighbour = np.asarray(block.layout.neighbour_cells)
+        neighbor = np.asarray(block.layout.neighbor_cells)
         np.add.at(closure, owner, area)
-        internal = neighbour >= 0
-        np.add.at(closure, neighbour[internal], -area[internal])
+        internal = neighbor >= 0
+        np.add.at(closure, neighbor[internal], -area[internal])
     return closure
 
 
@@ -106,7 +106,7 @@ def test_embedded_stage_compacts_open_physical_and_cut_blocks_with_closure():
         discretization.face_measures.size + expected_cut_cells,
     )
     np.testing.assert_array_equal(
-        cut.layout.neighbour_cells,
+        cut.layout.neighbor_cells,
         np.full(expected_cut_cells.shape, -1, dtype=np.int32),
     )
     assert all(
@@ -308,8 +308,8 @@ def test_full_fluid_embedded_stage_preserves_static_physical_geometry():
             static_block.layout.owner_cells,
         )
         np.testing.assert_array_equal(
-            embedded_block.layout.neighbour_cells,
-            static_block.layout.neighbour_cells,
+            embedded_block.layout.neighbor_cells,
+            static_block.layout.neighbor_cells,
         )
         np.testing.assert_array_equal(
             embedded_block.layout.boundary_policy_ids,
@@ -415,8 +415,8 @@ def test_embedded_stage_routes_and_ids_are_stable_across_dynamic_versions():
             second_block.layout.owner_cells,
         )
         np.testing.assert_array_equal(
-            first_block.layout.neighbour_cells,
-            second_block.layout.neighbour_cells,
+            first_block.layout.neighbor_cells,
+            second_block.layout.neighbor_cells,
         )
         np.testing.assert_array_equal(
             first_block.layout.boundary_policy_ids,
@@ -441,15 +441,15 @@ def test_mixed_solid_blocks_contain_only_remapped_positive_measure_routes():
     source = discretization.face_block
     source_ids = np.asarray(source.face_ids)
     owners = np.asarray(source.owner_cells)
-    neighbours = np.asarray(source.neighbour_cells)
-    internal = neighbours >= 0
-    safe_neighbours = np.where(internal, neighbours, 0)
+    neighbors = np.asarray(source.neighbor_cells)
+    internal = neighbors >= 0
+    safe_neighbors = np.where(internal, neighbors, 0)
     active_cells = np.asarray(metrics.active_fluid_cells)
     expected_physical = (
         np.asarray(source.active_mask)
         & (np.asarray(metrics.face_open_fraction)[source_ids] > 0.0)
         & active_cells[owners]
-        & (~internal | active_cells[safe_neighbours])
+        & (~internal | active_cells[safe_neighbors])
     )
     expected_face_ids = source_ids[expected_physical]
     np.testing.assert_array_equal(physical.layout.face_ids, expected_face_ids)
@@ -485,7 +485,7 @@ def test_partial_physical_face_quadrature_integrates_over_actual_open_segment():
     partial_boundary = (
         (fractions > 0.0)
         & (fractions < 1.0)
-        & (np.asarray(physical.layout.neighbour_cells) < 0)
+        & (np.asarray(physical.layout.neighbor_cells) < 0)
     )
     assert np.any(partial_boundary)
     partial_ids = face_ids[partial_boundary]

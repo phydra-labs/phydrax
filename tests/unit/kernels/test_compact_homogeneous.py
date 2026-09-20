@@ -24,7 +24,7 @@ def _so2_spectrum():
 
     return phx.kernels.PreparedCompactHomogeneousSpectrum(
         modes[:, None],
-        modes.astype(float) ** 2,
+        modes.astype("float64") ** 2,
         jnp.asarray([1.0, 2.0, 2.0, 2.0, 2.0]),
         zonal,
         space="so",

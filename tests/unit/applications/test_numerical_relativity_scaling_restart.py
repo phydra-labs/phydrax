@@ -89,7 +89,7 @@ def _block_setup(*, fine_capacity=8, overflow=False):
     )
     compiler = BlockTopologyCompiler(hierarchy)
     initial = compiler.initialize()
-    tags = jnp.zeros((8, 2, 2, 2), dtype=bool).at[0, 0, 0, 0].set(True)
+    tags = jnp.zeros((8, 2, 2, 2), dtype="bool").at[0, 0, 0, 0].set(True)
     if overflow:
         tags = tags.at[7, 1, 1, 1].set(True)
     compiled = compiler.compile(initial.topology, (tags,))
@@ -212,7 +212,7 @@ def test_z4c_and_material_transfers_report_constraints_and_conservation():
     register = FluxRegister(
         coarse_flux,
         fine_flux,
-        jnp.ones(material.shape[:3], dtype=bool),
+        jnp.ones(material.shape[:3], dtype="bool"),
         register_id="material-register",
     )
     reflux = reflux_relativistic_material(

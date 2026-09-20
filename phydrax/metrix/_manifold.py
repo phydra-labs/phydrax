@@ -12,11 +12,11 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 
 
 def _point_shape(value: Sequence[int], /) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if any(size <= 0 for size in shape):
         raise ValueError("Manifold point_shape dimensions must be positive.")
     return shape
@@ -49,7 +49,7 @@ def _real_inner(left: Array, right: Array, /) -> Array:
 
 
 def _finite_residual(value: Array, residual: Array, /) -> Array:
-    infinity = jnp.asarray(jnp.inf, dtype=jnp.result_type(value.dtype, float))
+    infinity = jnp.asarray(jnp.inf, dtype=jnp.result_type(value.dtype, jnp.float64))
     return jnp.where(jnp.all(jnp.isfinite(value)), residual, infinity)
 
 
@@ -61,12 +61,12 @@ class AbstractRiemannianManifold(StrictModule):
     vectors use the same ambient shape as their base points.
     """
 
-    manifold_id: AbstractAttribute[str]
-    point_shape: AbstractAttribute[tuple[int, ...]]
-    retraction_method: AbstractAttribute[str]
-    transport_method: AbstractAttribute[str]
-    transport_is_isometric: AbstractAttribute[bool]
-    transport_is_parallel: AbstractAttribute[bool]
+    manifold_id: eqx.AbstractVar[str]
+    point_shape: eqx.AbstractVar[tuple[int, ...]]
+    retraction_method: eqx.AbstractVar[str]
+    transport_method: eqx.AbstractVar[str]
+    transport_is_isometric: eqx.AbstractVar[bool]
+    transport_is_parallel: eqx.AbstractVar[bool]
 
     @property
     def scalar_field(self) -> str:
@@ -194,8 +194,8 @@ class EuclideanManifold(AbstractGeodesicManifold):
         value = _array_with_trailing_shape(point, self.point_shape, "Euclidean point")
         return jnp.where(
             jnp.all(jnp.isfinite(value)),
-            jnp.asarray(0.0, dtype=jnp.result_type(value.dtype, float)),
-            jnp.asarray(jnp.inf, dtype=jnp.result_type(value.dtype, float)),
+            jnp.asarray(0.0, dtype=jnp.result_type(value.dtype, jnp.float64)),
+            jnp.asarray(jnp.inf, dtype=jnp.result_type(value.dtype, jnp.float64)),
         )
 
     def project_tangent(

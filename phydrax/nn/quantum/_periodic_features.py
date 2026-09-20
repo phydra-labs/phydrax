@@ -88,7 +88,7 @@ class PeriodicCellFeatures(StrictModule, NonTrainableState):
         self.cell = cell
         self.reciprocal_modes = jnp.asarray(mode_host, dtype=jnp.int32)
         self.twist = jnp.asarray(twist_host)
-        self.reciprocal_mode_count = int(mode_host.shape[0])
+        self.reciprocal_mode_count = mode_host.shape[0]
         self.boundary_id = boundary_id
         self.differentiation_scope = (
             "fixed-cell coordinate derivatives within fixed wrap and minimum-image "
@@ -123,7 +123,7 @@ class PeriodicCellFeatures(StrictModule, NonTrainableState):
         pair_squared_distance = jnp.sum(
             minimum_displacement * minimum_displacement, axis=-1
         )
-        identity = jnp.eye(value.shape[-2], dtype=bool)
+        identity = jnp.eye(value.shape[-2], dtype=jnp.bool_)
         pair_distances = jnp.sqrt(jnp.where(identity, 1.0, pair_squared_distance))
         pair_distances = jnp.where(identity, 0.0, pair_distances)
         selected_translation = displacement - minimum_displacement

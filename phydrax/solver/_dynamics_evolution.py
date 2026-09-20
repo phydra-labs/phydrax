@@ -206,8 +206,7 @@ class DiffraxEvolution(AbstractDifferentiableEvolution):
             "reverse",
         }.issubset(composite_evidence.orientations):
             raise ValueError(
-                "composite_adjoint must support forward- and reverse-mode "
-                "differentiation."
+                "composite_adjoint must support forward- and reverse-mode differentiation."
             )
         if (
             not reverse_evidence.orientations
@@ -330,7 +329,7 @@ class DiffraxEvolution(AbstractDifferentiableEvolution):
     ) -> EvolutionStep:
         finite = jnp.all(jnp.isfinite(final_state))
         membership = jnp.asarray(
-            self.state_layout.geometry.contains(final_state), dtype=bool
+            self.state_layout.geometry.contains(final_state), dtype=jnp.bool_
         )
         if membership.shape != ():
             raise ValueError("State geometry contains() must return one scalar boolean.")
@@ -560,8 +559,7 @@ class DiffraxEvolution(AbstractDifferentiableEvolution):
         leaves = jax.tree.leaves(args)
         if not leaves or any(not eqx.is_inexact_array(leaf) for leaf in leaves):
             raise TypeError(
-                "Evolution argument linearization requires a nonempty PyTree "
-                "of inexact arrays."
+                "Evolution argument linearization requires a nonempty PyTree of inexact arrays."
             )
         source = jnp.asarray(source_coordinate)
         target = jnp.asarray(target_coordinate)

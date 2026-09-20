@@ -142,8 +142,7 @@ class GeometryPrecisionPolicy(StrictModule, NonTrainableState):
         observed = precision_dtype_name(array.dtype)
         if self.coordinate_dtype is not None and observed != self.coordinate_dtype:
             raise TypeError(
-                f"Geometry coordinate dtype {observed} does not match "
-                f"{self.coordinate_dtype}."
+                f"Geometry coordinate dtype {observed} does not match {self.coordinate_dtype}."
             )
         return observed
 

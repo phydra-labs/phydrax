@@ -119,7 +119,7 @@ def test_joint_two_curve_bootstrap_uses_discounted_projection_cashflows():
             end_times=jnp.array([1.0, 2.0]),
             payment_times=jnp.array([1.0, 2.0]),
             accrual_fractions=jnp.ones((2,)),
-            valid=jnp.ones((2,), dtype=bool),
+            valid=jnp.ones((2,), dtype="bool"),
         ),
     )
     discount_rate = 0.02

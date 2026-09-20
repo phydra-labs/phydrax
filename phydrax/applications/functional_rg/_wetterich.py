@@ -34,9 +34,9 @@ def _volume_factor(dimension: float) -> float:
 def _three_point_derivative_matrices(
     nodes: np.ndarray, /
 ) -> tuple[np.ndarray, np.ndarray]:
-    count = int(nodes.size)
-    first = np.zeros((count, count), dtype=float)
-    second = np.zeros((count, count), dtype=float)
+    count = nodes.size
+    first = np.zeros((count, count), dtype=np.float64)
+    second = np.zeros((count, count), dtype=np.float64)
     for row in range(count):
         start = min(max(row - 1, 0), count - 3)
         indices = np.arange(start, start + 3)
@@ -166,7 +166,7 @@ class PreparedONLocalPotentialFlow(StrictModule, NonTrainableState):
     def __init__(self, plan: ONLocalPotentialPlan, field_nodes: ArrayLike, /):
         if not isinstance(plan, ONLocalPotentialPlan):
             raise TypeError("plan must be ONLocalPotentialPlan.")
-        nodes = np.asarray(field_nodes, dtype=float)
+        nodes = np.asarray(field_nodes, dtype=np.float64)
         if (
             nodes.ndim != 1
             or nodes.size < 3

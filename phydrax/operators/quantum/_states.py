@@ -65,10 +65,9 @@ class _StateObservableCallable(StrictModule):
             self.observable.func(*observable_args, key=key, **kwargs),
             role="observable",
         )
-        if int(observable.shape[1]) != int(state.shape[0]):
+        if observable.shape[1] != state.shape[0]:
             raise ValueError(
-                "Observable and quantum-state dimensions must match; "
-                f"got {observable.shape} and {state.shape}."
+                f"Observable and quantum-state dimensions must match; got {observable.shape} and {state.shape}."
             )
         action = observable @ state
         expectation = jnp.vdot(state, action)
@@ -111,8 +110,7 @@ class _DensityExpectationCallable(StrictModule):
         )
         if density.shape != observable.shape:
             raise ValueError(
-                "Density-operator and observable dimensions must match; "
-                f"got {density.shape} and {observable.shape}."
+                f"Density-operator and observable dimensions must match; got {density.shape} and {observable.shape}."
             )
         return jnp.trace(density @ observable)
 
@@ -125,10 +123,9 @@ class _DensityFromFactorCallable(StrictModule):
 
     def __call__(self, *args, key=None, **kwargs):
         factor = jnp.asarray(self.factor.func(*args, key=key, **kwargs))
-        if factor.ndim != 2 or int(factor.shape[0]) == 0 or int(factor.shape[1]) == 0:
+        if factor.ndim != 2 or factor.shape[0] == 0 or factor.shape[1] == 0:
             raise ValueError(
-                "density_from_factor factor must have shape (n, r) with n, r > 0; "
-                f"got {factor.shape}."
+                f"density_from_factor factor must have shape (n, r) with n, r > 0; got {factor.shape}."
             )
         unnormalized = factor @ jnp.conj(factor.T)
         trace = jnp.real(jnp.trace(unnormalized))

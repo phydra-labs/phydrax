@@ -96,8 +96,8 @@ def prepare_linear_stencil(
         target_layout.coordinates_by_axis[axis],
         dtype=precision_.certification_dtype,
     )
-    source_count = int(source_coordinates.size)
-    target_count = int(target_coordinates.size)
+    source_count = source_coordinates.size
+    target_count = target_coordinates.size
     interior_width = _interior_width(request)
     closure_width = max(
         interior_width,
@@ -114,7 +114,7 @@ def prepare_linear_stencil(
         np.nan,
         dtype=precision_.coefficient_dtype,
     )
-    valid = np.zeros((target_count, capacity), dtype=bool)
+    valid = np.zeros((target_count, capacity), dtype=np.bool_)
     plans: list[StencilCoefficientPlan] = []
     row_kinds: list[StencilRowKind] = []
     maximum_lower = 0
@@ -140,7 +140,7 @@ def prepare_linear_stencil(
         else:
             start = int(np.floor(location_shift - 0.5 * (interior_width - 1)))
             relative = np.arange(start, start + interior_width, dtype=np.int32)
-        coefficient_nodes = (relative.astype(float) - location_shift) * delta
+        coefficient_nodes = (relative.astype("float64") - location_shift) * delta
         periodic_plan = StencilCoefficientPlan(
             coefficient_nodes,
             0.0,

@@ -17,14 +17,16 @@ import optax
 from jax import core as jax_core
 from jaxtyping import Array, Key, PyTree
 
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
+from .._tree_math import (
+    tree_allfinite as _tree_allfinite,
+    tree_inner as _tree_inner,
+    tree_norm as _tree_norm,
+    validate_real_inexact_tree as _validate_real_inexact_tree,
+)
 from ._bounds import ProjectedLBFGS
 from ._iterative._base import AbstractMinimizationMethod
 from ._iterative._types import (
-    _tree_allfinite,
-    _tree_inner,
-    _tree_norm,
-    _validate_real_inexact_tree,
     Bounds,
     MinimizationProblem,
     NonlinearConstraint,
@@ -57,8 +59,8 @@ class SampleBatch(StrictModule):
             raise TypeError("Scenario leaves must be real numeric or boolean arrays.")
         if not leaves or any(leaf.ndim < 1 for leaf in leaves):
             raise ValueError("Every scenario leaf must have a leading sample axis.")
-        size = int(leaves[0].shape[0])
-        if size < 1 or any(int(leaf.shape[0]) != size for leaf in leaves):
+        size = leaves[0].shape[0]
+        if size < 1 or any(leaf.shape[0] != size for leaf in leaves):
             raise ValueError("Scenario leaves must share a non-empty leading axis.")
         weight_dtype = jnp.result_type(leaves[0], jnp.float32)
         weights_ = (
@@ -97,8 +99,8 @@ class SampleBatch(StrictModule):
 class AbstractSamplingPolicy(StrictModule):
     """Explicit scenario sampling and refresh semantics."""
 
-    policy_id: AbstractAttribute[str]
-    refresh: AbstractAttribute[str]
+    policy_id: eqx.AbstractVar[str]
+    refresh: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def sample(self, key: Key[Array, ""], iteration: int, /) -> SampleBatch:
@@ -164,7 +166,7 @@ class MonteCarloSampling(AbstractSamplingPolicy):
 class AbstractRiskMeasure(StrictModule):
     """Scalar law-invariant risk over weighted scenario losses."""
 
-    risk_id: AbstractAttribute[str]
+    risk_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def evaluate(self, losses: Array, weights: Array, /) -> Array:
@@ -629,7 +631,7 @@ class StochasticResult(StrictModule):
 class AbstractStochasticMethod(StrictModule):
     """Complete stochastic optimization method."""
 
-    method_id: AbstractAttribute[str]
+    method_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def solve(

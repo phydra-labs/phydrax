@@ -68,7 +68,7 @@ class ReactionPathResult(StrictModule, NonTrainableState):
         self.provider_evaluations = jnp.asarray(
             provider_evaluations, dtype=jnp.int32
         ).reshape(())
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.climbing_image = climbing
         self.source_result_ids = sources
         self.plan_id = str(plan_id)
@@ -129,8 +129,8 @@ class NudgedElasticBandPlan(StrictModule, NonTrainableState):
         if surface.system_id != system.system_id or not surface.capabilities.forces:
             raise ValueError("NEB requires a force-capable surface for the same system.")
         if not np.any(
-            np.asarray(system.active_mask, dtype=bool)
-            & np.asarray(system.mobile_mask, dtype=bool)
+            np.asarray(system.active_mask, dtype=np.bool_)
+            & np.asarray(system.mobile_mask, dtype=np.bool_)
         ):
             raise ValueError("NEB requires at least one active mobile atom.")
         images = int(image_count)
@@ -198,8 +198,8 @@ class NudgedElasticBandPlan(StrictModule, NonTrainableState):
             dtype=np.dtype(self.system.coordinate_dtype),
         )
         right = np.asarray(product.positions, dtype=left.dtype)
-        active = np.asarray(self.system.active_mask, dtype=bool)
-        movable = np.asarray(self.system.mobile_mask, dtype=bool)
+        active = np.asarray(self.system.active_mask, dtype=np.bool_)
+        movable = np.asarray(self.system.mobile_mask, dtype=np.bool_)
         path_mask = active & movable
         fixed_active = active & ~movable
         if not np.array_equal(
@@ -397,7 +397,7 @@ class ReactionPathQualificationResult(StrictModule, NonTrainableState):
                 and overlap >= float(minimum_overlap)
             )
         self.tangent_overlap = jnp.asarray(overlap)
-        self.successful = jnp.asarray(successful, dtype=bool)
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_)
         self.path_result_id = path.result_id
         self.vibration_result_id = vibration.result_id
         self.result_id = canonical_fingerprint(
@@ -444,7 +444,7 @@ class IntrinsicReactionCoordinateResult(StrictModule, NonTrainableState):
         self.reverse = reverse_
         self.forward_energies = forward_energy
         self.reverse_energies = reverse_energy
-        self.successful = jnp.asarray(successful, dtype=bool)
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_)
         self.source_result_ids = source_result_ids
         self.result_id = canonical_fingerprint(
             {
@@ -540,8 +540,8 @@ class IntrinsicReactionCoordinatePlan(StrictModule, NonTrainableState):
         if mode.shape != transition_state.positions.shape:
             raise ValueError("imaginary_mode must align with transition-state positions.")
         masses = np.asarray(self.system.masses)[:, None]
-        active = np.asarray(self.system.active_mask, dtype=bool)
-        movable = np.asarray(self.system.mobile_mask, dtype=bool)
+        active = np.asarray(self.system.active_mask, dtype=np.bool_)
+        movable = np.asarray(self.system.mobile_mask, dtype=np.bool_)
         mode[~movable] = 0.0
         norm = float(np.sqrt(np.sum(masses[active] * mode[active] ** 2)))
         if not isfinite(norm) or norm <= 0.0:

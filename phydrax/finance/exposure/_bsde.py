@@ -30,7 +30,7 @@ def _identifier(value: str, name: str, /) -> str:
 
 
 class ExposureBSDERoute(StrictModule):
-    """One finance-labelled native BSDE problem and exact pricing-law binding."""
+    """One finance-labeled native BSDE problem and exact pricing-law binding."""
 
     problem: BSDEProblem
     pricing_law: PricingLaw = eqx.field(static=True)

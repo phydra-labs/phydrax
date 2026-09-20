@@ -53,8 +53,6 @@ def _body_identifier(value: int, /) -> int:
     return int(value)
 
 
-
-
 def _floating_vector(value: ArrayLike, size: int, name: str, /) -> Array:
     array = jnp.asarray(value)
     if array.shape != (size,):
@@ -71,8 +69,7 @@ def _positive_weight(value: ArrayLike, size: int, name: str, /) -> Array:
     if array.shape != (size,):
         raise ValueError(f"{name} must be scalar or have shape ({size},).")
     if not (
-        np.issubdtype(array.dtype, np.floating)
-        or np.issubdtype(array.dtype, np.integer)
+        np.issubdtype(array.dtype, np.floating) or np.issubdtype(array.dtype, np.integer)
     ):
         raise TypeError(f"{name} must be numeric.")
     if not np.all(np.isfinite(array)) or np.any(array <= 0.0):
@@ -93,8 +90,7 @@ def _task_bounds(bounds: Bounds | None, tolerance: float, size: int, /) -> Bound
     if lower.shape not in ((), (size,)) or upper.shape not in ((), (size,)):
         raise ValueError(f"Task bounds must be scalar or have shape ({size},).")
     if not all(
-        np.issubdtype(value.dtype, np.floating)
-        or np.issubdtype(value.dtype, np.integer)
+        np.issubdtype(value.dtype, np.floating) or np.issubdtype(value.dtype, np.integer)
         for value in (lower, upper)
     ):
         raise TypeError("Task bounds must be real.")
@@ -107,12 +103,9 @@ def _task_bounds(bounds: Bounds | None, tolerance: float, size: int, /) -> Bound
 
 def _determinant_3x3(matrix: np.ndarray, /) -> float:
     return float(
-        matrix[0, 0]
-        * (matrix[1, 1] * matrix[2, 2] - matrix[1, 2] * matrix[2, 1])
-        - matrix[0, 1]
-        * (matrix[1, 0] * matrix[2, 2] - matrix[1, 2] * matrix[2, 0])
-        + matrix[0, 2]
-        * (matrix[1, 0] * matrix[2, 1] - matrix[1, 1] * matrix[2, 0])
+        matrix[0, 0] * (matrix[1, 1] * matrix[2, 2] - matrix[1, 2] * matrix[2, 1])
+        - matrix[0, 1] * (matrix[1, 0] * matrix[2, 2] - matrix[1, 2] * matrix[2, 0])
+        + matrix[0, 2] * (matrix[1, 0] * matrix[2, 1] - matrix[1, 1] * matrix[2, 0])
     )
 
 
@@ -306,8 +299,7 @@ def _so3_log_coordinates_jvp(primals, tangents):
     coefficient = jnp.where(
         near_zero,
         1.0 / 12.0 + squared_angle / 720.0,
-        1.0 / safe_squared_angle
-        - (1.0 + jnp.cos(angle)) / (2.0 * angle * safe_sine),
+        1.0 / safe_squared_angle - (1.0 + jnp.cos(angle)) / (2.0 * angle * safe_sine),
     )
     first_cross = jnp.cross(coordinates, body_tangent)
     tangent = (
@@ -429,9 +421,7 @@ class FrameInverseKinematicsPlan(StrictModule, NonTrainableState):
             raise TypeError("articulation must be PreparedReducedArticulation.")
         tasks_ = tuple(tasks)
         if not tasks_ or any(
-            not isinstance(
-                task, (FramePositionTask, FrameOrientationTask, FramePoseTask)
-            )
+            not isinstance(task, (FramePositionTask, FrameOrientationTask, FramePoseTask))
             for task in tasks_
         ):
             raise TypeError("tasks must be a nonempty sequence of frame tasks.")
@@ -494,15 +484,11 @@ class FrameInverseKinematicsPlan(StrictModule, NonTrainableState):
         self.rotation_chart_tolerance = rotation_tolerance
         self.configuration_chart_tolerance = configuration_tolerance
         self.plan_id = (
-            generated_id
-            if plan_id is None
-            else _nonempty_identifier(plan_id, "plan_id")
+            generated_id if plan_id is None else _nonempty_identifier(plan_id, "plan_id")
         )
 
     def _require_configuration(self, configuration: ArrayLike, /) -> Array:
-        return _floating_vector(
-            configuration, self.articulation.nq, "configuration"
-        )
+        return _floating_vector(configuration, self.articulation.nq, "configuration")
 
     def canonical_configuration(
         self,
@@ -522,9 +508,7 @@ class FrameInverseKinematicsPlan(StrictModule, NonTrainableState):
     ) -> tuple[Array, Array, Array]:
         relative = jnp.swapaxes(target, -1, -2) @ current
         rotation_valid = (
-            target_valid
-            & jnp.all(jnp.isfinite(relative))
-            & _SO3.contains(relative)
+            target_valid & jnp.all(jnp.isfinite(relative)) & _SO3.contains(relative)
         )
         cosine = jnp.clip((jnp.trace(relative) - 1.0) / 2.0, -1.0, 1.0)
         angle = jnp.arccos(cosine)
@@ -705,26 +689,17 @@ class FrameInverseKinematicsPlan(StrictModule, NonTrainableState):
             joint_violation,
             task_feasible & joint_feasible,
         )
-        local_roundtrip_error = jnp.max(
-            jnp.abs(configuration - optimizer.parameters)
-        )
+        local_roundtrip_error = jnp.max(jnp.abs(configuration - optimizer.parameters))
         if self.posture_configuration is None:
-            posture_roundtrip_error = jnp.asarray(
-                0.0, dtype=configuration.dtype
-            )
+            posture_roundtrip_error = jnp.asarray(0.0, dtype=configuration.dtype)
         else:
             posture_roundtrip = self.canonical_configuration(
                 self.posture_configuration, configuration
             )
-            posture_roundtrip_error = jnp.max(
-                jnp.abs(posture_roundtrip - configuration)
-            )
-        roundtrip_error = jnp.maximum(
-            local_roundtrip_error, posture_roundtrip_error
-        )
-        configuration_chart_valid = (
-            jnp.isfinite(roundtrip_error)
-            & (roundtrip_error <= self.configuration_chart_tolerance)
+            posture_roundtrip_error = jnp.max(jnp.abs(posture_roundtrip - configuration))
+        roundtrip_error = jnp.maximum(local_roundtrip_error, posture_roundtrip_error)
+        configuration_chart_valid = jnp.isfinite(roundtrip_error) & (
+            roundtrip_error <= self.configuration_chart_tolerance
         )
         task_charts_valid = jnp.all(
             jnp.stack(tuple(value.chart_valid for value in evaluation.task_residuals))
@@ -748,9 +723,9 @@ class FrameInverseKinematicsPlan(StrictModule, NonTrainableState):
         )
         finite_initial = jnp.all(jnp.isfinite(initial))
         finite_optimizer_parameters = jnp.all(jnp.isfinite(optimizer.parameters))
-        finite_optimizer_residual = jnp.all(jnp.isfinite(optimizer.residual)) & jnp.isfinite(
-            optimizer.objective
-        )
+        finite_optimizer_residual = jnp.all(
+            jnp.isfinite(optimizer.residual)
+        ) & jnp.isfinite(optimizer.objective)
         finite_configuration = jnp.all(jnp.isfinite(configuration))
         finite_kinematics = evaluation.kinematics.finite
         finite_tasks = jnp.all(

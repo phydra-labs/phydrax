@@ -59,12 +59,12 @@ class CalibrationDiagnostics(StrictModule):
         class_mass: Any,
         method: str,
     ):
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.objective = jnp.asarray(objective)
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32)
-        self.converged = jnp.asarray(converged, dtype=bool)
-        self.finite = jnp.asarray(finite, dtype=bool)
+        self.converged = jnp.asarray(converged, dtype=jnp.bool_)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
         self.effective_samples = jnp.asarray(effective_samples)
         self.class_mass = jnp.asarray(class_mass)
         self.absent_classes = self.class_mass <= 0.0
@@ -78,10 +78,10 @@ def _validate_optimization(
     l2: Any,
     policy: WeightPolicy,
 ) -> tuple[Array, int, float, Array, WeightPolicy]:
-    rate = jnp.asarray(learning_rate, dtype=float)
+    rate = jnp.asarray(learning_rate, dtype=jnp.float64)
     iterations = int(max_iterations)
     tolerance_ = float(tolerance)
-    penalty = jnp.asarray(l2, dtype=float)
+    penalty = jnp.asarray(l2, dtype=jnp.float64)
     if (
         rate.ndim != 0
         or penalty.ndim != 0
@@ -130,7 +130,7 @@ def _prepare(
     case_valid = jnp.all(weight_valid, axis=-1) & vocabulary_valid & data_valid
     weight = jnp.where(case_valid[..., None], weight, jnp.nan)
     membership = weight[..., :, None] * jax.nn.one_hot(
-        encoded, int(labels.shape[0]), dtype=weight.dtype
+        encoded, labels.shape[0], dtype=weight.dtype
     )
     mass = jnp.sum(membership, axis=-2)
     return logits, encoded, weight, mass, labels, schema
@@ -294,7 +294,7 @@ class TemperatureCalibrationModel(AbstractArrayModel):
         self.labels = jnp.asarray(labels)
         self.target_schema = target_schema
         self.case_shape = tuple(case_shape)
-        self.in_size = int(self.labels.shape[0])
+        self.in_size = self.labels.shape[0]
         self.out_size = self.in_size
 
     def decision_function(self, x: Any, /) -> Array:
@@ -347,7 +347,7 @@ class VectorCalibrationModel(AbstractArrayModel):
         self.labels = jnp.asarray(labels)
         self.target_schema = target_schema
         self.case_shape = tuple(case_shape)
-        self.in_size = int(self.labels.shape[0])
+        self.in_size = self.labels.shape[0]
         self.out_size = self.in_size
 
     def decision_function(self, x: Any, /) -> Array:
@@ -401,7 +401,7 @@ class MatrixCalibrationModel(AbstractArrayModel):
         self.labels = jnp.asarray(labels)
         self.target_schema = target_schema
         self.case_shape = tuple(case_shape)
-        self.in_size = int(self.labels.shape[0])
+        self.in_size = self.labels.shape[0]
         self.out_size = self.in_size
 
     def decision_function(self, x: Any, /) -> Array:
@@ -455,7 +455,7 @@ class MulticlassCalibrationModel(AbstractArrayModel):
         self.labels = jnp.asarray(labels)
         self.target_schema = target_schema
         self.case_shape = tuple(case_shape)
-        self.in_size = int(labels.shape[0])
+        self.in_size = labels.shape[0]
         self.out_size = self.in_size
 
     def decision_function(self, x: Any, /) -> Array:
@@ -494,7 +494,7 @@ def _fit_smooth(recipe: Any, batch: MLBatch, *, kind: str) -> FitResult:
     logits, encoded, weight, mass, labels, schema = _prepare(
         batch, expected_classes, recipe.weight_policy
     )
-    classes = int(labels.shape[0])
+    classes = labels.shape[0]
     tiny = jnp.finfo(weight.dtype).tiny
     denominator = jnp.maximum(jnp.sum(weight), tiny)
     one_hot = jax.nn.one_hot(encoded, classes, dtype=logits.dtype)
@@ -687,7 +687,7 @@ class TemperatureCalibrationRecipe(AbstractRecipe):
         weight_policy: WeightPolicy = "statistical",
     ):
         self.num_classes = None if num_classes is None else int(num_classes)
-        self.minimum_temperature = jnp.asarray(minimum_temperature, dtype=float)
+        self.minimum_temperature = jnp.asarray(minimum_temperature, dtype=jnp.float64)
         (
             self.learning_rate,
             self.max_iterations,
@@ -1105,7 +1105,7 @@ class SmoothIsotonicCalibrationRecipe(AbstractRecipe):
     def __init__(
         self, *, bandwidth: float = 0.1, weight_policy: WeightPolicy = "statistical"
     ):
-        bandwidth_ = jnp.asarray(bandwidth, dtype=float)
+        bandwidth_ = jnp.asarray(bandwidth, dtype=jnp.float64)
         if (
             bandwidth_.ndim != 0
             or not bool(jnp.isfinite(bandwidth_))
@@ -1175,7 +1175,7 @@ class CalibratedClassifierModel(AbstractArrayModel):
         self.labels = jnp.asarray(labels)
         self.target_schema = target_schema
         self.in_size = _flat_input_size(base_model, "CalibratedClassifierModel")
-        self.out_size = int(self.labels.shape[0])
+        self.out_size = self.labels.shape[0]
         if calibration_model.out_size != self.out_size:
             raise ValueError(
                 "Calibrator output must align with the external class vocabulary."
@@ -1207,7 +1207,7 @@ class CalibratedClassifierModel(AbstractArrayModel):
         )
 
     def predict_log_proba(self, x: Any, /) -> Array:
-        return jnp.log(jnp.maximum(self.predict_proba(x), jnp.finfo(float).tiny))
+        return jnp.log(jnp.maximum(self.predict_proba(x), jnp.finfo(jnp.float64).tiny))
 
     def predict_indices(self, x: Any, /) -> Array:
         return jnp.argmax(self.predict_proba(x), axis=-1)
@@ -1258,7 +1258,7 @@ class CalibratedClassifierRecipe(AbstractRecipe):
                 SmoothIsotonicCalibrationRecipe,
             ),
         )
-        calibration_in_size = 1 if scalar_calibrator else int(labels.shape[0])
+        calibration_in_size = 1 if scalar_calibrator else labels.shape[0]
         logits = _calibration_input(
             base_model, batch.dense_features(), calibration_in_size
         )
@@ -1316,9 +1316,9 @@ class StrictCalibrationCompositionDiagnostics(StrictModule):
         calibration_valid: Any,
         calibration_status: Any,
     ):
-        self.base_valid = jnp.asarray(base_valid, dtype=bool)
+        self.base_valid = jnp.asarray(base_valid, dtype=jnp.bool_)
         self.base_status = jnp.asarray(base_status, dtype=jnp.int32)
-        self.calibration_valid = jnp.asarray(calibration_valid, dtype=bool)
+        self.calibration_valid = jnp.asarray(calibration_valid, dtype=jnp.bool_)
         self.calibration_status = jnp.asarray(calibration_status, dtype=jnp.int32)
         self.valid = self.base_valid & self.calibration_valid
         self.status = jnp.maximum(self.base_status, self.calibration_status)

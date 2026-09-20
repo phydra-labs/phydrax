@@ -8,6 +8,8 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 import numpy as np
 
+from phydrax._strict import StrictModule
+
 from ..sparse import gather_routes, mask_routes, route_reduce
 from ._geometry import (
     _face_geometry,
@@ -28,7 +30,7 @@ def _tree_leading_size(tree: Any) -> int:
     leaves = jtu.tree_leaves(tree)
     if not leaves:
         raise ValueError("Feature tree must contain at least one array leaf.")
-    return int(jnp.asarray(leaves[0]).shape[0])
+    return jnp.asarray(leaves[0]).shape[0]
 
 
 def _multiply_leaf(value: Any, weight: Any, /) -> jnp.ndarray:
@@ -38,7 +40,7 @@ def _multiply_leaf(value: Any, weight: Any, /) -> jnp.ndarray:
         value_arr.ndim != weight_arr.ndim
         and value_arr.ndim > 0
         and weight_arr.ndim > 0
-        and int(value_arr.shape[0]) == int(weight_arr.shape[0])
+        and value_arr.shape[0] == weight_arr.shape[0]
     ):
         while value_arr.ndim < weight_arr.ndim:
             value_arr = jnp.expand_dims(value_arr, axis=-1)
@@ -71,7 +73,7 @@ def _mask_tree(tree: Any, mask: jnp.ndarray | None, /) -> Any:
 
 def _num_nodes(graph: GraphIR, nodes: Any, /) -> int:
     if graph.node_mask is not None:
-        return int(graph.node_mask.shape[0])
+        return graph.node_mask.shape[0]
     return _tree_leading_size(nodes)
 
 
@@ -117,7 +119,7 @@ def _cotangent_weights_for_pairs(
     weight_map: dict[tuple[int, int], float],
     /,
 ) -> np.ndarray:
-    weights = np.zeros((pairs.shape[0],), dtype=float)
+    weights = np.zeros((pairs.shape[0],), dtype=np.float64)
     for i, (sender, receiver) in enumerate(pairs):
         if int(sender) == int(receiver):
             continue
@@ -130,28 +132,28 @@ def mesh_face_areas(mesh_vertices: Any, mesh_faces: Any, /) -> jnp.ndarray:
     """Return the area of each triangular mesh face."""
     vertices, faces = _validate_mesh_arrays(mesh_vertices, mesh_faces)
     area, _normal, _centroid = _face_geometry(vertices, faces)
-    return jnp.asarray(area, dtype=float)
+    return jnp.asarray(area, dtype=jnp.float64)
 
 
 def mesh_face_normals(mesh_vertices: Any, mesh_faces: Any, /) -> jnp.ndarray:
     """Return unit normals for triangular mesh faces."""
     vertices, faces = _validate_mesh_arrays(mesh_vertices, mesh_faces)
     _area, normal, _centroid = _face_geometry(vertices, faces)
-    return jnp.asarray(normal, dtype=float)
+    return jnp.asarray(normal, dtype=jnp.float64)
 
 
 def mesh_lumped_vertex_areas(mesh_vertices: Any, mesh_faces: Any, /) -> jnp.ndarray:
     """Return barycentric lumped vertex areas for a triangular mesh."""
     vertices, faces = _validate_mesh_arrays(mesh_vertices, mesh_faces)
     area, _normal = _vertex_geometry(vertices, faces)
-    return jnp.asarray(area, dtype=float)
+    return jnp.asarray(area, dtype=jnp.float64)
 
 
 def mesh_vertex_normals(mesh_vertices: Any, mesh_faces: Any, /) -> jnp.ndarray:
     """Return area-weighted unit vertex normals for a triangular mesh."""
     vertices, faces = _validate_mesh_arrays(mesh_vertices, mesh_faces)
     _area, normal = _vertex_geometry(vertices, faces)
-    return jnp.asarray(normal, dtype=float)
+    return jnp.asarray(normal, dtype=jnp.float64)
 
 
 def mesh_cotangent_weights(
@@ -173,13 +175,13 @@ def mesh_cotangent_weights(
         faces,
         add_reverse_edges=add_reverse_edges,
         add_self_edges=add_self_edges,
-        n_vertices=int(vertices.shape[0]),
+        n_vertices=vertices.shape[0],
     )
     weights = _cotangent_weights_for_pairs(pairs, _cotangent_weight_map(vertices, faces))
     return (
         jnp.asarray(pairs[:, 0], dtype=jnp.int32),
         jnp.asarray(pairs[:, 1], dtype=jnp.int32),
-        jnp.asarray(weights, dtype=float),
+        jnp.asarray(weights, dtype=jnp.float64),
     )
 
 
@@ -224,7 +226,7 @@ def mesh_to_cotangent_graph(
     nodes = _as_feature_mapping("nodes", bundle.graph.nodes)
     nodes[mass_key] = mass
     edges = _as_feature_mapping("edges", bundle.graph.edges)
-    edges[weight_key] = jnp.asarray(weight, dtype=float)
+    edges[weight_key] = jnp.asarray(weight, dtype=jnp.float64)
 
     graph = bundle.graph.replace(nodes=nodes, edges=edges, validate=validate)
     return GeometryGraph(
@@ -236,7 +238,7 @@ def mesh_to_cotangent_graph(
     )
 
 
-class MeshCotangentLaplacian(eqx.Module):
+class MeshCotangentLaplacian(StrictModule):
     """Mass-aware cotangent Laplacian block for mesh graphs.
 
     The block reads a node field, applies the sparse cotangent stencil, and
@@ -267,8 +269,7 @@ class MeshCotangentLaplacian(eqx.Module):
     ):
         if sign not in ("neighbor_minus_self", "self_minus_neighbor"):
             raise ValueError(
-                "MeshCotangentLaplacian sign must be 'neighbor_minus_self' "
-                "or 'self_minus_neighbor'."
+                "MeshCotangentLaplacian sign must be 'neighbor_minus_self' or 'self_minus_neighbor'."
             )
         self.weight = weight
         self.mass = mass
@@ -296,7 +297,7 @@ class MeshCotangentLaplacian(eqx.Module):
         if self.weight_key is None:
             if graph.senders is None:
                 raise ValueError("Cannot infer unit weights without graph edges.")
-            return jnp.ones((graph.senders.shape[0],), dtype=float)
+            return jnp.ones((graph.senders.shape[0],), dtype=jnp.float64)
         if not isinstance(graph.edges, Mapping):
             raise TypeError("weight_key requires mapping-valued graph edges.")
         if self.weight_key not in graph.edges:

@@ -24,7 +24,7 @@ from ._core import MedicalImageAsset
 
 
 def _readonly(value, name: str, /) -> np.ndarray:
-    array = np.array(value, dtype=float, copy=True)
+    array = np.array(value, dtype=np.float64, copy=True)
     if array.dtype.hasobject:
         raise TypeError(f"{name} must not use object dtype.")
     array.setflags(write=False)
@@ -169,9 +169,9 @@ def _calibrated_values(
     calibration: HUToMaterialCalibration,
     /,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
-    hu = np.asarray([anchor.hu for anchor in calibration.anchors], dtype=float)
+    hu = np.asarray([anchor.hu for anchor in calibration.anchors], dtype=np.float64)
     density = np.asarray(
-        [anchor.density_kg_m3 for anchor in calibration.anchors], dtype=float
+        [anchor.density_kg_m3 for anchor in calibration.anchors], dtype=np.float64
     )
     fractions = np.stack(
         [anchor.material_fractions for anchor in calibration.anchors], axis=0
@@ -220,8 +220,8 @@ def apply_hu_calibration(
     if asset.layout.kind is not ValueKind.REAL_SCALAR or asset.layout.component_shape:
         raise ValueError("HU calibration requires real scalar CT-number samples.")
     hu_scale = float(conversion_factor(asset.quantity.unit, ONE))
-    values = np.asarray(asset.values, dtype=float) * hu_scale
-    valid = np.asarray(asset.valid_mask, dtype=bool)
+    values = np.asarray(asset.values, dtype=np.float64) * hu_scale
+    valid = np.asarray(asset.valid_mask, dtype=np.bool_)
     density_values, fraction_values, density_slopes = _calibrated_values(
         values, valid, calibration
     )
@@ -230,7 +230,7 @@ def apply_hu_calibration(
     if asset.uncertainty is not None:
         uncertainty_scale = float(conversion_factor(asset.uncertainty.unit, ONE))
         source_uncertainty = np.broadcast_to(
-            np.asarray(asset.uncertainty.values, dtype=float) * uncertainty_scale,
+            np.asarray(asset.uncertainty.values, dtype=np.float64) * uncertainty_scale,
             values.shape,
         )
         density_standard = np.zeros(values.shape, dtype=density_values.dtype)

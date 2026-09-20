@@ -42,7 +42,7 @@ _SPECS: dict[str, tuple[str, Mapping[str, str], tuple[str, ...]]] = {
         {
             "sop-profile": "enhanced-ct-regular-grid",
             "operation": "read-only-normalization",
-            "coordinate-system": "lps-voxel-centre",
+            "coordinate-system": "lps-voxel-center",
             "scope": "research-only-deidentified",
         },
         (
@@ -57,7 +57,7 @@ _SPECS: dict[str, tuple[str, Mapping[str, str], tuple[str, ...]]] = {
         {
             "sop-profile": "legacy-ct-image-series-regular-grid",
             "operation": "read-only-normalization",
-            "coordinate-system": "lps-voxel-centre",
+            "coordinate-system": "lps-voxel-center",
             "scope": "research-only-deidentified",
         },
         (

@@ -117,10 +117,10 @@ def _as_input(
     rank = int(input_ndim)
     if rank <= 0:
         raise ValueError("input_ndim must be positive.")
-    sample = jnp.asarray(value, dtype=float)
+    sample = jnp.asarray(value, dtype=jnp.float64)
     if rank == 1 and sample.ndim == 0:
         sample = sample.reshape((1,))
-    if sample.ndim != rank or any(int(size) <= 0 for size in sample.shape):
+    if sample.ndim != rank or any(size <= 0 for size in sample.shape):
         raise ValueError(
             f"{name} must have {rank} nonempty input axes; got shape {sample.shape}."
         )
@@ -141,13 +141,12 @@ def _as_inputs(
     rank = int(input_ndim)
     if rank <= 0:
         raise ValueError("input_ndim must be positive.")
-    samples = jnp.asarray(value, dtype=float)
+    samples = jnp.asarray(value, dtype=jnp.float64)
     if rank == 1 and samples.ndim == 1:
         samples = samples[:, None]
-    if samples.ndim != rank + 1 or any(int(size) <= 0 for size in samples.shape):
+    if samples.ndim != rank + 1 or any(size <= 0 for size in samples.shape):
         raise ValueError(
-            f"{name} must have one design axis followed by {rank} nonempty "
-            f"input axes; got shape {samples.shape}."
+            f"{name} must have one design axis followed by {rank} nonempty input axes; got shape {samples.shape}."
         )
     return eqx.error_if(
         samples,

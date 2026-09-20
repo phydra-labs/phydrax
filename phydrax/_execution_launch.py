@@ -98,8 +98,7 @@ class LocalProcessLaunchError(RuntimeError):
         failed = tuple(result for result in self.results if result.returncode)
         summary = "; ".join(
             (
-                f"rank {result.process_id} exited {result.returncode} "
-                f"(stderr_bytes={len(result.stderr)})"
+                f"rank {result.process_id} exited {result.returncode} (stderr_bytes={len(result.stderr)})"
             )
             for result in failed
         )

@@ -151,7 +151,7 @@ def test_local_dephasing_decay_uses_rate_once(method):
         for index, key in enumerate(keys)
     )
     model = _model(graph, channels=channels)
-    initial = jnp.ones(2, dtype=complex) / jnp.sqrt(2.0)
+    initial = jnp.ones(2, dtype="complex128") / jnp.sqrt(2.0)
     result = evolve_electronics(
         model,
         _density(initial),
@@ -478,7 +478,7 @@ def test_host_admission_refuses_missing_support_rights_and_unbounded_models():
     with pytest.raises(PermissionError):
         model.require_rights({**USE, "export": True})
     with pytest.raises(ValueError, match="unit norm"):
-        model.jump_problem(jnp.ones(2, dtype=complex))
+        model.jump_problem(jnp.ones(2, dtype="complex128"))
 
 
 def test_fixed_support_generator_and_observables_are_jittable_and_differentiable():

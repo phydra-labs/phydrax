@@ -70,14 +70,14 @@ class PolynomialSpeciesThermodynamicsPlan(AbstractSpeciesThermodynamicsPlan):
     ):
         if not isinstance(schema, ChemicalSpeciesSchema):
             raise TypeError("schema must be a ChemicalSpeciesSchema.")
-        coefficients = np.asarray(heat_capacity_volume, dtype=float)
+        coefficients = np.asarray(heat_capacity_volume, dtype=np.float64)
         if coefficients.ndim == 1:
             coefficients = coefficients[:, None]
-        reference_energy = np.asarray(reference_molar_internal_energy, dtype=float)
+        reference_energy = np.asarray(reference_molar_internal_energy, dtype=np.float64)
         reference_entropy = (
-            np.zeros(schema.species_count, dtype=float)
+            np.zeros(schema.species_count, dtype=np.float64)
             if reference_molar_entropy is None
-            else np.asarray(reference_molar_entropy, dtype=float)
+            else np.asarray(reference_molar_entropy, dtype=np.float64)
         )
         t_ref = float(reference_temperature)
         t_min = float(minimum_temperature)
@@ -219,9 +219,9 @@ class NASASpeciesThermodynamicsPlan(AbstractSpeciesThermodynamicsPlan):
             raise TypeError("schema must be a ChemicalSpeciesSchema.")
         if not isinstance(polynomial_kind, NASAPolynomialKind):
             raise TypeError("polynomial_kind must be NASAPolynomialKind.")
-        values = np.asarray(coefficients, dtype=float)
-        lower = np.asarray(lower_temperature, dtype=float)
-        upper = np.asarray(upper_temperature, dtype=float)
+        values = np.asarray(coefficients, dtype=np.float64)
+        lower = np.asarray(lower_temperature, dtype=np.float64)
+        upper = np.asarray(upper_temperature, dtype=np.float64)
         count = 7 if polynomial_kind is NASAPolynomialKind.NASA7 else 9
         if (
             values.ndim != 3
@@ -335,7 +335,7 @@ def _positive_polynomial_on_interval(
     derivative = np.polynomial.polynomial.polyder(coefficients)
     roots = np.polynomial.polynomial.polyroots(derivative)
     real_roots = roots.real[
-        (np.abs(roots.imag) <= 64.0 * np.finfo(float).eps)
+        (np.abs(roots.imag) <= 64.0 * np.finfo(np.float64).eps)
         & (roots.real > lower)
         & (roots.real < upper)
     ]

@@ -66,7 +66,9 @@ def test_entropy_pair_interface_residual_matches_conservative_and_dissipative_fl
     residual = pair.interface_entropy_residual(left, right, conservative_flux, 0)
     assert jnp.allclose(residual, 0.0)
     dissipative_flux = conservative_flux - 0.5 * (right - left)
-    assert jnp.all(pair.interface_entropy_residual(left, right, dissipative_flux, 0) <= 1e-8)
+    assert jnp.all(
+        pair.interface_entropy_residual(left, right, dissipative_flux, 0) <= 1e-8
+    )
 
 
 def test_euler_entropy_pair_matches_existing_variables_and_all_axes():
@@ -170,7 +172,7 @@ def test_public_entropy_methods_reject_nonfinite_states_with_permissive_predicat
         base.entropy_function,
         base.entropy_variables_function,
         base.entropy_flux_function,
-        lambda state: jnp.ones(state.shape[:-1], dtype=bool),
+        lambda state: jnp.ones(state.shape[:-1], dtype="bool"),
         entropy_id="permissive-domain",
     )
     invalid = jnp.asarray([[jnp.nan]])
@@ -226,8 +228,9 @@ def test_entropy_flux_and_validation_propagate_runtime_args():
     system = phx.equations.ScalarConservationSystem(
         1,
         lambda state, axis, args: 0.5 * args["scale"] * state**2,
-        lambda left, right, axis, args: args["scale"]
-        * jnp.maximum(jnp.abs(left[..., 0]), jnp.abs(right[..., 0])),
+        lambda left, right, axis, args: (
+            args["scale"] * jnp.maximum(jnp.abs(left[..., 0]), jnp.abs(right[..., 0]))
+        ),
         system_id="scaled-burgers",
     )
     pair = phx.equations.ConvexEntropyPair(

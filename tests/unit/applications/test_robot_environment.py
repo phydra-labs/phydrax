@@ -442,7 +442,7 @@ class _BatchedEpisodeWrapper(AbstractRobotEnvironmentWrapper):
         del context, task_state, observation, terminated, key
         return RobotEnvironmentWrapperTransition(
             {"count": wrapper_state["count"] + 1},
-            jnp.zeros_like(plant_state.step_index, dtype=bool),
+            jnp.zeros_like(plant_state.step_index, dtype="bool"),
         )
 
 
@@ -458,7 +458,7 @@ class _MixedBatchedPlant(AbstractDiscretePlant):
     require_finite_controls: bool = eqx.field(static=True)
     require_finite_parameters: bool = eqx.field(static=True)
 
-    def __init__(self, semantic_tag="mixed-v1"):
+    def __init__(self, semantic_tag="mixed"):
         fallback = {
             "position": jnp.zeros((1,), dtype=jnp.float32),
             "memory": {
@@ -503,8 +503,8 @@ class _MixedBatchedPlant(AbstractDiscretePlant):
         return PlantProposal(
             payload,
             payload,
-            jnp.ones(case_shape, dtype=bool),
-            jnp.ones(case_shape, dtype=bool),
+            jnp.ones(case_shape, dtype="bool"),
+            jnp.ones(case_shape, dtype="bool"),
             jnp.zeros(case_shape, dtype=jnp.int32),
             jnp.zeros(case_shape, dtype=jnp.int32),
             (),
@@ -526,7 +526,7 @@ class _MixedBatchedPlant(AbstractDiscretePlant):
         return PlantProposal(
             payload,
             payload,
-            jnp.ones(successful.shape, dtype=bool),
+            jnp.ones(successful.shape, dtype="bool"),
             successful,
             status,
             status,
@@ -534,7 +534,7 @@ class _MixedBatchedPlant(AbstractDiscretePlant):
         )
 
 
-def _mixed_environment(*, semantic_tag="mixed-v1"):
+def _mixed_environment(*, semantic_tag="mixed"):
     plant = _MixedBatchedPlant(semantic_tag)
     parameters = PlantParameters(
         (),
@@ -622,7 +622,7 @@ def test_mixed_pytree_cases_never_expose_failed_candidate_and_roll_back_all_leav
 
 def test_same_shape_stale_plant_provenance_is_rejected_before_transition():
     environment = _mixed_environment()
-    stale_environment = _mixed_environment(semantic_tag="mixed-v2")
+    stale_environment = _mixed_environment(semantic_tag="mixed")
     keys = jax.random.split(jax.random.key(61), 2)
     state = environment.reset(keys, case_shape=(2,)).state
     stale = PlantRuntimeState(

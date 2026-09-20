@@ -26,13 +26,13 @@ def _benchmark(function, argument, repeats):
     return {
         "compile_and_first_seconds": first,
         "steady_seconds": (perf_counter() - start) / repeats,
-        "output_bytes": int(output.size * output.dtype.itemsize),
+        "output_bytes": output.size * output.dtype.itemsize,
     }
 
 
 def run_benchmarks(*, repeats=3):
     mps = phx.tensor_network.product_mps(
-        jnp.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=complex)
+        jnp.asarray([[1.0, 0.0], [0.0, 1.0]], dtype="complex128")
     )
     expansion = phx.operators.quantum.underdamped_brownian_two_pole(1.0, 0.2, 0.1)
     hierarchy = phx.solver.HEOMHierarchy(expansion.rank, 1)
@@ -43,7 +43,7 @@ def run_benchmarks(*, repeats=3):
             "mps_norm_environment": _benchmark(lambda state: state.norm(), mps, repeats),
             "scaled_heom_round_trip": _benchmark(
                 lambda values: scaled.unscale(scaled.scale(values)),
-                jnp.zeros((hierarchy.auxiliary_count, 2, 2), dtype=complex)
+                jnp.zeros((hierarchy.auxiliary_count, 2, 2), dtype="complex128")
                 .at[0]
                 .set(0.5 * jnp.eye(2)),
                 repeats,

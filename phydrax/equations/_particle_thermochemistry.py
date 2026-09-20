@@ -259,8 +259,8 @@ class ParticleTransportMaterialPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(schema, ChemicalSpeciesSchema):
             raise TypeError("schema must be a ChemicalSpeciesSchema.")
-        conductivity = np.asarray(thermal_conductivity, dtype=float)
-        diffusivity = np.asarray(species_diffusivity, dtype=float)
+        conductivity = np.asarray(thermal_conductivity, dtype=np.float64)
+        diffusivity = np.asarray(species_diffusivity, dtype=np.float64)
         exponent = float(tortuosity_exponent)
         if (
             conductivity.shape != (schema.species_count,)
@@ -525,11 +525,11 @@ def _evaluate_unstructured_particle_transport(
         fraction * material.transport.thermal_conductivity, axis=-1
     )
     owner = metrics.owner_cells
-    neighbour = metrics.neighbour_cells
-    safe_neighbour = jnp.maximum(neighbour, 0)
+    neighbor = metrics.neighbor_cells
+    safe_neighbor = jnp.maximum(neighbor, 0)
     interior = (~metrics.boundary_faces)[None, :] & metrics.active_faces
     conductivity_face = _harmonic_mean(
-        conductivity_cell[:, owner], conductivity_cell[:, safe_neighbour]
+        conductivity_cell[:, owner], conductivity_cell[:, safe_neighbor]
     )
     heat_conductance = (
         conductivity_face * metrics.face_measures / metrics.center_distances
@@ -539,20 +539,20 @@ def _evaluate_unstructured_particle_transport(
         heat_conductance
         * (
             thermodynamics.temperature[:, owner]
-            - thermodynamics.temperature[:, safe_neighbour]
+            - thermodynamics.temperature[:, safe_neighbor]
         ),
         0.0,
     )
     energy_rate = jnp.zeros_like(state.internal_energy)
     energy_rate = energy_rate.at[:, owner].add(-heat_flux)
-    energy_rate = energy_rate.at[:, safe_neighbour].add(heat_flux)
+    energy_rate = energy_rate.at[:, safe_neighbor].add(heat_flux)
     effective_diffusivity = (
         material.transport.species_diffusivity[None, None, :]
         * state.porosity[:, :, None] ** material.transport.tortuosity_exponent
     )
     diffusivity_face = _harmonic_mean(
         effective_diffusivity[:, owner, :],
-        effective_diffusivity[:, safe_neighbour, :],
+        effective_diffusivity[:, safe_neighbor, :],
     )
     species_conductance = (
         diffusivity_face
@@ -562,12 +562,12 @@ def _evaluate_unstructured_particle_transport(
     species_flux = jnp.where(
         interior[:, :, None],
         species_conductance
-        * (concentration[:, owner, :] - concentration[:, safe_neighbour, :]),
+        * (concentration[:, owner, :] - concentration[:, safe_neighbor, :]),
         0.0,
     )
     species_rate = jnp.zeros_like(state.species_amount)
     species_rate = species_rate.at[:, owner, :].add(-species_flux)
-    species_rate = species_rate.at[:, safe_neighbour, :].add(species_flux)
+    species_rate = species_rate.at[:, safe_neighbor, :].add(species_flux)
     boundary_faces = metrics.boundary_faces[None, :] & metrics.active_faces
     boundary_owner_temperature = thermodynamics.temperature[:, owner]
     boundary_owner_species = concentration[:, owner, :]
@@ -600,7 +600,7 @@ def _evaluate_unstructured_particle_transport(
     )
     temperature_jump = (
         thermodynamics.temperature[:, owner]
-        - thermodynamics.temperature[:, safe_neighbour]
+        - thermodynamics.temperature[:, safe_neighbor]
     )
     entropy = jnp.sum(
         jnp.where(
@@ -609,7 +609,7 @@ def _evaluate_unstructured_particle_transport(
             * temperature_jump**2
             / jnp.maximum(
                 thermodynamics.temperature[:, owner]
-                * thermodynamics.temperature[:, safe_neighbour],
+                * thermodynamics.temperature[:, safe_neighbor],
                 1.0e-30,
             ),
             0.0,
@@ -624,7 +624,7 @@ def _evaluate_unstructured_particle_transport(
             0.0,
         )
     )
-    heat_degree = heat_degree.at[:, safe_neighbour].add(
+    heat_degree = heat_degree.at[:, safe_neighbor].add(
         jnp.where(interior, heat_conductance, 0.0)
     )
     species_degree = jnp.zeros_like(state.species_amount)
@@ -637,7 +637,7 @@ def _evaluate_unstructured_particle_transport(
             0.0,
         )
     )
-    species_degree = species_degree.at[:, safe_neighbour, :].add(
+    species_degree = species_degree.at[:, safe_neighbor, :].add(
         jnp.where(interior[:, :, None], species_conductance, 0.0)
     )
     thermal_limit = jnp.where(

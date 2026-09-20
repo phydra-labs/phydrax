@@ -21,7 +21,7 @@ def _value_shape(size: int | tuple[int, ...] | Literal["scalar"], /) -> tuple[in
         return ()
     if isinstance(size, int):
         return (int(size),)
-    return tuple(int(value) for value in size)
+    return tuple(size)
 
 
 def _structured_shapes(

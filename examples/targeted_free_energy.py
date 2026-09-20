@@ -22,7 +22,7 @@ problem = phx.uq.TargetedFreeEnergyProblem(source, target, mapping)
 samples = jax.random.normal(jax.random.key(17), (1024, 1))
 evaluation = phx.uq.evaluate_targeted_work(problem, samples)
 count = samples.shape[0]
-active = jnp.ones((count,), dtype=bool)
+active = jnp.ones((count,), dtype="bool")
 work = phx.uq.ReducedWorkDataset(
     evaluation.forward_work,
     active,

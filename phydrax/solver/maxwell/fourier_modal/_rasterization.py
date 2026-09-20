@@ -79,10 +79,10 @@ class FourierModalRasterizationPlan(StrictModule, NonTrainableState):
         count = policy_.samples_per_axis
         shape = harmonics.sample_shape
         offsets = np.asarray(
-            tuple(product(*(range(count) for _ in range(2)))), dtype=float
+            tuple(product(*(range(count) for _ in range(2)))), dtype=np.float64
         )
         offsets = (offsets + 0.5) / count - 0.5
-        offsets = offsets / np.asarray(shape, dtype=float)
+        offsets = offsets / np.asarray(shape, dtype=np.float64)
         fractional = harmonics.fractional_coordinates[..., None, :] + jnp.asarray(
             offsets, dtype=harmonics.fractional_coordinates.dtype
         )

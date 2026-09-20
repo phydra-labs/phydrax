@@ -40,7 +40,7 @@ def free_euclidean_kernel(
     duration_arr = _positive_scalar("duration", duration)
     mass_arr = _positive_scalar("mass", mass)
     hbar_arr = _positive_scalar("hbar", hbar)
-    dimension = int(start.shape[-1])
+    dimension = start.shape[-1]
     displacement_sq = jnp.sum((end - start) ** 2, axis=-1)
     normalization = jnp.power(
         mass_arr / (2.0 * jnp.pi * hbar_arr * duration_arr),
@@ -101,10 +101,10 @@ def euclidean_kernel_from_noise(
     mass_arr = _positive_scalar("mass", mass)
     hbar_arr = _positive_scalar("hbar", hbar)
     start, end = _endpoints(x0, x1)
-    z = jnp.asarray(noise, dtype=float)
+    z = jnp.asarray(noise, dtype=jnp.float64)
     if z.ndim < 3:
         raise ValueError("noise must have shape (..., num_paths, num_steps, state_dim).")
-    count = int(z.shape[-3])
+    count = z.shape[-3]
     if count < 1:
         raise ValueError("noise must contain at least one path.")
     scale = free_euclidean_kernel(
@@ -179,13 +179,13 @@ def euclidean_kernel(
     num_chunks = (count + chunk - 1) // chunk
     indices = jnp.arange(num_chunks, dtype=jnp.int32)
     batch_shape = start.shape[:-1]
-    state_dim = int(start.shape[-1])
+    state_dim = start.shape[-1]
     single_path_noise_shape = batch_shape + (slicing.num_steps, state_dim)
     path_offsets = jnp.arange(chunk, dtype=jnp.int32)
     potential_key = jr.fold_in(key, count)
     initial = (
-        jnp.full(batch_shape, -jnp.inf, dtype=float),
-        jnp.full(batch_shape, -jnp.inf, dtype=float),
+        jnp.full(batch_shape, -jnp.inf, dtype=jnp.float64),
+        jnp.full(batch_shape, -jnp.inf, dtype=jnp.float64),
     )
 
     def accumulate(carry, index):

@@ -52,8 +52,7 @@ class ContractionResourcePolicy(StrictModule):
         maximum_schedule_steps: int = 100_000,
     ):
         values = tuple(
-            int(value)
-            for value in (
+            (
                 maximum_operand_elements,
                 maximum_intermediate_elements,
                 maximum_output_elements,
@@ -285,7 +284,7 @@ def plan_contraction(
     elapsed = monotonic() - started
     if elapsed > planner_.maximum_planning_seconds:
         raise TimeoutError("Contraction planning exceeded maximum_planning_seconds.")
-    path_ = tuple(tuple(int(index) for index in step) for step in path)
+    path_ = tuple(tuple(step) for step in path)
     schedule = build_contraction_schedule(structure, path_, dtype=dtype_)
     largest = max(
         (step.output_elements for step in schedule.steps), default=output_elements
@@ -347,8 +346,7 @@ def _validate_operands(plan: ContractionPlan, operands: Sequence[ArrayLike], /):
         expected = tuple(leg.dimension for leg in specification.legs)
         if array.shape != expected:
             raise ValueError(
-                f"Operand {specification.operand_id!r} expected shape {expected}; "
-                f"got {array.shape}."
+                f"Operand {specification.operand_id!r} expected shape {expected}; got {array.shape}."
             )
         if str(array.dtype) != plan.dtype:
             raise TypeError("Operand dtype differs from the contraction plan.")

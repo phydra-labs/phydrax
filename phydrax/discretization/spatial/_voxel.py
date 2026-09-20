@@ -89,7 +89,7 @@ class PreparedSparseVoxelGrid(NonTrainableState, StrictModule):
             raise ValueError(
                 f"integer_coordinates must have trailing dimension {self.dimension}."
             )
-        periodic = jnp.asarray(self.address_plan.periodic_axes, dtype=bool)
+        periodic = jnp.asarray(self.address_plan.periodic_axes, dtype=jnp.bool_)
         resolution = self.address_plan.resolution
         in_bounds_components = periodic | (
             (coordinates >= 0) & (coordinates < resolution)
@@ -380,7 +380,7 @@ class SparseVoxelGridPlan(StrictModule):
         if np.any(coordinates < 0) or np.any(coordinates >= self.address_plan.resolution):
             raise ValueError("active voxel coordinates lie outside the Morton grid.")
         unique_coordinates = np.unique(coordinates, axis=0)
-        duplicate_count = int(coordinates.shape[0] - unique_coordinates.shape[0])
+        duplicate_count = coordinates.shape[0] - unique_coordinates.shape[0]
         brick_coordinates = unique_coordinates // self.brick_size
         if self.brick_depth == 0:
             voxel_brick_codes = np.zeros((unique_coordinates.shape[0],), dtype=np.uint64)
@@ -389,11 +389,10 @@ class SparseVoxelGridPlan(StrictModule):
                 morton_encode_integer(jnp.asarray(brick_coordinates), self.brick_depth)
             )
         unique_brick_codes, inverse = np.unique(voxel_brick_codes, return_inverse=True)
-        required_bricks = int(unique_brick_codes.size)
+        required_bricks = unique_brick_codes.size
         if required_bricks > self.brick_capacity:
             raise ValueError(
-                f"Sparse voxel topology requires {required_bricks} bricks but "
-                f"capacity is {self.brick_capacity}."
+                f"Sparse voxel topology requires {required_bricks} bricks but capacity is {self.brick_capacity}."
             )
         key_upper_bound = (1 << (self.address_plan.dimension * self.brick_depth)) - 1
         brick_groups = KeyGroupPlan(
@@ -402,9 +401,11 @@ class SparseVoxelGridPlan(StrictModule):
             key_upper_bound,
         ).build(
             jnp.asarray(unique_brick_codes),
-            jnp.ones((required_bricks,), dtype=bool),
+            jnp.ones((required_bricks,), dtype=jnp.bool_),
         )
-        voxel_active = np.zeros((self.brick_capacity, self.voxels_per_brick), dtype=bool)
+        voxel_active = np.zeros(
+            (self.brick_capacity, self.voxels_per_brick), dtype=np.bool_
+        )
         local = unique_coordinates % self.brick_size
         strides = np.asarray(
             [

@@ -29,8 +29,8 @@ class LiftingFrame3D(StrictModule):
         linear_velocity: ArrayLike | None = None,
         angular_velocity: ArrayLike | None = None,
     ):
-        rotation_ = jnp.asarray(rotation, dtype=float)
-        translation_ = jnp.asarray(translation, dtype=float)
+        rotation_ = jnp.asarray(rotation, dtype=jnp.float64)
+        translation_ = jnp.asarray(translation, dtype=jnp.float64)
         linear = (
             jnp.zeros((3,), dtype=rotation_.dtype)
             if linear_velocity is None

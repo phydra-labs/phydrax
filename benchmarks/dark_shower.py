@@ -31,7 +31,7 @@ from phydrax.particle_physics._dark_shower import (
     stage_dark_shower_continuation,
 )
 from phydrax.particle_physics._events import ParticleEventPlan
-from phydrax.particle_physics._identity import ParticleCatalogueReference, ParticleRole
+from phydrax.particle_physics._identity import ParticleCatalogReference, ParticleRole
 from phydrax.particle_physics._species import ParticleSpeciesTable
 from phydrax.particle_physics._weights import EventWeightSet, WeightVariationKind
 from phydrax.solver._dark_sector_epoch_runtime import (
@@ -97,7 +97,7 @@ def _case(proposal_capacity: int):
         species_revision_id="b" * 64,
         topology_revision_id="c" * 64,
     )
-    catalogue = ParticleCatalogueReference(
+    catalog = ParticleCatalogReference(
         source_id="benchmark-dark",
         provider_release="test",
         checksum="checksum",
@@ -107,7 +107,7 @@ def _case(proposal_capacity: int):
         jnp.asarray((100, 101)),
         jnp.asarray((0.0, 0.0)),
         jnp.asarray((1.0, 0.0)),
-        catalogue=catalogue,
+        catalog=catalog,
         energy_unit=units.energy_unit,
         charge_unit=COULOMB,
     )
@@ -140,7 +140,7 @@ def _case(proposal_capacity: int):
         production_evidence_ids=("benchmark-dark-shower-control",),
     )
     event_plan = ParticleEventPlan(
-        catalogue=catalogue,
+        catalog=catalog,
         momentum_unit=units.energy_unit,
         length_unit=units.scale.dimensional_scale.length_unit,
         time_unit=units.scale.dimensional_scale.time_unit,
@@ -149,7 +149,7 @@ def _case(proposal_capacity: int):
         vertex_capacity=proposal_capacity + 1,
         provider_status_namespace="native-dark",
     ).prepare()
-    active = jnp.zeros((1, particle_capacity), dtype=bool).at[0, 0].set(True)
+    active = jnp.zeros((1, particle_capacity), dtype="bool").at[0, 0].set(True)
     pdg = jnp.zeros((1, particle_capacity), dtype=jnp.int32).at[0, 0].set(100)
     roles = (
         jnp.zeros((1, particle_capacity), dtype=jnp.int32)
@@ -179,7 +179,7 @@ def _case(proposal_capacity: int):
         end_vertex_indices=jnp.full((1, particle_capacity), -1),
         color_flow=color,
         production_vertices=jnp.zeros((1, proposal_capacity + 1, 4)),
-        vertex_active=jnp.zeros((1, proposal_capacity + 1), dtype=bool),
+        vertex_active=jnp.zeros((1, proposal_capacity + 1), dtype="bool"),
         weights=weights,
         source_id="benchmark-hard-event",
     )
@@ -210,7 +210,7 @@ def _case(proposal_capacity: int):
             "continuation_admission": continuation_seconds,
         },
         "resources": {
-            "event_slots": int(result.events.event_active.shape[0]),
+            "event_slots": result.events.event_active.shape[0],
             "accepted_branches": int(jnp.sum(result.accepted)),
             "resident_particles": int(jnp.sum(result.events.particle_active)),
             "frontier_branches": int(jnp.sum(result.frontier)),

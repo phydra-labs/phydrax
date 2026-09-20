@@ -60,7 +60,7 @@ class IGATraceProjection(StrictModule, NonTrainableState):
         constant_tolerance: float = 1.0e-12,
         projection_id: str | None = None,
     ):
-        values = np.asarray(matrix, dtype=float)
+        values = np.asarray(matrix, dtype=np.float64)
         tolerance = float(constant_tolerance)
         if values.ndim != 2 or 0 in values.shape:
             raise ValueError("IGA trace projection must be one nonempty matrix.")
@@ -75,8 +75,8 @@ class IGATraceProjection(StrictModule, NonTrainableState):
             )
         self.matrix = jnp.asarray(values)
         self.constant_reproduction_error = jnp.asarray(constant_error)
-        self.source_coefficient_count = int(values.shape[1])
-        self.trace_coefficient_count = int(values.shape[0])
+        self.source_coefficient_count = values.shape[1]
+        self.trace_coefficient_count = values.shape[0]
         self.projection_id = (
             canonical_fingerprint(
                 {
@@ -192,7 +192,7 @@ class CertifiedSplinePatchProxyPlan(StrictModule, NonTrainableState):
             raise TypeError("projection must be IGATraceProjection.")
         controls = np.asarray(patch_control_indices)
         vertex_patch = np.asarray(proxy_vertex_patch_indices)
-        error = np.asarray(patch_approximation_error, dtype=float)
+        error = np.asarray(patch_approximation_error, dtype=np.float64)
         patch_count = len(atlas.topologies)
         if (
             controls.ndim != 2
@@ -229,7 +229,7 @@ class CertifiedSplinePatchProxyPlan(StrictModule, NonTrainableState):
                 "IGA proxy projection rows must match the collision proxy vertices."
             )
         if error.shape == ():
-            error = np.full((patch_count,), float(error), dtype=float)
+            error = np.full((patch_count,), float(error), dtype=np.float64)
         if (
             error.shape != (patch_count,)
             or np.any(~np.isfinite(error))
@@ -418,7 +418,7 @@ def _dense_trace_routes(matrix: np.ndarray, /) -> tuple[np.ndarray, np.ndarray]:
     if width == 0:
         raise ValueError("Every IGA mortar quadrature row needs trace support.")
     indices = np.zeros((matrix.shape[0], width), dtype=np.int32)
-    weights = np.zeros((matrix.shape[0], width), dtype=float)
+    weights = np.zeros((matrix.shape[0], width), dtype=np.float64)
     for row, active in enumerate(supports):
         indices[row, : active.size] = active
         weights[row, : active.size] = matrix[row, active]
@@ -431,7 +431,7 @@ def _bspline_basis_matrix(
     points: np.ndarray,
     /,
 ) -> np.ndarray:
-    knot = np.asarray(knots, dtype=float)
+    knot = np.asarray(knots, dtype=np.float64)
     p = int(degree)
     if (
         knot.ndim != 1
@@ -447,11 +447,11 @@ def _bspline_basis_matrix(
         raise ValueError("IGA mortar quadrature leaves the active knot domain.")
     basis = (
         (points[:, None] >= knot[:-1][None, :]) & (points[:, None] < knot[1:][None, :])
-    ).astype(float)
+    ).astype("float64")
     endpoint = points == upper
     for order in range(1, p + 1):
         width = knot.size - order - 1
-        updated = np.zeros((points.size, width), dtype=float)
+        updated = np.zeros((points.size, width), dtype=np.float64)
         for index in range(width):
             left_denominator = knot[index + order] - knot[index]
             right_denominator = knot[index + order + 1] - knot[index + 1]
@@ -488,7 +488,7 @@ def _tensor_basis_matrix(
         result = (result[:, :, None] * axis[:, None, :]).reshape((points.shape[0], -1))
     if rational_weights is None:
         return result
-    weights = np.asarray(rational_weights, dtype=float).reshape((-1,))
+    weights = np.asarray(rational_weights, dtype=np.float64).reshape((-1,))
     if (
         weights.shape != (result.shape[1],)
         or np.any(~np.isfinite(weights))
@@ -507,7 +507,7 @@ def _common_quadrature(
     quadrature_order: int,
     /,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    breaks = tuple(np.asarray(axis, dtype=float) for axis in axis_breaks)
+    breaks = tuple(np.asarray(axis, dtype=np.float64) for axis in axis_breaks)
     order = int(quadrature_order)
     if order <= 0 or not breaks or len(breaks) > 2:
         raise ValueError(
@@ -549,10 +549,10 @@ def _common_quadrature(
             quadrature_weights.append(measure)
             cells.append(cell_id)
     return (
-        np.asarray(points, dtype=float),
-        np.asarray(quadrature_weights, dtype=float),
+        np.asarray(points, dtype=np.float64),
+        np.asarray(quadrature_weights, dtype=np.float64),
         np.asarray(cells, dtype=np.int32),
-        np.asarray(bounds, dtype=float),
+        np.asarray(bounds, dtype=np.float64),
     )
 
 
@@ -607,13 +607,13 @@ class IGACommonRefinementMortarPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "IGA mortar participants must be distinct overlay participants."
             )
-        plus = np.asarray(plus_basis, dtype=float)
-        minus = np.asarray(minus_basis, dtype=float)
-        points = np.asarray(parameter_points, dtype=float)
+        plus = np.asarray(plus_basis, dtype=np.float64)
+        minus = np.asarray(minus_basis, dtype=np.float64)
+        points = np.asarray(parameter_points, dtype=np.float64)
         cells = np.asarray(cell_indices)
-        bounds = np.asarray(cell_parameter_bounds, dtype=float)
-        normal = np.asarray(reference_normal, dtype=float)
-        measure = np.asarray(quadrature_weight, dtype=float)
+        bounds = np.asarray(cell_parameter_bounds, dtype=np.float64)
+        normal = np.asarray(reference_normal, dtype=np.float64)
+        measure = np.asarray(quadrature_weight, dtype=np.float64)
         if plus.ndim != 2 or minus.ndim != 2 or plus.shape[0] != minus.shape[0]:
             raise ValueError("IGA mortar basis evaluations must be matching matrices.")
         capacity = plus.shape[0]
@@ -652,7 +652,9 @@ class IGACommonRefinementMortarPlan(StrictModule, NonTrainableState):
             raise ValueError("IGA mortar quadrature data must be finite and positive.")
         plus_error = np.max(np.abs(plus.sum(axis=1) - 1.0), initial=0.0)
         minus_error = np.max(np.abs(minus.sum(axis=1) - 1.0), initial=0.0)
-        tolerance = 256.0 * np.finfo(float).eps * max(1, plus.shape[1], minus.shape[1])
+        tolerance = (
+            256.0 * np.finfo(np.float64).eps * max(1, plus.shape[1], minus.shape[1])
+        )
         if plus_error > tolerance or minus_error > tolerance:
             raise ValueError("IGA mortar basis must reproduce constants.")
         plus_indices, plus_weights = _dense_trace_routes(plus)
@@ -738,8 +740,8 @@ class IGACommonRefinementMortarPlan(StrictModule, NonTrainableState):
             raise TypeError("overlay must be IntegrationOverlay.")
         plus_knot_values = tuple(plus_knots)
         minus_knot_values = tuple(minus_knots)
-        plus_degree_values = tuple(int(value) for value in plus_degrees)
-        minus_degree_values = tuple(int(value) for value in minus_degrees)
+        plus_degree_values = tuple(plus_degrees)
+        minus_degree_values = tuple(minus_degrees)
         dimension = len(plus_knot_values)
         if (
             dimension not in (1, 2)
@@ -757,8 +759,8 @@ class IGACommonRefinementMortarPlan(StrictModule, NonTrainableState):
             minus_degree_values,
             strict=True,
         ):
-            plus_axis = np.asarray(plus_knot, dtype=float)
-            minus_axis = np.asarray(minus_knot, dtype=float)
+            plus_axis = np.asarray(plus_knot, dtype=np.float64)
+            minus_axis = np.asarray(minus_knot, dtype=np.float64)
             if (
                 plus_degree < 0
                 or minus_degree < 0
@@ -805,21 +807,21 @@ class IGACommonRefinementMortarPlan(StrictModule, NonTrainableState):
         normal = (
             np.asarray(
                 cast(Callable[[np.ndarray], ArrayLike], reference_normal)(points),
-                dtype=float,
+                dtype=np.float64,
             )
             if callable(reference_normal)
-            else np.asarray(reference_normal, dtype=float)
+            else np.asarray(reference_normal, dtype=np.float64)
         )
         jacobian = (
             np.asarray(
                 cast(Callable[[np.ndarray], ArrayLike], surface_jacobian)(points),
-                dtype=float,
+                dtype=np.float64,
             )
             if callable(surface_jacobian)
-            else np.asarray(surface_jacobian, dtype=float)
+            else np.asarray(surface_jacobian, dtype=np.float64)
         )
         if jacobian.shape == ():
-            jacobian = np.full((points.shape[0],), float(jacobian), dtype=float)
+            jacobian = np.full((points.shape[0],), float(jacobian), dtype=np.float64)
         if (
             jacobian.shape != (points.shape[0],)
             or np.any(~np.isfinite(jacobian))

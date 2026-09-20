@@ -346,7 +346,7 @@ class MeshArrayArtifact:
             and np.asarray(vertex_coordinates).dtype.kind not in "iuf"
         ):
             raise TypeError("Vertex coordinates must contain real numeric coordinates.")
-        coordinates = np.array(points, dtype=float, copy=True)
+        coordinates = np.array(points, dtype=np.float64, copy=True)
         identifiers = _entity_ids(point_global_ids, "Point IDs")
         blocks_ = tuple(blocks)
         fields_ = tuple(fields)
@@ -502,7 +502,7 @@ class MeshArrayArtifact:
         vertex_points = (
             None
             if vertex_coordinates is None
-            else np.array(vertex_coordinates, dtype=float, copy=True)
+            else np.array(vertex_coordinates, dtype=np.float64, copy=True)
         )
         if vertex_points is not None:
             if (

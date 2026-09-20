@@ -357,7 +357,7 @@ class PreparedActivationNetwork(StrictModule, NonTrainableState):
 
     @property
     def transition_count(self) -> int:
-        return int(self.decay_rates_s.shape[0])
+        return self.decay_rates_s.shape[0]
 
     def inventory(
         self, amounts_mol: ArrayLike, time_s: ArrayLike = 0.0, /
@@ -566,7 +566,7 @@ class IrradiationSchedulePlan:
             times.append(current.time_s)
             successful.append(chain_valid)
         success = jnp.stack(successful)
-        prefix = jnp.cumprod(success.astype(jnp.int32)).astype(bool)
+        prefix = jnp.cumprod(success.astype(jnp.int32)).astype("bool")
         return ActivationScheduleResult(
             jnp.stack(amounts),
             jnp.stack(times),

@@ -29,7 +29,7 @@ def _problem():
         ),
         tetrahedra=np.asarray(((0, 1, 2, 3), (0, 2, 1, 4))),
     ).prepare()
-    exterior = np.flatnonzero(np.asarray(discretization.neighbour_cells) < 0)
+    exterior = np.flatnonzero(np.asarray(discretization.neighbor_cells) < 0)
     pressure_boundary = porous.PorousBoundaryConditions(
         discretization,
         pressure_Pa={int(face): -2.0e4 for face in exterior},

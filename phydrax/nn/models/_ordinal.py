@@ -54,7 +54,7 @@ class OrdinalCumulativeLinkHead(AbstractArrayModel):
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         location = jnp.asarray(self.location_model(x, key=key))
-        if location.ndim >= 1 and int(location.shape[-1]) == 1:
+        if location.ndim >= 1 and location.shape[-1] == 1:
             location = location[..., 0]
         return self.cutpoints() - location[..., None]
 

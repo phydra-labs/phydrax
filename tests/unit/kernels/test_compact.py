@@ -121,6 +121,7 @@ def test_tolerance_near_sphere_points_are_canonicalized_before_expansion():
     with pytest.raises(ValueError, match="one sphere point"):
         kernel.pairwise(points[:2], points[0])
 
+
 def test_sphere_kernel_binds_spherical_discretization_radius_and_bandlimit():
     space = phx.discretization.SphericalSpectralPlan(4).prepare(radius=2.0)
     kernel = phx.kernels.SphereSpectralKernel.from_discretization(

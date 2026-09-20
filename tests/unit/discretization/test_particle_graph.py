@@ -46,13 +46,13 @@ def _compiled_pair():
             box,
         ),
     )
-    position = (jnp.arange(count, dtype=float) + 0.5)[:, None] * spacing
+    position = (jnp.arange(count, dtype="float64") + 0.5)[:, None] * spacing
     position = position + 0.01 * spacing * jnp.sin(2.0 * jnp.pi * position)
     return dense, cell, position
 
 
 def _edge_ids(graph):
-    mask = np.asarray(graph.edge_mask, dtype=bool)
+    mask = np.asarray(graph.edge_mask, dtype="bool")
     left = np.asarray(graph.edges["left_particle_id"])[mask, 0]
     right = np.asarray(graph.edges["right_particle_id"])[mask, 0]
     return set(zip(left.tolist(), right.tolist(), strict=True))

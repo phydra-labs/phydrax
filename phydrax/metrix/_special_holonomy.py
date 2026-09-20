@@ -110,10 +110,10 @@ class LocalSUNValidationReport(StrictModule):
         maximum_volume_normalization_residual: ArrayLike,
         maximum_ricci_residual: ArrayLike,
     ):
-        self.valid = jnp.asarray(valid, dtype=bool)
-        self.kahler_valid = jnp.asarray(kahler_valid, dtype=bool)
-        self.volume_closed = jnp.asarray(volume_closed, dtype=bool)
-        self.volume_nonvanishing = jnp.asarray(volume_nonvanishing, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
+        self.kahler_valid = jnp.asarray(kahler_valid, dtype=jnp.bool_)
+        self.volume_closed = jnp.asarray(volume_closed, dtype=jnp.bool_)
+        self.volume_nonvanishing = jnp.asarray(volume_nonvanishing, dtype=jnp.bool_)
         self.maximum_closure_residual = jnp.asarray(maximum_closure_residual)
         self.minimum_volume_norm = jnp.asarray(minimum_volume_norm)
         self.maximum_compatibility_residual = jnp.asarray(maximum_compatibility_residual)
@@ -351,13 +351,13 @@ class OctonionG2Bridge(StrictModule):
         self.product = algebra.prepare_product(backend="sparse")
         self.coefficients = jnp.asarray(
             [float(value) for value in coefficients],
-            dtype=float,
+            dtype=jnp.float64,
         )
         self.imaginary_basis_indices = imaginary
         self.orientation = int(orientation)
         self.bridge_id = canonical_fingerprint(
             {
-                "kind": "octonion-g2-bridge-v1",
+                "kind": "octonion-g2-bridge",
                 "algebra": algebra.algebra_id,
                 "basis": list(imaginary),
                 "chart": {
@@ -460,15 +460,15 @@ class LocalG2ValidationReport(StrictModule):
         required_torsion_free: bool,
         required_ricci_flat: bool,
     ):
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.algebraically_compatible = jnp.asarray(
             algebraically_compatible,
-            dtype=bool,
+            dtype=jnp.bool_,
         )
-        self.closed = jnp.asarray(closed, dtype=bool)
-        self.coclosed = jnp.asarray(coclosed, dtype=bool)
-        self.torsion_free = jnp.asarray(torsion_free, dtype=bool)
-        self.ricci_flat = jnp.asarray(ricci_flat, dtype=bool)
+        self.closed = jnp.asarray(closed, dtype=jnp.bool_)
+        self.coclosed = jnp.asarray(coclosed, dtype=jnp.bool_)
+        self.torsion_free = jnp.asarray(torsion_free, dtype=jnp.bool_)
+        self.ricci_flat = jnp.asarray(ricci_flat, dtype=jnp.bool_)
         self.maximum_metric_compatibility_residual = jnp.asarray(
             maximum_metric_compatibility_residual
         )
@@ -610,7 +610,7 @@ class G2DerivationInvarianceReport(StrictModule):
         derivation_plan_id: str,
         tolerance: float,
     ):
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.derivation_dimension = jnp.asarray(
             derivation_dimension,
             dtype=jnp.int32,

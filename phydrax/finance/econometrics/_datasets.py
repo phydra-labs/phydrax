@@ -297,16 +297,16 @@ def prepare_point_in_time_panel(
     definition = resolved.definition
     series_count = len(definition.quote_keys)
     capacity = definition.capacity
-    values = np.zeros((series_count, capacity), dtype=float)
-    valid = np.zeros((series_count, capacity), dtype=bool)
+    values = np.zeros((series_count, capacity), dtype=np.float64)
+    valid = np.zeros((series_count, capacity), dtype=np.bool_)
     event = np.zeros((series_count, capacity), dtype=np.int64)
     published = np.zeros((series_count, capacity), dtype=np.int64)
     received = np.zeros((series_count, capacity), dtype=np.int64)
     available = np.zeros((series_count, capacity), dtype=np.int64)
     observation_ids: list[tuple[str, ...]] = []
     vintage_ids: list[tuple[str, ...]] = []
-    overflow = np.zeros((series_count,), dtype=bool)
-    admissible = np.ones((series_count,), dtype=bool)
+    overflow = np.zeros((series_count,), dtype=np.bool_)
+    admissible = np.ones((series_count,), dtype=np.bool_)
     for series, observations in enumerate(resolved.observations):
         overflow[series] = len(observations) > capacity
         chosen = observations[:capacity]
@@ -448,9 +448,9 @@ def prepare_market_event_stream(
     capacity = definition.capacity
     overflow = len(selected) > capacity
     chosen = selected[:capacity]
-    values = np.zeros((capacity,), dtype=float)
+    values = np.zeros((capacity,), dtype=np.float64)
     channels = np.zeros((capacity,), dtype=np.int32)
-    valid = np.zeros((capacity,), dtype=bool)
+    valid = np.zeros((capacity,), dtype=np.bool_)
     clocks = [np.zeros((capacity,), dtype=np.int64) for _ in range(4)]
     observation_ids = [""] * capacity
     vintage_ids = [""] * capacity

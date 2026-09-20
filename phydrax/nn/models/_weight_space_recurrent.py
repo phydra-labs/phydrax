@@ -54,14 +54,13 @@ class FunctionalStateDecoder(StrictModule):
         parameter_states = jnp.asarray(states)
         if (
             parameter_states.ndim < 2
-            or int(parameter_states.shape[-1]) != self.subspace.total_dimension
+            or parameter_states.shape[-1] != self.subspace.total_dimension
         ):
             raise ValueError(
-                "states must have case and sequence axes followed by the selected "
-                "parameter dimension."
+                "states must have case and sequence axes followed by the selected parameter dimension."
             )
-        case_shape = tuple(int(size) for size in parameter_states.shape[:-2])
-        sequence_length = int(parameter_states.shape[-2])
+        case_shape = tuple(parameter_states.shape[:-2])
+        sequence_length = parameter_states.shape[-2]
         query_values = jnp.asarray(queries)
         if (
             self.query_size == 1
@@ -69,11 +68,11 @@ class FunctionalStateDecoder(StrictModule):
             and (query_values.ndim == 1 or query_values.shape[-1] != 1)
         ):
             query_values = query_values[..., None]
-        if query_values.ndim < 2 or int(query_values.shape[-1]) != self.query_size:
+        if query_values.ndim < 2 or query_values.shape[-1] != self.query_size:
             raise ValueError(
                 f"queries must end in coordinate width {self.query_size}; got {query_values.shape}."
             )
-        query_count = int(query_values.shape[-2])
+        query_count = query_values.shape[-2]
         if query_values.shape[:-2] == ():
             query_values = jnp.broadcast_to(
                 query_values,

@@ -9,9 +9,9 @@ import numpy as np
 import pytest
 
 import phydrax.applications.battery as battery
-from phydrax.applications.battery._ageing_empirical import (
-    EmpiricalAgeingSupport,
-    EmpiricalAgeingTopology,
+from phydrax.applications.battery._aging_empirical import (
+    EmpiricalAgingSupport,
+    EmpiricalAgingTopology,
 )
 from phydrax.applications.battery._calibration import BatteryCalibrationFailurePolicy
 from phydrax.applications.battery._current_control import (
@@ -342,17 +342,17 @@ def test_private_model_candidates_execute_their_native_physics_boundaries():
 
 
 def test_private_workflow_contracts_retain_real_content_boundaries():
-    ageing_support = EmpiricalAgeingSupport(
+    aging_support = EmpiricalAgingSupport(
         (273.15, 333.15),
         (0.0, 1.0),
         (0.0, 20.0),
         (0.0, 1.0e9),
         maximum_time_gap_s=60.0,
         maximum_macrostep_s=3600.0,
-        source_id="integration:empirical-ageing",
+        source_id="integration:empirical-aging",
     )
-    ageing = EmpiricalAgeingTopology(ageing_support, 3)
-    assert ageing.topology_id
+    aging = EmpiricalAgingTopology(aging_support, 3)
+    assert aging.topology_id
 
     calibration_policy = BatteryCalibrationFailurePolicy()
     assert calibration_policy.policy_id

@@ -15,7 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ...linalg import DenseLinearOperator, FactorizationPolicy, factorize, RankPolicy
 from ...optim import (
     least_squares,
@@ -63,14 +63,14 @@ def _schedule_arrays(
     end = jnp.asarray(end_times)
     payment = jnp.asarray(payment_times)
     accrual = jnp.asarray(accrual_fractions)
-    mask = jnp.asarray(valid, dtype=bool)
+    mask = jnp.asarray(valid, dtype=jnp.bool_)
     if not all(array.ndim == 1 for array in (start, end, payment, accrual, mask)):
         raise ValueError("Bootstrap schedule arrays must be rank one.")
     if not (start.shape == end.shape == payment.shape == accrual.shape == mask.shape):
         raise ValueError("Bootstrap schedule arrays must have identical shapes.")
     concrete = tuple(np.asarray(array) for array in (start, end, payment, accrual, mask))
     start_np, end_np, payment_np, accrual_np, mask_np = concrete
-    active = mask_np.astype(bool)
+    active = mask_np.astype("bool")
     if np.any(~np.isfinite(start_np[active])) or np.any(start_np[active] < 0.0):
         raise ValueError("Active schedule start times must be finite and nonnegative.")
     if np.any(~np.isfinite(end_np[active])) or np.any(end_np[active] <= start_np[active]):
@@ -529,8 +529,7 @@ def _validate_plan_inputs(
         missing = set(_required_curve_ids(instrument)).difference(curve_ids)
         if missing:
             raise ValueError(
-                f"Bootstrap instrument {_instrument_id(instrument)!r} references "
-                f"unknown curves {sorted(missing)!r}."
+                f"Bootstrap instrument {_instrument_id(instrument)!r} references unknown curves {sorted(missing)!r}."
             )
     if len(initial_) != len(definitions_):
         raise ValueError("initial_node_values must contain one array per curve.")
@@ -634,11 +633,11 @@ def _model_quotes(
 class AbstractCurveBootstrapPlan(StrictModule):
     """Shared typed bootstrap execution without storing an opaque residual callable."""
 
-    definitions: AbstractAttribute[tuple[CurveDefinition, ...]]
-    instruments: AbstractAttribute[tuple[BootstrapInstrument, ...]]
-    initial_node_values: AbstractAttribute[tuple[Array, ...]]
-    solver_policy: AbstractAttribute[BootstrapSolverPolicy]
-    quote_ids: AbstractAttribute[tuple[str, ...]]
+    definitions: eqx.AbstractVar[tuple[CurveDefinition, ...]]
+    instruments: eqx.AbstractVar[tuple[BootstrapInstrument, ...]]
+    initial_node_values: eqx.AbstractVar[tuple[Array, ...]]
+    solver_policy: eqx.AbstractVar[BootstrapSolverPolicy]
+    quote_ids: eqx.AbstractVar[tuple[str, ...]]
 
     @property
     def topology_key(self) -> tuple[Any, ...]:
@@ -723,7 +722,7 @@ class AbstractCurveBootstrapPlan(StrictModule):
             ),
         )
         singular_values = factorization.singular_values()
-        free_count = int(fitted_raw.shape[0])
+        free_count = fitted_raw.shape[0]
         independent = (len(self.instruments) >= free_count) & (
             jnp.sum(singular_values > policy.rank_tolerance) == free_count
         )
@@ -892,9 +891,9 @@ class CurveBootstrapResult(StrictModule):
         self.optimizer_status = jnp.asarray(optimizer_status, dtype=jnp.int32)
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32)
         self.jacobian_rank = jnp.asarray(jacobian_rank, dtype=jnp.int32)
-        self.independent = jnp.asarray(independent, dtype=bool)
-        self.repriced = jnp.asarray(repriced, dtype=bool)
-        self.successful = jnp.asarray(successful, dtype=bool)
+        self.independent = jnp.asarray(independent, dtype=jnp.bool_)
+        self.repriced = jnp.asarray(repriced, dtype=jnp.bool_)
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_)
 
     @property
     def maximum_absolute_repricing_error(self) -> Array:

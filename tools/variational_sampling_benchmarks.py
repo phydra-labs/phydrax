@@ -98,8 +98,8 @@ def gram_benchmark(*, samples: int, parameters: int):
         "compile_and_first_seconds": compile_seconds,
         "steady_action_seconds": steady_seconds,
         "dense_materialization_seconds": dense_seconds,
-        "matrix_free_storage_bytes": int(matrix.nbytes + weights.nbytes),
-        "dense_storage_bytes": int(dense.nbytes),
+        "matrix_free_storage_bytes": matrix.nbytes + weights.nbytes,
+        "dense_storage_bytes": dense.nbytes,
         "dense_action_residual": float(residual),
         "output_norm": float(jnp.linalg.norm(first)),
     }
@@ -126,7 +126,7 @@ def _ising_operator():
         return phx.operators.ConnectedConfigurations(
             values,
             -0.5 * jnp.ones(shape),
-            jnp.ones(shape, dtype=bool),
+            jnp.ones(shape, dtype="bool"),
             configuration_shape=(2,),
         )
 
@@ -221,7 +221,7 @@ def _spin_chain_operator(num_sites: int, *, coupling: float, field: float):
         return phx.operators.ConnectedConfigurations(
             values,
             -field * jnp.ones(shape),
-            jnp.ones(shape, dtype=bool),
+            jnp.ones(shape, dtype="bool"),
             configuration_shape=(num_sites,),
         )
 
@@ -320,7 +320,7 @@ def spin_chain_benchmark(
         "num_chains": num_chains,
         "draws": draws,
         "iterations": iterations,
-        "parameters": int(state.parameter_coordinates.size),
+        "parameters": state.parameter_coordinates.size,
         "sampler_seconds": sampler_seconds,
         "local_energy_seconds": local_energy_seconds,
         "geometry_action_seconds": geometry_seconds,

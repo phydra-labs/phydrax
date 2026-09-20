@@ -61,15 +61,13 @@ class ParameterMirrorGeometry(StrictModule):
         missing = tuple(sorted(requested - available))
         if missing:
             raise ValueError(
-                f"Unknown ParameterMirrorGeometry leaf paths {missing}; available "
-                f"paths are {paths}."
+                f"Unknown ParameterMirrorGeometry leaf paths {missing}; available paths are {paths}."
             )
         requested_weights = {} if weights is None else dict(weights)
         unknown_weights = tuple(sorted(set(requested_weights) - requested))
         if unknown_weights:
             raise ValueError(
-                "ParameterMirrorGeometry weights may select only Legendre-bound "
-                f"leaves; got {unknown_weights}."
+                f"ParameterMirrorGeometry weights may select only Legendre-bound leaves; got {unknown_weights}."
             )
 
         leaf_geometries: list[LegendreGeometry | None] = []
@@ -85,29 +83,24 @@ class ParameterMirrorGeometry(StrictModule):
             geometry = geometries[path]
             if not isinstance(geometry, LegendreGeometry):
                 raise TypeError(
-                    f"ParameterMirrorGeometry leaf {path} must be bound to a "
-                    "LegendreGeometry."
+                    f"ParameterMirrorGeometry leaf {path} must be bound to a LegendreGeometry."
                 )
             if not jnp.issubdtype(point.dtype, jnp.floating):
                 raise TypeError(
-                    f"Mirror parameter leaf {path} must use real floating-point "
-                    "coordinates."
+                    f"Mirror parameter leaf {path} must use real floating-point coordinates."
                 )
             if point.ndim < 1 or shape[-1] != geometry.dimension:
                 raise ValueError(
-                    f"Mirror parameter leaf {path} must have trailing dimension "
-                    f"{geometry.dimension}, got {shape}."
+                    f"Mirror parameter leaf {path} must have trailing dimension {geometry.dimension}, got {shape}."
                 )
-            membership = jnp.asarray(geometry.primal_contains(point), dtype=bool)
+            membership = jnp.asarray(geometry.primal_contains(point), dtype=jnp.bool_)
             if membership.shape != point.shape[:-1]:
                 raise ValueError(
-                    f"Legendre geometry {geometry.geometry_id!r} membership must "
-                    "preserve leading parameter axes."
+                    f"Legendre geometry {geometry.geometry_id!r} membership must preserve leading parameter axes."
                 )
             if not bool(jax.device_get(jnp.all(membership))):
                 raise ValueError(
-                    f"Initial parameter leaf {path} is outside "
-                    f"{geometry.geometry_id!r}."
+                    f"Initial parameter leaf {path} is outside {geometry.geometry_id!r}."
                 )
             weight = jnp.asarray(
                 requested_weights.get(path, 1.0),
@@ -119,8 +112,7 @@ class ParameterMirrorGeometry(StrictModule):
                 )
             if not bool(jax.device_get(jnp.isfinite(weight) & (weight > 0.0))):
                 raise ValueError(
-                    f"ParameterMirrorGeometry weight for {path} must be finite "
-                    "and positive."
+                    f"ParameterMirrorGeometry weight for {path} must be finite and positive."
                 )
             leaf_geometries.append(geometry)
             selected_indices.append(index)
@@ -158,9 +150,7 @@ class ParameterMirrorGeometry(StrictModule):
     @property
     def geometry_ids(self) -> tuple[str, ...]:
         return tuple(
-            geometry.geometry_id
-            for geometry in self.geometries
-            if geometry is not None
+            geometry.geometry_id for geometry in self.geometries if geometry is not None
         )
 
     def _validated_leaves(self, tree: PyTree[Any], name: str, /) -> list[Array]:
@@ -186,7 +176,7 @@ class ParameterMirrorGeometry(StrictModule):
                 if geometry is None
                 else jnp.all(geometry.primal_contains(point))
             )
-            membership = membership & jnp.asarray(leaf_membership, dtype=bool)
+            membership = membership & jnp.asarray(leaf_membership, dtype=jnp.bool_)
         return membership
 
     def constraint_residuals(
@@ -298,9 +288,7 @@ class ParameterMirrorGeometry(StrictModule):
                     jnp.vdot(left_leaf - right_leaf, left_leaf - right_leaf)
                 )
             else:
-                value = jnp.sum(
-                    geometry.bregman_divergence(left_leaf, right_leaf)
-                )
+                value = jnp.sum(geometry.bregman_divergence(left_leaf, right_leaf))
             divergence = divergence + jnp.asarray(weight, dtype=value.dtype) * value
         return jnp.real(divergence)
 

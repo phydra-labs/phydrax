@@ -37,8 +37,8 @@ class LogicalPatchBox(StrictModule, NonTrainableState):
         /,
     ):
         level_ = int(level)
-        lower_ = tuple(int(value) for value in lower)
-        upper_ = tuple(int(value) for value in upper)
+        lower_ = tuple(lower)
+        upper_ = tuple(upper)
         if level_ < 0 or not lower_ or len(lower_) != len(upper_):
             raise ValueError("Logical patch box level and bounds must be valid.")
         if any(
@@ -72,7 +72,7 @@ class LogicalPatchBox(StrictModule, NonTrainableState):
         return prod(self.extent)
 
     def contains_cell(self, coordinate: Sequence[int], /) -> bool:
-        values = tuple(int(value) for value in coordinate)
+        values = tuple(coordinate)
         return len(values) == self.dimension and all(
             start <= value < stop
             for value, start, stop in zip(values, self.lower, self.upper, strict=True)
@@ -150,9 +150,7 @@ class LogicalPatchBox(StrictModule, NonTrainableState):
 
     def grow(self, widths: int | Sequence[int], /) -> "LogicalPatchBox":
         widths_ = (
-            (int(widths),) * self.dimension
-            if isinstance(widths, int)
-            else tuple(int(value) for value in widths)
+            (int(widths),) * self.dimension if isinstance(widths, int) else tuple(widths)
         )
         if len(widths_) != self.dimension or any(value < 0 for value in widths_):
             raise ValueError("Patch growth widths must be non-negative and axis-aligned.")
@@ -208,16 +206,16 @@ class PatchShapeSignature(StrictModule, NonTrainableState):
         halo_width: int | Sequence[int] = 1,
         alignment: int | Sequence[int] = 1,
     ):
-        shape = tuple(int(value) for value in envelope_shape)
+        shape = tuple(envelope_shape)
         halo = (
             (int(halo_width),) * len(shape)
             if isinstance(halo_width, int)
-            else tuple(int(value) for value in halo_width)
+            else tuple(halo_width)
         )
         alignment_ = (
             (int(alignment),) * len(shape)
             if isinstance(alignment, int)
-            else tuple(int(value) for value in alignment)
+            else tuple(alignment)
         )
         if (
             not shape
@@ -244,7 +242,7 @@ class PatchShapeSignature(StrictModule, NonTrainableState):
         )
 
     def admits(self, extent: Sequence[int], /) -> bool:
-        values = tuple(int(value) for value in extent)
+        values = tuple(extent)
         return len(values) == len(self.envelope_shape) and all(
             0 < value <= envelope and value % alignment == 0
             for value, envelope, alignment in zip(
@@ -293,8 +291,8 @@ class BlockHierarchyCapacityPlan(StrictModule, NonTrainableState):
         route_capacities: Sequence[int],
         /,
     ):
-        entities = tuple(tuple(int(value) for value in row) for row in entity_capacities)
-        routes = tuple(int(value) for value in route_capacities)
+        entities = tuple(tuple(row) for row in entity_capacities)
+        routes = tuple(route_capacities)
         if (
             not entities
             or any(not row or any(value <= 0 for value in row) for row in entities)

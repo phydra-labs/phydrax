@@ -284,7 +284,7 @@ def test_rejects_inverted_airgap_source_and_out_of_domain_geometry():
     with pytest.raises(ValueError, match="topology"):
         MachineAngleStudy((machine, different_topology), ((-5.0, 1.0),) * 2)
     with pytest.raises(ValueError, match="source-free"):
-        _rebuild(machine, mesh, airgap_cells=np.ones(len(cells), dtype=bool))
+        _rebuild(machine, mesh, airgap_cells=np.ones(len(cells), dtype="bool"))
     with pytest.raises(ValueError, match="airgap"):
         polar_machine(rotor_radius_bounds=(0.024, 0.041))
     with pytest.raises(ValueError, match="too thin"):

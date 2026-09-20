@@ -152,8 +152,7 @@ class PeriodicEwaldPolicy3D(StrictModule, NonTrainableState):
             raise ValueError("splitting_parameter must be finite and positive.")
         if real < 0 or reciprocal < 0 or exact < 0 or exact > real:
             raise ValueError(
-                "Ewald cutoffs must be nonnegative and exact_image_cutoff "
-                "must not exceed real_cutoff."
+                "Ewald cutoffs must be nonnegative and exact_image_cutoff must not exceed real_cutoff."
             )
         if order < 2:
             raise ValueError("quadrature_order must be at least two.")
@@ -186,7 +185,7 @@ class PeriodicEwaldPolicy3D(StrictModule, NonTrainableState):
         self.precision = precision_
         self.policy_id = canonical_fingerprint(
             {
-                "kind": "periodic-ewald-policy-3d-v1",
+                "kind": "periodic-ewald-policy-3d",
                 "eta": eta,
                 "cutoffs": (real, reciprocal, exact),
                 "quadrature_order": order,
@@ -281,8 +280,7 @@ class PeriodicScalarDP0Operator3D(StrictModule, NonTrainableState):
             )
             if not bool(jnp.abs(charge) <= tolerance):
                 raise PeriodicScalarCompatibilityError(
-                    "The zero-Bloch periodic Laplace single layer requires "
-                    "zero total DP0 charge."
+                    "The zero-Bloch periodic Laplace single layer requires zero total DP0 charge."
                 )
         return value
 
@@ -350,9 +348,9 @@ def _integer_cube(cutoff: int) -> np.ndarray:
 
 def _validated_bloch_wavevector(bloch_wavevector: ArrayLike | None) -> np.ndarray:
     value = (
-        np.zeros((3,), dtype=float)
+        np.zeros((3,), dtype=np.float64)
         if bloch_wavevector is None
-        else np.asarray(bloch_wavevector, dtype=float)
+        else np.asarray(bloch_wavevector, dtype=np.float64)
     )
     if value.shape != (3,) or np.any(~np.isfinite(value)):
         raise ValueError("bloch_wavevector must be a finite vector of shape (3,).")
@@ -364,7 +362,7 @@ def _reduced_bloch_wavevector(
 ) -> np.ndarray:
     cell_ = _require_periodic_cell_3d(cell)
     value = _validated_bloch_wavevector(bloch_wavevector)
-    reciprocal = np.asarray(periodic_reciprocal_vectors_3d(cell_), dtype=float)
+    reciprocal = np.asarray(periodic_reciprocal_vectors_3d(cell_), dtype=np.float64)
     coordinates = np.linalg.solve(reciprocal.T, value)
     reduced_coordinates = coordinates - np.floor(coordinates + 0.5)
     return reduced_coordinates @ reciprocal
@@ -398,15 +396,15 @@ def _ewald_green_host(
     subtract_central_laplace: bool,
     remove_zero_mode: bool,
 ) -> _EwaldEvaluation:
-    vectors = np.asarray(displacements, dtype=float)
+    vectors = np.asarray(displacements, dtype=np.float64)
     if vectors.shape[-1:] != (3,):
         raise ValueError("Ewald displacements must have trailing shape (3,).")
     original_shape = vectors.shape[:-1]
     flat = vectors.reshape((-1, 3))
     cell_ = _require_periodic_cell_3d(cell)
-    lattice = np.asarray(cell_.vectors, dtype=float)
-    inverse_lattice = np.asarray(cell_.inverse_vectors, dtype=float)
-    reciprocal = np.asarray(periodic_reciprocal_vectors_3d(cell_), dtype=float)
+    lattice = np.asarray(cell_.vectors, dtype=np.float64)
+    inverse_lattice = np.asarray(cell_.inverse_vectors, dtype=np.float64)
+    reciprocal = np.asarray(periodic_reciprocal_vectors_3d(cell_), dtype=np.float64)
     eta = policy.splitting_parameter
     real_count = (2 * policy.real_cutoff + 1) ** 3
     reciprocal_count = (2 * policy.reciprocal_cutoff + 1) ** 3
@@ -422,7 +420,7 @@ def _ewald_green_host(
         fractional = flat @ inverse_lattice
         nearest_images = np.rint(fractional) @ lattice
         singular_scale = max(float(np.linalg.norm(lattice, ord=2)), 1.0)
-        singular_tolerance = 64.0 * np.finfo(float).eps * singular_scale
+        singular_tolerance = 64.0 * np.finfo(np.float64).eps * singular_scale
         if np.any(np.linalg.norm(flat - nearest_images, axis=1) <= singular_tolerance):
             raise ValueError(
                 "The periodic scalar Green function is singular at a source image."
@@ -484,12 +482,12 @@ def _ewald_green_host(
     modes = reciprocal_indices @ reciprocal + bloch_wavevector[None, :]
     mode_norm_squared = np.sum(modes * modes, axis=1)
     denominators = mode_norm_squared + screening * screening
-    zero_mode = np.abs(denominators) <= 64.0 * np.finfo(float).eps
+    zero_mode = np.abs(denominators) <= 64.0 * np.finfo(np.float64).eps
     if not remove_zero_mode and np.any(zero_mode):
         raise ValueError(
             "A retained reciprocal mode has a zero scalar resolvent denominator."
         )
-    active = ~zero_mode if remove_zero_mode else np.ones_like(zero_mode, dtype=bool)
+    active = ~zero_mode if remove_zero_mode else np.ones_like(zero_mode, dtype=np.bool_)
     reciprocal_coefficients = np.zeros(denominators.shape, dtype=np.complex128)
     reciprocal_coefficients[active] = np.exp(
         -denominators[active] / (4.0 * eta * eta)
@@ -534,7 +532,7 @@ def _direct_screened_image_sum_host(
     max_image_count: int,
 ) -> complex:
     cell_ = _require_periodic_cell_3d(cell)
-    vector = np.asarray(displacement, dtype=float)
+    vector = np.asarray(displacement, dtype=np.float64)
     if vector.shape != (3,) or np.any(~np.isfinite(vector)):
         raise ValueError("displacement must be a finite vector of shape (3,).")
     cutoff = int(image_cutoff)
@@ -549,7 +547,7 @@ def _direct_screened_image_sum_host(
             "The direct Yukawa image cube exceeds max_image_count."
         )
     indices = _integer_cube(cutoff)
-    shifts = indices @ np.asarray(cell_.vectors, dtype=float)
+    shifts = indices @ np.asarray(cell_.vectors, dtype=np.float64)
     radii = np.linalg.norm(vector[None, :] - shifts, axis=1)
     if np.any(radii == 0.0):
         raise ValueError("The Yukawa image sum is singular at a source image.")
@@ -558,18 +556,18 @@ def _direct_screened_image_sum_host(
 
 
 def _laplace_zero_bloch(cell: PeriodicCell, bloch_wavevector: np.ndarray) -> bool:
-    reciprocal = np.asarray(periodic_reciprocal_vectors_3d(cell), dtype=float)
+    reciprocal = np.asarray(periodic_reciprocal_vectors_3d(cell), dtype=np.float64)
     coordinates = np.linalg.solve(reciprocal.T, bloch_wavevector)
     return bool(
         np.linalg.norm(coordinates - np.rint(coordinates), ord=np.inf)
-        <= 64.0 * np.finfo(float).eps
+        <= 64.0 * np.finfo(np.float64).eps
     )
 
 
 def _strict_fractional_clearance(region: MeshRegion, cell: PeriodicCell) -> float:
-    vertices = np.asarray(region.triangle_mesh.vertices, dtype=float)
-    origin = np.asarray(cell.origin, dtype=float)
-    inverse = np.asarray(cell.inverse_vectors, dtype=float)
+    vertices = np.asarray(region.triangle_mesh.vertices, dtype=np.float64)
+    origin = np.asarray(cell.origin, dtype=np.float64)
+    inverse = np.asarray(cell.inverse_vectors, dtype=np.float64)
     fractional = (vertices - origin) @ inverse
     return float(np.min(np.minimum(fractional, 1.0 - fractional)))
 
@@ -586,10 +584,10 @@ def _build_smooth_weak_matrix(
 ) -> tuple[np.ndarray, float, float, int]:
     face_count = panelization.panel_count
     nodes_per_panel = panelization.nodes_per_panel
-    points = np.asarray(panelization.points, dtype=float).reshape(
+    points = np.asarray(panelization.points, dtype=np.float64).reshape(
         (face_count, nodes_per_panel, 3)
     )
-    weights = np.asarray(panelization.weights, dtype=float).reshape(
+    weights = np.asarray(panelization.weights, dtype=np.float64).reshape(
         (face_count, nodes_per_panel)
     )
     real_count = (2 * policy.real_cutoff + 1) ** 3
@@ -657,13 +655,12 @@ def _prepare_periodic_scalar_dp0_3d(
     minimum_clearance = _strict_fractional_clearance(region, cell)
     if minimum_clearance < clearance_certificate:
         raise ValueError(
-            "The watertight inclusion does not satisfy its certified "
-            "fractional cell clearance."
+            "The watertight inclusion does not satisfy its certified fractional cell clearance."
         )
     wavevector = _reduced_bloch_wavevector(cell, bloch_wavevector)
     remove_zero_mode = family == "laplace" and _laplace_zero_bloch(cell, wavevector)
 
-    face_count = int(region.triangle_mesh.faces.shape[0])
+    face_count = region.triangle_mesh.faces.shape[0]
     entries = face_count * face_count
     if entries > selected.max_matrix_entries:
         raise PeriodicScalarResourceError(
@@ -710,7 +707,7 @@ def _prepare_periodic_scalar_dp0_3d(
     smooth = selected.precision.accumulation(jnp.asarray(smooth_host))
     face_areas = selected.precision.accumulation(central.face_areas)
     inverse_areas = jnp.reciprocal(face_areas)
-    smooth_bytes = int(smooth.size * smooth.dtype.itemsize)
+    smooth_bytes = smooth.size * smooth.dtype.itemsize
     owned_state_bytes = int(
         (face_areas.size + inverse_areas.size) * face_areas.dtype.itemsize
         + cell.vectors.size * cell.vectors.dtype.itemsize
@@ -743,7 +740,7 @@ def _prepare_periodic_scalar_dp0_3d(
     )
     report_id = canonical_fingerprint(
         {
-            "kind": "periodic-scalar-dp0-report-3d-v1",
+            "kind": "periodic-scalar-dp0-report-3d",
             "family": family,
             "cell": cell.cell_id,
             "policy": selected.policy_id,
@@ -763,8 +760,7 @@ def _prepare_periodic_scalar_dp0_3d(
         ),
         formulation=formulation,
         provider=(
-            "SciPy/NumPy host Ewald preparation and existing PHYDRA DP0 "
-            "Galerkin; fixed-shape JAX actions"
+            "SciPy/NumPy host Ewald preparation and existing PHYDRA DP0 Galerkin; fixed-shape JAX actions"
         ),
         precision=precision_description,
         gauge=gauge,

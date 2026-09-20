@@ -73,8 +73,7 @@ class GaussianPriorWhitening(StrictModule):
                 location, scale = prior.location, prior.scale
             else:
                 raise ValueError(
-                    "Gaussian prior whitening supports only Normal/Identity and "
-                    "LogNormal/Exp prior-bijector pairs."
+                    "Gaussian prior whitening supports only Normal/Identity and LogNormal/Exp prior-bijector pairs."
                 )
             initial_array = jnp.asarray(initial)
             locations.append(jnp.broadcast_to(location, initial_array.shape))

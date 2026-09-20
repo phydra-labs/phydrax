@@ -630,8 +630,7 @@ class EinsteinVlasovCheckpointPlan(StrictModule, NonTrainableState):
             & (route.topology_id == self.numerical_relativity.topology_id)
         ):
             raise ValueError(
-                "Checkpoint requires one successful owner route at an accepted "
-                "co-temporal synchronization point."
+                "Checkpoint requires one successful owner route at an accepted co-temporal synchronization point."
             )
         particle_reals = jnp.concatenate(
             (
@@ -929,7 +928,7 @@ class EinsteinVlasovCheckpointPlan(StrictModule, NonTrainableState):
                 template_particles.species_ids,
             ),
             placed(
-                particle_integers[:, 2].astype(bool),
+                particle_integers[:, 2].astype("bool"),
                 template_particles.active_mask,
             ),
             placed(
@@ -951,10 +950,10 @@ class EinsteinVlasovCheckpointPlan(StrictModule, NonTrainableState):
             runtime.step_index,
             runtime_counters[0],
             runtime_counters[1],
-            runtime_counters[2].astype(bool),
+            runtime_counters[2].astype("bool"),
             runtime_id=runtime.runtime_id,
         )
-        route_active = route_integers[:, 6].astype(bool)
+        route_active = route_integers[:, 6].astype("bool")
         expected = self.migration.route(
             particles,
             route_integers[:, 2],

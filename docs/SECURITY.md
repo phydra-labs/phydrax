@@ -37,7 +37,7 @@ Qualification treats the following as explicit threats rather than assumptions:
 - PHI or other disallowed data entering a non-PHI workflow;
 - an engineering result being represented as a diagnosis, treatment recommendation, clinical decision, safety claim, or regulated-device output.
 
-The commercial layer fails closed. Missing evidence is a blocker; it is never replaced by a default pass, inferred licence, nearby capability profile, or best-effort continuation.
+The commercial layer fails closed. Missing evidence is a blocker; it is never replaced by a default pass, inferred license, nearby capability profile, or best-effort continuation.
 
 ## Repository-wide threat boundary
 
@@ -63,7 +63,7 @@ A cardiovascular release candidate must bind:
 2. independent author, technical reviewer, validation reviewer, security reviewer, and release approver identities;
 3. current, reviewer-signed G0–G7 records whose common dossier ID, reviewer, and evidence-ID tuples are authenticated and whose underlying `ReleaseGateEvidence` is accepted by the configured trust policy;
 4. completed immutable lifecycle records whose analysis plan and numeric revision match a case-bound execution manifest, with each computational gate citing the exact run/manifest pair;
-5. content-addressed SBOM, build-provenance, commercial-licence authorization, notice-audit, data-rights, and supply-chain references;
+5. content-addressed SBOM, build-provenance, commercial-license authorization, notice-audit, data-rights, and supply-chain references;
 6. explicit artifact dependencies and SHA-256 manifests;
 7. current signed non-claims for diagnosis, treatment, clinical decision support, and regulated medical-device use;
 8. hard wall-time, memory, artifact-size, and concurrency limits;
@@ -80,12 +80,12 @@ Verification must use a `CardiovascularSignatureVerifier` and its `verify(payloa
 
 ## Dependency and artifact security
 
-Generate the SBOM and build provenance from the same pinned source and dependency lock used by qualification. The supply-chain attestation must reference those exact artifact IDs. Review all bundled licence and notice obligations, including optional backends and data/model artefacts actually included in the tuple. A clean vulnerability scan does not establish licence or data rights, and licence compatibility does not establish security.
+Generate the SBOM and build provenance from the same pinned source and dependency lock used by qualification. The supply-chain attestation must reference those exact artifact IDs. Review all bundled license and notice obligations, including optional backends and data/model artifacts actually included in the tuple. A clean vulnerability scan does not establish license or data rights, and license compatibility does not establish security.
 
 Release artifacts must be immutable, regular files in controlled storage. Verify SHA-256 before use. Reject symlinks where a release process expects a sealed regular file, unexpected parents, duplicate artifact kinds, missing dependencies, expired references, and records outside configured size limits.
 
 Computational-chemistry executables and model files are trusted external code,
-not sandboxed inputs. Pin executable bytes and declared release/licence
+not sandboxed inputs. Pin executable bytes and declared release/license
 identity, invoke argv without a shell through the bounded energy runtime, stage
 private working directories, limit logs and outputs, and retain detached
 artifacts. In-process ASE, QCEngine, PySCF, and learned-model providers inherit

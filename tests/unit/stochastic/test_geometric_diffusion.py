@@ -114,7 +114,7 @@ def test_path_increment_diffusion_keeps_initial_state_and_enforces_causality():
 
     assert jnp.allclose(perturbed[0], path[0])
     assert jnp.all(jnp.isfinite(perturbed))
-    process.require_causal_mask(jnp.tril(jnp.ones((3, 3), dtype=bool)))
+    process.require_causal_mask(jnp.tril(jnp.ones((3, 3), dtype="bool")))
 
 
 def test_path_layout_keeps_padded_nodes_fixed_and_rejects_active_padding_modes():

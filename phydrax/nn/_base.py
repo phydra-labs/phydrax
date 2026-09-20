@@ -24,7 +24,7 @@ class _AbstractBaseModel(AbstractArrayModel, ModelObjectiveProvider):
         iter_: Array | None = None,
     ) -> Array:
         del key, iter_
-        return jnp.array(0.0, dtype=float)
+        return jnp.array(0.0, dtype=jnp.float64)
 
     def local_model_objective_labels(self) -> tuple[str, ...]:
         if type(self).__loss__ is _AbstractBaseModel.__loss__:
@@ -40,7 +40,9 @@ class _AbstractBaseModel(AbstractArrayModel, ModelObjectiveProvider):
         if type(self).__loss__ is _AbstractBaseModel.__loss__:
             return ()
         return (
-            jnp.asarray(self.__loss__(key=key, iter_=iter_), dtype=float).reshape(()),
+            jnp.asarray(self.__loss__(key=key, iter_=iter_), dtype=jnp.float64).reshape(
+                ()
+            ),
         )
 
     def add_model_loss(

@@ -431,7 +431,7 @@ def complex_ellipj(
     active_values = []
     b = jnp.sqrt(1.0 - m)
     b = jnp.where(jnp.abs(1.0 - b) <= jnp.abs(1.0 + b), b, -b)
-    running = jnp.ones_like(u, dtype=bool)
+    running = jnp.ones_like(u, dtype=jnp.bool_)
     for _ in range(capacity):
         a = a_values[-1]
         c = 0.5 * (a - b)

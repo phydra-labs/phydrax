@@ -123,7 +123,7 @@ def _spatial_series():
     axis = phx.measurement.SampleTimeAxis(
         "activity-time", np.asarray((0.0, 1.0, 3.0)), phx.units.SECOND
     )
-    values = np.zeros((3, 3, 3, 3), dtype=float)
+    values = np.zeros((3, 3, 3, 3), dtype="float64")
     values[1, 1, 1, :] = np.asarray((4.0, 2.0, 1.0))
     spec = phx.imaging.ImageFieldSpec(
         _quantity(
@@ -283,7 +283,7 @@ def test_spatial_delta_kernel_converts_activity_concentration_through_voxel_volu
     )
     result = dosimetry.SpatialSValueConvolutionPlan(kernel).apply(integrated)
 
-    expected = np.zeros((3, 3, 3), dtype=float)
+    expected = np.zeros((3, 3, 3), dtype="float64")
     expected[1, 1, 1] = 6.0
     np.testing.assert_allclose(result.dose_gy, expected)
     assert np.all(result.valid_mask)

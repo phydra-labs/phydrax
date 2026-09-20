@@ -42,7 +42,7 @@ class NuclearCollisionBatch(StrictModule, NonTrainableState):
         participants = jnp.asarray(participant_counts, dtype=jnp.int32)
         collisions = jnp.asarray(binary_collision_counts, dtype=jnp.int32)
         eccentricities_ = jnp.asarray(eccentricities, dtype=impact.dtype)
-        active_ = jnp.asarray(active, dtype=bool)
+        active_ = jnp.asarray(active, dtype=jnp.bool_)
         if (
             event_ids_.ndim != 1
             or impact.shape != event_ids_.shape

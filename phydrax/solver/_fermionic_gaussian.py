@@ -30,8 +30,8 @@ class FermionicGaussianProblem(StrictModule):
     ):
         if not isinstance(initial_state, FermionicGaussianState):
             raise TypeError("initial_state must be FermionicGaussianState.")
-        drift_ = jnp.asarray(drift, dtype=float)
-        diffusion_ = jnp.asarray(diffusion, dtype=float)
+        drift_ = jnp.asarray(drift, dtype=jnp.float64)
+        diffusion_ = jnp.asarray(diffusion, dtype=jnp.float64)
         if (
             drift_.shape != initial_state.covariance.shape
             or diffusion_.shape != drift_.shape
@@ -120,7 +120,7 @@ def solve_fermionic_gaussian(
     step_size: ArrayLike,
     steps: int,
 ) -> FermionicGaussianSolution:
-    step = jnp.asarray(step_size, dtype=float).reshape(())
+    step = jnp.asarray(step_size, dtype=jnp.float64).reshape(())
     count = int(steps)
     if count < 0 or not bool(jnp.isfinite(step) & (step > 0.0)):
         raise ValueError("steps must be nonnegative and step_size finite and positive.")

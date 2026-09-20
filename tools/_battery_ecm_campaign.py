@@ -352,7 +352,7 @@ def resource_observations(executed, /) -> dict[str, int | None]:
 
 def raw_output(spec, executed, campaign_directory: Path, /) -> dict[str, object]:
     result, residuals = executed
-    host_residuals = np.asarray(residuals, dtype=float)
+    host_residuals = np.asarray(residuals, dtype="float64")
     if host_residuals.shape != (len(spec.planned_schedule.sample_times_s),):
         raise ValueError("Built-in campaign returned an unexpected raw output shape.")
     if not result.evidence_ready:
@@ -412,23 +412,23 @@ def raw_output(spec, executed, campaign_directory: Path, /) -> dict[str, object]
         "outputs": {
             "names": list(result.outputs.names),
             "units": list(result.outputs.units),
-            "times_s": np.asarray(result.outputs.times_s, dtype=float).tolist(),
-            "values": np.asarray(result.outputs.values, dtype=float).tolist(),
-            "valid": np.asarray(result.outputs.valid, dtype=bool).tolist(),
+            "times_s": np.asarray(result.outputs.times_s, dtype="float64").tolist(),
+            "values": np.asarray(result.outputs.values, dtype="float64").tolist(),
+            "valid": np.asarray(result.outputs.valid, dtype="bool").tolist(),
         },
         "native": {
             "solver_name": result.native_solution.solver_name,
             "resolved_method": result.native_solution.resolved_method,
-            "valid": np.asarray(result.native_solution.valid, dtype=bool).tolist(),
+            "valid": np.asarray(result.native_solution.valid, dtype="bool").tolist(),
             "charge_c": np.asarray(
-                result.native_solution.states.charge_c, dtype=float
+                result.native_solution.states.charge_c, dtype="float64"
             ).tolist(),
             "polarization_voltages_v": np.asarray(
                 result.native_solution.states.polarization_voltages_v,
-                dtype=float,
+                dtype="float64",
             ).tolist(),
             "temperature_k": np.asarray(
-                result.native_solution.states.temperature_k, dtype=float
+                result.native_solution.states.temperature_k, dtype="float64"
             ).tolist(),
         },
         "ledger": ledger,

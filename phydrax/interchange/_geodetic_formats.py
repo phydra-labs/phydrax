@@ -90,7 +90,7 @@ def read_sinex_positions(
         if len(fields) < 10 or fields[1] not in ("STAX", "STAY", "STAZ"):
             continue
         if fields[6] != "m":
-            raise ValueError("SINEX station coordinates must use metres.")
+            raise ValueError("SINEX station coordinates must use meters.")
         key = (fields[2], fields[3], fields[4], fields[5])
         if key not in grouped and 6 * (len(grouped) + 1) > limits.max_nodes:
             raise ValueError("SINEX station solutions exceed the decoded-node limit.")
@@ -134,7 +134,7 @@ def read_sinex_positions(
         ),
         preserved_fields=(
             "station, point, solution, and reference-epoch identifiers",
-            "ECEF position estimates and standard deviations in metres",
+            "ECEF position estimates and standard deviations in meters",
             "exact source bytes",
         ),
         assumptions=(
@@ -211,9 +211,9 @@ def read_rinex_observations(
         if any(tuple(value.dims) != ("time", "sv") for value in selected_arrays):
             raise ValueError("RINEX observable dimensions must be exactly (time, sv).")
         decoded_nodes = (
-            int(selected.coords["time"].size)
-            + int(selected.coords["sv"].size)
-            + sum(int(value.size) for value in selected_arrays)
+            selected.coords["time"].size
+            + selected.coords["sv"].size
+            + sum(value.size for value in selected_arrays)
         )
         attribute_count = (
             len(selected.attrs)
@@ -241,7 +241,7 @@ def read_rinex_observations(
     arrays = []
     for name in requested:
         variable = dataset[name]
-        arrays.append(np.asarray(variable.values, dtype=float))
+        arrays.append(np.asarray(variable.values, dtype=np.float64))
     values = np.stack(arrays, axis=-1)
     valid = np.isfinite(values)
     data = np.where(valid, values, 0.0)

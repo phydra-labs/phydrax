@@ -227,7 +227,7 @@ class GradientLengthKnudsenPlan(StrictModule, NonTrainableState):
         maximum = jnp.max(components, axis=-1)
         trigger = jnp.argmax(components, axis=-1)
         if previous is None:
-            previous_mask = jnp.zeros(maximum.shape, dtype=bool)
+            previous_mask = jnp.zeros(maximum.shape, dtype=jnp.bool_)
         else:
             if (
                 not isinstance(previous, RarefactionHysteresisState)

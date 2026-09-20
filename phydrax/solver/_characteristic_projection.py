@@ -81,12 +81,8 @@ class CharacteristicBoundaryPolicy(StrictModule):
             raise ValueError("Unknown characteristic boundary action.")
         if action in ("reflect", "reset", "periodic") and reset_map is None:
             raise ValueError(f"{action} boundary action requires reset_map.")
-        intervals = jnp.asarray(brackets, dtype=float)
-        if (
-            intervals.ndim != 2
-            or intervals.shape[-1] != 2
-            or int(intervals.shape[0]) == 0
-        ):
+        intervals = jnp.asarray(brackets, dtype=jnp.float64)
+        if intervals.ndim != 2 or intervals.shape[-1] != 2 or intervals.shape[0] == 0:
             raise ValueError("Boundary brackets must have fixed shape (N, 2).")
         if (
             bool(jnp.any(~jnp.isfinite(intervals)))
@@ -137,7 +133,7 @@ class DiffusiveCharacteristicPlan(StrictModule):
             raise TypeError("integration must be IntegrationRealization.")
         if interpretation not in ("ito", "stratonovich"):
             raise ValueError("Unknown stochastic interpretation.")
-        values = jnp.asarray(weights, dtype=float)
+        values = jnp.asarray(weights, dtype=jnp.float64)
         if values.shape != (ensemble.plan.path_count,):
             raise ValueError("Diffusive cubature weights must match path capacity.")
         if bool(jnp.any(~jnp.isfinite(values))) or not bool(jnp.sum(values) > 0.0):
@@ -213,7 +209,7 @@ class CharacteristicTraceResult(StrictModule):
     @property
     def successful(self) -> Array:
         return (
-            jnp.asarray(self.solution.backend_successful, dtype=bool)
+            jnp.asarray(self.solution.backend_successful, dtype=jnp.bool_)
             & jnp.all(self.solution.valid)
             & jnp.all(self.valid)
         )
@@ -250,8 +246,8 @@ def trace_characteristics(
         CharacteristicBoundaryPolicy,
     ):
         raise TypeError("boundary_policy must be CharacteristicBoundaryPolicy or None.")
-    start = jnp.asarray(t0, dtype=float)
-    end = jnp.asarray(t1, dtype=float)
+    start = jnp.asarray(t0, dtype=jnp.float64)
+    end = jnp.asarray(t1, dtype=jnp.float64)
     if start.shape != () or end.shape != ():
         raise ValueError("Characteristic time bounds must be scalar.")
     if not bool(jnp.isfinite(start) & jnp.isfinite(end) & (end > start)):
@@ -308,8 +304,8 @@ def trace_characteristics(
             dtype=feet.dtype,
         )
         event_actions = jnp.zeros(point_shape + (0,), dtype=jnp.int32)
-        event_mask = jnp.zeros(point_shape + (0,), dtype=bool)
-        capacity_valid = jnp.ones(point_shape, dtype=bool)
+        event_mask = jnp.zeros(point_shape + (0,), dtype=jnp.bool_)
+        capacity_valid = jnp.ones(point_shape, dtype=jnp.bool_)
     else:
         if boundary_policy.schedule.state_shape != points.shape[-1:]:
             raise ValueError(
@@ -492,9 +488,9 @@ class CharacteristicProjectionResult(StrictModule):
     @property
     def successful(self) -> Array:
         return jnp.asarray(
-            self.completed_steps == int(self.times.shape[0]) - 1
+            self.completed_steps == self.times.shape[0] - 1
             and all(bool(trace.successful) for trace in self.traces),
-            dtype=bool,
+            dtype=jnp.bool_,
         ) & jnp.all(jnp.isfinite(self.projection_losses))
 
 

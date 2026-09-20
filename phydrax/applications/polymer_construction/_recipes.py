@@ -136,15 +136,15 @@ class PolymerMaterialRecipePlan(StrictModule, NonTrainableState):
     ):
         identifier = str(material_id).strip()
         type_ids = tuple(str(value).strip() for value in bead_type_ids)
-        masses = np.asarray(bead_masses, dtype=float)
+        masses = np.asarray(bead_masses, dtype=np.float64)
         chain_values = tuple(chains)
         port_values = tuple(ports)
         charges = (
             np.zeros_like(masses)
             if bead_charges is None
-            else np.asarray(bead_charges, dtype=float)
+            else np.asarray(bead_charges, dtype=np.float64)
         )
-        active_count = sum(int(chain.bead_type_indices.size) for chain in chain_values)
+        active_count = sum(chain.bead_type_indices.size for chain in chain_values)
         capacity = active_count if maximum_particles is None else int(maximum_particles)
         start = int(particle_id_start)
         bonded_scale = float(bonded_lennard_jones_scale)
@@ -305,7 +305,7 @@ def lower_polymer_recipe(
     if not isinstance(recipe, PolymerMaterialRecipePlan):
         raise TypeError("recipe must be PolymerMaterialRecipePlan.")
     capacity = recipe.maximum_particles
-    active_count = sum(int(chain.bead_type_indices.size) for chain in recipe.chains)
+    active_count = sum(chain.bead_type_indices.size for chain in recipe.chains)
     particle_ids = np.arange(
         recipe.particle_id_start,
         recipe.particle_id_start + capacity,
@@ -313,18 +313,16 @@ def lower_polymer_recipe(
     )
     active = np.arange(capacity) < active_count
     atom_types = np.zeros((capacity,), dtype=np.int32)
-    masses = np.ones((capacity,), dtype=float)
-    charges = np.zeros((capacity,), dtype=float)
+    masses = np.ones((capacity,), dtype=np.float64)
+    charges = np.zeros((capacity,), dtype=np.float64)
     molecule_ids = np.zeros((capacity,), dtype=np.int32)
     chain_particle_ids: list[tuple[int, ...]] = []
     bonds: list[tuple[int, int]] = []
     angles: list[tuple[int, int, int]] = []
     cursor = 0
-    maximum_chain_length = max(
-        int(chain.bead_type_indices.size) for chain in recipe.chains
-    )
+    maximum_chain_length = max(chain.bead_type_indices.size for chain in recipe.chains)
     layout_indices = np.zeros((len(recipe.chains), maximum_chain_length), dtype=np.int32)
-    layout_mask = np.zeros_like(layout_indices, dtype=bool)
+    layout_mask = np.zeros_like(layout_indices, dtype=np.bool_)
     slot_by_chain: dict[str, np.ndarray] = {}
     for chain_index, chain in enumerate(recipe.chains):
         sequence = np.asarray(chain.bead_type_indices, dtype=np.int32)
@@ -332,7 +330,7 @@ def lower_polymer_recipe(
         slots = np.arange(cursor, cursor + length, dtype=np.int32)
         stable = particle_ids[slots]
         slot_by_chain[chain.chain_id] = slots
-        chain_particle_ids.append(tuple(int(value) for value in stable))
+        chain_particle_ids.append(tuple(stable))
         atom_types[slots] = sequence
         masses[slots] = np.asarray(recipe.bead_masses)[sequence]
         charges[slots] = np.asarray(recipe.bead_charges)[sequence]
@@ -374,7 +372,7 @@ def lower_polymer_recipe(
         masses,
         recipe.units,
         atom_type_ids=atom_types,
-        element_mask=np.zeros((capacity,), dtype=bool),
+        element_mask=np.zeros((capacity,), dtype=np.bool_),
         charges=charges,
         active_mask=active,
         mobile_mask=active,
@@ -398,7 +396,7 @@ def lower_polymer_recipe(
         for port in recipe.ports
     )
     lengths = np.asarray(
-        [chain.bead_type_indices.size for chain in recipe.chains], dtype=float
+        [chain.bead_type_indices.size for chain in recipe.chains], dtype=np.float64
     )
     number_average = np.mean(lengths)
     weight_average = np.sum(lengths * lengths) / np.sum(lengths)

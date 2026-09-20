@@ -103,7 +103,7 @@ class NumericalRelativityOwnership(StrictModule, NonTrainableState):
     ):
         owners = np.asarray(owner_indices, dtype=np.int32)
         local = np.asarray(local_indices, dtype=np.int32)
-        mask = np.asarray(active, dtype=bool)
+        mask = np.asarray(active, dtype=np.bool_)
         devices = int(device_count)
         capacity = int(per_device_capacity)
         if (

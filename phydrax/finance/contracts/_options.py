@@ -53,7 +53,7 @@ class AverageType(str, Enum):
 
 
 def _positive_scalar(value: ArrayLike, name: str, /) -> Array:
-    array = jnp.asarray(value, dtype=float)
+    array = jnp.asarray(value, dtype=jnp.float64)
     if array.shape != ():
         raise ValueError(f"{name} must be scalar.")
     return eqx.error_if(
@@ -135,7 +135,7 @@ def _resolve(
         status |= ContractResolutionStatus.CALENDAR_MISMATCH
     cashflows = CashflowBatch(
         (),
-        jnp.zeros((0,), dtype=float),
+        jnp.zeros((0,), dtype=jnp.float64),
         (),
         capacity=context.cashflow_capacity,
     )
@@ -151,7 +151,7 @@ def _resolve(
 def amount_in_major_units(value: CurrencyAmount, /) -> Array:
     if not isinstance(value, CurrencyAmount):
         raise TypeError("value must be a CurrencyAmount.")
-    return value.atoms.astype(float) / value.currency.atoms_per_unit
+    return value.atoms.astype("float64") / value.currency.atoms_per_unit
 
 
 class VanillaPayoff(AbstractPayoff):
@@ -210,7 +210,7 @@ class PathBarrierPayoff(AbstractPayoff):
             activation, BarrierActivation
         ):
             raise TypeError("direction and activation must be barrier enums.")
-        rebate_ = jnp.asarray(rebate, dtype=float)
+        rebate_ = jnp.asarray(rebate, dtype=jnp.float64)
         if rebate_.shape != ():
             raise ValueError("rebate must be scalar.")
         rebate_ = eqx.error_if(
@@ -287,7 +287,7 @@ class BasketPayoff(AbstractPayoff):
         *,
         notional: ArrayLike = 1.0,
     ):
-        weights_ = jnp.asarray(weights, dtype=float)
+        weights_ = jnp.asarray(weights, dtype=jnp.float64)
         if weights_.ndim != 1 or weights_.size < 1:
             raise ValueError("weights must be a non-empty vector.")
         weights_ = eqx.error_if(
@@ -303,7 +303,7 @@ class BasketPayoff(AbstractPayoff):
         self.notional = _positive_scalar(notional, "notional")
         self.option_type = _option_type(option_type)
         self.payoff_id = f"basket:{option_type.value}"
-        self.asset_count = int(weights_.size)
+        self.asset_count = weights_.size
 
 
 class VarianceSwapPayoff(AbstractPayoff):
@@ -312,7 +312,7 @@ class VarianceSwapPayoff(AbstractPayoff):
     payoff_id: str = eqx.field(static=True)
 
     def __init__(self, variance_strike: ArrayLike, variance_notional: ArrayLike, /):
-        strike = jnp.asarray(variance_strike, dtype=float)
+        strike = jnp.asarray(variance_strike, dtype=jnp.float64)
         if strike.shape != ():
             raise ValueError("variance_strike must be scalar.")
         self.variance_strike = eqx.error_if(

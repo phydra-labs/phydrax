@@ -221,21 +221,19 @@ class SelectiveStateSpaceMixer(AbstractOperatorModel):
         time_values = jnp.asarray(times)
         if jnp.issubdtype(time_values.dtype, jnp.complexfloating):
             raise TypeError("SelectiveStateSpaceMixer times must be real-valued.")
-        if time_values.ndim < 1 or int(time_values.shape[-1]) <= 0:
+        if time_values.ndim < 1 or time_values.shape[-1] <= 0:
             raise ValueError("times must contain a non-empty trailing sequence axis.")
-        length = int(time_values.shape[-1])
+        length = time_values.shape[-1]
         in_count = _get_size(self.in_size)
         if self.in_size == "scalar":
-            if values.ndim < 1 or int(values.shape[-1]) != length:
+            if values.ndim < 1 or values.shape[-1] != length:
                 raise ValueError("Scalar inputs must have shape case_shape + (length,).")
             values = values[..., None]
         elif (
-            values.ndim < 2
-            or int(values.shape[-2]) != length
-            or int(values.shape[-1]) != in_count
+            values.ndim < 2 or values.shape[-2] != length or values.shape[-1] != in_count
         ):
             raise ValueError("inputs must have shape case_shape + (length, in_channels).")
-        case_shape = tuple(int(size) for size in values.shape[:-2])
+        case_shape = tuple(values.shape[:-2])
         compute_dtype = jnp.result_type(
             values.dtype, time_values.dtype, self.raw_decay.dtype
         )
@@ -335,11 +333,11 @@ class SelectiveStateSpaceMixer(AbstractOperatorModel):
             jnp.zeros_like(initial_state),
             initial_state,
         )
-        if int(values.shape[-2]) == 1:
+        if values.shape[-2] == 1:
             empty = jnp.zeros(
                 values.shape[:-2] + (0, self.state_size), dtype=values.dtype
             )
-            continuation = jnp.zeros(values.shape[:-2] + (0,), dtype=bool)
+            continuation = jnp.zeros(values.shape[:-2] + (0,), dtype=jnp.bool_)
             return state_at_first[..., None, :], empty, continuation
         transition, injection, effective_step, continuation = self._affine_steps(
             values, times, valid, reset
@@ -518,7 +516,7 @@ class SelectiveStateSpaceMixer(AbstractOperatorModel):
         ):
             raise ValueError(f"{role} tensor grid requires one {self.time_axis!r} axis.")
         coordinates = samples.coordinates_array(case_shape=case_shape)
-        if int(coordinates.shape[-1]) != 1:
+        if coordinates.shape[-1] != 1:
             raise ValueError(f"{role} point coordinates must contain time only.")
         return coordinates[..., 0], samples.mask_array(case_shape=case_shape)
 

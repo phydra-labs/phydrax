@@ -28,9 +28,9 @@ class MappedCochainGeometry(StrictModule, NonTrainableState):
         cell_volumes: ArrayLike,
         /,
     ):
-        faces = tuple(np.asarray(value, dtype=float) for value in face_area_vectors)
-        edges = tuple(np.asarray(value, dtype=float) for value in edge_vectors)
-        volumes = np.asarray(cell_volumes, dtype=float)
+        faces = tuple(np.asarray(value, dtype=np.float64) for value in face_area_vectors)
+        edges = tuple(np.asarray(value, dtype=np.float64) for value in edge_vectors)
+        volumes = np.asarray(cell_volumes, dtype=np.float64)
         if (
             len(faces) != 3
             or len(edges) != 3

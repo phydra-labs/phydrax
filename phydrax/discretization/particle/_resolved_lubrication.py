@@ -89,9 +89,9 @@ class ResolvedLubricationCorrectionPlan(StrictModule, NonTrainableState):
         if velocity.shape != gap_.shape or radius.shape != gap_.shape:
             raise ValueError("Gap, velocity, and effective radius shapes differ.")
         active_mask = (
-            jnp.ones(gap_.shape, dtype=bool)
+            jnp.ones(gap_.shape, dtype=jnp.bool_)
             if valid is None
-            else jnp.asarray(valid, dtype=bool)
+            else jnp.asarray(valid, dtype=jnp.bool_)
         )
         minimum = jnp.broadcast_to(self.minimum_gap, gap_.shape)
         cutoff = jnp.broadcast_to(self.cutoff, gap_.shape)

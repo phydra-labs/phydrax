@@ -45,7 +45,7 @@ class LinearGaussianSpectra(StrictModule):
 
 def _inexact(value: ArrayLike, /) -> Array:
     array = jnp.asarray(value)
-    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype(float)
+    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype("float64")
 
 
 def _matrix(value: ArrayLike, /, *, owner: str) -> Array:
@@ -70,9 +70,9 @@ def _system_shapes(
     inputs = _matrix(input_matrix, owner="input_matrix")
     outputs = _matrix(output_matrix, owner="output_matrix")
     feedthrough = _matrix(feedthrough_matrix, owner="feedthrough_matrix")
-    state_size = int(state.shape[-1])
-    input_size = int(inputs.shape[-1])
-    output_size = int(outputs.shape[-2])
+    state_size = state.shape[-1]
+    input_size = inputs.shape[-1]
+    output_size = outputs.shape[-2]
     if state.shape[-2:] != (state_size, state_size):
         raise ValueError("state_matrix must end in a square matrix.")
     if inputs.shape[-2] != state_size:

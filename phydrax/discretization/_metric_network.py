@@ -112,8 +112,8 @@ class MetricNetworkPlan:
             raise TypeError("Metric networks require an interval CellMesh.")
         if not isinstance(self.coordinate_contract, SpatialCoordinateContract):
             raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
-        areas = np.asarray(self.areas, dtype=float)
-        perimeters = np.asarray(self.perimeters, dtype=float)
+        areas = np.asarray(self.areas, dtype=np.float64)
+        perimeters = np.asarray(self.perimeters, dtype=np.float64)
         edges = np.concatenate([np.asarray(block.vertices) for block in self.mesh.blocks])
         if areas.shape != (len(edges),) or perimeters.shape != (len(edges),):
             raise ValueError("areas and perimeters must contain one value per edge.")
@@ -202,7 +202,7 @@ class MetricNetworkPlan:
         if np.any(~np.isfinite(lengths)) or np.any(lengths <= 0.0):
             raise ValueError("Network edges must have finite positive length.")
         tangents = difference / lengths[:, None]
-        node_measures = np.zeros((len(points),), dtype=float)
+        node_measures = np.zeros((len(points),), dtype=np.float64)
         half_volume = 0.5 * self.areas * lengths
         np.add.at(node_measures, edges[:, 0], half_volume)
         np.add.at(node_measures, edges[:, 1], half_volume)
@@ -213,7 +213,7 @@ class MetricNetworkPlan:
         for first, second in edges:
             adjacency[int(first)].append(int(second))
             adjacency[int(second)].append(int(first))
-        visited = np.zeros((len(points),), dtype=bool)
+        visited = np.zeros((len(points),), dtype=np.bool_)
         component_count = 0
         for start in range(len(points)):
             if visited[start]:

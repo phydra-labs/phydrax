@@ -493,7 +493,7 @@ def _validate_owner_bindings(
     for axis, length in zip(grid.axes, particles.box_size, strict=True):
         if not axis.periodic or axis.bounds is None:
             raise ValueError("Mixed fixed-grid cosmology requires periodic PM axes.")
-        bounds = np.asarray(axis.bounds, dtype=float)
+        bounds = np.asarray(axis.bounds, dtype=np.float64)
         if not np.allclose(bounds, (0.0, length), rtol=0.0, atol=2.0e-13):
             raise ValueError("Mixed PM bounds must be [0, particle box size].")
     if not np.array_equal(

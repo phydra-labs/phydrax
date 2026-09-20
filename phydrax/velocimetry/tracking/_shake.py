@@ -128,7 +128,7 @@ def robust_image_loss(
     """Mean pixelwise robust loss on an explicit image mask."""
     predicted_ = jnp.asarray(predicted)
     observed_ = jnp.asarray(observed, dtype=predicted_.dtype)
-    valid_ = jnp.asarray(valid_mask, dtype=bool)
+    valid_ = jnp.asarray(valid_mask, dtype=jnp.bool_)
     if predicted_.shape != observed_.shape or predicted_.shape != valid_.shape:
         raise ValueError("predicted, observed, and valid_mask must have equal shapes.")
     residual = jnp.where(valid_, observed_ - predicted_, 0.0)
@@ -165,10 +165,10 @@ def shake_particles(
     if positions.ndim != 2 or positions.shape[1] != 3:
         raise ValueError("positions_xyz must have shape (particle_capacity, 3).")
     if not jnp.issubdtype(positions.dtype, jnp.inexact):
-        positions = positions.astype(float)
+        positions = positions.astype("float64")
     amplitudes = jnp.asarray(amplitude, dtype=positions.dtype)
-    active_ = jnp.asarray(active, dtype=bool)
-    capacity = int(positions.shape[0])
+    active_ = jnp.asarray(active, dtype=jnp.bool_)
+    capacity = positions.shape[0]
     if amplitudes.shape != (capacity,) or active_.shape != (capacity,):
         raise ValueError("amplitude and active must match particle capacity.")
     invalid_input = active_ & (
@@ -189,7 +189,7 @@ def shake_particles(
     valid = (
         finite_observed
         if valid_mask is None
-        else finite_observed & jnp.asarray(valid_mask, dtype=bool)
+        else finite_observed & jnp.asarray(valid_mask, dtype=jnp.bool_)
     )
     if valid.shape != observed.shape:
         raise ValueError("valid_mask must have the observed image shape.")

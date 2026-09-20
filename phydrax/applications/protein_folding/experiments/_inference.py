@@ -63,7 +63,7 @@ def protein_experiment_identifiability(
         )
     sensitivity = jax.jacrev(problem.residual)(z)
     device_values = np.asarray(sensitivity)
-    matrix = device_values.astype(float)
+    matrix = device_values.astype("float64")
     if np.any(~np.isfinite(matrix)):
         raise ValueError("Nonfinite model derivatives cannot establish identifiability.")
     _, singular, vt = np.linalg.svd(
@@ -192,8 +192,8 @@ def protein_experiment_posterior_problem(
     )
     shape = problem.initial_coordinates.shape
     mean, sigma = np.broadcast_arrays(
-        np.asarray(prior_mean, dtype=float),
-        np.asarray(prior_standard_deviation, dtype=float),
+        np.asarray(prior_mean, dtype=np.float64),
+        np.asarray(prior_standard_deviation, dtype=np.float64),
     )
     mean, sigma = np.broadcast_to(mean, shape), np.broadcast_to(sigma, shape)
     if (
@@ -330,7 +330,7 @@ def phi_posterior(
     )
     if any(name not in named_samples for name in names):
         raise ValueError("Missing named posterior variable for Phi.")
-    arrays = tuple(np.asarray(named_samples[name], dtype=float) for name in names)
+    arrays = tuple(np.asarray(named_samples[name], dtype=np.float64) for name in names)
     if (
         arrays[0].ndim != 2
         or arrays[0].size < 2

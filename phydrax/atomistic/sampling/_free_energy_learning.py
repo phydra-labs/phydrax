@@ -59,8 +59,8 @@ class MeanForceData(StrictModule, NonTrainableState):
         metrics: tuple[CollectiveVariableMetric, ...] | None = None,
         source_id: str,
     ):
-        center = np.asarray(centers, dtype=float)
-        gradient = np.asarray(free_energy_gradients, dtype=float)
+        center = np.asarray(centers, dtype=np.float64)
+        gradient = np.asarray(free_energy_gradients, dtype=np.float64)
         if center.ndim != 2 or center.shape[0] == 0 or gradient.shape != center.shape:
             raise ValueError(
                 "Mean-force centers and gradients require shape (sample, cv)."
@@ -68,17 +68,17 @@ class MeanForceData(StrictModule, NonTrainableState):
         error = (
             np.ones_like(center)
             if gradient_standard_error is None
-            else np.asarray(gradient_standard_error, dtype=float)
+            else np.asarray(gradient_standard_error, dtype=np.float64)
         )
         mass = (
-            np.ones((center.shape[0],), dtype=float)
+            np.ones((center.shape[0],), dtype=np.float64)
             if weights is None
-            else np.asarray(weights, dtype=float)
+            else np.asarray(weights, dtype=np.float64)
         )
         support = (
-            np.ones((center.shape[0],), dtype=bool)
+            np.ones((center.shape[0],), dtype=np.bool_)
             if valid is None
-            else np.asarray(valid, dtype=bool)
+            else np.asarray(valid, dtype=np.bool_)
         )
         if (
             error.shape != center.shape
@@ -152,10 +152,10 @@ class RestrainedMeanForcePlan(StrictModule, NonTrainableState):
         *,
         metrics: tuple[CollectiveVariableMetric, ...] | None = None,
     ):
-        center = np.asarray(centers, dtype=float)
+        center = np.asarray(centers, dtype=np.float64)
         if center.ndim != 2 or center.shape[0] == 0:
             raise ValueError("Restrained centers require shape (window, cv).")
-        stiffness_ = np.asarray(stiffness, dtype=float)
+        stiffness_ = np.asarray(stiffness, dtype=np.float64)
         if stiffness_.size == 1:
             stiffness_ = np.full((center.shape[1],), float(stiffness_.reshape(())))
         else:
@@ -215,9 +215,9 @@ def estimate_restrained_free_energy_gradient(
         else jnp.asarray(sample_weights, dtype=values.dtype)
     )
     valid = (
-        jnp.ones(values.shape[:2], dtype=bool)
+        jnp.ones(values.shape[:2], dtype=jnp.bool_)
         if sample_valid is None
-        else jnp.asarray(sample_valid, dtype=bool)
+        else jnp.asarray(sample_valid, dtype=jnp.bool_)
     )
     if weights.shape != values.shape[:2] or valid.shape != values.shape[:2]:
         raise ValueError(
@@ -492,7 +492,7 @@ class LearnedFreeEnergyBiasPlan(AbstractAtomisticBiasPlan):
             for model in members
         ):
             raise ValueError("Bias models must map the CV program to one scalar.")
-        reference_ = jnp.asarray(reference, dtype=float).reshape((-1,))
+        reference_ = jnp.asarray(reference, dtype=jnp.float64).reshape((-1,))
         if reference_.shape != (variables.output_size,) or not bool(
             jnp.all(jnp.isfinite(reference_))
         ):
@@ -535,7 +535,7 @@ class LearnedFreeEnergyBiasPlan(AbstractAtomisticBiasPlan):
 
     def initialize(self, dtype=jnp.float64) -> LearnedFreeEnergyBiasState:
         return LearnedFreeEnergyBiasState(
-            successful=jnp.asarray(True, dtype=bool), bias_id=self.bias_id
+            successful=jnp.asarray(True, dtype=jnp.bool_), bias_id=self.bias_id
         )
 
     def prepare(

@@ -85,10 +85,10 @@ def test_cartesian_qualification_rejects_angular_swapped_and_mismatched_coordina
         local.require_cartesian(
             SpatialCoordinateContract(METER, reference_frame="other-site")
         )
-    kilometre = UnitDefinition("km", METER.dimension, METER.reference_system_id, 1000)
+    kilometer = UnitDefinition("km", METER.dimension, METER.reference_system_id, 1000)
     with pytest.raises(ValueError):
         local.require_cartesian(
-            SpatialCoordinateContract(kilometre, reference_frame="survey-site")
+            SpatialCoordinateContract(kilometer, reference_frame="survey-site")
         )
 
 
@@ -184,7 +184,7 @@ def test_unknown_registration_and_missing_data_are_not_inferred():
 
 def test_periodic_seams_require_matching_endpoint_values_and_masks():
     contract = _geographic(seam="periodic")
-    values = np.array([[1, 2, 3, 4, 1], [5, 6, 7, 8, 5]], dtype=float)
+    values = np.array([[1, 2, 3, 4, 1], [5, 6, 7, 8, 5]], dtype="float64")
     grid = QualifiedGeospatialGrid(
         [-180, -90, 0, 90, 180], [-20, 20], values, contract, value_unit=METER
     )
@@ -193,7 +193,7 @@ def test_periodic_seams_require_matching_endpoint_values_and_masks():
     broken[0, -1] = 99
     with pytest.raises(ValueError):
         QualifiedGeospatialGrid(grid.x, grid.y, broken, contract, value_unit=METER)
-    valid = np.ones(values.shape, dtype=bool)
+    valid = np.ones(values.shape, dtype="bool")
     valid[0, -1] = False
     with pytest.raises(ValueError):
         QualifiedGeospatialGrid(
@@ -215,7 +215,7 @@ def test_pixel_periodic_seam_and_radian_support_are_qualified_without_resampling
     contract = _geographic(registration="pixel", seam="periodic", units=RADIAN)
     x = np.deg2rad([-135, -45, 45, 135])
     y = np.deg2rad([-45, 45])
-    values = np.array([[1, 2, 3, 4], [8, 7, 6, 5]], dtype=float)
+    values = np.array([[1, 2, 3, 4], [8, 7, 6, 5]], dtype="float64")
     grid = QualifiedGeospatialGrid(x, y, values, contract, value_unit=METER)
     np.testing.assert_array_equal(grid.x, x)
     np.testing.assert_allclose(grid.region, [-np.pi, np.pi, -np.pi / 2, np.pi / 2])

@@ -24,7 +24,7 @@ def test_periodic_fof_unbinding_properties_and_merger_matching():
     velocities = jnp.zeros_like(positions)
     masses = jnp.ones((6,))
     fof = cosmology.PeriodicFoFFinderPlan((1.0, 1.0, 1.0), 0.05, 4).find(
-        ids, positions, velocities, masses, jnp.ones((6,), dtype=bool)
+        ids, positions, velocities, masses, jnp.ones((6,), dtype="bool")
     )
     assert bool(fof.successful)
     assert int(jnp.sum(fof.group_active)) == 2
@@ -70,7 +70,7 @@ def test_fof_realizations_are_deterministic_and_equivalent():
     )
     velocities = jnp.arange(18.0).reshape((6, 3))
     masses = jnp.arange(1.0, 7.0)
-    active = jnp.ones((6,), dtype=bool)
+    active = jnp.ones((6,), dtype="bool")
 
     def evaluate(realization):
         return cosmology.PeriodicFoFFinderPlan(
@@ -131,7 +131,7 @@ def test_fof_group_and_link_capacity_fail_closed():
     )
     velocities = jnp.zeros_like(positions)
     masses = jnp.ones((4,))
-    active = jnp.ones((4,), dtype=bool)
+    active = jnp.ones((4,), dtype="bool")
     group_overflow = cosmology.PeriodicFoFFinderPlan((1.0, 1.0, 1.0), 0.05, 1).find(
         ids, positions, velocities, masses, active
     )
@@ -178,7 +178,7 @@ def test_non_direct_fof_realizations_are_filter_jittable():
     )
     velocities = jnp.zeros_like(positions)
     masses = jnp.ones((4,))
-    active = jnp.ones((4,), dtype=bool)
+    active = jnp.ones((4,), dtype="bool")
     for realization in ("cell_list", "morton_plane"):
         plan = cosmology.PeriodicFoFFinderPlan(
             (1.0, 1.0, 1.0),

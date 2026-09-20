@@ -104,8 +104,8 @@ def _replay(runtime, initial, realized, mode, block_size):
             jnp.max(jnp.abs(final.magnetic_flux - reference.magnetic_flux))
         ),
         "all_intervals_accepted": bool(jnp.all(result.accepted)),
-        "retained_cell_values": int(result.retained_states.size),
-        "retained_auxiliary_values": int(result.retained_transport_auxiliary.size),
+        "retained_cell_values": result.retained_states.size,
+        "retained_auxiliary_values": result.retained_transport_auxiliary.size,
     }
 
 

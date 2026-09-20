@@ -4,10 +4,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import io
-import json
-import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +15,7 @@ from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from .._validation import canonical_identifier as _require_identifier
 from ..discretization import TopologyEpoch
 from ..discretization.amr import (
     BlockHierarchyState,
@@ -75,7 +72,6 @@ _SLIDING_ARRAY_NAMES = (
 _JOURNAL_ARRAY_PREFIX = "topology_journal/"
 _CONTENT_RECORD_FIELDS = frozenset(
     (
-        "schema_version",
         "content_policy_id",
         "content_layout_id",
         "precision_policy_id",
@@ -112,7 +108,6 @@ def _content_policy_id(
     return canonical_fingerprint(
         {
             "kind": "finite-volume-conservative-content-policy",
-            "schema_version": 1,
             "precision_policy_id": precision_policy_id,
             "evidence_policy_id": evidence_policy_id,
         }
@@ -126,7 +121,6 @@ def _content_layout_id(
     return canonical_fingerprint(
         {
             "kind": "finite-volume-conservative-content-layout",
-            "schema_version": 2,
             "topology_epoch_id": content_state.topology_epoch_id,
             "geometry_family_id": content_state.geometry_family_id,
             "geometry_layout_id": content_state.geometry_layout_id,
@@ -142,7 +136,6 @@ def _content_record(
     /,
 ) -> dict[str, Any]:
     return {
-        "schema_version": 2,
         "content_policy_id": _content_policy_id(
             content_state.precision.policy_id,
             content_state.evidence_policy_id,
@@ -154,12 +147,6 @@ def _content_record(
         "geometry_layout_id": content_state.geometry_layout_id,
         "evidence_policy_id": content_state.evidence_policy_id,
     }
-
-
-def _require_identifier(value: Any, name: str, /) -> str:
-    if not isinstance(value, str) or not value or value != value.strip():
-        raise ValueError(f"{name} must be a nonempty canonical identifier.")
-    return value
 
 
 def _validate_array_inventory(
@@ -263,7 +250,6 @@ class FiniteVolumeCheckpointPlan(StrictModule, NonTrainableState):
             self.checkpoint_id = canonical_fingerprint(
                 {
                     "kind": "finite-volume-checkpoint-plan",
-                    "schema_version": 5,
                     "state_kind": "block-hierarchy",
                     "prepared_runtime": case.prepared_id,
                     "hierarchy": case.dynamics.topology.plan.plan_id,
@@ -306,10 +292,6 @@ class FiniteVolumeCheckpointPlan(StrictModule, NonTrainableState):
         self.checkpoint_id = canonical_fingerprint(
             {
                 "kind": "finite-volume-checkpoint-plan",
-                "schema_version": 5,
-                "runtime_state_schema_version": 4,
-                "content_state_schema_version": 2,
-                "topology_journal_schema_version": 1,
                 "case": case.case_id,
                 "topology": case.mesh_topology_id,
                 "geometry": case.mesh_geometry_id,
@@ -329,7 +311,6 @@ class FiniteVolumeCheckpoint(StrictModule):
 
 _SLIDING_RECORD_FIELDS = frozenset(
     (
-        "schema_version",
         "plan_id",
         "normalized_shift_hex",
         "shift_precision",
@@ -413,7 +394,6 @@ def _sliding_record(
                 "Checkpoint sliding event, coupling, and successor epoch are stale."
             )
     return {
-        "schema_version": 1,
         "plan_id": sliding_plan.plan_id,
         "normalized_shift_hex": float(coupling.normalized_shift).hex(),
         "shift_precision": coupling.shift_precision,
@@ -587,8 +567,6 @@ def _restore_sliding(
         )
     if not isinstance(record, dict) or set(record) != _SLIDING_RECORD_FIELDS:
         raise ValueError("Finite-volume checkpoint sliding record fields changed.")
-    if isinstance(record["schema_version"], bool) or record["schema_version"] != 1:
-        raise ValueError("Unsupported finite-volume checkpoint sliding schema.")
     if sliding_plan is None:
         raise ValueError(
             "Reading a sliding checkpoint requires the originating prepared runtime."
@@ -757,7 +735,6 @@ def _block_topology_record(
     if runtime is None:
         raise ValueError("Block checkpoint plan has no prepared block runtime.")
     return {
-        "schema_version": 2,
         "hierarchy_plan_id": topology.plan.plan_id,
         "topology_id": topology.topology_id,
         "partition_id": topology.partition_id,
@@ -767,7 +744,7 @@ def _block_topology_record(
             [
                 int(value)
                 for value in np.asarray(metadata.block_ids)[
-                    np.asarray(metadata.active, dtype=bool)
+                    np.asarray(metadata.active, dtype=np.bool_)
                 ]
             ]
             for metadata in topology.levels
@@ -800,7 +777,6 @@ def _block_runtime_record(
     if runtime is None:
         raise ValueError("Block checkpoint plan has no prepared block runtime.")
     return {
-        "schema_version": 1,
         "prepared_id": runtime.prepared_id,
         "runtime_plan_id": runtime.plan.plan_id,
         "finite_volume_plan_id": runtime.plan.finite_volume.plan_id,
@@ -919,8 +895,6 @@ def _write_block_checkpoint(
     _validate_block_arrays(plan, arrays)
     manifest = {
         "archive_kind": "finite-volume-checkpoint",
-        "schema_version": 6,
-        "runtime_state_schema_version": 5,
         "checkpoint_id": plan.checkpoint_id,
         "state_kind": "block-hierarchy",
         "precision_evidence": precision.evidence().to_dict(),
@@ -952,8 +926,6 @@ def _read_block_checkpoint(
         )
     required_manifest = {
         "archive_kind",
-        "schema_version",
-        "runtime_state_schema_version",
         "checkpoint_id",
         "state_kind",
         "precision_evidence",
@@ -965,8 +937,6 @@ def _read_block_checkpoint(
     }
     if set(manifest) != required_manifest or (
         manifest["archive_kind"] != "finite-volume-checkpoint"
-        or manifest["schema_version"] != 6
-        or manifest["runtime_state_schema_version"] != 5
         or manifest["state_kind"] != "block-hierarchy"
     ):
         raise ValueError("Unsupported block finite-volume checkpoint schema.")
@@ -986,7 +956,6 @@ def _read_block_checkpoint(
 
     topology_record = manifest["topology"]
     expected_topology_fields = {
-        "schema_version",
         "hierarchy_plan_id",
         "topology_id",
         "partition_id",
@@ -1005,7 +974,6 @@ def _read_block_checkpoint(
     if (
         not isinstance(topology_record, dict)
         or set(topology_record) != expected_topology_fields
-        or topology_record["schema_version"] != 2
     ):
         raise ValueError("Block checkpoint topology record changed.")
     prepared_topology = runtime.dynamics.topology
@@ -1120,9 +1088,6 @@ def write_finite_volume_checkpoint(
     _validate_runtime_arrays(plan, arrays)
     manifest = {
         "archive_kind": "finite-volume-checkpoint",
-        "schema_version": 5,
-        "runtime_state_schema_version": 4,
-        "content_state_schema_version": 2,
         "checkpoint_id": plan.checkpoint_id,
         "case": plan.case.to_dict(),
         "precision_evidence": plan.case.precision.evidence().to_dict(),
@@ -1146,19 +1111,16 @@ def write_finite_volume_checkpoint(
     )
 
 
-def _read_schema5_checkpoint(
+def _read_checkpoint(
     manifest: dict[str, Any],
     arrays: dict[str, np.ndarray],
     plan: FiniteVolumeCheckpointPlan,
     /,
 ) -> FiniteVolumeCheckpoint:
-    """Strictly reconstruct one content-authoritative schema-5 archive."""
+    """Strictly reconstruct one canonical content-authoritative archive."""
 
     required_manifest = {
         "archive_kind",
-        "schema_version",
-        "runtime_state_schema_version",
-        "content_state_schema_version",
         "checkpoint_id",
         "case",
         "precision_evidence",
@@ -1171,12 +1133,7 @@ def _read_schema5_checkpoint(
     }
     if set(manifest) != required_manifest:
         raise ValueError("Finite-volume checkpoint manifest fields changed.")
-    if (
-        manifest["archive_kind"] != "finite-volume-checkpoint"
-        or manifest["schema_version"] != 5
-        or manifest["runtime_state_schema_version"] != 4
-        or manifest["content_state_schema_version"] != 2
-    ):
+    if manifest["archive_kind"] != "finite-volume-checkpoint":
         raise ValueError("Unsupported finite-volume checkpoint schema.")
     if manifest["checkpoint_id"] != plan.checkpoint_id:
         raise ValueError("Finite-volume checkpoint is incompatible with this plan.")
@@ -1220,11 +1177,6 @@ def _read_schema5_checkpoint(
         or set(content_record) != _CONTENT_RECORD_FIELDS
     ):
         raise ValueError("Finite-volume checkpoint content record fields changed.")
-    if (
-        isinstance(content_record["schema_version"], bool)
-        or content_record["schema_version"] != 2
-    ):
-        raise ValueError("Unsupported finite-volume checkpoint content schema.")
     for name in (
         "content_policy_id",
         "content_layout_id",
@@ -1295,344 +1247,6 @@ def _read_schema5_checkpoint(
     )
 
 
-_LEGACY_RUNTIME_ARRAY_NAMES = (
-    "conservative_state",
-    "time",
-    "accepted_step",
-    "step_size",
-    "last_status",
-    "controller_state",
-    "integrator_state",
-    "forcing_state",
-    "random_state",
-    "output_cursor",
-)
-
-
-def _checkpoint_manifest_version(path: str | Path, /) -> int:
-    try:
-        with zipfile.ZipFile(Path(path), "r") as archive:
-            if archive.namelist().count("manifest.json") != 1:
-                raise ValueError("Finite-volume checkpoint must contain one manifest.")
-            manifest = json.loads(archive.read("manifest.json"))
-    except (KeyError, json.JSONDecodeError, zipfile.BadZipFile) as error:
-        raise ValueError("Finite-volume checkpoint manifest is corrupt.") from error
-    if not isinstance(manifest, dict):
-        raise ValueError("Finite-volume checkpoint manifest must be an object.")
-    version = manifest.get("schema_version")
-    if isinstance(version, bool) or not isinstance(version, int):
-        raise ValueError("Finite-volume checkpoint schema version is invalid.")
-    return version
-
-
-def _validate_legacy_case(payload: Any, plan: FiniteVolumeCheckpointPlan, /) -> str:
-    if not isinstance(payload, dict):
-        raise ValueError("Finite-volume checkpoint case record changed.")
-    version = payload.get("schema_version")
-    if version == 2:
-        FiniteVolumeCaseSpec.validate_dict(payload)
-        if payload != plan.case.to_dict():
-            raise ValueError("Finite-volume checkpoint case identity changed.")
-        return payload["case_id"]
-    required = {
-        "schema_version",
-        "name",
-        "runtime_id",
-        "system_id",
-        "discretization_id",
-        "method_id",
-        "boundary_id",
-        "precision",
-        "execution",
-        "case_id",
-    }
-    if version != 1 or set(payload) != required:
-        raise ValueError("Unsupported legacy finite-volume case schema.")
-    identity_payload = dict(payload)
-    case_id = identity_payload.pop("case_id")
-    if not isinstance(case_id, str) or canonical_fingerprint(identity_payload) != case_id:
-        raise ValueError("Legacy finite-volume checkpoint case identity changed.")
-    expected = plan.case.to_dict()
-    for name in (
-        "name",
-        "runtime_id",
-        "system_id",
-        "discretization_id",
-        "method_id",
-        "boundary_id",
-        "precision",
-        "execution",
-    ):
-        if payload[name] != expected[name]:
-            raise ValueError("Legacy finite-volume checkpoint case identity changed.")
-    return case_id
-
-
-def _legacy_checkpoint_id(
-    version: int,
-    case_id: str,
-    plan: FiniteVolumeCheckpointPlan,
-    /,
-) -> str:
-    payload = {
-        "kind": "finite-volume-checkpoint-plan",
-        "schema_version": version,
-        "case": case_id,
-        "precision_policy_id": plan.case.precision.policy_id,
-        "precision_evidence_id": plan.case.precision.evidence().evidence_id,
-        "checkpoint_dtype": plan.case.precision.checkpoint_dtype,
-    }
-    if version == 3:
-        payload.update(
-            {
-                "runtime_state_schema_version": 2,
-                "topology": plan.case.mesh_topology_id,
-                "geometry": plan.case.mesh_geometry_id,
-            }
-        )
-    return canonical_fingerprint(payload)
-
-
-def _validate_legacy_precision(
-    manifest: dict[str, Any],
-    plan: FiniteVolumeCheckpointPlan,
-    /,
-) -> PrecisionEvidenceEnvelope:
-    precision = PrecisionEvidenceEnvelope.from_dict(manifest["precision_evidence"])
-    current = plan.case.precision.evidence()
-    if precision.evidence_id != current.evidence_id:
-        raise ValueError("Finite-volume checkpoint precision evidence changed.")
-    return current
-
-
-def _validate_legacy_runtime_arrays(
-    plan: FiniteVolumeCheckpointPlan,
-    arrays: dict[str, np.ndarray],
-    /,
-) -> None:
-    state = np.asarray(arrays["conservative_state"])
-    if (
-        state.shape != plan.case.state_shape
-        or state.dtype != plan.case.precision.numpy_dtype("checkpoint")
-        or not np.all(np.isfinite(state))
-    ):
-        raise ValueError("Legacy finite-volume checkpoint state changed.")
-    for name in ("time", "accepted_step", "step_size", "last_status", "output_cursor"):
-        if np.asarray(arrays[name]).shape != ():
-            raise ValueError(f"Legacy finite-volume checkpoint scalar {name!r} changed.")
-    if (
-        not np.isfinite(np.asarray(arrays["time"])).item()
-        or not np.isfinite(np.asarray(arrays["step_size"])).item()
-        or float(np.asarray(arrays["step_size"])) <= 0.0
-    ):
-        raise ValueError("Legacy finite-volume checkpoint timing changed.")
-    accepted_step = int(np.asarray(arrays["accepted_step"]))
-    output_cursor = int(np.asarray(arrays["output_cursor"]))
-    if (
-        accepted_step < 0
-        or accepted_step > np.iinfo(np.int32).max
-        or output_cursor < 0
-        or output_cursor > np.iinfo(np.int32).max
-        or int(np.asarray(arrays["last_status"]))
-        not in {int(status) for status in FiniteVolumeRunStatus}
-        or np.asarray(arrays["random_state"]).dtype != np.dtype(np.uint32)
-    ):
-        raise ValueError("Legacy finite-volume checkpoint runtime state changed.")
-
-
-def _migrate_legacy_runtime(
-    plan: FiniteVolumeCheckpointPlan,
-    arrays: dict[str, np.ndarray],
-    /,
-) -> FiniteVolumeRuntimeState:
-    runtime = plan.runtime
-    if runtime is None:
-        raise ValueError(
-            "Reading checkpoint schema 2 or 3 requires the prepared runtime."
-        )
-    coupling = getattr(runtime.dynamics, "coupling", None)
-    if runtime.sliding_plan is not None or (
-        coupling is not None and getattr(coupling, "motion", None) is not None
-    ):
-        raise ValueError(
-            "Checkpoint schemas 2 and 3 cannot restore ALE or sliding state."
-        )
-    _validate_legacy_runtime_arrays(plan, arrays)
-    migrated = runtime.initialize_state(
-        plan.case.precision.storage(arrays["conservative_state"]),
-        plan.case.precision.decision(arrays["time"]),
-        plan.case.precision.decision(arrays["step_size"]),
-        accepted_step=arrays["accepted_step"],
-        last_status=arrays["last_status"],
-        controller_state=arrays["controller_state"],
-        integrator_state=arrays["integrator_state"],
-        output_cursor=arrays["output_cursor"],
-    )
-    if migrated.content_state.geometry_family_id != runtime.geometry_family_id:
-        raise ValueError("Legacy checkpoint migration produced a stale geometry family.")
-    return migrated
-
-
-def _read_schema3_checkpoint(
-    manifest: dict[str, Any],
-    arrays: dict[str, np.ndarray],
-    plan: FiniteVolumeCheckpointPlan,
-    /,
-) -> FiniteVolumeCheckpoint:
-    required_manifest = {
-        "archive_kind",
-        "schema_version",
-        "runtime_state_schema_version",
-        "checkpoint_id",
-        "case",
-        "precision_evidence",
-        "mesh",
-        "payload_id",
-        "arrays",
-    }
-    if set(manifest) != required_manifest:
-        raise ValueError("Finite-volume checkpoint schema-3 manifest fields changed.")
-    if (
-        manifest["archive_kind"] != "finite-volume-checkpoint"
-        or manifest["schema_version"] != 3
-        or manifest["runtime_state_schema_version"] != 2
-    ):
-        raise ValueError("Unsupported finite-volume checkpoint schema.")
-    case_id = _validate_legacy_case(manifest["case"], plan)
-    if manifest["checkpoint_id"] != _legacy_checkpoint_id(3, case_id, plan):
-        raise ValueError("Finite-volume checkpoint is incompatible with this plan.")
-    expected_mesh = {
-        "kind": plan.case.mesh_kind,
-        "topology_id": plan.case.mesh_topology_id,
-        "geometry_id": plan.case.mesh_geometry_id,
-    }
-    if manifest["mesh"] != expected_mesh:
-        raise ValueError("Finite-volume checkpoint mesh identity changed.")
-    precision = _validate_legacy_precision(manifest, plan)
-    expected_arrays = set(_LEGACY_RUNTIME_ARRAY_NAMES)
-    if plan.case.mesh_kind == "unstructured":
-        expected_arrays.update(
-            {
-                "mesh/vertices",
-                "mesh/vertex_global_ids",
-                "mesh/cell_global_ids",
-            }
-        )
-    _validate_array_inventory(manifest, arrays, expected_arrays)
-    if _payload_id(manifest, arrays) != manifest["payload_id"]:
-        raise ValueError("Finite-volume checkpoint payload identity changed.")
-    if plan.case.mesh_kind == "unstructured" and (
-        not np.array_equal(arrays["mesh/vertices"], plan.case.mesh_vertices)
-        or not np.array_equal(
-            arrays["mesh/vertex_global_ids"], plan.case.vertex_global_ids
-        )
-        or not np.array_equal(arrays["mesh/cell_global_ids"], plan.case.cell_global_ids)
-    ):
-        raise ValueError("Finite-volume checkpoint mesh payload changed.")
-    runtime = _migrate_legacy_runtime(plan, arrays)
-    return FiniteVolumeCheckpoint(
-        runtime,
-        plan.checkpoint_id,
-        manifest["payload_id"],
-        precision,
-    )
-
-
-def _read_schema2_checkpoint(
-    path: str | Path,
-    plan: FiniteVolumeCheckpointPlan,
-    /,
-) -> FiniteVolumeCheckpoint:
-    try:
-        with zipfile.ZipFile(Path(path), "r") as archive:
-            members = archive.namelist()
-            manifest = json.loads(archive.read("manifest.json"))
-            required_manifest = {
-                "schema_version",
-                "checkpoint_id",
-                "case",
-                "precision_evidence",
-                "arrays",
-                "payload_id",
-            }
-            if not isinstance(manifest, dict) or set(manifest) != required_manifest:
-                raise ValueError(
-                    "Finite-volume checkpoint schema-2 manifest fields changed."
-                )
-            if manifest["schema_version"] != 2:
-                raise ValueError("Unsupported finite-volume checkpoint schema.")
-            case_id = _validate_legacy_case(manifest["case"], plan)
-            if manifest["checkpoint_id"] != _legacy_checkpoint_id(2, case_id, plan):
-                raise ValueError(
-                    "Finite-volume checkpoint is incompatible with this plan."
-                )
-            precision = _validate_legacy_precision(manifest, plan)
-            inventory = manifest["arrays"]
-            if not isinstance(inventory, dict) or set(inventory) != set(
-                _LEGACY_RUNTIME_ARRAY_NAMES
-            ):
-                raise ValueError(
-                    "Finite-volume checkpoint schema-2 array inventory changed."
-                )
-            expected_members = {"manifest.json"}
-            arrays: dict[str, np.ndarray] = {}
-            payloads: list[bytes] = []
-            for name in _LEGACY_RUNTIME_ARRAY_NAMES:
-                record = inventory[name]
-                expected_fields = {"file", "sha256", "shape", "dtype"}
-                expected_file = f"arrays/{name}.npy"
-                if (
-                    not isinstance(record, dict)
-                    or set(record) != expected_fields
-                    or record["file"] != expected_file
-                ):
-                    raise ValueError(
-                        f"Finite-volume checkpoint schema-2 record {name!r} changed."
-                    )
-                expected_members.add(expected_file)
-                payload = archive.read(expected_file)
-                checksum = hashlib.sha256(payload).hexdigest()
-                if checksum != record["sha256"]:
-                    raise ValueError(
-                        f"Finite-volume checkpoint array {name!r} is corrupt."
-                    )
-                value = np.load(io.BytesIO(payload), allow_pickle=False)
-                if (
-                    list(value.shape) != record["shape"]
-                    or str(value.dtype) != record["dtype"]
-                ):
-                    raise ValueError(
-                        f"Finite-volume checkpoint array {name!r} metadata changed."
-                    )
-                arrays[name] = value
-                payloads.append(payload)
-            if len(members) != len(set(members)) or set(members) != expected_members:
-                raise ValueError("Finite-volume checkpoint schema-2 members changed.")
-    except (KeyError, json.JSONDecodeError, zipfile.BadZipFile) as error:
-        raise ValueError(
-            "Finite-volume checkpoint schema-2 archive is corrupt."
-        ) from error
-    if plan.case.mesh_kind != "structured":
-        raise ValueError(
-            "Checkpoint schema 2 supports only its public structured runtime."
-        )
-    unsigned = dict(manifest)
-    payload_id = unsigned.pop("payload_id")
-    manifest_payload = json.dumps(
-        unsigned, sort_keys=True, separators=(",", ":")
-    ).encode()
-    actual_payload_id = hashlib.sha256(manifest_payload + b"".join(payloads)).hexdigest()
-    if actual_payload_id != payload_id:
-        raise ValueError("Finite-volume checkpoint manifest or payload is corrupt.")
-    runtime = _migrate_legacy_runtime(plan, arrays)
-    return FiniteVolumeCheckpoint(
-        runtime,
-        plan.checkpoint_id,
-        actual_payload_id,
-        precision,
-    )
-
-
 def read_finite_volume_checkpoint(
     path: str | Path,
     plan: FiniteVolumeCheckpointPlan,
@@ -1642,21 +1256,12 @@ def read_finite_volume_checkpoint(
 
     if not isinstance(plan, FiniteVolumeCheckpointPlan):
         raise TypeError("plan must be a FiniteVolumeCheckpointPlan.")
-    version = _checkpoint_manifest_version(path)
-    if plan.block_runtime is not None and version != 6:
-        raise ValueError("Block finite-volume checkpoints require the current schema.")
-    if version == 2:
-        return _read_schema2_checkpoint(path, plan)
-    if version in (3, 5, 6):
-        manifest, arrays = read_array_archive(path)
-        if version == 3:
-            return _read_schema3_checkpoint(manifest, arrays, plan)
-        if version == 6 and manifest.get("state_kind") == "block-hierarchy":
-            return _read_block_checkpoint(manifest, arrays, plan)
-        if plan.block_runtime is not None:
-            raise ValueError("Checkpoint does not contain a block hierarchy state.")
-        return _read_schema5_checkpoint(manifest, arrays, plan)
-    raise ValueError("Unsupported finite-volume checkpoint schema.")
+    manifest, arrays = read_array_archive(path)
+    if manifest.get("state_kind") == "block-hierarchy":
+        return _read_block_checkpoint(manifest, arrays, plan)
+    if plan.block_runtime is not None:
+        raise ValueError("Checkpoint does not contain a block hierarchy state.")
+    return _read_checkpoint(manifest, arrays, plan)
 
 
 __all__ = [

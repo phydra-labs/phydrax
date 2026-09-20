@@ -133,7 +133,7 @@ class PereiraBotelho2019FiberCurrentPlan(StrictModule):
         relative_neutrality_tolerance: float = 1.0e-6,
     ):
         ids = tuple(str(value).strip() for value in fiber_ids)
-        positions = jnp.asarray(positions_m, dtype=float)
+        positions = jnp.asarray(positions_m, dtype=jnp.float64)
         radius = jnp.asarray(radius_m, dtype=positions.dtype)
         if not ids or any(not value for value in ids) or len(set(ids)) != len(ids):
             raise ValueError(
@@ -176,7 +176,7 @@ class PereiraBotelho2019FiberCurrentPlan(StrictModule):
         self.geometry_license = geometry_license.strip()
         self.geometry_id = canonical_fingerprint(
             {
-                "kind": "fixed-world-fiber-geometry-metres",
+                "kind": "fixed-world-fiber-geometry-meters",
                 "fibers": ids,
                 "positions": array_tree_fingerprint(positions),
                 "radius": array_tree_fingerprint(radius),

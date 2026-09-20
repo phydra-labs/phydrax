@@ -377,7 +377,7 @@ the outputs of those separately declared runs.
 ```python
 # Shape: (initial_condition, parameter, noise_realization, tolerance, metric)
 diagnostic_samples = jnp.linspace(0.4, 0.9, 32).reshape((2, 2, 2, 2, 2))
-diagnostic_valid = jnp.ones((2, 2, 2, 2), dtype=bool)
+diagnostic_valid = jnp.ones((2, 2, 2, 2), dtype="bool")
 
 uncertainty = phx.dynamics.analysis.summarize_chaos_uncertainty(
     diagnostic_samples,
@@ -527,7 +527,7 @@ control_trajectory = phx.control.ControlTrajectory(
     time_grid=control_grid,
     states=trajectory.states[:5],
     controls=jnp.zeros((control_grid.num_steps, 1)),
-    valid=jnp.ones((control_grid.num_times,), dtype=bool),
+    valid=jnp.ones((control_grid.num_times,), dtype="bool"),
     status=jnp.asarray(0, dtype=jnp.int32),
     backend_status="recorded",
     case_shape=(),

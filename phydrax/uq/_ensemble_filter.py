@@ -290,7 +290,7 @@ def _etkf_case(
     inflation: float,
     covariance_regularization: float,
 ) -> tuple[Array, Array, Array, Array, Array, Array, Array]:
-    count = int(forecast.shape[0])
+    count = forecast.shape[0]
     state_size = prod(problem.model.state_shape) if problem.model.state_shape else 1
     observation_size = (
         prod(problem.model.observation_shape) if problem.model.observation_shape else 1
@@ -308,7 +308,7 @@ def _etkf_case(
     )(inflated_forecast).reshape((count, observation_size))
     observation_mean = jnp.mean(forecast_observations, axis=0)
     observation_anomalies = forecast_observations - observation_mean[None, :]
-    mask_flat = jnp.asarray(mask, dtype=bool).reshape((observation_size,))
+    mask_flat = jnp.asarray(mask, dtype=jnp.bool_).reshape((observation_size,))
     active_float = mask_flat.astype(forecast.dtype)
     observation_anomalies = observation_anomalies * active_float[None, :]
     innovation = jnp.where(
@@ -346,7 +346,9 @@ def _etkf_case(
     analysis_mean = forecast_mean + state_anomalies.T @ mean_weights
     transform = (
         eigenvectors
-        * jnp.sqrt((count - 1) / jnp.maximum(eigenvalues, jnp.finfo(float).tiny))[None, :]
+        * jnp.sqrt((count - 1) / jnp.maximum(eigenvalues, jnp.finfo(jnp.float64).tiny))[
+            None, :
+        ]
     ) @ eigenvectors.T
     analysis_anomalies = transform @ state_anomalies
     analysis = analysis_mean[None, :] + analysis_anomalies
@@ -409,7 +411,7 @@ def ensemble_filter_step(
     flat_active = active.reshape((case_count,))
     previous = state.ensemble.reshape((case_count, count) + problem.model.state_shape)
     forecasts = []
-    analyses = []
+    analyzes = []
     forecast_observations = []
     innovations = []
     nis_values = []
@@ -455,7 +457,7 @@ def ensemble_filter_step(
             likelihood = jnp.asarray(0.0)
             valid = jnp.asarray(True)
         forecasts.append(forecast_case)
-        analyses.append(analysis_case)
+        analyzes.append(analysis_case)
         forecast_observations.append(observation_case)
         innovations.append(innovation_case)
         nis_values.append(nis)
@@ -464,7 +466,7 @@ def ensemble_filter_step(
     forecast = jnp.stack(forecasts, axis=0).reshape(
         case_shape + (count,) + problem.model.state_shape
     )
-    analysis = jnp.stack(analyses, axis=0).reshape(
+    analysis = jnp.stack(analyzes, axis=0).reshape(
         case_shape + (count,) + problem.model.state_shape
     )
     predicted_observations = jnp.stack(forecast_observations, axis=0).reshape(

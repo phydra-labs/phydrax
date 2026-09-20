@@ -143,7 +143,7 @@ def _constraint_candidates():
             "buffer-only",
             1.0,
             "plate",
-            "prediction-v1",
+            "prediction",
             setup_id="plate-setup",
             setup_cost=2.0,
             diversity_group="control",
@@ -154,7 +154,7 @@ def _constraint_candidates():
             "ligand-a",
             2.0,
             "plate",
-            "prediction-v1",
+            "prediction",
             setup_id="plate-setup",
             setup_cost=2.0,
             diversity_group="mechanism-a",
@@ -164,7 +164,7 @@ def _constraint_candidates():
             "ligand-b",
             2.0,
             "plate",
-            "prediction-v1",
+            "prediction",
             setup_id="plate-setup",
             setup_cost=2.0,
             diversity_group="mechanism-a",
@@ -174,7 +174,7 @@ def _constraint_candidates():
             "temperature-c",
             3.0,
             "orthogonal",
-            "prediction-v1",
+            "prediction",
             diversity_group="mechanism-b",
         ),
     )
@@ -185,7 +185,7 @@ def _constraint_utility(candidates):
         expected_utility=jnp.asarray([0.0, 3.0, 2.0, 2.0]),
         estimator_standard_error=jnp.asarray([0.01, 0.01, 0.01, 0.01]),
         estimator_bias_bound=jnp.full((4,), jnp.nan),
-        valid=jnp.ones((4,), dtype=bool),
+        valid=jnp.ones((4,), dtype="bool"),
         candidates=candidates,
         model_ids=("additive", "interaction"),
         utility_target="model_discrimination",
@@ -213,7 +213,7 @@ def test_batch_selection_is_deterministic_and_respects_all_constraints():
         candidates,
         utility,
         constraints,
-        objective_id="model-information-v1",
+        objective_id="model-information",
         model_ids=("additive", "interaction"),
         analysis_id="analysis-source-tree-123",
     )
@@ -221,7 +221,7 @@ def test_batch_selection_is_deterministic_and_respects_all_constraints():
         tuple(reversed(candidates)),
         utility,
         constraints,
-        objective_id="model-information-v1",
+        objective_id="model-information",
         model_ids=("interaction", "additive"),
         analysis_id="analysis-source-tree-123",
     )
@@ -262,7 +262,7 @@ def test_mandatory_control_is_costed_with_explicit_zero_information_utility():
         candidates,
         utility,
         constraints,
-        objective_id="model-information-v1",
+        objective_id="model-information",
         model_ids=("additive", "interaction"),
         analysis_id="analysis-source-tree-123",
     )
@@ -286,7 +286,7 @@ def test_prospective_plan_identity_freezes_registered_inputs():
     def select(
         values,
         *,
-        objective="model-information-v1",
+        objective="model-information",
         models=("additive", "interaction"),
         analysis="analysis-a",
     ):
@@ -301,7 +301,7 @@ def test_prospective_plan_identity_freezes_registered_inputs():
 
     reference = select(candidates)
     changed_analysis = select(candidates, analysis="analysis-b")
-    changed_objective = select(candidates, objective="prediction-information-v1")
+    changed_objective = select(candidates, objective="prediction-information")
     with pytest.raises(ValueError, match="model IDs must exactly match"):
         select(candidates, models=("additive", "other-model"))
     changed_candidates = list(candidates)
@@ -337,7 +337,7 @@ def test_retrospective_replay_reports_and_normalizes_unmatched_realized_budgets(
             f"condition-{index}",
             (0.5, 1.0, 1.5, 3.0)[index],
             "assay",
-            "prediction-v1",
+            "prediction",
             diversity_group=f"group-{index}",
         )
         for index in range(4)
@@ -371,7 +371,7 @@ def test_retrospective_replay_reports_and_normalizes_unmatched_realized_budgets(
         realized_utility=lambda selected: sum(realized_gain[value] for value in selected),
         metric_id="locked-predictive-loss-reduction",
         model_ids=("model-a", "model-b"),
-        analysis_id="retrospective-analysis-v1",
+        analysis_id="retrospective-analysis",
         objective_id="historical-replay",
     )
 

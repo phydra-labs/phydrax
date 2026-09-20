@@ -700,7 +700,7 @@ class PreparedMappedMACGeometry(StrictModule, NonTrainableState):
                 right_hand_side = right_hand_side + jnp.moveaxis(
                     contribution_right, 0, axis
                 )
-        dimension = int(matrix.shape[-1])
+        dimension = matrix.shape[-1]
         result = solve_small_linear(
             SmallLinearSolvePlan(dimension),
             matrix,

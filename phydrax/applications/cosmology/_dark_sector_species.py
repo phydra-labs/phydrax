@@ -57,7 +57,7 @@ class DarkSectorSpeciesPlan(StrictModule, NonTrainableState):
             raise TypeError("Dark-sector degeneracy must be an integer.")
         degeneracy_ = int(degeneracy)
         names = tuple(str(name).strip() for name in charge_names)
-        charge_values = np.asarray(charges, dtype=float)
+        charge_values = np.asarray(charges, dtype=np.float64)
         mass_unit_ = str(mass_unit).strip()
         energy_unit_ = str(energy_unit).strip()
         if not identifier:

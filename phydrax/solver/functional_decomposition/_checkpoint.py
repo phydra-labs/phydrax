@@ -8,7 +8,7 @@ from pathlib import Path
 
 import equinox as eqx
 
-from ..._model._structure import deserialise_model_leaf, serialise_model_leaf
+from ..._model._structure import deserialize_model_leaf, serialize_model_leaf
 from ..._training_checkpoint import (
     _prune_state_files,
     _publish_manifest,
@@ -36,8 +36,7 @@ def save_functional_decomposition_checkpoint(
         raise TypeError("prepared must be a PreparedFunctionalDecomposition.")
     if state.strategy == "joint":
         raise ValueError(
-            "Joint decomposition uses FunctionalTrainingCheckpoint through its "
-            "underlying FunctionalSolver."
+            "Joint decomposition uses FunctionalTrainingCheckpoint through its underlying FunctionalSolver."
         )
     if len(state.optimizer_states) != len(prepared.problem.cover.patches):
         raise ValueError("Checkpoint optimizer-state count does not match the cover.")
@@ -48,7 +47,7 @@ def save_functional_decomposition_checkpoint(
         lambda target: eqx.tree_serialise_leaves(
             target,
             state,
-            filter_spec=serialise_model_leaf,
+            filter_spec=serialize_model_leaf,
         ),
     )
     manifest = {
@@ -97,8 +96,7 @@ def load_functional_decomposition_checkpoint(
     unknown = set(manifest) - expected
     if missing or unknown:
         raise ValueError(
-            "Decomposition checkpoint fields are not canonical; "
-            f"missing={sorted(missing)}, unknown={sorted(unknown)}."
+            f"Decomposition checkpoint fields are not canonical; missing={sorted(missing)}, unknown={sorted(unknown)}."
         )
     if manifest["format"] != _CHECKPOINT_FORMAT:
         raise ValueError("File is not a Phydrax decomposition checkpoint.")
@@ -120,7 +118,7 @@ def load_functional_decomposition_checkpoint(
     restored = eqx.tree_deserialise_leaves(
         state_path,
         state_like,
-        filter_spec=deserialise_model_leaf,
+        filter_spec=deserialize_model_leaf,
     )
     if restored.completed_sweeps != int(manifest["completed_sweeps"]):
         raise ValueError("Decomposition checkpoint sweep count is inconsistent.")

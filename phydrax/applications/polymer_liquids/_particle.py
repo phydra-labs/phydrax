@@ -103,7 +103,7 @@ class PreparedKremerGrestProfile(StrictModule, NonTrainableState):
             raise TypeError("chain_layout must be PolymerChainLayoutPlan.")
         system = dynamics.system
         cell = system.cell
-        active = np.asarray(system.active_mask, dtype=bool)
+        active = np.asarray(system.active_mask, dtype=np.bool_)
         active_count = int(np.count_nonzero(active))
         if cell is None or not cell.fully_periodic:
             raise ValueError("The Kremer-Grest profile requires a fully periodic cell.")
@@ -116,7 +116,7 @@ class PreparedKremerGrestProfile(StrictModule, NonTrainableState):
         ):
             raise ValueError("Kremer-Grest resource bounds are exceeded.")
         layout_indices = np.asarray(chain_layout.particle_indices, dtype=np.int32)
-        layout_mask = np.asarray(chain_layout.chain_mask, dtype=bool)
+        layout_mask = np.asarray(chain_layout.chain_mask, dtype=np.bool_)
         selected = layout_indices[layout_mask]
         if (
             selected.size != active_count
@@ -188,10 +188,7 @@ class PreparedKremerGrestProfile(StrictModule, NonTrainableState):
             raise ValueError(
                 "Kremer-Grest topology must contain exactly the chain bonds."
             )
-        actual_angles = {
-            tuple(int(value) for value in row)
-            for row in np.asarray(system.topology.angle_indices)
-        }
+        actual_angles = {tuple(row) for row in np.asarray(system.topology.angle_indices)}
         if angle_terms and actual_angles != set(expected_angles):
             raise ValueError("The bending term must route every internal chain angle.")
         if not angle_terms and actual_angles:
@@ -201,7 +198,7 @@ class PreparedKremerGrestProfile(StrictModule, NonTrainableState):
             tuple(sorted((int(left), int(right)))): float(scale)
             for (left, right), scale in zip(
                 np.asarray(system.plan.topology.pair_exceptions, dtype=np.int64),
-                np.asarray(system.plan.topology.lennard_jones_scales, dtype=float),
+                np.asarray(system.plan.topology.lennard_jones_scales, dtype=np.float64),
                 strict=True,
             )
         }
@@ -212,7 +209,7 @@ class PreparedKremerGrestProfile(StrictModule, NonTrainableState):
             if not np.isclose(exception_scale.get(pair, 1.0), 1.0):
                 raise ValueError("Kremer-Grest WCA must remain active on bonded pairs.")
         fene_types = np.asarray(system.topology.bond_type_ids, dtype=np.int32)
-        if fene_types.size and int(np.max(fene_types)) >= int(fene.stiffness.size):
+        if fene_types.size and int(np.max(fene_types)) >= fene.stiffness.size:
             raise ValueError("FENE type routing exceeds the parameter table.")
         self.plan = plan
         self.dynamics = dynamics

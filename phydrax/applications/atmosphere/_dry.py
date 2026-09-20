@@ -55,7 +55,7 @@ class DryAir(StrictModule, NonTrainableState):
     air_id: str = eqx.field(static=True)
 
     def __init__(self, mole_fractions: Sequence[float] = (0.78084, 0.20946, 0.00934)):
-        fraction = np.asarray(mole_fractions, dtype=float)
+        fraction = np.asarray(mole_fractions, dtype=np.float64)
         if (
             fraction.shape != (3,)
             or np.any(~np.isfinite(fraction))
@@ -291,8 +291,8 @@ class DryAtmospherePlan(StrictModule, NonTrainableState):
         order: int = 2,
         cfl: float = 0.35,
     ):
-        shape_ = tuple(int(n) for n in shape)
-        bounds_ = np.asarray(bounds, dtype=float)
+        shape_ = tuple(shape)
+        bounds_ = np.asarray(bounds, dtype=np.float64)
         if (
             len(shape_) not in (1, 2)
             or any(n < 2 for n in shape_)
@@ -513,7 +513,7 @@ class PreparedDryAtmosphere(AbstractFixedStepMethod):
         content = FiniteVolumeConservativeContentState.from_cell_average(
             values.reshape((-1, self.system.component_count)),
             volumes,
-            jnp.ones(volumes.shape, dtype=bool),
+            jnp.ones(volumes.shape, dtype=jnp.bool_),
             jnp.asarray(time),
             topology_epoch_id=geometry.prepared_id,
             geometry_family_id=geometry.plan_id,

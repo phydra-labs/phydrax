@@ -95,10 +95,10 @@ open-chain environments and do not allocate the global operator.
 
 ::: phydrax.tensor_network.TensorNetworkPrecisionPolicy
 
-## Prepared labelled contractions
+## Prepared labeled contractions
 
 `ContractionStructure` separates static operand/leg topology from numerical
-arrays. V1 ordinary contractions require every free label exactly once and in
+arrays. Canonical ordinary contractions require every free label exactly once and in
 the explicit output order, and every contracted label exactly twice; hyperedges
 and log-semiring inference are rejected rather than assigned implicit semantics.
 
@@ -119,7 +119,7 @@ available for sweep algorithms.
 ## Static Abelian sectors
 
 `AbelianGroup` represents an ordered direct product of U(1) and finite cyclic
-charge components. Oriented `AbelianLeg` values declare charge catalogues and
+charge components. Oriented `AbelianLeg` values declare charge catalogs and
 fixed degeneracy capacities; `AbelianTensorLayout` enumerates the exact
 charge-conserving blocks. Numerical storage is an immutable ordered tuple of
 fixed-shape JAX blocks. It is not a dynamic sparse dictionary or a universal

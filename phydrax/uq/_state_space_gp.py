@@ -89,33 +89,33 @@ class StateSpaceGaussianProcessDesign(StrictModule):
     ):
         train = _as_time_vector(train_times, name="train_times")
         query = _as_time_vector(query_times, name="query_times")
-        if int(train.size + query.size) == 0:
+        if train.size + query.size == 0:
             raise ValueError("At least one training or query time is required.")
         train_orders = _derivative_orders(
             train_time_derivative_order,
-            size=int(train.size),
+            size=train.size,
             name="train_time_derivative_order",
         )
         query_orders = _derivative_orders(
             query_time_derivative_order,
-            size=int(query.size),
+            size=query.size,
             name="query_time_derivative_order",
         )
         if train_mask is None:
-            mask = jnp.ones(train.shape, dtype=bool)
+            mask = jnp.ones(train.shape, dtype=jnp.bool_)
         else:
-            mask = jnp.asarray(train_mask, dtype=bool)
+            mask = jnp.asarray(train_mask, dtype=jnp.bool_)
             if mask.shape != train.shape:
                 raise ValueError("train_mask must align with train_times.")
         if train_spatial is not None:
             if not isinstance(train_spatial, FunctionalDesign):
                 raise TypeError("train_spatial must be a FunctionalDesign or None.")
-            if train_spatial.num_observations != int(train.size):
+            if train_spatial.num_observations != train.size:
                 raise ValueError("train_spatial must align with train_times.")
         if query_spatial is not None:
             if not isinstance(query_spatial, FunctionalDesign):
                 raise TypeError("query_spatial must be a FunctionalDesign or None.")
-            if query_spatial.num_observations != int(query.size):
+            if query_spatial.num_observations != query.size:
                 raise ValueError("query_spatial must align with query_times.")
         self.train_times = train
         self.query_times = query
@@ -127,11 +127,11 @@ class StateSpaceGaussianProcessDesign(StrictModule):
 
     @property
     def train_size(self) -> int:
-        return int(self.train_times.shape[0])
+        return self.train_times.shape[0]
 
     @property
     def query_size(self) -> int:
-        return int(self.query_times.shape[0])
+        return self.query_times.shape[0]
 
 
 class _StateSpaceGaussianProcessArguments(StrictModule):
@@ -181,7 +181,7 @@ class StateSpaceGaussianProcessPlan(StrictModule):
 
     @property
     def schedule_size(self) -> int:
-        return int(self.schedule_times.shape[0])
+        return self.schedule_times.shape[0]
 
     @property
     def train_size(self) -> int:
@@ -456,17 +456,17 @@ def _expanded_state_space(
     row_capacity: int,
     /,
 ) -> _ExpandedStateSpace:
-    rank = int(spatial_factor.shape[1])
+    rank = spatial_factor.shape[1]
     identity = jnp.eye(rank, dtype=temporal.drift.dtype)
     drift = jnp.kron(identity, temporal.drift)
     stationary = jnp.kron(identity, temporal.stationary)
     stationary_factor = jnp.kron(identity, temporal.stationary_factor)
     process_factor = jnp.kron(identity, temporal.process_factor)
-    state_size = int(drift.shape[0])
+    state_size = drift.shape[0]
     observation_matrices = jnp.zeros(
         (schedule_size, row_capacity, state_size), dtype=drift.dtype
     )
-    train_count = int(train_orders.shape[0])
+    train_count = train_orders.shape[0]
     all_orders = jnp.concatenate((train_orders, query_orders))
     temporal_rows = _time_observation_rows(temporal, all_orders)
     rows = jax.vmap(jnp.kron)(spatial_factor, temporal_rows)
@@ -610,7 +610,7 @@ def compile_state_space_kernel(
             )
         train_gather[index] = (schedule_index, row)
         row_counts[schedule_index] += 1
-    schedule_mask = np.zeros((schedule_host.size, row_capacity), dtype=bool)
+    schedule_mask = np.zeros((schedule_host.size, row_capacity), dtype=np.bool_)
     mask_host = np.asarray(jax.device_get(design.train_mask))
     for index, (schedule_index, row) in enumerate(train_gather):
         schedule_mask[schedule_index, row] = bool(mask_host[index])
@@ -627,8 +627,8 @@ def compile_state_space_kernel(
             f"but the design requires {requested_order}."
         )
     spatial_factor = _spatial_factor(design, spatial_kernel)
-    rank = int(spatial_factor.shape[1])
-    temporal_size = int(temporal.drift.shape[0])
+    rank = spatial_factor.shape[1]
+    temporal_size = temporal.drift.shape[0]
     state_size = rank * temporal_size
     if state_size > state_limit:
         raise ValueError(
@@ -647,7 +647,7 @@ def compile_state_space_kernel(
         design.train_time_derivative_order,
         design.query_time_derivative_order,
         train_gather_array,
-        int(schedule_host.size),
+        schedule_host.size,
         row_capacity,
     )
     process_noise = expanded.process_factor @ expanded.process_factor.T
@@ -671,7 +671,7 @@ def compile_state_space_kernel(
 
     inference_times = schedule - schedule[0]
     initial_time = jnp.zeros((), dtype=schedule.dtype)
-    schedule_mask_array = jnp.asarray(schedule_mask, dtype=bool)
+    schedule_mask_array = jnp.asarray(schedule_mask, dtype=jnp.bool_)
     prior = GaussianStatePrior(
         jnp.zeros((state_size,), dtype=schedule.dtype),
         expanded.stationary,
@@ -973,7 +973,7 @@ def state_space_gaussian_process_status_name(value: int, /) -> str:
 
 
 def _as_time_vector(value: ArrayLike, /, *, name: str) -> Array:
-    times = jnp.asarray(value, dtype=float)
+    times = jnp.asarray(value, dtype=jnp.float64)
     if times.ndim != 1:
         raise ValueError(f"{name} must be a one-dimensional time vector.")
     host = np.asarray(jax.device_get(times))

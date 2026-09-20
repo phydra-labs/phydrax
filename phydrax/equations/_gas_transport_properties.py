@@ -42,17 +42,17 @@ class AbstractGasTransportPropertyPlan(StrictModule, NonTrainableState, abc.ABC)
 
 
 def _positive_vector(values: ArrayLike, size: int, name: str, /) -> np.ndarray:
-    array = np.asarray(values, dtype=float)
+    array = np.asarray(values, dtype=np.float64)
     if array.shape != (size,) or np.any(~np.isfinite(array)) or np.any(array <= 0.0):
         raise ValueError(f"{name} must contain one finite positive value per species.")
     return array
 
 
 def _binary_matrix(values: ArrayLike, size: int, name: str, /) -> np.ndarray:
-    matrix = np.asarray(values, dtype=float)
+    matrix = np.asarray(values, dtype=np.float64)
     if matrix.shape != (size, size):
         raise ValueError(f"{name} must be species-square.")
-    off_diagonal = ~np.eye(size, dtype=bool)
+    off_diagonal = ~np.eye(size, dtype=np.bool_)
     if (
         np.any(~np.isfinite(matrix[off_diagonal]))
         or np.any(matrix[off_diagonal] <= 0.0)
@@ -83,7 +83,7 @@ def _evaluation(
         & jnp.all(
             jnp.isfinite(
                 jnp.where(
-                    jnp.eye(diffusion.shape[-1], dtype=bool),
+                    jnp.eye(diffusion.shape[-1], dtype=jnp.bool_),
                     0.0,
                     diffusion,
                 )
@@ -95,7 +95,9 @@ def _evaluation(
         jnp.all(viscosity > 0.0, axis=-1)
         & jnp.all(conductivity > 0.0, axis=-1)
         & jnp.all(
-            jnp.where(jnp.eye(diffusion.shape[-1], dtype=bool), True, diffusion > 0.0),
+            jnp.where(
+                jnp.eye(diffusion.shape[-1], dtype=jnp.bool_), True, diffusion > 0.0
+            ),
             axis=(-2, -1),
         )
     )
@@ -136,8 +138,8 @@ class ReferencePowerLawGasTransportPlan(AbstractGasTransportPropertyPlan):
         viscosity_temperature_exponent: float = 0.7,
         conductivity_temperature_exponent: float = 0.7,
     ):
-        viscosity = np.asarray(species_viscosities, dtype=float)
-        count = int(viscosity.size) if viscosity.ndim == 1 else 0
+        viscosity = np.asarray(species_viscosities, dtype=np.float64)
+        count = viscosity.size if viscosity.ndim == 1 else 0
         if count < 2:
             raise ValueError("Gas transport requires at least two species.")
         viscosity = _positive_vector(viscosity, count, "species_viscosities")
@@ -223,7 +225,7 @@ class ReferencePowerLawGasTransportPlan(AbstractGasTransportPropertyPlan):
 
 def _horner(coefficients: Array, coordinate: Array, /) -> Array:
     result = jnp.zeros(coordinate.shape + coefficients.shape[:-1], dtype=coordinate.dtype)
-    for index in range(int(coefficients.shape[-1]) - 1, -1, -1):
+    for index in range(coefficients.shape[-1] - 1, -1, -1):
         result = result * coordinate[..., None] + coefficients[..., index]
     return result
 
@@ -252,12 +254,12 @@ class LogPolynomialGasTransportPlan(AbstractGasTransportPropertyPlan):
         relative_error_bounds: tuple[float, float, float],
         reference_id: str,
     ):
-        viscosity = np.asarray(viscosity_coefficients, dtype=float)
-        conductivity = np.asarray(conductivity_coefficients, dtype=float)
-        diffusion = np.asarray(diffusion_coefficients, dtype=float)
+        viscosity = np.asarray(viscosity_coefficients, dtype=np.float64)
+        conductivity = np.asarray(conductivity_coefficients, dtype=np.float64)
+        diffusion = np.asarray(diffusion_coefficients, dtype=np.float64)
         if viscosity.ndim != 2 or viscosity.shape[0] < 2:
             raise ValueError("Viscosity log-polynomials must be species-by-coefficient.")
-        count = int(viscosity.shape[0])
+        count = viscosity.shape[0]
         if (
             conductivity.shape != viscosity.shape
             or diffusion.ndim != 3
@@ -267,7 +269,7 @@ class LogPolynomialGasTransportPlan(AbstractGasTransportPropertyPlan):
             or np.any(~np.isfinite(conductivity))
         ):
             raise ValueError("Transport log-polynomial coefficient shapes are invalid.")
-        off_diagonal = ~np.eye(count, dtype=bool)
+        off_diagonal = ~np.eye(count, dtype=np.bool_)
         if np.any(~np.isfinite(diffusion[off_diagonal])):
             raise ValueError("Off-diagonal diffusion polynomials must be finite.")
         lower, upper = map(float, temperature_bounds)
@@ -285,7 +287,7 @@ class LogPolynomialGasTransportPlan(AbstractGasTransportPropertyPlan):
                 "Polynomial support, pressure, errors, or reference ID is invalid."
             )
         diffusion = diffusion.copy()
-        diffusion[np.eye(count, dtype=bool)] = 0.0
+        diffusion[np.eye(count, dtype=np.bool_)] = 0.0
         self.species_count = count
         self.viscosity_coefficients = jnp.asarray(viscosity)
         self.conductivity_coefficients = jnp.asarray(conductivity)
@@ -332,7 +334,9 @@ class LogPolynomialGasTransportPlan(AbstractGasTransportPropertyPlan):
         diffusion = jnp.exp(log_diffusion) * (
             self.reference_pressure / pressure_[..., None, None]
         )
-        diffusion = jnp.where(jnp.eye(self.species_count, dtype=bool), jnp.inf, diffusion)
+        diffusion = jnp.where(
+            jnp.eye(self.species_count, dtype=jnp.bool_), jnp.inf, diffusion
+        )
         supported = (
             jnp.isfinite(temperature_)
             & (temperature_ >= self.minimum_temperature)
@@ -369,8 +373,8 @@ class KineticTheoryGasTransportPlan(AbstractGasTransportPropertyPlan):
         temperature_bounds: tuple[float, float],
         /,
     ):
-        masses = np.asarray(molar_masses_g_mol, dtype=float)
-        count = int(masses.size) if masses.ndim == 1 else 0
+        masses = np.asarray(molar_masses_g_mol, dtype=np.float64)
+        count = masses.size if masses.ndim == 1 else 0
         if count < 2:
             raise ValueError("Kinetic gas transport requires at least two species.")
         masses = _positive_vector(masses, count, "molar_masses_g_mol")
@@ -459,7 +463,9 @@ class KineticTheoryGasTransportPlan(AbstractGasTransportPropertyPlan):
             * pair_mass
             / (pressure_atmosphere[..., None, None] * pair_diameter**2 * omega_d)
         )
-        diffusion = jnp.where(jnp.eye(self.species_count, dtype=bool), jnp.inf, diffusion)
+        diffusion = jnp.where(
+            jnp.eye(self.species_count, dtype=jnp.bool_), jnp.inf, diffusion
+        )
         supported = (
             jnp.isfinite(temperature_)
             & (temperature_ >= self.minimum_temperature)

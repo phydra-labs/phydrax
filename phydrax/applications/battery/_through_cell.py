@@ -21,7 +21,7 @@ _FARADAY_C_MOL = 96485.33212
 
 
 class ThroughCellRegionPlan(StrictModule, NonTrainableState):
-    """One fixed cell-centred region of a three-region through-cell mesh."""
+    """One fixed cell-centered region of a three-region through-cell mesh."""
 
     cell_count: int = eqx.field(static=True)
     reference_faces: Array
@@ -45,7 +45,7 @@ class ThroughCellRegionPlan(StrictModule, NonTrainableState):
         if reference_faces is None:
             faces_host = np.linspace(0.0, 1.0, cell_count + 1)
         else:
-            faces_host = np.asarray(reference_faces, dtype=float)
+            faces_host = np.asarray(reference_faces, dtype=np.float64)
         if (
             faces_host.shape != (cell_count + 1,)
             or np.any(~np.isfinite(faces_host))
@@ -54,8 +54,7 @@ class ThroughCellRegionPlan(StrictModule, NonTrainableState):
             or not np.isclose(faces_host[-1], 1.0)
         ):
             raise ValueError(
-                "reference_faces must be finite, strictly increasing, span [0, 1], "
-                "and match cell_count."
+                "reference_faces must be finite, strictly increasing, span [0, 1], and match cell_count."
             )
         self.cell_count = cell_count
         self.reference_faces = jnp.asarray(faces_host)

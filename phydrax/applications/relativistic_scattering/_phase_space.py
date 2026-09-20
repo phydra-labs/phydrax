@@ -121,7 +121,7 @@ class TwoBodyPhaseSpaceMap(AbstractPhaseSpaceMap, NonTrainableState):
     _map_id: str = eqx.field(static=True)
 
     def __init__(self, first_mass: float, second_mass: float, /):
-        masses = np.asarray([first_mass, second_mass], dtype=float)
+        masses = np.asarray([first_mass, second_mass], dtype=np.float64)
         if np.any(~np.isfinite(masses)) or np.any(masses < 0.0):
             raise ValueError("Two-body masses must be finite and nonnegative.")
         self.masses = jnp.asarray(masses)
@@ -207,7 +207,7 @@ class RecursivePhaseSpaceMap(AbstractPhaseSpaceMap, NonTrainableState):
         *,
         max_multiplicity: int = 16,
     ):
-        masses_ = np.asarray(tuple(masses), dtype=float)
+        masses_ = np.asarray(tuple(masses), dtype=np.float64)
         maximum = int(max_multiplicity)
         if masses_.ndim != 1 or masses_.size < 2:
             raise ValueError("Recursive phase space requires at least two final masses.")
@@ -216,8 +216,8 @@ class RecursivePhaseSpaceMap(AbstractPhaseSpaceMap, NonTrainableState):
         if np.any(~np.isfinite(masses_)) or np.any(masses_ < 0.0):
             raise ValueError("Final-state masses must be finite and nonnegative.")
         self.masses = jnp.asarray(masses_)
-        self._multiplicity = int(masses_.size)
-        self._dimension = 3 * int(masses_.size) - 4
+        self._multiplicity = masses_.size
+        self._dimension = 3 * masses_.size - 4
         self.max_multiplicity = maximum
         self._map_id = canonical_fingerprint(
             {
@@ -358,7 +358,7 @@ class MultiChannelPhaseSpacePlan(StrictModule, NonTrainableState):
         max_channels: int = 16,
     ):
         channels_ = tuple(channels)
-        probabilities_ = np.asarray(tuple(probabilities), dtype=float)
+        probabilities_ = np.asarray(tuple(probabilities), dtype=np.float64)
         maximum = int(max_channels)
         if not channels_ or probabilities_.shape != (len(channels_),):
             raise ValueError(

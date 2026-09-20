@@ -33,7 +33,7 @@ def _hierarchy(*, fine_capacity=4, refined=False, periodic=True):
     runtime = phx.discretization.FDAMRHierarchyPlan(hierarchy).prepare()
     topology = runtime.initial_topology()
     if refined:
-        tags = jnp.zeros((2, 4), dtype=bool).at[0, 1:3].set(True)
+        tags = jnp.zeros((2, 4), dtype="bool").at[0, 1:3].set(True)
         compiled = runtime.compile_topology(topology, (tags,))
         assert compiled.status.successful
         topology = compiled.topology

@@ -59,8 +59,8 @@ class TabulatedEphemeris(StrictModule, NonTrainableState):
             raise TypeError("provenance must be AstrodynamicsDataProvenance.")
         if bounds_policy not in ("error", "clip"):
             raise ValueError("Unknown ephemeris bounds policy.")
-        times_host = np.asarray(relative_times, dtype=float)
-        states_host = np.asarray(states, dtype=float)
+        times_host = np.asarray(relative_times, dtype=np.float64)
+        states_host = np.asarray(states, dtype=np.float64)
         expected = (times_host.size, catalog.capacity, 6)
         if times_host.ndim != 1 or times_host.size < 2 or states_host.shape != expected:
             raise ValueError(f"Ephemeris states must have shape {expected}.")
@@ -91,7 +91,7 @@ class TabulatedEphemeris(StrictModule, NonTrainableState):
                 "kind": "tabulated-ephemeris",
                 "catalog": catalog.catalog_id,
                 "provenance": provenance.provenance_id,
-                "num_times": int(times_host.size),
+                "num_times": times_host.size,
                 "bounds_policy": bounds_policy,
             }
         )
@@ -111,7 +111,7 @@ class TabulatedEphemeris(StrictModule, NonTrainableState):
         support = (time >= self.relative_times[0]) & (time <= self.relative_times[-1])
         query = jnp.clip(time, self.relative_times[0], self.relative_times[-1])
         upper = jnp.searchsorted(self.relative_times, query, side="right")
-        upper = jnp.clip(upper, 1, int(self.relative_times.size) - 1)
+        upper = jnp.clip(upper, 1, self.relative_times.size - 1)
         lower = upper - 1
         start = self.relative_times[lower]
         end = self.relative_times[upper]

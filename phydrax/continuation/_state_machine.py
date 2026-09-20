@@ -14,7 +14,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._tree_math import validate_inexact_tree, validate_real_inexact_tree
 from ._geometry import ContinuationRepresentationPolicy
 
@@ -93,7 +93,7 @@ class ParameterRealization(StrictModule):
         )
         self.coordinate = coordinate_
         self.parameters = parameters_
-        self.finite = jnp.asarray(finite, dtype=bool)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
         self.problem_id = identifier
         self.parameter_paths = paths
         self.path_id = path_id
@@ -196,7 +196,7 @@ class ContinuationCandidate(StrictModule):
             )
         if not bool(jnp.array_equal(coordinate_, realization.coordinate)):
             raise ValueError("Candidate coordinate and parameter realization must match.")
-        numerical = jnp.asarray(numerical_accepted, dtype=bool)
+        numerical = jnp.asarray(numerical_accepted, dtype=jnp.bool_)
         candidate_id = canonical_fingerprint(
             {
                 "kind": "continuation-candidate",
@@ -269,7 +269,7 @@ class ParameterTransferEvidence(StrictModule):
                 "Transfer evidence requires a target ID and parameter paths."
             )
         flags = tuple(
-            jnp.asarray(value, dtype=bool)
+            jnp.asarray(value, dtype=jnp.bool_)
             for value in (evaluated, paths_match, finite, application_accepted)
         )
         if any(value.shape != () for value in flags):
@@ -476,7 +476,7 @@ class ContinuationStepResult(StrictModule):
         if transfer.target_realization_id != candidate.realization.realization_id:
             raise ValueError("Transfer evidence targets another parameter realization.")
         flags = tuple(
-            jnp.asarray(value, dtype=bool)
+            jnp.asarray(value, dtype=jnp.bool_)
             for value in (numerical_accepted, accepted, committed, rolled_back)
         )
         if any(value.shape != () for value in flags):
@@ -545,11 +545,11 @@ class ContinuationStepResult(StrictModule):
 class AbstractContinuationAdapter(StrictModule):
     """Curve adapter with opaque, application-owned attempt transactions."""
 
-    continuation_problem: AbstractAttribute[Any]
-    coordinate_lower: AbstractAttribute[float]
-    coordinate_upper: AbstractAttribute[float]
-    problem_id: AbstractAttribute[str]
-    adapter_id: AbstractAttribute[str]
+    continuation_problem: eqx.AbstractVar[Any]
+    coordinate_lower: eqx.AbstractVar[float]
+    coordinate_upper: eqx.AbstractVar[float]
+    problem_id: eqx.AbstractVar[str]
+    adapter_id: eqx.AbstractVar[str]
     __strict_abstract__ = True
 
     @abc.abstractmethod
@@ -877,7 +877,7 @@ class ContinuationAdapterAudit(StrictModule):
         representation_matches: Any,
     ):
         flags = tuple(
-            jnp.asarray(value, dtype=bool)
+            jnp.asarray(value, dtype=jnp.bool_)
             for value in (
                 problem_identity_matches,
                 coordinate_interval_matches,

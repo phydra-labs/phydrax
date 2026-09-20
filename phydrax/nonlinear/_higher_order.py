@@ -11,6 +11,8 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
+from phydrax._strict import StrictModule
+
 from .._tree_math import tree_allfinite
 from ..linalg import (
     FunctionLinearOperator,
@@ -39,7 +41,7 @@ def _coordinate_norm(space, value, precision: NonlinearPrecisionPolicy, /) -> Ar
     )
 
 
-class _HalleyRun(eqx.Module):
+class _HalleyRun(StrictModule):
     state: PyTree[Array]
     residual: PyTree[Array]
     auxiliary: Any
@@ -207,7 +209,7 @@ class VectorHalley(AbstractNonlinearMethod):
             )
             direction = second.value
 
-            class _Search(eqx.Module):
+            class _Search(StrictModule):
                 state: PyTree[Array]
                 residual: PyTree[Array]
                 auxiliary: Any

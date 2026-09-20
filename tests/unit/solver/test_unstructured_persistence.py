@@ -98,7 +98,7 @@ def _moving_sliding_runtime():
     face_ids = np.asarray((9, 7, 10), dtype=np.int32)
     face_cells = np.asarray((2, 2, 3), dtype=np.int32)
     owners = np.asarray(discretization.owner_cells)[face_ids]
-    neighbours = np.asarray(discretization.neighbour_cells)[face_ids]
+    np.asarray(discretization.neighbor_cells)[face_ids]
     orientation = np.where(owners == face_cells, 1.0, -1.0)
     unit_normals = (
         np.asarray(discretization.area_vectors)[face_ids]
@@ -230,7 +230,6 @@ def test_unstructured_case_loader_checkpoint_and_mesh_compatibility(tmp_path):
     phx.discretization.write_unstructured_fv_archive(mesh_path, plan)
     checksum = hashlib.sha256(mesh_path.read_bytes()).hexdigest()
     payload = {
-        "schema_version": 2,
         "name": "loaded-unstructured",
         "mesh": {"path": mesh_path.name, "sha256": checksum},
         "equation": {
@@ -250,7 +249,6 @@ def test_unstructured_case_loader_checkpoint_and_mesh_compatibility(tmp_path):
     prepared = phx.solver.load_finite_volume_case(
         payload, source_path=tmp_path / "case.json"
     )
-    assert prepared.case.schema_version == 2
     assert prepared.case.mesh_topology_id == plan.topology_id
     assert prepared.case.mesh_geometry_id == plan.geometry_id
     assert prepared.initial_state is not None
@@ -297,9 +295,9 @@ def test_unstructured_case_loader_checkpoint_and_mesh_compatibility(tmp_path):
     )
     with zipfile.ZipFile(checkpoint_path) as archive:
         manifest = json.loads(archive.read("manifest.json"))
-    assert manifest["schema_version"] == 5
-    assert manifest["runtime_state_schema_version"] == 4
-    assert manifest["content_state_schema_version"] == 2
+    assert "schema_version" not in manifest
+    assert "runtime_state_schema_version" not in manifest
+    assert "content_state_schema_version" not in manifest
     assert manifest["mesh"]["topology_id"] == plan.topology_id
 
     bad_payload = {
@@ -324,7 +322,7 @@ def test_unstructured_hdf5_xdmf_and_vtk_outputs_are_self_describing(tmp_path):
     assert index == 0
     h5py = import_module("h5py")
     with h5py.File(output.hdf5_path, "r") as handle:
-        assert handle.attrs["schema_version"] == 4
+        assert "schema_version" not in handle.attrs
         assert handle.attrs["topology_id"] == discretization.topology_id
         np.testing.assert_array_equal(handle["mesh/points"], discretization.vertices)
         np.testing.assert_array_equal(

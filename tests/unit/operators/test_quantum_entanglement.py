@@ -9,15 +9,15 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-SIGMA_X = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=complex)
-SIGMA_Y = jnp.asarray([[0.0, -1.0j], [1.0j, 0.0]], dtype=complex)
-SIGMA_Z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype=complex)
+SIGMA_X = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype="complex128")
+SIGMA_Y = jnp.asarray([[0.0, -1.0j], [1.0j, 0.0]], dtype="complex128")
+SIGMA_Z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype="complex128")
 
 
 def _bell_fields():
     time = phx.domain.TimeInterval(0.0, 1.0)
-    zero = time.Function()(jnp.asarray([1.0, 0.0], dtype=complex))
-    one = time.Function()(jnp.asarray([0.0, 1.0], dtype=complex))
+    zero = time.Function()(jnp.asarray([1.0, 0.0], dtype="complex128"))
+    one = time.Function()(jnp.asarray([0.0, 1.0], dtype="complex128"))
     bell_state = (
         phx.operators.tensor_product(zero, zero) + phx.operators.tensor_product(one, one)
     ) / jnp.sqrt(2.0)
@@ -86,7 +86,7 @@ def test_partial_trace_is_jittable_and_parameter_differentiable():
     def reduced_ground_population(theta):
         state = jnp.asarray(
             [jnp.cos(theta), 0.0, 0.0, jnp.sin(theta)],
-            dtype=complex,
+            dtype="complex128",
         )
         density = phx.operators.density_from_factor(time.Function()(state[:, None]))
         reduced = phx.operators.partial_trace(

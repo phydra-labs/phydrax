@@ -191,7 +191,7 @@ class WeightSpaceRecurrence(StrictModule):
         if not isinstance(batch, RecurrentBatch):
             raise TypeError("batch must be a RecurrentBatch.")
         values = jnp.asarray(batch.inputs)
-        if values.ndim < 1 or int(values.shape[-1]) != self.input_size:
+        if values.ndim < 1 or values.shape[-1] != self.input_size:
             raise ValueError(f"Weight-space inputs must end in width {self.input_size}.")
         parameter_center = jnp.asarray(center)
         values_complex = jnp.issubdtype(values.dtype, jnp.complexfloating)

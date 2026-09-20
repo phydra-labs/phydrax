@@ -106,8 +106,7 @@ class FuglevandWinterPatla1993Parameters(StrictModule):
         if values["peak_firing_rate_difference_hz"] < 0.0:
             raise ValueError("peak_firing_rate_difference_hz must be nonnegative.")
         if (
-            values["peak_firing_rate_first_hz"]
-            - values["peak_firing_rate_difference_hz"]
+            values["peak_firing_rate_first_hz"] - values["peak_firing_rate_difference_hz"]
             <= values["minimum_firing_rate_hz"]
         ):
             raise ValueError("Every peak firing rate must exceed the minimum rate.")
@@ -116,11 +115,10 @@ class FuglevandWinterPatla1993Parameters(StrictModule):
         cv = values["interspike_interval_cv"]
         if cv <= 0.0 or cv >= 1.0 / 3.9:
             raise ValueError(
-                "interspike_interval_cv must be in (0, 1/3.9) so every "
-                "source-truncated interval remains positive."
+                "interspike_interval_cv must be in (0, 1/3.9) so every source-truncated interval remains positive."
             )
         for name, value in values.items():
-            setattr(self, name, jnp.asarray(value, dtype=float))
+            setattr(self, name, jnp.asarray(value, dtype=jnp.float64))
 
 
 class FuglevandWinterPatla1993Plan(StrictModule):
@@ -145,9 +143,8 @@ class FuglevandWinterPatla1993Plan(StrictModule):
             raise TypeError("unit_count must be an integer.")
         if unit_count <= 0:
             raise ValueError("unit_count must be positive.")
-        if (
-            isinstance(event_capacity_per_unit, bool)
-            or not isinstance(event_capacity_per_unit, int)
+        if isinstance(event_capacity_per_unit, bool) or not isinstance(
+            event_capacity_per_unit, int
         ):
             raise TypeError("event_capacity_per_unit must be an integer.")
         if event_capacity_per_unit <= 0:
@@ -155,9 +152,7 @@ class FuglevandWinterPatla1993Plan(StrictModule):
         if not isinstance(random_stream_id, str) or not random_stream_id:
             raise ValueError("random_stream_id must be a nonempty string.")
         parameters_ = (
-            FuglevandWinterPatla1993Parameters()
-            if parameters is None
-            else parameters
+            FuglevandWinterPatla1993Parameters() if parameters is None else parameters
         )
         if not isinstance(parameters_, FuglevandWinterPatla1993Parameters):
             raise TypeError(
@@ -180,12 +175,10 @@ class FuglevandWinterPatla1993Plan(StrictModule):
     def prepare(self, /) -> "PreparedFuglevandWinterPatla1993":
         """Materialize the fixed-rank source distributions."""
 
-        rank = jnp.arange(1, self.unit_count + 1, dtype=float)
+        rank = jnp.arange(1, self.unit_count + 1, dtype=jnp.float64)
         fraction = rank / float(self.unit_count)
         parameters = self.parameters
-        thresholds = jnp.exp(
-            jnp.log(parameters.recruitment_threshold_range) * fraction
-        )
+        thresholds = jnp.exp(jnp.log(parameters.recruitment_threshold_range) * fraction)
         peak_twitch = jnp.exp(jnp.log(parameters.twitch_force_range) * fraction)
         contraction_power = jnp.log(parameters.contraction_time_range) / jnp.log(
             parameters.twitch_force_range
@@ -194,13 +187,13 @@ class FuglevandWinterPatla1993Plan(StrictModule):
             peak_twitch**contraction_power
         )
         peak_firing = parameters.peak_firing_rate_first_hz - (
-            parameters.peak_firing_rate_difference_hz
-            * thresholds
-            / thresholds[-1]
+            parameters.peak_firing_rate_difference_hz * thresholds / thresholds[-1]
         )
-        maximum_excitation = thresholds[-1] + (
-            peak_firing[-1] - parameters.minimum_firing_rate_hz
-        ) / parameters.firing_rate_gain_hz_per_excitation
+        maximum_excitation = (
+            thresholds[-1]
+            + (peak_firing[-1] - parameters.minimum_firing_rate_hz)
+            / parameters.firing_rate_gain_hz_per_excitation
+        )
         return PreparedFuglevandWinterPatla1993(
             self,
             thresholds,
@@ -364,9 +357,7 @@ class PreparedFuglevandWinterPatla1993(StrictModule):
         if state.model_id != self.plan.model_id:
             raise ValueError("state does not belong to this prepared model.")
         if not isinstance(random_input, FuglevandWinterPatla1993RandomInput):
-            raise TypeError(
-                "random_input must be FuglevandWinterPatla1993RandomInput."
-            )
+            raise TypeError("random_input must be FuglevandWinterPatla1993RandomInput.")
         if random_input.stream_id != self.plan.random_stream_id:
             raise ValueError("random_input stream_id does not match the plan.")
         n = self.plan.unit_count
@@ -415,12 +406,16 @@ class PreparedFuglevandWinterPatla1993(StrictModule):
         )
         normal_scores = jax.lax.stop_gradient(normal_scores)
         event_times = jnp.full((n, capacity), jnp.inf, dtype=excitation_.dtype)
-        event_mask = jnp.zeros((n, capacity), dtype=bool)
+        event_mask = jnp.zeros((n, capacity), dtype=jnp.bool_)
         event_gain = jnp.zeros((n, capacity), dtype=excitation_.dtype)
         last = state.last_discharge_ms
         next_time = jnp.where(
             eligible,
-            jnp.where(jnp.isfinite(state.next_discharge_ms), state.next_discharge_ms, state.time_ms),
+            jnp.where(
+                jnp.isfinite(state.next_discharge_ms),
+                state.next_discharge_ms,
+                state.time_ms,
+            ),
             jnp.inf,
         )
         gain_boundary = jnp.asarray(0.4, dtype=excitation_.dtype)
@@ -434,7 +429,9 @@ class PreparedFuglevandWinterPatla1993(StrictModule):
             has_predecessor = fires & jnp.isfinite(last) & (interval > 0.0)
             safe_interval = jnp.where(has_predecessor, interval, 1.0)
             normalized_rate = self.contraction_time_ms / safe_interval
-            safe_normalized_rate = jnp.maximum(normalized_rate, jnp.finfo(excitation_.dtype).tiny)
+            safe_normalized_rate = jnp.maximum(
+                normalized_rate, jnp.finfo(excitation_.dtype).tiny
+            )
             high_gain = (
                 -jnp.expm1(-2.0 * safe_normalized_rate**3)
                 / safe_normalized_rate
@@ -463,16 +460,12 @@ class PreparedFuglevandWinterPatla1993(StrictModule):
         decay = jnp.exp(-rates_per_ms * safe_duration)
         base_driver = state.twitch_driver * decay
         base_force = (
-            state.motor_unit_force
-            + rates_per_ms * state.twitch_driver * safe_duration
+            state.motor_unit_force + rates_per_ms * state.twitch_driver * safe_duration
         ) * decay
         age = jnp.maximum(end_time - event_times, 0.0)
         impulse_decay = jnp.exp(-rates_per_ms[:, None] * age)
         amplitude = (
-            jnp.e
-            * self.peak_twitch_force_arbitrary[:, None]
-            * event_gain
-            * event_mask
+            jnp.e * self.peak_twitch_force_arbitrary[:, None] * event_gain * event_mask
         )
         impulse_driver = jnp.sum(amplitude * impulse_decay, axis=1)
         impulse_force = jnp.sum(
@@ -495,7 +488,15 @@ class PreparedFuglevandWinterPatla1993(StrictModule):
             jnp.isfinite(proposed.time_ms)
             & jnp.all(jnp.isfinite(proposed.twitch_driver))
             & jnp.all(jnp.isfinite(proposed.motor_unit_force))
-            & jnp.all(jnp.isfinite(jnp.where(jnp.isinf(proposed.next_discharge_ms), 0.0, proposed.next_discharge_ms)))
+            & jnp.all(
+                jnp.isfinite(
+                    jnp.where(
+                        jnp.isinf(proposed.next_discharge_ms),
+                        0.0,
+                        proposed.next_discharge_ms,
+                    )
+                )
+            )
         )
         force_nonnegative = jnp.all(proposed.motor_unit_force >= 0.0)
         random_matches = random_input.semantic_step == state.random_step
@@ -503,12 +504,16 @@ class PreparedFuglevandWinterPatla1993(StrictModule):
         status = jnp.where(
             excitation_finite,
             status,
-            jnp.bitwise_or(status, int(FuglevandWinterPatla1993Status.NONFINITE_EXCITATION)),
+            jnp.bitwise_or(
+                status, int(FuglevandWinterPatla1993Status.NONFINITE_EXCITATION)
+            ),
         )
         status = jnp.where(
             excitation_nonnegative,
             status,
-            jnp.bitwise_or(status, int(FuglevandWinterPatla1993Status.NEGATIVE_EXCITATION)),
+            jnp.bitwise_or(
+                status, int(FuglevandWinterPatla1993Status.NEGATIVE_EXCITATION)
+            ),
         )
         status = jnp.where(
             step_finite,
@@ -523,12 +528,16 @@ class PreparedFuglevandWinterPatla1993(StrictModule):
         status = jnp.where(
             random_matches,
             status,
-            jnp.bitwise_or(status, int(FuglevandWinterPatla1993Status.RANDOM_STEP_MISMATCH)),
+            jnp.bitwise_or(
+                status, int(FuglevandWinterPatla1993Status.RANDOM_STEP_MISMATCH)
+            ),
         )
         status = jnp.where(
             ~jnp.any(overflow),
             status,
-            jnp.bitwise_or(status, int(FuglevandWinterPatla1993Status.EVENT_CAPACITY_OVERFLOW)),
+            jnp.bitwise_or(
+                status, int(FuglevandWinterPatla1993Status.EVENT_CAPACITY_OVERFLOW)
+            ),
         )
         status = jnp.where(
             state_finite,
@@ -538,7 +547,9 @@ class PreparedFuglevandWinterPatla1993(StrictModule):
         status = jnp.where(
             force_nonnegative,
             status,
-            jnp.bitwise_or(status, int(FuglevandWinterPatla1993Status.NEGATIVE_FORCE_STATE)),
+            jnp.bitwise_or(
+                status, int(FuglevandWinterPatla1993Status.NEGATIVE_FORCE_STATE)
+            ),
         )
         successful = status == int(FuglevandWinterPatla1993Status.SUCCESS)
         evidence = FuglevandWinterPatla1993Evidence(
@@ -619,9 +630,11 @@ def fuglevand_force_variability_evidence(
 
     samples = jnp.asarray(force_samples_arbitrary)
     if samples.ndim != 1 or samples.shape[0] < 2:
-        raise ValueError("force_samples_arbitrary must be a vector with at least two samples.")
+        raise ValueError(
+            "force_samples_arbitrary must be a vector with at least two samples."
+        )
     if not jnp.issubdtype(samples.dtype, jnp.inexact):
-        samples = samples.astype(float)
+        samples = samples.astype("float64")
     mean = jnp.mean(samples)
     standard_deviation = jnp.std(samples, ddof=1)
     coefficient = standard_deviation / jnp.maximum(

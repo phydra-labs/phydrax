@@ -76,7 +76,7 @@ class HaloModelPlan(StrictModule, NonTrainableState):
             {
                 "kind": "halo-model-plan",
                 "model_id": str(model_id),
-                "masses": int(self.mass.size),
+                "masses": self.mass.size,
             }
         )
 

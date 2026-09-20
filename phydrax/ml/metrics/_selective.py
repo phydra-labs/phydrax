@@ -53,8 +53,8 @@ class SelectiveRiskCurveResult(StrictModule):
         self.coverage = jnp.asarray(coverage)
         self.retained_risk = jnp.asarray(retained_risk)
         self.retained_weight = jnp.asarray(retained_weight)
-        self.point_mask = jnp.asarray(point_mask, dtype=bool)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.point_mask = jnp.asarray(point_mask, dtype=jnp.bool_)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.effective_weight = jnp.asarray(effective_weight)
 
@@ -73,7 +73,7 @@ def _tie_block_curve(
 
     block_start = jnp.concatenate(
         (
-            jnp.ones((1,), dtype=bool),
+            jnp.ones((1,), dtype=jnp.bool_),
             sorted_score[1:] != sorted_score[:-1],
         )
     )
@@ -170,7 +170,7 @@ def selective_risk_curve(
             coverage=empty,
             retained_risk=empty,
             retained_weight=empty,
-            point_mask=jnp.empty(curve_shape, dtype=bool),
+            point_mask=jnp.empty(curve_shape, dtype=jnp.bool_),
             valid=valid,
             status=status,
             effective_weight=mass,
@@ -218,7 +218,7 @@ def _weighted_midranks(values: Array, weights: Array, /) -> Array:
 
     block_start = jnp.concatenate(
         (
-            jnp.ones((1,), dtype=bool),
+            jnp.ones((1,), dtype=jnp.bool_),
             sorted_value[1:] != sorted_value[:-1],
         )
     )
@@ -297,7 +297,7 @@ def spearman_rank_correlation(
             jnp.zeros(case_shape, dtype=weights.dtype),
             invalid=invalid,
             effective_weight=mass,
-            undefined=jnp.ones(case_shape, dtype=bool),
+            undefined=jnp.ones(case_shape, dtype=jnp.bool_),
             undefined_status=METRIC_ZERO_DENOMINATOR,
         )
     case_count = prod(case_shape)

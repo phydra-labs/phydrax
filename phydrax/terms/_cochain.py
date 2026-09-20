@@ -59,8 +59,7 @@ def _squared_cell_values(field: cx.AxisArray, batch: GraphBatch, /) -> Array:
     named = tuple(dim for dim in field.dims if dim is not None)
     if named != (axis,):
         raise ValueError(
-            "Cochain residuals must have one named graph sampling axis; "
-            f"got dims {field.dims!r}."
+            f"Cochain residuals must have one named graph sampling axis; got dims {field.dims!r}."
         )
     axis_index = field.dims.index(axis)
     data = jnp.moveaxis(jnp.asarray(field.data), axis_index, 0)
@@ -81,7 +80,7 @@ def _hodge_weights(batch: GraphBatch, /) -> Array:
         raise TypeError(
             "Sampled cochain hodge_star values must be phydrax.axes.AxisArrays."
         )
-    return jnp.asarray(weight.data, dtype=float).reshape((-1,))
+    return jnp.asarray(weight.data, dtype=jnp.float64).reshape((-1,))
 
 
 def _trajectory_segment_weights(
@@ -92,7 +91,7 @@ def _trajectory_segment_weights(
     weight = graph_trajectory_default_quadrature_total_weight(component, batch)
     if weight is None:
         return None
-    values = jnp.asarray(weight.data, dtype=float).reshape((-1,))
+    values = jnp.asarray(weight.data, dtype=jnp.float64).reshape((-1,))
     return values * float(values.shape[0])
 
 
@@ -266,7 +265,7 @@ class CochainResidualTerm(AbstractSamplingTerm):
         if not isinstance(sampling, PointSampling):
             raise TypeError("CochainResidualTerm requires PointSampling.")
         self.sampling = sampling
-        self.weight = jnp.asarray(weight, dtype=float)
+        self.weight = jnp.asarray(weight, dtype=jnp.float64)
         self.label = None if label is None else str(label)
         self.over = None
         self.reduction = reduction
@@ -389,8 +388,7 @@ class CochainResidualTerm(AbstractSamplingTerm):
         spec = cochain_field_spec(residual)
         if spec.degree != self.degree:
             raise ValueError(
-                f"Residual degree {spec.degree} does not match CochainCells degree "
-                f"{self.degree}."
+                f"Residual degree {spec.degree} does not match CochainCells degree {self.degree}."
             )
 
         selected = self.sample(key=key) if batch is None else batch
@@ -414,11 +412,11 @@ class CochainResidualTerm(AbstractSamplingTerm):
             values,
             metric,
             graph_index,
-            n_graph=int(selected.graph.n_node.shape[0]),
+            n_graph=selected.graph.n_node.shape[0],
             reduction=self.reduction,
             segment_weight=_trajectory_segment_weights(self.component, selected),
         )
-        return self.weight * jnp.asarray(reduced, dtype=float).reshape(())
+        return self.weight * jnp.asarray(reduced, dtype=jnp.float64).reshape(())
 
 
 __all__ = ["CochainResidualTerm", "cochain_residual_field"]

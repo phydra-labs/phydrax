@@ -22,7 +22,7 @@ def _runtime(
     boundary_primitive=None,
 ):
     vertices = np.asarray(
-        [(i / 4.0, j / 2.0) for j in range(3) for i in range(5)], dtype=float
+        [(i / 4.0, j / 2.0) for j in range(3) for i in range(5)], dtype="float64"
     )
     cells = []
     for j in range(2):
@@ -110,9 +110,7 @@ def _runtime(
                     contact_angle,
                     contact_tolerance,
                     (
-                        "runtime-contact:"
-                        f"{float(contact_angle).hex()}:"
-                        f"{float(contact_tolerance).hex()}"
+                        f"runtime-contact:{float(contact_angle).hex()}:{float(contact_tolerance).hex()}"
                     ),
                 )
             },
@@ -666,7 +664,7 @@ def test_boundary_inflow_uses_exterior_composition_and_outflow_uses_owner_plic()
     )
     stage_flux = np.asarray(physical_stage.flux_rate)
     stage_boundary = np.asarray(physical_stage.active_mask) & (
-        np.asarray(physical_stage.neighbour_cells) < 0
+        np.asarray(physical_stage.neighbor_cells) < 0
     )
     stage_total_mass = stage_flux[:, 0] + stage_flux[:, 1]
     stage_inflow = stage_boundary & (stage_total_mass < 0.0)

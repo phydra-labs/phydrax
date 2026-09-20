@@ -30,14 +30,14 @@ FunctionalCollocationMethod: TypeAlias = Literal["auto", "root", "least-squares"
 
 
 def _state_shape(value: Sequence[int], /) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if any(size <= 0 for size in shape):
         raise ValueError("state_shape entries must be positive.")
     return shape
 
 
 def _maximum_absolute(value: Array, /) -> Array:
-    if int(value.size) == 0:
+    if value.size == 0:
         return jnp.asarray(0.0, dtype=value.dtype)
     return jnp.max(jnp.abs(value))
 
@@ -137,7 +137,7 @@ class FunctionalDifferentialBoundaryProblem(StrictModule):
         if parameter_shape is None:
             solved_parameter_shape = None
         else:
-            solved_parameter_shape = tuple(int(size) for size in parameter_shape)
+            solved_parameter_shape = tuple(parameter_shape)
             if any(size <= 0 for size in solved_parameter_shape):
                 raise ValueError("parameter_shape entries must be positive.")
         if unknown_period and not periodic:
@@ -157,15 +157,14 @@ class FunctionalDifferentialBoundaryProblem(StrictModule):
             values = None
             weights = None
         else:
-            times = jnp.asarray(observation_times, dtype=float)
+            times = jnp.asarray(observation_times, dtype=jnp.float64)
             values = jnp.asarray(observation_values)
             if times.ndim != 1:
                 raise ValueError("observation_times must be rank one.")
-            expected = (int(times.size),) + shape
+            expected = (times.size,) + shape
             if values.shape != expected:
                 raise ValueError(
-                    "observation_values must have shape (num_observations,) + "
-                    "state_shape."
+                    "observation_values must have shape (num_observations,) + state_shape."
                 )
             times = eqx.error_if(
                 times,
@@ -180,8 +179,8 @@ class FunctionalDifferentialBoundaryProblem(StrictModule):
             if observation_weights is None:
                 weights = None
             else:
-                weights = jnp.asarray(observation_weights, dtype=float)
-                allowed = weights.shape in ((), (int(times.size),), expected)
+                weights = jnp.asarray(observation_weights, dtype=jnp.float64)
+                allowed = weights.shape in ((), (times.size,), expected)
                 if not allowed:
                     raise ValueError(
                         "observation_weights must be scalar, have one entry per "
@@ -267,8 +266,8 @@ class FunctionalCollocationPlan(StrictModule):
         if int(max_steps) < 1:
             raise ValueError("max_steps must be positive.")
 
-        mesh_ = jnp.asarray(mesh, dtype=float)
-        if mesh_.ndim != 1 or int(mesh_.size) < 2:
+        mesh_ = jnp.asarray(mesh, dtype=jnp.float64)
+        if mesh_.ndim != 1 or mesh_.size < 2:
             raise ValueError("mesh must be a rank-one array with at least two entries.")
         mesh_ = eqx.error_if(
             mesh_,
@@ -308,7 +307,7 @@ class FunctionalCollocationPlan(StrictModule):
 
     @property
     def num_intervals(self) -> int:
-        return int(self.mesh.size) - 1
+        return self.mesh.size - 1
 
     @property
     def nodes_per_interval(self) -> int:
@@ -385,7 +384,7 @@ class _FunctionalPolynomialInterpolation(StrictModule):
             )
         side = "left" if left else "right"
         indices = jnp.searchsorted(self.mesh, flat, side=side) - 1
-        indices = jnp.clip(indices, 0, int(self.mesh.size) - 2)
+        indices = jnp.clip(indices, 0, self.mesh.size - 2)
         lower = self.mesh[indices]
         upper = self.mesh[indices + 1]
         reference = 2.0 * (flat - lower) / (upper - lower) - 1.0
@@ -467,9 +466,9 @@ def _interpolation(
 
 
 def _unknown_size(unknowns: _FunctionalUnknowns, /) -> int:
-    size = int(unknowns.values.size)
+    size = unknowns.values.size
     if unknowns.parameters is not None:
-        size += int(unknowns.parameters.size)
+        size += unknowns.parameters.size
     if unknowns.log_period is not None:
         size += 1
     return size
@@ -580,7 +579,7 @@ class FunctionalDifferentialSolution(StrictModule):
         self.degree = plan.degree
         self.num_intervals = plan.num_intervals
         self.unknown_size = _unknown_size(unknowns)
-        self.residual_size = int(blocks.assembled.size)
+        self.residual_size = blocks.assembled.size
         self.solver_name = "functional-collocation"
         self.solver_id = "solver:functional-differential-collocation"
         self.nonlinear_solver = nonlinear_solver
@@ -588,7 +587,7 @@ class FunctionalDifferentialSolution(StrictModule):
 
     @property
     def num_times(self) -> int:
-        return int(self.times.size)
+        return self.times.size
 
     @property
     def has_dense_interpolation(self) -> bool:
@@ -637,7 +636,7 @@ def _argument_values(
     args: Any,
     /,
 ) -> Array:
-    stage_count = int(times.size)
+    stage_count = times.size
     argument_times = problem.argument_times
     if argument_times is None:
         return jnp.empty(
@@ -651,8 +650,7 @@ def _argument_values(
             locations = locations.reshape((1,))
         if locations.shape != (problem.num_arguments,):
             raise ValueError(
-                "argument_times must return shape (num_arguments,) at every "
-                "collocation stage."
+                "argument_times must return shape (num_arguments,) at every collocation stage."
             )
         return locations
 
@@ -749,7 +747,7 @@ def _residual_blocks(
         observations = trajectory.evaluate(observation_times) - observation_values
         if problem.observation_weights is not None:
             weights = problem.observation_weights
-            if weights.shape == (int(observation_times.size),):
+            if weights.shape == (observation_times.size,):
                 weights = weights.reshape(weights.shape + (1,) * len(problem.state_shape))
             observations = observations * jnp.sqrt(weights)
     observation_constraint = _constraint_residual(
@@ -831,9 +829,9 @@ def _initial_values(
         return guess
     if guess.shape == problem.state_shape:
         return jnp.broadcast_to(guess, expected)
-    mesh_shape = (int(plan.mesh.size),) + problem.state_shape
+    mesh_shape = (plan.mesh.size,) + problem.state_shape
     if guess.shape == mesh_shape:
-        flat_guess = guess.reshape((int(plan.mesh.size), -1))
+        flat_guess = guess.reshape((plan.mesh.size, -1))
         flat_times = coordinate_times.reshape((-1,))
         interpolated = jax.vmap(
             lambda component: linear_interpolate(plan.mesh, component, flat_times).values,
@@ -842,8 +840,7 @@ def _initial_values(
         )(flat_guess)
         return interpolated.reshape(expected)
     raise ValueError(
-        "initial_guess must be callable, state-shaped, mesh-node-shaped, or "
-        "collocation-node-shaped."
+        "initial_guess must be callable, state-shaped, mesh-node-shaped, or collocation-node-shaped."
     )
 
 
@@ -951,7 +948,7 @@ def solve_functional_differential(
     packed_args = (problem, plan, args)
     initial_residual = _assembled_residual(initial_unknowns, packed_args)
     unknown_size = _unknown_size(initial_unknowns)
-    residual_size = int(initial_residual.size)
+    residual_size = initial_residual.size
     if residual_size < unknown_size:
         raise ValueError(
             "Functional collocation is underdetermined: residual size "

@@ -8,8 +8,9 @@ from collections.abc import Mapping, Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
-import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
+
+from phydrax.ein import contract, get_symbol
 
 from .._fingerprint import canonical_fingerprint
 from .._precision import precision_itemsize
@@ -310,7 +311,7 @@ def run_network_belief_propagation(
         new_factor = []
         for target, (factor_index, variable_index, _) in enumerate(incidences):
             factor = network.factors[factor_index]
-            symbols = tuple(oe.get_symbol(axis) for axis in range(len(factor.variables)))
+            symbols = tuple(get_symbol(axis) for axis in range(len(factor.variables)))
             inputs = ["".join(symbols)]
             operands = [factor.values]
             for source, (source_factor, source_axis, _) in enumerate(incidences):
@@ -318,7 +319,7 @@ def run_network_belief_propagation(
                     inputs.append(symbols[source_axis])
                     operands.append(new_variable[source])
             equation = ",".join(inputs) + "->" + symbols[variable_index]
-            proposed = _normalize(oe.contract(equation, *operands, optimize="greedy"))
+            proposed = _normalize(contract(equation, *operands, optimize="greedy"))
             damped = _normalize(
                 (1.0 - policy.damping) * proposed
                 + policy.damping * factor_to_variable[target]

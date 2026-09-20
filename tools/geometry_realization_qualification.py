@@ -200,7 +200,7 @@ def run():
         return motion.realize(design).proposed_coordinates
 
     radius = jnp.asarray(1.05)
-    cotangent = jnp.arange(10, dtype=float).reshape((5, 2)) / 10.0
+    cotangent = jnp.arange(10, dtype="float64").reshape((5, 2)) / 10.0
     _, tangent = jax.jvp(coordinates, (radius,), (jnp.asarray(1.0),))
     _, pullback = jax.vjp(coordinates, radius)
     left = jnp.sum(tangent * cotangent)

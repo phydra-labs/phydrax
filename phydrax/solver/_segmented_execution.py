@@ -94,7 +94,7 @@ class FixedCapacitySegmentStep(StrictModule, Generic[Carry]):
         end = jnp.asarray(segment_end)
         steps = jnp.asarray(step_count, dtype=jnp.int32)
         events = jnp.asarray(event_count, dtype=jnp.int32)
-        terminal_ = jnp.asarray(terminal, dtype=bool)
+        terminal_ = jnp.asarray(terminal, dtype=jnp.bool_)
         status_ = jnp.asarray(status, dtype=jnp.int32)
         if (
             start.shape
@@ -156,7 +156,7 @@ def run_fixed_capacity_segments(
     ends = jnp.zeros((n,))
     step_counts = jnp.zeros((n,), dtype=jnp.int32)
     event_counts = jnp.zeros((n,), dtype=jnp.int32)
-    active = jnp.zeros((n,), dtype=bool)
+    active = jnp.zeros((n,), dtype=jnp.bool_)
     initial = (
         initial_carry,
         jnp.asarray(False),

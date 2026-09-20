@@ -124,10 +124,7 @@ class IsothermalDFNPlan:
         maximum_newton_steps: int = 12,
         residual_tolerance: float = 1.0e-4,
     ):
-        counts = tuple(
-            int(value)
-            for value in (negative_cells, separator_cells, positive_cells, radial_cells)
-        )
+        counts = tuple((negative_cells, separator_cells, positive_cells, radial_cells))
         if any(value < 2 for value in counts):
             raise ValueError(
                 "DFN regions and radial particles require at least two cells."

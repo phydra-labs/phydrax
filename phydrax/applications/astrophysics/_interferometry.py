@@ -92,11 +92,11 @@ class VisibilitySampling(StrictModule, NonTrainableState):
         if uv_unit_ != "wavelength":
             raise ValueError("Direct image visibilities require uv_unit='wavelength'.")
         stations = _station_ids(station_ids)
-        uv = np.asarray(uv_coordinates, dtype=float)
+        uv = np.asarray(uv_coordinates, dtype=np.float64)
         if uv.ndim != 2 or uv.shape[1:] != (2,) or uv.shape[0] == 0:
             raise ValueError("uv_coordinates must have shape (visibility, 2).")
         pairs = _integer_matrix(station_pairs, 2, "station_pairs", allow_empty=False)
-        frequency = np.asarray(frequencies, dtype=float)
+        frequency = np.asarray(frequencies, dtype=np.float64)
         if frequency.shape == ():
             frequency = np.full((uv.shape[0],), frequency)
         if pairs.shape[0] != uv.shape[0] or frequency.shape != (uv.shape[0],):
@@ -348,7 +348,7 @@ class ClosureTopology(StrictModule, NonTrainableState):
     """Gain-invariant triangle and quadrangle routes on fixed visibility samples.
 
     Phase rows multiply three oriented baselines; ``phase_conjugated`` reverses
-    stored orientation. Amplitude rows mean ``|V0 V1| / |V2 V3|``. Construction
+    stored orientation. Amplitude rows mean ``|Canonical Canonical| / |Canonical Canonical|``. Construction
     proves station-gain cancellation rather than trusting caller labels.
     """
 
@@ -383,10 +383,10 @@ class ClosureTopology(StrictModule, NonTrainableState):
         if phase.shape[0] == 0 and amplitude.shape[0] == 0:
             raise ValueError("ClosureTopology needs at least one closure row.")
         if phase_conjugated is None:
-            conjugated = np.zeros(phase.shape, dtype=bool)
+            conjugated = np.zeros(phase.shape, dtype=np.bool_)
         else:
             conjugated = np.asarray(phase_conjugated)
-            if conjugated.dtype != np.dtype(bool) or conjugated.shape != phase.shape:
+            if conjugated.dtype != np.dtype(np.bool_) or conjugated.shape != phase.shape:
                 raise ValueError(
                     "phase_conjugated must be boolean and match phase indices."
                 )
@@ -441,7 +441,7 @@ class ClosureTopology(StrictModule, NonTrainableState):
                         self.amplitude_baseline_indices,
                     )
                 ),
-                "amplitude_convention": "abs(V0*V1)/abs(V2*V3)",
+                "amplitude_convention": "abs(Canonical*Canonical)/abs(Canonical*Canonical)",
             }
         )
 
@@ -504,7 +504,7 @@ class ClosureTopology(StrictModule, NonTrainableState):
             sampling,
             np.asarray(phase_indices, dtype=np.int64).reshape((-1, 3)),
             np.asarray(amplitude_indices, dtype=np.int64).reshape((-1, 4)),
-            phase_conjugated=np.asarray(phase_reversals, dtype=bool).reshape((-1, 3)),
+            phase_conjugated=np.asarray(phase_reversals, dtype=np.bool_).reshape((-1, 3)),
         )
 
 

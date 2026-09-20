@@ -34,7 +34,7 @@ def _coordinate_array(value: ArrayLike, name: str, /) -> Array:
     if coordinates.shape[0] < 1:
         raise ValueError(f"{name} must contain at least one node.")
     if not jnp.issubdtype(coordinates.dtype, jnp.inexact):
-        coordinates = coordinates.astype(float)
+        coordinates = coordinates.astype("float64")
     if jnp.issubdtype(coordinates.dtype, jnp.complexfloating):
         raise TypeError(f"{name} must be real.")
     return coordinates
@@ -65,7 +65,7 @@ class ForwardContinuationResult(StrictModule):
     ):
         self.coordinates = jnp.asarray(coordinates)
         self.equilibrium_residual_norm = jnp.asarray(equilibrium_residual_norm)
-        self.stage_successful = jnp.asarray(stage_successful, dtype=bool)
+        self.stage_successful = jnp.asarray(stage_successful, dtype=jnp.bool_)
 
 
 ForwardContinuationPath = Callable[[Array, Array, Any], ForwardContinuationResult]
@@ -96,7 +96,7 @@ class UnloadedReferenceRecoveryPlan(StrictModule, NonTrainableState):
         maximum_steps: int = 64,
         plan_id: str | None = None,
     ):
-        factors = np.asarray(load_factors, dtype=float)
+        factors = np.asarray(load_factors, dtype=np.float64)
         residual_limit = float(residual_tolerance)
         equilibrium_limit = float(equilibrium_tolerance)
         steps = int(maximum_steps)
@@ -269,16 +269,14 @@ class PreparedUnloadedReferenceRecovery(StrictModule, NonTrainableState):
         stage_shape = (self.plan.load_factors.size,)
         if result.coordinates.shape != expected:
             raise ValueError(
-                "Forward continuation coordinates must have shape "
-                "(num_load_factors, num_nodes, 3)."
+                "Forward continuation coordinates must have shape (num_load_factors, num_nodes, 3)."
             )
         if (
             result.equilibrium_residual_norm.shape != stage_shape
             or result.stage_successful.shape != stage_shape
         ):
             raise ValueError(
-                "Forward continuation solver evidence must have shape "
-                "(num_load_factors,)."
+                "Forward continuation solver evidence must have shape (num_load_factors,)."
             )
         if jnp.issubdtype(
             result.coordinates.dtype, jnp.complexfloating
@@ -587,7 +585,7 @@ def read_unloaded_reference_checkpoint(
     reference = jnp.asarray(arrays["reference_coordinates"], dtype=dtype)
     path_ = jnp.asarray(arrays["continuation_coordinates"], dtype=dtype)
     equilibrium = jnp.asarray(arrays["equilibrium_residual_norm"], dtype=dtype)
-    successful = jnp.asarray(arrays["stage_successful"], dtype=bool)
+    successful = jnp.asarray(arrays["stage_successful"], dtype=jnp.bool_)
     mismatch = jnp.asarray(arrays["loaded_mismatch"], dtype=dtype)
     residual = jnp.asarray(arrays["residual_norm"], dtype=dtype)
     stage_shape = (prepared.plan.load_factors.size,)

@@ -41,8 +41,7 @@ class SINGLearningPolicy(StrictModule):
         factor_source: Any = None,
     ):
         counts = tuple(
-            int(value)
-            for value in (
+            (
                 posterior_steps,
                 parameter_steps,
                 max_outer_iterations,

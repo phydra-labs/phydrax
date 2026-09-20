@@ -144,7 +144,7 @@ def main() -> None:
     )
     crossings = spherical_surface_crossings(
         crossing_states[:, None, :],
-        jnp.ones((arguments.paths, 1), dtype=bool),
+        jnp.ones((arguments.paths, 1), dtype="bool"),
         source,
         2.0,
         direction="outward",

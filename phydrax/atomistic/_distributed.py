@@ -154,8 +154,7 @@ class DistributedCollectiveOperations(StrictModule, NonTrainableState):
     ) -> DistributedCollectiveOperations:
         if execution_group.spec.device_count != len(execution_group.spec.process_indices):
             raise ValueError(
-                "Atomistic rank-local collectives require one assigned device "
-                "per JAX process."
+                "Atomistic rank-local collectives require one assigned device per JAX process."
             )
         axis = execution_group.mesh.axis_names[0] if axis_name is None else str(axis_name)
         if axis not in execution_group.mesh.axis_names:
@@ -223,7 +222,7 @@ class DistributedPMEPlan(StrictModule, NonTrainableState):
             or int(decomposition_axis) not in (0, 1, 2)
         ):
             raise ValueError("PME decomposition_axis must be zero, one, or two.")
-        self.grid_shape = tuple(int(value) for value in shape)
+        self.grid_shape = tuple(shape)
         self.interpolation_order = int(interpolation_order)
         self.decomposition_axis = int(decomposition_axis)
         self.plan_id = canonical_fingerprint(
@@ -977,7 +976,7 @@ def _prepare_spatial_decomposition(
             ),
         )
     destination_near = distance <= plan.decomposition.halo_radius
-    off_diagonal = ~jnp.eye(partitions, dtype=bool)
+    off_diagonal = ~jnp.eye(partitions, dtype=jnp.bool_)
     full_routes = (
         full_owned[:, None, :] & destination_near[None, :, :] & off_diagonal[:, :, None]
     )
@@ -1239,8 +1238,7 @@ def propose_distributed_migration(
         raise ValueError("Distributed state belongs to another plan.")
     if plan.execution_mode == "collective":
         raise ValueError(
-            "Collective migration requires continuation-payload communication "
-            "and is not supported by this runtime."
+            "Collective migration requires continuation-payload communication and is not supported by this runtime."
         )
     coordinate = jnp.asarray(positions)
     if coordinate.shape != state.positions.shape:
@@ -1332,8 +1330,7 @@ def commit_distributed_migration(
         raise TypeError("Migration commit requires plan, state, and candidate.")
     if plan.execution_mode == "collective":
         raise ValueError(
-            "Collective migration commit is unsupported without explicit "
-            "continuation-payload exchange."
+            "Collective migration commit is unsupported without explicit continuation-payload exchange."
         )
     if state.plan_id != plan.plan_id or candidate.plan_id != plan.plan_id:
         raise ValueError("Migration candidate or state belongs to another plan.")
@@ -1844,7 +1841,7 @@ def evaluate_distributed_atomistic(
             mask.atom_energy,
             mask.partition_energy,
         ),
-        dtype=bool,
+        dtype=jnp.bool_,
     )
     return DistributedAtomisticEvaluation(
         output_energy,

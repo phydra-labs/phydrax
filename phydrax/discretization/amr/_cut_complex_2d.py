@@ -115,7 +115,7 @@ class MultivaluedCutCell2DComplex(StrictModule, NonTrainableState):
     )
     face_active: Array
     face_owner_components: Array
-    face_neighbour_components: Array
+    face_neighbor_components: Array
     face_kinds: Array
     face_body_tags: Array
     face_axes: Array
@@ -172,10 +172,10 @@ class MultivaluedCutCell2DComplex(StrictModule, NonTrainableState):
         def rhs(stage_time, stage_state):
             count = self.component_count
             owner = self.face_owner_components
-            neighbour = self.face_neighbour_components
-            safe_neighbour = jnp.maximum(neighbour, 0)
+            neighbor = self.face_neighbor_components
+            safe_neighbor = jnp.maximum(neighbor, 0)
             left = stage_state[owner]
-            right = stage_state[safe_neighbour]
+            right = stage_state[safe_neighbor]
             normal = (
                 self.face_area_vectors
                 / jnp.where(
@@ -216,11 +216,11 @@ class MultivaluedCutCell2DComplex(StrictModule, NonTrainableState):
                 (self.component_capacity, system.component_count), dtype=value.dtype
             )
             content_rate = content_rate.at[owner].add(-integrated)
-            internal = self.face_active & (neighbour >= 0)
-            neighbour_contribution = jnp.where(
+            internal = self.face_active & (neighbor >= 0)
+            neighbor_contribution = jnp.where(
                 internal[:, None], integrated, jnp.zeros_like(integrated)
             )
-            content_rate = content_rate.at[safe_neighbour].add(neighbour_contribution)
+            content_rate = content_rate.at[safe_neighbor].add(neighbor_contribution)
             average_rate = content_rate[:count] / self.component_areas[:count, None]
             padded = jnp.zeros_like(stage_state)
             return padded.at[:count].set(average_rate)
@@ -315,7 +315,7 @@ def _leaf_cells(hierarchy: CanonicalPatchHierarchy):
     cells = []
     for level in hierarchy.levels:
         for bucket in level.buckets:
-            active = np.asarray(bucket.leaf_active, dtype=bool)
+            active = np.asarray(bucket.leaf_active, dtype=np.bool_)
             for lane, box in enumerate(bucket.boxes):
                 if box is None:
                     continue
@@ -407,7 +407,7 @@ class MultivaluedCutCell2DPlan(StrictModule, NonTrainableState):
                 axis.bounds[0]
                 for axis in self.hierarchy.topology.plan.grid.structured_axes
             ],
-            dtype=float,
+            dtype=np.float64,
         )
         cells = _leaf_cells(self.hierarchy)
         global_vertices: dict[tuple[Any, ...], int] = {}
@@ -433,7 +433,7 @@ class MultivaluedCutCell2DPlan(StrictModule, NonTrainableState):
         for level_index, cell_coordinate, patch_id in cells:
             level = self.hierarchy.levels[level_index]
             divisions = self.subdivision * _fine_scale(self.hierarchy, level_index)
-            spacing = np.asarray(level.spacing, dtype=float)
+            spacing = np.asarray(level.spacing, dtype=np.float64)
             lower = lower_bounds + spacing * np.asarray(cell_coordinate)
             upper = lower + spacing
             indices = tuple(np.ndindex((divisions + 1, divisions + 1)))
@@ -446,7 +446,7 @@ class MultivaluedCutCell2DPlan(StrictModule, NonTrainableState):
                 else self.coordinate_map
             )
             physical = np.asarray(
-                mapped(jnp.asarray(references), time_, args), dtype=float
+                mapped(jnp.asarray(references), time_, args), dtype=jnp.float64
             )
             phi, tags = self.bodies.evaluate(jnp.asarray(physical), time_, args)
             scale = max(1.0, float(np.max(np.linalg.norm(physical, axis=1))))
@@ -476,11 +476,11 @@ class MultivaluedCutCell2DPlan(StrictModule, NonTrainableState):
             for subcell in np.ndindex((divisions, divisions)):
                 for ordering in permutations(range(2)):
                     point = np.asarray(subcell)
-                    triangle_indices = [tuple(int(value) for value in point)]
+                    triangle_indices = [tuple(point)]
                     for axis in ordering:
                         point = point.copy()
                         point[axis] += 1
-                        triangle_indices.append(tuple(int(value) for value in point))
+                        triangle_indices.append(tuple(point))
                     triangle = tuple(sample[index] for index in triangle_indices)
                     first_edge = triangle[1].point - triangle[0].point
                     second_edge = triangle[2].point - triangle[0].point
@@ -532,7 +532,7 @@ class MultivaluedCutCell2DPlan(StrictModule, NonTrainableState):
             for slot, group in enumerate(tuple(groups[key] for key in sorted(groups))):
                 edge_incidents: dict[tuple[Any, ...], list[_Edge2D]] = {}
                 area = 0.0
-                moment = np.zeros((2,), dtype=float)
+                moment = np.zeros((2,), dtype=np.float64)
                 triangles = []
                 for fragment_index in group:
                     fragment = fragments[fragment_index]
@@ -602,31 +602,31 @@ class MultivaluedCutCell2DPlan(StrictModule, NonTrainableState):
                 raise ValueError("2-D cut face has more than two incidents.")
         if len(records) > face_capacity:
             raise ValueError("2-D cut face capacity is exceeded.")
-        component_active = np.zeros((capacity,), dtype=bool)
+        component_active = np.zeros((capacity,), dtype=np.bool_)
         component_active[:active_count] = True
         level_array = np.full((capacity,), -1, dtype=np.int32)
         coordinate_array = np.full((capacity, 2), -1, dtype=np.int32)
         slot_array = np.full((capacity,), -1, dtype=np.int32)
-        area_array = np.zeros((capacity,), dtype=float)
-        center_array = np.zeros((capacity, 2), dtype=float)
-        fraction_array = np.zeros((capacity,), dtype=float)
+        area_array = np.zeros((capacity,), dtype=np.float64)
+        center_array = np.zeros((capacity, 2), dtype=np.float64)
+        fraction_array = np.zeros((capacity,), dtype=np.float64)
         level_array[:active_count] = levels
         coordinate_array[:active_count] = coordinates
         slot_array[:active_count] = slots
         area_array[:active_count] = areas
         center_array[:active_count] = centers
         fraction_array[:active_count] = fractions
-        face_active = np.zeros((face_capacity,), dtype=bool)
+        face_active = np.zeros((face_capacity,), dtype=np.bool_)
         owner = np.zeros((face_capacity,), dtype=np.int32)
-        neighbour = np.full((face_capacity,), -1, dtype=np.int32)
+        neighbor = np.full((face_capacity,), -1, dtype=np.int32)
         kinds = np.zeros((face_capacity,), dtype=np.int32)
         tags = np.full((face_capacity,), -1, dtype=np.int32)
         axes = np.full((face_capacity,), -1, dtype=np.int32)
         sides = np.full((face_capacity,), -1, dtype=np.int32)
-        face_centers = np.zeros((face_capacity, 2), dtype=float)
-        area_vectors = np.zeros((face_capacity, 2), dtype=float)
-        measures = np.zeros((face_capacity,), dtype=float)
-        closure = np.zeros((active_count, 2), dtype=float)
+        face_centers = np.zeros((face_capacity, 2), dtype=np.float64)
+        area_vectors = np.zeros((face_capacity, 2), dtype=np.float64)
+        measures = np.zeros((face_capacity,), dtype=np.float64)
+        closure = np.zeros((active_count, 2), dtype=np.float64)
         for face, (left, right, edge) in enumerate(records):
             vector = edge.stop.point - edge.start.point
             area_vector = np.asarray((vector[1], -vector[0]))
@@ -638,7 +638,7 @@ class MultivaluedCutCell2DPlan(StrictModule, NonTrainableState):
                 area_vector = -area_vector
             face_active[face] = True
             owner[face] = left
-            neighbour[face] = right
+            neighbor[face] = right
             kinds[face] = _FACE_INTERNAL if right >= 0 else edge.kind
             tags[face] = edge.body_tag
             axes[face] = edge.axis
@@ -650,7 +650,7 @@ class MultivaluedCutCell2DPlan(StrictModule, NonTrainableState):
             if right >= 0:
                 closure[right] -= area_vector
         closure_defect = float(np.max(np.linalg.norm(closure, axis=1), initial=0.0))
-        tolerance = 512.0 * np.finfo(float).eps * max(1.0, float(np.max(measures)))
+        tolerance = 512.0 * np.finfo(np.float64).eps * max(1.0, float(np.max(measures)))
         valid = bool(closure_defect <= tolerance)
         boundary_names = tuple(
             (
@@ -695,7 +695,7 @@ class MultivaluedCutCell2DPlan(StrictModule, NonTrainableState):
             component_triangles=tuple(component_triangles),
             face_active=jnp.asarray(face_active),
             face_owner_components=jnp.asarray(owner),
-            face_neighbour_components=jnp.asarray(neighbour),
+            face_neighbor_components=jnp.asarray(neighbor),
             face_kinds=jnp.asarray(kinds),
             face_body_tags=jnp.asarray(tags),
             face_axes=jnp.asarray(axes),
@@ -717,7 +717,7 @@ class MultivaluedCutCell2DPlan(StrictModule, NonTrainableState):
                     "components": [levels, coordinates, slots],
                     "routes": array_tree_fingerprint(
                         np.stack(
-                            (owner[: len(records)], neighbour[: len(records)]), axis=-1
+                            (owner[: len(records)], neighbor[: len(records)]), axis=-1
                         )
                     ),
                 }

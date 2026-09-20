@@ -81,8 +81,7 @@ def compensated_sum_chunks(
         arrays[0].shape[arrays[0].ndim - output_ndim_ :] if output_ndim_ else ()
     )
     if any(
-        (array.shape[array.ndim - output_ndim_ :] if output_ndim_ else ())
-        != output_shape
+        (array.shape[array.ndim - output_ndim_ :] if output_ndim_ else ()) != output_shape
         for array in arrays[1:]
     ):
         raise ValueError("Compensated chunks must have identical trailing output shapes.")
@@ -149,7 +148,9 @@ def compensated_sum(
     )
     if not keepdims:
         return result
-    shape = tuple(1 if index in axes else array.shape[index] for index in range(array.ndim))
+    shape = tuple(
+        1 if index in axes else array.shape[index] for index in range(array.ndim)
+    )
     return result.reshape(shape)
 
 

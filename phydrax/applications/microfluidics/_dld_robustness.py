@@ -64,7 +64,7 @@ class DLDRobustnessPlan(StrictModule, NonTrainableState):
         nominal_index: int = 0,
     ) -> DLDRobustnessResult:
         metric = jnp.asarray(values)
-        valid = jnp.asarray(valid_samples, dtype=bool)
+        valid = jnp.asarray(valid_samples, dtype=jnp.bool_)
         nominal = int(nominal_index)
         if (
             metric.ndim != 1

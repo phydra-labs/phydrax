@@ -23,7 +23,7 @@ def _points(values):
     return frozendict(
         {
             "x": cx.AxisArray(
-                jnp.asarray(values, dtype=float),
+                jnp.asarray(values, dtype="float64"),
                 dims=("sample", None),
             )
         }

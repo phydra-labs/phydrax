@@ -53,9 +53,7 @@ def run_advanced_potential_benchmarks(
     boundary_ms = 1e3 * (time.perf_counter() - started)
     center_error = jnp.abs(center_value - 1.0)
     harmonic_certificate = phx.equations.trial_space_certificate(
-        phx.domain.HyperRectangle((-1.0, -1.0), (1.0, 1.0)).Model("x")(
-            harmonic
-        )
+        phx.domain.HyperRectangle((-1.0, -1.0), (1.0, 1.0)).Model("x")(harmonic)
     )
     layer_certificate = phx.equations.trial_space_certificate(
         phx.domain.GeometryDomain(geometry).Model("x")(result.potential)
@@ -67,7 +65,6 @@ def run_advanced_potential_benchmarks(
         and center_error <= 5e-4
     )
     return {
-        "schema_version": 1,
         "passed": passed,
         "holomorphic": {
             "laplace_residual": float(harmonic_residual),

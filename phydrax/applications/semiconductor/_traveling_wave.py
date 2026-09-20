@@ -270,7 +270,7 @@ class TravelingWaveSemiconductorLaserPlan(StrictModule, NonTrainableState):
             or np.any(np.diff(z_input) <= 0.0)
         ):
             raise ValueError("z_grid must be a finite increasing real vector.")
-        z = np.asarray(z_input, dtype=float)
+        z = np.asarray(z_input, dtype=np.float64)
         widths = np.diff(z)
         tolerance = 64.0 * np.finfo(widths.dtype).eps * max(1.0, abs(float(widths[0])))
         if not np.allclose(widths, widths[0], rtol=1.0e-12, atol=tolerance):
@@ -285,12 +285,12 @@ class TravelingWaveSemiconductorLaserPlan(StrictModule, NonTrainableState):
         if sections > section_limit or count > step_limit:
             raise ValueError("Laser topology exceeds declared fixed resource bounds.")
         detuning_host = (
-            np.zeros((sections,), dtype=float)
+            np.zeros((sections,), dtype=np.float64)
             if detuning is None
             else np.asarray(detuning)
         )
         coupling_host = (
-            np.zeros((sections,), dtype=complex)
+            np.zeros((sections,), dtype=np.complex128)
             if coupling is None
             else np.asarray(coupling)
         )
@@ -636,7 +636,7 @@ def prepare_traveling_wave_semiconductor_laser(
     volumes = widths * plan.active_area
     time_step = widths[0] / plan.group_velocity
     times = jnp.arange(plan.step_count + 1, dtype=widths.dtype) * time_step
-    sections = int(widths.size)
+    sections = widths.size
     grating_norm = jnp.sqrt(
         plan.detuning * plan.detuning + jnp.real(plan.coupling * jnp.conj(plan.coupling))
     )
@@ -1088,8 +1088,7 @@ def solve_traveling_wave_laser_threshold(
         used_mode_iterations = mode_iterations
         if map_applications > prepared.plan.maximum_threshold_map_applications:
             raise ValueError(
-                "Distributed-grating threshold exceeds "
-                "maximum_threshold_map_applications."
+                "Distributed-grating threshold exceeds maximum_threshold_map_applications."
             )
 
         def mode_at(density):

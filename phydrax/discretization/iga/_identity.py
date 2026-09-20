@@ -21,7 +21,7 @@ def _name(name: str, value: str, /) -> str:
 
 
 def _coordinates(value: Sequence[int], /) -> tuple[int, ...]:
-    result = tuple(int(item) for item in value)
+    result = tuple(value)
     if not result or any(item < 0 for item in result):
         raise ValueError(
             "Span coordinates must be a nonempty sequence of nonnegative integers."
@@ -101,8 +101,8 @@ class InterfaceId(StrictModule, NonTrainableState):
     ):
         left = _name("left_patch_id", left_patch_id)
         right = _name("right_patch_id", right_patch_id)
-        left_values = tuple(int(item) for item in left_route)
-        right_values = tuple(int(item) for item in right_route)
+        left_values = tuple(left_route)
+        right_values = tuple(right_route)
         if len(left_values) != 2 or len(right_values) != 2:
             raise ValueError("Interface routes must each contain an axis and side.")
         if (

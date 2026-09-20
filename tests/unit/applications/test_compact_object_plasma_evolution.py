@@ -25,12 +25,12 @@ from phydrax.applications.compact_objects._plasma_evolution import (
 from phydrax.applications.compact_objects._radiative_plasma import (
     GRPhotonNumberPlan,
     KleinNishinaScatteringPlan,
-    ThermalBremsstrahlungGreyOpacityPlan,
-    ThermalSynchrotronGreyOpacityPlan,
+    ThermalBremsstrahlungGrayOpacityPlan,
+    ThermalSynchrotronGrayOpacityPlan,
 )
 from phydrax.discretization.finite_volume._structured import FiniteVolumePlan
 from phydrax.equations._relativistic_radiation_interaction import (
-    ConstantGRGreyOpacityPlan,
+    ConstantGRGrayOpacityPlan,
 )
 from phydrax.metrix._adm_exchange import ADMGridGeometry
 from phydrax.metrix._spacetime_conventions import RelativityConvention
@@ -59,8 +59,8 @@ def _grid_stage(scale):
         identity,
         jnp.ones(4),
         jnp.zeros((4, 3, 3)),
-        jnp.ones(4, dtype=bool),
-        jnp.ones(4, dtype=bool),
+        jnp.ones(4, dtype="bool"),
+        jnp.ones(4, dtype="bool"),
         snapshot_token=jnp.asarray(0, dtype=jnp.int32),
         chart_id="cartesian",
         convention_id=convention.convention_id,
@@ -73,13 +73,13 @@ def _grid_stage(scale):
 
 def test_physical_opacities_and_photon_number_sources_are_positive_and_balanced():
     scale = _scale()
-    bremsstrahlung = ThermalBremsstrahlungGreyOpacityPlan(
+    bremsstrahlung = ThermalBremsstrahlungGrayOpacityPlan(
         scale,
         emission_prefactor=2.0,
         minimum_temperature=0.1,
         maximum_temperature=10.0,
     ).evaluate(2.0, 1.0, 1.0, 0.0)
-    synchrotron = ThermalSynchrotronGreyOpacityPlan(
+    synchrotron = ThermalSynchrotronGrayOpacityPlan(
         scale,
         electron_mass_per_particle=1.0,
         emission_prefactor=1.0,
@@ -103,7 +103,7 @@ def test_physical_opacities_and_photon_number_sources_are_positive_and_balanced(
     discretization, stage = _grid_stage(scale)
     photon_plan = GRPhotonNumberPlan(discretization, scale)
     state = photon_plan.initialize(jnp.ones(4), stage)
-    opacity = ConstantGRGreyOpacityPlan(
+    opacity = ConstantGRGrayOpacityPlan(
         photon_absorption=1.0, photon_emission_rate=0.5
     ).evaluate(jnp.ones(4), jnp.ones(4), jnp.ones(4), jnp.zeros(4))
     radiation = jnp.broadcast_to(jnp.asarray((2.0, 0.0, 0.0, 0.0)), (4, 4))

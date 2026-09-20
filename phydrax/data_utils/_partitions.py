@@ -77,8 +77,7 @@ class CasePartitionManifest(StrictModule, NonTrainableState):
             missing = tuple(sorted(known - assigned))
             unknown = tuple(sorted(assigned - known))
             raise ValueError(
-                "Partitions must assign every case exactly once; "
-                f"missing={missing}, unknown={unknown}."
+                f"Partitions must assign every case exactly once; missing={missing}, unknown={unknown}."
             )
         membership = {
             case_id: partition
@@ -124,7 +123,7 @@ class CasePartitionManifest(StrictModule, NonTrainableState):
         cases = tuple(str(case_id) for case_id in case_ids)
 
         def select(indices: Sequence[int], name: str) -> tuple[str, ...]:
-            positions = tuple(int(index) for index in indices)
+            positions = tuple(indices)
             if any(index < 0 or index >= len(cases) for index in positions):
                 raise IndexError(f"{name} contains an out-of-range case index.")
             return tuple(cases[index] for index in positions)

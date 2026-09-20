@@ -93,7 +93,7 @@ def _record(tmp_path, construct, *, ordinal, condition, preparation, rows):
         protocol_id="ShapeMapper-effective-depth",
         upstream_tool="ShapeMapper2",
         upstream_version="2.2",
-        reference_sequence_id="synthetic-reference-v1",
+        reference_sequence_id="synthetic-reference",
     )
 
 
@@ -168,7 +168,7 @@ def test_dance_map_admission_retains_coverage_missingness_and_exclusions(tmp_pat
         import_dance_map_files((record,), requested_use={})
 
 
-def test_dance_map_admission_rejects_relabelled_duplicate_payload(tmp_path):
+def test_dance_map_admission_rejects_relabeled_duplicate_payload(tmp_path):
     construct = NucleicAcidConstruct(("r",), ("AAAA",), ("RNA",), (False,))
     rows = (("INCLUDED", "1111", "1111", "0001"),)
     first = _record(
@@ -273,7 +273,7 @@ def _ensemble(tmp_path):
     hypothesis = StructuralEnsembleHypothesis(
         ("open", "closed-a", "closed-b"),
         states,
-        "binary-paired-accessibility-v1",
+        "binary-paired-accessibility",
         ("independent-structure-panel",),
         (batch.case_ids[0],),
         (),
@@ -588,7 +588,7 @@ def test_predictive_stages_require_frozen_threshold_model_score_and_advantage(tm
         rtol=1e-10,
         atol=1e-10,
     )
-    assert uncertainty.approximation_id == "laplace-spherical-radial-equal-weight-v1"
+    assert uncertainty.approximation_id == "laplace-spherical-radial-equal-weight"
     object.__setattr__(finite_fit.optimization, "converged", False)
     with pytest.raises(ValueError, match="converged calibration fit"):
         EnsemblePosteriorUncertainty(

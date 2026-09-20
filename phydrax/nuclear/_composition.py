@@ -48,7 +48,7 @@ class ElementalComposition:
             for value in atomic_numbers
         ):
             raise TypeError("atomic_numbers must contain integer atomic numbers.")
-        normalized_numbers = tuple(int(value) for value in atomic_numbers)
+        normalized_numbers = tuple(atomic_numbers)
         if any(value < 1 or value > 118 for value in normalized_numbers):
             raise ValueError("Element atomic numbers must lie in [1, 118].")
         if len(set(normalized_numbers)) != len(normalized_numbers):

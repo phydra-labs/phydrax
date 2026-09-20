@@ -63,7 +63,7 @@ def _noise(
     )
     return phx.control.stochastic.PreparedControlledNoise(
         increments,
-        valid=jnp.ones((path_count,), dtype=bool),
+        valid=jnp.ones((path_count,), dtype="bool"),
         realization_ids=tuple(
             f"benchmark-feedback:{role}:path-{index}" for index in range(path_count)
         ),

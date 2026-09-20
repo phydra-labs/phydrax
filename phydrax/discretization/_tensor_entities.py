@@ -42,7 +42,7 @@ class StructuredAxis(StrictModule, NonTrainableState):
     def __init__(self, axis: AxisDiscretization, /):
         if not isinstance(axis, AxisDiscretization):
             raise TypeError("axis must be an AxisDiscretization.")
-        nodes = np.asarray(axis.nodes, dtype=float)
+        nodes = np.asarray(axis.nodes, dtype=np.float64)
         if (
             nodes.size < 1
             or np.any(~np.isfinite(nodes))
@@ -53,7 +53,7 @@ class StructuredAxis(StrictModule, NonTrainableState):
             )
         finite_bounds = axis.domain.finite_bounds
         if finite_bounds is not None:
-            bounds = np.asarray(finite_bounds, dtype=float)
+            bounds = np.asarray(finite_bounds, dtype=np.float64)
         elif axis.periodic:
             raise ValueError("Periodic structured axes require finite bounds.")
         else:
@@ -80,15 +80,15 @@ class StructuredAxis(StrictModule, NonTrainableState):
             point_measures = (
                 geometric_measures
                 if axis.quad_weights is None
-                else np.asarray(axis.quad_weights, dtype=float)
+                else np.asarray(axis.quad_weights, dtype=np.float64)
             )
         else:
             centers = nodes
-            count = int(nodes.size)
+            count = nodes.size
             widths = (
                 np.full((count,), float(bounds[1] - bounds[0]) / count)
                 if axis.quad_weights is None
-                else np.asarray(axis.quad_weights, dtype=float)
+                else np.asarray(axis.quad_weights, dtype=np.float64)
             )
             if (
                 np.any(~np.isfinite(widths))
@@ -113,7 +113,7 @@ class StructuredAxis(StrictModule, NonTrainableState):
             if axis.periodic:
                 point_measures = 0.5 * (widths + np.roll(widths, 1))
             else:
-                point_measures = np.empty((count + 1,), dtype=float)
+                point_measures = np.empty((count + 1,), dtype=np.float64)
                 point_measures[0] = 0.5 * widths[0]
                 point_measures[-1] = 0.5 * widths[-1]
                 if count > 1:
@@ -126,8 +126,7 @@ class StructuredAxis(StrictModule, NonTrainableState):
             or not np.any(point_measures > 0.0)
         ):
             raise ValueError(
-                "Structured entity measures must be finite and non-negative "
-                "with positive total support."
+                "Structured entity measures must be finite and non-negative with positive total support."
             )
         self.bounds = jnp.asarray(bounds)
         self.point_coordinates = jnp.asarray(points)
@@ -157,9 +156,9 @@ class StructuredAxis(StrictModule, NonTrainableState):
 
     def count(self, kind: AxisEntityKind, /) -> int:
         if kind == "point":
-            return int(self.point_coordinates.size)
+            return self.point_coordinates.size
         if kind == "interval":
-            return int(self.interval_centers.size)
+            return self.interval_centers.size
         raise ValueError("Unknown axis entity kind.")
 
     def coordinates(self, kind: AxisEntityKind, /) -> Array:
@@ -223,13 +222,13 @@ class TensorEntityLayout(StrictModule, NonTrainableState):
         for index, (axis, entity) in enumerate(zip(axes_, entities, strict=True)):
             weights = axis.measure(entity)
             reshape = [1] * len(shape)
-            reshape[index] = int(weights.size)
+            reshape[index] = weights.size
             measure = measure * weights.reshape(reshape)
         lower_masks = []
         upper_masks = []
         for dimension, (axis, entity) in enumerate(zip(axes_, entities, strict=True)):
-            lower = jnp.zeros(shape, dtype=bool)
-            upper = jnp.zeros(shape, dtype=bool)
+            lower = jnp.zeros(shape, dtype=jnp.bool_)
+            upper = jnp.zeros(shape, dtype=jnp.bool_)
             if entity == "point" and (
                 axis.lower_endpoint_included
                 or (axis.primary_entity == "interval" and not axis.periodic)

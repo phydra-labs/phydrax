@@ -144,10 +144,9 @@ def _noise_inputs(
         or state_noise.shape[-2:] != (n, n)
     ):
         raise ValueError(
-            "state_noise_matrices must have shape case_shape + "
-            f"(horizon, noise_size, n, n); got {state_noise.shape}."
+            f"state_noise_matrices must have shape case_shape + (horizon, noise_size, n, n); got {state_noise.shape}."
         )
-    noise_size = int(state_noise.shape[-3])
+    noise_size = state_noise.shape[-3]
     if noise_size < 1:
         raise ValueError("state_noise_matrices must have a positive noise_size.")
     control_noise = _require_shape(
@@ -277,7 +276,7 @@ def finite_horizon_multiplicative_lq_feedback_nash(
         control_noise,
         gamma_raw,
         noise_offset,
-        float,
+        jnp.float64,
     )
     (
         a,
@@ -722,7 +721,7 @@ def finite_horizon_multiplicative_lq_feedback_nash(
         condition_reported = jnp.where(diagnostic_available, condition, jnp.nan)
         rank_valid = rank == m
         condition_valid = (
-            jnp.ones_like(condition, dtype=bool)
+            jnp.ones_like(condition, dtype=jnp.bool_)
             if condition_limit is None
             else condition <= condition_limit
         )

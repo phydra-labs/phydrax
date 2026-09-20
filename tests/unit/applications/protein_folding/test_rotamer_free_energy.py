@@ -174,7 +174,7 @@ def test_native_force_path_is_scalar_gradient_and_rigid_covariant():
     )
     result = jax.jit(lambda q: program.evaluate(q, relation))(positions)
     prepared = program.terms[0]
-    direction = jnp.arange(27, dtype=float).reshape((9, 3)) / 27 - 0.5
+    direction = jnp.arange(27, dtype="float64").reshape((9, 3)) / 27 - 0.5
     h = 1e-5
     finite_difference = (
         prepared.evaluate(positions + h * direction).energy

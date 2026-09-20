@@ -17,7 +17,7 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from .._frozendict import frozendict
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from ..metrix import AbstractStateGeometry, EuclideanStateGeometry
 from ..stochastic import (
     AbstractRoughControl,
@@ -33,7 +33,7 @@ RoughVectorFields: TypeAlias = Callable[[Array, Array, Any], ArrayLike]
 RoughDrift: TypeAlias = Callable[[Array, Array, Any], ArrayLike]
 
 
-class _ZeroRoughDrift(eqx.Module):
+class _ZeroRoughDrift(StrictModule):
     zero: Array
 
     def __call__(self, time, state, args):
@@ -79,13 +79,13 @@ class RoughDifferentialProblem(StrictModule):
             raise TypeError("drift must be callable or None.")
         resolved_drift = drift
         state = jnp.asarray(initial_state)
-        state_shape = tuple(int(size) for size in state.shape)
+        state_shape = tuple(state.shape)
         if not state_shape or any(size <= 0 for size in state_shape):
             raise ValueError("initial_state must have a non-empty positive shape.")
         resolved_geometry = EuclideanStateGeometry() if geometry is None else geometry
         if not isinstance(resolved_geometry, AbstractStateGeometry):
             raise TypeError("geometry must be an AbstractStateGeometry or None.")
-        membership = jnp.asarray(resolved_geometry.contains(state), dtype=bool)
+        membership = jnp.asarray(resolved_geometry.contains(state), dtype=jnp.bool_)
         if membership.shape != () or not bool(membership):
             raise ValueError("initial_state must belong to the state geometry.")
         if not resolved_geometry.supports_exact_differential:
@@ -95,11 +95,11 @@ class RoughDifferentialProblem(StrictModule):
         tangent_zero = jnp.asarray(
             resolved_geometry.project_tangent(state, jnp.zeros_like(state))
         )
-        tangent_shape = tuple(int(size) for size in tangent_zero.shape)
+        tangent_shape = tuple(tangent_zero.shape)
         local_zero = jnp.asarray(
             resolved_geometry.retraction_inverse_jvp(state, state, tangent_zero)
         )
-        local_shape = tuple(int(size) for size in local_zero.shape)
+        local_shape = tuple(local_zero.shape)
         retracted_zero = jnp.asarray(resolved_geometry.retract(state, local_zero))
         if retracted_zero.shape != state.shape:
             raise ValueError(
@@ -124,8 +124,7 @@ class RoughDifferentialProblem(StrictModule):
         expected_fields = tangent_shape + (dimension,)
         if fields.shape != expected_fields:
             raise ValueError(
-                f"vector_fields must return physical tangent shape "
-                f"{expected_fields}; got {fields.shape}."
+                f"vector_fields must return physical tangent shape {expected_fields}; got {fields.shape}."
             )
         invalid_fields = jax.vmap(
             lambda column: _invalid_geometry_tangent(
@@ -144,8 +143,7 @@ class RoughDifferentialProblem(StrictModule):
         drift_value = jnp.asarray(resolved_drift(jnp.asarray(0.0), state, args))
         if drift_value.shape != tangent_shape:
             raise ValueError(
-                f"drift must return physical tangent shape {tangent_shape}; "
-                f"got {drift_value.shape}."
+                f"drift must return physical tangent shape {tangent_shape}; got {drift_value.shape}."
             )
         drift_value = eqx.error_if(
             drift_value,
@@ -177,9 +175,9 @@ class RoughDifferentialProblem(StrictModule):
 class AbstractRoughSolver(StrictModule):
     """Algorithm consuming one finite-depth geometric rough control."""
 
-    solver_name: AbstractAttribute[str]
-    solver_id: AbstractAttribute[str]
-    required_depth: AbstractAttribute[int]
+    solver_name: eqx.AbstractVar[str]
+    solver_id: eqx.AbstractVar[str]
+    required_depth: eqx.AbstractVar[int]
 
     @abstractmethod
     def integrate(
@@ -212,8 +210,7 @@ def _validate_classical_control(
         raise ValueError("Problem and rough control driver dimensions must match.")
     if control.depth < required_depth:
         raise ValueError(
-            f"{solver_name} requires control depth at least {required_depth}; "
-            f"got {control.depth}."
+            f"{solver_name} requires control depth at least {required_depth}; got {control.depth}."
         )
     hurst = _fractional_hurst(control)
     if hurst is not None and hurst <= minimum_hurst:
@@ -378,7 +375,7 @@ class RoughEuler(AbstractRoughSolver):
 
     def __init__(self):
         self.solver_name = "RoughEuler"
-        self.solver_id = "rough-solver:rough-euler:v1"
+        self.solver_id = "rough-solver:rough-euler"
         self.required_depth = 1
 
     def integrate(
@@ -406,7 +403,7 @@ class Davie(AbstractRoughSolver):
 
     def __init__(self):
         self.solver_name = "Davie"
-        self.solver_id = "rough-solver:davie:v1"
+        self.solver_id = "rough-solver:davie"
         self.required_depth = 2
 
     def integrate(
@@ -552,8 +549,8 @@ class RoughDifferentialSolution(StrictModule):
 def _save_indices(
     control: AbstractRoughControl, save_times: ArrayLike, /
 ) -> tuple[Array, Array]:
-    saved = jnp.asarray(save_times, dtype=float)
-    if saved.ndim != 1 or int(saved.size) <= 0:
+    saved = jnp.asarray(save_times, dtype=jnp.float64)
+    if saved.ndim != 1 or saved.size <= 0:
         raise ValueError("save_times must be a non-empty rank-1 array.")
     saved = eqx.error_if(
         saved,

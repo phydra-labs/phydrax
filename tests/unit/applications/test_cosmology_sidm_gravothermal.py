@@ -219,7 +219,7 @@ def test_nonuniform_radial_geometry_uses_resistance_weighting_and_exact_quadrati
     closure = plan._closure(state)
     centers = closure[0]
     enclosed = closure[3]
-    pressure = closure[4]
+    closure[4]
     hydrostatic_residual = closure[5]
     conductivity = closure[10]
     heat_flux = closure[11]

@@ -123,7 +123,7 @@ def finite_volume_convergence_result(
     *,
     order_tolerance: float = 0.25,
 ) -> FiniteVolumeConvergenceResult:
-    resolutions_ = tuple(int(value) for value in resolutions)
+    resolutions_ = tuple(resolutions)
     errors_ = jnp.asarray(errors)
     expected = float(expected_order)
     tolerance = float(order_tolerance)

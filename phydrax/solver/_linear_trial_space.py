@@ -92,7 +92,9 @@ def _validate_solver(solver) -> None:
         raise ValueError("Linear trial-space solves require at least one training term.")
     for term in solver.terms:
         if not isinstance(term, ResidualPenalty):
-            raise TypeError("Linear trial-space solves require ResidualPenalty terms only.")
+            raise TypeError(
+                "Linear trial-space solves require ResidualPenalty terms only."
+            )
         if not isinstance(term.source, FixedIntegration):
             raise TypeError(
                 "Linear trial-space solves require fixed integration realizations."
@@ -100,13 +102,9 @@ def _validate_solver(solver) -> None:
     for name, field in solver.functions.items():
         certificate = trial_space_certificate(field)
         if not certificate.linear_in_coefficients:
-            raise TypeError(
-                f"Field {name!r} is not linear in its declared coefficients."
-            )
+            raise TypeError(f"Field {name!r} is not linear in its declared coefficients.")
         if not isinstance(field.func, ConcatenatedModelEvaluator):
-            raise TypeError(
-                f"Field {name!r} must bind its certified model directly."
-            )
+            raise TypeError(f"Field {name!r} must bind its certified model directly.")
 
 
 def solve_linear_trial_space(
@@ -145,7 +143,9 @@ def solve_linear_trial_space(
     )
     residual_terms = materialize_prepared_residual_terms(prepared, require_all=True)
     if len(residual_terms) != len(solver.terms):
-        raise RuntimeError("Failed to materialize every linear trial-space residual term.")
+        raise RuntimeError(
+            "Failed to materialize every linear trial-space residual term."
+        )
 
     def residual_vector(flat):
         current = unravel(flat)
@@ -173,7 +173,7 @@ def solve_linear_trial_space(
     if not bool(jnp.all(jnp.isfinite(design))) or not bool(jnp.all(jnp.isfinite(offset))):
         raise ValueError("Linear trial-space design matrix and offset must be finite.")
 
-    direction = jnp.linspace(-0.75, 0.75, int(flat_params.size), dtype=flat_params.dtype)
+    direction = jnp.linspace(-0.75, 0.75, flat_params.size, dtype=flat_params.dtype)
     first_actual = residual_vector(direction)
     second_actual = residual_vector(-0.5 * direction)
     first_error = jnp.max(jnp.abs(first_actual - (design @ direction + offset)))
@@ -182,20 +182,13 @@ def solve_linear_trial_space(
     )
     audit_residual = jnp.maximum(first_error, second_error)
     audit_scale = jnp.maximum(
-        jnp.max(
-            jnp.abs(
-                jnp.concatenate((first_actual, second_actual, offset), axis=0)
-            )
-        ),
+        jnp.max(jnp.abs(jnp.concatenate((first_actual, second_actual, offset), axis=0))),
         1.0,
     )
     if affine_tolerance is None:
         epsilon = np.finfo(np.dtype(flat_params.dtype)).eps
         audit_tolerance = (
-            4096.0
-            * epsilon
-            * max(int(flat_params.size), int(offset.size), 1)
-            * audit_scale
+            4096.0 * epsilon * max(flat_params.size, offset.size, 1) * audit_scale
         )
     else:
         audit_tolerance = jnp.asarray(affine_tolerance_, dtype=flat_params.dtype)
@@ -223,8 +216,8 @@ def solve_linear_trial_space(
         final_residual_norm=final_residual,
         affine_audit_residual=audit_residual,
         affine_audit_tolerance=audit_tolerance,
-        coefficient_count=int(flat_params.size),
-        residual_count=int(offset.size),
+        coefficient_count=flat_params.size,
+        residual_count=offset.size,
     )
 
 

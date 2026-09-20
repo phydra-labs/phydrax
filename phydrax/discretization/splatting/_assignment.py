@@ -14,7 +14,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._tensor_entities import StructuredAxis, TensorEntityLayout
 from .._tensor_index import TensorIndexLayout
@@ -126,7 +126,7 @@ class SplatAssignmentState(StrictModule):
         weights_ = jnp.asarray(weights)
         gradients = jnp.asarray(weight_gradients)
         offsets = jnp.asarray(route_offsets)
-        valid_ = jnp.asarray(valid, dtype=bool)
+        valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         if indices_.ndim != 2 or weights_.shape != indices_.shape:
             raise ValueError(
                 "Assignment indices and weights must have shape (sources, routes)."
@@ -143,9 +143,9 @@ class SplatAssignmentState(StrictModule):
         dimension = gradients.shape[-1]
         source_shape = (source_count,)
         vectors = {
-            "source_in_domain": jnp.asarray(source_in_domain, dtype=bool),
+            "source_in_domain": jnp.asarray(source_in_domain, dtype=jnp.bool_),
             "captured_fractions": jnp.asarray(captured_fractions),
-            "full_support": jnp.asarray(full_support, dtype=bool),
+            "full_support": jnp.asarray(full_support, dtype=jnp.bool_),
         }
         if any(value.shape != source_shape for value in vectors.values()):
             raise ValueError("Assignment source evidence must match the source count.")
@@ -174,8 +174,8 @@ class SplatAssignmentState(StrictModule):
 class AbstractStructuredSplatAssignment(StrictModule, NonTrainableState):
     """Shape-function contract for one structured particle-grid assignment."""
 
-    capabilities: AbstractAttribute[SplatAssignmentCapabilities]
-    assignment_id: AbstractAttribute[str]
+    capabilities: eqx.AbstractVar[SplatAssignmentCapabilities]
+    assignment_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def route_width(self, dimension: int, /) -> int:
@@ -231,14 +231,14 @@ def _uniform_spacing(
     periodic: bool,
     /,
 ) -> float:
-    values = np.asarray(coordinates, dtype=float)
+    values = np.asarray(coordinates, dtype=np.float64)
     if values.ndim != 1 or values.size < 2 or np.any(~np.isfinite(values)):
         raise ValueError(
             "Uniform splat assignment requires at least two finite coordinates."
         )
     differences = np.diff(values)
     spacing = float(differences[0])
-    tolerance = np.finfo(float).eps * max(32.0, abs(spacing) * values.size)
+    tolerance = np.finfo(np.float64).eps * max(32.0, abs(spacing) * values.size)
     if spacing <= 0.0 or not np.allclose(
         differences, spacing, rtol=1e-10, atol=tolerance
     ):
@@ -297,7 +297,7 @@ def _uniform_axis_stencil(
     active: Array,
     /,
 ) -> tuple[Array, Array, Array, Array, Array, Array]:
-    count = int(coordinates.size)
+    count = coordinates.size
     spacing = jnp.asarray(
         _uniform_spacing(coordinates, bounds, periodic), dtype=position.dtype
     )
@@ -338,7 +338,7 @@ def _linear_nonuniform_axis_stencil(
     active: Array,
     /,
 ) -> tuple[Array, Array, Array, Array, Array, Array]:
-    count = int(coordinates.size)
+    count = coordinates.size
     lower, upper = bounds
     if periodic:
         period = upper - lower
@@ -378,9 +378,9 @@ def _tensor_product_state(
     active: Array,
     /,
 ) -> SplatAssignmentState:
-    source_count = int(active.size)
+    source_count = active.size
     dimension = len(axis_stencils)
-    widths = tuple(int(stencil[0].shape[1]) for stencil in axis_stencils)
+    widths = tuple(stencil[0].shape[1] for stencil in axis_stencils)
     route_count = prod(widths)
     route_indices = []
     route_weights = []
@@ -486,7 +486,7 @@ class MultilinearSplatAssignment(AbstractStructuredSplatAssignment):
     ) -> None:
         if len(axes) != len(layout.shape):
             raise ValueError("Assignment axes must match the target layout dimension.")
-        if any(int(coordinates.size) < 2 for coordinates in layout.coordinates_by_axis):
+        if any(coordinates.size < 2 for coordinates in layout.coordinates_by_axis):
             raise ValueError("Multilinear assignment requires two targets on every axis.")
         if any(entity == "interval" for entity in layout.axis_entities):
             for coordinates, axis in zip(layout.coordinates_by_axis, axes, strict=True):
@@ -518,9 +518,7 @@ class MultilinearSplatAssignment(AbstractStructuredSplatAssignment):
         *,
         assignment_input: object = None,
     ) -> SplatAssignmentState:
-        self.validate_input(
-            assignment_input, int(position.shape[0]), int(position.shape[1])
-        )
+        self.validate_input(assignment_input, position.shape[0], position.shape[1])
         uniform_mixed = any(entity == "interval" for entity in layout.axis_entities)
         stencils = []
         for axis, (coordinates, bounds, geometry_axis) in enumerate(

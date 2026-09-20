@@ -66,7 +66,7 @@ class AlgebraCoordinatePlan(StrictModule, NonTrainableState):
         self.public_dtype = dtype
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "algebra-coordinate-plan-v1",
+                "kind": "algebra-coordinate-plan",
                 "algebra": algebra.algebra_id,
                 "public_storage": public_storage,
                 "public_axis": int(public_axis),
@@ -89,7 +89,7 @@ class PreparedAlgebraCoordinates(AbstractRealCoordinateMap, NonTrainableState):
     def __init__(self, plan: AlgebraCoordinatePlan, base_shape: Sequence[int], /):
         if not isinstance(plan, AlgebraCoordinatePlan):
             raise TypeError("plan must be AlgebraCoordinatePlan.")
-        base = tuple(int(size) for size in base_shape)
+        base = tuple(base_shape)
         if any(size <= 0 for size in base):
             raise ValueError("Algebra coordinate base shape must be positive.")
         real_dtype = (
@@ -118,7 +118,7 @@ class PreparedAlgebraCoordinates(AbstractRealCoordinateMap, NonTrainableState):
             public_axis = source_space.algebra_axis
         identifier = canonical_fingerprint(
             {
-                "kind": "prepared-algebra-coordinates-v1",
+                "kind": "prepared-algebra-coordinates",
                 "plan": plan.plan_id,
                 "base_shape": list(base),
                 "source_space": source_space.space_id,
@@ -169,7 +169,7 @@ class PreparedAlgebraCoordinates(AbstractRealCoordinateMap, NonTrainableState):
 
     def pack_diffusion(self, value: ArrayLike, noise_shape: Sequence[int], /) -> Array:
         array = jnp.asarray(value)
-        noise = tuple(int(size) for size in noise_shape)
+        noise = tuple(noise_shape)
         expected = self.public_shape + noise
         if array.shape != expected:
             raise ValueError(
@@ -206,7 +206,7 @@ class PreparedAlgebraCoordinates(AbstractRealCoordinateMap, NonTrainableState):
         return self.validate_state(state)
 
     def defect(self, state: ArrayLike, /) -> Array:
-        value = self.validate_state(state)
+        self.validate_state(state)
         return jnp.zeros((), dtype=self.coordinate_space.dtype)
 
 

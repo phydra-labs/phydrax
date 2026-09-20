@@ -104,23 +104,23 @@ def test_boundary_chart_lowering_integrates_arclength_without_seam_duplication(
 
 def test_bounds_property(geometry_from_square):
     geom = geometry_from_square
-    bounds = np.asarray(geom.bounds, dtype=float)
+    bounds = np.asarray(geom.bounds, dtype="float64")
     expected_bounds = np.array([[-0.5, -0.5], [0.5, 0.5]])
     assert np.allclose(bounds, expected_bounds, atol=1e-6)
 
 
 def test_contains_method(geometry_from_square):
     geom = geometry_from_square
-    inside_point = jnp.array([[0.0, 0.0]], dtype=float)
-    outside_point = jnp.array([[2.0, 2.0]], dtype=float)
+    inside_point = jnp.array([[0.0, 0.0]], dtype="float64")
+    outside_point = jnp.array([[2.0, 2.0]], dtype="float64")
     assert geom._contains(inside_point)[0]
     assert ~geom._contains(outside_point)[0]
 
 
 def test_on_boundary_method(geometry_from_square):
     geom = geometry_from_square
-    boundary_point = jnp.array([[0.5, 0.0]], dtype=float)
-    interior_point = jnp.array([[0.0, 0.0]], dtype=float)
+    boundary_point = jnp.array([[0.5, 0.0]], dtype="float64")
+    interior_point = jnp.array([[0.0, 0.0]], dtype="float64")
     assert geom._on_boundary(boundary_point)[0]
     assert ~geom._on_boundary(interior_point)[0]
 
@@ -171,7 +171,7 @@ def test_boundary_normals(geometry_from_square):
             [0.0, 0.5],  # Top edge
             [0.0, -0.5],  # Bottom edge
         ],
-        dtype=float,
+        dtype="float64",
     )
 
     expected_normals = np.array(

@@ -77,9 +77,9 @@ class SparseGridRealization(StrictModule):
         self.batch = batch
         self.previous = previous
         self.level = int(level)
-        self.num_unique_nodes = int(batch.weights.data.size)
+        self.num_unique_nodes = batch.weights.data.size
         self.previous_num_unique_nodes = (
-            0 if previous is None else int(previous.weights.data.size)
+            0 if previous is None else previous.weights.data.size
         )
         self.num_terms = int(num_terms)
         self.axis_rules = axis_rules
@@ -147,12 +147,12 @@ def _smolyak_rule_from_terms(
             else:
                 table[identifier] = (node, weight)
     ordered = tuple(sorted(table))
-    nodes = np.asarray(tuple(table[key][0] for key in ordered), dtype=float).reshape(
+    nodes = np.asarray(tuple(table[key][0] for key in ordered), dtype=np.float64).reshape(
         (-1, dimension)
     )
-    weights = np.asarray(tuple(table[key][1] for key in ordered), dtype=float)
+    weights = np.asarray(tuple(table[key][1] for key in ordered), dtype=np.float64)
     weight_scale = max(1.0, float(np.max(np.abs(weights), initial=0.0)))
-    active = np.abs(weights) > 64.0 * np.finfo(float).eps * weight_scale
+    active = np.abs(weights) > 64.0 * np.finfo(np.float64).eps * weight_scale
     return nodes[active], weights[active]
 
 
@@ -188,10 +188,10 @@ def _fixed_field(factor: Any, selector: Any, /) -> cx.AxisArray:
             value = selector.value
         else:
             raise TypeError("Expected a fixed scalar selector.")
-        return cx.AxisArray(jnp.asarray(value, dtype=float).reshape(()), dims=())
+        return cx.AxisArray(jnp.asarray(value, dtype=jnp.float64).reshape(()), dims=())
     if isinstance(factor, AbstractGeometry) and isinstance(selector, Fixed):
         return cx.AxisArray(
-            jnp.asarray(selector.value, dtype=float).reshape((factor.spatial_dim,)),
+            jnp.asarray(selector.value, dtype=jnp.float64).reshape((factor.spatial_dim,)),
             dims=(None,),
         )
     raise TypeError("Unsupported fixed sparse-grid factor.")
@@ -220,8 +220,7 @@ def _materialize_level(
         requested = (target.axes,) if isinstance(target.axes, str) else target.axes
         if len(requested) != len(varying) or frozenset(requested) != frozenset(varying):
             raise ValueError(
-                "Sparse-grid targets use one coupled axis; axes must select every "
-                f"non-fixed label {varying!r}."
+                f"Sparse-grid targets use one coupled axis; axes must select every non-fixed label {varying!r}."
             )
     unsupported = tuple(
         label
@@ -230,13 +229,11 @@ def _materialize_level(
     )
     if unsupported:
         raise TypeError(
-            "Sparse grids support only Interior() or fixed component selectors; "
-            f"unsupported labels: {unsupported!r}."
+            f"Sparse grids support only Interior() or fixed component selectors; unsupported labels: {unsupported!r}."
         )
     if len(varying) != plan.dimension:
         raise ValueError(
-            f"SparseGridPlan dimension={plan.dimension} but target has "
-            f"{len(varying)} non-fixed factors."
+            f"SparseGridPlan dimension={plan.dimension} but target has {len(varying)} non-fixed factors."
         )
     factors = tuple(_unwrap(component.domain.factor(label)) for label in varying)
     if any(not isinstance(factor, AbstractScalarDomain) for factor in factors):
@@ -254,12 +251,12 @@ def _materialize_level(
             plan.axis_rules,
             smolyak_terms_for_index_set(index_set),
         )
-    scale = jnp.asarray(1.0, dtype=float)
+    scale = jnp.asarray(1.0, dtype=jnp.float64)
     mapped_columns: list[Array] = []
     for axis, (label, factor, rule) in enumerate(
         zip(varying, factors, plan.axis_rules, strict=True)
     ):
-        coordinate = jnp.asarray(canonical_nodes[:, axis], dtype=float)
+        coordinate = jnp.asarray(canonical_nodes[:, axis], dtype=jnp.float64)
         if rule == "gauss-hermite":
             if not isinstance(factor, ProbabilityDomain):
                 raise TypeError(
@@ -268,8 +265,7 @@ def _materialize_level(
             transport = factor.reference_transport
             if transport.reference_measure != "standard-normal":
                 raise ValueError(
-                    f"Gauss--Hermite axis {label!r} requires a standard-normal "
-                    "reference transport."
+                    f"Gauss--Hermite axis {label!r} requires a standard-normal reference transport."
                 )
             mapped = transport.from_reference(coordinate)
         elif isinstance(factor, ProbabilityDomain):
@@ -306,7 +302,7 @@ def _materialize_level(
             )
     point_batch = PointBatch(frozendict(points), structure)
     weights = cx.AxisArray(
-        scale * jnp.asarray(canonical_weights, dtype=float), dims=(axis_name,)
+        scale * jnp.asarray(canonical_weights, dtype=jnp.float64), dims=(axis_name,)
     )
     return PointIntegrationBatch(
         point_batch,
@@ -316,8 +312,7 @@ def _materialize_level(
         provenance=(
             f"smolyak:level-{level}:rules-{'+'.join(plan.axis_rules)}"
             if index_set is None
-            else f"smolyak:indices-{len(index_set.indices)}:"
-            f"rules-{'+'.join(plan.axis_rules)}"
+            else f"smolyak:indices-{len(index_set.indices)}:rules-{'+'.join(plan.axis_rules)}"
         ),
     )
 
@@ -524,7 +519,7 @@ def _index_set_node_count(
         1.0,
         max((abs(weight) for weight in weights.values()), default=0.0),
     )
-    threshold = 64.0 * np.finfo(float).eps * weight_scale
+    threshold = 64.0 * np.finfo(np.float64).eps * weight_scale
     return sum(abs(weight) > threshold for weight in weights.values())
 
 
@@ -640,7 +635,7 @@ def prepare_adaptive_sparse_grid(
                 proposed,
                 limit=plan.max_nodes,
             )
-            work = max(1, proposed_nodes - int(batch.weights.data.size))
+            work = max(1, proposed_nodes - batch.weights.data.size)
             if proposed_nodes > plan.max_nodes:
                 node_limited = True
                 continue
@@ -742,9 +737,9 @@ def prepare_adaptive_sparse_grid(
     )
     diagnostics = AdaptiveSparseGridDiagnostics(
         status=jnp.asarray(int(terminal_status), dtype=jnp.int32),
-        frontier_indicator=jnp.asarray(frontier_indicator, dtype=float),
+        frontier_indicator=jnp.asarray(frontier_indicator, dtype=jnp.float64),
         accepted_indices=len(index_set.indices),
-        num_unique_nodes=int(batch.weights.data.size),
+        num_unique_nodes=batch.weights.data.size,
         num_rounds=len(epochs),
     )
     return AdaptiveSparseGridResult(

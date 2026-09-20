@@ -84,10 +84,10 @@ class WellCompletionPlan(StrictModule, NonTrainableState):
         /,
     ):
         cells = np.asarray(cell_indices)
-        indices = np.asarray(well_indices_m, dtype=float)
-        composition = np.asarray(phase_composition, dtype=float)
-        density = np.asarray(phase_density_kg_m3, dtype=float)
-        enthalpy = np.asarray(phase_enthalpy_J_kg, dtype=float)
+        indices = np.asarray(well_indices_m, dtype=np.float64)
+        composition = np.asarray(phase_composition, dtype=np.float64)
+        density = np.asarray(phase_density_kg_m3, dtype=np.float64)
+        enthalpy = np.asarray(phase_enthalpy_J_kg, dtype=np.float64)
         count = int(cell_count)
         completions = cells.size
         if (
@@ -145,11 +145,11 @@ class WellCompletionPlan(StrictModule, NonTrainableState):
         /,
     ) -> WellCompletionPlan:
         permeability, thickness, dx, dy, radius = np.broadcast_arrays(
-            np.asarray(permeability_m2, dtype=float),
-            np.asarray(thickness_m, dtype=float),
-            np.asarray(cell_dx_m, dtype=float),
-            np.asarray(cell_dy_m, dtype=float),
-            np.asarray(well_radius_m, dtype=float),
+            np.asarray(permeability_m2, dtype=np.float64),
+            np.asarray(thickness_m, dtype=np.float64),
+            np.asarray(cell_dx_m, dtype=np.float64),
+            np.asarray(cell_dy_m, dtype=np.float64),
+            np.asarray(well_radius_m, dtype=np.float64),
         )
         if (
             np.any(permeability <= 0)

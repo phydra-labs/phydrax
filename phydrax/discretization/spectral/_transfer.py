@@ -58,8 +58,8 @@ class SpectralModalTransferReport(StrictModule, NonTrainableState):
         target_space_id: str,
         removed_mode_count: int,
     ):
-        source = tuple(int(size) for size in source_shape)
-        target = tuple(int(size) for size in target_shape)
+        source = tuple(source_shape)
+        target = tuple(target_shape)
         actions = tuple(str(action) for action in axis_actions)
         workspace = int(workspace_bytes)
         source_space = str(source_space_id)
@@ -77,7 +77,7 @@ class SpectralModalTransferReport(StrictModule, NonTrainableState):
             or removed < 0
         ):
             raise ValueError("Spectral transfer report metadata is invalid.")
-        residual = jnp.asarray(trace_residual, dtype=float).reshape(())
+        residual = jnp.asarray(trace_residual, dtype=jnp.float64).reshape(())
         residual = eqx.error_if(
             residual,
             ~(jnp.isfinite(residual) & (residual >= 0.0)),
@@ -162,8 +162,7 @@ class SpectralModalTransferPlan(StrictModule, NonTrainableState):
                 or source.radius != target.radius
             ):
                 raise ValueError(
-                    "Spherical transfers require one spin, reality, normalization, "
-                    "and radius."
+                    "Spherical transfers require one spin, reality, normalization, and radius."
                 )
         if lattice_pair:
             if (
@@ -592,8 +591,7 @@ def _validate_modal_coefficients(
         values = jnp.asarray(coefficients)
         if values.ndim < 1 or values.shape[0] != discretization.harmonic_count:
             raise ValueError(
-                f"{name} must begin with ({discretization.harmonic_count},); "
-                f"got {values.shape}."
+                f"{name} must begin with ({discretization.harmonic_count},); got {values.shape}."
             )
         return values
     values = jnp.asarray(coefficients)
@@ -659,7 +657,7 @@ def _resize_degree_axis(
     target_size: int,
     /,
 ) -> Array:
-    source_size = int(coefficients.shape[axis])
+    source_size = coefficients.shape[axis]
     target = int(target_size)
     if target == source_size:
         return coefficients

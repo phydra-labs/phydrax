@@ -213,7 +213,7 @@ def _ordered_history(
 
 def _require_accepted_boundary(accepted: ArrayLike, /) -> None:
     value = jnp.asarray(accepted)
-    if value.shape != () or value.dtype != jnp.dtype(bool):
+    if value.shape != () or value.dtype != jnp.dtype(jnp.bool_):
         raise TypeError("accepted must be one boolean scalar.")
     if not bool(value):
         raise ValueError("D2V checkpoints may only be written at an accepted boundary.")

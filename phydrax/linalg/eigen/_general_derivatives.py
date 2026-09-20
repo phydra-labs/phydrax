@@ -723,7 +723,7 @@ def _mode_indices(value: int | Sequence[int], size: int, /) -> tuple[int, ...]:
     if isinstance(value, (int, np.integer)):
         indices = (int(value),)
     else:
-        indices = tuple(int(index) for index in value)
+        indices = tuple(value)
     if not indices:
         raise ValueError("mode_indices must be nonempty.")
     if len(set(indices)) != len(indices):

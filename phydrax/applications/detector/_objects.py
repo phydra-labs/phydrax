@@ -45,7 +45,7 @@ class ReconstructedParticleBank(StrictModule, NonTrainableState):
         energies_ = jnp.asarray(energies, dtype=charges_.dtype)
         tracks = jnp.asarray(source_track_indices, dtype=jnp.int32)
         clusters = jnp.asarray(source_cluster_indices, dtype=jnp.int32)
-        active_ = jnp.asarray(active, dtype=bool)
+        active_ = jnp.asarray(active, dtype=jnp.bool_)
         if pdg.ndim != 2:
             raise ValueError("Reconstructed particles require shape (event, particle).")
         expected = pdg.shape

@@ -10,13 +10,15 @@ from typing import Any, Sequence
 import equinox as eqx
 import jax.numpy as jnp
 
+from phydrax._strict import StrictModule
+
 from ..discretization.spatial import MortonNeighborQueryPlan
 from ..sparse import gather_routes, RowRelation
 from ._geometry import mollified_kernel_weight, MollifierKind, QueryGraph
 from ._ir import GraphIR
 
 
-class QueryNeighborhoodEvidence(eqx.Module):
+class QueryNeighborhoodEvidence(StrictModule):
     """Exactness, completeness, and backend evidence for one neighborhood."""
 
     exact: jnp.ndarray
@@ -26,7 +28,7 @@ class QueryNeighborhoodEvidence(eqx.Module):
     backend: str = eqx.field(static=True)
 
 
-class QueryNeighborhood(eqx.Module):
+class QueryNeighborhood(StrictModule):
     """Fixed-capacity, case-local source neighborhoods for target points."""
 
     relation: RowRelation
@@ -57,7 +59,7 @@ class QueryNeighborhood(eqx.Module):
             index_array,
             source_size=source_size,
             valid=mask,
-            case_shape=(int(index_array.shape[0]),),
+            case_shape=(index_array.shape[0],),
         )
         relative_array = jnp.asarray(relative)
         distance_array = jnp.asarray(distance)
@@ -111,12 +113,11 @@ def _case_shape(
     target: jnp.ndarray,
     /,
 ) -> tuple[int, ...]:
-    source_cases = tuple(int(size) for size in source.shape[:-2])
-    target_cases = tuple(int(size) for size in target.shape[:-2])
+    source_cases = tuple(source.shape[:-2])
+    target_cases = tuple(target.shape[:-2])
     if source_cases and target_cases and source_cases != target_cases:
         raise ValueError(
-            "Source and target coordinates must have one shared case shape; "
-            f"got {source_cases} and {target_cases}."
+            f"Source and target coordinates must have one shared case shape; got {source_cases} and {target_cases}."
         )
     return source_cases or target_cases
 
@@ -129,16 +130,16 @@ def _point_array(
     *,
     coord_dim: int | None = None,
 ) -> jnp.ndarray:
-    array = jnp.asarray(value, dtype=float)
+    array = jnp.asarray(value, dtype=jnp.float64)
     if array.ndim < 2:
         raise ValueError(f"{name} must end in (num_points, coord_dim).")
-    if int(array.shape[-2]) <= 0 or int(array.shape[-1]) <= 0:
+    if array.shape[-2] <= 0 or array.shape[-1] <= 0:
         raise ValueError(f"{name} point and coordinate dimensions must be positive.")
-    if coord_dim is not None and int(array.shape[-1]) != int(coord_dim):
+    if coord_dim is not None and array.shape[-1] != int(coord_dim):
         raise ValueError(
             f"{name} coordinate dimension must be {coord_dim}; got {array.shape[-1]}."
         )
-    explicit = tuple(int(size) for size in array.shape[:-2])
+    explicit = tuple(array.shape[:-2])
     if explicit and explicit != case_shape:
         raise ValueError(f"{name} case shape must be {case_shape}; got {explicit}.")
     return jnp.broadcast_to(array, case_shape + array.shape[-2:])
@@ -153,9 +154,9 @@ def _point_mask(
 ) -> jnp.ndarray:
     target = case_shape + (int(point_count),)
     if value is None:
-        return jnp.ones(target, dtype=bool)
-    array = jnp.asarray(value, dtype=bool)
-    explicit = tuple(int(size) for size in array.shape)
+        return jnp.ones(target, dtype=jnp.bool_)
+    array = jnp.asarray(value, dtype=jnp.bool_)
+    explicit = tuple(array.shape)
     if explicit not in ((int(point_count),), target):
         raise ValueError(
             f"{name} must have shape {(point_count,)} or {target}; got {explicit}."
@@ -173,8 +174,8 @@ def _point_scalar(
     if value is None:
         return None
     target = case_shape + (int(point_count),)
-    array = jnp.asarray(value, dtype=float)
-    explicit = tuple(int(size) for size in array.shape)
+    array = jnp.asarray(value, dtype=jnp.float64)
+    explicit = tuple(array.shape)
     if explicit not in ((int(point_count),), target):
         raise ValueError(
             f"{name} must have shape {(point_count,)} or {target}; got {explicit}."
@@ -195,15 +196,15 @@ def _point_features(
     case_ndim = len(case_shape)
     if array.ndim < 1:
         raise ValueError(f"{name} must have a leading point axis.")
-    if tuple(int(size) for size in array.shape[:case_ndim]) == case_shape:
+    if tuple(array.shape[:case_ndim]) == case_shape:
         point_axis = case_ndim
-    elif int(array.shape[0]) == int(point_count):
+    elif array.shape[0] == int(point_count):
         point_axis = 0
     else:
         raise ValueError(f"{name} does not contain the expected point axis.")
-    if int(array.shape[point_axis]) != int(point_count):
+    if array.shape[point_axis] != int(point_count):
         raise ValueError(f"{name} point axis must have size {point_count}.")
-    trailing = tuple(int(size) for size in array.shape[point_axis + 1 :])
+    trailing = tuple(array.shape[point_axis + 1 :])
     return jnp.broadcast_to(array, case_shape + (int(point_count),) + trailing)
 
 
@@ -213,7 +214,9 @@ def _periodic_data(
     /,
 ) -> tuple[jnp.ndarray, jnp.ndarray]:
     if periodic_lengths is None:
-        return jnp.ones((coord_dim,), dtype=float), jnp.zeros((coord_dim,), dtype=bool)
+        return jnp.ones((coord_dim,), dtype=jnp.float64), jnp.zeros(
+            (coord_dim,), dtype=jnp.bool_
+        )
     lengths = tuple(periodic_lengths)
     if len(lengths) != int(coord_dim):
         raise ValueError(
@@ -221,9 +224,9 @@ def _periodic_data(
         )
     if any(value is not None and float(value) <= 0.0 for value in lengths):
         raise ValueError("Periodic lengths must be positive when supplied.")
-    periodic = jnp.asarray([value is not None for value in lengths], dtype=bool)
+    periodic = jnp.asarray([value is not None for value in lengths], dtype=jnp.bool_)
     safe_lengths = jnp.asarray(
-        [1.0 if value is None else float(value) for value in lengths], dtype=float
+        [1.0 if value is None else float(value) for value in lengths], dtype=jnp.float64
     )
     return safe_lengths, periodic
 
@@ -251,7 +254,7 @@ def _query_neighbors_block(
     exclude_self: bool,
     target_offset: int = 0,
 ) -> QueryNeighborhood:
-    coord_dim = int(source.shape[-1])
+    coord_dim = source.shape[-1]
     lengths, periodic = _periodic_data(periodic_lengths, coord_dim)
     relative = target[:, :, None, :] - source[:, None, :, :]
     relative = _minimum_image(relative, lengths, periodic)
@@ -260,10 +263,8 @@ def _query_neighbors_block(
     if radius is not None:
         valid = valid & (distance_squared <= float(radius) ** 2)
     if exclude_self:
-        source_indices = jnp.arange(int(source.shape[1]), dtype=jnp.int32)
-        target_indices = int(target_offset) + jnp.arange(
-            int(target.shape[1]), dtype=jnp.int32
-        )
+        source_indices = jnp.arange(source.shape[1], dtype=jnp.int32)
+        target_indices = int(target_offset) + jnp.arange(target.shape[1], dtype=jnp.int32)
         valid = valid & (target_indices[None, :, None] != source_indices[None, None, :])
 
     sortable = jnp.where(valid, distance_squared, jnp.inf)
@@ -290,7 +291,7 @@ def _query_neighbors_block(
         distance_squared=selected_distance_squared,
         mask=selected_mask,
         count=jnp.sum(selected_mask, axis=-1, dtype=jnp.int32),
-        source_size=int(source.shape[1]),
+        source_size=source.shape[1],
     )
 
 
@@ -306,13 +307,13 @@ def _query_neighbors_morton(
     periodic_lengths: Sequence[float | None] | None,
     exclude_self: bool,
 ) -> QueryNeighborhood:
-    source_count = int(source.shape[1])
-    target_count = int(target.shape[1])
+    source_count = source.shape[1]
+    target_count = target.shape[1]
     if plan.source_capacity != source_count:
         raise ValueError("Morton query source_capacity must match source_points.")
     if plan.target_capacity != target_count:
         raise ValueError("Morton query target_capacity must match target_points.")
-    if plan.address_plan.dimension != int(source.shape[-1]):
+    if plan.address_plan.dimension != source.shape[-1]:
         raise ValueError("Morton query dimension must match the coordinate dimension.")
 
     extents = tuple(
@@ -349,14 +350,14 @@ def _query_neighbors_morton(
             exclude_self=exclude_self,
             radius=radius,
         )
-        for case in range(int(source.shape[0]))
+        for case in range(source.shape[0])
     ]
     indices = jnp.stack([result.source_indices for result in results])
     mask = jnp.stack([result.valid for result in results])
-    case_indices = jnp.arange(int(source.shape[0]), dtype=jnp.int32)[:, None, None]
+    case_indices = jnp.arange(source.shape[0], dtype=jnp.int32)[:, None, None]
     selected_source = source[case_indices, indices]
     relative = target[:, :, None, :] - selected_source
-    lengths, periodic = _periodic_data(plan_lengths, int(source.shape[-1]))
+    lengths, periodic = _periodic_data(plan_lengths, source.shape[-1])
     relative = _minimum_image(relative, lengths, periodic)
     distance_squared = jnp.sum(relative * relative, axis=-1)
     relative = jnp.where(mask[..., None], relative, 0)
@@ -404,15 +405,15 @@ def query_neighbors(
     plan: MortonNeighborQueryPlan | None = None,
 ) -> QueryNeighborhood:
     """Return deterministic, fixed-capacity neighbors without leaving JAX."""
-    source_raw = jnp.asarray(source_points, dtype=float)
-    target_raw = jnp.asarray(target_points, dtype=float)
+    source_raw = jnp.asarray(source_points, dtype=jnp.float64)
+    target_raw = jnp.asarray(target_points, dtype=jnp.float64)
     case_shape = _case_shape(source_raw, target_raw)
     source = _point_array("source_points", source_raw, case_shape)
     target = _point_array(
-        "target_points", target_raw, case_shape, coord_dim=int(source.shape[-1])
+        "target_points", target_raw, case_shape, coord_dim=source.shape[-1]
     )
-    source_count = int(source.shape[-2])
-    target_count = int(target.shape[-2])
+    source_count = source.shape[-2]
+    target_count = target.shape[-2]
     neighbor_count = (
         plan.maximum_neighbors
         if plan is not None and max_neighbors is None
@@ -432,8 +433,8 @@ def query_neighbors(
         raise ValueError("target_chunk_size must be positive when supplied.")
 
     cases = prod(case_shape) if case_shape else 1
-    source = source.reshape((cases, source_count, int(source.shape[-1])))
-    target = target.reshape((cases, target_count, int(target.shape[-1])))
+    source = source.reshape((cases, source_count, source.shape[-1]))
+    target = target.reshape((cases, target_count, target.shape[-1]))
     source_valid = _point_mask(
         "source_mask", source_mask, case_shape, source_count
     ).reshape((cases, source_count))
@@ -549,16 +550,16 @@ def batched_knn_query_graph(
     validate: bool = True,
 ) -> QueryGraph:
     """Build a JIT-compatible counts-first batch of bipartite query graphs."""
-    source_raw = jnp.asarray(source_points, dtype=float)
-    target_raw = jnp.asarray(target_points, dtype=float)
+    source_raw = jnp.asarray(source_points, dtype=jnp.float64)
+    target_raw = jnp.asarray(target_points, dtype=jnp.float64)
     case_shape = _case_shape(source_raw, target_raw)
     source = _point_array("source_points", source_raw, case_shape)
     target = _point_array(
-        "target_points", target_raw, case_shape, coord_dim=int(source.shape[-1])
+        "target_points", target_raw, case_shape, coord_dim=source.shape[-1]
     )
-    source_count = int(source.shape[-2])
-    target_count = int(target.shape[-2])
-    coord_dim = int(source.shape[-1])
+    source_count = source.shape[-2]
+    target_count = target.shape[-2]
+    coord_dim = source.shape[-1]
     case_count = prod(case_shape) if case_shape else 1
     source = source.reshape((case_count, source_count, coord_dim))
     target = target.reshape((case_count, target_count, coord_dim))
@@ -625,8 +626,8 @@ def batched_knn_query_graph(
     is_source = jnp.broadcast_to(
         jnp.concatenate(
             (
-                jnp.ones((source_count,), dtype=bool),
-                jnp.zeros((target_count,), dtype=bool),
+                jnp.ones((source_count,), dtype=jnp.bool_),
+                jnp.zeros((target_count,), dtype=jnp.bool_),
             )
         )[None, :],
         (case_count, node_count),
@@ -695,7 +696,7 @@ def batched_knn_query_graph(
         n_edge=jnp.full((case_count,), edge_count, dtype=jnp.int32),
         node_mask=node_mask,
         edge_mask=neighborhood.mask.reshape((-1,)),
-        graph_mask=jnp.ones((case_count,), dtype=bool),
+        graph_mask=jnp.ones((case_count,), dtype=jnp.bool_),
         validate=validate,
     )
     return QueryGraph(
@@ -726,11 +727,11 @@ def batched_knn_graph(
     validate: bool = True,
 ) -> GraphIR:
     """Build a JIT-compatible counts-first batch of homogeneous KNN graphs."""
-    raw = jnp.asarray(points, dtype=float)
-    case_shape = tuple(int(size) for size in raw.shape[:-2])
+    raw = jnp.asarray(points, dtype=jnp.float64)
+    case_shape = tuple(raw.shape[:-2])
     point_array = _point_array("points", raw, case_shape)
-    point_count = int(point_array.shape[-2])
-    coord_dim = int(point_array.shape[-1])
+    point_count = point_array.shape[-2]
+    coord_dim = point_array.shape[-1]
     case_count = prod(case_shape) if case_shape else 1
     point_array = point_array.reshape((case_count, point_count, coord_dim))
     valid = _point_mask("node_mask", node_mask, case_shape, point_count).reshape(
@@ -797,7 +798,7 @@ def batched_knn_graph(
         n_edge=jnp.full((case_count,), edge_count, dtype=jnp.int32),
         node_mask=valid.reshape((-1,)),
         edge_mask=neighborhood.mask.reshape((-1,)),
-        graph_mask=jnp.ones((case_count,), dtype=bool),
+        graph_mask=jnp.ones((case_count,), dtype=jnp.bool_),
         validate=validate,
     )
 

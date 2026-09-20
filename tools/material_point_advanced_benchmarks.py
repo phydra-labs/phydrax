@@ -172,8 +172,8 @@ def run(output: Path):
         "pack_steady_ms": pack_steady,
         "unpack_steady_ms": unpack_steady,
         "active_blocks": int(active.evidence.required_blocks),
-        "dense_values": int(dense.size),
-        "compact_values": int(compact.size),
+        "dense_values": dense.size,
+        "compact_values": compact.size,
     }
     passed = all(
         all(

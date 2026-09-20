@@ -55,7 +55,7 @@ class FlowVariationalFamily(AbstractVariationalFamily):
         flat_reference, unravel = ravel_pytree(reference)
         if flat_reference.size < 1:
             raise ValueError("Flow variational coordinates cannot be empty.")
-        if flow.shape != (int(flat_reference.size),) or flow.cond_shape is not None:
+        if flow.shape != (flat_reference.size,) or flow.cond_shape is not None:
             raise ValueError(
                 "Flow event shape must match unconditional parameter coordinates."
             )
@@ -64,8 +64,8 @@ class FlowVariationalFamily(AbstractVariationalFamily):
         self.unravel = unravel
         self.tree_definition = tree_definition
         self.event_shapes = tuple(tuple(jnp.asarray(leaf).shape) for leaf in leaves)
-        self.event_sizes = tuple(int(jnp.asarray(leaf).size) for leaf in leaves)
-        self.dimension = int(flat_reference.size)
+        self.event_sizes = tuple(jnp.asarray(leaf).size for leaf in leaves)
+        self.dimension = flat_reference.size
 
     @property
     def family_id(self) -> str:
@@ -126,7 +126,7 @@ class FlowVariationalFamily(AbstractVariationalFamily):
         *,
         sample_shape: tuple[int, ...] = (),
     ) -> tuple[PyTree[Array], Array]:
-        shape = tuple(int(size) for size in sample_shape)
+        shape = tuple(sample_shape)
         if any(size <= 0 for size in shape):
             raise ValueError("sample_shape dimensions must be positive.")
         values, log_prob = self.flow.sample_and_log_prob(key, sample_shape=shape)
@@ -169,8 +169,7 @@ class FlowVariationalConfig(StrictModule):
         ):
             raise TypeError("initialization and optimization must be VariationalConfig.")
         counts = tuple(
-            int(value)
-            for value in (
+            (
                 initialization_samples,
                 flow_layers,
                 num_knots,
@@ -277,7 +276,7 @@ def fit_flow_variational(
     )
     if flat_initialization.shape != (
         config_.initialization_samples,
-        int(flat_reference.size),
+        flat_reference.size,
     ):
         raise ValueError(
             "Flow initialization draws do not match initialization_samples and parameter dimension."

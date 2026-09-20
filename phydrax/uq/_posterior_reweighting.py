@@ -34,7 +34,7 @@ def _flatten_target(
     weights = _raw(target.log_weights)
     if weights is None:
         raise RuntimeError("WeightedSampleTarget lost its log weights.")
-    shape = tuple(int(size) for size in weights.shape)
+    shape = tuple(weights.shape)
     if not shape:
         raise ValueError("Posterior weights require at least one sample axis.")
     if isinstance(target.log_weights, cx.Field):
@@ -50,7 +50,9 @@ def _flatten_target(
             )
     mask = _raw(target.mask)
     active = (
-        jnp.ones(shape, dtype=bool) if mask is None else jnp.asarray(mask, dtype=bool)
+        jnp.ones(shape, dtype=jnp.bool_)
+        if mask is None
+        else jnp.asarray(mask, dtype=jnp.bool_)
     )
     if active.shape != shape or not bool(jnp.any(active)):
         raise ValueError("Posterior mask must select at least one weighted sample.")
@@ -154,7 +156,7 @@ class PosteriorReweightingResult(StrictModule):
         if count <= 0:
             raise ValueError("num_samples must be positive.")
         samples, weights, _, _ = _flatten_target(self.target)
-        if count == int(weights.size):
+        if count == weights.size:
             indices = resample_indices(key, weights, method="systematic")
         else:
             normalized, _, valid = normalize_log_weights(weights)
@@ -163,7 +165,7 @@ class PosteriorReweightingResult(StrictModule):
             )
             indices = jax.random.choice(
                 key,
-                int(weights.size),
+                weights.size,
                 shape=(count,),
                 p=jnp.exp(normalized),
                 replace=True,

@@ -60,7 +60,7 @@ class FixedClusterVortexPlan2D(StrictModule):
         opening_angle: float = 0.5,
         maximum_reference_displacement: float = 0.1,
     ):
-        reference = np.asarray(reference_position, dtype=float)
+        reference = np.asarray(reference_position, dtype=np.float64)
         leaf = int(leaf_size)
         angle = float(opening_angle)
         displacement = float(maximum_reference_displacement)
@@ -76,7 +76,7 @@ class FixedClusterVortexPlan2D(StrictModule):
         order = np.lexsort((reference[:, 1], reference[:, 0]))
         group_count = (reference.shape[0] + leaf - 1) // leaf
         groups = -np.ones((group_count, leaf), dtype=np.int32)
-        valid = np.zeros((group_count, leaf), dtype=bool)
+        valid = np.zeros((group_count, leaf), dtype=np.bool_)
         centers, radii = [], []
         for group in range(group_count):
             indices = order[group * leaf : (group + 1) * leaf]
@@ -88,7 +88,7 @@ class FixedClusterVortexPlan2D(StrictModule):
             radii.append(
                 max(
                     float(np.max(np.linalg.norm(values - center, axis=1))),
-                    np.finfo(float).eps,
+                    np.finfo(np.float64).eps,
                 )
             )
         self.reference_position = jnp.asarray(reference)
@@ -98,7 +98,7 @@ class FixedClusterVortexPlan2D(StrictModule):
         self.reference_radius = jnp.asarray(radii)
         self.opening_angle = angle
         self.maximum_reference_displacement = displacement
-        self.source_capacity = int(reference.shape[0])
+        self.source_capacity = reference.shape[0]
         self.leaf_size = leaf
         self.capabilities = VortexVelocityCapabilities(
             2,
@@ -169,7 +169,7 @@ class FixedClusterVortexPlan2D(StrictModule):
         far_count = jnp.asarray(0, dtype=jnp.int32)
         direct_count = jnp.asarray(0, dtype=jnp.int32)
         error_bound = jnp.asarray(0.0, dtype=positions.dtype)
-        for group in range(int(self.groups.shape[0])):
+        for group in range(self.groups.shape[0]):
             indices = self.groups[group]
             valid = self.group_valid[group]
             safe_indices = jnp.where(valid, indices, 0)

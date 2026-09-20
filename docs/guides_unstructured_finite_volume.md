@@ -1,6 +1,6 @@
 # Single-device unstructured finite volume
 
-Phydrax provides fixed-topology, cell-centred finite volume for:
+Phydrax provides fixed-topology, cell-centered finite volume for:
 
 - triangular, quadrilateral, and mixed triangle/quadrilateral meshes in two dimensions;
 - affine tetrahedral meshes in three dimensions;
@@ -8,7 +8,7 @@ Phydrax provides fixed-topology, cell-centred finite volume for:
 - piecewise-constant, general cell-polynomial, and unstructured WENO-Z reconstruction.
 
 `CellComplexTopology` remains the incidence authority. Prepared finite-volume geometry
-derives owner/neighbour routes and homogeneous face blocks without imposing explicit
+derives owner/neighbor routes and homogeneous face blocks without imposing explicit
 connectivity on structured discretizations.
 
 ## Geometry
@@ -85,7 +85,7 @@ compiled = phx.equations.compile_conservation_problem(problem, fv, method)
 ```
 
 Every internal face flux is computed once, subtracted from its owner, and added to its
-neighbour. Rusanov, HLL, HLLC, and Einfeldt-HLL use physical unit normals. Prepared
+neighbor. Rusanov, HLL, HLLC, and Einfeldt-HLL use physical unit normals. Prepared
 dynamics expose face fluxes, CFL limits, conservation diagnostics, JVP/VJP
 linearization, shared SSPRK, and conservative positivity/retry.
 
@@ -107,7 +107,7 @@ method = phx.discretization.UnstructuredFiniteVolumeMethodPlan(
 Degree one is the general WLSQ path and is affine-exact on qualified polygonal and
 tetrahedral meshes. Degree two is k-exact on qualified triangle and quadrilateral
 geometries when the stencil rank policy passes. Reconstruction evaluates at face
-quadrature rather than only at face centres.
+quadrature rather than only at face centers.
 
 `UnstructuredWENOZReconstructionPlan` combines an optimal polynomial with directional
 sector candidates through a CWENO decomposition and Jiang--Shu derivative Gram
@@ -207,7 +207,7 @@ never an in-place mutation.
 
 `EmbeddedBoundaryPlan` performs exact linear-edge clipping of a level set on
 two-dimensional polygonal cells. It produces fluid volumes, face apertures, cut-face
-centres/normals/measures, body tags, safe masked inverses, and fluid closure evidence.
+centers/normals/measures, body tags, safe masked inverses, and fluid closure evidence.
 
 `UnstructuredVOFPlan` provides bounded conservative upwind phase transport and
 host-prepared two-dimensional PLIC segments. PLIC offsets are solved against the exact
@@ -285,7 +285,7 @@ power, donor restriction, and defects derive from that one signed rate.
 `VOFPhaseChangePlan` binds a transfer law to the exact stage PLIC geometry.
 Interface-resistance and Stefan rates use reconstructed interface measure per
 cell. Stefan transfer additionally reconstructs both phase-side normal
-temperature gradients from fixed neighbour routes and fails when an active
+temperature gradients from fixed neighbor routes and fails when an active
 interface lacks evidence on either side.
 `UnstructuredTwoMaterialThermalDiffusionPlan` adds conservative
 heat conduction to total energy, static adiabatic/prescribed-temperature/
@@ -333,10 +333,10 @@ and saltation remain owned by the solver hybrid-event APIs.
 `prepare_polyhedral_finite_volume_geometry(CellMesh.from_polyhedra(...))` consumes the
 canonical root `PolyhedralConnectivity`. Planar outward face loops are certified with
 Newell area vectors, divergence-theorem volume/centroid identities, positive
-star-tetrahedron quadrature, manifold owner/neighbour routes, and per-cell closure
+star-tetrahedron quadrature, manifold owner/neighbor routes, and per-cell closure
 residuals. Padded face/cell quadrature capacities remain fixed.
 `UnstructuredFiniteVolumePlan.from_cell_mesh(mesh)` wires this certified geometry into
-the ordinary owner/neighbour face block, spaces, quality report, reconstruction, and
+the ordinary owner/neighbor face block, spaces, quality report, reconstruction, and
 dynamics path without a private polyhedral topology.
 
 

@@ -1244,16 +1244,16 @@ def test_release_artifact_builder_rejects_mismatched_bound_supply_chain_inputs(
     assert not report["g5_evidence_ready"]
     assert "external-license-report-record:lock-sha256-mismatch" in report["blockers"]
     assert (
-        "external-license-report-record:package-source-mismatch:alpha@1.0"
+        "external-license-report-record:package-source-mismatch:alpha.0"
         in report["blockers"]
     )
     assert (
-        f"external-license-report-record:package-hash-missing:alpha@1.0:{'11' * 32}"
+        f"external-license-report-record:package-hash-missing:alpha.0:{'11' * 32}"
         in report["blockers"]
     )
     assert (
-        "external-supply-chain-attestation-record:"
-        "subject-hash-mismatch:distribution:wheel" in report["blockers"]
+        "external-supply-chain-attestation-record:subject-hash-mismatch:distribution:wheel"
+        in report["blockers"]
     )
 
 

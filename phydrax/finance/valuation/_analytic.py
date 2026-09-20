@@ -42,11 +42,11 @@ def _inputs(
     positive_underlying: bool,
 ) -> tuple[Array, Array, Array, Array, Array]:
     underlying_, strike_, maturity_, rate_, volatility_ = jnp.broadcast_arrays(
-        jnp.asarray(underlying, dtype=float),
-        jnp.asarray(strike, dtype=float),
-        jnp.asarray(maturity, dtype=float),
-        jnp.asarray(rate, dtype=float),
-        jnp.asarray(volatility, dtype=float),
+        jnp.asarray(underlying, dtype=jnp.float64),
+        jnp.asarray(strike, dtype=jnp.float64),
+        jnp.asarray(maturity, dtype=jnp.float64),
+        jnp.asarray(rate, dtype=jnp.float64),
+        jnp.asarray(volatility, dtype=jnp.float64),
     )
     invalid = (
         ~jnp.isfinite(underlying_)
@@ -158,8 +158,10 @@ def evaluate_black_scholes_european(
     spot_, strike_, maturity_, rate_, volatility = _inputs(
         spot, strike, maturity, rate, model.volatility, positive_underlying=True
     )
-    dividend = jnp.broadcast_to(jnp.asarray(dividend_yield, dtype=float), spot_.shape)
-    notional_ = jnp.broadcast_to(jnp.asarray(notional, dtype=float), spot_.shape)
+    dividend = jnp.broadcast_to(
+        jnp.asarray(dividend_yield, dtype=jnp.float64), spot_.shape
+    )
+    notional_ = jnp.broadcast_to(jnp.asarray(notional, dtype=jnp.float64), spot_.shape)
     spot_ = eqx.error_if(
         spot_,
         jnp.any(~jnp.isfinite(dividend))
@@ -210,8 +212,10 @@ def evaluate_black76_european(
     forward_, strike_, maturity_, _, volatility = _inputs(
         forward, strike, maturity, 0.0, model.volatility, positive_underlying=True
     )
-    discount = jnp.broadcast_to(jnp.asarray(discount_factor, dtype=float), forward_.shape)
-    notional_ = jnp.broadcast_to(jnp.asarray(notional, dtype=float), forward_.shape)
+    discount = jnp.broadcast_to(
+        jnp.asarray(discount_factor, dtype=jnp.float64), forward_.shape
+    )
+    notional_ = jnp.broadcast_to(jnp.asarray(notional, dtype=jnp.float64), forward_.shape)
     forward_ = eqx.error_if(
         forward_,
         jnp.any(~jnp.isfinite(discount))
@@ -257,8 +261,10 @@ def evaluate_bachelier_european(
     forward_, strike_, maturity_, _, volatility = _inputs(
         forward, strike, maturity, 0.0, model.volatility, positive_underlying=False
     )
-    discount = jnp.broadcast_to(jnp.asarray(discount_factor, dtype=float), forward_.shape)
-    notional_ = jnp.broadcast_to(jnp.asarray(notional, dtype=float), forward_.shape)
+    discount = jnp.broadcast_to(
+        jnp.asarray(discount_factor, dtype=jnp.float64), forward_.shape
+    )
+    notional_ = jnp.broadcast_to(jnp.asarray(notional, dtype=jnp.float64), forward_.shape)
     forward_ = eqx.error_if(
         forward_,
         jnp.any(~jnp.isfinite(discount))
@@ -272,7 +278,7 @@ def evaluate_bachelier_european(
     )
     sign = 1.0 if kind is OptionType.CALL else -1.0
     lower = notional_ * discount * jnp.maximum(sign * (forward_ - strike_), 0.0)
-    upper = jnp.full_like(lower, jnp.inf)
+    jnp.full_like(lower, jnp.inf)
     evidence = ValuationEvidence(
         route="bachelier-analytic",
         finite=jnp.all(jnp.isfinite(value)),
@@ -305,8 +311,10 @@ def evaluate_black_scholes_digital(
     spot_, strike_, maturity_, rate_, volatility = _inputs(
         spot, strike, maturity, rate, model.volatility, positive_underlying=True
     )
-    dividend = jnp.broadcast_to(jnp.asarray(dividend_yield, dtype=float), spot_.shape)
-    cash = jnp.broadcast_to(jnp.asarray(cash_amount, dtype=float), spot_.shape)
+    dividend = jnp.broadcast_to(
+        jnp.asarray(dividend_yield, dtype=jnp.float64), spot_.shape
+    )
+    cash = jnp.broadcast_to(jnp.asarray(cash_amount, dtype=jnp.float64), spot_.shape)
     spot_ = eqx.error_if(
         spot_,
         jnp.any(~jnp.isfinite(dividend))
@@ -355,8 +363,8 @@ def evaluate_black76_digital(
     forward_, strike_, maturity_, _, volatility = _inputs(
         forward, strike, maturity, 0.0, model.volatility, positive_underlying=True
     )
-    discount = jnp.asarray(discount_factor, dtype=float)
-    cash = jnp.asarray(cash_amount, dtype=float)
+    discount = jnp.asarray(discount_factor, dtype=jnp.float64)
+    cash = jnp.asarray(cash_amount, dtype=jnp.float64)
     forward_, discount, cash = jnp.broadcast_arrays(forward_, discount, cash)
     forward_ = eqx.error_if(
         forward_,
@@ -404,8 +412,8 @@ def evaluate_bachelier_digital(
     forward_, strike_, maturity_, _, volatility = _inputs(
         forward, strike, maturity, 0.0, model.volatility, positive_underlying=False
     )
-    discount = jnp.asarray(discount_factor, dtype=float)
-    cash = jnp.asarray(cash_amount, dtype=float)
+    discount = jnp.asarray(discount_factor, dtype=jnp.float64)
+    cash = jnp.asarray(cash_amount, dtype=jnp.float64)
     forward_, discount, cash = jnp.broadcast_arrays(forward_, discount, cash)
     forward_ = eqx.error_if(
         forward_,
@@ -446,7 +454,7 @@ def _implied(
     tolerance: float,
     maximum_steps: int,
 ) -> ImpliedVolatilityResult:
-    target = jnp.asarray(price, dtype=float)
+    target = jnp.asarray(price, dtype=jnp.float64)
     if target.shape != ():
         raise ValueError("implied-volatility inversion requires a scalar price.")
     invalid = ~jnp.isfinite(target) | (target < lower_price)
@@ -509,7 +517,7 @@ def invert_black_scholes_implied_volatility(
     maturity_ = eqx.error_if(
         maturity_, maturity_ <= 0.0, "implied volatility is undefined at zero maturity."
     )
-    dividend = jnp.asarray(dividend_yield, dtype=float)
+    dividend = jnp.asarray(dividend_yield, dtype=jnp.float64)
     discount, carry = jnp.exp(-rate_ * maturity_), jnp.exp(-dividend * maturity_)
     forward = spot_ * carry / discount
     sign = 1.0 if kind is OptionType.CALL else -1.0
@@ -550,7 +558,7 @@ def invert_black76_implied_volatility(
     maturity_ = eqx.error_if(
         maturity_, maturity_ <= 0.0, "implied volatility is undefined at zero maturity."
     )
-    discount = jnp.asarray(discount_factor, dtype=float)
+    discount = jnp.asarray(discount_factor, dtype=jnp.float64)
     discount = eqx.error_if(
         discount,
         ~jnp.isfinite(discount) | (discount <= 0.0) | (discount > 1.0),
@@ -594,7 +602,7 @@ def invert_bachelier_implied_volatility(
     maturity_ = eqx.error_if(
         maturity_, maturity_ <= 0.0, "implied volatility is undefined at zero maturity."
     )
-    discount = jnp.asarray(discount_factor, dtype=float)
+    discount = jnp.asarray(discount_factor, dtype=jnp.float64)
     discount = eqx.error_if(
         discount,
         ~jnp.isfinite(discount) | (discount <= 0.0) | (discount > 1.0),
@@ -602,7 +610,7 @@ def invert_bachelier_implied_volatility(
     )
     sign = 1.0 if kind is OptionType.CALL else -1.0
     lower = discount * jnp.maximum(sign * (forward_ - strike_), 0.0)
-    target = jnp.asarray(price, dtype=float)
+    target = jnp.asarray(price, dtype=jnp.float64)
     upper_volatility = (
         16.0
         * (jnp.abs(forward_) + jnp.abs(strike_) + jnp.abs(target / discount) + 1.0)

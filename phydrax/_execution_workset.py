@@ -183,7 +183,7 @@ class PreparedExecutionWorksets(StrictModule, NonTrainableState):
                 )
                 bucket_signatures.append(representatives[signature_id])
         indices = np.asarray(bucket_rows, dtype=np.int32)
-        valid = np.zeros_like(indices, dtype=bool)
+        valid = np.zeros_like(indices, dtype=np.bool_)
         item_bucket = np.empty((plan.item_count,), dtype=np.int32)
         item_slot = np.empty((plan.item_count,), dtype=np.int32)
         for bucket, signature in enumerate(bucket_signatures):

@@ -186,7 +186,7 @@ class ConservativeFiniteVolumeDVMPlan(StrictModule, NonTrainableState):
         self.population_floor = floor
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "conservative-finite-volume-dvm-plan-v1",
+                "kind": "conservative-finite-volume-dvm-plan",
                 "quadrature": quadrature.quadrature_id,
                 "discretization": discretization.prepared_id,
                 "method": method.method_id,
@@ -243,7 +243,7 @@ class ConservativeFiniteVolumeDVMPlan(StrictModule, NonTrainableState):
         )
         prepared_id = canonical_fingerprint(
             {
-                "kind": "prepared-conservative-finite-volume-dvm-v1",
+                "kind": "prepared-conservative-finite-volume-dvm",
                 "plan": self.plan_id,
                 "system": system.system_id,
                 "dynamics": dynamics.dynamics_id,

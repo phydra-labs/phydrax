@@ -50,7 +50,7 @@ class LogConductivity(StrictModule, NonTrainableState):
         if jnp.issubdtype(raw.dtype, jnp.complexfloating):
             raise TypeError("Reference conductivity must be real.")
         reference = np.asarray(
-            convert_value(raw, source=unit, target=DC_CONDUCTIVITY_UNIT), dtype=float
+            convert_value(raw, source=unit, target=DC_CONDUCTIVITY_UNIT), dtype=np.float64
         )
         if (
             reference.ndim != 1

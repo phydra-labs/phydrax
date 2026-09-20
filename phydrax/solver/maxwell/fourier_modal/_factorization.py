@@ -343,8 +343,7 @@ def _prepare_frame(
         )
         if field.shape != lattice.sample_shape + (2,):
             raise ValueError(
-                "Analytic tangent field must have shape "
-                f"{lattice.sample_shape + (2,)}; got {field.shape}."
+                f"Analytic tangent field must have shape {lattice.sample_shape + (2,)}; got {field.shape}."
             )
         magnitude = jnp.sqrt(jnp.sum(jnp.abs(field) ** 2, axis=-1, keepdims=True))
         field = field / eqx.error_if(

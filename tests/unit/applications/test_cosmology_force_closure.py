@@ -137,7 +137,7 @@ def test_screened_ewald_radius_route_resolves_periodic_image_seam():
         jnp.arange(plan.real_offsets.shape[0], dtype=jnp.int32) == plan.zero_offset_index
     )
     self_pair = (
-        jnp.eye(positions.shape[0], dtype=bool)[:, :, None] & zero_offset[None, None, :]
+        jnp.eye(positions.shape[0], dtype="bool")[:, :, None] & zero_offset[None, None, :]
     )
     valid = ~self_pair & (geometric_radius <= plan.real_cutoff)
     expected = jnp.sum(

@@ -109,8 +109,8 @@ class MultiObjectiveBayesianOptimizationProblem(StrictModule):
         if validity is not None and not callable(validity):
             raise TypeError("validity must be callable or None.")
         scale_array, ref = (
-            jnp.asarray(scales, dtype=float),
-            jnp.asarray(reference, dtype=float),
+            jnp.asarray(scales, dtype=jnp.float64),
+            jnp.asarray(reference, dtype=jnp.float64),
         )
         if scale_array.shape != (len(names),) or ref.shape != (len(names),):
             raise ValueError("scales and reference must align with objective_names.")
@@ -549,7 +549,7 @@ def _acquisition_scores(
     problem, plan, encoded, objectives, constraints, valid, candidates, key
 ):
     """Shared latent B union P draws, then only q-by-q conditional covariance."""
-    active = np.asarray(jax.device_get(valid), dtype=bool)
+    active = np.asarray(jax.device_get(valid), dtype=np.bool_)
     train_points, train_values = encoded[active], objectives[active]
     pending = _pending_encodings(problem.domain, problem.pending)
     baseline_points = jnp.concatenate((train_points, pending), axis=0)
@@ -562,7 +562,7 @@ def _acquisition_scores(
     baseline_objectives = problem.canonical(
         baseline.draws.reshape((plan.fantasy_count, b, m))
     )
-    baseline_feasible = jnp.ones((plan.fantasy_count, b), dtype=bool)
+    baseline_feasible = jnp.ones((plan.fantasy_count, b), dtype=jnp.bool_)
     constraint_models = []
     for index, state in enumerate(plan.constraint_surrogates):
         constraint_gp = _PreparedGP(
@@ -598,7 +598,7 @@ def _acquisition_scores(
         candidate_objectives = problem.canonical(
             draws.reshape((plan.fantasy_count, q, m))
         )
-        candidate_feasible = jnp.ones((plan.fantasy_count, q), dtype=bool)
+        candidate_feasible = jnp.ones((plan.fantasy_count, q), dtype=jnp.bool_)
         for (constraint_gp, constraint_baseline), noise in zip(
             constraint_models, constraint_noise, strict=True
         ):
@@ -736,7 +736,7 @@ def multiobjective_bayesian_optimize(
             candidates[eligible],
             fantasy_key,
         )
-        scored_count += int(eligible.size)
+        scored_count += eligible.size
         if not bool(
             jnp.all(jnp.isfinite(scores)) & jnp.all(jnp.isfinite(standard_errors))
         ):

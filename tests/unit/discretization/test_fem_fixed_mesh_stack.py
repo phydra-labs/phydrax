@@ -40,9 +40,9 @@ def test_action_ir_and_packed_facet_routes_are_explicit():
     assert compiled._action_ir.actions
     assert facet.action_indices.shape == (1,)
     assert facet.owner_local_entities.shape == facet.entity_indices.shape
-    assert facet.neighbour_local_entities.shape == facet.entity_indices.shape
-    assert int(facet.owner_permutations[0]) == -int(facet.neighbour_permutations[0])
-    assert dict(facet.neighbour_gathers)["u"].shape == dict(facet.gathers)["u"].shape
+    assert facet.neighbor_local_entities.shape == facet.entity_indices.shape
+    assert int(facet.owner_permutations[0]) == -int(facet.neighbor_permutations[0])
+    assert dict(facet.neighbor_gathers)["u"].shape == dict(facet.gathers)["u"].shape
 
 
 def test_rectangular_element_tensor_has_exact_sparse_and_transpose_actions():

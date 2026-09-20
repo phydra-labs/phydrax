@@ -47,9 +47,9 @@ class ObserverProjectionPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(context, AstrodynamicsContext):
             raise TypeError("context must be an AstrodynamicsContext.")
-        first = np.asarray(sky_x, dtype=float)
-        second = np.asarray(sky_y, dtype=float)
-        sight = np.asarray(toward_observer, dtype=float)
+        first = np.asarray(sky_x, dtype=np.float64)
+        second = np.asarray(sky_y, dtype=np.float64)
+        sight = np.asarray(toward_observer, dtype=np.float64)
         if any(value.shape != (3,) for value in (first, second, sight)):
             raise ValueError("Observer basis vectors must have shape (3,).")
         if any(np.any(~np.isfinite(value)) for value in (first, second, sight)):

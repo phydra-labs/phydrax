@@ -79,7 +79,7 @@ class IonSpecies(StrictModule, NonTrainableState):
         self.valence = valence
         self.species_fingerprint = canonical_fingerprint(
             {
-                "kind": "electrophysiology-ion-species-v1",
+                "kind": "electrophysiology-ion-species",
                 "species_id": identifier,
                 "valence": valence,
             }
@@ -143,7 +143,7 @@ class IonDynamicsPlan(StrictModule, NonTrainableState):
         self.charge_tolerance_C = charge
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "electrophysiology-ion-dynamics-v1",
+                "kind": "electrophysiology-ion-dynamics",
                 "species": [value.species_fingerprint for value in species_values],
                 "intracellular_volume_pL": list(intracellular),
                 "extracellular_volume_pL": list(extracellular),
@@ -191,7 +191,7 @@ class PreparedIonDynamics(StrictModule, NonTrainableState):
         self.charge_per_nA_ms_C = charge_per_nA_ms_C
         self.amount_per_mM_pL_mol = amount_per_mM_pL_mol
         self.runtime_id = canonical_fingerprint(
-            {"kind": "prepared-electrophysiology-ion-dynamics-v1", "plan": plan.plan_id}
+            {"kind": "prepared-electrophysiology-ion-dynamics", "plan": plan.plan_id}
         )
 
 

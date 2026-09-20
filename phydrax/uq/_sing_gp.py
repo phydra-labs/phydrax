@@ -56,7 +56,7 @@ class SINGSparseGPDrift(StrictModule):
         ):
             raise TypeError("kernels must contain positive-definite kernel objects.")
         output_count = len(selected)
-        inducing_count = int(points.shape[0])
+        inducing_count = points.shape[0]
         if mean.shape != (output_count, inducing_count):
             raise ValueError("whitened_mean must have shape (outputs, inducing_count).")
         if (
@@ -65,8 +65,7 @@ class SINGSparseGPDrift(StrictModule):
             or factor.shape[-1] < inducing_count
         ):
             raise ValueError(
-                "whitened_factor must have shape (outputs, inducing_count, rank) "
-                "with rank at least inducing_count."
+                "whitened_factor must have shape (outputs, inducing_count, rank) with rank at least inducing_count."
             )
         grams = jnp.stack(tuple(kernel.matrix(points, points) for kernel in selected))
         symmetric = 0.5 * (grams + jnp.swapaxes(grams, -1, -2))
@@ -90,11 +89,11 @@ class SINGSparseGPDrift(StrictModule):
             raise ValueError("output_mixing must have shape (state_size, outputs).")
         resolved_id = drift_id or canonical_fingerprint(
             {
-                "kind": "sing-sparse-gp-drift-v1",
+                "kind": "sing-sparse-gp-drift",
                 "inducing_count": inducing_count,
-                "input_dimension": int(points.shape[1]),
+                "input_dimension": points.shape[1],
                 "outputs": output_count,
-                "mixed_outputs": None if mixing is None else int(mixing.shape[0]),
+                "mixed_outputs": None if mixing is None else mixing.shape[0],
             }
         )
         if not isinstance(resolved_id, str) or not resolved_id:

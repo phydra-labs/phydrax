@@ -283,11 +283,11 @@ def test_accepted_checkpoint_and_replay_compatibility_are_exact(tmp_path) -> Non
     supervisor.record_checkpoint(publication)
     assert supervisor.complete(matching).status == TensorNetworkRunStatus.COMPLETED
 
-    cancelled = TensorNetworkRunSupervisor(execution)
-    cancelled.start()
-    cancelled_state = cancelled.request_cancellation("operator cancellation")
-    assert cancelled_state.status == TensorNetworkRunStatus.CANCELLED
-    assert cancelled_state.failure == TensorNetworkFailure.CANCELLED
+    canceled = TensorNetworkRunSupervisor(execution)
+    canceled.start()
+    canceled_state = canceled.request_cancellation("operator cancellation")
+    assert canceled_state.status == TensorNetworkRunStatus.CANCELED
+    assert canceled_state.failure == TensorNetworkFailure.CANCELED
 
 
 def test_release_gate_decision_uses_computed_claim_evidence() -> None:

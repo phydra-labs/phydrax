@@ -60,24 +60,24 @@ class DesignParameterization(StrictModule):
             spec = reference.schema.specs[index]
             if not spec.trainable:
                 raise ValueError(f"Parameter {parameter_id} is not trainable.")
-            size = int(reference.values[index].size)
+            size = reference.values[index].size
             if size == 0:
                 raise ValueError(f"Parameter {parameter_id} cannot be empty.")
             bindings.append(ParameterBinding(parameter_id, index))
             offsets.append(offsets[-1] + size)
-            scale_parts.append(jnp.full((size,), spec.physical_scale, dtype=float))
+            scale_parts.append(jnp.full((size,), spec.physical_scale, dtype=jnp.float64))
             lower, upper = spec.bounds
-            reference_values = jnp.ravel(reference.values[index]).astype(float)
+            reference_values = jnp.ravel(reference.values[index]).astype("float64")
             lower_parts.append(
-                jnp.full((size,), -jnp.inf, dtype=float)
+                jnp.full((size,), -jnp.inf, dtype=jnp.float64)
                 if lower is None
-                else (jnp.full((size,), lower, dtype=float) - reference_values)
+                else (jnp.full((size,), lower, dtype=jnp.float64) - reference_values)
                 / spec.physical_scale
             )
             upper_parts.append(
-                jnp.full((size,), jnp.inf, dtype=float)
+                jnp.full((size,), jnp.inf, dtype=jnp.float64)
                 if upper is None
-                else (jnp.full((size,), upper, dtype=float) - reference_values)
+                else (jnp.full((size,), upper, dtype=jnp.float64) - reference_values)
                 / spec.physical_scale
             )
 
@@ -110,9 +110,9 @@ class DesignParameterization(StrictModule):
             self.offsets[1:],
             strict=True,
         ):
-            delta = jnp.ravel(state.values[binding.index]).astype(float) - jnp.ravel(
+            delta = jnp.ravel(state.values[binding.index]).astype("float64") - jnp.ravel(
                 self.reference.values[binding.index]
-            ).astype(float)
+            ).astype("float64")
             parts.append(delta / self.scales[start:stop])
         return jnp.concatenate(tuple(parts))
 
@@ -121,8 +121,7 @@ class DesignParameterization(StrictModule):
         vector = jnp.asarray(coordinates, dtype=self.scales.dtype)
         if vector.shape != (self.dimension,):
             raise ValueError(
-                f"Reduced coordinates must have shape {(self.dimension,)}, "
-                f"got {vector.shape}."
+                f"Reduced coordinates must have shape {(self.dimension,)}, got {vector.shape}."
             )
         values = list(self.reference.values)
         for binding, start, stop in zip(
@@ -132,7 +131,7 @@ class DesignParameterization(StrictModule):
             strict=True,
         ):
             reference = self.reference.values[binding.index]
-            physical = jnp.ravel(reference).astype(float) + (
+            physical = jnp.ravel(reference).astype("float64") + (
                 self.scales[start:stop] * vector[start:stop]
             )
             values[binding.index] = physical.reshape(reference.shape).astype(
@@ -220,16 +219,16 @@ class DesignEvaluation(StrictModule):
         constraints: ArrayLike,
         valid: ArrayLike,
     ):
-        objective_ = jnp.asarray(objective, dtype=float)
-        constraints_ = jnp.asarray(constraints, dtype=float)
-        valid_ = jnp.asarray(valid, dtype=bool)
+        objective_ = jnp.asarray(objective, dtype=jnp.float64)
+        constraints_ = jnp.asarray(constraints, dtype=jnp.float64)
+        valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         if objective_.ndim != 0:
             raise ValueError("A design objective must be scalar.")
         if constraints_.ndim != 1:
             raise ValueError("Design constraints must be a one-dimensional residual.")
         if valid_.ndim != 0:
             raise ValueError("Design validity must be scalar.")
-        self.coordinates = jnp.asarray(coordinates, dtype=float)
+        self.coordinates = jnp.asarray(coordinates, dtype=jnp.float64)
         self.state = state
         self.bound_values = frozendict(
             {name: jnp.asarray(value) for name, value in bound_values.items()}
@@ -282,12 +281,12 @@ class ReducedDesignProblem(StrictModule):
         """Evaluate objective and residuals without choosing an optimizer."""
         state = self.parameterization.expand(coordinates)
         bound_values = self.binding_graph.read(state)
-        objective = jnp.asarray(self.objective_fn(state, bound_values), dtype=float)
+        objective = jnp.asarray(self.objective_fn(state, bound_values), dtype=jnp.float64)
         if objective.ndim != 0:
             raise ValueError("The reduced design objective must return a scalar.")
         if self.constraint_fns:
             residuals = tuple(
-                jnp.ravel(jnp.asarray(constraint(state, bound_values), dtype=float))
+                jnp.ravel(jnp.asarray(constraint(state, bound_values), dtype=jnp.float64))
                 for constraint in self.constraint_fns
             )
             constraints = jnp.concatenate(residuals)

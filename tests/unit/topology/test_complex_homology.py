@@ -108,7 +108,7 @@ def test_relative_subcomplex_must_be_contained_in_ambient():
     full = phx.topology.CellSubcomplex.full(topology)
     empty = phx.topology.CellSubcomplex(
         topology,
-        tuple(jnp.zeros_like(value, dtype=bool) for value in full.masks),
+        tuple(jnp.zeros_like(value, dtype="bool") for value in full.masks),
     )
     with pytest.raises(ValueError, match="contained"):
         phx.topology.CellComplexPair(empty, full)

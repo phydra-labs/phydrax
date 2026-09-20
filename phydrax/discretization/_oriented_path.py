@@ -22,7 +22,7 @@ def _edge_endpoints(topology: CellComplexTopology, /) -> tuple[np.ndarray, np.nd
         raise ValueError("Oriented edge paths require a topology with edges.")
     incidence = topology.incidences[0]
     relation = incidence.relation
-    valid = np.asarray(relation.valid, dtype=bool)
+    valid = np.asarray(relation.valid, dtype=np.bool_)
     vertices = np.asarray(relation.source_indices, dtype=np.int64)[valid]
     edges = np.asarray(relation.target_indices, dtype=np.int64)[valid]
     signs = np.asarray(incidence.signs)[valid]
@@ -91,9 +91,9 @@ class OrientedEdgePathPlan(StrictModule, NonTrainableState):
                 "edge_indices and orientations must be non-empty rank-two arrays."
             )
         active = (
-            np.ones(edges.shape, dtype=bool)
+            np.ones(edges.shape, dtype=np.bool_)
             if valid is None
-            else np.asarray(valid, dtype=bool)
+            else np.asarray(valid, dtype=np.bool_)
         )
         if active.shape != edges.shape:
             raise ValueError("valid must match the path array shape.")
@@ -142,8 +142,8 @@ class OrientedEdgePathPlan(StrictModule, NonTrainableState):
         self.end_vertices = jnp.asarray(ends)
         self.path_names = names
         self.require_closed = bool(require_closed)
-        self.num_paths = int(edges.shape[0])
-        self.max_length = int(edges.shape[1])
+        self.num_paths = edges.shape[0]
+        self.max_length = edges.shape[1]
         self.topology_id = topology.topology_id
         self.edge_entity_set_id = topology.entities(1).entity_set_id
         self.path_plan_id = canonical_fingerprint(
@@ -193,7 +193,7 @@ class CellBoundaryPathPlan(StrictModule, NonTrainableState):
         path_signs = np.asarray(paths.orientations)
         path_valid = np.asarray(paths.valid)
         for path_index, cell in enumerate(cells):
-            coefficients = np.zeros((topology.entities(1).count,), dtype=int)
+            coefficients = np.zeros((topology.entities(1).count,), dtype=np.int64)
             np.add.at(
                 coefficients,
                 path_edges[path_index, path_valid[path_index]],
@@ -249,7 +249,7 @@ def prepare_cell_boundary_paths(
             raise ValueError(
                 "Two-cell boundaries must be non-empty simple oriented cycles."
             )
-        signs = coefficients[active_edges].astype(int)
+        signs = coefficients[active_edges].astype("int64")
         starts = np.where(signs > 0, tails[active_edges], heads[active_edges])
         ends = np.where(signs > 0, heads[active_edges], tails[active_edges])
         first = int(np.lexsort((active_edges, starts))[0])
@@ -272,7 +272,7 @@ def prepare_cell_boundary_paths(
     capacity = max(len(value) for value in ordered_edges)
     edge_array = np.zeros((len(ordered_edges), capacity), dtype=np.int32)
     sign_array = np.zeros((len(ordered_edges), capacity), dtype=np.int32)
-    valid_array = np.zeros((len(ordered_edges), capacity), dtype=bool)
+    valid_array = np.zeros((len(ordered_edges), capacity), dtype=np.bool_)
     for index, (edges, signs) in enumerate(
         zip(ordered_edges, ordered_signs, strict=True)
     ):

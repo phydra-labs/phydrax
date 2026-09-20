@@ -43,7 +43,7 @@ class HEOMImplicitEvidence(StrictModule):
 
     def __init__(self, linear_residuals: ArrayLike, successful_steps: ArrayLike, /):
         self.linear_residuals = jnp.asarray(linear_residuals)
-        self.successful_steps = jnp.asarray(successful_steps, dtype=bool)
+        self.successful_steps = jnp.asarray(successful_steps, dtype=jnp.bool_)
         self.valid = jnp.all(jnp.isfinite(self.linear_residuals)) & jnp.all(
             self.successful_steps
         )
@@ -142,7 +142,7 @@ class HEOMBDFEvidence(StrictModule):
         /,
     ):
         self.linear_residuals = jnp.asarray(linear_residuals)
-        self.successful_steps = jnp.asarray(successful_steps, dtype=bool)
+        self.successful_steps = jnp.asarray(successful_steps, dtype=jnp.bool_)
         self.orders = jnp.asarray(orders, dtype=jnp.int32)
         self.preconditioned_rhs_norms = jnp.asarray(preconditioned_rhs_norms)
         self.valid = (
@@ -242,7 +242,7 @@ def solve_heom_bdf(
     )
     evidence = HEOMBDFEvidence(
         jnp.stack(residuals) if residuals else jnp.zeros((0,)),
-        jnp.stack(successful) if successful else jnp.zeros((0,), dtype=bool),
+        jnp.stack(successful) if successful else jnp.zeros((0,), dtype=jnp.bool_),
         jnp.asarray(orders),
         jnp.stack(preconditioned) if preconditioned else jnp.zeros((0,)),
     )
@@ -267,10 +267,10 @@ class HEOMAdaptiveBDFEvidence(StrictModule):
         /,
     ):
         self.attempted_step_sizes = jnp.asarray(attempted_step_sizes)
-        self.accepted_steps = jnp.asarray(accepted_steps, dtype=bool)
+        self.accepted_steps = jnp.asarray(accepted_steps, dtype=jnp.bool_)
         self.error_ratios = jnp.asarray(error_ratios)
         self.linear_residuals = jnp.asarray(linear_residuals)
-        self.capacity_saturated = jnp.asarray(capacity_saturated, dtype=bool)
+        self.capacity_saturated = jnp.asarray(capacity_saturated, dtype=jnp.bool_)
         count = self.attempted_step_sizes.shape[0]
         if (
             self.attempted_step_sizes.shape != (count,)

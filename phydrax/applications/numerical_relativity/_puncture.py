@@ -27,7 +27,7 @@ from ...nonlinear import (
     NonlinearTermination,
     RootLineSearch,
 )
-from ._initial_data import ADMInitialData, _coordinates, _package_initial_data
+from ._initial_data import _coordinates, _package_initial_data, ADMInitialData
 from ._status import NumericalRelativityStatus, ScientificStatus
 
 
@@ -51,16 +51,18 @@ class Puncture(StrictModule, NonTrainableState):
         puncture_id: str | None = None,
     ):
         mass = float(np.asarray(bare_mass))
-        location = np.asarray(position, dtype=float)
-        momentum = np.asarray(linear_momentum, dtype=float)
-        angular = np.asarray(spin, dtype=float)
+        location = np.asarray(position, dtype=np.float64)
+        momentum = np.asarray(linear_momentum, dtype=np.float64)
+        angular = np.asarray(spin, dtype=np.float64)
         if not isfinite(mass) or mass <= 0.0:
             raise ValueError("Puncture bare mass must be finite and positive.")
         if any(
             value.shape != (3,) or not np.all(np.isfinite(value))
             for value in (location, momentum, angular)
         ):
-            raise ValueError("Puncture position, momentum, and spin must be finite three-vectors.")
+            raise ValueError(
+                "Puncture position, momentum, and spin must be finite three-vectors."
+            )
         identity = (
             canonical_fingerprint(
                 {
@@ -263,7 +265,9 @@ class TwoPunctureHamiltonianPlan(StrictModule, NonTrainableState):
             raise ValueError("TwoPunctureHamiltonianPlan requires exactly two punctures.")
         shape = _triple_int(resolution, "resolution")
         if any(count < 4 for count in shape):
-            raise ValueError("Each two-puncture spectral resolution must be at least four.")
+            raise ValueError(
+                "Each two-puncture spectral resolution must be at least four."
+            )
         extents = _triple_float(half_extent, "half_extent")
         if any(not isfinite(value) or value <= 0.0 for value in extents):
             raise ValueError("Each spectral half-extent must be finite and positive.")
@@ -275,11 +279,15 @@ class TwoPunctureHamiltonianPlan(StrictModule, NonTrainableState):
             not isfinite(value) or value <= 0.0
             for value in (nonlinear_tol, linear_tol, mass_tol, charge_tol)
         ):
-            raise ValueError("Puncture solve and tuning tolerances must be finite and positive.")
+            raise ValueError(
+                "Puncture solve and tuning tolerances must be finite and positive."
+            )
         newton_steps = int(maximum_newton_steps)
         linear_steps = int(maximum_linear_steps)
         if newton_steps < 1 or linear_steps < 1:
-            raise ValueError("Puncture nonlinear and linear step limits must be positive.")
+            raise ValueError(
+                "Puncture nonlinear and linear step limits must be positive."
+            )
         axes = tuple(
             ChebyshevCollocation(
                 count,
@@ -291,7 +299,7 @@ class TwoPunctureHamiltonianPlan(StrictModule, NonTrainableState):
         )
         mesh = jnp.meshgrid(*(axis.nodes for axis in axes), indexing="ij")
         coordinates = jnp.stack(mesh, axis=-1)
-        boundary = jnp.zeros(shape, dtype=bool)
+        boundary = jnp.zeros(shape, dtype=jnp.bool_)
         for axis in range(3):
             lower_index = [slice(None)] * 3
             upper_index = [slice(None)] * 3
@@ -304,7 +312,7 @@ class TwoPunctureHamiltonianPlan(StrictModule, NonTrainableState):
                 np.asarray(coordinates) - np.asarray(puncture.position), axis=-1
             )
             scale = max(extents)
-            if float(np.min(distances)) <= 128.0 * np.finfo(float).eps * scale:
+            if float(np.min(distances)) <= 128.0 * np.finfo(np.float64).eps * scale:
                 raise ValueError(
                     "A puncture coincides with a collocation node; use another fixed resolution."
                 )
@@ -320,9 +328,7 @@ class TwoPunctureHamiltonianPlan(StrictModule, NonTrainableState):
         default_momentum = sum(
             (np.asarray(item.linear_momentum) for item in pair), start=np.zeros(3)
         )
-        default_spin = sum(
-            (np.asarray(item.spin) for item in pair), start=np.zeros(3)
-        )
+        default_spin = sum((np.asarray(item.spin) for item in pair), start=np.zeros(3))
         default_angular = sum(
             (
                 np.asarray(item.spin)
@@ -335,17 +341,17 @@ class TwoPunctureHamiltonianPlan(StrictModule, NonTrainableState):
         momentum_target = (
             default_momentum
             if target_linear_momentum is None
-            else np.asarray(target_linear_momentum, dtype=float)
+            else np.asarray(target_linear_momentum, dtype=np.float64)
         )
         spin_target = (
             default_spin
             if target_spin is None
-            else np.asarray(target_spin, dtype=float)
+            else np.asarray(target_spin, dtype=np.float64)
         )
         angular_target = (
             default_angular
             if target_angular_momentum is None
-            else np.asarray(target_angular_momentum, dtype=float)
+            else np.asarray(target_angular_momentum, dtype=np.float64)
         )
         if (
             not isfinite(mass_target)
@@ -415,15 +421,15 @@ class TwoPunctureHamiltonianPlan(StrictModule, NonTrainableState):
         return conformal
 
     def conformal_extrinsic_curvature(self) -> Array:
-        _, conformal_extrinsic, _ = _conformal_fields(
-            self.punctures, self.coordinates
-        )
+        _, conformal_extrinsic, _ = _conformal_fields(self.punctures, self.coordinates)
         return conformal_extrinsic
 
     def hamiltonian_residual(self, correction: ArrayLike, /) -> Array:
         value = jnp.asarray(correction)
         if value.shape != self.shape:
-            raise ValueError("Hamiltonian correction must match the fixed spectral shape.")
+            raise ValueError(
+                "Hamiltonian correction must match the fixed spectral shape."
+            )
         singular, conformal_extrinsic, _ = _conformal_fields(
             self.punctures, self.coordinates
         )
@@ -525,10 +531,12 @@ class TwoPunctureHamiltonianPlan(StrictModule, NonTrainableState):
             & jnp.all(jnp.isfinite(residual))
             & jnp.all(jnp.isfinite(conformal))
         )
-        converged = (
-            nonlinear.status == int(NonlinearStatus.SUCCESS)
-        ) & (final_norm <= self.nonlinear_tolerance * (1.0 + initial_norm))
-        physical = finite & jnp.all(conformal > 0.0) & initial_data.status.physically_valid
+        converged = (nonlinear.status == int(NonlinearStatus.SUCCESS)) & (
+            final_norm <= self.nonlinear_tolerance * (1.0 + initial_norm)
+        )
+        physical = (
+            finite & jnp.all(conformal > 0.0) & initial_data.status.physically_valid
+        )
         tuning = self.tuning_evidence(
             correction,
             converged=converged,
@@ -547,9 +555,7 @@ class TwoPunctureHamiltonianPlan(StrictModule, NonTrainableState):
                 0,
                 int(NumericalRelativityStatus.CONSTRAINT_TOLERANCE_EXCEEDED),
             )
-            | jnp.where(
-                False, 0, int(NumericalRelativityStatus.DERIVATIVE_INVALID)
-            )
+            | jnp.where(False, 0, int(NumericalRelativityStatus.DERIVATIVE_INVALID))
         ).astype(jnp.int32)
         content_id = canonical_fingerprint(
             {
@@ -640,8 +646,8 @@ class TwoPunctureHamiltonianPlan(StrictModule, NonTrainableState):
             & jnp.all(jnp.isfinite(achieved_spin))
             & jnp.all(jnp.isfinite(achieved_angular))
         )
-        converged_ = jnp.asarray(converged, dtype=bool).reshape(())
-        physical_ = jnp.asarray(physically_valid, dtype=bool).reshape(())
+        converged_ = jnp.asarray(converged, dtype=jnp.bool_).reshape(())
+        physical_ = jnp.asarray(physically_valid, dtype=jnp.bool_).reshape(())
         qualified = (
             finite
             & converged_
@@ -694,7 +700,9 @@ def bowen_york_initial_data(
 
 def _puncture_tuple(value, /, *, minimum):
     punctures = tuple(value)
-    if len(punctures) < minimum or any(not isinstance(item, Puncture) for item in punctures):
+    if len(punctures) < minimum or any(
+        not isinstance(item, Puncture) for item in punctures
+    ):
         raise TypeError(f"punctures must contain at least {minimum} Puncture objects.")
     identifiers = tuple(item.puncture_id for item in punctures)
     if len(set(identifiers)) != len(identifiers):
@@ -705,7 +713,7 @@ def _puncture_tuple(value, /, *, minimum):
 def _triple_int(value, name, /):
     if isinstance(value, int):
         return (int(value),) * 3
-    values = tuple(int(item) for item in value)
+    values = tuple(value)
     if len(values) != 3:
         raise ValueError(f"{name} must be a scalar or three values.")
     return values
@@ -723,28 +731,20 @@ def _triple_float(value, name, /):
 def _clenshaw_curtis_weights(nodes):
     """Polynomially exact Lobatto quadrature weights on one bounded axis."""
 
-    values = np.asarray(nodes, dtype=float)
+    values = np.asarray(nodes, dtype=np.float64)
     intervals = values.size - 1
-    theta = np.pi * np.arange(values.size, dtype=float) / intervals
+    theta = np.pi * np.arange(values.size, dtype=np.float64) / intervals
     weights = np.empty_like(values)
-    interior = np.ones((intervals - 1,), dtype=float)
+    interior = np.ones((intervals - 1,), dtype=np.float64)
     if intervals % 2 == 0:
         endpoint = 1.0 / (intervals**2 - 1.0)
         for mode in range(1, intervals // 2):
-            interior -= (
-                2.0
-                * np.cos(2.0 * mode * theta[1:-1])
-                / (4.0 * mode**2 - 1.0)
-            )
+            interior -= 2.0 * np.cos(2.0 * mode * theta[1:-1]) / (4.0 * mode**2 - 1.0)
         interior -= np.cos(intervals * theta[1:-1]) / (intervals**2 - 1.0)
     else:
         endpoint = 1.0 / intervals**2
         for mode in range(1, (intervals + 1) // 2):
-            interior -= (
-                2.0
-                * np.cos(2.0 * mode * theta[1:-1])
-                / (4.0 * mode**2 - 1.0)
-            )
+            interior -= 2.0 * np.cos(2.0 * mode * theta[1:-1]) / (4.0 * mode**2 - 1.0)
     weights[[0, -1]] = endpoint
     weights[1:-1] = 2.0 * interior / intervals
     return 0.5 * (values[-1] - values[0]) * weights
@@ -756,7 +756,7 @@ def _conformal_fields(punctures, coordinates):
     dtype = points.dtype
     conformal = jnp.ones(leading, dtype=dtype)
     conformal_extrinsic = jnp.zeros(leading + (3, 3), dtype=dtype)
-    domain = jnp.ones(leading, dtype=bool)
+    domain = jnp.ones(leading, dtype=jnp.bool_)
     identity = jnp.eye(3, dtype=dtype)
     for puncture in punctures:
         offset = points - puncture.position.astype(dtype)
@@ -769,19 +769,24 @@ def _conformal_fields(punctures, coordinates):
         spin = puncture.spin.astype(dtype)
         conformal = conformal + mass / (2.0 * safe_radius)
         momentum_dot_normal = ein.contract("i,...i->...", momentum, normal)
-        momentum_term = 1.5 / safe_radius[..., None, None] ** 2 * (
-            ein.contract("i,...j->...ij", momentum, normal)
-            + ein.contract("...i,j->...ij", normal, momentum)
-            - (
-                identity
-                - ein.contract("...i,...j->...ij", normal, normal)
+        momentum_term = (
+            1.5
+            / safe_radius[..., None, None] ** 2
+            * (
+                ein.contract("i,...j->...ij", momentum, normal)
+                + ein.contract("...i,j->...ij", normal, momentum)
+                - (identity - ein.contract("...i,...j->...ij", normal, normal))
+                * momentum_dot_normal[..., None, None]
             )
-            * momentum_dot_normal[..., None, None]
         )
         spin_cross_normal = jnp.cross(spin, normal)
-        spin_term = 3.0 / safe_radius[..., None, None] ** 3 * (
-            ein.contract("...i,...j->...ij", normal, spin_cross_normal)
-            + ein.contract("...i,...j->...ij", spin_cross_normal, normal)
+        spin_term = (
+            3.0
+            / safe_radius[..., None, None] ** 3
+            * (
+                ein.contract("...i,...j->...ij", normal, spin_cross_normal)
+                + ein.contract("...i,...j->...ij", spin_cross_normal, normal)
+            )
         )
         conformal_extrinsic = conformal_extrinsic + jnp.where(
             point_valid[..., None, None], momentum_term + spin_term, 0.0

@@ -50,13 +50,13 @@ class InvariantElectricalSurvey(StrictModule, NonTrainableState):
         expected_unit = LINE_CURRENT_UNIT if current_kind == "line-current" else AMPERE
         selected_unit = expected_unit if current_unit is None else current_unit
         positions_ = np.asarray(
-            convert_value(positions, source=length_unit, target=METER), dtype=float
+            convert_value(positions, source=length_unit, target=METER), dtype=np.float64
         )
         currents_ = np.asarray(
             convert_value(currents, source=selected_unit, target=expected_unit),
-            dtype=float,
+            dtype=np.float64,
         )
-        receivers = np.asarray(receiver_weights, dtype=float)
+        receivers = np.asarray(receiver_weights, dtype=np.float64)
         indices = np.asarray(source_indices)
         if positions_.ndim != 2 or positions_.shape[1] != 3 or positions_.shape[0] < 4:
             raise ValueError(
@@ -86,7 +86,7 @@ class InvariantElectricalSurvey(StrictModule, NonTrainableState):
             or np.any(indices >= currents_.shape[0])
         ):
             raise ValueError("Invariant survey arrays must be finite and indices valid.")
-        tolerance = 64 * np.finfo(float).eps
+        tolerance = 64 * np.finfo(np.float64).eps
         if np.any(
             np.abs(np.sum(currents_, axis=1))
             > tolerance * np.sum(np.abs(currents_), axis=1)
@@ -147,14 +147,14 @@ class PreparedInvariantElectricalGeometry(StrictModule, NonTrainableState):
         cells = np.concatenate(
             [np.asarray(block.vertices, dtype=np.int32) for block in mesh.blocks]
         )
-        coordinates = np.asarray(mesh.coordinates, dtype=float)
+        coordinates = np.asarray(mesh.coordinates, dtype=np.float64)
         simplex = AffineSimplexMap(jnp.asarray(coordinates[cells]))
         if not bool(jnp.all(simplex.evidence.successful)):
             raise ValueError(
                 "Invariant electrical triangles must be finite and nondegenerate."
             )
         gradients = np.asarray(simplex.barycentric_gradients)
-        points = np.asarray(positions_m, dtype=float)[:, (0, 2)]
+        points = np.asarray(positions_m, dtype=np.float64)[:, (0, 2)]
         point_cells: list[int] = []
         barycentric: list[np.ndarray] = []
         for point in points:
@@ -371,8 +371,8 @@ class TwoPointFiveDDCPlan(StrictModule, NonTrainableState):
             or survey.current_kind != "point-current"
         ):
             raise TypeError("2.5D DC requires point-current InvariantElectricalSurvey.")
-        waves = np.asarray(wavenumbers_m_inverse, dtype=float)
-        weights = np.asarray(quadrature_weights_m_inverse, dtype=float)
+        waves = np.asarray(wavenumbers_m_inverse, dtype=np.float64)
+        weights = np.asarray(quadrature_weights_m_inverse, dtype=np.float64)
         if (
             waves.ndim != 1
             or waves.size < 2

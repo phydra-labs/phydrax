@@ -37,7 +37,7 @@ class PINNDomainDecompositionBenchmark:
 def _parameter_count(tree) -> int:
     trainable, _ = partition_trainable(tree)
     return sum(
-        int(leaf.size)
+        leaf.size
         for leaf in jax.tree_util.tree_leaves(trainable)
         if eqx.is_inexact_array(leaf)
     )
@@ -345,9 +345,7 @@ def run_benchmarks(
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description=(
-            "Benchmark global, joint/block POU, and trace-state Schwarz routes."
-        )
+        description=("Benchmark global, joint/block POU, and trace-state Schwarz routes.")
     )
     parser.add_argument("--iterations", type=int, default=20)
     parser.add_argument("--points", type=int, default=64)

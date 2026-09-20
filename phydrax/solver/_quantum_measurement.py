@@ -73,8 +73,8 @@ class QuantumPOVM(StrictModule):
         self.positive_semidefinite = positive
         self.complete = complete
         self.valid = finite & positive & complete
-        self.outcome_count = int(values.shape[0])
-        self.dimension = int(values.shape[-1])
+        self.outcome_count = values.shape[0]
+        self.dimension = values.shape[-1]
         self.tolerance = tolerance_
         self.povm_id = canonical_fingerprint(
             {
@@ -114,7 +114,7 @@ class QuantumInstrument(StrictModule):
         tolerance: float = 1e-8,
     ):
         operators = jnp.asarray(kraus)
-        mask = jnp.asarray(kraus_mask, dtype=bool)
+        mask = jnp.asarray(kraus_mask, dtype=jnp.bool_)
         tolerance_ = float(tolerance)
         if (
             operators.ndim != 4
@@ -123,8 +123,7 @@ class QuantumInstrument(StrictModule):
             or operators.shape[2] != operators.shape[3]
         ):
             raise ValueError(
-                "Instrument Kraus operators require shape "
-                "(outcomes, capacity, dimension, dimension)."
+                "Instrument Kraus operators require shape (outcomes, capacity, dimension, dimension)."
             )
         if mask.shape != operators.shape[:2]:
             raise ValueError("kraus_mask must have shape (outcomes, capacity).")
@@ -163,9 +162,9 @@ class QuantumInstrument(StrictModule):
         self.completely_positive_by_construction = cp
         self.trace_preserving = tp
         self.valid = active_finite & cp & tp & effects_valid
-        self.outcome_count = int(operators.shape[0])
-        self.kraus_capacity = int(operators.shape[1])
-        self.dimension = int(operators.shape[-1])
+        self.outcome_count = operators.shape[0]
+        self.kraus_capacity = operators.shape[1]
+        self.dimension = operators.shape[-1]
         self.tolerance = tolerance_
         self.instrument_id = canonical_fingerprint(
             {

@@ -217,7 +217,7 @@ class ExplicitPolygonH1GeometryActions(LocalGeometryActions):
         self.reference_points = points
         self.reference_weights = weights
         self.runtime_layout_id = str(runtime_layout_id)
-        self.entity_count = int(rows.size)
+        self.entity_count = rows.size
         self.domain_kind = kind
         self.action_id = canonical_fingerprint(
             {
@@ -412,9 +412,9 @@ class ExplicitPolygonH1LocalProvider(StrictModule):
                 domain.support_id,
                 domain.entity_set_id,
                 owner_cells=np.asarray(domain.owner_cells)[domain_rows],
-                neighbour_cells=np.asarray(domain.neighbour_cells)[domain_rows],
+                neighbor_cells=np.asarray(domain.neighbor_cells)[domain_rows],
                 owner_local_entities=np.asarray(domain.owner_local_entities)[domain_rows],
-                neighbour_local_entities=np.asarray(domain.neighbour_local_entities)[
+                neighbor_local_entities=np.asarray(domain.neighbor_local_entities)[
                     domain_rows
                 ],
                 selection_id=domain.selection_id,
@@ -498,7 +498,7 @@ class ExplicitPolygonH1LocalProvider(StrictModule):
             )
             width = discretization.dof_map.local_width
             trace_values = np.zeros(
-                (selected.size, reference_points.shape[0], width), dtype=float
+                (selected.size, reference_points.shape[0], width), dtype=np.float64
             )
             parameter = np.asarray(reference_points[:, 0])
             for row, local_edge in enumerate(local_edges):
@@ -509,7 +509,7 @@ class ExplicitPolygonH1LocalProvider(StrictModule):
                 cell_rows,
                 discretization.precision_policy.basis(trace_values),
                 local_width=width,
-                point_count=int(reference_points.shape[0]),
+                point_count=reference_points.shape[0],
                 maximum_derivative_order=0,
                 structural_id=selected_domain.domain_id,
                 is_trace=True,

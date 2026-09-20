@@ -49,7 +49,7 @@ class LatticeBoltzmannHaloRoute(StrictModule, NonTrainableState):
         /,
     ):
         direction = int(direction_index)
-        velocity = tuple(int(value) for value in velocity_offset)
+        velocity = tuple(velocity_offset)
         source = tuple(-value for value in velocity)
         local = all(value == 0 for value in velocity)
         if (
@@ -228,7 +228,7 @@ class LatticeBoltzmannHaloSchedule(StrictModule, NonTrainableState):
                 slices.append(slice(lower + local, lower + local + upper))
             else:
                 slices.append(slice(lower, lower + local))
-        mask = np.zeros(extended_shape, dtype=bool)
+        mask = np.zeros(extended_shape, dtype=np.bool_)
         mask[tuple(slices)] = True
         broadcast_mask = jnp.asarray(mask).reshape(
             (1,) * len(self.schedule.partition_shape) + extended_shape

@@ -25,7 +25,7 @@ from ...nonlinear import (
 
 
 def _face_components(value, faces, components, name):
-    array = jnp.asarray(value, dtype=float)
+    array = jnp.asarray(value, dtype=jnp.float64)
     if array.shape not in ((), (components,), (faces, components)):
         raise ValueError(
             f"{name} must be scalar, component vector or face-by-component array."
@@ -35,15 +35,15 @@ def _face_components(value, faces, components, name):
 
 def _integrated_divergence(discretization, face_rates):
     """Scatter one owner-oriented integrated rate, without multiplying by area."""
-    neighbour = discretization.neighbour_cells
+    neighbor = discretization.neighbor_cells
     shape = (discretization.cell_count,) + face_rates.shape[1:]
     result = (
         jnp.zeros(shape, dtype=face_rates.dtype)
         .at[discretization.owner_cells]
         .add(face_rates)
     )
-    mask = (neighbour >= 0).reshape((neighbour.size,) + (1,) * (face_rates.ndim - 1))
-    return result.at[jnp.maximum(neighbour, 0)].add(jnp.where(mask, -face_rates, 0.0))
+    mask = (neighbor >= 0).reshape((neighbor.size,) + (1,) * (face_rates.ndim - 1))
+    return result.at[jnp.maximum(neighbor, 0)].add(jnp.where(mask, -face_rates, 0.0))
 
 
 class TransportBoundary(StrictModule):
@@ -78,15 +78,15 @@ class TransportBoundary(StrictModule):
             raise ValueError("component_count must be positive.")
         nf = discretization.owner_cells.size
         mask = (
-            jnp.zeros((nf,), dtype=bool)
+            jnp.zeros((nf,), dtype=jnp.bool_)
             if dirichlet_mask is None
-            else jnp.asarray(dirichlet_mask, dtype=bool)
+            else jnp.asarray(dirichlet_mask, dtype=jnp.bool_)
         )
         if mask.shape != (nf,):
             raise ValueError("dirichlet_mask must have one entry per face.")
         mask = eqx.error_if(
             mask,
-            jnp.any(mask & (discretization.neighbour_cells >= 0)),
+            jnp.any(mask & (discretization.neighbor_cells >= 0)),
             "Only boundary faces admit prescribed dispersive traces.",
         )
         concentration = _face_components(
@@ -101,7 +101,7 @@ class TransportBoundary(StrictModule):
         flux = eqx.error_if(
             flux,
             jnp.any(~jnp.isfinite(flux))
-            | jnp.any((discretization.neighbour_cells >= 0)[:, None] & (flux != 0))
+            | jnp.any((discretization.neighbor_cells >= 0)[:, None] & (flux != 0))
             | jnp.any(mask[:, None] & (flux != 0)),
             "Dispersive fluxes must be finite and prescribed only on Neumann boundary faces.",
         )
@@ -135,7 +135,7 @@ class ComponentTransport(StrictModule):
     Inventory is water_volume * total_component_concentration (mol); face water
     rates are ALREADY area-integrated m³/s, positive out of owner. Water volumes
     are accepted from any conservative hydraulic model, not recomputed here.
-    All numerical geometry is in metres. Dry cells are outside this aqueous-only
+    All numerical geometry is in meters. Dry cells are outside this aqueous-only
     profile and rejected rather than assigned a fictitious concentration.
 
     ``dispersion_tensor`` is the effective bulk coefficient theta*D (m²/s) on
@@ -207,7 +207,7 @@ class ComponentTransport(StrictModule):
         self.dispersion_tensor = (
             None
             if dispersion_tensor is None
-            else jnp.asarray(dispersion_tensor, dtype=float)
+            else jnp.asarray(dispersion_tensor, dtype=jnp.float64)
         )
 
     def _fields(
@@ -215,9 +215,9 @@ class ComponentTransport(StrictModule):
     ):
         d, nb = self.discretization, len(self.component_names)
         inventory, volumes, rates = (
-            jnp.asarray(previous_inventory, dtype=float),
-            jnp.asarray(water_volumes, dtype=float),
-            jnp.asarray(face_water_rates, dtype=float),
+            jnp.asarray(previous_inventory, dtype=jnp.float64),
+            jnp.asarray(water_volumes, dtype=jnp.float64),
+            jnp.asarray(face_water_rates, dtype=jnp.float64),
         )
         if (
             inventory.shape != (d.cell_count, nb)
@@ -251,7 +251,7 @@ class ComponentTransport(StrictModule):
             jnp.any(~jnp.isfinite(rates)),
             "Accepted integrated water rates must be finite.",
         )
-        inflow = (d.neighbour_cells < 0) & (rates < 0)
+        inflow = (d.neighbor_cells < 0) & (rates < 0)
         if boundary.inflow_concentration is None:
             rates = eqx.error_if(
                 rates,
@@ -314,8 +314,8 @@ class ComponentTransport(StrictModule):
             else boundary.inflow_concentration
         )
         downstream = jnp.where(
-            (d.neighbour_cells >= 0)[:, None],
-            c[jnp.maximum(d.neighbour_cells, 0)],
+            (d.neighbor_cells >= 0)[:, None],
+            c[jnp.maximum(d.neighbor_cells, 0)],
             outside,
         )
         upstream = jnp.where((q >= 0)[:, None], c[d.owner_cells], downstream)
@@ -363,7 +363,7 @@ class ComponentTransport(StrictModule):
         if self.dispersion is not None:
             diffusive, continuity, flux = self._dispersion_fields(c, state[1])
             outflow = outflow + diffusive
-            interior = self.discretization.neighbour_cells >= 0
+            interior = self.discretization.neighbor_cells >= 0
             trace = jnp.where(
                 interior[:, None], continuity, flux - boundary.dispersion_flux
             )
@@ -479,7 +479,7 @@ class ComponentTransport(StrictModule):
             flux = flux + self._dispersion_fields(c, traces)[2]
         new_inventory = volumes[:, None] * c
         boundary_flux = jnp.sum(
-            jnp.where((self.discretization.neighbour_cells < 0)[:, None], flux, 0.0),
+            jnp.where((self.discretization.neighbor_cells < 0)[:, None], flux, 0.0),
             axis=0,
         )
         balance = (

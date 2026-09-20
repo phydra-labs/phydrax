@@ -93,8 +93,7 @@ class PolynomialChaosBasis(StrictModule, NonTrainableState):
             raise ValueError("PolynomialChaosBasis requires at least one factor.")
         if any(not isinstance(factor, ProbabilityDomain) for factor in factor_values):
             raise TypeError(
-                "Polynomial chaos factors must be independent scalar "
-                "ProbabilityDomain objects."
+                "Polynomial chaos factors must be independent scalar ProbabilityDomain objects."
             )
         labels = tuple(factor.label for factor in factor_values)
         if len(set(labels)) != len(labels):
@@ -128,8 +127,7 @@ class PolynomialChaosBasis(StrictModule, NonTrainableState):
                 )
             else:
                 raise TypeError(
-                    "Polynomial chaos supports only phydrax.uq.Uniform and "
-                    "phydrax.uq.Normal scalar factors."
+                    "Polynomial chaos supports only phydrax.uq.Uniform and phydrax.uq.Normal scalar factors."
                 )
 
         if isinstance(degree, PolynomialMultiIndexSet):
@@ -152,7 +150,7 @@ class PolynomialChaosBasis(StrictModule, NonTrainableState):
         self.reference_measures = tuple(measures)
         self.basis_id = canonical_fingerprint(
             {
-                "kind": "labeled-polynomial-chaos-basis-v1",
+                "kind": "labeled-polynomial-chaos-basis",
                 "factors": factor_identity,
                 "multiindices": multiindices.content_id,
             }
@@ -220,8 +218,7 @@ class PolynomialChaosExpansion(StrictModule):
                 field_dims = None
             if array.ndim < 1 or array.shape[0] != basis.feature_count:
                 raise ValueError(
-                    "Every coefficient leaf must have the basis feature count on "
-                    "its leading axis."
+                    "Every coefficient leaf must have the basis feature count on its leading axis."
                 )
             if not jnp.issubdtype(array.dtype, jnp.number):
                 raise TypeError("Polynomial-chaos coefficients must be numeric.")
@@ -236,7 +233,7 @@ class PolynomialChaosExpansion(StrictModule):
         self.output_specs = tuple(specs)
         self.expansion_id = canonical_fingerprint(
             {
-                "kind": "polynomial-chaos-expansion-v1",
+                "kind": "polynomial-chaos-expansion",
                 "basis_id": basis.basis_id,
                 "coefficients": array_tree_fingerprint(tuple(arrays)),
                 "output": tuple(
@@ -431,8 +428,7 @@ class PolynomialChaosProjectionPlan(StrictModule, NonTrainableState):
         covered = tuple(label for group in integration_plan.plans for label in group)
         if len(covered) != len(set(covered)) or set(covered) != set(basis.labels):
             raise ValueError(
-                "The product integration plan must cover every polynomial-chaos "
-                "factor label exactly once."
+                "The product integration plan must cover every polynomial-chaos factor label exactly once."
             )
         self.basis = basis
         self.integration_plan = integration_plan
@@ -441,7 +437,7 @@ class PolynomialChaosProjectionPlan(StrictModule, NonTrainableState):
         self.maximum_basis_bytes = maximum_basis
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "polynomial-chaos-projection-plan-v1",
+                "kind": "polynomial-chaos-projection-plan",
                 "basis_id": basis.basis_id,
                 "factor_plans": tuple(
                     {
@@ -548,8 +544,7 @@ class PolynomialChaosProjectionPlan(StrictModule, NonTrainableState):
                 output_specs = specs
             elif tree != output_tree or specs != output_specs:
                 raise ValueError(
-                    "Projection model output structure changed between "
-                    "integration batches."
+                    "Projection model output structure changed between integration batches."
                 )
             if any(bool(jnp.any(~jnp.isfinite(value))) for value in values):
                 raise ValueError("Projection model outputs must be finite.")
@@ -687,7 +682,7 @@ class PolynomialChaosRegressionPlan(StrictModule, NonTrainableState):
         self.maximum_design_bytes = maximum_bytes
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "polynomial-chaos-regression-plan-v1",
+                "kind": "polynomial-chaos-regression-plan",
                 "basis_id": basis.basis_id,
                 "exact_policy": _content_identity(exact),
                 "least_squares_policy": _content_identity(least_squares),
@@ -708,21 +703,19 @@ class PolynomialChaosRegressionPlan(StrictModule, NonTrainableState):
         point_array = _ordered_points(points, {}, self.basis.labels)
         if point_array.ndim != 2:
             raise ValueError("Regression points must describe one leading sample axis.")
-        sample_count = int(point_array.shape[0])
+        sample_count = point_array.shape[0]
         feature_count = self.basis.feature_count
         if sample_count < feature_count:
             raise ValueError(
-                f"Regression requires at least {feature_count} samples for this basis; "
-                f"received {sample_count}."
+                f"Regression requires at least {feature_count} samples for this basis; received {sample_count}."
             )
         if sample_count > self.maximum_samples:
             raise ValueError(
-                f"Regression received {sample_count} samples, exceeding "
-                f"maximum_samples={self.maximum_samples}."
+                f"Regression received {sample_count} samples, exceeding maximum_samples={self.maximum_samples}."
             )
         if bool(jnp.any(~jnp.isfinite(point_array))):
             raise ValueError("Regression samples must be finite.")
-        design_dtype = jnp.asarray(point_array, dtype=float).dtype
+        design_dtype = jnp.asarray(point_array, dtype=jnp.float64).dtype
         design_bytes = int(sample_count * feature_count * np.dtype(design_dtype).itemsize)
         if design_bytes > self.maximum_design_bytes:
             raise ValueError(
@@ -771,8 +764,7 @@ class PolynomialChaosRegressionPlan(StrictModule, NonTrainableState):
             if not bool(jnp.all(result.successful)):
                 status_value = int(np.asarray(result.status).reshape((-1,))[0])
                 raise ValueError(
-                    "Polynomial-chaos regression solve failed: "
-                    f"{linear_status_message(status_value)}."
+                    f"Polynomial-chaos regression solve failed: {linear_status_message(status_value)}."
                 )
             coefficients = jnp.asarray(result.value).reshape(
                 (feature_count,) + spec.shape
@@ -1032,8 +1024,7 @@ def _ordered_points(
         extra = tuple(label for label in selected if label not in labels)
         if missing or extra:
             raise ValueError(
-                f"Labeled points must match basis labels; missing={missing!r}, "
-                f"extra={extra!r}."
+                f"Labeled points must match basis labels; missing={missing!r}, extra={extra!r}."
             )
         arrays = tuple(
             jnp.asarray(
@@ -1050,8 +1041,7 @@ def _ordered_points(
         return array.reshape((1,))
     if array.ndim < 1 or array.shape[-1] != len(labels):
         raise ValueError(
-            f"Point arrays must have final dimension {len(labels)} in factor order "
-            f"{labels!r}."
+            f"Point arrays must have final dimension {len(labels)} in factor order {labels!r}."
         )
     return array
 

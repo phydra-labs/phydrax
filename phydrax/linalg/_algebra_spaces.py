@@ -27,7 +27,7 @@ class AlgebraCoefficientPairing(AbstractPairing):
         if not identifier:
             raise ValueError("algebra_id must be non-empty.")
         self.pairing_id = canonical_fingerprint(
-            {"kind": "algebra-coefficient-pairing-v1", "algebra": identifier}
+            {"kind": "algebra-coefficient-pairing", "algebra": identifier}
         )
 
     def inner(self, left, right, /) -> Array:
@@ -74,7 +74,7 @@ class AlgebraArraySpace(AbstractVectorSpace):
 
         if not isinstance(algebra, AbstractFiniteRealAlgebraSpec):
             raise TypeError("algebra must implement AbstractFiniteRealAlgebraSpec.")
-        base = tuple(int(size) for size in base_shape)
+        base = tuple(base_shape)
         if any(size <= 0 for size in base):
             raise ValueError("Algebra base shape must contain positive dimensions.")
         rank = len(base) + 1
@@ -101,7 +101,7 @@ class AlgebraArraySpace(AbstractVectorSpace):
         self.space_id = (
             canonical_fingerprint(
                 {
-                    "kind": "algebra-array-space-v1",
+                    "kind": "algebra-array-space",
                     "base_shape": list(base),
                     "shape": shape,
                     "dtype": dtype_.str,

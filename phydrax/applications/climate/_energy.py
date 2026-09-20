@@ -46,8 +46,8 @@ class MultilayerEnergyBalance(StrictModule):
         *,
         feedback: float = 1.2,
     ):
-        capacities_ = np.asarray(capacities, dtype=float)
-        exchanges_ = np.asarray(exchanges, dtype=float)
+        capacities_ = np.asarray(capacities, dtype=np.float64)
+        exchanges_ = np.asarray(exchanges, dtype=np.float64)
         if (
             capacities_.ndim != 1
             or len(capacities_) < 1

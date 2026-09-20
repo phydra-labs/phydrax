@@ -38,7 +38,7 @@ class OrthogonalPointTopology(StrictModule):
     ):
         query = jnp.asarray(query_indices, dtype=jnp.int32)
         source = jnp.asarray(source_indices, dtype=jnp.int32)
-        mask = jnp.asarray(active, dtype=bool)
+        mask = jnp.asarray(active, dtype=jnp.bool_)
         if query.ndim != 1 or source.shape != query.shape or mask.shape != query.shape:
             raise ValueError("Prepared point topology arrays must share one edge shape.")
         margin = float(cutoff_margin)
@@ -93,7 +93,7 @@ class OrthogonalEquivariantPointCNO(AbstractOperatorModel):
             raise TypeError("topology must be OrthogonalPointTopology or None.")
         count = len(layout.blocks)
         self.layout = layout
-        self.raw_amplitudes = jnp.zeros((count,), dtype=float)
+        self.raw_amplitudes = jnp.zeros((count,), dtype=jnp.float64)
         self.raw_length_scales = jnp.full((count,), jnp.log(jnp.expm1(scale)))
         self.source_key = source_key
         self.topology = topology
@@ -160,7 +160,7 @@ class OrthogonalEquivariantPointCNO(AbstractOperatorModel):
             & jnp.take(query_mask, query_index, axis=-1)
         )
         outputs = []
-        query_count = int(query_points.shape[-2])
+        query_count = query_points.shape[-2]
         for index, block_values in enumerate(self.layout.unpack(values)):
             block = self.layout.blocks[index]
             flattened = block_values.reshape(

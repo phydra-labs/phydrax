@@ -191,8 +191,7 @@ class IntegerHullPolicy(StrictModule):
         backtracks = int(maximum_backtracks)
         if steps < 1 or active < steps + 1 or backtracks < 1:
             raise ValueError(
-                "maximum_fw_steps/backtracks must be positive and active capacity "
-                "must hold every generated atom."
+                "maximum_fw_steps/backtracks must be positive and active capacity must hold every generated atom."
             )
         values = tuple(
             float(value) for value in (fw_tolerance, integrality_tolerance, armijo)
@@ -408,7 +407,7 @@ class _IntegerHullBranchProblem(AbstractBranchAndBoundProblem):
         return _IntegerHullNode(
             CombinatorialFeatureRestriction.root(self.problem.space),
             [],
-            np.empty((0,), dtype=float),
+            np.empty((0,), dtype=np.float64),
             "root",
         )
 
@@ -463,7 +462,7 @@ class _IntegerHullBranchProblem(AbstractBranchAndBoundProblem):
 
     def evaluate(self, node: _IntegerHullNode, /) -> BranchNodeEvaluation:
         atoms = list(node.atoms)
-        weights = np.asarray(node.weights, dtype=float).copy()
+        weights = np.asarray(node.weights, dtype=np.float64).copy()
         best_candidate = None
         if not atoms:
             zero_costs = jax.tree.map(
@@ -592,7 +591,7 @@ class _IntegerHullBranchProblem(AbstractBranchAndBoundProblem):
         lower_bound = final_value - final_gap
         flat, _ = ravel_pytree(relaxation)
         mask, _ = ravel_pytree(self.problem.space.integral_feature_mask())
-        integral = np.asarray(mask, dtype=bool)
+        integral = np.asarray(mask, dtype=np.bool_)
         flat_host = np.asarray(flat)
         fractionality = np.zeros_like(flat_host)
         fractionality[integral] = np.abs(
@@ -605,8 +604,8 @@ class _IntegerHullBranchProblem(AbstractBranchAndBoundProblem):
             lower_flat, lower_unravel = ravel_pytree(node.restriction.lower)
             upper_flat, upper_unravel = ravel_pytree(node.restriction.upper)
             fixed = jnp.rint(flat)
-            fixed_lower = jnp.where(mask.astype(bool), fixed, lower_flat)
-            fixed_upper = jnp.where(mask.astype(bool), fixed, upper_flat)
+            fixed_lower = jnp.where(mask.astype("bool"), fixed, lower_flat)
+            fixed_upper = jnp.where(mask.astype("bool"), fixed, upper_flat)
             fixed_restriction = CombinatorialFeatureRestriction(
                 self.problem.space,
                 lower=lower_unravel(fixed_lower),
@@ -677,7 +676,7 @@ class _IntegerHullBranchProblem(AbstractBranchAndBoundProblem):
         upper, upper_unravel = ravel_pytree(node.restriction.upper)
         mask, _ = ravel_pytree(self.problem.space.integral_feature_mask())
         values = np.asarray(flat)
-        integral = np.asarray(mask, dtype=bool)
+        integral = np.asarray(mask, dtype=np.bool_)
         fractionality = np.where(
             integral,
             np.abs(values - np.rint(values)),
@@ -726,7 +725,7 @@ class _IntegerHullBranchProblem(AbstractBranchAndBoundProblem):
                 weights /= np.sum(weights)
             else:
                 atoms = []
-                weights = np.empty((0,), dtype=float)
+                weights = np.empty((0,), dtype=np.float64)
             return _IntegerHullNode(
                 restriction,
                 atoms,

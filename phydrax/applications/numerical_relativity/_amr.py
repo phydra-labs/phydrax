@@ -1174,7 +1174,7 @@ def _active_block_slots(epoch: NumericalRelativityAMRTopologyEpoch, /) -> np.nda
     return np.flatnonzero(
         np.concatenate(
             tuple(
-                np.asarray(metadata.active, dtype=bool)
+                np.asarray(metadata.active, dtype=np.bool_)
                 for metadata in epoch.hierarchy.topology.levels
             )
         )

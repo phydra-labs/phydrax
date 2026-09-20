@@ -582,8 +582,7 @@ class BidirectionalElectromechanicsPlan(StrictModule, NonTrainableState):
         )
         if differentiation_.mode == "implicit":
             raise ValueError(
-                "Bidirectional fixed-point electromechanics supports only none or "
-                "algorithmic differentiation."
+                "Bidirectional fixed-point electromechanics supports only none or algorithmic differentiation."
             )
         self.forward_port = forward_port
         self.backward_port = backward_port

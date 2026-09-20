@@ -217,10 +217,10 @@ class NativeB4BoosterPlan(StrictModule):
         *,
         tolerance: float = 1e-8,
     ):
-        boundary = tuple(int(value) for value in boundary_twice_spins)
-        internal = tuple(int(value) for value in internal_twice_spins)
-        nodes = np.asarray(radial_nodes, dtype=float)
-        weights = np.asarray(radial_weights, dtype=float)
+        boundary = tuple(boundary_twice_spins)
+        internal = tuple(internal_twice_spins)
+        nodes = np.asarray(radial_nodes, dtype=np.float64)
+        weights = np.asarray(radial_weights, dtype=np.float64)
         gamma = float(immirzi_parameter)
         tolerance_ = float(tolerance)
         if len(boundary) != 4 or len(internal) != 4:
@@ -410,8 +410,8 @@ def su2_15j_symbol(
 ) -> complex:
     """Contract five oriented four-valent intertwiners in the 4-simplex graph."""
 
-    spins = tuple(int(value) for value in boundary_twice_spins)
-    intertwiners = tuple(int(value) for value in boundary_twice_intertwiners)
+    spins = tuple(boundary_twice_spins)
+    intertwiners = tuple(boundary_twice_intertwiners)
     if len(spins) != 10 or len(intertwiners) != 5:
         raise ValueError("The SU(2) 15j symbol requires ten spins and five intertwiners.")
     spin_lookup = {
@@ -470,7 +470,7 @@ class NativeEPRLVertexData(StrictModule):
         support = np.asarray(support_twice_spins, dtype=np.int32)
         intertwiners = np.asarray(internal_twice_intertwiners, dtype=np.int32)
         boosters = np.asarray(booster_values, dtype=np.complex128)
-        errors = np.asarray(booster_error_bounds, dtype=float)
+        errors = np.asarray(booster_error_bounds, dtype=np.float64)
         if support.ndim != 2 or support.shape[1] != 10:
             raise ValueError("EPRL support table must have shape (support, 10).")
         count = support.shape[0]
@@ -635,7 +635,7 @@ class FiniteSpinFoamComplexPlan(StrictModule):
             sorted(
                 (
                     str(label),
-                    tuple(int(value) for value in values),
+                    tuple(values),
                 )
                 for label, values in face_support.items()
             )
@@ -706,7 +706,7 @@ def contract_finite_spin_foam(
     boundary = plan.boundary_faces
     output_shape = tuple(len(support[label]) for label in boundary)
     amplitude = np.zeros(output_shape or (), dtype=np.complex128)
-    absolute = np.zeros_like(amplitude, dtype=float)
+    absolute = np.zeros_like(amplitude, dtype=np.float64)
     face_labels = tuple(label for label, _ in plan.face_support)
     assignment_count = 0
     for assignment_indices in np.ndindex(*(len(support[label]) for label in face_labels)):
@@ -763,7 +763,7 @@ def coarse_grain_spin_foam_tensor(
     """SVD-coarse-grain one local amplitude tensor with an explicit error ledger."""
 
     values = np.asarray(tensor, dtype=np.complex128)
-    left = tuple(int(value) for value in left_axes)
+    left = tuple(left_axes)
     if values.ndim < 2 or not left or not set(left) < set(range(values.ndim)):
         raise ValueError("Coarse-graining axes must be a proper non-empty tensor subset.")
     right = tuple(value for value in range(values.ndim) if value not in left)
@@ -825,10 +825,10 @@ def assess_eprl_semiclassical_asymptotics(
     power_tolerance: float,
     geometric: bool,
 ) -> EPRLSemiclassicalEvidence:
-    scales_ = np.asarray(scales, dtype=float)
+    scales_ = np.asarray(scales, dtype=np.float64)
     amplitudes_ = np.asarray(amplitudes, dtype=np.complex128)
-    spins = np.asarray(base_twice_spins, dtype=float)
-    angles = np.asarray(dihedral_angles, dtype=float)
+    spins = np.asarray(base_twice_spins, dtype=np.float64)
+    angles = np.asarray(dihedral_angles, dtype=np.float64)
     if scales_.ndim != 1 or scales_.size < 3 or amplitudes_.shape != scales_.shape:
         raise ValueError(
             "Semiclassical evidence requires three aligned scale amplitudes."

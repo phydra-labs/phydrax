@@ -23,7 +23,7 @@ from .._strict import StrictModule
 
 
 def _positive_modes(mode_sizes: Sequence[int], /) -> tuple[int, ...]:
-    modes = tuple(int(size) for size in mode_sizes)
+    modes = tuple(mode_sizes)
     if not modes or any(size <= 0 for size in modes):
         raise ValueError("Tensor-train mode sizes must be a nonempty tuple of positives.")
     return modes
@@ -40,7 +40,7 @@ def _rank_caps(max_ranks: int | Sequence[int], order: int, /) -> tuple[int, ...]
     if isinstance(max_ranks, int):
         caps = (int(max_ranks),) * (order - 1)
     else:
-        caps = tuple(int(rank) for rank in max_ranks)
+        caps = tuple(max_ranks)
     if len(caps) != order - 1 or any(rank <= 0 for rank in caps):
         raise ValueError("max_ranks must provide one positive cap for every TT cut.")
     return caps
@@ -55,7 +55,7 @@ def _validate_relative_tolerance(relative_tolerance: float, /) -> float:
 
 def _selected_rank(singular_values: Array, cap: int, cut_tolerance: float, /) -> int:
     values = np.asarray(singular_values)
-    maximum = min(int(cap), int(values.size))
+    maximum = min(int(cap), values.size)
     if cut_tolerance <= 0.0:
         return maximum
     squared = np.abs(values) ** 2
@@ -92,8 +92,8 @@ class TTRoundingEvidence(StrictModule):
         norm = jnp.asarray(input_frobenius_norm)
         if discarded.ndim != 1 or norm.shape != ():
             raise ValueError("Rounding evidence requires a cut vector and scalar norm.")
-        ranks = tuple(int(rank) for rank in output_ranks)
-        caps = tuple(int(rank) for rank in max_ranks)
+        ranks = tuple(output_ranks)
+        caps = tuple(max_ranks)
         if discarded.shape != (len(ranks),) or len(caps) != len(ranks):
             raise ValueError("Rounding evidence cut counts must agree.")
         bound = jnp.sqrt(jnp.sum(discarded**2))
@@ -138,7 +138,7 @@ class TensorTrain(StrictModule):
         if any(core.dtype != dtype for core in arrays):
             raise TypeError("All TensorTrain cores must have one dtype.")
         modes = _positive_modes(tuple(core.shape[1] for core in arrays))
-        ranks = tuple(int(core.shape[2]) for core in arrays[:-1])
+        ranks = tuple(core.shape[2] for core in arrays[:-1])
         self.cores = arrays
         self.mode_sizes = modes
         self.ranks = ranks
@@ -175,7 +175,7 @@ class TensorTrain(StrictModule):
         )
 
     def entry(self, index: Sequence[int], /) -> Array:
-        position = tuple(int(value) for value in index)
+        position = tuple(index)
         if len(position) != self.order:
             raise ValueError("A TensorTrain entry needs one index per mode.")
         if any(
@@ -357,7 +357,7 @@ class TensorTrainOperator(StrictModule):
             raise TypeError("All TensorTrainOperator cores must have one dtype.")
         outputs = _positive_modes(tuple(core.shape[1] for core in arrays))
         inputs = _positive_modes(tuple(core.shape[2] for core in arrays))
-        ranks = tuple(int(core.shape[3]) for core in arrays[:-1])
+        ranks = tuple(core.shape[3] for core in arrays[:-1])
         self.cores = arrays
         self.output_mode_sizes = outputs
         self.input_mode_sizes = inputs
@@ -472,8 +472,8 @@ class TensorTrainOperator(StrictModule):
         input_index: Sequence[int],
         /,
     ) -> Array:
-        output = tuple(int(value) for value in output_index)
-        input_ = tuple(int(value) for value in input_index)
+        output = tuple(output_index)
+        input_ = tuple(input_index)
         if len(output) != self.order or len(input_) != self.order:
             raise ValueError(
                 "TT operator entries need one input and output index per mode."

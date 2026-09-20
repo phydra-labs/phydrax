@@ -71,7 +71,7 @@ def ising_factor_messages(
     for target in range(len(incoming)):
         parity = _parity_distribution(
             [value for index, value in enumerate(incoming) if index != target],
-            int(incoming[target].shape[0]),
+            incoming[target].shape[0],
             mode,
             incoming[target].dtype,
         )
@@ -190,11 +190,11 @@ def logical_factor_messages(
 
 def _count_convolution(left: Array, right: Array, mode: Literal["sum", "max"]):
     output = []
-    for count in range(int(left.shape[-1] + right.shape[-1] - 1)):
+    for count in range(left.shape[-1] + right.shape[-1] - 1):
         terms = []
-        for left_count in range(int(left.shape[-1])):
+        for left_count in range(left.shape[-1]):
             right_count = count - left_count
-            if 0 <= right_count < int(right.shape[-1]):
+            if 0 <= right_count < right.shape[-1]:
                 terms.append(left[:, left_count] + right[:, right_count])
         output.append(_reduce(jnp.stack(terms, axis=-1), mode))
     return jnp.stack(output, axis=-1)
@@ -209,7 +209,7 @@ def cardinality_factor_messages(
 ) -> tuple[Array, ...]:
     """Compute binary cardinality messages by count dynamic programming."""
     outputs = []
-    factor_count = int(incoming[0].shape[0])
+    factor_count = incoming[0].shape[0]
     for target in range(len(incoming)):
         distribution = jnp.zeros((factor_count, 1), dtype=incoming[target].dtype)
         for index, values in enumerate(incoming):

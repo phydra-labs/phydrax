@@ -150,7 +150,7 @@ def assess_sign_free_stochastic_candidate(
     orders = order_values.astype(jnp.int32)
     observables = jnp.asarray(raw_observables, dtype=jnp.complex128)
     signs = jnp.asarray(raw_signs, dtype=jnp.complex128)
-    acceptance = jnp.asarray(accepted, dtype=bool)
+    acceptance = jnp.asarray(accepted, dtype=jnp.bool_)
     expected_states = (
         plan.chain_count,
         plan.draw_count,

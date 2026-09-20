@@ -7,7 +7,9 @@ import phydrax as phx
 
 
 def _lineage(capacity, *, active=None):
-    active_ = jnp.ones((capacity,), dtype=bool) if active is None else jnp.asarray(active)
+    active_ = (
+        jnp.ones((capacity,), dtype="bool") if active is None else jnp.asarray(active)
+    )
     return {
         "sample_active": active_,
         "chain_index": jnp.where(active_, 0, -1),
@@ -18,7 +20,7 @@ def _lineage(capacity, *, active=None):
 
 
 def _work_dataset(values, sources):
-    values = jnp.asarray(values, dtype=float)
+    values = jnp.asarray(values, dtype="float64")
     source = jnp.asarray(sources, dtype=jnp.int32)
     lineage = _lineage(values.size)
     return phx.uq.ReducedWorkDataset(
@@ -46,7 +48,7 @@ def _work_dataset(values, sources):
 
 
 def _potential_dataset(values, origins, *, active=None, coverage=None):
-    values = jnp.asarray(values, dtype=float)
+    values = jnp.asarray(values, dtype="float64")
     lineage = _lineage(values.shape[1], active=active)
     covered = (
         jnp.broadcast_to(lineage["sample_active"][None, :], values.shape)
@@ -83,7 +85,7 @@ def test_reduced_potential_dataset_derives_counts_and_canonicalizes_padding():
         values,
         [0, 1, -7],
         active=[True, True, False],
-        coverage=jnp.ones_like(values, dtype=bool),
+        coverage=jnp.ones_like(values, dtype="bool"),
     )
     np.testing.assert_array_equal(dataset.state_counts, [1, 1])
     np.testing.assert_array_equal(dataset.coverage[:, -1], [False, False])
@@ -99,8 +101,8 @@ def test_reduced_potential_dataset_derives_counts_and_canonicalizes_padding():
     with pytest.raises(ValueError, match="unit_id"):
         phx.uq.ReducedPotentialDataset(
             jnp.zeros((2, 2)),
-            jnp.ones((2, 2), dtype=bool),
-            jnp.ones((2,), dtype=bool),
+            jnp.ones((2, 2), dtype="bool"),
+            jnp.ones((2,), dtype="bool"),
             [0, 1],
             [0, 0],
             [0, 1],
@@ -173,7 +175,7 @@ def test_block_bootstrap_is_explicitly_keyed_and_replayable():
 
 def test_ti_consumes_raw_complete_path_derivatives_and_joint_blocks():
     state_count, capacity = 3, 8
-    active = jnp.ones((state_count, capacity), dtype=bool)
+    active = jnp.ones((state_count, capacity), dtype="bool")
     draw = jnp.broadcast_to(jnp.arange(capacity), active.shape)
     dataset = phx.uq.ThermodynamicDerivativeDataset(
         jnp.full((state_count, capacity), 2.0),

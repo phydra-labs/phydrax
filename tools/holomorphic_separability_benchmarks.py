@@ -21,7 +21,7 @@ from phydrax._trainable import partition_trainable
 
 def _parameter_count(model: Any, /) -> int:
     trainable, _ = partition_trainable(model)
-    return sum(int(leaf.size) for leaf in jax.tree.leaves(trainable))
+    return sum(leaf.size for leaf in jax.tree.leaves(trainable))
 
 
 def _cauchy_riemann_residual(model: Any, point: jax.Array, /) -> jax.Array:
@@ -37,7 +37,7 @@ def _cauchy_riemann_residual(model: Any, point: jax.Array, /) -> jax.Array:
 
 
 def _polynomial(coefficients: jax.Array, /):
-    values = jnp.asarray(coefficients, dtype=float)
+    values = jnp.asarray(coefficients, dtype="float64")
     potential = phx.equations.HolomorphicPolynomialPotential(
         values.shape[0],
         values.shape[1] - 1,

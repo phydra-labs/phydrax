@@ -40,8 +40,7 @@ def _validate_primal_field(field: DomainFunction, /) -> CochainFieldSpec:
     expected_orientation = "invariant" if spec.degree == 0 else "signed"
     if spec.cell_orientation != expected_orientation:
         raise ValueError(
-            f"Degree-{spec.degree} primal cochains require "
-            f"{expected_orientation!r} cell orientation semantics."
+            f"Degree-{spec.degree} primal cochains require {expected_orientation!r} cell orientation semantics."
         )
     return spec
 

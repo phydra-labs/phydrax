@@ -146,8 +146,7 @@ class PfaffianJastrowAmplitude(StrictModule):
         expected_shape = (self.particle_count, self.particle_count)
         if pairing_matrix.shape != expected_shape:
             raise ValueError(
-                "pairing_evaluator must return shape "
-                f"({self.particle_count}, {self.particle_count})."
+                f"pairing_evaluator must return shape ({self.particle_count}, {self.particle_count})."
             )
         correlation = jnp.asarray(self.jastrow(coordinates))
         if correlation.shape != ():
@@ -371,7 +370,7 @@ def _full_cache(
         log_abs=log_abs,
         phase=phase,
         sequence=sequence,
-        compact_eligible=jnp.asarray(compact_eligible, dtype=bool),
+        compact_eligible=jnp.asarray(compact_eligible, dtype=jnp.bool_),
         locality_residual=jnp.asarray(locality_residual),
         native_residual=pfaffian.antisymmetry_residual,
         low_rank_status=jnp.asarray(low_rank_status, dtype=jnp.int32),

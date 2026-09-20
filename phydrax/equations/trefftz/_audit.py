@@ -61,8 +61,7 @@ def _validate_admissibility(
 
     if not isinstance(admissibility, AbstractTrialSpaceAdmissibility):
         raise TypeError(
-            "Off-singular-support trial audits require matching target "
-            "admissibility evidence."
+            "Off-singular-support trial audits require matching target admissibility evidence."
         )
     if admissibility.singular_support_id != certificate.singular_support_id:
         raise ValueError(
@@ -72,19 +71,18 @@ def _validate_admissibility(
     fingerprint = trial_target_fingerprint(points, certificate.ambient_dimension)
     if admissibility.target_fingerprint != fingerprint:
         raise ValueError("Target admissibility evidence does not match the audit batch.")
-    point_count = int(points.size) // certificate.ambient_dimension
+    point_count = points.size // certificate.ambient_dimension
     if admissibility.target_count != point_count:
         raise ValueError(
             "Target admissibility evidence has the wrong number of audit points."
         )
     if not bool(np.asarray(admissibility.pde_membership_valid)):
         raise ValueError(
-            "Trial-space audit targets intersect or lie on the certified "
-            "singular support."
+            "Trial-space audit targets intersect or lie on the certified singular support."
         )
     return (
-        jnp.asarray(admissibility.pde_membership_valid, dtype=bool),
-        jnp.asarray(admissibility.accuracy_supported, dtype=bool),
+        jnp.asarray(admissibility.pde_membership_valid, dtype=jnp.bool_),
+        jnp.asarray(admissibility.accuracy_supported, dtype=jnp.bool_),
         admissibility.report_id,
     )
 
@@ -189,10 +187,10 @@ def audit_trial_space(
         tolerance_value = jnp.asarray(tolerance_, dtype=jnp.real(field_values).dtype)
 
     output_count = math.prod(certificate.field_shape) if certificate.field_shape else 1
-    point_count = int(field_values.size) // int(output_count)
+    point_count = field_values.size // int(output_count)
     point_fingerprint = canonical_fingerprint(
         {
-            "kind": "trefftz-audit-points-v1",
+            "kind": "trefftz-audit-points",
             "batch": array_tree_fingerprint(batch),
         }
     )

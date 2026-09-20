@@ -20,7 +20,7 @@ from .._exponential_family import (
     NaturalCoordinates,
 )
 from .._frozendict import frozendict
-from .._sampling import get_sampler
+from .._sampling import materialize_design
 from .._strict import StrictModule
 from ..linalg import (
     DenseLinearOperator,
@@ -58,10 +58,7 @@ class SobolResult(StrictModule):
             or first_order.data.shape != total_order.data.shape
         ):
             raise ValueError("Sobol first-order and total-order fields must align.")
-        if (
-            first_order.dims[0] != parameter_dim
-            or int(first_order.data.shape[0]) != expected
-        ):
+        if first_order.dims[0] != parameter_dim or first_order.data.shape[0] != expected:
             raise ValueError(
                 "Sobol result parameter axis does not match parameter_names."
             )
@@ -116,7 +113,12 @@ def sobol_indices(
         if not isinstance(distribution, AbstractDistribution):
             raise TypeError(f"Distribution {name!r} must implement AbstractDistribution.")
     dimension = len(names)
-    unit = get_sampler(sampler)(count, 2 * dimension, key)
+    unit = materialize_design(
+        sampler,
+        count=count,
+        dimension=2 * dimension,
+        key=key,
+    )
     a = jnp.stack(
         tuple(
             distribution.icdf(unit[:, index])
@@ -211,7 +213,7 @@ def _evaluate_design(
     call_style: Literal["keywords", "mapping"],
     **kwargs: Any,
 ):
-    count = int(design.shape[0])
+    count = design.shape[0]
     chunk = count if batch_size is None else int(batch_size)
     if chunk <= 0:
         raise ValueError("batch_size must be positive.")
@@ -271,16 +273,18 @@ def _reduce_sample_outputs(
     effective = jnp.ones(output_shape, dtype=values.dtype)
     if mask is not None:
         effective = effective * jnp.broadcast_to(
-            jnp.asarray(mask, dtype=bool), output_shape
+            jnp.asarray(mask, dtype=jnp.bool_), output_shape
         )
     if weights is not None:
-        weight_array = jnp.broadcast_to(jnp.asarray(weights, dtype=float), output_shape)
+        weight_array = jnp.broadcast_to(
+            jnp.asarray(weights, dtype=jnp.float64), output_shape
+        )
         if bool(jnp.any(~jnp.isfinite(weight_array))) or bool(
             jnp.any(weight_array < 0.0)
         ):
             raise ValueError("weights must be finite and non-negative.")
         effective = effective * weight_array
-    flat_values = values.reshape((int(values.shape[0]), -1))
+    flat_values = values.reshape((values.shape[0], -1))
     flat_weight = effective.reshape((-1,))
     sums = jnp.sum(flat_values * flat_weight, axis=1)
     if reduction == "sum":
@@ -335,7 +339,7 @@ class SensitivityGradientResult(StrictModule):
             raise ValueError("num_samples must be positive.")
         self.gradient = gradient
         self.standard_error = standard_error
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.estimator_id = str(estimator_id)
         self.method_id = str(method_id)
@@ -382,7 +386,7 @@ class ResamplingScoreResult(StrictModule):
         ancestors = jnp.asarray(ancestor_indices, dtype=jnp.int32)
         if weights.ndim != 1:
             raise ValueError("normalized_weights must be rank one.")
-        if ancestors.ndim != 1 or int(ancestors.size) == 0:
+        if ancestors.ndim != 1 or ancestors.size == 0:
             raise ValueError("ancestor_indices must be non-empty and rank one.")
         if not resampling_id:
             raise ValueError("resampling_id must be non-empty.")
@@ -392,15 +396,15 @@ class ResamplingScoreResult(StrictModule):
         self.expected_centered_score = expected_centered_score
         self.normalized_weights = weights
         self.ancestor_indices = ancestors
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.estimator_id = "resampling_score"
         self.method_id = "categorical_log_probability_score"
         self.noise_id = noise_id
         self.resampling_id = str(resampling_id)
         self.approximation = "monte_carlo_likelihood_ratio"
-        self.num_particles = int(weights.size)
-        self.num_draws = int(ancestors.size)
+        self.num_particles = weights.size
+        self.num_draws = ancestors.size
 
 
 class SensitivityActionResult(StrictModule):
@@ -431,7 +435,7 @@ class SensitivityActionResult(StrictModule):
         if not operator_id or not method_id or not approximation:
             raise ValueError("Sensitivity action provenance IDs must be non-empty.")
         self.action = action
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.operator_id = str(operator_id)
         self.method_id = str(method_id)
@@ -474,15 +478,15 @@ class EmpiricalDirectionsResult(StrictModule):
             raise ValueError("quantity must be non-empty.")
         self.directions = vectors
         self.strengths = values
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.quantity = str(quantity)
         self.method_id = "matrix_free_actions_dense_eigh"
         self.approximation = "empirical_local_linearization"
         self.regularization = float(regularization)
-        self.ambient_shape = tuple(int(size) for size in ambient_shape)
-        self.ambient_dimension = int(vectors.shape[0])
-        self.rank = int(vectors.shape[1])
+        self.ambient_shape = tuple(ambient_shape)
+        self.ambient_dimension = vectors.shape[0]
+        self.rank = vectors.shape[1]
 
 
 class ExperimentDesignResult(StrictModule):
@@ -511,17 +515,17 @@ class ExperimentDesignResult(StrictModule):
         regularization: float,
     ):
         spectrum = jnp.asarray(eigenvalues)
-        if spectrum.ndim != 1 or int(spectrum.size) == 0:
+        if spectrum.ndim != 1 or spectrum.size == 0:
             raise ValueError("eigenvalues must be a non-empty rank-1 array.")
         self.value = jnp.asarray(value)
         self.eigenvalues = spectrum
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.criterion = str(criterion)
         self.method_id = str(method_id)
         self.approximation = str(approximation)
         self.regularization = float(regularization)
-        self.dimension = int(spectrum.size)
+        self.dimension = spectrum.size
 
 
 def likelihood_ratio_gradient(
@@ -535,14 +539,14 @@ def likelihood_ratio_gradient(
 ) -> SensitivityGradientResult:
     """Estimate ``E[f score]`` while retaining the score-estimator identity."""
     observations = jnp.asarray(values)
-    if observations.ndim == 0 or int(observations.shape[0]) < 2:
+    if observations.ndim == 0 or observations.shape[0] < 2:
         raise ValueError("values must have at least two samples on axis zero.")
-    count = int(observations.shape[0])
+    count = observations.shape[0]
     score_leaves = jax.tree_util.tree_leaves(scores)
     if not score_leaves:
         raise ValueError("scores must contain at least one array leaf.")
     if any(
-        jnp.asarray(leaf).ndim == 0 or int(jnp.asarray(leaf).shape[0]) != count
+        jnp.asarray(leaf).ndim == 0 or jnp.asarray(leaf).shape[0] != count
         for leaf in score_leaves
     ):
         raise ValueError("Every score leaf must share the values sample axis.")
@@ -654,12 +658,12 @@ def resampling_score_gradient(
     observations = jnp.asarray(values)
     logits = jnp.asarray(log_weights)
     ancestors = jnp.asarray(ancestor_indices)
-    if logits.ndim != 1 or int(logits.size) == 0:
+    if logits.ndim != 1 or logits.size == 0:
         raise ValueError("log_weights must be a non-empty rank-1 array.")
-    count = int(logits.size)
-    if observations.ndim == 0 or int(observations.shape[0]) != count:
+    count = logits.size
+    if observations.ndim == 0 or observations.shape[0] != count:
         raise ValueError("values must share the particle axis of log_weights.")
-    if ancestors.ndim != 1 or int(ancestors.size) == 0:
+    if ancestors.ndim != 1 or ancestors.size == 0:
         raise ValueError("ancestor_indices must be a non-empty rank-1 array.")
     if not jnp.issubdtype(ancestors.dtype, jnp.integer):
         raise TypeError("ancestor_indices must have an integer dtype.")
@@ -667,7 +671,7 @@ def resampling_score_gradient(
         raise ValueError("ancestor_indices contain an out-of-range particle index.")
     score_leaves = jax.tree_util.tree_leaves(log_weight_scores)
     if not score_leaves or any(
-        jnp.asarray(leaf).ndim == 0 or int(jnp.asarray(leaf).shape[0]) != count
+        jnp.asarray(leaf).ndim == 0 or jnp.asarray(leaf).shape[0] != count
         for leaf in score_leaves
     ):
         raise ValueError("Every log-weight score must share the particle axis.")
@@ -734,7 +738,7 @@ def fisher_information_action(
     """Apply an empirical Fisher matrix without materializing it."""
     score_array = jnp.asarray(scores)
     direction = jnp.asarray(vector)
-    if score_array.ndim < 2 or int(score_array.shape[0]) == 0:
+    if score_array.ndim < 2 or score_array.shape[0] == 0:
         raise ValueError("scores must have shape (sample, *parameter_shape).")
     if score_array.shape[1:] != direction.shape:
         raise ValueError("vector shape must match one score sample.")
@@ -746,11 +750,11 @@ def fisher_information_action(
     penalty = float(regularization)
     if not isfinite(penalty) or penalty < 0.0:
         raise ValueError("regularization must be finite and non-negative.")
-    count = int(score_array.shape[0])
+    count = score_array.shape[0]
     flat_scores = score_array.reshape((count, -1))
     flat_direction = direction.reshape(-1)
     if weights is None:
-        sample_weights = jnp.ones((count,), dtype=float)
+        sample_weights = jnp.ones((count,), dtype=jnp.float64)
         weights_valid = jnp.asarray(True)
     else:
         sample_weights = jnp.asarray(weights)
@@ -971,7 +975,7 @@ def empirical_observability_directions(
         raise TypeError("output_fn must be callable.")
     center = jnp.asarray(state)
     shape = tuple(center.shape)
-    dimension = int(center.size)
+    dimension = center.size
     retained = _validate_direction_request(dimension, rank, max_dimension)
     penalty = _validate_regularization(regularization)
     output, pushforward = jax.linearize(
@@ -1010,7 +1014,7 @@ def empirical_controllability_directions(
         lambda value: jnp.asarray(response_fn(value)), control
     )
     response_shape = tuple(response.shape)
-    dimension = int(response.size)
+    dimension = response.size
     retained = _validate_direction_request(dimension, rank, max_dimension)
     penalty = _validate_regularization(regularization)
     pullback = jax.linear_transpose(pushforward, control)
@@ -1063,7 +1067,7 @@ def experiment_design_objective(
         matrix = jnp.asarray(information)
         if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1] or matrix.shape[0] == 0:
             raise ValueError("information must be a non-empty square matrix.")
-        size = int(matrix.shape[0])
+        size = matrix.shape[0]
         if dimension is not None and int(dimension) != size:
             raise ValueError("dimension does not match the information matrix.")
         if size > int(max_dimension):
@@ -1115,8 +1119,7 @@ def experiment_design_objective(
         criterion_valid = base_valid
     else:
         raise ValueError(
-            "criterion must be 'd_optimal', 'a_optimal', 'e_optimal', "
-            "or 'mutual_information'."
+            "criterion must be 'd_optimal', 'a_optimal', 'e_optimal', or 'mutual_information'."
         )
     reported_valid = criterion_valid & jnp.isfinite(raw_value)
     value = jnp.where(reported_valid, raw_value, jnp.nan)

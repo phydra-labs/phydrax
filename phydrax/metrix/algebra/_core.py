@@ -94,7 +94,7 @@ class AbstractFiniteRealAlgebraSpec(StrictModule, NonTrainableState):
         convention_ = {} if convention is None else dict(convention)
         algebra_id = canonical_fingerprint(
             {
-                "kind": "finite-real-algebra-v1",
+                "kind": "finite-real-algebra",
                 "family": family_,
                 "basis": list(labels),
                 "scalar_basis_index": scalar,
@@ -129,7 +129,7 @@ class AbstractFiniteRealAlgebraSpec(StrictModule, NonTrainableState):
         self.algebra_id = algebra_id
         self.spec_id = canonical_fingerprint(
             {
-                "kind": "finite-real-algebra-spec-v1",
+                "kind": "finite-real-algebra-spec",
                 "algebra": algebra_id,
                 "budget": budget_.budget_id,
                 "properties": properties.evidence_id,
@@ -260,12 +260,9 @@ class FiniteRealAlgebraSpec(AbstractFiniteRealAlgebraSpec):
         return FiniteRealAlgebraSpec(
             str(value["family"]),
             tuple(str(item) for item in value["basis_ids"]),
-            tuple(tuple(int(item) for item in term) for term in value["terms"]),
-            tuple(tuple(int(item) for item in entry) for entry in value["unit"]),
-            tuple(
-                tuple(tuple(int(item) for item in entry) for entry in row)
-                for row in value["conjugation"]
-            ),
+            tuple(tuple(term) for term in value["terms"]),
+            tuple(tuple(entry) for entry in value["unit"]),
+            tuple(tuple(tuple(entry) for entry in row) for row in value["conjugation"]),
             scalar_basis_index=int(value["scalar_basis_index"]),
             convention=value["convention"],
             family_claims=claims,

@@ -132,16 +132,13 @@ def test_generated_public_geometry_mesh_has_closed_positive_volume_cells():
     points = np.array(
         [[float(v) for v in row.strip("()").split()] for row in rows("points")]
     )
-    faces = [
-        tuple(int(v) for v in re.search(r"\((.*)\)", row)[1].split())
-        for row in rows("faces")
-    ]
+    faces = [tuple(re.search(r"\((.*)\)", row)[1].split()) for row in rows("faces")]
     owner = np.array([int(row) for row in rows("owner")])
-    neighbour = np.array([int(row) for row in rows("neighbour")])
+    neighbor = np.array([int(row) for row in rows("neighbour")])
     cells = int(max(owner)) + 1
     volume = np.zeros(cells)
     closure = np.zeros((cells, 3))
-    counts = np.zeros(cells, dtype=int)
+    counts = np.zeros(cells, dtype="int64")
     for i, face in enumerate(faces):
         p = points[list(face)]
         area = 0.5 * (
@@ -151,10 +148,10 @@ def test_generated_public_geometry_mesh_has_closed_positive_volume_cells():
         volume[owner[i]] += contribution
         closure[owner[i]] += area
         counts[owner[i]] += 1
-        if i < len(neighbour):
-            volume[neighbour[i]] -= contribution
-            closure[neighbour[i]] -= area
-            counts[neighbour[i]] += 1
+        if i < len(neighbor):
+            volume[neighbor[i]] -= contribution
+            closure[neighbor[i]] -= area
+            counts[neighbor[i]] += 1
     assert np.all(volume > 0)
     np.testing.assert_allclose(closure, 0, atol=2e-13)
     assert np.all(counts == 6)

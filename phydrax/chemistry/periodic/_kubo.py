@@ -4,9 +4,9 @@
 
 """Independent-particle periodic Kubo transitions and optical conductivity.
 
-Energies are explicit joules, velocities are physical Cartesian metres per
+Energies are explicit joules, velocities are physical Cartesian meters per
 second, normalized k weights represent one primitive cell, and cell volume is
-cubic metres.  The regular finite-frequency response and zero-frequency Drude
+cubic meters.  The regular finite-frequency response and zero-frequency Drude
 distribution are never conflated.  A linewidth broadens only named interband
 transitions; it is neither a relaxation time nor a finite ballistic DC law.
 """
@@ -122,7 +122,7 @@ class PeriodicKuboPlan(StrictModule, NonTrainableState):
     ):
         energies = np.asarray(energies_joule)
         velocities = np.asarray(velocity_matrices_m_per_s)
-        weights = np.asarray(k_weights, dtype=float)
+        weights = np.asarray(k_weights, dtype=np.float64)
         mask = (
             np.abs(energies[:, :, None] - energies[:, None, :])
             <= float(degeneracy_tolerance_joule)
@@ -208,7 +208,7 @@ class PeriodicKuboPlan(StrictModule, NonTrainableState):
 
     @property
     def dimension(self) -> int:
-        return int(self.velocity_matrices_m_per_s.shape[-1])
+        return self.velocity_matrices_m_per_s.shape[-1]
 
     @classmethod
     def from_periodic_results(
@@ -283,8 +283,8 @@ class PeriodicKuboPlan(StrictModule, NonTrainableState):
         )
         delta = energies[:, None, :] - energies[:, :, None]
         occupation_difference = occupations[:, :, None] - occupations[:, None, :]
-        bands = int(energies.shape[1])
-        upper = jnp.triu(jnp.ones((bands, bands), dtype=bool), k=1)
+        bands = energies.shape[1]
+        upper = jnp.triu(jnp.ones((bands, bands), dtype=jnp.bool_), k=1)
         active = upper[None, :, :] & (delta > self.degeneracy_tolerance_joule)
         safe_delta = jnp.where(active, delta, 1.0)
         transition_factor = jnp.where(
@@ -430,7 +430,7 @@ def finite_frequency_kubo_response(
         raise TypeError("linewidth must be KuboLinewidth.")
     sum_tolerance = _positive_scalar(f_sum_tolerance, "f_sum_tolerance")
     passive_tolerance = _positive_scalar(passivity_tolerance, "passivity_tolerance")
-    frequencies = np.asarray(angular_frequencies_rad_per_s, dtype=float)
+    frequencies = np.asarray(angular_frequencies_rad_per_s, dtype=np.float64)
     if (
         frequencies.ndim != 1
         or frequencies.size == 0

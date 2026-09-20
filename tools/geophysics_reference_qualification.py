@@ -66,8 +66,7 @@ def qualify(recipe_path: Path, artifact_path: Path) -> dict[str, object]:
         }
         if missing or unknown:
             raise ValueError(
-                "Reference NPZ needs prediction/reference and only optional "
-                "valid/standard_deviation arrays."
+                "Reference NPZ needs prediction/reference and only optional valid/standard_deviation arrays."
             )
         comparison = recipe.compare(
             archive["prediction"],

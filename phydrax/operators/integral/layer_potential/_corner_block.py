@@ -41,7 +41,7 @@ def _recursive_inverse(
     *,
     problem_id: str,
 ) -> Array:
-    size = int(matrix.shape[0])
+    size = matrix.shape[0]
     if size <= 1 or levels <= 1:
         return _inverse(matrix, f"{problem_id}:leaf")
     coarse_size = max(size // 2, 1)
@@ -114,7 +114,7 @@ class CornerBlockInversePreconditioner2D(StrictModule, NonTrainableState):
         self.levels = depth
         self.preconditioner_id = canonical_fingerprint(
             {
-                "kind": "corner-block-recursive-inverse-2d-v1",
+                "kind": "corner-block-recursive-inverse-2d",
                 "matrix_shape": matrix_.shape,
                 "corner_blocks": array_tree_fingerprint(blocks),
                 "levels": depth,

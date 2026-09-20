@@ -67,22 +67,24 @@ class MLBatch(StrictModule):
                 raise ValueError(
                     "SparseFeatures encode entry validity internally; feature_mask is unsupported."
                 )
-            feature_mask_ = jnp.ones(feature_shape, dtype=bool)
+            feature_mask_ = jnp.ones(feature_shape, dtype=jnp.bool_)
         else:
             features_ = jnp.asarray(features)
             if features_.ndim < 2:
                 raise ValueError(
                     "features must have shape case_shape + (sample, feature)."
                 )
-            case_shape = tuple(int(size) for size in features_.shape[:-2])
-            sample_count = int(features_.shape[-2])
-            feature_count = int(features_.shape[-1])
+            case_shape = tuple(features_.shape[:-2])
+            sample_count = features_.shape[-2]
+            feature_count = features_.shape[-1]
             if sample_count <= 0 or feature_count <= 0:
                 raise ValueError(
                     "Feature sample and feature dimensions must be positive."
                 )
-            feature_shape = tuple(int(size) for size in features_.shape)
-            feature_mask_ = _broadcast(feature_mask, feature_shape, dtype=bool, fill=True)
+            feature_shape = tuple(features_.shape)
+            feature_mask_ = _broadcast(
+                feature_mask, feature_shape, dtype=jnp.bool_, fill=True
+            )
 
         sample_shape = case_shape + (sample_count,)
         targets_ = None if targets is None else jnp.asarray(targets)
@@ -93,24 +95,25 @@ class MLBatch(StrictModule):
             target_mask_ = None
         else:
             prefix = targets_.shape[: len(sample_shape)]
-            if tuple(int(size) for size in prefix) != sample_shape:
+            if tuple(prefix) != sample_shape:
                 raise ValueError(
-                    f"targets must begin with case/sample shape {sample_shape}; "
-                    f"got {targets_.shape}."
+                    f"targets must begin with case/sample shape {sample_shape}; got {targets_.shape}."
                 )
-            target_shape = tuple(
-                int(size) for size in targets_.shape[len(sample_shape) :]
-            )
+            target_shape = tuple(targets_.shape[len(sample_shape) :])
             target_mask_ = _broadcast(
                 target_mask,
-                tuple(int(size) for size in targets_.shape),
-                dtype=bool,
+                tuple(targets_.shape),
+                dtype=jnp.bool_,
                 fill=True,
             )
 
-        sample_mask_ = _broadcast(sample_mask, sample_shape, dtype=bool, fill=True)
-        sample_weight_ = _broadcast(sample_weight, sample_shape, dtype=float, fill=1.0)
-        measure_weight_ = _broadcast(measure_weight, sample_shape, dtype=float, fill=1.0)
+        sample_mask_ = _broadcast(sample_mask, sample_shape, dtype=jnp.bool_, fill=True)
+        sample_weight_ = _broadcast(
+            sample_weight, sample_shape, dtype=jnp.float64, fill=1.0
+        )
+        measure_weight_ = _broadcast(
+            measure_weight, sample_shape, dtype=jnp.float64, fill=1.0
+        )
         groups_ = None
         if groups is not None:
             groups_ = jnp.broadcast_to(jnp.asarray(groups), sample_shape)

@@ -408,7 +408,7 @@ def electronic_contact_current_kernels(
         raise TypeError("convention must be ElectronicTransportConvention.")
     occupation = jnp.asarray(occupations)
     chemical = jnp.asarray(chemical_potentials_joule)
-    contacts = int(point.contact_broadenings.shape[0])
+    contacts = point.contact_broadenings.shape[0]
     if occupation.shape != (contacts,) or chemical.shape != (contacts,):
         raise ValueError(
             "Occupations and chemical potentials require one scalar per contact."
@@ -455,7 +455,7 @@ class ElasticDisorderEnsemblePlan(StrictModule, NonTrainableState):
 
     def __init__(self, realization_ids: Sequence[str], probabilities: ArrayLike, /):
         identifiers = tuple(str(value).strip() for value in realization_ids)
-        weights = np.asarray(probabilities, dtype=float)
+        weights = np.asarray(probabilities, dtype=np.float64)
         if (
             len(identifiers) < 2
             or any(not value for value in identifiers)
@@ -504,7 +504,7 @@ def evaluate_elastic_disorder_ensemble(
     if not isinstance(plan, ElasticDisorderEnsemblePlan):
         raise TypeError("plan must be ElasticDisorderEnsemblePlan.")
     values = jnp.asarray(realization_values)
-    successful = jnp.asarray(realization_successful, dtype=bool)
+    successful = jnp.asarray(realization_successful, dtype=jnp.bool_)
     count = len(plan.realization_ids)
     if values.ndim < 1 or values.shape[0] != count or successful.shape != (count,):
         raise ValueError(
@@ -525,7 +525,7 @@ def evaluate_elastic_disorder_ensemble(
         1.0 / jnp.sum(plan.probabilities**2),
         finite & jnp.all(successful),
         plan.ensemble_id,
-        tuple(int(value) for value in values.shape[1:]),
+        tuple(values.shape[1:]),
     )
 
 
@@ -634,10 +634,7 @@ class FermionicKeldyshTransportState(StrictModule, NonTrainableState):
         self.mode_order_id = identifier
         self.source_id = source
         self.statistics = "fermionic"
-        self.convention = (
-            "Ggreater-Glesser=GR-GA; GA(t,tprime)=GR(tprime,t)^dagger; "
-            "retarded vanishes for t<tprime"
-        )
+        self.convention = "Ggreater-Glesser=GR-GA; GA(t,tprime)=GR(tprime,t)^dagger; retarded vanishes for t<tprime"
 
 
 @runtime_checkable

@@ -368,7 +368,7 @@ def test_high_order_point_field_projection_is_not_silently_lossless(tmp_path):
         meshio.Mesh(
             points,
             [("triangle6", np.arange(6)[None, :])],
-            point_data={"temperature": np.arange(6, dtype=float)},
+            point_data={"temperature": np.arange(6, dtype="float64")},
         ),
     )
     with pytest.raises(ValueError, match="nonvertex_values"):
@@ -405,7 +405,10 @@ def test_import_orders_mixed_surface_blocks_without_changing_cell_fields(tmp_pat
     assert {
         int(attribute.scope.entity_ids[0]): int(attribute.values[0])
         for attribute in restored.attributes
-    } == {80: 7, 20: 9}
+    } == {
+        80: 7,
+        20: 9,
+    }
 
 
 def _artifact(blocks, *, fields=()):
@@ -518,7 +521,7 @@ def test_disjoint_same_name_cell_attributes_survive_native_and_file_roundtrip(tm
 def test_tensor_attributes_preserve_native_shape_and_declare_file_loss(tmp_path):
     mesh = _mesh()
     geometry = phx.discretization.CellGeometrySpec.affine(mesh)
-    values = np.arange(8, dtype=float).reshape(2, 2, 2)
+    values = np.arange(8, dtype="float64").reshape(2, 2, 2)
     attribute = phx.meshing.MeshAttribute(
         "tensor", phx.meshing.MeshAttributeRole.USER, _scope(mesh, 2), values
     )

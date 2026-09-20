@@ -54,12 +54,12 @@ class OpenPTVTargetRecords(StrictModule, NonTrainableState):
         source_id: str,
     ):
         ids = np.asarray(target_ids, dtype=np.int64).reshape((-1,))
-        positions = np.asarray(positions_rc, dtype=float)
+        positions = np.asarray(positions_rc, dtype=np.float64)
         count = np.asarray(pixel_count, dtype=np.int64).reshape((-1,))
         extent = np.asarray(extent_rc, dtype=np.int64)
         intensity = np.asarray(summed_intensity, dtype=np.int64).reshape((-1,))
         correspondence = np.asarray(correspondence_ids, dtype=np.int64).reshape((-1,))
-        valid_ = np.asarray(valid, dtype=bool).reshape((-1,))
+        valid_ = np.asarray(valid, dtype=np.bool_).reshape((-1,))
         size = ids.size
         if (
             positions.shape != (size, 2)
@@ -118,9 +118,9 @@ class OpenPTVReconstructionRecords(StrictModule, NonTrainableState):
         source_id: str,
     ):
         ids = np.asarray(record_ids, dtype=np.int64).reshape((-1,))
-        positions = np.asarray(positions_xyz, dtype=float)
+        positions = np.asarray(positions_xyz, dtype=np.float64)
         targets = np.asarray(target_indices, dtype=np.int64)
-        valid_ = np.asarray(valid, dtype=bool).reshape((-1,))
+        valid_ = np.asarray(valid, dtype=np.bool_).reshape((-1,))
         size = ids.size
         if (
             positions.shape != (size, 3)
@@ -174,10 +174,10 @@ class OpenPTVTrackRecords(StrictModule, NonTrainableState):
         source_id: str,
     ):
         tracks = np.asarray(track_ids, dtype=np.int64).reshape((-1,))
-        times_ = np.asarray(times, dtype=float).reshape((-1,))
-        positions = np.asarray(positions_xyz, dtype=float)
-        valid_ = np.asarray(valid, dtype=bool).reshape((-1,))
-        resets = np.asarray(reset_before, dtype=bool).reshape((-1,))
+        times_ = np.asarray(times, dtype=np.float64).reshape((-1,))
+        positions = np.asarray(positions_xyz, dtype=np.float64)
+        valid_ = np.asarray(valid, dtype=np.bool_).reshape((-1,))
+        resets = np.asarray(reset_before, dtype=np.bool_).reshape((-1,))
         size = tracks.size
         if positions.shape != (size, 3) or any(
             value.size != size for value in (times_, valid_, resets)
@@ -236,7 +236,7 @@ def read_openptv_targets(
         np.column_stack((extent_y, extent_x)),
         intensity,
         correspondence,
-        np.ones(count, dtype=bool),
+        np.ones(count, dtype=np.bool_),
         camera_id=camera_id,
         frame_index=frame_index,
         source_id=source_id,
@@ -327,7 +327,7 @@ def read_openptv_reconstruction(
         ids,
         table[:, 1:4],
         targets,
-        np.ones(count, dtype=bool),
+        np.ones(count, dtype=np.bool_),
         frame_index=frame_index,
         frame_id=frame_id,
         source_id=source_id,
@@ -394,7 +394,7 @@ def read_openptv_tracks(
     """Reconstruct stable track identities from reciprocal rt_is/ptv_is links."""
     rt_paths = tuple(Path(path) for path in reconstruction_paths)
     ptv_paths = tuple(Path(path) for path in linkage_paths)
-    times_ = np.asarray(tuple(times), dtype=float)
+    times_ = np.asarray(tuple(times), dtype=np.float64)
     if (
         not rt_paths
         or len(rt_paths) != len(ptv_paths)
@@ -426,7 +426,7 @@ def read_openptv_tracks(
     reset_frames: list[np.ndarray] = []
     for frame, prev in enumerate(previous):
         ids = np.full(prev.shape, -1, dtype=np.int64)
-        resets = np.zeros(prev.shape, dtype=bool)
+        resets = np.zeros(prev.shape, dtype=np.bool_)
         for index, predecessor in enumerate(prev):
             if predecessor >= 0 and frame > 0:
                 if (
@@ -472,7 +472,7 @@ def read_openptv_tracks(
         track_ids,
         sample_times,
         position_values,
-        np.ones(track_ids.shape, dtype=bool),
+        np.ones(track_ids.shape, dtype=np.bool_),
         resets,
         frame_id=frame_id,
         source_id=source_id,
@@ -523,7 +523,7 @@ def write_openptv_tracks(
     positions = np.asarray(records.positions_xyz)[valid]
     resets = np.asarray(records.reset_before)[valid]
     unique_times = np.unique(times)
-    frame_numbers_ = tuple(int(value) for value in frame_numbers)
+    frame_numbers_ = tuple(frame_numbers)
     if len(frame_numbers_) != unique_times.size:
         raise ValueError("frame_numbers must contain one value per unique track time.")
     indices_by_frame = [np.flatnonzero(times == time) for time in unique_times]
@@ -536,8 +536,8 @@ def write_openptv_tracks(
     for frame, (number, indices) in enumerate(
         zip(frame_numbers_, indices_by_frame, strict=True)
     ):
-        prev = np.full(indices.size, -1, dtype=int)
-        next_ = np.full(indices.size, -2, dtype=int)
+        prev = np.full(indices.size, -1, dtype=np.int64)
+        next_ = np.full(indices.size, -2, dtype=np.int64)
         for local, sample in enumerate(indices):
             same_track = tracks == tracks[sample]
             if frame > 0 and not resets[sample]:
@@ -558,7 +558,7 @@ def write_openptv_tracks(
             (
                 np.arange(1, indices.size + 1),
                 positions[indices],
-                np.full((indices.size, 4), -1, dtype=int),
+                np.full((indices.size, 4), -1, dtype=np.int64),
             )
         )
         link_table = np.column_stack((prev, next_, positions[indices]))
@@ -636,8 +636,8 @@ def _counted_table(path: Path, /, *, columns: int) -> tuple[int, np.ndarray]:
             AdapterStatus.MALFORMED_SOURCE, f"{path} count does not match its records."
         )
     if count == 0:
-        return 0, np.empty((0, columns), dtype=float)
-    table = np.loadtxt(nonempty, dtype=float, ndmin=2)
+        return 0, np.empty((0, columns), dtype=np.float64)
+    table = np.loadtxt(nonempty, dtype=np.float64, ndmin=2)
     if table.shape != (count, columns) or not np.all(np.isfinite(table)):
         raise AdapterError(
             AdapterStatus.MALFORMED_SOURCE, f"{path} has malformed or nonfinite records."

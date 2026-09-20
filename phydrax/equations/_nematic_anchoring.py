@@ -57,7 +57,7 @@ class NematicAnchoringPlan(StrictModule, NonTrainableState):
             raise TypeError("basis must be NematicTensorBasis.")
         if not isinstance(kind, NematicAnchoringKind):
             raise TypeError("kind must be NematicAnchoringKind.")
-        mask = jnp.asarray(boundary_mask, dtype=bool)
+        mask = jnp.asarray(boundary_mask, dtype=jnp.bool_)
         strength_ = jnp.asarray(strength)
         order = jnp.asarray(scalar_order, dtype=strength_.dtype)
         if mask.ndim < 1 or strength_.shape != () or order.shape != ():

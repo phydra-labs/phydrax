@@ -74,9 +74,7 @@ def _fixed_integrator():
     )
     mesh = _mesh(case_id)
     return DirectCollocationQualificationSetup(
-        DirectCollocationQualificationCase(
-            case_id, "analytic", "analytic", True, False
-        ),
+        DirectCollocationQualificationCase(case_id, "analytic", "analytic", True, False),
         problem,
         _plan(case_id),
         mesh.nodes[:, None],
@@ -170,9 +168,7 @@ def _active_path_constraint():
         system_id=f"qualification:{case_id}:system",
     )
     path = phx.control.BoundedPathConstraint(
-        lambda time, state, control, args: (
-            control[0] - jnp.where(time < 0.25, 0.2, 1.0)
-        ),
+        lambda time, state, control, args: control[0] - jnp.where(time < 0.25, 0.2, 1.0),
         upper=0.0,
         constraint_id=f"{case_id}:control-limit",
     )
@@ -190,7 +186,7 @@ def _active_path_constraint():
         trajectory_constraints=(terminal,),
         problem_id=f"qualification:{case_id}",
     )
-    mesh = _mesh(case_id)
+    _mesh(case_id)
     return DirectCollocationQualificationSetup(
         DirectCollocationQualificationCase(
             case_id, "active-inequality", "analytic-kkt", True, False
@@ -228,8 +224,7 @@ def _shared_parameter():
         system,
         initial_state=jnp.zeros((2, 1)),
         trajectory_cost=lambda trajectory, context: (
-            (context.parameters[0] - 2.0) ** 2
-            + (trajectory.final_state[1, 0] - 2.0) ** 2
+            (context.parameters[0] - 2.0) ** 2 + (trajectory.final_state[1, 0] - 2.0) ** 2
         ),
         path_constraints=(path,),
         trajectory_constraints=(terminal,),
@@ -356,7 +351,9 @@ def _nonholonomic_constraint():
         problem_id=f"qualification:{case_id}",
     )
     mesh = _mesh(case_id)
-    states = jnp.stack((mesh.nodes, jnp.zeros_like(mesh.nodes), jnp.zeros_like(mesh.nodes)), axis=-1)
+    states = jnp.stack(
+        (mesh.nodes, jnp.zeros_like(mesh.nodes), jnp.zeros_like(mesh.nodes)), axis=-1
+    )
     controls = jnp.broadcast_to(jnp.asarray((1.0, 0.0, 0.0)), (mesh.num_steps, 3))
     return DirectCollocationQualificationSetup(
         DirectCollocationQualificationCase(

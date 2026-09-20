@@ -227,7 +227,7 @@ class EmbeddedBoundaryPlan(StrictModule, NonTrainableState):
             raise TypeError("Embedded-boundary connectivity must be polygonal.")
         vertices = np.asarray(geometry.vertices)
         level_values = np.asarray(
-            self.level_set(jnp.asarray(vertices), args), dtype=float
+            self.level_set(jnp.asarray(vertices), args), dtype=jnp.float64
         )
         if level_values.shape != (vertices.shape[0],) or np.any(
             ~np.isfinite(level_values)
@@ -239,19 +239,19 @@ class EmbeddedBoundaryPlan(StrictModule, NonTrainableState):
         cell_vertices = np.asarray(connectivity.cell_vertices, dtype=np.int32)
         cell_kinds = np.asarray(connectivity.cell_kinds, dtype=np.int32)
         cell_count = geometry.cell_count
-        cell_volumes = np.asarray(geometry.cell_volumes, dtype=float)
+        cell_volumes = np.asarray(geometry.cell_volumes, dtype=np.float64)
         fluid_volumes = np.zeros((cell_count,))
         solid_volumes = np.zeros((cell_count,))
         fluid_centers = np.zeros((cell_count, 2))
         cut_centers = np.zeros((cell_count, 2))
         cut_normals = np.zeros((cell_count, 2))
         cut_measures = np.zeros((cell_count,))
-        cut_active = np.zeros((cell_count,), dtype=bool)
+        cut_active = np.zeros((cell_count,), dtype=np.bool_)
         fluid_polygon_vertices = np.zeros(
             (cell_count, _EMBEDDED_FLUID_VERTEX_CAPACITY, 2)
         )
         fluid_polygon_valid = np.zeros(
-            (cell_count, _EMBEDDED_FLUID_VERTEX_CAPACITY), dtype=bool
+            (cell_count, _EMBEDDED_FLUID_VERTEX_CAPACITY), dtype=np.bool_
         )
         for cell in range(cell_count):
             arity = int(cell_kinds[cell])
@@ -260,8 +260,7 @@ class EmbeddedBoundaryPlan(StrictModule, NonTrainableState):
             values = level_values[indices]
             if np.all(values == 0.0):
                 raise ValueError(
-                    f"Embedded boundary in cell {cell} is identically zero and "
-                    "has ambiguous crossings."
+                    f"Embedded boundary in cell {cell} is identically zero and has ambiguous crossings."
                 )
             clipped, intersections = _clip_positive_polygon(polygon, values)
             if len(intersections) not in (0, 2):
@@ -304,12 +303,11 @@ class EmbeddedBoundaryPlan(StrictModule, NonTrainableState):
                 outward_projection = np.dot(normal, midpoint - fluid_center)
                 if (
                     not np.isfinite(normal_norm)
-                    or abs(normal_norm - 1.0) > 256.0 * np.finfo(float).eps
+                    or abs(normal_norm - 1.0) > 256.0 * np.finfo(np.float64).eps
                     or outward_projection <= 0.0
                 ):
                     raise ValueError(
-                        f"Embedded cut face in cell {cell} must have a unit "
-                        "outward normal."
+                        f"Embedded cut face in cell {cell} must have a unit outward normal."
                     )
                 cut_centers[cell] = midpoint
                 cut_normals[cell] = normal
@@ -338,8 +336,7 @@ class EmbeddedBoundaryPlan(StrictModule, NonTrainableState):
         for face, (start_value, stop_value) in enumerate(edge_values):
             if start_value == 0.0 and stop_value == 0.0:
                 raise ValueError(
-                    f"Embedded boundary coincides with face {face}; crossings are "
-                    "ambiguous."
+                    f"Embedded boundary coincides with face {face}; crossings are ambiguous."
                 )
             if start_value >= 0.0 and stop_value >= 0.0:
                 open_fraction[face] = 1.0
@@ -374,21 +371,20 @@ class EmbeddedBoundaryPlan(StrictModule, NonTrainableState):
             or np.any(open_fraction > 1.0)
         ):
             raise ValueError("Embedded face-open fractions lie outside [0, 1].")
-        face_measures = np.asarray(geometry.face_measures, dtype=float)
+        face_measures = np.asarray(geometry.face_measures, dtype=np.float64)
         open_measures = open_fraction * face_measures
         if np.any(~np.isfinite(open_measures)) or not np.array_equal(
             open_measures, open_fraction * face_measures
         ):
             raise ValueError(
-                "Embedded open-face measures must equal open fractions times "
-                "base-face measures."
+                "Embedded open-face measures must equal open fractions times base-face measures."
             )
 
         tangent = edge_points[:, 1] - edge_points[:, 0]
         canonical_area = np.stack((tangent[:, 1], -tangent[:, 0]), axis=-1)
         cell_edges = np.asarray(connectivity.cell_edges, dtype=np.int32)
         cell_signs = np.asarray(connectivity.cell_edge_signs)
-        cell_valid = np.asarray(connectivity.cell_edge_valid, dtype=bool)
+        cell_valid = np.asarray(connectivity.cell_edge_valid, dtype=np.bool_)
 
         policy = self.stabilization_policy
         body_tags = np.full((cell_count,), self.body_tag, dtype=np.int32)
@@ -422,7 +418,7 @@ class EmbeddedBoundaryPlan(StrictModule, NonTrainableState):
         target_active = np.asarray(active_array)
         target_cut_active = np.asarray(cut_array)
         target_fluid_polygon_vertices = np.asarray(fluid_polygon_array)
-        target_fluid_polygon_valid = np.asarray(fluid_polygon_valid_array, dtype=bool)
+        target_fluid_polygon_valid = np.asarray(fluid_polygon_valid_array, dtype=np.bool_)
         target_open_fraction = np.asarray(open_fraction_array)
         target_open_measures = np.asarray(open_measure_array)
         target_open_face_segments = np.asarray(open_face_segment_array)
@@ -499,8 +495,7 @@ class EmbeddedBoundaryPlan(StrictModule, NonTrainableState):
             or np.any(target_open_face_segments[~target_open] != 0.0)
         ):
             raise ValueError(
-                "Embedded open-face segments must be finite and nondegenerate when "
-                "open, with exact closed-face zeros."
+                "Embedded open-face segments must be finite and nondegenerate when open, with exact closed-face zeros."
             )
         normal_norm = np.linalg.norm(target_cut_normals[target_cut_active], axis=-1)
         normal_tolerance = 256.0 * np.finfo(numpy_target_dtype).eps
@@ -642,7 +637,6 @@ class EmbeddedBoundaryPlan(StrictModule, NonTrainableState):
         realized_tolerance_policy_id = canonical_fingerprint(
             {
                 "kind": "embedded-boundary-realized-tolerance-policy",
-                "schema_version": 2,
                 "stabilization_policy": policy.policy_id,
                 "metric_dtype": numpy_target_dtype.str,
                 "machine_epsilon": float(machine_epsilon),
@@ -693,7 +687,7 @@ class EmbeddedBoundaryPlan(StrictModule, NonTrainableState):
             and np.all(cut_closure_defect <= cut_closure_tolerance)
             and np.all(fluid_polygon_defect <= fluid_polygon_tolerance)
             and np.all(open_segment_defect <= open_segment_tolerance),
-            dtype=bool,
+            dtype=np.bool_,
         )
         status = np.asarray(
             int(

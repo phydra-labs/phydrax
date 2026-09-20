@@ -36,11 +36,11 @@ class OperatorTrialSubspace(StrictModule):
 
     @property
     def dimension(self) -> int:
-        return int(self.basis.shape[0])
+        return self.basis.shape[0]
 
     @property
     def capacity(self) -> int:
-        return int(self.basis.shape[1])
+        return self.basis.shape[1]
 
 
 def operator_trial_subspace(
@@ -62,14 +62,14 @@ def operator_trial_subspace(
         raise ValueError(
             "Trial-subspace values must append one mode axis to the sample/value axes."
         )
-    if tuple(int(size) for size in values.shape[:sample_rank]) != sample_shape:
+    if tuple(values.shape[:sample_rank]) != sample_shape:
         raise ValueError(
             "Trial-subspace values must describe exactly one case on the declared support."
         )
-    capacity = int(values.shape[-1])
+    capacity = values.shape[-1]
     if capacity < 1:
         raise ValueError("Trial-subspace mode capacity must be positive.")
-    value_shape = tuple(int(size) for size in values.shape[sample_rank:-1])
+    value_shape = tuple(values.shape[sample_rank:-1])
     coordinate_size = math.prod(sample_shape + value_shape)
     if coordinate_size != space.size:
         raise ValueError(
@@ -77,8 +77,8 @@ def operator_trial_subspace(
             f"got {coordinate_size} and {space.size}."
         )
     if samples.mask is not None:
-        mask = jnp.asarray(samples.mask, dtype=bool)
-        if tuple(int(size) for size in mask.shape) != sample_shape:
+        mask = jnp.asarray(samples.mask, dtype=jnp.bool_)
+        if tuple(mask.shape) != sample_shape:
             raise ValueError(
                 "Trial-subspace masks must describe one unbatched sample support."
             )

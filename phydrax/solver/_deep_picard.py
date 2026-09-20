@@ -718,7 +718,7 @@ def solve_deep_picard(
     return DeepPicardResult(
         solver=current,
         diagnostics=diagnostics,
-        completed_iterations=int(diagnostics.steps.shape[0]),
+        completed_iterations=diagnostics.steps.shape[0],
         converged=converged,
         problem_id=problem.problem_id,
         process_id=problem.process_id,

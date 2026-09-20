@@ -81,7 +81,7 @@ def _finite_array(value: ArrayLike, name: str, ndim: int, /) -> np.ndarray:
         raise ValueError(f"{name} must have rank {ndim}.")
     if result.dtype.kind not in "fciu" or np.any(~np.isfinite(result)):
         raise ValueError(f"{name} must be a finite real or complex array.")
-    return result.astype(float, copy=False) if result.dtype.kind in "iu" else result
+    return result.astype("float64", copy=False) if result.dtype.kind in "iu" else result
 
 
 def _real_nonnegative_vector(value: ArrayLike, name: str, /) -> np.ndarray:
@@ -93,7 +93,7 @@ def _real_nonnegative_vector(value: ArrayLike, name: str, /) -> np.ndarray:
         or np.any(result < 0)
     ):
         raise ValueError(f"{name} must be a finite nonnegative real vector.")
-    return result.astype(float, copy=False)
+    return result.astype("float64", copy=False)
 
 
 def _canonical_indices(
@@ -122,8 +122,8 @@ class AffineSlice(StrictModule, NonTrainableState):
         dtype = np.result_type(linear_.dtype, offset_.dtype)
         self.linear = jnp.asarray(linear_, dtype=dtype)
         self.offset = jnp.asarray(offset_, dtype=dtype)
-        self.ambient_dimension = int(linear_.shape[1])
-        self.codimension = int(linear_.shape[0])
+        self.ambient_dimension = linear_.shape[1]
+        self.codimension = linear_.shape[0]
         self.slice_id = canonical_fingerprint(
             {
                 "kind": "polynomial-affine-slice",
@@ -325,7 +325,7 @@ class WitnessSet(StrictModule, NonTrainableState):
         self.slice = slice_
         self.points = jnp.asarray(points_, dtype=dtype)
         self.residual_norms = jnp.asarray(residuals)
-        self.degree = int(points_.shape[0])
+        self.degree = points_.shape[0]
         self.witness_id = canonical_fingerprint(
             {
                 "kind": "polynomial-witness-set",
@@ -393,8 +393,7 @@ class MultigradedWitnessCollection(StrictModule, NonTrainableState):
                 )
             ):
                 raise ValueError(
-                    "Each multidegree must respect group dimensions and sum to "
-                    "the witness dimension."
+                    "Each multidegree must respect group dimensions and sum to the witness dimension."
                 )
             if witness.system_id != system or witness.ambient_dimension != ambient:
                 raise ValueError(
@@ -512,7 +511,7 @@ class PseudoWitnessSet(StrictModule, NonTrainableState):
         source_points_ = _finite_array(source_points, "source_points", 2)
         image_points_ = _finite_array(image_points, "image_points", 2)
         residuals = _real_nonnegative_vector(residual_norms, "residual_norms")
-        point_count = int(source_points_.shape[0])
+        point_count = source_points_.shape[0]
         degree = _positive_integer(image_degree, "image_degree")
         fiber_dimension = source_dimension_ - image_dimension_
         if source_slice.codimension != fiber_dimension:

@@ -38,9 +38,7 @@ def main() -> None:
 
     def running_cost(time, state, control, parameters):
         del time, parameters
-        force = runtime.evaluate(
-            runtime.unpack_state(state), control[0]
-        ).total_force
+        force = runtime.evaluate(runtime.unpack_state(state), control[0]).total_force
         return ((force - target_force) / target_force) ** 2
 
     problem = ControlProblem(
@@ -68,10 +66,11 @@ def main() -> None:
 
     def exact_force(trajectory):
         return jax.vmap(
-            lambda state, control: runtime.evaluate(
-                runtime.unpack_state(state), control[0]
-            ).total_force
+            lambda state, control: (
+                runtime.evaluate(runtime.unpack_state(state), control[0]).total_force
+            )
         )(trajectory.states[:-1], trajectory.controls)
+
     exact_force_operator = SkeletalReplayObservationOperator(
         exact_force, "potvin-fuglevand-relative-force-observation"
     )
@@ -80,7 +79,7 @@ def main() -> None:
         problem,
         parameterization,
         exact_force_operator,
-        jnp.ones((2,), dtype=bool),
+        jnp.ones((2,), dtype="bool"),
         "constant-state-force-surrogate",
         "relative_muscle_force",
         absolute_tolerance=1.0e-8,

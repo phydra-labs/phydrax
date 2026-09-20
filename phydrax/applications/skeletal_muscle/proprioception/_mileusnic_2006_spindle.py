@@ -37,7 +37,7 @@ def _scalar(value: ArrayLike, name: str, /) -> Array:
     if result.shape != ():
         raise ValueError(f"{name} must be scalar.")
     if not jnp.issubdtype(result.dtype, jnp.inexact):
-        result = result.astype(float)
+        result = result.astype("float64")
     return result
 
 
@@ -99,6 +99,7 @@ class MileusnicSpindle2006Parameters(StrictModule):
             jnp.asarray(0.149),
             jnp.asarray(0.205),
         )
+
 
 def _parameters_admissible(parameters: MileusnicSpindle2006Parameters, /) -> Array:
     vector_values = (
@@ -362,7 +363,9 @@ class PreparedMileusnicSpindle2006(StrictModule):
             )
             + active_force
         )
-        denominator = 1.0 + self.parameters.polar_stiffness / self.parameters.series_stiffness
+        denominator = (
+            1.0 + self.parameters.polar_stiffness / self.parameters.series_stiffness
+        )
         tension = numerator / denominator
         return MileusnicSpindleState(
             tension,
@@ -393,15 +396,9 @@ class PreparedMileusnicSpindle2006(StrictModule):
         input_value: MileusnicSpindleInput,
         /,
     ) -> MileusnicSpindleRates:
-        dynamic_target, static_target, chain_target = self._fusimotor_targets(
-            input_value
-        )
-        dynamic_activation = jnp.asarray(
-            (state.bag1_dynamic_activation, 0.0, 0.0)
-        )
-        static_activation = jnp.asarray(
-            (0.0, state.bag2_static_activation, chain_target)
-        )
+        dynamic_target, static_target, chain_target = self._fusimotor_targets(input_value)
+        dynamic_activation = jnp.asarray((state.bag1_dynamic_activation, 0.0, 0.0))
+        static_activation = jnp.asarray((0.0, state.bag2_static_activation, chain_target))
         beta = (
             self.parameters.beta_zero
             + self.parameters.beta_dynamic * dynamic_activation
@@ -438,9 +435,7 @@ class PreparedMileusnicSpindle2006(StrictModule):
         )
         tension_acceleration = self.parameters.series_stiffness * (
             input_value.fascicle_acceleration_per_s2
-            - (
-                state.branch_tension_force_unit - damping - passive - active_force
-            )
+            - (state.branch_tension_force_unit - damping - passive - active_force)
             / self.parameters.polar_mass
         )
         return MileusnicSpindleRates(
@@ -478,9 +473,9 @@ class PreparedMileusnicSpindle2006(StrictModule):
         primary_branch = self.parameters.primary_gain_pps * sensory_stretch
         first = primary_branch[0]
         remaining = primary_branch[1] + primary_branch[2]
-        primary = jnp.maximum(first, remaining) + self.parameters.primary_occlusion * jnp.minimum(
+        primary = jnp.maximum(
             first, remaining
-        )
+        ) + self.parameters.primary_occlusion * jnp.minimum(first, remaining)
         polar_stretch = jnp.maximum(
             polar_length - self.parameters.secondary_polar_threshold,
             0.0,
@@ -516,8 +511,8 @@ class PreparedMileusnicSpindle2006(StrictModule):
     ) -> MileusnicSpindleCandidate:
         step = _scalar(step_s, "step_s")
         output = self.output(state, input_value)
-        step_valid = jnp.isfinite(step) & (step > 0.0) & (
-            step <= self.plan.maximum_step_s
+        step_valid = (
+            jnp.isfinite(step) & (step > 0.0) & (step <= self.plan.maximum_step_s)
         )
         input_values = jnp.stack(
             (
@@ -572,9 +567,9 @@ class PreparedMileusnicSpindle2006(StrictModule):
             jnp.isfinite(output.primary_branch_pps)
         )
         status = jnp.asarray(int(MileusnicSpindleStatus.SUCCESS), dtype=jnp.int32)
-        status |= jnp.where(
-            finite, 0, int(MileusnicSpindleStatus.NONFINITE)
-        ).astype(jnp.int32)
+        status |= jnp.where(finite, 0, int(MileusnicSpindleStatus.NONFINITE)).astype(
+            jnp.int32
+        )
         status |= jnp.where(
             state_valid, 0, int(MileusnicSpindleStatus.INVALID_STATE)
         ).astype(jnp.int32)
@@ -609,8 +604,7 @@ def _state_increment(
         + scale * rates.branch_tension_rate_force_unit_per_s,
         state.branch_tension_rate_force_unit_per_s
         + scale * rates.branch_tension_acceleration_force_unit_per_s2,
-        state.bag1_dynamic_activation
-        + scale * rates.bag1_dynamic_activation_per_s,
+        state.bag1_dynamic_activation + scale * rates.bag1_dynamic_activation_per_s,
         state.bag2_static_activation + scale * rates.bag2_static_activation_per_s,
     )
 

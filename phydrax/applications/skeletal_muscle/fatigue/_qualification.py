@@ -79,7 +79,7 @@ class LiuBrownYue2002QualificationPlan(StrictModule, NonTrainableState):
             raise ValueError("sustained_compartments must have shape (steps>=2, 3).")
         if recovery.ndim != 2 or recovery.shape[1] != 3 or recovery.shape[0] < 2:
             raise ValueError("recovery_compartments must have shape (steps>=2, 3).")
-        dtype = jnp.result_type(sustained, recovery, float)
+        dtype = jnp.result_type(sustained, recovery, jnp.float64)
         sustained = sustained.astype(dtype)
         recovery = recovery.astype(dtype)
         sustained_total = jnp.sum(sustained, axis=1)
@@ -98,12 +98,15 @@ class LiuBrownYue2002QualificationPlan(StrictModule, NonTrainableState):
         sustained_increases = fatigued_sustained[-1] > fatigued_sustained[0] + tolerance
         recovery_nonincreasing = jnp.all(jnp.diff(fatigued_recovery) <= tolerance)
         active_non_decreasing = jnp.all(jnp.diff(active_recovery) >= -tolerance)
-        transfer_conserved = jnp.max(
-            jnp.abs(
-                (active_recovery - active_recovery[0])
-                + (fatigued_recovery - fatigued_recovery[0])
+        transfer_conserved = (
+            jnp.max(
+                jnp.abs(
+                    (active_recovery - active_recovery[0])
+                    + (fatigued_recovery - fatigued_recovery[0])
+                )
             )
-        ) <= self.conservation_tolerance
+            <= self.conservation_tolerance
+        )
         finite = jnp.all(jnp.isfinite(sustained)) & jnp.all(jnp.isfinite(recovery))
         valid = (
             finite

@@ -145,9 +145,9 @@ class MemberNetworkInputs(StrictModule):
             else jnp.asarray(initial_temperature, dtype=dtype)
         )
         self.cable_active = (
-            jnp.ones(self.rest_lengths.shape, dtype=bool)
+            jnp.ones(self.rest_lengths.shape, dtype=jnp.bool_)
             if cable_active is None
-            else jnp.asarray(cable_active, dtype=bool)
+            else jnp.asarray(cable_active, dtype=jnp.bool_)
         )
 
 
@@ -279,7 +279,7 @@ def _signature(inputs: MemberNetworkInputs, /) -> tuple[Any, ...]:
     leaves, tree = jax.tree.flatten(inputs)
     return (
         str(tree),
-        tuple(tuple(int(size) for size in leaf.shape) for leaf in leaves),
+        tuple(tuple(leaf.shape) for leaf in leaves),
         tuple(str(leaf.dtype) for leaf in leaves),
     )
 

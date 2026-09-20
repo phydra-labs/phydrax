@@ -42,9 +42,9 @@ def _signature_shape(signature: Sequence[ArrayLike], /) -> tuple[tuple[Array, ..
     levels = tuple(jnp.asarray(level) for level in signature)
     if not levels:
         raise ValueError("A signature must contain at least one level.")
-    if levels[0].ndim < 1 or int(levels[0].shape[-1]) <= 0:
+    if levels[0].ndim < 1 or levels[0].shape[-1] <= 0:
         raise ValueError("Signature level one must end in a non-empty driver axis.")
-    dimension = int(levels[0].shape[-1])
+    dimension = levels[0].shape[-1]
     batch_shape = levels[0].shape[:-1]
     for degree, level in enumerate(levels, start=1):
         expected = batch_shape + (dimension,) * degree
@@ -104,7 +104,7 @@ def tensor_exponential(increment: ArrayLike, depth: int, /) -> tuple[Array, ...]
     """Return the truncated tensor exponential of one or batched increments."""
     value = _inexact_array(increment)
     resolved_depth = _validate_depth(depth)
-    if value.ndim < 1 or int(value.shape[-1]) <= 0:
+    if value.ndim < 1 or value.shape[-1] <= 0:
         raise ValueError("increment must end in a non-empty driver axis.")
     levels: list[Array] = [value]
     for degree in range(2, resolved_depth + 1):
@@ -180,12 +180,12 @@ def piecewise_linear_signature(
     """
     values = _inexact_array(increments)
     resolved_depth = _validate_depth(depth)
-    if values.ndim < 2 or int(values.shape[-1]) <= 0:
+    if values.ndim < 2 or values.shape[-1] <= 0:
         raise ValueError(
             "increments must have shape batch_shape + (num_segments, dimension)."
         )
-    dimension = int(values.shape[-1])
-    batch_shape = tuple(int(size) for size in values.shape[:-2])
+    dimension = values.shape[-1]
+    batch_shape = tuple(values.shape[:-2])
     initial = _signature_identity(
         batch_shape,
         dimension,
@@ -300,7 +300,7 @@ class PrimitiveBasis(StrictModule):
                         [expansions[column].get(words[row], 0) for column in indices]
                         for row in indices
                     ],
-                    dtype=float,
+                    dtype=np.float64,
                 )
                 inverse = tuple(
                     map(
@@ -362,7 +362,7 @@ class PrimitiveBasis(StrictModule):
     def primitive_to_tensor(self, coefficients: ArrayLike, /) -> tuple[Array, ...]:
         """Expand packed primitive coefficients into tensor word coefficients."""
         values = jnp.asarray(coefficients)
-        if values.ndim < 1 or int(values.shape[-1]) != self.size:
+        if values.ndim < 1 or values.shape[-1] != self.size:
             raise ValueError(f"coefficients must end in primitive axis {self.size}.")
         levels: list[Array] = []
         for degree, indices in enumerate(self.degree_indices, start=1):
@@ -443,7 +443,7 @@ class LogSignatureControl(AbstractRoughControl):
         self.sample_shape = sample_shape
         self.dimension = primitive_basis.dimension
         self.source_dimension = source_dimension
-        self.num_steps = int(times.size) - 1
+        self.num_steps = times.size - 1
         self.depth = primitive_basis.depth
         self.joint_time = joint_time
         self.source_id = source_id
@@ -477,10 +477,10 @@ class LogSignatureControl(AbstractRoughControl):
     ) -> LogSignatureControl:
         """Lift fine path values and aggregate them exactly onto coarse knots."""
         resolved_depth = _validate_depth(depth)
-        nodes = jnp.asarray(times, dtype=float)
-        samples = tuple(int(size) for size in sample_shape)
+        nodes = jnp.asarray(times, dtype=jnp.float64)
+        samples = tuple(sample_shape)
         path_values = _inexact_array(values)
-        if nodes.ndim != 1 or int(nodes.size) < 2:
+        if nodes.ndim != 1 or nodes.size < 2:
             raise ValueError("times must contain at least two fine knots.")
         if bool(jnp.any(~jnp.isfinite(nodes))) or bool(jnp.any(jnp.diff(nodes) <= 0.0)):
             raise ValueError("times must be finite and strictly increasing.")
@@ -490,17 +490,18 @@ class LogSignatureControl(AbstractRoughControl):
             raise ValueError(
                 "values must have shape sample_shape + (num_times, dimension)."
             )
-        if path_values.shape[: len(samples)] != samples or path_values.shape[
-            len(samples)
-        ] != int(nodes.size):
+        if (
+            path_values.shape[: len(samples)] != samples
+            or path_values.shape[len(samples)] != nodes.size
+        ):
             raise ValueError("values must align with sample_shape and fine times.")
-        source_dimension = int(path_values.shape[-1])
+        source_dimension = path_values.shape[-1]
         if source_dimension <= 0 or bool(jnp.any(~jnp.isfinite(path_values))):
             raise ValueError("values must have a non-empty finite driver axis.")
         if coarse_indices is not None and coarse_times is not None:
             raise ValueError("Specify coarse_indices or coarse_times, not both.")
         if coarse_times is not None:
-            requested = np.asarray(coarse_times, dtype=float)
+            requested = np.asarray(coarse_times, dtype=np.float64)
             fine_host = np.asarray(jax.device_get(nodes))
             positions = np.searchsorted(fine_host, requested)
             if (
@@ -511,19 +512,19 @@ class LogSignatureControl(AbstractRoughControl):
                     fine_host[np.minimum(positions, fine_host.size - 1)],
                     requested,
                     rtol=0.0,
-                    atol=100.0 * np.finfo(float).eps,
+                    atol=100.0 * np.finfo(np.float64).eps,
                 )
             ):
                 raise ValueError("coarse_times must be fine knots.")
-            indices = tuple(int(index) for index in positions)
+            indices = tuple(positions)
         elif coarse_indices is None:
-            indices = tuple(range(int(nodes.size)))
+            indices = tuple(range(nodes.size))
         else:
-            indices = tuple(int(index) for index in coarse_indices)
+            indices = tuple(coarse_indices)
         if (
             len(indices) < 2
             or indices[0] != 0
-            or indices[-1] != int(nodes.size) - 1
+            or indices[-1] != nodes.size - 1
             or any(right <= left for left, right in pairwise(indices))
         ):
             raise ValueError(
@@ -548,8 +549,8 @@ class LogSignatureControl(AbstractRoughControl):
             resolved_source_id = realization.realization_id
         if bool(joint_time):
             time_values = jnp.broadcast_to(
-                nodes.reshape((1,) * len(samples) + (int(nodes.size), 1)),
-                samples + (int(nodes.size), 1),
+                nodes.reshape((1,) * len(samples) + (nodes.size, 1)),
+                samples + (nodes.size, 1),
             )
             lifted_values = jnp.concatenate((time_values, path_values), axis=-1)
         else:
@@ -567,7 +568,7 @@ class LogSignatureControl(AbstractRoughControl):
             )
             for level in range(resolved_depth)
         )
-        basis = PrimitiveBasis(int(lifted_values.shape[-1]), resolved_depth)
+        basis = PrimitiveBasis(lifted_values.shape[-1], resolved_depth)
         tensor_log = tensor_logarithm(signature_levels)
         log_coefficients = basis.tensor_to_primitive(tensor_log)
         return cls(

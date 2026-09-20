@@ -53,7 +53,7 @@ class ChemicalConditionalAffineScaling(StrictModule):
         if state.ndim != 1:
             raise ValueError("state_scale must be one-dimensional.")
         if not jnp.issubdtype(state.dtype, jnp.inexact):
-            state = state.astype(float)
+            state = state.astype("float64")
         drivers = jnp.asarray(driver_scale, dtype=state.dtype)
         duration = jnp.asarray(duration_scale, dtype=state.dtype)
         if drivers.ndim != 1:
@@ -168,11 +168,11 @@ class StoichiometricRateCorrection(StrictModule):
 
     @property
     def reaction_count(self) -> int:
-        return int(self.net_stoichiometry.shape[0])
+        return self.net_stoichiometry.shape[0]
 
     @property
     def species_count(self) -> int:
-        return int(self.net_stoichiometry.shape[1])
+        return self.net_stoichiometry.shape[1]
 
     def __call__(
         self,
@@ -337,7 +337,7 @@ class ChemicalConditionalAffineOperator(AbstractOperatorModel):
         if batch.single_query_name() != self.query_name:
             raise ValueError(f"Expected query {self.query_name!r}.")
         query = batch.query(self.query_name)
-        if query.coordinates is None or int(query.coordinates.shape[-1]) != 1:
+        if query.coordinates is None or query.coordinates.shape[-1] != 1:
             raise ValueError(
                 "Conditional-affine query requires one-dimensional point coordinates."
             )

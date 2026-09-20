@@ -108,7 +108,7 @@ class PiecewiseConstantRates:
         time_unit: UnitDefinition = SECOND,
     ):
         conversion_factor(time_unit, SECOND)
-        raw_boundaries = np.asarray(boundaries, dtype=float)
+        raw_boundaries = np.asarray(boundaries, dtype=np.float64)
         if raw_boundaries.ndim != 1 or raw_boundaries.size < 2:
             raise ValueError(
                 "Schedule boundaries must be a vector with at least two nodes."
@@ -130,7 +130,7 @@ class PiecewiseConstantRates:
             raise ValueError("Every runtime rate must be finite and strictly positive.")
         inverse_time = derived_unit(f"1/({time_unit.symbol})", ((time_unit, -1),))
         runtime = convert_value(
-            jnp.asarray(values, dtype=float), source=rate_unit, target=inverse_time
+            jnp.asarray(values, dtype=jnp.float64), source=rate_unit, target=inverse_time
         )
         if not np.all(np.isfinite(np.asarray(runtime))) or np.any(
             np.asarray(runtime) <= 0
@@ -284,7 +284,7 @@ class TranscriptScenario:
             ("cells", cells),
             ("genes", genes),
             ("segments", segments),
-            ("initial_states", jnp.asarray(states, dtype=float)),
+            ("initial_states", jnp.asarray(states, dtype=jnp.float64)),
             ("max_paths", capacity),
             ("max_events_per_interval", events),
         ):
@@ -368,7 +368,7 @@ class TranscriptExperiment:
             raise ValueError("The requested cell/gene path was not executed.")
         coordinates = jnp.concatenate(tuple(p.latent.support.coordinates for p in paths))
         values = jnp.concatenate(tuple(p.latent.values for p in paths))
-        edges = np.ones(coordinates.shape[0] - 1, dtype=bool)
+        edges = np.ones(coordinates.shape[0] - 1, dtype=np.bool_)
         offset = 0
         for path in paths[:-1]:
             offset += path.latent.support.capacity

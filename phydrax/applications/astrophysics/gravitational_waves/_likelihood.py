@@ -13,7 +13,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
 from ...._fingerprint import canonical_fingerprint
-from ...._strict import AbstractAttribute, StrictModule
+from ...._strict import StrictModule
 from ....uq import AbstractPosteriorTerm
 from ._data import DetectorNetworkData
 from ._detector import DetectorResponsePlan, DetectorResponseResult
@@ -54,12 +54,12 @@ class GravitationalWaveLikelihoodEvaluation(StrictModule):
 
 
 class AbstractGravitationalWaveLikelihood(StrictModule):
-    network: AbstractAttribute[DetectorNetworkData]
-    response: AbstractAttribute[DetectorResponsePlan]
-    waveform: AbstractAttribute[AbstractFrequencyDomainWaveform]
-    parameterization_id: AbstractAttribute[str]
-    likelihood_id: AbstractAttribute[str]
-    approximation_id: AbstractAttribute[str]
+    network: eqx.AbstractVar[DetectorNetworkData]
+    response: eqx.AbstractVar[DetectorResponsePlan]
+    waveform: eqx.AbstractVar[AbstractFrequencyDomainWaveform]
+    parameterization_id: eqx.AbstractVar[str]
+    likelihood_id: eqx.AbstractVar[str]
+    approximation_id: eqx.AbstractVar[str]
 
     @abstractmethod
     def detector_signal(

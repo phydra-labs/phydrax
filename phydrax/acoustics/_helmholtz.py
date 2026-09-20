@@ -21,10 +21,10 @@ def solve_helmholtz(
     angular_frequency_rad_s: float,
     /,
 ):
-    matrix = jnp.asarray(stiffness).astype(complex) - float(
+    matrix = jnp.asarray(stiffness).astype("complex128") - float(
         angular_frequency_rad_s
     ) ** 2 * jnp.asarray(mass)
-    rhs = jnp.asarray(source).astype(complex)
+    rhs = jnp.asarray(source).astype("complex128")
     space = ArraySpace((rhs.size,), dtype=matrix.dtype)
     return solve(
         LinearSystem(DenseLinearOperator(matrix, source=space, target=space)),

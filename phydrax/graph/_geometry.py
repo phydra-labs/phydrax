@@ -7,6 +7,8 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax._strict import StrictModule
+
 from ._ir import GraphIR
 
 
@@ -19,7 +21,7 @@ EdgeFeatureMode = (
 MollifierKind = Literal["wendland_c2", "bump", "hat", "gaussian"]
 
 
-class GeometryGraph(eqx.Module):
+class GeometryGraph(StrictModule):
     """Graph plus geometry-derived entity-set metadata."""
 
     graph: GraphIR
@@ -65,7 +67,7 @@ class GeometryGraph(eqx.Module):
         return InterfaceEdges(self.interface_edges)
 
 
-class QueryGraph(eqx.Module):
+class QueryGraph(StrictModule):
     """A typed bipartite query graph from source points to target points."""
 
     graph: GraphIR
@@ -144,7 +146,7 @@ def _triangle_adjacency(
 def _validate_mesh_arrays(
     mesh_vertices: Any, mesh_faces: Any, /
 ) -> tuple[np.ndarray, np.ndarray]:
-    vertices_np = np.asarray(mesh_vertices, dtype=float)
+    vertices_np = np.asarray(mesh_vertices, dtype=np.float64)
     faces_np = np.asarray(mesh_faces, dtype=np.int32)
 
     if vertices_np.ndim != 2 or vertices_np.shape[1] != 3:
@@ -156,7 +158,7 @@ def _validate_mesh_arrays(
             f"mesh_faces must have shape (n_face, 3); got {faces_np.shape!r}."
         )
 
-    n_vertex = int(vertices_np.shape[0])
+    n_vertex = vertices_np.shape[0]
     if n_vertex == 0:
         raise ValueError("mesh_vertices must contain at least one vertex.")
     if np.any(faces_np < 0) or np.any(faces_np >= n_vertex):
@@ -179,8 +181,8 @@ def _vertex_geometry(
     vertices: np.ndarray, faces: np.ndarray, /
 ) -> tuple[np.ndarray, np.ndarray]:
     area, face_normals, _centroids = _face_geometry(vertices, faces)
-    vertex_area = np.zeros((vertices.shape[0],), dtype=float)
-    vertex_normal = np.zeros_like(vertices, dtype=float)
+    vertex_area = np.zeros((vertices.shape[0],), dtype=np.float64)
+    vertex_normal = np.zeros_like(vertices, dtype=np.float64)
     for face, face_area, face_normal in zip(faces, area, face_normals, strict=True):
         vertex_area[face] += face_area / 3.0
         vertex_normal[face] += face_normal * face_area
@@ -250,12 +252,12 @@ def _node_features_from_mode(
     if mode == "positions":
         return positions
     if mode == "geometry":
-        boundary_mask = np.zeros((positions.shape[0],), dtype=bool)
+        boundary_mask = np.zeros((positions.shape[0],), dtype=np.bool_)
         boundary_mask[boundary_nodes] = True
         return {
             "positions": positions,
-            "normal": jnp.asarray(vertex_normal, dtype=float),
-            "area": jnp.asarray(vertex_area[:, None], dtype=float),
+            "normal": jnp.asarray(vertex_normal, dtype=jnp.float64),
+            "area": jnp.asarray(vertex_area[:, None], dtype=jnp.float64),
             "is_boundary": jnp.asarray(boundary_mask[:, None]),
         }
     if mode is None:
@@ -281,7 +283,7 @@ def _edge_features_from_mode(
         return distance
     if mode == "geometry":
         if face_counts is None:
-            face_counts = np.zeros((int(senders.shape[0]),), dtype=np.int32)
+            face_counts = np.zeros((senders.shape[0],), dtype=np.int32)
         unit = relative / jnp.maximum(distance, 1e-30)
         face_counts_arr = jnp.asarray(face_counts[:, None], dtype=jnp.int32)
         return {
@@ -311,7 +313,7 @@ def mesh_to_graph(
 ) -> GraphIR:
     """Convert triangular mesh arrays into canonical `GraphIR`."""
     vertices_np, faces_np = _validate_mesh_arrays(mesh_vertices, mesh_faces)
-    n_vertex = int(vertices_np.shape[0])
+    n_vertex = vertices_np.shape[0]
 
     pairs = _triangle_adjacency(
         faces_np,
@@ -322,7 +324,7 @@ def mesh_to_graph(
 
     senders = jnp.asarray(pairs[:, 0], dtype=jnp.int32)
     receivers = jnp.asarray(pairs[:, 1], dtype=jnp.int32)
-    positions = jnp.asarray(vertices_np, dtype=float)
+    positions = jnp.asarray(vertices_np, dtype=jnp.float64)
     vertex_area, vertex_normal = _vertex_geometry(vertices_np, faces_np)
     boundary_nodes, _interior_nodes, _boundary_edges, _interface_edges, face_counts = (
         _mesh_boundary_metadata(pairs, faces_np, n_vertices=n_vertex)
@@ -349,7 +351,7 @@ def mesh_to_graph(
         receivers=receivers,
         globals=globals,
         n_node=jnp.asarray([n_vertex], dtype=jnp.int32),
-        n_edge=jnp.asarray([int(senders.shape[0])], dtype=jnp.int32),
+        n_edge=jnp.asarray([senders.shape[0]], dtype=jnp.int32),
         validate=validate,
     )
 
@@ -385,7 +387,7 @@ def mesh_to_geometry_graph(
         axis=1,
     )
     boundary_nodes, interior_nodes, boundary_edges, interface_edges, _face_counts = (
-        _mesh_boundary_metadata(pairs, faces_np, n_vertices=int(vertices_np.shape[0]))
+        _mesh_boundary_metadata(pairs, faces_np, n_vertices=vertices_np.shape[0])
     )
     return GeometryGraph(
         graph,
@@ -411,7 +413,7 @@ def _point_cloud_edges(
     if k is not None and k < 0:
         raise ValueError("k must be non-negative.")
 
-    n = int(points.shape[0])
+    n = points.shape[0]
     diff = points[None, :, :] - points[:, None, :]
     dist = np.linalg.norm(diff, axis=-1)
     edges: list[tuple[int, int]] = []
@@ -453,12 +455,12 @@ def point_cloud_to_graph(
     validate: bool = True,
 ) -> GraphIR:
     """Construct a sparse graph from point-cloud radius and/or kNN neighborhoods."""
-    points_np = np.asarray(points, dtype=float)
+    points_np = np.asarray(points, dtype=np.float64)
     if points_np.ndim != 2:
         raise ValueError(
             f"points must have shape (n_point, dim); got {points_np.shape!r}."
         )
-    if int(points_np.shape[0]) == 0:
+    if points_np.shape[0] == 0:
         raise ValueError("points must contain at least one point.")
     pairs = _point_cloud_edges(
         points_np,
@@ -468,9 +470,9 @@ def point_cloud_to_graph(
     )
     senders = jnp.asarray(pairs[:, 0], dtype=jnp.int32)
     receivers = jnp.asarray(pairs[:, 1], dtype=jnp.int32)
-    positions = jnp.asarray(points_np, dtype=float)
-    zeros_area = np.zeros((int(points_np.shape[0]),), dtype=float)
-    zeros_normal = np.zeros_like(points_np, dtype=float)
+    positions = jnp.asarray(points_np, dtype=jnp.float64)
+    zeros_area = np.zeros((points_np.shape[0],), dtype=np.float64)
+    zeros_normal = np.zeros_like(points_np, dtype=np.float64)
     nodes = _node_features_from_mode(
         node_features,
         positions,
@@ -491,17 +493,17 @@ def point_cloud_to_graph(
         senders=senders,
         receivers=receivers,
         globals=globals,
-        n_node=jnp.asarray([int(points_np.shape[0])], dtype=jnp.int32),
-        n_edge=jnp.asarray([int(senders.shape[0])], dtype=jnp.int32),
+        n_node=jnp.asarray([points_np.shape[0]], dtype=jnp.int32),
+        n_edge=jnp.asarray([senders.shape[0]], dtype=jnp.int32),
         validate=validate,
     )
 
 
 def _validate_points(name: str, value: Any, /) -> np.ndarray:
-    points = np.asarray(value, dtype=float)
+    points = np.asarray(value, dtype=np.float64)
     if points.ndim != 2:
         raise ValueError(f"{name} must have shape (n_point, dim); got {points.shape!r}.")
-    if int(points.shape[0]) == 0:
+    if points.shape[0] == 0:
         raise ValueError(f"{name} must contain at least one point.")
     return points
 
@@ -509,9 +511,9 @@ def _validate_points(name: str, value: Any, /) -> np.ndarray:
 def _periodic_box(periodic_box: Any | None, dim: int, /) -> np.ndarray | None:
     if periodic_box is None:
         return None
-    box = np.asarray(periodic_box, dtype=float)
+    box = np.asarray(periodic_box, dtype=np.float64)
     if box.ndim == 0:
-        box = np.full((dim,), float(box), dtype=float)
+        box = np.full((dim,), float(box), dtype=np.float64)
     if box.shape != (dim,):
         raise ValueError(
             f"periodic_box must be scalar or shape ({dim},); got {box.shape!r}."
@@ -541,9 +543,9 @@ def _validate_query_points(
         if target_points is None
         else _validate_points("target_points", target_points)
     )
-    if int(source.shape[1]) != int(target.shape[1]):
+    if source.shape[1] != target.shape[1]:
         raise ValueError("source_points and target_points must have the same dimension.")
-    box = _periodic_box(periodic_box, int(source.shape[1]))
+    box = _periodic_box(periodic_box, source.shape[1])
     return source, target, box, target_points is None
 
 
@@ -593,7 +595,7 @@ def _knn_query_pairs(
     target_parts: list[int] = []
     if k_int == 0:
         return np.zeros((0,), dtype=np.int32), np.zeros((0,), dtype=np.int32)
-    for target_index in range(int(distance.shape[0])):
+    for target_index in range(distance.shape[0]):
         order = np.argsort(distance[target_index], kind="stable")
         chosen: list[int] = []
         for source_index in order:
@@ -633,18 +635,22 @@ def _combine_query_features(
     if source_features is None and target_features is None:
         return None
     source = (
-        None if source_features is None else jnp.asarray(source_features, dtype=float)
+        None
+        if source_features is None
+        else jnp.asarray(source_features, dtype=jnp.float64)
     )
     target = (
-        None if target_features is None else jnp.asarray(target_features, dtype=float)
+        None
+        if target_features is None
+        else jnp.asarray(target_features, dtype=jnp.float64)
     )
     if source is not None and source.ndim == 0:
         raise ValueError("source_features must have a leading point axis.")
     if target is not None and target.ndim == 0:
         raise ValueError("target_features must have a leading point axis.")
-    if source is not None and int(source.shape[0]) != n_source:
+    if source is not None and source.shape[0] != n_source:
         raise ValueError(f"source_features leading axis must be {n_source}.")
-    if target is not None and int(target.shape[0]) != n_target:
+    if target is not None and target.shape[0] != n_target:
         raise ValueError(f"target_features leading axis must be {n_target}.")
 
     template = source if source is not None else target
@@ -672,7 +678,7 @@ def mollified_kernel_weight(
     r = float(radius)
     if r <= 0:
         raise ValueError("radius must be positive for mollified kernel weights.")
-    d = jnp.asarray(distance, dtype=float)
+    d = jnp.asarray(distance, dtype=jnp.float64)
     q = d / r
     if kind == "wendland_c2":
         one_minus_q = jnp.maximum(1.0 - q, 0.0)
@@ -714,20 +720,20 @@ def query_graph_from_edges(
         periodic_box,
     )
     source_idx = _validate_query_indices(
-        "source_indices", source_indices, int(source.shape[0])
+        "source_indices", source_indices, source.shape[0]
     )
     target_idx = _validate_query_indices(
-        "target_indices", target_indices, int(target.shape[0])
+        "target_indices", target_indices, target.shape[0]
     )
-    if int(source_idx.shape[0]) != int(target_idx.shape[0]):
+    if source_idx.shape[0] != target_idx.shape[0]:
         raise ValueError("source_indices and target_indices must have the same length.")
 
-    n_source = int(source.shape[0])
-    n_target = int(target.shape[0])
+    n_source = source.shape[0]
+    n_target = target.shape[0]
     relative = _minimum_image(target[target_idx] - source[source_idx], box)
     distance = np.linalg.norm(relative, axis=-1, keepdims=True)
     unit = relative / np.maximum(distance, 1e-30)
-    positions = jnp.asarray(np.concatenate([source, target], axis=0), dtype=float)
+    positions = jnp.asarray(np.concatenate([source, target], axis=0), dtype=jnp.float64)
     features = _combine_query_features(
         source_features,
         target_features,
@@ -751,16 +757,22 @@ def query_graph_from_edges(
             axis=0,
         ),
         "is_source": jnp.concatenate(
-            [jnp.ones((n_source,), dtype=bool), jnp.zeros((n_target,), dtype=bool)],
+            [
+                jnp.ones((n_source,), dtype=jnp.bool_),
+                jnp.zeros((n_target,), dtype=jnp.bool_),
+            ],
             axis=0,
         ),
         "is_target": jnp.concatenate(
-            [jnp.zeros((n_source,), dtype=bool), jnp.ones((n_target,), dtype=bool)],
+            [
+                jnp.zeros((n_source,), dtype=jnp.bool_),
+                jnp.ones((n_target,), dtype=jnp.bool_),
+            ],
             axis=0,
         ),
     }
     if source_measure is not None:
-        source_measure_ = jnp.asarray(source_measure, dtype=float).reshape((-1,))
+        source_measure_ = jnp.asarray(source_measure, dtype=jnp.float64).reshape((-1,))
         if source_measure_.shape != (n_source,):
             raise ValueError(
                 "source_measure must have one scalar quadrature weight per source node."
@@ -773,18 +785,16 @@ def query_graph_from_edges(
         nodes["features"] = features
 
     edges: dict[str, Any] = {
-        "type": jnp.full(
-            (int(source_idx.shape[0]),), int(query_edge_type), dtype=jnp.int32
-        ),
+        "type": jnp.full((source_idx.shape[0],), int(query_edge_type), dtype=jnp.int32),
         "source_index": jnp.asarray(source_idx, dtype=jnp.int32),
         "target_index": jnp.asarray(target_idx, dtype=jnp.int32),
-        "relative": jnp.asarray(relative, dtype=float),
-        "distance": jnp.asarray(distance, dtype=float),
-        "unit": jnp.asarray(unit, dtype=float),
+        "relative": jnp.asarray(relative, dtype=jnp.float64),
+        "distance": jnp.asarray(distance, dtype=jnp.float64),
+        "unit": jnp.asarray(unit, dtype=jnp.float64),
     }
     if weight_kind is not None:
-        if int(source_idx.shape[0]) == 0:
-            edges["kernel_weight"] = jnp.zeros((0, 1), dtype=float)
+        if source_idx.shape[0] == 0:
+            edges["kernel_weight"] = jnp.zeros((0, 1), dtype=jnp.float64)
         else:
             radius = (
                 float(np.max(distance)) if weight_radius is None else float(weight_radius)
@@ -805,14 +815,14 @@ def query_graph_from_edges(
         senders=senders,
         receivers=receivers,
         n_node=jnp.asarray([n_source + n_target], dtype=jnp.int32),
-        n_edge=jnp.asarray([int(source_idx.shape[0])], dtype=jnp.int32),
+        n_edge=jnp.asarray([source_idx.shape[0]], dtype=jnp.int32),
         validate=validate,
     )
     return QueryGraph(
         graph,
         source_nodes=jnp.arange(n_source, dtype=jnp.int32),
         target_nodes=n_source + jnp.arange(n_target, dtype=jnp.int32),
-        query_edges=jnp.arange(int(source_idx.shape[0]), dtype=jnp.int32),
+        query_edges=jnp.arange(source_idx.shape[0], dtype=jnp.int32),
         source_type=source_type,
         target_type=target_type,
         query_edge_type=query_edge_type,

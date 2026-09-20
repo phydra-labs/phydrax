@@ -80,7 +80,7 @@ def evaluate_global_qbx_fmm_2d(
         raise TypeError("Global QBX/FMM requires a single Laplace layer.")
     if not isinstance(backend, LaplaceFMMBackend2D):
         raise TypeError("backend must be LaplaceFMMBackend2D.")
-    values = jnp.asarray(targets, dtype=float)
+    values = jnp.asarray(targets, dtype=jnp.float64)
     if values.ndim != 2 or values.shape[1] != 2 or values.shape[0] == 0:
         raise ValueError("Global QBX/FMM targets must have shape (target_count, 2).")
     if not isinstance(adaptive_plan, AdaptiveQuadraturePlan):
@@ -88,8 +88,7 @@ def evaluate_global_qbx_fmm_2d(
     order = int(expansion_order)
     if backend.expansion_order < order + 1:
         raise ValueError(
-            "FMM expansion_order must cover the requested QBX order plus one "
-            "omitted-term certificate."
+            "FMM expansion_order must cover the requested QBX order plus one omitted-term certificate."
         )
     factor = float(radius_factor)
     ratio = float(near_ratio)
@@ -283,9 +282,9 @@ def evaluate_global_qbx_fmm_2d(
         clearance=jnp.stack(clearances),
         association_id=canonical_fingerprint(
             {
-                "kind": "global-qbx-fmm-association-2d-v1",
+                "kind": "global-qbx-fmm-association-2d",
                 "panelization_id": panelization.panelization_id,
-                "target_count": int(values.shape[0]),
+                "target_count": values.shape[0],
                 "target_side": target_side,
                 "order": order,
                 "radius_factor": factor,

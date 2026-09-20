@@ -271,8 +271,8 @@ def prepare_surface_image(plan: SurfaceImagePlan, /) -> PreparedSurfaceImage:
         plan,
         query,
         pixels,
-        int(mesh.coordinates.shape[0]),
-        int(triangles.shape[0]),
+        mesh.coordinates.shape[0],
+        triangles.shape[0],
         prepared_id,
     )
 

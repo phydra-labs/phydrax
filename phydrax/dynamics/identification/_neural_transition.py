@@ -48,8 +48,8 @@ class DiscreteModelRolloutTransitionResult(StrictModule):
     ):
         self.candidate_state = jnp.asarray(candidate_state)
         self.accepted_state = jnp.asarray(accepted_state)
-        self.training_usable = jnp.asarray(training_usable, dtype=bool)
-        self.physically_converged = jnp.asarray(physically_converged, dtype=bool)
+        self.training_usable = jnp.asarray(training_usable, dtype=jnp.bool_)
+        self.physically_converged = jnp.asarray(physically_converged, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.residual = jnp.asarray(residual)
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32)

@@ -15,7 +15,7 @@ import numpy as np
 from jaxtyping import Array
 
 from .._fingerprint import canonical_fingerprint
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import AbstractVectorSpace
 from ._partitioned_coupling_types import (
@@ -44,7 +44,7 @@ class CouplingWaveformAdaptationPolicy(StrictModule, NonTrainableState):
         observable_tolerance: float,
         maximum_additions_per_attempt: int = 1,
     ):
-        candidates = np.asarray(candidate_nodes, dtype=float)
+        candidates = np.asarray(candidate_nodes, dtype=np.float64)
         tolerance = float(observable_tolerance)
         maximum = int(maximum_additions_per_attempt)
         if (
@@ -88,7 +88,7 @@ class CouplingWaveformGrid(StrictModule):
         capacity_id: str,
     ):
         nodes_ = jnp.asarray(nodes)
-        active_ = jnp.asarray(active, dtype=bool)
+        active_ = jnp.asarray(active, dtype=jnp.bool_)
         count = jnp.asarray(sample_count, dtype=jnp.int32).reshape(())
         if nodes_.ndim != 1 or active_.shape != nodes_.shape:
             raise ValueError("Waveform grid nodes/activity must be equal-length vectors.")
@@ -112,7 +112,7 @@ class CouplingWaveformGrid(StrictModule):
 
     @property
     def sample_capacity(self) -> int:
-        return int(self.nodes.size)
+        return self.nodes.size
 
     @property
     def num_steps(self) -> int:
@@ -142,7 +142,7 @@ class CouplingWaveformPlan(StrictModule, NonTrainableState):
     ):
         capacity = int(sample_capacity)
         degree = int(polynomial_degree)
-        nodes = np.asarray(initial_nodes, dtype=float)
+        nodes = np.asarray(initial_nodes, dtype=np.float64)
         order = max(degree + 1, 1) if metric_order is None else int(metric_order)
         if capacity < 2 or degree not in (0, 1, 2, 3):
             raise ValueError("Waveform capacity must be >=2 and degree must be 0..3.")
@@ -187,7 +187,7 @@ class CouplingWaveformPlan(StrictModule, NonTrainableState):
         self.plan_id = identifier
 
     def initial_grid(self) -> CouplingWaveformGrid:
-        count = int(self.initial_nodes.size)
+        count = self.initial_nodes.size
         nodes = jnp.ones((self.sample_capacity,), dtype=self.initial_nodes.dtype)
         nodes = nodes.at[:count].set(self.initial_nodes)
         active = jnp.arange(self.sample_capacity) < count
@@ -257,7 +257,7 @@ class CouplingWaveform(StrictModule):
 
 
 class AbstractCouplingTemporalTransfer(StrictModule, NonTrainableState):
-    transfer_id: AbstractAttribute[str]
+    transfer_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def interpolate(
@@ -541,7 +541,7 @@ def coupling_signal_norm(port, value: Any, /) -> Array:
         query_values = _barycentric_values(
             validated,
             query,
-            jnp.ones((order,), dtype=bool),
+            jnp.ones((order,), dtype=jnp.bool_),
             port.space,
             degree,
         )

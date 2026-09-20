@@ -119,7 +119,7 @@ class DiscreteTracePenalty(AbstractScalarTerm):
         if side not in ("left", "right"):
             raise ValueError("side must be 'left' or 'right'.")
         target_ = jnp.asarray(target)
-        scale_ = jnp.asarray(scale, dtype=float).reshape(())
+        scale_ = jnp.asarray(scale, dtype=jnp.float64).reshape(())
         if float(scale_) < 0.0:
             raise ValueError("scale must be non-negative.")
         self.fields = (str(field_name),)
@@ -240,7 +240,7 @@ class DiscreteOperatorTracePenalty(AbstractScalarTerm):
             raise TypeError("operator must be callable.")
         if side not in ("left", "right"):
             raise ValueError("side must be 'left' or 'right'.")
-        scale_ = jnp.asarray(scale, dtype=float).reshape(())
+        scale_ = jnp.asarray(scale, dtype=jnp.float64).reshape(())
         if float(scale_) < 0.0:
             raise ValueError("scale must be non-negative.")
         self.fields = (str(field_name),)

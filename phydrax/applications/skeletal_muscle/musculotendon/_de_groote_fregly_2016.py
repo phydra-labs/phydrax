@@ -40,10 +40,12 @@ def _identifier(value: str, name: str, /) -> str:
     return identifier
 
 
-def _positive_vector(value: ArrayLike, name: str, /, *, dtype: Any | None = None) -> Array:
+def _positive_vector(
+    value: ArrayLike, name: str, /, *, dtype: Any | None = None
+) -> Array:
     array = jnp.asarray(value, dtype=dtype)
     if dtype is None and not jnp.issubdtype(array.dtype, jnp.floating):
-        array = array.astype(float)
+        array = array.astype("float64")
     host = np.asarray(array)
     if array.ndim != 1 or array.size == 0:
         raise ValueError(f"{name} must be a non-empty rank-1 array.")
@@ -145,7 +147,11 @@ class DeGrooteFregly2016Parameters(StrictModule):
             dtype=dtype,
         )
         expected = force.shape
-        if optimal.shape != expected or slack.shape != expected or velocity.shape != expected:
+        if (
+            optimal.shape != expected
+            or slack.shape != expected
+            or velocity.shape != expected
+        ):
             raise ValueError("Muscle-specific parameter vectors must have equal shape.")
         if pennation.shape != expected:
             raise ValueError("pennation_angle_at_optimum_rad must match muscle capacity.")
@@ -167,7 +173,9 @@ class DeGrooteFregly2016Parameters(StrictModule):
             )
         )
         if any(array.shape != (3,) for array in curve_arrays):
-            raise ValueError("Active force-length coefficient arrays must have shape (3,).")
+            raise ValueError(
+                "Active force-length coefficient arrays must have shape (3,)."
+            )
         if not all(np.all(np.isfinite(np.asarray(array))) for array in curve_arrays):
             raise ValueError("Active force-length coefficients must be finite.")
         length_grid = np.linspace(0.4, 1.6, 257)
@@ -203,9 +211,7 @@ class DeGrooteFregly2016Parameters(StrictModule):
         self.passive_stiffness = _positive_scalar(
             passive_stiffness, "passive_stiffness", dtype
         )
-        self.passive_strain = _positive_scalar(
-            passive_strain, "passive_strain", dtype
-        )
+        self.passive_strain = _positive_scalar(passive_strain, "passive_strain", dtype)
         self.force_velocity_d1 = _finite_scalar(
             force_velocity_d1, "force_velocity_d1", dtype
         )
@@ -218,9 +224,10 @@ class DeGrooteFregly2016Parameters(StrictModule):
         self.force_velocity_d4 = _finite_scalar(
             force_velocity_d4, "force_velocity_d4", dtype
         )
-        if float(np.asarray(self.force_velocity_d1)) == 0.0 or float(
-            np.asarray(self.force_velocity_d2)
-        ) == 0.0:
+        if (
+            float(np.asarray(self.force_velocity_d1)) == 0.0
+            or float(np.asarray(self.force_velocity_d2)) == 0.0
+        ):
             raise ValueError("force_velocity_d1 and force_velocity_d2 must be nonzero.")
         self.implicit_force_rate_scale_per_s = _positive_scalar(
             implicit_force_rate_scale_per_s,
@@ -230,7 +237,7 @@ class DeGrooteFregly2016Parameters(StrictModule):
 
     @property
     def muscle_capacity(self) -> int:
-        return int(self.maximum_isometric_force_N.shape[0])
+        return self.maximum_isometric_force_N.shape[0]
 
 
 class DeGrooteFregly2016State(StrictModule):
@@ -239,9 +246,7 @@ class DeGrooteFregly2016State(StrictModule):
     activation: Array
     normalized_tendon_force: Array
 
-    def __init__(
-        self, activation: ArrayLike, normalized_tendon_force: ArrayLike, /
-    ):
+    def __init__(self, activation: ArrayLike, normalized_tendon_force: ArrayLike, /):
         activation_ = jnp.asarray(activation)
         tendon_force = jnp.asarray(normalized_tendon_force, dtype=activation_.dtype)
         if activation_.ndim != 1 or activation_.shape != tendon_force.shape:
@@ -426,11 +431,10 @@ def de_groote_fregly_2016_passive_force_length(
     length = jnp.asarray(
         normalized_fiber_length, dtype=parameters.maximum_isometric_force_N.dtype
     )
-    numerator = jnp.exp(
-        parameters.passive_stiffness
-        * (length - 1.0)
-        / parameters.passive_strain
-    ) - 1.0
+    numerator = (
+        jnp.exp(parameters.passive_stiffness * (length - 1.0) / parameters.passive_strain)
+        - 1.0
+    )
     return numerator / jnp.expm1(parameters.passive_stiffness)
 
 
@@ -464,10 +468,7 @@ def de_groote_fregly_2016_inverse_force_velocity(
         normalized_force_velocity, dtype=parameters.maximum_isometric_force_N.dtype
     )
     return (
-        jnp.sinh(
-            (force - parameters.force_velocity_d4)
-            / parameters.force_velocity_d1
-        )
+        jnp.sinh((force - parameters.force_velocity_d4) / parameters.force_velocity_d1)
         - parameters.force_velocity_d3
     ) / parameters.force_velocity_d2
 
@@ -482,10 +483,9 @@ def _activation_rate(
         parameters.activation_smoothing * (independent_excitation - activation)
     )
     scale = 0.5 + 1.5 * activation
-    inverse_time = (
-        (transition + 0.5) / (parameters.activation_time_constant_s * scale)
-        + scale * (-transition + 0.5) / parameters.deactivation_time_constant_s
-    )
+    inverse_time = (transition + 0.5) / (
+        parameters.activation_time_constant_s * scale
+    ) + scale * (-transition + 0.5) / parameters.deactivation_time_constant_s
     return inverse_time * (independent_excitation - activation)
 
 
@@ -498,12 +498,9 @@ def _tendon_energy(
         normalized_tendon_length - parameters.tendon_c2
     )
     reference_exponent = parameters.tendon_stiffness * (1.0 - parameters.tendon_c2)
-    normalized_integral = (
-        parameters.tendon_c1
-        / parameters.tendon_stiffness
-        * (jnp.exp(exponent) - jnp.exp(reference_exponent))
-        - parameters.tendon_c3 * (normalized_tendon_length - 1.0)
-    )
+    normalized_integral = parameters.tendon_c1 / parameters.tendon_stiffness * (
+        jnp.exp(exponent) - jnp.exp(reference_exponent)
+    ) - parameters.tendon_c3 * (normalized_tendon_length - 1.0)
     return (
         parameters.maximum_isometric_force_N
         * parameters.tendon_slack_length_m
@@ -522,9 +519,7 @@ def _passive_energy(
         / parameters.passive_strain
     )
     normalized_integral = (
-        parameters.passive_strain
-        / parameters.passive_stiffness
-        * jnp.expm1(exponent)
+        parameters.passive_strain / parameters.passive_stiffness * jnp.expm1(exponent)
         - (normalized_fiber_length - 1.0)
     ) / jnp.expm1(parameters.passive_stiffness)
     return (
@@ -574,7 +569,9 @@ class DeGrooteFregly2016Plan(StrictModule):
         self.parameters = parameters
         self.muscle_names = names
         self.muscle_mask = mask
-        self.model_id = generated if model_id is None else _identifier(model_id, "model_id")
+        self.model_id = (
+            generated if model_id is None else _identifier(model_id, "model_id")
+        )
 
     def prepare(
         self, state: DeGrooteFregly2016State | None = None, /
@@ -655,14 +652,12 @@ class PreparedDeGrooteFregly2016Musculotendon(StrictModule):
         parameters = self.parameters
         activation = state.activation
         tendon_force_normalized = state.normalized_tendon_force
-        excitation_ = self._input(
-            independent_excitation, "independent_excitation"
-        )
+        excitation_ = self._input(independent_excitation, "independent_excitation")
         length_mt = self._input(musculotendon_length_m, "musculotendon_length_m")
         velocity_mt = self._input(
             musculotendon_velocity_m_per_s, "musculotendon_velocity_m_per_s"
         )
-        mask = jnp.asarray(self.plan.muscle_mask, dtype=bool)
+        mask = jnp.asarray(self.plan.muscle_mask, dtype=jnp.bool_)
         tiny = jnp.finfo(activation.dtype).tiny
         force_argument_valid = tendon_force_normalized + parameters.tendon_c3 > tiny
         safe_force = jnp.where(
@@ -674,9 +669,8 @@ class PreparedDeGrooteFregly2016Musculotendon(StrictModule):
             parameters, safe_force
         )
         tendon_length = parameters.tendon_slack_length_m * normalized_tendon_length
-        fixed_height = (
-            parameters.optimal_fiber_length_m
-            * jnp.sin(parameters.pennation_angle_at_optimum_rad)
+        fixed_height = parameters.optimal_fiber_length_m * jnp.sin(
+            parameters.pennation_angle_at_optimum_rad
         )
         along_tendon = length_mt - tendon_length
         fiber_length = jnp.sqrt(fixed_height * fixed_height + along_tendon * along_tendon)
@@ -718,9 +712,7 @@ class PreparedDeGrooteFregly2016Musculotendon(StrictModule):
             )
         )
         normalized_tendon_force_rate = (
-            tendon_curve_slope
-            * tendon_velocity
-            / parameters.tendon_slack_length_m
+            tendon_curve_slope * tendon_velocity / parameters.tendon_slack_length_m
         )
         activation_rate = _activation_rate(parameters, activation, excitation_)
         normalized_fiber_force = (
@@ -733,16 +725,10 @@ class PreparedDeGrooteFregly2016Musculotendon(StrictModule):
         tendon_curve_force = de_groote_fregly_2016_tendon_force_length(
             parameters, normalized_tendon_length
         )
-        tendon_constitutive_residual = (
-            tendon_force_normalized - tendon_curve_force
-        )
-        force_velocity_inverse_residual = (
-            force_velocity_required - force_velocity
-        )
+        tendon_constitutive_residual = tendon_force_normalized - tendon_curve_force
+        force_velocity_inverse_residual = force_velocity_required - force_velocity
         tendon_rate_residual = normalized_tendon_force_rate - (
-            tendon_curve_slope
-            * tendon_velocity
-            / parameters.tendon_slack_length_m
+            tendon_curve_slope * tendon_velocity / parameters.tendon_slack_length_m
         )
         force_residual = tendon_force_normalized - normalized_fiber_force * cosine
         length_residual = length_mt - (tendon_length + fiber_length * cosine)
@@ -813,22 +799,14 @@ class PreparedDeGrooteFregly2016Musculotendon(StrictModule):
         )
         eps = jnp.finfo(activation.dtype).eps
         force_scale = jnp.maximum(1.0, jnp.abs(tendon_force_normalized))
-        rate_scale = jnp.maximum(
-            1.0, jnp.abs(normalized_tendon_force_rate)
-        )
+        rate_scale = jnp.maximum(1.0, jnp.abs(normalized_tendon_force_rate))
         length_scale = jnp.maximum(1.0, jnp.abs(length_mt))
         power_scale = jnp.maximum(
             1.0, jnp.maximum(jnp.abs(route_power), jnp.abs(series_plus_fiber_power))
         )
         residuals_satisfied = (
-            (
-                jnp.abs(tendon_constitutive_residual)
-                <= 128.0 * eps * force_scale
-            )
-            & (
-                jnp.abs(force_velocity_inverse_residual)
-                <= 128.0 * eps * force_scale
-            )
+            (jnp.abs(tendon_constitutive_residual) <= 128.0 * eps * force_scale)
+            & (jnp.abs(force_velocity_inverse_residual) <= 128.0 * eps * force_scale)
             & (jnp.abs(tendon_rate_residual) <= 128.0 * eps * rate_scale)
             & (jnp.abs(force_residual) <= 128.0 * eps * force_scale)
             & (jnp.abs(length_residual) <= 128.0 * eps * length_scale)
@@ -915,7 +893,7 @@ class PreparedDeGrooteFregly2016Musculotendon(StrictModule):
         )
         if dt.shape != ():
             raise ValueError("time_step_s must be scalar.")
-        mask = jnp.asarray(self.plan.muscle_mask, dtype=bool)
+        mask = jnp.asarray(self.plan.muscle_mask, dtype=jnp.bool_)
         proposed_activation = state.activation + dt * source.rates.activation_per_s
         proposed_force = (
             state.normalized_tendon_force
@@ -935,16 +913,10 @@ class PreparedDeGrooteFregly2016Musculotendon(StrictModule):
             length + dt * velocity,
             velocity,
         )
-        excitation_ = self._input(
-            independent_excitation, "independent_excitation"
-        )
+        excitation_ = self._input(independent_excitation, "independent_excitation")
         excitation_admissible = jnp.all(
             (~mask)
-            | (
-                jnp.isfinite(excitation_)
-                & (excitation_ >= 0.0)
-                & (excitation_ <= 1.0)
-            )
+            | (jnp.isfinite(excitation_) & (excitation_ >= 0.0) & (excitation_ <= 1.0))
         )
         time_step_admissible = jnp.isfinite(dt) & (dt > 0.0)
         candidate_state_admissible = jnp.all(
@@ -1039,7 +1011,9 @@ class DeGrooteFregly2016ImplicitTendonForcePlan(StrictModule):
         self.parameters = parameters
         self.muscle_names = explicit.muscle_names
         self.muscle_mask = explicit.muscle_mask
-        self.model_id = generated if model_id is None else _identifier(model_id, "model_id")
+        self.model_id = (
+            generated if model_id is None else _identifier(model_id, "model_id")
+        )
 
     def prepare(
         self, state: DeGrooteFregly2016State | None = None, /
@@ -1130,9 +1104,8 @@ class PreparedDeGrooteFregly2016ImplicitTendonForce(StrictModule):
             parameters, tendon_force
         )
         tendon_length = parameters.tendon_slack_length_m * normalized_tendon_length
-        fixed_height = (
-            parameters.optimal_fiber_length_m
-            * jnp.sin(parameters.pennation_angle_at_optimum_rad)
+        fixed_height = parameters.optimal_fiber_length_m * jnp.sin(
+            parameters.pennation_angle_at_optimum_rad
         )
         along = musculotendon_length_m - tendon_length
         fiber_length = jnp.sqrt(fixed_height * fixed_height + along * along)
@@ -1150,9 +1123,7 @@ class PreparedDeGrooteFregly2016ImplicitTendonForce(StrictModule):
             parameters.implicit_force_rate_scale_per_s * scaled_force_rate
         )
         tendon_velocity = (
-            parameters.tendon_slack_length_m
-            * normalized_force_rate
-            / tendon_curve_slope
+            parameters.tendon_slack_length_m * normalized_force_rate / tendon_curve_slope
         )
         fiber_velocity = (musculotendon_velocity_m_per_s - tendon_velocity) * cosine
         normalized_fiber_velocity = (
@@ -1167,10 +1138,8 @@ class PreparedDeGrooteFregly2016ImplicitTendonForce(StrictModule):
         force_velocity = de_groote_fregly_2016_force_velocity(
             parameters, normalized_fiber_velocity
         )
-        fiber_force = (
-            state.activation * active_length * force_velocity + passive_length
-        )
-        mask = jnp.asarray(self.plan.muscle_mask, dtype=bool)
+        fiber_force = state.activation * active_length * force_velocity + passive_length
+        mask = jnp.asarray(self.plan.muscle_mask, dtype=jnp.bool_)
         return jnp.where(mask, tendon_force - fiber_force * cosine, scaled_force_rate)
 
     def candidate(
@@ -1201,9 +1170,7 @@ class PreparedDeGrooteFregly2016ImplicitTendonForce(StrictModule):
 
         def residual(scaled_force_rate, runtime_args):
             del runtime_args
-            return self._algebraic_residual(
-                scaled_force_rate, state, length, velocity
-            )
+            return self._algebraic_residual(scaled_force_rate, state, length, velocity)
 
         problem = NonlinearSystemProblem(
             residual,
@@ -1219,7 +1186,7 @@ class PreparedDeGrooteFregly2016ImplicitTendonForce(StrictModule):
         )
         if dt.shape != ():
             raise ValueError("time_step_s must be scalar.")
-        mask = jnp.asarray(self.plan.muscle_mask, dtype=bool)
+        mask = jnp.asarray(self.plan.muscle_mask, dtype=jnp.bool_)
         candidate_state = DeGrooteFregly2016State(
             jnp.where(
                 mask,
@@ -1243,11 +1210,7 @@ class PreparedDeGrooteFregly2016ImplicitTendonForce(StrictModule):
         )
         excitation_admissible = jnp.all(
             (~mask)
-            | (
-                jnp.isfinite(excitation_)
-                & (excitation_ >= 0.0)
-                & (excitation_ <= 1.0)
-            )
+            | (jnp.isfinite(excitation_) & (excitation_ >= 0.0) & (excitation_ <= 1.0))
         )
         time_step_admissible = jnp.isfinite(dt) & (dt > 0.0)
         state_admissible = jnp.all(
@@ -1270,9 +1233,7 @@ class PreparedDeGrooteFregly2016ImplicitTendonForce(StrictModule):
             (~mask)
             | (
                 jnp.abs(algebraic_residual)
-                <= 256.0
-                * jnp.finfo(algebraic_residual.dtype).eps
-                * residual_scale
+                <= 256.0 * jnp.finfo(algebraic_residual.dtype).eps * residual_scale
             )
         )
         step_successful = (

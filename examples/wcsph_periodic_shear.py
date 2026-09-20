@@ -14,7 +14,7 @@ kinematic_viscosity = 0.01
 wave_number = 2.0 * jnp.pi
 velocity_amplitude = 0.05
 end_time = 0.01
-x_axis = (jnp.arange(resolution, dtype=float) + 0.5) * spacing
+x_axis = (jnp.arange(resolution, dtype="float64") + 0.5) * spacing
 x_grid, y_grid = jnp.meshgrid(x_axis, x_axis, indexing="ij")
 initial_position = jnp.stack((x_grid.reshape(-1), y_grid.reshape(-1)), axis=-1)
 initial_velocity = jnp.stack(
@@ -31,9 +31,12 @@ particles = phx.discretization.ParticleSetPlan(
     name="periodic-shear-particles",
 ).prepare()
 box = phx.discretization.ParticleBox([0.0, 0.0], [1.0, 1.0])
-method = phx.discretization.WeaklyCompressibleSPHMethodPlan(phx.discretization.WendlandC2SPHKernel(2),
-1.25 * spacing,
-density=phx.discretization.ContinuityDensityPlan(), physical_viscosity=phx.discretization.MorrisViscosityPlan(kinematic_viscosity), )
+method = phx.discretization.WeaklyCompressibleSPHMethodPlan(
+    phx.discretization.WendlandC2SPHKernel(2),
+    1.25 * spacing,
+    density=phx.discretization.ContinuityDensityPlan(),
+    physical_viscosity=phx.discretization.MorrisViscosityPlan(kinematic_viscosity),
+)
 compiled = phx.equations.compile_weakly_compressible_sph_problem(
     phx.equations.WeaklyCompressibleFluidProblemIR(
         "periodic-viscous-shear",

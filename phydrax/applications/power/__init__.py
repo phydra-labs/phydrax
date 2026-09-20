@@ -3,6 +3,8 @@
 #
 """Balanced positive-sequence RMS networks, native optimization and machine DAEs."""
 
+from importlib import import_module
+
 from ._dynamics import (
     ClassicalMachine,
     DroopGovernor,
@@ -54,14 +56,30 @@ from ._opf import (
     solve_dc_opf,
     solve_dc_power_flow,
 )
+from ._polynomial_power_flow import __all__ as _polynomial_power_flow_all
 from ._power_flow import (
     fixed_mode_power_flow,
     FixedModePowerFlowResult,
     PowerFlowResult,
     solve_power_flow,
 )
-from ._polynomial_power_flow import *  # noqa: F403
-from ._polynomial_power_flow import __all__ as _polynomial_power_flow_all
+
+
+_FACADE_EXPORT_MODULES = ("._polynomial_power_flow",)
+
+
+def __getattr__(name: str):
+    for module_name in reversed(_FACADE_EXPORT_MODULES):
+        module = import_module(module_name, __package__)
+        if name in module.__all__:
+            value = getattr(module, name)
+            globals()[name] = value
+            return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
 
 
 __all__ = [

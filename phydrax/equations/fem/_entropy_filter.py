@@ -154,7 +154,7 @@ class _PreparedTensorEntropyFilter(AbstractSSPRKStageTransform):
             raise TypeError("The entropy filter currently requires EulerSystem.")
         if dynamics.entropy_pair is None:
             raise ValueError("The entropy filter requires prepared entropy diagnostics.")
-        nodes = np.asarray(dynamics.sbp.nodes, dtype=float)
+        nodes = np.asarray(dynamics.sbp.nodes, dtype=np.float64)
         degree = dynamics.sbp.order
         vandermonde = np.stack(
             tuple(eval_legendre(mode, 2.0 * nodes - 1.0) for mode in range(degree + 1)),
@@ -162,7 +162,7 @@ class _PreparedTensorEntropyFilter(AbstractSSPRKStageTransform):
         )
         inverse = np.linalg.solve(vandermonde, np.eye(degree + 1))
         mode_axes = np.meshgrid(
-            *(np.arange(degree + 1, dtype=float),) * dynamics.metrics.dimension,
+            *(np.arange(degree + 1, dtype=np.float64),) * dynamics.metrics.dimension,
             indexing="ij",
         )
         total_degree = sum(mode_axes)
@@ -243,9 +243,9 @@ class _PreparedTensorEntropyFilter(AbstractSSPRKStageTransform):
         bounds = self._cell_minimum(self._specific_entropy(local))
         for pair in self.dynamics.face_pairs:
             owner = bounds[pair.owner_cell]
-            neighbour = bounds[pair.neighbour_cell]
-            bounds = bounds.at[pair.owner_cell].min(neighbour)
-            bounds = bounds.at[pair.neighbour_cell].min(owner)
+            neighbor = bounds[pair.neighbor_cell]
+            bounds = bounds.at[pair.owner_cell].min(neighbor)
+            bounds = bounds.at[pair.neighbor_cell].min(owner)
         if self.dynamics.boundaries is None:
             return bounds
         context = self.dynamics._context(time, args)
@@ -464,10 +464,10 @@ class _PreparedNodalEntropyFilter(AbstractSSPRKStageTransform):
             *self.dynamics.three_dimensional_interface_routes,
         ):
             owner = self.cell_by_dof[route.owner_dofs[0]]
-            neighbour = self.cell_by_dof[route.neighbour_dofs[0]]
-            common = jnp.maximum(bound[owner], bound[neighbour])
+            neighbor = self.cell_by_dof[route.neighbor_dofs[0]]
+            common = jnp.maximum(bound[owner], bound[neighbor])
             bound = bound.at[owner].set(common)
-            bound = bound.at[neighbour].set(common)
+            bound = bound.at[neighbor].set(common)
         return bound
 
     def filter(

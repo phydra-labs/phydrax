@@ -33,7 +33,7 @@ def _identifier(value: str, owner: str, /) -> str:
 
 
 def _shape(value: Sequence[int], owner: str, /) -> tuple[int, ...]:
-    result = tuple(int(size) for size in value)
+    result = tuple(value)
     if any(size <= 0 for size in result):
         raise ValueError(f"{owner} dimensions must be positive.")
     return result
@@ -46,7 +46,7 @@ def _positive_scale(value: ArrayLike, shape: tuple[int, ...], owner: str, /) -> 
     if array.shape not in ((), shape):
         raise ValueError(f"{owner} must be scalar or have shape {shape}.")
     if not jnp.issubdtype(array.dtype, jnp.inexact):
-        array = array.astype(float)
+        array = array.astype("float64")
     scale = jnp.broadcast_to(array, shape)
     return eqx.error_if(
         scale,
@@ -60,7 +60,7 @@ def _unshaped_positive_scale(value: ArrayLike, owner: str, /) -> Array:
     if jnp.issubdtype(array.dtype, jnp.complexfloating):
         raise TypeError(f"{owner} must be real-valued.")
     if not jnp.issubdtype(array.dtype, jnp.inexact):
-        array = array.astype(float)
+        array = array.astype("float64")
     return eqx.error_if(
         array,
         jnp.any(~jnp.isfinite(array)) | jnp.any(array <= 0),
@@ -232,7 +232,7 @@ class DAEConnection(StrictModule, NonTrainableState):
 
     def __init__(self, port_ids: Sequence[str], orientations: Sequence[int], /):
         ports = tuple(_identifier(value, "port_id") for value in port_ids)
-        signs = tuple(int(value) for value in orientations)
+        signs = tuple(orientations)
         if len(ports) < 2 or len(ports) != len(signs) or len(set(ports)) != len(ports):
             raise ValueError("A connection requires at least two unique oriented ports.")
         if any(sign not in (-1, 1) for sign in signs):
@@ -707,8 +707,8 @@ def _minimum_differentiation_matching(
     if cardinality[1] or cardinality[2]:
         return cardinality
     indices = {name: index for index, name in enumerate(names)}
-    costs = np.zeros((len(equations), len(names)), dtype=float)
-    valid = np.zeros(costs.shape, dtype=bool)
+    costs = np.zeros((len(equations), len(names)), dtype=np.float64)
+    valid = np.zeros(costs.shape, dtype=np.bool_)
     for row, equation in enumerate(equations):
         for edge in equation.incidence:
             column = indices[edge.variable_name]
@@ -1091,7 +1091,7 @@ def _sample_inputs(source: AcausalDAESource, inputs: ArrayLike | None, /) -> Arr
     if jnp.issubdtype(values.dtype, jnp.complexfloating):
         raise TypeError("Acausal DAE inputs must be real-valued.")
     if not jnp.issubdtype(values.dtype, jnp.inexact):
-        values = values.astype(float)
+        values = values.astype("float64")
     return values
 
 
@@ -1182,7 +1182,7 @@ def compile_acausal_dae(
         jnp.asarray(equation.residual(jnp.asarray(1.0), sample_jet, *runtime))
         for equation in assembly.equations
     )
-    equation_sizes = tuple(int(value.size) for value in equation_values)
+    equation_sizes = tuple(value.size for value in equation_values)
     matching = dict(analysis.matching)
     variable_by_name = {value.name: value for value in assembly.variables}
     equation_scale_rows = []
@@ -1202,8 +1202,7 @@ def compile_acausal_dae(
             )
         if residual_scale.shape not in ((), value.shape):
             raise ValueError(
-                f"Equation {equation.name!r} residual_scale must be scalar or "
-                f"have residual shape {value.shape}."
+                f"Equation {equation.name!r} residual_scale must be scalar or have residual shape {value.shape}."
             )
         equation_scale_rows.append(
             jnp.broadcast_to(residual_scale, value.shape).reshape((-1,))

@@ -85,8 +85,8 @@ class CoherentDrive(StrictModule, NonTrainableState):
         if lower == upper:
             raise ValueError("A coherent dipole drive requires distinct manifolds.")
         frequency = _finite_scalar(rabi_frequency, "rabi_frequency")
-        polarization_ = np.asarray(polarization, dtype=complex)
-        angles = np.asarray(frame_euler_angles, dtype=float)
+        polarization_ = np.asarray(polarization, dtype=np.complex128)
+        angles = np.asarray(frame_euler_angles, dtype=np.float64)
         if polarization_.shape != (3,) or np.any(~np.isfinite(polarization_)):
             raise ValueError("polarization must be finite with shape (3,).")
         if angles.shape != (3,) or np.any(~np.isfinite(angles)):
@@ -274,8 +274,10 @@ class AtomicQuantumPlan(StrictModule, NonTrainableState):
         if dimension > dimension_limit or dimension**4 > liouville_limit:
             raise ValueError("Atomic basis exceeds declared dense resource bounds.")
         estimated_bytes = (1 + channel_limit) * dimension * dimension * np.dtype(
-            complex
-        ).itemsize + channel_limit * (np.dtype(float).itemsize + np.dtype(bool).itemsize)
+            np.complex128
+        ).itemsize + channel_limit * (
+            np.dtype(np.float64).itemsize + np.dtype(np.bool_).itemsize
+        )
         if estimated_bytes > byte_limit:
             raise ValueError("Atomic fixed arrays exceed maximum_materialization_bytes.")
         plan_id = canonical_fingerprint(
@@ -331,7 +333,7 @@ class PreparedAtomicQuantumSystem(StrictModule, NonTrainableState):
         )
         basis_index = {label: index for index, label in enumerate(basis_labels)}
         dimension = len(basis_labels)
-        hamiltonian = np.zeros((dimension, dimension), dtype=complex)
+        hamiltonian = np.zeros((dimension, dimension), dtype=np.complex128)
         for manifold in plan.manifolds:
             frequency = float(manifold.angular_frequency)
             for twice_m in manifold.magnetic_projections:
@@ -368,9 +370,11 @@ class PreparedAtomicQuantumSystem(StrictModule, NonTrainableState):
                     hamiltonian[lower_index, upper_index] += coupling.conjugate()
 
         estimated_bytes = plan.estimated_materialization_bytes
-        jumps = np.zeros((plan.maximum_channels, dimension, dimension), dtype=complex)
-        rates = np.zeros((plan.maximum_channels,), dtype=float)
-        active = np.zeros((plan.maximum_channels,), dtype=bool)
+        jumps = np.zeros(
+            (plan.maximum_channels, dimension, dimension), dtype=np.complex128
+        )
+        rates = np.zeros((plan.maximum_channels,), dtype=np.float64)
+        active = np.zeros((plan.maximum_channels,), dtype=np.bool_)
         channel_ids: list[str] = []
         active_count = 0
         maximum_branching_residual = 0.0
@@ -460,7 +464,7 @@ class PreparedAtomicQuantumSystem(StrictModule, NonTrainableState):
         hermiticity_residual = float(
             np.max(np.abs(hamiltonian - hamiltonian.conjugate().T))
         )
-        identity = np.eye(dimension, dtype=complex)
+        identity = np.eye(dimension, dtype=np.complex128)
         dual_identity = 1j * (hamiltonian @ identity - identity @ hamiltonian)
         for operator, rate, enabled in zip(jumps, rates, active, strict=True):
             if enabled:

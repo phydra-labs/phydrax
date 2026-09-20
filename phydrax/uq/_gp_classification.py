@@ -145,8 +145,8 @@ def condition_bernoulli_gaussian_process(
     curvature_floor: ArrayLike = 1e-6,
 ) -> BernoulliGaussianProcessPosterior:
     """Fit a Bernoulli Laplace site and route it through exact GP factors."""
-    points = jnp.asarray(observation_points, dtype=float)
-    labels = jnp.asarray(observations, dtype=float)
+    points = jnp.asarray(observation_points, dtype=jnp.float64)
+    labels = jnp.asarray(observations, dtype=jnp.float64)
     if points.ndim != 2 or labels.shape != (points.shape[0],):
         raise ValueError(
             "Bernoulli GP data must have shapes (sample, feature) and (sample,)."
@@ -155,13 +155,15 @@ def condition_bernoulli_gaussian_process(
         raise ValueError("iterations must be positive.")
     if not isinstance(state, GaussianProcessLikelihoodState):
         raise TypeError("state must be a GaussianProcessLikelihoodState.")
-    floor = jnp.asarray(curvature_floor, dtype=float)
+    floor = jnp.asarray(curvature_floor, dtype=jnp.float64)
     if floor.ndim != 0 or bool(floor <= 0):
         raise ValueError("curvature_floor must be positive.")
     weight = (
         jnp.ones_like(labels)
         if observation_weight is None
-        else jnp.broadcast_to(jnp.asarray(observation_weight, dtype=float), labels.shape)
+        else jnp.broadcast_to(
+            jnp.asarray(observation_weight, dtype=jnp.float64), labels.shape
+        )
     )
     weight = eqx.error_if(
         weight,
@@ -258,7 +260,7 @@ def condition_categorical_gaussian_process(
     exact_labels = jnp.isfinite(labels_value) & (labels_value == jnp.floor(labels_value))
     labels = jnp.where(exact_labels, labels_value, 0).astype(jnp.int32)
     active = (
-        jnp.ones_like(labels, dtype=bool)
+        jnp.ones_like(labels, dtype=jnp.bool_)
         if observation_weight is None
         else jnp.broadcast_to(jnp.asarray(observation_weight) > 0, labels.shape)
     )
@@ -271,7 +273,7 @@ def condition_categorical_gaussian_process(
     factors = tuple(
         condition_bernoulli_gaussian_process(
             observation_points,
-            (labels == class_index).astype(float),
+            (labels == class_index).astype("float64"),
             state=state,
             observation_weight=observation_weight,
             iterations=iterations,

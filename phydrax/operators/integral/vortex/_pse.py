@@ -155,7 +155,7 @@ class PreparedGaussianParticleStrengthExchange(AbstractPreparedVortexDiffusion):
         self.right = right
         self.dimension = plan.dimension
         self.capacity = capacity
-        self.pair_capacity = int(left.size)
+        self.pair_capacity = left.size
         self.backend_id = plan.plan_id
         self.capabilities = plan.capabilities
         self.prepared_id = canonical_fingerprint(

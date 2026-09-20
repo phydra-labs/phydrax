@@ -339,7 +339,7 @@ class RelaxedHPMarking(StrictModule, NonTrainableState):
 
     def weights(self, indicators: ArrayLike, valid: ArrayLike, /) -> Array:
         values = jnp.asarray(indicators)
-        valid_ = jnp.asarray(valid, dtype=bool)
+        valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         logits = jnp.where(valid_, values / self.temperature, -jnp.inf)
         probabilities = jax.nn.softmax(logits)
         return jnp.minimum(1.0, self.budget * probabilities)
@@ -348,14 +348,14 @@ class RelaxedHPMarking(StrictModule, NonTrainableState):
         self, indicators: ArrayLike, valid: ArrayLike, stable_ids: ArrayLike, /
     ) -> Array:
         values = np.asarray(indicators)
-        valid_ = np.asarray(valid, dtype=bool)
+        valid_ = np.asarray(valid, dtype=np.bool_)
         ids = np.asarray(stable_ids)
         candidates = np.flatnonzero(valid_)
         ordered = sorted(
             candidates.tolist(),
             key=lambda index: (-float(values[index]), tuple(ids[index].tolist())),
         )
-        selected = np.zeros(valid_.shape, dtype=bool)
+        selected = np.zeros(valid_.shape, dtype=np.bool_)
         selected[ordered[: self.budget]] = True
         return jnp.asarray(selected)
 

@@ -242,7 +242,7 @@ def finite_entanglement_spectrum(
     probabilities = jnp.square(jnp.abs(singular))
     normalization = jnp.sum(probabilities)
     probabilities = probabilities / jnp.maximum(normalization, floor)
-    count = min(capacity, int(probabilities.shape[0]))
+    count = min(capacity, probabilities.shape[0])
     spectrum = (
         jnp.zeros((capacity,), dtype=probabilities.dtype)
         .at[:count]
@@ -267,13 +267,13 @@ def finite_transfer_spectrum(
     if not 0 <= site_ < state.site_count or capacity < 1:
         raise ValueError("site must be valid and maximum_modes positive.")
     tensor = state.precision.accumulation(state.tensors[site_])
-    left = int(tensor.shape[0])
-    right = int(tensor.shape[-1])
+    left = tensor.shape[0]
+    right = tensor.shape[-1]
     dtype = jnp.result_type(tensor)
     eigenvalues = jnp.full(
         (capacity,), jnp.nan + 0j, dtype=jnp.result_type(dtype, jnp.complex64)
     )
-    active = jnp.zeros((capacity,), dtype=bool)
+    active = jnp.zeros((capacity,), dtype=jnp.bool_)
     if left != right:
         return FiniteTransferSpectrum(
             eigenvalues,
@@ -288,7 +288,7 @@ def finite_transfer_spectrum(
     computed = jnp.linalg.eigvals(transfer)
     order = jnp.argsort(jnp.abs(computed))[::-1]
     computed = computed[order]
-    count = min(capacity, int(computed.shape[0]))
+    count = min(capacity, computed.shape[0])
     eigenvalues = eigenvalues.at[:count].set(computed[:count])
     active = active.at[:count].set(True)
     finite = jnp.all(jnp.isfinite(computed))

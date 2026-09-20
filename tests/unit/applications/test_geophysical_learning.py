@@ -344,7 +344,7 @@ def test_anomaly_provenance_and_explicit_multivariate_scaling():
         area_weights=[1.0, 1.0],
         layer_weights=[1.0],
         time_weights=[1.0],
-        mask=jnp.ones_like(truth, dtype=bool),
+        mask=jnp.ones_like(truth, dtype="bool"),
         climatology=climatology,
     )
     with pytest.raises(ValueError, match="independent"):
@@ -380,7 +380,7 @@ def test_extreme_reliability_empty_bins_and_native_complex_spectral_error():
     np.testing.assert_allclose(result.bin_frequency[0, :2], [0.0, 1.0])
     assert float(result.bin_weight[0, 2]) == 0 and np.isnan(result.bin_frequency[0, 2])
     spectral = geophysical_spectral_rmse(
-        jnp.zeros((1, 2), dtype=complex),
+        jnp.zeros((1, 2), dtype="complex128"),
         jnp.asarray([[1j, 3j]]),
         mode_weights=[3.0, 1.0],
         mask=True,

@@ -39,7 +39,6 @@ from .._sampling import (
     host_design_factory,
     normalize_design_name,
     seed_from_key,
-    unit_design,
 )
 from ._adaptive_cubature_rules import (
     AdaptiveCubatureFamily,
@@ -165,7 +164,6 @@ __all__ = [
     "smolyak_terms_for_index_set",
     "sparse_index",
     "smolyak_terms",
-    "unit_design",
     "weight_ess",
     "weighted_diagnostics",
     "weighted_total_degree_indices",

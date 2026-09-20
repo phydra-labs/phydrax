@@ -67,7 +67,7 @@ def _bounds(
         )
     else:
         if len(value) != 4:
-            raise ValueError("Cell bounds must be (u0, u1, v0, v1).")
+            raise ValueError("Cell bounds must be (u0, u1, canonical, canonical).")
         result = tuple(float(component) for component in value)
     if not all(isfinite(component) for component in result):
         raise ValueError("Cell bounds must be finite.")
@@ -133,7 +133,7 @@ class TEdge2D(StrictModule, NonTrainableState):
         /,
     ):
         identifier = int(edge_id)
-        vertices = tuple(int(value) for value in vertex_ids)
+        vertices = tuple(vertex_ids)
         cells = tuple(sorted(int(value) for value in cell_ids))
         if identifier < 0 or len(vertices) != 2 or vertices[0] == vertices[1]:
             raise ValueError("A T-mesh edge requires an ID and two distinct vertices.")
@@ -174,8 +174,8 @@ class TCell2D(StrictModule, NonTrainableState):
             raise ValueError("T-mesh cell IDs and levels must be nonnegative.")
         self.cell_id = identifier
         self.parameter_bounds = _bounds(parameter_bounds)
-        self.vertex_ids = tuple(int(value) for value in vertex_ids)
-        self.edge_ids = tuple(int(value) for value in edge_ids)
+        self.vertex_ids = tuple(vertex_ids)
+        self.edge_ids = tuple(edge_ids)
         self.level = level_
 
     @property
@@ -294,7 +294,7 @@ class TMesh2D(StrictModule, NonTrainableState):
         proprietary_format: str | None = None,
         extraordinary: bool = False,
     ):
-        degrees = tuple(int(value) for value in degree)
+        degrees = tuple(degree)
         if degrees != (_BICUBIC_DEGREE, _BICUBIC_DEGREE):
             raise NotImplementedError("F7 supports bicubic ASTS2D bases only.")
         if proprietary_format is not None:
@@ -811,7 +811,7 @@ def _bspline_value(knots: Sequence[float], degree: int, point: float, /) -> floa
 
 
 def _bernstein_cubic(points: np.ndarray, derivative: int = 0) -> np.ndarray:
-    t = np.asarray(points, dtype=float)
+    t = np.asarray(points, dtype=np.float64)
     if derivative == 0:
         return np.stack(
             ((1.0 - t) ** 3, 3.0 * t * (1.0 - t) ** 2, 3.0 * t**2 * (1.0 - t), t**3),
@@ -835,7 +835,7 @@ def _bernstein_cubic(points: np.ndarray, derivative: int = 0) -> np.ndarray:
     if derivative == 3:
         return np.broadcast_to(np.asarray((-6.0, 18.0, -18.0, 6.0)), t.shape + (4,))
     if derivative > 3:
-        return np.zeros(t.shape + (4,), dtype=float)
+        return np.zeros(t.shape + (4,), dtype=np.float64)
     raise ValueError("Bernstein derivative orders must be nonnegative.")
 
 
@@ -844,7 +844,7 @@ def _univariate_extraction(
 ) -> np.ndarray:
     lower, upper = interval
     if knots[0] >= upper or knots[-1] <= lower:
-        return np.zeros((4,), dtype=float)
+        return np.zeros((4,), dtype=np.float64)
     if any(lower < knot < upper for knot in knots):
         raise ValueError("A local knot line cuts the interior of one extraction cell.")
     reference = np.asarray((0.125, 0.375, 0.625, 0.875))
@@ -854,7 +854,7 @@ def _univariate_extraction(
         [_bspline_value(knots, _BICUBIC_DEGREE, float(point)) for point in points]
     )
     coefficients = np.linalg.solve(collocation, values)
-    coefficients[np.abs(coefficients) < 32.0 * np.finfo(float).eps] = 0.0
+    coefficients[np.abs(coefficients) < 32.0 * np.finfo(np.float64).eps] = 0.0
     return coefficients
 
 
@@ -879,7 +879,7 @@ class ExtractedBernstein(StrictModule, NonTrainableState):
     ):
         bounds_ = _bounds(parameter_bounds)
         anchors = np.asarray(anchor_ids)
-        operator = np.asarray(extraction_operator, dtype=float)
+        operator = np.asarray(extraction_operator, dtype=np.float64)
         if anchors.ndim != 1 or not np.issubdtype(anchors.dtype, np.integer):
             raise TypeError("anchor_ids must be one rank-1 integer array.")
         if operator.shape != (anchors.size, 16):
@@ -909,7 +909,7 @@ class ExtractedBernstein(StrictModule, NonTrainableState):
 
     @property
     def local_width(self) -> int:
-        return int(self.anchor_ids.shape[0])
+        return self.anchor_ids.shape[0]
 
     def evaluate_reference(
         self,
@@ -918,7 +918,7 @@ class ExtractedBernstein(StrictModule, NonTrainableState):
         *,
         derivative: tuple[int, int] = (0, 0),
     ) -> Array:
-        points = np.asarray(reference_points, dtype=float)
+        points = np.asarray(reference_points, dtype=np.float64)
         if points.ndim != 2 or points.shape[1] != 2:
             raise ValueError("reference_points must have shape (point, 2).")
         du, dv = (int(derivative[0]), int(derivative[1]))
@@ -942,11 +942,11 @@ class ExtractedBernstein(StrictModule, NonTrainableState):
         *,
         derivative: tuple[int, int] = (0, 0),
     ) -> Array:
-        points = np.asarray(parameter_points, dtype=float)
+        points = np.asarray(parameter_points, dtype=np.float64)
         if points.ndim != 2 or points.shape[1] != 2:
             raise ValueError("parameter_points must have shape (point, 2).")
         u0, u1, v0, v1 = self.parameter_bounds
-        tolerance = 16.0 * np.finfo(float).eps * max(u1 - u0, v1 - v0, 1.0)
+        tolerance = 16.0 * np.finfo(np.float64).eps * max(u1 - u0, v1 - v0, 1.0)
         if np.any(points[:, 0] < u0 - tolerance) or np.any(points[:, 0] > u1 + tolerance):
             raise ValueError("A parameter point lies outside the extraction cell.")
         if np.any(points[:, 1] < v0 - tolerance) or np.any(points[:, 1] > v1 + tolerance):
@@ -1046,7 +1046,7 @@ class LocalExtractedBernsteinRealization(StrictModule, NonTrainableState):
         *,
         derivative: tuple[int, int] = (0, 0),
     ) -> Array:
-        points = np.asarray(parameter_points, dtype=float)
+        points = np.asarray(parameter_points, dtype=np.float64)
         if points.ndim != 2 or points.shape[1] != 2:
             raise ValueError("parameter_points must have shape (point, 2).")
         coefficient_values = jnp.asarray(coefficients)
@@ -1088,9 +1088,9 @@ def _cell_extraction(mesh: TMesh2D, cell: TCell2D, /) -> ExtractedBernstein:
         if np.max(np.abs(row)) > 0.0:
             anchor_ids.append(anchor.anchor_id)
             rows.append(row)
-    operator = np.asarray(rows, dtype=float)
+    operator = np.asarray(rows, dtype=np.float64)
     if operator.size == 0:
-        operator = np.empty((0, 16), dtype=float)
+        operator = np.empty((0, 16), dtype=np.float64)
     return ExtractedBernstein(cell.cell_id, cell.parameter_bounds, anchor_ids, operator)
 
 
@@ -1310,7 +1310,7 @@ class ASTSTransferPlan(StrictModule, NonTrainableState):
     ):
         targets = np.asarray(target_indices)
         sources = np.asarray(source_indices)
-        weights = np.asarray(coefficients, dtype=float)
+        weights = np.asarray(coefficients, dtype=np.float64)
         if (
             targets.ndim != 1
             or sources.shape != targets.shape
@@ -1333,7 +1333,7 @@ class ASTSTransferPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Exact ASTS transfer weights must be finite and nonnegative."
             )
-        constant = np.zeros((target_count_,), dtype=float)
+        constant = np.zeros((target_count_,), dtype=np.float64)
         np.add.at(constant, targets, weights)
         constant_residual = float(np.max(np.abs(constant - 1.0)))
         reproduction_residual = float(maximum_reproduction_residual)
@@ -1371,7 +1371,7 @@ class ASTSTransferPlan(StrictModule, NonTrainableState):
 
     @property
     def route_count(self) -> int:
-        return int(self.coefficients.shape[0])
+        return self.coefficients.shape[0]
 
     def apply(self, source_coefficients: ArrayLike, /) -> Array:
         values = jnp.asarray(source_coefficients)
@@ -1452,7 +1452,7 @@ def _refined_univariate_routes(
     augmented = (
         (support_lower,) * _BICUBIC_DEGREE + local + (support_upper,) * _BICUBIC_DEGREE
     )
-    coefficients = np.zeros((len(augmented) - _BICUBIC_DEGREE - 1,), dtype=float)
+    coefficients = np.zeros((len(augmented) - _BICUBIC_DEGREE - 1,), dtype=np.float64)
     coefficients[_BICUBIC_DEGREE] = 1.0
     spline = BSpline(augmented, coefficients, _BICUBIC_DEGREE, extrapolate=False)
     target_values, target_counts = np.unique(np.asarray(target_knots), return_counts=True)
@@ -1469,7 +1469,7 @@ def _refined_univariate_routes(
     }
     routes: dict[int, float] = {}
     for index, coefficient in enumerate(np.asarray(spline.c)):
-        if abs(coefficient) <= 64.0 * np.finfo(float).eps:
+        if abs(coefficient) <= 64.0 * np.finfo(np.float64).eps:
             continue
         window = _knot_key(spline.t[index : index + _BICUBIC_DEGREE + 2])
         if window not in target_windows:

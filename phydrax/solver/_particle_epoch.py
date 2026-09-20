@@ -85,7 +85,7 @@ def advance_particle_epoch_segments(
         raise TypeError("initial_epoch must be ParticleExecutionEpoch.")
     if not callable(step_function):
         raise TypeError("step_function must be callable.")
-    counts = tuple(int(value) for value in segment_steps)
+    counts = tuple(segment_steps)
     if not counts or any(value < 0 for value in counts):
         raise ValueError("segment_steps must contain nonnegative counts.")
     requests = tuple(growth_requests)
@@ -102,7 +102,7 @@ def advance_particle_epoch_segments(
     successful = jnp.asarray(True)
     global_step = 0
     for segment_index, count in enumerate(counts):
-        accepted = jnp.zeros((count,), dtype=bool)
+        accepted = jnp.zeros((count,), dtype=jnp.bool_)
         segment_successful = jnp.asarray(True)
         for local_step in range(count):
             result = step_function(epoch, global_step)

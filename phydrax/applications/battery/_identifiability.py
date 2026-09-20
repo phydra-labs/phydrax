@@ -69,8 +69,7 @@ class BatteryIdentifiabilityPlan(StrictModule):
             prepared = calibration
         else:
             raise TypeError(
-                "calibration must be a BatteryCalibrationPlan or "
-                "PreparedBatteryCalibration."
+                "calibration must be a BatteryCalibrationPlan or PreparedBatteryCalibration."
             )
         policy = RankPolicy() if rank_policy is None else rank_policy
         if not isinstance(policy, RankPolicy):
@@ -157,9 +156,9 @@ class BatteryIdentifiabilityReport(StrictModule):
         rank = jnp.asarray(numerical_rank, dtype=jnp.int32)
         condition = jnp.asarray(condition_number)
         weak = jnp.asarray(weak_directions)
-        weak_mask = jnp.asarray(weak_direction_mask, dtype=bool)
+        weak_mask = jnp.asarray(weak_direction_mask, dtype=jnp.bool_)
         status = jnp.asarray(svd_status, dtype=jnp.int32)
-        success = jnp.asarray(successful, dtype=bool)
+        success = jnp.asarray(successful, dtype=jnp.bool_)
         count = len(parameter_ids)
         if jacobian.ndim != 2 or jacobian.shape[1] != count:
             raise ValueError(
@@ -214,7 +213,7 @@ def _evaluate_battery_identifiability_numerics(
 ) -> _BatteryIdentifiabilityNumerics:
     plan.calibration.plan.parameter_space.constrain(position)
     flat_point, unravel = ravel_pytree(position)
-    if int(flat_point.size) != plan.parameter_count:
+    if flat_point.size != plan.parameter_count:
         raise ValueError("Identifiability position does not match parameter coordinates.")
 
     def residual_from_flat(flat: Array, /) -> Array:
@@ -226,13 +225,13 @@ def _evaluate_battery_identifiability_numerics(
     safe_jacobian = jnp.where(finite_evaluation, jacobian, jnp.zeros_like(jacobian))
     fisher = safe_jacobian.T @ safe_jacobian
 
-    row_count = max(int(safe_jacobian.shape[0]), plan.parameter_count)
-    if row_count == int(safe_jacobian.shape[0]):
+    row_count = max(safe_jacobian.shape[0], plan.parameter_count)
+    if row_count == safe_jacobian.shape[0]:
         svd_matrix = safe_jacobian
     else:
         svd_matrix = jnp.pad(
             safe_jacobian,
-            ((0, row_count - int(safe_jacobian.shape[0])), (0, 0)),
+            ((0, row_count - safe_jacobian.shape[0]), (0, 0)),
         )
     operator = DenseLinearOperator(
         svd_matrix,
@@ -259,7 +258,7 @@ def _evaluate_battery_identifiability_numerics(
     weak_directions = jnp.where(weak_mask[:, None], right_vectors.T, 0.0)
     retained_mask = ~weak_mask
     retained_converged = jnp.all(
-        (~retained_mask) | jnp.asarray(decomposition.converged, dtype=bool)
+        (~retained_mask) | jnp.asarray(decomposition.converged, dtype=jnp.bool_)
     )
     decomposition_valid = (
         jnp.all(jnp.isfinite(singular_values))
@@ -297,8 +296,7 @@ def evaluate_battery_identifiability(
         isinstance(leaf, jax.core.Tracer) for leaf in jax.tree_util.tree_leaves(point)
     ):
         raise TypeError(
-            "Report identity requires a concrete position; use "
-            "BatteryIdentifiabilityPlan.evaluate_numerics inside JIT."
+            "Report identity requires a concrete position; use BatteryIdentifiabilityPlan.evaluate_numerics inside JIT."
         )
     numerics = plan.evaluate_numerics(point)
     position_fingerprint = array_tree_fingerprint(point)["sha256"]

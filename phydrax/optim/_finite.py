@@ -43,7 +43,7 @@ from ._pareto import nondominated_mask
 
 
 _FINITE_SPACE_VERSION = 1
-_FINITE_SEARCH_METHOD_ID = "finite-exhaustive-v1"
+_FINITE_SEARCH_METHOD_ID = "finite-exhaustive"
 FiniteEvaluator = Callable[[PyTree[Array]], tuple[Array, Array]]
 
 
@@ -105,10 +105,9 @@ class FiniteAxis(StrictModule):
                 raise TypeError("FiniteAxis leaves must be numerical or boolean arrays.")
             if array.ndim == 0:
                 raise ValueError(
-                    f"FiniteAxis leaf {_path_name(path)} must have a leading "
-                    "candidate dimension."
+                    f"FiniteAxis leaf {_path_name(path)} must have a leading candidate dimension."
                 )
-            leading = int(array.shape[0])
+            leading = array.shape[0]
             if leading == 0:
                 raise ValueError("FiniteAxis candidate dimensions must be nonempty.")
             if axis_size is None:
@@ -120,7 +119,7 @@ class FiniteAxis(StrictModule):
                 )
             arrays.append(array)
             paths.append(_path_name(path))
-            payload_shapes.append(tuple(int(size) for size in array.shape[1:]))
+            payload_shapes.append(tuple(array.shape[1:]))
             dtypes.append(str(array.dtype))
 
         assert axis_size is not None
@@ -427,7 +426,7 @@ class FiniteSearchIterationMetrics(StrictModule):
         self.invalid_evaluations = jnp.asarray(invalid_evaluations, dtype=jnp.int64)
         self.retained_candidates = jnp.asarray(retained_candidates, dtype=jnp.int32)
         self.total_candidates = jnp.asarray(total_candidates, dtype=jnp.int64)
-        self.complete = jnp.asarray(complete, dtype=bool)
+        self.complete = jnp.asarray(complete, dtype=jnp.bool_)
 
 
 def _finite_search_scope(
@@ -549,8 +548,7 @@ def _reducer_shape(
     if isinstance(reducer, FinitePareto):
         if score_spec.shape != (reducer.objective_count,):
             raise ValueError(
-                "FinitePareto evaluator scores must have trailing shape "
-                f"({reducer.objective_count},)."
+                f"FinitePareto evaluator scores must have trailing shape ({reducer.objective_count},)."
             )
         return (
             reducer.capacity,
@@ -627,7 +625,7 @@ def _finite_evaluator_contract(
         raise TypeError("Finite evaluator scores and validity must be arrays.")
     if not np.issubdtype(np.dtype(score_spec.dtype), np.floating):
         raise TypeError("Finite evaluator scores must use a real floating dtype.")
-    if np.dtype(valid_spec.dtype) != np.dtype(bool) or valid_spec.shape != ():
+    if np.dtype(valid_spec.dtype) != np.dtype(np.bool_) or valid_spec.shape != ():
         raise ValueError("Finite evaluator validity must be one boolean scalar.")
     capacity, objectives, reducer_id = _reducer_shape(reducer, score_spec, space.size)
     return score_spec, capacity, objectives, reducer_id
@@ -892,16 +890,18 @@ def search_finite(
         )
 
     retained_scores = jnp.full((capacity, objectives), jnp.nan, dtype=score_spec.dtype)
-    retained_valid = jnp.zeros((capacity,), dtype=bool)
+    retained_valid = jnp.zeros((capacity,), dtype=jnp.bool_)
     retained_indices = jnp.full((capacity,), -1, dtype=jnp.int64)
     landscape_scores = (
         jnp.full((space.size, objectives), jnp.nan, dtype=score_spec.dtype)
         if landscape_.retain
         else None
     )
-    landscape_valid = jnp.zeros((space.size,), dtype=bool) if landscape_.retain else None
+    landscape_valid = (
+        jnp.zeros((space.size,), dtype=jnp.bool_) if landscape_.retain else None
+    )
     landscape_evaluated = (
-        jnp.zeros((space.size,), dtype=bool) if landscape_.retain else None
+        jnp.zeros((space.size,), dtype=jnp.bool_) if landscape_.retain else None
     )
     attempted = jnp.asarray(0, dtype=jnp.int64)
     invalid = jnp.asarray(0, dtype=jnp.int64)

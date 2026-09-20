@@ -141,7 +141,7 @@ class MeanFieldIndividualConstraintEvidence(StrictModule):
         if stationarity.ndim != 1 or stationarity.size == 0:
             raise ValueError("original_stationarity must be a nonempty vector.")
         stationarity_residual = jnp.max(jnp.abs(stationarity))
-        validity = jnp.asarray(valid, dtype=bool)
+        validity = jnp.asarray(valid, dtype=jnp.bool_)
         if validity.shape != ():
             raise ValueError("valid must be scalar.")
         finite = (
@@ -211,7 +211,7 @@ class MeanFieldAggregateConstraintDerivativeEvidence(StrictModule):
             raise ValueError("aggregate_jacobian must be a nonempty matrix.")
         if prices.ndim != 1 or jacobian.shape[0] != prices.size:
             raise ValueError("aggregate_jacobian rows must match the multiplier vector.")
-        validity = jnp.asarray(valid, dtype=bool)
+        validity = jnp.asarray(valid, dtype=jnp.bool_)
         if validity.shape != ():
             raise ValueError("valid must be scalar.")
         finite = bool(
@@ -346,7 +346,7 @@ class ConstrainedMeanFieldGameProblem(StrictModule):
         if not isinstance(multiplier_layout, GameMultiplierLayout):
             raise TypeError("multiplier_layout must be a GameMultiplierLayout.")
 
-        num_path_sites = int(fixed_point_problem.initial_flow.times.size) - 1
+        num_path_sites = fixed_point_problem.initial_flow.times.size - 1
         layout = constraints.layout(num_path_sites=num_path_sites)
         individual_blocks = tuple(
             block
@@ -370,15 +370,13 @@ class ConstrainedMeanFieldGameProblem(StrictModule):
         if concept is MeanFieldConstraintConcept.INDIVIDUAL:
             if aggregate_blocks:
                 raise ValueError(
-                    "INDIVIDUAL constrained MFGs cannot contain aggregate shared "
-                    "constraint blocks."
+                    "INDIVIDUAL constrained MFGs cannot contain aggregate shared constraint blocks."
                 )
             variational = False
         else:
             if not aggregate_blocks:
                 raise ValueError(
-                    "Aggregate constrained MFG concepts require at least one "
-                    "shared constraint block."
+                    "Aggregate constrained MFG concepts require at least one shared constraint block."
                 )
             variational = concept is MeanFieldConstraintConcept.AGGREGATE_VARIATIONAL
         expected_multiplier_layout = layout.multiplier_layout(variational=variational)
@@ -389,8 +387,7 @@ class ConstrainedMeanFieldGameProblem(StrictModule):
         ):
             convention = "common variational" if variational else "population-specific"
             raise ValueError(
-                "multiplier_layout does not match the declared constraint concept; "
-                f"expected the {convention} layout."
+                f"multiplier_layout does not match the declared constraint concept; expected the {convention} layout."
             )
 
         has_constraints = bool(constraints.blocks)
@@ -411,8 +408,7 @@ class ConstrainedMeanFieldGameProblem(StrictModule):
         else:
             if individual_evidence is not None or multipliers is not None:
                 raise ValueError(
-                    "Unconstrained problems must not supply constraint evidence or "
-                    "multiplier callbacks."
+                    "Unconstrained problems must not supply constraint evidence or multiplier callbacks."
                 )
             if individual_evidence_id is not None or multiplier_callback_id is not None:
                 raise ValueError(
@@ -428,8 +424,7 @@ class ConstrainedMeanFieldGameProblem(StrictModule):
                 )
             if not callable(aggregate_derivative_evidence):
                 raise TypeError(
-                    "Aggregate constraints require an "
-                    "aggregate_derivative_evidence callback."
+                    "Aggregate constraints require an aggregate_derivative_evidence callback."
                 )
             aggregate_identifier = _identifier(
                 aggregate_law_constraints_id,
@@ -445,8 +440,7 @@ class ConstrainedMeanFieldGameProblem(StrictModule):
                 or aggregate_derivative_evidence is not None
             ):
                 raise ValueError(
-                    "Aggregate residual and derivative callbacks require aggregate "
-                    "shared constraint blocks."
+                    "Aggregate residual and derivative callbacks require aggregate shared constraint blocks."
                 )
             if (
                 aggregate_law_constraints_id is not None
@@ -459,8 +453,7 @@ class ConstrainedMeanFieldGameProblem(StrictModule):
         identifiers = _identifiers(multiplier_ids, "multiplier_ids")
         if len(identifiers) != multiplier_layout.num_multipliers:
             raise ValueError(
-                "multiplier_ids must identify every multiplier slot in the declared "
-                "layout."
+                "multiplier_ids must identify every multiplier slot in the declared layout."
             )
 
         self.fixed_point_problem = fixed_point_problem
@@ -795,7 +788,7 @@ def _aggregate_multiplier_mask(
                 mask[left:right] = [True] * (right - left)
     for left, right in problem.multiplier_layout.shared_multiplier_slices:
         mask[left:right] = [True] * (right - left)
-    return jnp.asarray(mask, dtype=bool)
+    return jnp.asarray(mask, dtype=jnp.bool_)
 
 
 def _validate_aggregate_derivative_evidence(
@@ -955,7 +948,7 @@ def _multiplier_metadata(
         )
     if any(row < 0 for row in rows):
         raise RuntimeError("Multiplier layout did not cover every multiplier slot.")
-    return jnp.asarray(rows, dtype=jnp.int32), jnp.asarray(equality, dtype=bool)
+    return jnp.asarray(rows, dtype=jnp.int32), jnp.asarray(equality, dtype=jnp.bool_)
 
 
 def _maximum_or_zero(value: Array, dtype: jnp.dtype, /) -> Array:
@@ -994,7 +987,9 @@ def solve_constrained_mean_field_game(
         raise ValueError("plan and problem IDs must match.")
 
     capacity = plan.maximum_iterations
-    dtype = jnp.result_type(problem.fixed_point_problem.initial_flow.particles, float)
+    dtype = jnp.result_type(
+        problem.fixed_point_problem.initial_flow.particles, jnp.float64
+    )
     nan_history = lambda: jnp.full((capacity,), jnp.nan, dtype=dtype)
     law_distance_history = nan_history()
     current_ess_history = nan_history()
@@ -1013,16 +1008,16 @@ def solve_constrained_mean_field_game(
         jnp.nan,
         dtype=dtype,
     )
-    best_response_validity = jnp.zeros((capacity,), dtype=bool)
-    induced_law_validity = jnp.zeros((capacity,), dtype=bool)
-    law_consistency = jnp.zeros((capacity,), dtype=bool)
-    evidence_validity = jnp.zeros((capacity,), dtype=bool)
-    population_feasibility = jnp.zeros((capacity,), dtype=bool)
-    dual_feasibility = jnp.zeros((capacity,), dtype=bool)
-    complementarity_validity = jnp.zeros((capacity,), dtype=bool)
-    kkt_validity = jnp.zeros((capacity,), dtype=bool)
-    iteration_validity = jnp.zeros((capacity,), dtype=bool)
-    acceptance = jnp.zeros((capacity,), dtype=bool)
+    best_response_validity = jnp.zeros((capacity,), dtype=jnp.bool_)
+    induced_law_validity = jnp.zeros((capacity,), dtype=jnp.bool_)
+    law_consistency = jnp.zeros((capacity,), dtype=jnp.bool_)
+    evidence_validity = jnp.zeros((capacity,), dtype=jnp.bool_)
+    population_feasibility = jnp.zeros((capacity,), dtype=jnp.bool_)
+    dual_feasibility = jnp.zeros((capacity,), dtype=jnp.bool_)
+    complementarity_validity = jnp.zeros((capacity,), dtype=jnp.bool_)
+    kkt_validity = jnp.zeros((capacity,), dtype=jnp.bool_)
+    iteration_validity = jnp.zeros((capacity,), dtype=jnp.bool_)
+    acceptance = jnp.zeros((capacity,), dtype=jnp.bool_)
 
     current_flow_ids: list[str | None] = [None] * capacity
     induced_flow_ids: list[str | None] = [None] * capacity

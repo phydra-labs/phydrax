@@ -88,9 +88,9 @@ def topology_case(width, repeats):
         evaluated.birth_values.block_until_ready()
     frozen_seconds = (time.perf_counter() - started) / repeats
     return {
-        "vertices": int(vertices.shape[0]),
+        "vertices": vertices.shape[0],
         "edges": int(mesh.topology.entity_sets[1].count),
-        "faces": int(faces.shape[0]),
+        "faces": faces.shape[0],
         "boundary_nonzeros": int(
             sum(incidence.relation.capacity for incidence in mesh.topology.incidences)
         ),

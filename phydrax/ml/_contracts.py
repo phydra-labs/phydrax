@@ -244,7 +244,7 @@ class FitDiagnostics(StrictModule):
         condition: Any = jnp.nan,
         method: str,
     ):
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.objective = jnp.asarray(objective)
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32)
@@ -277,7 +277,7 @@ class FitResult(StrictModule):
     ):
         self.model = model if isinstance(model, FrozenModel) else FrozenModel(model)
         self.diagnostics = diagnostics
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.gradient_contract = gradient_contract
         self.method = str(method)
@@ -297,8 +297,7 @@ class FitResult(StrictModule):
         model = self.model.as_trainable()
         if expected_type is not None and not isinstance(model, expected_type):
             raise TypeError(
-                f"Expected fitted model {expected_type.__name__}; "
-                f"got {type(model).__name__}."
+                f"Expected fitted model {expected_type.__name__}; got {type(model).__name__}."
             )
         return model
 
@@ -326,18 +325,6 @@ class AbstractRecipe(StrictModule):
 
 
 __all__ = [
-    "AbstractRecipe",
-    "DecisionFunctionModel",
-    "FitDiagnostics",
-    "FitGradientMode",
-    "GradientInput",
-    "GradientLevel",
-    "GradientSurface",
-    "FitResult",
-    "GradientContract",
-    "LogProbabilityModel",
-    "MLGradientAdmission",
-    "MLGradientRequest",
     "ML_CAPACITY_EXHAUSTED",
     "ML_INFEASIBLE",
     "ML_INSUFFICIENT_DATA",
@@ -346,4 +333,16 @@ __all__ = [
     "ML_RANK_DEFICIENT",
     "ML_SUCCESS",
     "ML_UNSUPPORTED_GRADIENT",
+    "AbstractRecipe",
+    "DecisionFunctionModel",
+    "FitDiagnostics",
+    "FitGradientMode",
+    "FitResult",
+    "GradientContract",
+    "GradientInput",
+    "GradientLevel",
+    "GradientSurface",
+    "LogProbabilityModel",
+    "MLGradientAdmission",
+    "MLGradientRequest",
 ]

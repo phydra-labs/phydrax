@@ -69,15 +69,13 @@ class ParameterGeometry(StrictModule):
         missing = tuple(sorted(requested - available))
         if missing:
             raise ValueError(
-                f"Unknown ParameterGeometry leaf paths {missing}; available paths are "
-                f"{tuple(paths)}."
+                f"Unknown ParameterGeometry leaf paths {missing}; available paths are {tuple(paths)}."
             )
         requested_weights = {} if weights is None else dict(weights)
         unknown_weights = tuple(sorted(set(requested_weights) - requested))
         if unknown_weights:
             raise ValueError(
-                "ParameterGeometry weights may select only manifold-bound leaves; "
-                f"got {unknown_weights}."
+                f"ParameterGeometry weights may select only manifold-bound leaves; got {unknown_weights}."
             )
 
         leaf_manifolds: list[AbstractRiemannianManifold | None] = []
@@ -93,8 +91,7 @@ class ParameterGeometry(StrictModule):
                 continue
             if not isinstance(manifold, AbstractRiemannianManifold):
                 raise TypeError(
-                    f"ParameterGeometry leaf {path_name} must be bound to an "
-                    "AbstractRiemannianManifold."
+                    f"ParameterGeometry leaf {path_name} must be bound to an AbstractRiemannianManifold."
                 )
             array = jnp.asarray(leaf)
             if manifold.scalar_field == "real":
@@ -107,25 +104,22 @@ class ParameterGeometry(StrictModule):
                 )
             if not valid_dtype:
                 raise TypeError(
-                    f"Manifold parameter leaf {path_name} must use "
-                    f"{manifold.scalar_field} floating-point coordinates."
+                    f"Manifold parameter leaf {path_name} must use {manifold.scalar_field} floating-point coordinates."
                 )
             point_shape = manifold.point_shape
             rank = len(point_shape)
             if array.ndim < rank or (rank and shape[-rank:] != point_shape):
                 raise ValueError(
-                    f"Manifold parameter leaf {path_name} must have trailing shape "
-                    f"{point_shape}, got {shape}."
+                    f"Manifold parameter leaf {path_name} must have trailing shape {point_shape}, got {shape}."
                 )
-            membership = jnp.asarray(manifold.contains(array), dtype=bool)
+            membership = jnp.asarray(manifold.contains(array), dtype=jnp.bool_)
             if membership.shape != ():
                 raise ValueError(
                     f"Manifold {manifold.manifold_id} contains() must return a scalar."
                 )
             if not bool(membership):
                 raise ValueError(
-                    f"Initial parameter leaf {path_name} is outside "
-                    f"{manifold.manifold_id}."
+                    f"Initial parameter leaf {path_name} is outside {manifold.manifold_id}."
                 )
             leaf_manifolds.append(manifold)
             selected_indices.append(index)
@@ -321,8 +315,7 @@ class ParameterGeometry(StrictModule):
             expected = self._factor_shape(shape, manifold)
             if factor_array.shape != expected:
                 raise ValueError(
-                    f"Factor leaf {path} must have shape {expected}, "
-                    f"got {factor_array.shape}."
+                    f"Factor leaf {path} must have shape {expected}, got {factor_array.shape}."
                 )
             rank = 0 if manifold is None else len(manifold.point_shape)
             broadcast = factor_array.reshape(expected + (1,) * rank)
@@ -442,7 +435,9 @@ class ParameterGeometry(StrictModule):
                 if manifold is None
                 else manifold.contains(point)
             )
-            membership = membership & jnp.asarray(leaf_membership, dtype=bool).reshape(())
+            membership = membership & jnp.asarray(
+                leaf_membership, dtype=jnp.bool_
+            ).reshape(())
         return membership
 
     def constraint_residuals(

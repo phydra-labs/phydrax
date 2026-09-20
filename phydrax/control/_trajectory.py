@@ -69,37 +69,33 @@ class ControlTrajectory(StrictModule):
     ):
         if not isinstance(time_grid, TimeGrid):
             raise TypeError("ControlTrajectory time_grid must be a TimeGrid.")
-        cases = tuple(int(size) for size in case_shape)
-        states_shape = tuple(int(size) for size in state_shape)
-        controls_shape = tuple(int(size) for size in control_shape)
+        cases = tuple(case_shape)
+        states_shape = tuple(state_shape)
+        controls_shape = tuple(control_shape)
         if any(size <= 0 for size in cases + states_shape + controls_shape):
             raise ValueError("ControlTrajectory shape dimensions must be positive.")
         states_ = jnp.asarray(states)
         controls_ = jnp.asarray(controls)
-        valid_ = jnp.asarray(valid, dtype=bool)
+        valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         status_ = jnp.asarray(status, dtype=jnp.int32)
         expected_states = cases + (time_grid.num_times,) + states_shape
         expected_controls = cases + (time_grid.num_steps,) + controls_shape
         expected_valid = cases + (time_grid.num_times,)
         if tuple(states_.shape) != expected_states:
             raise ValueError(
-                f"ControlTrajectory states must have shape {expected_states}; "
-                f"got {states_.shape}."
+                f"ControlTrajectory states must have shape {expected_states}; got {states_.shape}."
             )
         if tuple(controls_.shape) != expected_controls:
             raise ValueError(
-                f"ControlTrajectory controls must have shape {expected_controls}; "
-                f"got {controls_.shape}."
+                f"ControlTrajectory controls must have shape {expected_controls}; got {controls_.shape}."
             )
         if tuple(valid_.shape) != expected_valid:
             raise ValueError(
-                f"ControlTrajectory valid must have shape {expected_valid}; "
-                f"got {valid_.shape}."
+                f"ControlTrajectory valid must have shape {expected_valid}; got {valid_.shape}."
             )
         if tuple(status_.shape) != cases:
             raise ValueError(
-                f"ControlTrajectory status must have case shape {cases}; "
-                f"got {status_.shape}."
+                f"ControlTrajectory status must have case shape {cases}; got {status_.shape}."
             )
         if transition_evidence is not None:
             if not isinstance(transition_evidence, DiscreteTransitionEvidence):

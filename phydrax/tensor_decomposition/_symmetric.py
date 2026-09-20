@@ -118,7 +118,7 @@ def prepare_symmetric_waring(
         else 0
     )
     cost = SymmetricWaringCostEstimate(
-        tensor_entries=int(problem.tensor.size),
+        tensor_entries=problem.tensor.size,
         quotient_basis_size=basis_size,
         hankel_entries=hankel_entries,
         vandermonde_entries=vandermonde_entries,
@@ -202,8 +202,7 @@ def solve_symmetric_waring(
         evidence = _failure_evidence(
             plan,
             detail=(
-                "tensor order does not provide the 2s+1 moments required by a "
-                "rank-sized affine quotient basis"
+                "tensor order does not provide the 2s+1 moments required by a rank-sized affine quotient basis"
             ),
         )
         return _failure_result(
@@ -501,7 +500,9 @@ def _recover_chart(
         diagonalized = jnp.asarray(transformed.value)
         diagonal = jnp.diag(diagonalized)
         off_diagonal = diagonalized - jnp.diag(diagonal)
-        scale = max(float(np.linalg.norm(np.asarray(diagonalized))), np.finfo(float).tiny)
+        scale = max(
+            float(np.linalg.norm(np.asarray(diagonalized))), np.finfo(np.float64).tiny
+        )
         diagonalization_defect = max(
             diagonalization_defect,
             float(np.linalg.norm(np.asarray(off_diagonal)) / scale),
@@ -781,14 +782,14 @@ def _select_quotient_basis(
             continue
         condition = float(singular_values[0] / singular_values[-1])
         if condition < best_condition:
-            best = tuple(int(index) for index in indices)
+            best = tuple(indices)
             best_condition = condition
     return best, best_condition
 
 
 def _commutator_defect(matrices: list[Array], /) -> float:
     defect = 0.0
-    tiny = np.finfo(float).tiny
+    tiny = np.finfo(np.float64).tiny
     for left_index in range(len(matrices)):
         for right_index in range(left_index + 1, len(matrices)):
             left = np.asarray(matrices[left_index])

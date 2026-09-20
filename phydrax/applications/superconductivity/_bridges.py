@@ -89,7 +89,7 @@ class _AbstractBridgePolicy(StrictModule, NonTrainableState, abc.ABC):
             & jnp.isfinite(separation)
             & jnp.isfinite(relative)
         )
-        support = jnp.asarray(supported, dtype=bool) & (
+        support = jnp.asarray(supported, dtype=jnp.bool_) & (
             separation >= self.minimum_scale_separation
         )
         successful = finite & support & (relative <= self.relative_tolerance)
@@ -215,7 +215,7 @@ class GLLondonBridgePlan(_AbstractBridgePolicy):
         relative_tolerance: float,
         minimum_scale_separation: float,
     ):
-        projection = np.asarray(current_projection, dtype=float)
+        projection = np.asarray(current_projection, dtype=np.float64)
         if projection.ndim != 2 or np.any(~np.isfinite(projection)):
             raise ValueError("GL/London current projection must be a finite matrix.")
         super().__init__(

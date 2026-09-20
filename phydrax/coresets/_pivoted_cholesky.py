@@ -53,14 +53,13 @@ def randomized_pivoted_cholesky(
     """Select source rows using randomized residual Cholesky pivots."""
     if not isinstance(method, RandomizedPivotedCholesky):
         raise TypeError("method must be a RandomizedPivotedCholesky.")
-    values = jnp.asarray(points, dtype=float)
+    values = jnp.asarray(points, dtype=jnp.float64)
     expected_rank = method.kernel.input_ndim + 1
     if values.ndim != expected_rank:
         raise ValueError(
-            "points must have one source axis followed by "
-            f"{method.kernel.input_ndim} kernel input axes."
+            f"points must have one source axis followed by {method.kernel.input_ndim} kernel input axes."
         )
-    source_points = int(values.shape[0])
+    source_points = values.shape[0]
     if source_points < 1:
         raise ValueError("Pivoted Cholesky requires at least one source point.")
     if method.num_points > source_points:
@@ -74,8 +73,8 @@ def randomized_pivoted_cholesky(
     capacity = method.num_points
     columns = jnp.zeros((source_points, capacity), dtype=safe_points.dtype)
     indices = jnp.zeros((capacity,), dtype=jnp.int32)
-    output_mask = jnp.zeros((capacity,), dtype=bool)
-    selected = jnp.zeros((source_points,), dtype=bool)
+    output_mask = jnp.zeros((capacity,), dtype=jnp.bool_)
+    selected = jnp.zeros((source_points,), dtype=jnp.bool_)
     tolerance = jnp.asarray(
         jnp.finfo(safe_points.dtype).eps * jnp.maximum(initial_trace, 1.0) * 32.0
     )

@@ -239,7 +239,7 @@ class StaticStructureFactorPlan(StrictModule, NonTrainableState):
         maximum_frames: int,
         maximum_particles: int,
     ):
-        vectors = np.asarray(wave_vectors, dtype=float)
+        vectors = np.asarray(wave_vectors, dtype=np.float64)
         frame_capacity = int(maximum_frames)
         particle_capacity = int(maximum_particles)
         if (
@@ -296,14 +296,14 @@ def static_structure_factor(
     if frame_count > plan.maximum_frames or particle_count > plan.maximum_particles:
         raise ValueError("Structure-factor input exceeds its declared resource bounds.")
     particles = (
-        jnp.ones((particle_count,), dtype=bool)
+        jnp.ones((particle_count,), dtype=jnp.bool_)
         if particle_mask is None
-        else jnp.asarray(particle_mask, dtype=bool)
+        else jnp.asarray(particle_mask, dtype=jnp.bool_)
     )
     samples = (
-        jnp.ones((frame_count,), dtype=bool)
+        jnp.ones((frame_count,), dtype=jnp.bool_)
         if sample_mask is None
-        else jnp.asarray(sample_mask, dtype=bool)
+        else jnp.asarray(sample_mask, dtype=jnp.bool_)
     )
     scattering = (
         jnp.ones((particle_count,), dtype=values.dtype)
@@ -395,7 +395,7 @@ class LaggedCorrelationPlan(StrictModule, NonTrainableState):
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "lagged-atomistic-correlation-plan",
-                "lag_steps": lags.astype(int).tolist(),
+                "lag_steps": lags.astype("int64").tolist(),
                 "spatial_dimension": dimension,
                 "maximum_frames": frames,
                 "maximum_particles": particles,
@@ -441,14 +441,14 @@ def lagged_msd_vacf(
     if frame_count > plan.maximum_frames or particle_count > plan.maximum_particles:
         raise ValueError("Lagged-correlation input exceeds declared resource bounds.")
     particles = (
-        jnp.ones((particle_count,), dtype=bool)
+        jnp.ones((particle_count,), dtype=jnp.bool_)
         if particle_mask is None
-        else jnp.asarray(particle_mask, dtype=bool)
+        else jnp.asarray(particle_mask, dtype=jnp.bool_)
     )
     samples = (
-        jnp.ones((frame_count,), dtype=bool)
+        jnp.ones((frame_count,), dtype=jnp.bool_)
         if sample_mask is None
-        else jnp.asarray(sample_mask, dtype=bool)
+        else jnp.asarray(sample_mask, dtype=jnp.bool_)
     )
     if particles.shape != (particle_count,) or samples.shape != (frame_count,):
         raise ValueError("Lagged-correlation masks are misaligned.")

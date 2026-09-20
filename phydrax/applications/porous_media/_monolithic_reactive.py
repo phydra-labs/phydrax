@@ -227,7 +227,7 @@ class MonolithicReactiveTransportPlan(StrictModule):
         face_flux = self.transport.advective_fluxes(totals, water_rate, boundary)
         boundary_flux = jnp.sum(
             jnp.where(
-                (self.transport.discretization.neighbour_cells < 0)[:, None],
+                (self.transport.discretization.neighbor_cells < 0)[:, None],
                 face_flux,
                 0.0,
             ),

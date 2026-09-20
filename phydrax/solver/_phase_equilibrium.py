@@ -477,7 +477,7 @@ class FixedTwoPhaseTPFlashPlan(StrictModule):
             jnp.full((2, count), nan),
             jnp.full((2,), nan),
             jnp.full((2,), -1, dtype=jnp.int32),
-            jnp.zeros((2,), dtype=bool),
+            jnp.zeros((2,), dtype=jnp.bool_),
             jnp.full((count,), nan),
             jnp.full((count,), nan),
             stability,

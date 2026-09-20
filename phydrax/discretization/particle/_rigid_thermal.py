@@ -5,7 +5,7 @@
 
 States retain unwrapped COM coordinates. Images are presentation data, never
 independent wrapped marker coordinates. Rotational friction is isotropic in
-angular velocity; inertia is COM-centred and angular velocities are world-frame.
+angular velocity; inertia is COM-centered and angular velocities are world-frame.
 """
 
 from __future__ import annotations
@@ -47,7 +47,7 @@ class PreparedRigidHeatBath(StrictModule, NonTrainableState):
 
     kT is in mechanical mass*length^2/time^2 units, not an arbitrary energy
     scale. Frictions are nonnegative inverse-time rates. All validation and
-    inertia factorization are host-only. No centre-of-mass velocity removal is
+    inertia factorization are host-only. No center-of-mass velocity removal is
     performed: that would change the ensemble. Keys are consumed explicitly.
     """
 
@@ -61,7 +61,7 @@ class PreparedRigidHeatBath(StrictModule, NonTrainableState):
         self, bodies, thermal_energy, translation_friction, rotation_friction, /
     ):
         values = np.asarray(
-            [thermal_energy, translation_friction, rotation_friction], dtype=float
+            [thermal_energy, translation_friction, rotation_friction], dtype=np.float64
         )
         if values.shape != (3,) or not np.all(np.isfinite(values) & (values >= 0)):
             raise ValueError(

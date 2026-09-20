@@ -21,14 +21,14 @@ _IMAGE_COORDINATE_CONVENTION = "row-down-column-right"
 
 
 def _shape2(value: Sequence[int], /, *, name: str) -> tuple[int, int]:
-    shape = tuple(int(item) for item in value)
+    shape = tuple(value)
     if len(shape) != 2 or any(item < 1 for item in shape):
         raise ValueError(f"{name} must contain two positive dimensions.")
     return shape
 
 
 def _vector2(value: Array | Sequence[float], /, *, name: str) -> Array:
-    result = jnp.asarray(value, dtype=float)
+    result = jnp.asarray(value, dtype=jnp.float64)
     if result.shape != (2,):
         raise ValueError(f"{name} must have shape (2,).")
     return result

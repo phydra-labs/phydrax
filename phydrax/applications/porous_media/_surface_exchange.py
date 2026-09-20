@@ -49,7 +49,7 @@ class OrthogonalDiffusiveWaveSurfacePlan(StrictModule):
     projected_areas: Array
     bed: Array
     edge_owner: Array
-    edge_neighbour: Array
+    edge_neighbor: Array
     edge_width: Array
     edge_distance: Array
     manning: Array
@@ -105,7 +105,7 @@ class OrthogonalDiffusiveWaveSurfacePlan(StrictModule):
                 raise ValueError(
                     "Manning two-point runoff requires projected-orthogonal dual edges."
                 )
-        n = np.broadcast_to(np.asarray(manning, dtype=float), (centers.shape[0],))
+        n = np.broadcast_to(np.asarray(manning, dtype=np.float64), (centers.shape[0],))
         if np.any(~np.isfinite(n)) or np.any(n <= 0):
             raise ValueError("Manning roughness must be positive and finite.")
         if (
@@ -121,7 +121,7 @@ class OrthogonalDiffusiveWaveSurfacePlan(StrictModule):
         self.projected_areas = trace.areas * trace.normals[:, 2]
         self.bed = trace.centers[:, 2]
         self.edge_owner = jnp.asarray(pairs[:, 0], dtype=jnp.int32)
-        self.edge_neighbour = jnp.asarray(pairs[:, 1], dtype=jnp.int32)
+        self.edge_neighbor = jnp.asarray(pairs[:, 1], dtype=jnp.int32)
         self.edge_width = jnp.asarray(widths)
         self.edge_distance = jnp.asarray(distances)
         self.manning = jnp.asarray(n)
@@ -168,10 +168,10 @@ class OrthogonalDiffusiveWaveSurfacePlan(StrictModule):
             return jnp.zeros_like(self.edge_width)
         depth = jnp.maximum(volume / self.projected_areas, 0.0)
         head = self.bed + depth
-        difference = head[self.edge_owner] - head[self.edge_neighbour]
-        donor = jnp.where(difference >= 0, self.edge_owner, self.edge_neighbour)
+        difference = head[self.edge_owner] - head[self.edge_neighbor]
+        donor = jnp.where(difference >= 0, self.edge_owner, self.edge_neighbor)
         # Reconstruction above the higher bed prevents flow through dry uphill cells.
-        sill = jnp.maximum(self.bed[self.edge_owner], self.bed[self.edge_neighbour])
+        sill = jnp.maximum(self.bed[self.edge_owner], self.bed[self.edge_neighbor])
         hydraulic_depth = jnp.maximum(head[donor] - sill, 0.0)
         nonzero = difference != 0
         magnitude = jnp.sqrt(
@@ -193,7 +193,7 @@ class OrthogonalDiffusiveWaveSurfacePlan(StrictModule):
             jnp.zeros_like(self.bed)
             .at[self.edge_owner]
             .add(rates)
-            .at[self.edge_neighbour]
+            .at[self.edge_neighbor]
             .add(-rates)
         )
 
@@ -249,7 +249,7 @@ class OrthogonalDiffusiveWaveSurfacePlan(StrictModule):
         available_energy = state.energy + dt * (rain_energy - exfiltration_energy)
         specific = available_energy / jnp.where(available > 0, available, 1.0)
         lateral = self.lateral_rates(available)
-        donor = jnp.where(lateral >= 0, self.edge_owner, self.edge_neighbour)
+        donor = jnp.where(lateral >= 0, self.edge_owner, self.edge_neighbor)
         total_out = infiltration + jnp.zeros_like(volume).at[donor].add(jnp.abs(lateral))
         budget = jnp.where(total_out > 0, total_out, 1.0)
         scale = jnp.minimum(1.0, available / (dt * budget))

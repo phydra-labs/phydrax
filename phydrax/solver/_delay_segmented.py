@@ -17,6 +17,8 @@ import numpy as np
 from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
+from phydrax._strict import StrictModule
+
 from .._frozendict import frozendict
 from ..linalg import AbstractRealCoordinateMap
 from ..stochastic._wiener import WienerRealization
@@ -93,7 +95,7 @@ class SegmentedDelayResult(str, Enum):
     solver_failure = "solver_failure"
 
 
-class _RollingRetardedSolverState(eqx.Module):
+class _RollingRetardedSolverState(StrictModule):
     inner_state: Any
     history: RollingDelayHistory
     error_template: Any
@@ -529,7 +531,7 @@ class _RestartableFixedController(dfx.AbstractStepSizeController):
         )
 
 
-class DelaySegmentContinuation(eqx.Module):
+class DelaySegmentContinuation(StrictModule):
     """Complete restart state at one accepted segmented-solve boundary."""
 
     time: Array
@@ -552,7 +554,7 @@ class DelaySegmentContinuation(eqx.Module):
         return self.solver_state.history
 
 
-class DelaySegmentArchive(eqx.Module):
+class DelaySegmentArchive(StrictModule):
     """Host archive of finite compiled-segment interpolations."""
 
     starts: np.ndarray
@@ -589,7 +591,7 @@ class DelaySegmentArchive(eqx.Module):
             raise TypeError("Segmented dense query times must be real-valued.")
         if query.size == 0:
             raise ValueError("Segmented dense query times must be non-empty.")
-        query = query.astype(float)
+        query = query.astype("float64")
         query = eqx.error_if(
             query,
             ~jnp.all(jnp.isfinite(query)),
@@ -839,8 +841,7 @@ def solve_diffrax_delay_segmented(
     if traced or bounded:
         if not isinstance(adjoint, SegmentedDelayAdjoint):
             raise TypeError(
-                "Compiled segmented execution requires SegmentedDelayAdjoint "
-                "or an explicit FixedCapacitySegmentPolicy."
+                "Compiled segmented execution requires SegmentedDelayAdjoint or an explicit FixedCapacitySegmentPolicy."
             )
         if continuation is not None:
             raise ValueError(
@@ -977,8 +978,7 @@ def solve_diffrax_delay_segmented(
         raise ValueError("The declared maximum delay must be finite and positive.")
     if problem.neutral and discontinuity_depth is not None:
         raise ValueError(
-            "Neutral delay solves propagate discontinuities through the full horizon; "
-            "discontinuity_depth must be None."
+            "Neutral delay solves propagate discontinuities through the full horizon; discontinuity_depth must be None."
         )
     stochastic = problem.stochastic
     validated_realization: WienerRealization | None = None
@@ -1001,8 +1001,7 @@ def solve_diffrax_delay_segmented(
             raise ValueError("Stochastic neutral delay terms are not supported.")
         if discontinuity_depth not in (None, 1):
             raise ValueError(
-                "Fixed-step stochastic segmented delay requires "
-                "discontinuity_depth=1 or None."
+                "Fixed-step stochastic segmented delay requires discontinuity_depth=1 or None."
             )
         selected_solver = resolve_delay_solver(problem, solver)
         heun = problem.interpretation == "stratonovich"
@@ -1077,7 +1076,7 @@ def solve_diffrax_delay_segmented(
         geometry=problem.state_geometry,
         state_adapter=state_adapter,
         backend_shape=state_adapter.backend_shape,
-        backend_tangent_shape=tuple(int(size) for size in packed_derivative.shape),
+        backend_tangent_shape=tuple(packed_derivative.shape),
         computed_history=EmptyDelayHistory(
             packed_initial,
             packed_derivative,
@@ -1150,7 +1149,7 @@ def solve_diffrax_delay_segmented(
             )
         clipped = (
             base_controller
-            if int(discontinuities.size) == 0
+            if discontinuities.size == 0
             else dfx.ClipStepSizeController(
                 base_controller, jump_ts=jax.lax.stop_gradient(discontinuities)
             )
@@ -1172,8 +1171,7 @@ def solve_diffrax_delay_segmented(
         )
         if history_capacity is not None and history_capacity < required_capacity:
             raise ValueError(
-                "history_capacity is below the exact fixed-step lag-window bound "
-                f"({required_capacity})."
+                f"history_capacity is below the exact fixed-step lag-window bound ({required_capacity})."
             )
         resolved_capacity = (
             required_capacity if history_capacity is None else history_capacity
@@ -1286,10 +1284,10 @@ def solve_diffrax_delay_segmented(
     start_time = solve_start if continuation is None else continuation.time
     times = validate_save_times(start_time, solve_end, save_times)
     states = jax.tree.map(
-        lambda leaf: jnp.zeros((int(times.size),) + leaf.shape, dtype=leaf.dtype),
+        lambda leaf: jnp.zeros((times.size,) + leaf.shape, dtype=leaf.dtype),
         packed_initial,
     )
-    valid = jnp.zeros((int(times.size),), dtype=bool)
+    valid = jnp.zeros((times.size,), dtype=jnp.bool_)
     packed_args = state_adapter.pack_args(problem.args)
     packed_event = state_adapter.wrap_event(event)
 
@@ -1338,7 +1336,7 @@ def solve_diffrax_delay_segmented(
             final_result = SegmentedDelayResult.segment_limit_reached
             break
         host_times = np.asarray(jax.device_get(times))
-        pending = np.asarray(jax.device_get(~valid), dtype=bool)
+        pending = np.asarray(jax.device_get(~valid), dtype=np.bool_)
         pending_requested_indices = np.flatnonzero(
             pending & (host_times >= _host_scalar(current_time))
         )
@@ -1534,13 +1532,13 @@ def solve_diffrax_delay_segmented(
         solver_id = selected_solver.solver_id
         resolved_method = selected_solver.resolved_method
     elif stochastic:
-        solver_id = f"solver:diffrax-delay-stochastic:{solver_name}:segmented-retarded-v1"
+        solver_id = f"solver:diffrax-delay-stochastic:{solver_name}:segmented-retarded"
         resolved_method = f"{solver_name}:segmented-causal-wiener-path"
     elif isinstance(problem, NeutralDelayProblem):
-        solver_id = "solver:diffrax-delay:Euler:segmented-transformed-neutral-v1"
+        solver_id = "solver:diffrax-delay:Euler:segmented-transformed-neutral"
         resolved_method = "Euler:segmented-transformed-neutral-method-of-steps"
     else:
-        solver_id = f"solver:diffrax-delay:{solver_name}:segmented-retarded-v1"
+        solver_id = f"solver:diffrax-delay:{solver_name}:segmented-retarded"
         resolved_method = f"{solver_name}:segmented-causal-method-of-steps"
     stats = {
         **accumulated,

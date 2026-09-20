@@ -30,10 +30,10 @@ from phydrax.equations._relativistic_neutrino import (
     GRNeutrinoInteractionPlan,
     GRNeutrinoM1System,
 )
-from phydrax.equations._relativistic_radiation import GRGreyM1RadiationSystem
+from phydrax.equations._relativistic_radiation import GRGrayM1RadiationSystem
 from phydrax.equations._relativistic_radiation_interaction import (
-    ConstantGRGreyOpacityPlan,
-    GRGreyRadiationInteractionPlan,
+    ConstantGRGrayOpacityPlan,
+    GRGrayRadiationInteractionPlan,
 )
 from phydrax.equations._resistive_grmhd import ResistiveGRMHDOhmicClosure
 from phydrax.metrix._adm_exchange import ADMGridGeometry
@@ -79,8 +79,8 @@ def _geometry(scale, convention, shape=(), *, topology_id="single-cell"):
         identity,
         jnp.ones(shape),
         jnp.zeros(shape + (3, 3)),
-        jnp.ones(shape, dtype=bool),
-        jnp.ones(shape, dtype=bool),
+        jnp.ones(shape, dtype="bool"),
+        jnp.ones(shape, dtype="bool"),
         snapshot_token=jnp.asarray(0, dtype=jnp.int32),
         chart_id="cartesian",
         convention_id=convention.convention_id,
@@ -92,7 +92,7 @@ def _geometry(scale, convention, shape=(), *, topology_id="single-cell"):
 
 def test_periodic_gr_m1_preserves_uniform_stream_and_closes_balance_ledger():
     scale, convention = _contracts()
-    system = GRGreyM1RadiationSystem(scale, convention)
+    system = GRGrayM1RadiationSystem(scale, convention)
     grid = phx.discretization.TensorGridPlan(
         (phx.discretization.UniformCellAxisSpec(8, periodic=True),),
         axis_names=("x",),
@@ -122,7 +122,7 @@ def test_periodic_gr_m1_preserves_uniform_stream_and_closes_balance_ledger():
 
 def test_m1_vacuum_boundary_removes_incoming_flux_and_reflective_boundary_flips_it():
     scale, convention = _contracts()
-    system = GRGreyM1RadiationSystem(scale, convention)
+    system = GRGrayM1RadiationSystem(scale, convention)
     geometry = _geometry(scale, convention)
     incoming = jnp.asarray((1.0, 0.5, 0.0, 0.0))
     outgoing = jnp.asarray((1.0, -0.5, 0.0, 0.0))
@@ -267,7 +267,7 @@ def test_multigroup_and_neutrino_uniform_transport_preserve_all_groups_and_lepto
         GRMultigroupRadiationInteractionPlan(
             system,
             tuple(
-                GRGreyRadiationInteractionPlan(group, ConstantGRGreyOpacityPlan())
+                GRGrayRadiationInteractionPlan(group, ConstantGRGrayOpacityPlan())
                 for group in system.groups
             ),
         )
@@ -327,12 +327,12 @@ def _coupled_grrmhd_fixture(*, conductivity=0.0):
     )
     ct = GRMHDConstrainedTransportPlan(bridge)
     material_transport = GRMHDSSPRK3Plan(material, ct, cfl=0.2)
-    radiation = GRGreyM1RadiationSystem(scale, convention)
+    radiation = GRGrayM1RadiationSystem(scale, convention)
     discretization = FiniteVolumePlan(
         grid, component_names=radiation.component_names
     ).prepare()
     radiation_transport = FixedGridGRM1SSPRK3Plan(radiation, discretization, cfl=0.2)
-    interaction = GRGreyRadiationInteractionPlan(radiation, ConstantGRGreyOpacityPlan())
+    interaction = GRGrayRadiationInteractionPlan(radiation, ConstantGRGrayOpacityPlan())
     source = GRRMHDImplicitSourcePlan(
         material, interaction, caloric_temperature_scale=1.0
     )
@@ -389,9 +389,9 @@ def test_uniform_grrmhd_imex_step_preserves_equilibrium_and_all_ledgers():
 
 def test_uniform_implicit_four_force_accepts_absorption_and_preserves_total_energy():
     base, _, conserved, radiation, _, stages = _coupled_grrmhd_fixture()
-    interaction = GRGreyRadiationInteractionPlan(
+    interaction = GRGrayRadiationInteractionPlan(
         base.radiation_transport.system,
-        ConstantGRGreyOpacityPlan(
+        ConstantGRGrayOpacityPlan(
             planck_absorption=0.5,
             planck_emission=0.0,
             rosseland_transport=0.5,

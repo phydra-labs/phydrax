@@ -37,7 +37,7 @@ def _kde_scores_one(
     squared = pairwise_distances(queries, training, metric="squared-euclidean")
     log_weights = jnp.where(
         weights > 0.0,
-        jnp.log(jnp.maximum(weights, jnp.finfo(float).tiny)),
+        jnp.log(jnp.maximum(weights, jnp.finfo(jnp.float64).tiny)),
         -jnp.inf,
     )
     if jnp.issubdtype(training.dtype, jnp.complexfloating):
@@ -48,7 +48,7 @@ def _kde_scores_one(
         log_normalizer = training.shape[-1] * jnp.log(bandwidth * jnp.sqrt(2.0 * jnp.pi))
     log_density = (
         jax.scipy.special.logsumexp(log_kernel, axis=-1)
-        - jnp.log(jnp.maximum(jnp.sum(weights), jnp.finfo(float).tiny))
+        - jnp.log(jnp.maximum(jnp.sum(weights), jnp.finfo(jnp.float64).tiny))
         - log_normalizer
     )
     return -log_density
@@ -59,21 +59,21 @@ def _kde_leave_one_out_one(
     weights: Array,
     bandwidth: float,
 ) -> Array:
-    n = int(training.shape[0])
+    n = training.shape[0]
     squared = pairwise_distances(training, metric="squared-euclidean")
-    eligible = (weights[None, :] > 0.0) & ~jnp.eye(n, dtype=bool)
+    eligible = (weights[None, :] > 0.0) & ~jnp.eye(n, dtype=jnp.bool_)
     if jnp.issubdtype(training.dtype, jnp.complexfloating):
         logits = -squared / (bandwidth * bandwidth) + jnp.log(
-            jnp.maximum(weights[None, :], jnp.finfo(float).tiny)
+            jnp.maximum(weights[None, :], jnp.finfo(jnp.float64).tiny)
         )
         log_normalizer = training.shape[-1] * jnp.log(jnp.pi * bandwidth * bandwidth)
     else:
         logits = -0.5 * squared / (bandwidth * bandwidth) + jnp.log(
-            jnp.maximum(weights[None, :], jnp.finfo(float).tiny)
+            jnp.maximum(weights[None, :], jnp.finfo(jnp.float64).tiny)
         )
         log_normalizer = training.shape[-1] * jnp.log(bandwidth * jnp.sqrt(2.0 * jnp.pi))
     logits = jnp.where(eligible, logits, -jnp.inf)
-    denominator = jnp.maximum(jnp.sum(weights) - weights, jnp.finfo(float).tiny)
+    denominator = jnp.maximum(jnp.sum(weights) - weights, jnp.finfo(jnp.float64).tiny)
     log_density = (
         jax.scipy.special.logsumexp(logits, axis=-1)
         - jnp.log(denominator)
@@ -109,7 +109,7 @@ class KernelDensityOutlierModel(AbstractArrayModel):
         self.threshold = jnp.asarray(threshold)
         self.bandwidth = float(bandwidth)
         self.case_shape = tuple(case_shape)
-        self.in_size = int(train.shape[-1])
+        self.in_size = train.shape[-1]
         self.out_size = "scalar"
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
@@ -141,7 +141,7 @@ class KernelDensityOutlierModel(AbstractArrayModel):
         )
         return jax.nn.sigmoid(
             (scores - threshold)
-            / jnp.maximum(jnp.asarray(temperature), jnp.finfo(float).tiny)
+            / jnp.maximum(jnp.asarray(temperature), jnp.finfo(jnp.float64).tiny)
         )
 
 
@@ -181,7 +181,7 @@ class KernelDensityOutlierRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             objective=jnp.sum(jnp.where(active, weights * scores, 0.0), axis=-1)
-            / jnp.maximum(jnp.sum(weights, axis=-1), jnp.finfo(float).tiny),
+            / jnp.maximum(jnp.sum(weights, axis=-1), jnp.finfo(jnp.float64).tiny),
             iterations=1,
             effective_samples=effective,
             threshold=threshold,
@@ -257,12 +257,12 @@ def _fit_robust_one(
         coordinate_weights = weights[:, None] * influence
         mass = jnp.sum(coordinate_weights, axis=0)
         next_location = jnp.sum(coordinate_weights * x, axis=0) / jnp.maximum(
-            mass, jnp.finfo(float).tiny
+            mass, jnp.finfo(jnp.float64).tiny
         )
         residual = x - next_location
         next_variance = jnp.sum(
             coordinate_weights * jnp.real(residual * jnp.conj(residual)), axis=0
-        ) / jnp.maximum(mass, jnp.finfo(float).tiny)
+        ) / jnp.maximum(mass, jnp.finfo(jnp.float64).tiny)
         next_scale = jnp.sqrt(jnp.maximum(next_variance, scale_floor * scale_floor))
         delta = jnp.linalg.norm(next_location - current_location) + jnp.linalg.norm(
             next_scale - current_scale
@@ -277,7 +277,7 @@ def _fit_robust_one(
     )
     scores = _robust_score_one(x, location, scale, tuning)
     objective = jnp.sum(weights * scores) / jnp.maximum(
-        jnp.sum(weights), jnp.finfo(float).tiny
+        jnp.sum(weights), jnp.finfo(jnp.float64).tiny
     )
     return location, scale, scores, residual, objective
 
@@ -309,7 +309,7 @@ class RobustNoveltyModel(AbstractArrayModel):
         self.threshold = jnp.asarray(threshold)
         self.tuning = float(tuning)
         self.case_shape = tuple(case_shape)
-        self.in_size = int(location_.shape[-1])
+        self.in_size = location_.shape[-1]
         self.out_size = "scalar"
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
@@ -341,7 +341,7 @@ class RobustNoveltyModel(AbstractArrayModel):
         )
         return jax.nn.sigmoid(
             (scores - threshold)
-            / jnp.maximum(jnp.asarray(temperature), jnp.finfo(float).tiny)
+            / jnp.maximum(jnp.asarray(temperature), jnp.finfo(jnp.float64).tiny)
         )
 
 
@@ -415,7 +415,7 @@ class RobustNoveltyRecipe(AbstractRecipe):
             score_maximum=maximum,
             rank=batch.feature_count,
             condition=jnp.max(scale, axis=-1)
-            / jnp.maximum(jnp.min(scale, axis=-1), jnp.finfo(float).tiny),
+            / jnp.maximum(jnp.min(scale, axis=-1), jnp.finfo(jnp.float64).tiny),
             converged=converged,
             method="robust-pseudo-huber-novelty",
         )

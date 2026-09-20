@@ -236,7 +236,7 @@ class LatticeBoltzmannEnvelopeAdmission(StrictModule, NonTrainableState):
         envelope_id: str,
         /,
     ):
-        checks_ = jnp.asarray(checks, dtype=bool)
+        checks_ = jnp.asarray(checks, dtype=jnp.bool_)
         margins_ = jnp.asarray(margins)
         if checks_.shape != (len(_ENVELOPE_CHECKS),):
             raise ValueError("LBM envelope checks have an invalid shape.")
@@ -268,7 +268,7 @@ class LatticeBoltzmannEnvelopeAdmission(StrictModule, NonTrainableState):
         self.envelope_id = envelope
 
     def failed_checks(self, /) -> tuple[str, ...]:
-        host = np.asarray(self.checks, dtype=bool)
+        host = np.asarray(self.checks, dtype=np.bool_)
         return tuple(
             name
             for name, passed in zip(self.check_names, host, strict=True)
@@ -302,8 +302,7 @@ class LatticeBoltzmannResourceEstimate(StrictModule, NonTrainableState):
         precision_resource_assumptions_id: str,
     ):
         components = tuple(
-            int(value)
-            for value in (
+            (
                 state_bytes,
                 temporary_bytes,
                 halo_bytes,
@@ -640,8 +639,7 @@ class LatticeBoltzmannOperatingEnvelopePlan(StrictModule, NonTrainableState):
         output_copies: int = 0,
     ) -> LatticeBoltzmannResourceEstimate:
         counts = tuple(
-            int(value)
-            for value in (
+            (
                 local_cell_count,
                 population_field_count,
                 scalar_field_count,

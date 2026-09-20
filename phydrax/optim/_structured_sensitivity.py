@@ -179,7 +179,7 @@ def structured_parameter_continuation(
     inequality = jnp.where(active, inequality, 0.0)
     initial = jnp.concatenate((coordinates, equality, inequality))
     n = prepared.program.num_variables
-    me = int(equality.size)
+    me = equality.size
 
     def residual(state, coordinate, _):
         current_args = args_path(coordinate)

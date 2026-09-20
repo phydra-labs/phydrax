@@ -71,17 +71,16 @@ class CellFiltration(StrictModule, NonTrainableState):
             array = np.asarray(value)
             if array.shape != (entity_set.count,):
                 raise ValueError(
-                    f"Degree-{degree} filtration values must have shape "
-                    f"{(entity_set.count,)}."
+                    f"Degree-{degree} filtration values must have shape {(entity_set.count,)}."
                 )
-            selected = np.asarray(mask, dtype=bool)
+            selected = np.asarray(mask, dtype=np.bool_)
             if np.any(~np.isfinite(array[selected])):
                 raise ValueError("Selected filtration values must be finite.")
             stored = np.where(selected, array, np.zeros((), dtype=array.dtype))
             normalized.append(jnp.asarray(stored))
             canonical.append(stored if direction == "sublevel" else -stored)
         for incidence in complex.topology.incidences:
-            valid = np.asarray(incidence.relation.valid, dtype=bool)
+            valid = np.asarray(incidence.relation.valid, dtype=np.bool_)
             lower = np.asarray(incidence.relation.source_indices)[valid]
             upper = np.asarray(incidence.relation.target_indices)[valid]
             selected = np.asarray(complex.masks[incidence.degree])[upper]
@@ -217,7 +216,7 @@ class PreparedVertexFiltration(StrictModule, NonTrainableState):
                 "Prepared vertex filtration values must use an inexact dtype."
             )
         vertex_count = self.complex.topology.entity_sets[0].count
-        if values.ndim == 0 or int(values.shape[-1]) != vertex_count:
+        if values.ndim == 0 or values.shape[-1] != vertex_count:
             raise ValueError(
                 "Vertex filtration values require trailing topology vertex count."
             )

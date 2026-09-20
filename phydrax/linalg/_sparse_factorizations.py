@@ -199,8 +199,7 @@ class PreparedSparseFactorization(StrictModule):
             vector_input = False
         else:
             raise ValueError(
-                "right_hand_side must have shape (n,), (n, k), "
-                "batch_shape + (n,), or batch_shape + (n, k)."
+                "right_hand_side must have shape (n,), (n, k), batch_shape + (n,), or batch_shape + (n, k)."
             )
         batch_count = int(np.prod(self.batch_shape)) if self.batch_shape else 1
         factors = self.factor_values.reshape((batch_count, -1))
@@ -426,7 +425,7 @@ def _padded(rows: list[list[int]], /, *, fill: int = 0) -> tuple[np.ndarray, np.
     width = max((len(row) for row in rows), default=0)
     width = max(width, 1)
     values = np.full((len(rows), width), fill, dtype=np.int64)
-    valid = np.zeros((len(rows), width), dtype=bool)
+    valid = np.zeros((len(rows), width), dtype=np.bool_)
     for index, row in enumerate(rows):
         values[index, : len(row)] = row
         valid[index, : len(row)] = True
@@ -508,7 +507,7 @@ def _triangular_pattern(
         ([0], np.cumsum([len(row) for row in selected], dtype=np.int64))
     )
     storage = SparseStorage(
-        jnp.ones((indices.size,), dtype=float),
+        jnp.ones((indices.size,), dtype=jnp.float64),
         jnp.asarray(indices, dtype=index_dtype),
         jnp.asarray(indptr, dtype=index_dtype),
         shape=(len(rows), len(rows)),
@@ -567,7 +566,7 @@ def prepare_sparse_factorization(
     )
     factor_indices, factor_indptr, positions = _csr_from_rows(rows)
     input_positions = np.full(factor_indices.size, -1, dtype=np.int64)
-    input_conjugate = np.zeros(factor_indices.size, dtype=bool)
+    input_conjugate = np.zeros(factor_indices.size, dtype=np.bool_)
     if kind == "lu":
         for coordinate, factor_position in positions.items():
             input_positions[factor_position] = entries.get(coordinate, -1)
@@ -704,8 +703,8 @@ def _prune_row(
             & candidate
         )
     keep = valid & (diagonal | selected)
-    row_marker = jnp.zeros(values.shape, dtype=bool).at[safe_positions].max(valid)
-    keep_marker = jnp.zeros(values.shape, dtype=bool).at[safe_positions].max(keep)
+    row_marker = jnp.zeros(values.shape, dtype=jnp.bool_).at[safe_positions].max(valid)
+    keep_marker = jnp.zeros(values.shape, dtype=jnp.bool_).at[safe_positions].max(keep)
     pruned = jnp.where(row_marker & ~keep_marker, jnp.zeros((), values.dtype), values)
     dropped = jnp.sum((row_marker & ~keep_marker).astype(jnp.int32))
     return pruned, dropped
@@ -929,7 +928,7 @@ def refresh_sparse_factorization_values(
         factor_nonzeros,
         finite,
     ) = jax.vmap(factor_one)(flattened_input)
-    factor_size = int(plan.factor_indices.size)
+    factor_size = plan.factor_indices.size
     values = values.reshape(plan.batch_shape + (factor_size,))
     status = status.reshape(plan.batch_shape)
     minimum_pivot = minimum_pivot.reshape(plan.batch_shape)

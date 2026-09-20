@@ -83,7 +83,7 @@ class BoundaryMPSResult(StrictModule):
 
 
 def _double_tensor(tensor: Array, /) -> Array:
-    shape = tuple(int(value * value) for value in tensor.shape[:4])
+    shape = tuple(value * value for value in tensor.shape[:4])
     return ein.contract(
         "urdlp,URDLp->uUrRdDlL",
         jnp.conj(tensor),
@@ -97,7 +97,7 @@ def _admit_boundary(state: PEPS, policy: BoundaryMPSPolicy, /) -> tuple[int, int
     maximum = 1
     total_transfers = 0
     for tensor in state.tensors:
-        doubled = tuple(int(value * value) for value in tensor.shape[:4])
+        doubled = tuple(value * value for value in tensor.shape[:4])
         transfer_elements = prod(doubled)
         total_transfers += transfer_elements
         combined = (

@@ -23,7 +23,7 @@ def test_periodic_spectral_conservation_and_entropy_diagnostics():
         lambda state: 0.5 * state[..., 0] ** 2,
         lambda state: state,
         lambda state, axis, args: 0.5 * state[..., 0] ** 2,
-        lambda state: jnp.ones(state.shape[:-1], dtype=bool),
+        lambda state: jnp.ones(state.shape[:-1], dtype="bool"),
         entropy_id="quadratic",
     )
     problem = phx.equations.ConservationProblemIR(

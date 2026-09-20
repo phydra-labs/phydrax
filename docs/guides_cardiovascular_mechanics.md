@@ -6,8 +6,8 @@ introduce another mesh, nonlinear solver, optimizer, or surface owner.
 
 ## Kernel units and configurations
 
-Cardiovascular kernels use millimetres, milliseconds, milligrams, millivolts,
-kilopascals, and cubic millimetres. Passive material stress and reference energy
+Cardiovascular kernels use millimeters, milliseconds, milligrams, millivolts,
+kilopascals, and cubic millimeters. Passive material stress and reference energy
 per reference volume are therefore in kPa. Surface-foundation stiffness is in
 kPa/mm when displacement is in mm. Cavity pressure is in kPa; pressure-volume
 work is in kPa mm3 (one microjoule per kPa mm3).

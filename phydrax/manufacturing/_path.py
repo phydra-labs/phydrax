@@ -65,7 +65,7 @@ class ToolpathEvent:
         )
 
     def position(self, time_s: ArrayLike, /) -> Array:
-        duration = max(self.end_time_s - self.start_time_s, np.finfo(float).eps)
+        duration = max(self.end_time_s - self.start_time_s, np.finfo(np.float64).eps)
         fraction = jnp.clip((jnp.asarray(time_s) - self.start_time_s) / duration, 0, 1)
         return jnp.asarray(self.start) + fraction * (
             jnp.asarray(self.end) - jnp.asarray(self.start)

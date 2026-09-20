@@ -431,7 +431,7 @@ class TikhonovRecipe(AbstractRecipe):
         del key
         prepared = prepare_supervised(batch, weight_policy=self.weight_policy)
         features = prepared.design.features
-        if int(self.penalty.shape[-1]) != features:
+        if self.penalty.shape[-1] != features:
             raise ValueError("The Tikhonov penalty final dimension must match features.")
         operator = jnp.diag(self.penalty) if self.penalty.ndim == 1 else self.penalty
         strength = self.strength

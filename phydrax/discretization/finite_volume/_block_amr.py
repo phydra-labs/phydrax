@@ -44,7 +44,7 @@ class _BlockAMRFaceRoute(StrictModule, NonTrainableState):
     axis: int = eqx.field(static=True)
     face_indices: Array
     owner_cells: Array
-    neighbour_cells: Array
+    neighbor_cells: Array
     orientation: Array
     coordinates: Array
     lower_positions: tuple[int, ...] = eqx.field(static=True)
@@ -58,7 +58,7 @@ class _BlockAMRFaceRoute(StrictModule, NonTrainableState):
         axis: int,
         face_indices: np.ndarray,
         owner_cells: np.ndarray,
-        neighbour_cells: np.ndarray,
+        neighbor_cells: np.ndarray,
         orientation: np.ndarray,
         coordinates: np.ndarray,
         sides: np.ndarray,
@@ -70,11 +70,11 @@ class _BlockAMRFaceRoute(StrictModule, NonTrainableState):
         self.axis = int(axis)
         self.face_indices = jnp.asarray(face_indices, dtype=jnp.int32)
         self.owner_cells = jnp.asarray(owner_cells, dtype=jnp.int32)
-        self.neighbour_cells = jnp.asarray(neighbour_cells, dtype=jnp.int32)
+        self.neighbor_cells = jnp.asarray(neighbor_cells, dtype=jnp.int32)
         self.orientation = jnp.asarray(orientation)
         self.coordinates = jnp.asarray(coordinates)
-        self.lower_positions = tuple(int(value) for value in np.flatnonzero(sides == -1))
-        self.upper_positions = tuple(int(value) for value in np.flatnonzero(sides == 1))
+        self.lower_positions = tuple(np.flatnonzero(sides == -1))
+        self.upper_positions = tuple(np.flatnonzero(sides == 1))
         self.block_id = str(block_id)
         self.block_kind = str(block_kind)
 
@@ -89,7 +89,7 @@ class BlockAMRFiniteVolumeStageResult(StrictModule):
 
 
 class BlockAMRFiniteVolumePlan(StrictModule, NonTrainableState):
-    """Cartesian cell-centred FV method bound to one prepared fixed-block hierarchy."""
+    """Cartesian cell-centered FV method bound to one prepared fixed-block hierarchy."""
 
     hierarchy: PreparedFDAMRHierarchy
     system: Any
@@ -228,7 +228,8 @@ class PreparedBlockAMRFiniteVolumeDynamics(StrictModule, NonTrainableState):
         ):
             active_chunks.append(
                 np.repeat(
-                    np.asarray(metadata.active, dtype=bool), prod(level_plan.block_shape)
+                    np.asarray(metadata.active, dtype=np.bool_),
+                    prod(level_plan.block_shape),
                 )
             )
         active = np.concatenate(active_chunks)
@@ -255,7 +256,7 @@ class PreparedBlockAMRFiniteVolumeDynamics(StrictModule, NonTrainableState):
             hierarchy_plan.block_lattice_shapes,
             strict=True,
         ):
-            active_host = np.asarray(metadata.active, dtype=bool)
+            active_host = np.asarray(metadata.active, dtype=np.bool_)
             logical_host = np.asarray(metadata.logical_indices, dtype=np.int32)
             level_slots = []
             for axis in range(len(hierarchy_plan.grid.shape)):
@@ -287,8 +288,8 @@ class PreparedBlockAMRFiniteVolumeDynamics(StrictModule, NonTrainableState):
                     {
                         "block": route.block_id,
                         "owners": array_tree_fingerprint(np.asarray(route.owner_cells)),
-                        "neighbours": array_tree_fingerprint(
-                            np.asarray(route.neighbour_cells)
+                        "neighbors": array_tree_fingerprint(
+                            np.asarray(route.neighbor_cells)
                         ),
                     }
                     for route in routes
@@ -301,13 +302,13 @@ class PreparedBlockAMRFiniteVolumeDynamics(StrictModule, NonTrainableState):
         hierarchy = topology.plan
         level_plan = hierarchy.levels[level]
         metadata = topology.levels[level]
-        spacing = np.asarray(hierarchy.level_spacings[level], dtype=float)
+        spacing = np.asarray(hierarchy.level_spacings[level], dtype=np.float64)
         lower = np.asarray(
-            [axis.bounds[0] for axis in hierarchy.grid.structured_axes], dtype=float
+            [axis.bounds[0] for axis in hierarchy.grid.structured_axes], dtype=np.float64
         )
         coordinates = np.zeros(
             (level_plan.maximum_blocks,) + level_plan.block_shape + (len(spacing),),
-            dtype=float,
+            dtype=np.float64,
         )
         logical = np.asarray(metadata.logical_indices)
         for slot in range(level_plan.maximum_blocks):
@@ -329,7 +330,7 @@ class PreparedBlockAMRFiniteVolumeDynamics(StrictModule, NonTrainableState):
         hierarchy = topology.plan
         dimension = len(hierarchy.grid.shape)
         lower_bounds = np.asarray(
-            [axis.bounds[0] for axis in hierarchy.grid.structured_axes], dtype=float
+            [axis.bounds[0] for axis in hierarchy.grid.structured_axes], dtype=np.float64
         )
         offsets = []
         next_offset = 0
@@ -340,11 +341,11 @@ class PreparedBlockAMRFiniteVolumeDynamics(StrictModule, NonTrainableState):
         for level, (level_plan, metadata) in enumerate(
             zip(hierarchy.levels, topology.levels, strict=True)
         ):
-            active = np.asarray(metadata.active, dtype=bool)
+            active = np.asarray(metadata.active, dtype=np.bool_)
             logical = np.asarray(metadata.logical_indices, dtype=np.int32)
             neighbors = np.asarray(metadata.neighbor_slots, dtype=np.int32)
-            interfaces = np.asarray(topology.interfaces[level], dtype=bool)
-            spacing = np.asarray(hierarchy.level_spacings[level], dtype=float)
+            interfaces = np.asarray(topology.interfaces[level], dtype=np.bool_)
+            spacing = np.asarray(hierarchy.level_spacings[level], dtype=np.float64)
             lattice = hierarchy.block_lattice_shapes[level]
             block_shape = level_plan.block_shape
             block_cells = prod(block_shape)
@@ -380,19 +381,19 @@ class PreparedBlockAMRFiniteVolumeDynamics(StrictModule, NonTrainableState):
             def separates_finer_coverage(
                 owner_slot: int,
                 owner: tuple[int, ...],
-                neighbour_slot: int,
-                neighbour: tuple[int, ...],
+                neighbor_slot: int,
+                neighbor: tuple[int, ...],
                 *,
                 covered: np.ndarray | None = (
                     None
                     if level + 1 == len(hierarchy.levels)
-                    else np.asarray(topology.covered_cells[level], dtype=bool)
+                    else np.asarray(topology.covered_cells[level], dtype=np.bool_)
                 ),
             ) -> bool:
                 if covered is None:
                     return False
                 return bool(covered[(owner_slot,) + owner]) != bool(
-                    covered[(neighbour_slot,) + neighbour]
+                    covered[(neighbor_slot,) + neighbor]
                 )
 
             for axis in range(dimension):
@@ -405,7 +406,7 @@ class PreparedBlockAMRFiniteVolumeDynamics(StrictModule, NonTrainableState):
                     name: {
                         "faces": [],
                         "owner": [],
-                        "neighbour": [],
+                        "neighbor": [],
                         "sign": [],
                         "coordinates": [],
                         "sides": [],
@@ -418,8 +419,8 @@ class PreparedBlockAMRFiniteVolumeDynamics(StrictModule, NonTrainableState):
                     slot: int,
                     face: tuple[int, ...],
                     owner: tuple[int, ...],
-                    neighbour_slot: int,
-                    neighbour: tuple[int, ...] | None,
+                    neighbor_slot: int,
+                    neighbor: tuple[int, ...] | None,
                     sign: int,
                     *,
                     buckets: dict[str, dict[str, list[Any]]] = buckets,
@@ -430,8 +431,8 @@ class PreparedBlockAMRFiniteVolumeDynamics(StrictModule, NonTrainableState):
                     bucket = buckets[kind]
                     bucket["faces"].append((slot,) + face)
                     bucket["owner"].append(cell(slot, owner))
-                    bucket["neighbour"].append(
-                        -1 if neighbour is None else cell(neighbour_slot, neighbour)
+                    bucket["neighbor"].append(
+                        -1 if neighbor is None else cell(neighbor_slot, neighbor)
                     )
                     bucket["sign"].append(sign)
                     bucket["coordinates"].append(coordinate(slot, face, axis))
@@ -453,14 +454,14 @@ class PreparedBlockAMRFiniteVolumeDynamics(StrictModule, NonTrainableState):
 
                         for face_index in range(1, block_shape[axis]):
                             owner_local = local_with_axis(face_index - 1)
-                            neighbour_local = local_with_axis(face_index)
+                            neighbor_local = local_with_axis(face_index)
                             kind = (
                                 f"transition-{level}-{level + 1}:coarse"
                                 if separates_finer_coverage(
                                     int(slot),
                                     owner_local,
                                     int(slot),
-                                    neighbour_local,
+                                    neighbor_local,
                                 )
                                 else "same-level"
                             )
@@ -470,20 +471,20 @@ class PreparedBlockAMRFiniteVolumeDynamics(StrictModule, NonTrainableState):
                                 local_with_axis(face_index),
                                 owner_local,
                                 int(slot),
-                                neighbour_local,
+                                neighbor_local,
                                 1,
                             )
                         upper_slot = int(neighbors[slot, axis, 1])
                         if upper_slot >= 0:
                             owner_local = local_with_axis(block_shape[axis] - 1)
-                            neighbour_local = local_with_axis(0)
+                            neighbor_local = local_with_axis(0)
                             kind = (
                                 f"transition-{level}-{level + 1}:coarse"
                                 if separates_finer_coverage(
                                     int(slot),
                                     owner_local,
                                     upper_slot,
-                                    neighbour_local,
+                                    neighbor_local,
                                 )
                                 else "same-level"
                             )
@@ -493,7 +494,7 @@ class PreparedBlockAMRFiniteVolumeDynamics(StrictModule, NonTrainableState):
                                 local_with_axis(block_shape[axis]),
                                 owner_local,
                                 upper_slot,
-                                neighbour_local,
+                                neighbor_local,
                                 1,
                             )
                         for side, face_index, owner_index in (
@@ -535,9 +536,9 @@ class PreparedBlockAMRFiniteVolumeDynamics(StrictModule, NonTrainableState):
                             axis,
                             np.asarray(bucket["faces"], dtype=np.int32),
                             np.asarray(bucket["owner"], dtype=np.int32),
-                            np.asarray(bucket["neighbour"], dtype=np.int32),
-                            np.asarray(bucket["sign"], dtype=float),
-                            np.asarray(bucket["coordinates"], dtype=float),
+                            np.asarray(bucket["neighbor"], dtype=np.int32),
+                            np.asarray(bucket["sign"], dtype=np.float64),
+                            np.asarray(bucket["coordinates"], dtype=np.float64),
                             np.asarray(bucket["sides"], dtype=np.int8),
                             block_id,
                             "coarse-fine" if kind.startswith("transition-") else kind,
@@ -897,8 +898,8 @@ class PreparedBlockAMRFiniteVolumeDynamics(StrictModule, NonTrainableState):
                 ConservationStageFluxRateBlock(
                     outward,
                     route.owner_cells,
-                    route.neighbour_cells,
-                    np.ones(route.owner_cells.shape, dtype=bool),
+                    route.neighbor_cells,
+                    np.ones(route.owner_cells.shape, dtype=np.bool_),
                     route.block_id,
                     route.block_kind,
                 )

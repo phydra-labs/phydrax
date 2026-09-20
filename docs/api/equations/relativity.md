@@ -1,6 +1,6 @@
 # Relativistic equations
 
-Relativistic EOS, SRHD/Valencia GRHD, ideal GRMHD, grey/multigroup/neutrino
+Relativistic EOS, SRHD/Valencia GRHD, ideal GRMHD, gray/multigroup/neutrino
 radiation, higher-angular closures, resistive Ohm, and force-free physical systems.
 Numerical recovery and stepping remain in `phydrax.solver`. See the
 [matter and radiation guide](../../guides_relativistic_matter.md).
@@ -30,14 +30,14 @@ Numerical recovery and stepping remain in `phydrax.solver`. See the
         - ValenciaHLLEFlux
         - valencia_geometric_source_from_projection
         - IdealValenciaGRMHDSystem
-        - GRGreyM1ClosureEvaluation
+        - GRGrayM1ClosureEvaluation
         - GRRadiationMatterExchange
-        - GRGreyM1RadiationSystem
-        - AbstractGRGreyOpacityPlan
-        - ConstantGRGreyOpacityPlan
-        - CompositeGRGreyOpacityPlan
-        - GRGreyOpacityEvaluation
-        - GRGreyRadiationInteractionPlan
+        - GRGrayM1RadiationSystem
+        - AbstractGRGrayOpacityPlan
+        - ConstantGRGrayOpacityPlan
+        - CompositeGRGrayOpacityPlan
+        - GRGrayOpacityEvaluation
+        - GRGrayRadiationInteractionPlan
         - GRMultigroupM1ClosureEvaluation
         - GRMultigroupM1RadiationSystem
         - GRMultigroupRadiationMatterExchange

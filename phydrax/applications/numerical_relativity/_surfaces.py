@@ -11,8 +11,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from phydrax import ein
 import phydrax.linalg as la
+from phydrax import ein
 
 from ..._fingerprint import canonical_fingerprint
 from ..._spectral._spherical import (
@@ -141,9 +141,10 @@ class SphericalSurfacePlan(StrictModule, NonTrainableState):
             ),
             axis=-1,
         )
-        solid_angle_weights = np.asarray(scalar.theta_quadrature_weights)[:, None] * np.asarray(
-            scalar.phi_quadrature_weights
-        )[None, :]
+        solid_angle_weights = (
+            np.asarray(scalar.theta_quadrature_weights)[:, None]
+            * np.asarray(scalar.phi_quadrature_weights)[None, :]
+        )
         self.scalar_transform = scalar
         self.gradient_transform = gradient
         self.unit_radial = jnp.asarray(unit_radial)
@@ -173,7 +174,7 @@ class SphericalSurfacePlan(StrictModule, NonTrainableState):
         if values.shape != self.sample_shape:
             raise ValueError("Surface radius samples do not match the fixed capacity.")
         if not jnp.issubdtype(values.dtype, jnp.inexact):
-            values = values.astype(float)
+            values = values.astype("float64")
         center_ = jnp.asarray(center, dtype=values.real.dtype)
         if center_.shape != (3,):
             raise ValueError("Surface center must have shape (3,).")
@@ -203,9 +204,7 @@ class SphericalSurfacePlan(StrictModule, NonTrainableState):
         self._validate_surface(surface)
         degree = jnp.arange(self.bandlimit, dtype=self.unit_radial.dtype)[:, None]
         eth_multiplier = jnp.sqrt(degree * (degree + 1.0))
-        eth = self.gradient_transform.synthesis(
-            surface.coefficients * eth_multiplier
-        )
+        eth = self.gradient_transform.synthesis(surface.coefficients * eth_multiplier)
         return -jnp.real(eth), -jnp.imag(eth)
 
     def mean_radius(self, surface: SphericalSpectralSurface, /) -> Array:
@@ -238,7 +237,9 @@ class SphericalSurfacePlan(StrictModule, NonTrainableState):
         else:
             metric = jnp.asarray(spatial_metric, dtype=radius.dtype)
             if metric.shape != self.sample_shape + (3, 3):
-                raise ValueError("Sampled spatial metric shape does not match the surface.")
+                raise ValueError(
+                    "Sampled spatial metric shape does not match the surface."
+                )
         inverse_result = la.inverse_small_linear(_METRIC_SOLVE, metric)
         inverse_metric = inverse_result.value
         q_theta_theta = ein.contract(
@@ -247,9 +248,7 @@ class SphericalSurfacePlan(StrictModule, NonTrainableState):
         q_theta_phi = ein.contract(
             "...i,...ij,...j->...", theta_tangent, metric, phi_tangent
         )
-        q_phi_phi = ein.contract(
-            "...i,...ij,...j->...", phi_tangent, metric, phi_tangent
-        )
+        q_phi_phi = ein.contract("...i,...ij,...j->...", phi_tangent, metric, phi_tangent)
         induced = jnp.stack(
             (
                 jnp.stack((q_theta_theta, q_theta_phi), axis=-1),
@@ -264,7 +263,9 @@ class SphericalSurfacePlan(StrictModule, NonTrainableState):
         area = jnp.sum(area_weights)
         areal_radius = jnp.sqrt(jnp.maximum(area, 0.0) / (4.0 * jnp.pi))
 
-        normal_density_covector = jnp.cross(theta_tangent, phi_tangent) / safe_sine[..., None]
+        normal_density_covector = (
+            jnp.cross(theta_tangent, phi_tangent) / safe_sine[..., None]
+        )
         normal_squared = ein.contract(
             "...i,...ij,...j->...",
             normal_density_covector,
@@ -315,7 +316,10 @@ class SphericalSurfacePlan(StrictModule, NonTrainableState):
             raise TypeError("surface must be a SphericalSpectralSurface.")
         if surface.plan_id != self.plan_id:
             raise ValueError("Surface and spherical plan identities differ.")
-        if surface.coefficients.shape != self.coefficient_shape or surface.center.shape != (3,):
+        if (
+            surface.coefficients.shape != self.coefficient_shape
+            or surface.center.shape != (3,)
+        ):
             raise ValueError("Surface arrays do not match the fixed-capacity plan.")
 
 

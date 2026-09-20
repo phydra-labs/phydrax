@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Qualified reduced human Purkinje-fibre ionic dynamics.
+"""Qualified reduced human Purkinje-fiber ionic dynamics.
 
 This Stewart-2009-informed subsystem retains the Purkinje fast upstroke,
 plateau calcium, transient/delayed potassium currents, ``I_f`` automaticity,
@@ -185,7 +185,7 @@ class StewartPurkinjeParameters(StrictModule, NonTrainableState):
             object.__setattr__(self, name, value)
         self.parameter_id = canonical_fingerprint(
             {
-                "kind": "cardiovascular-purkinje-stewart2009-reduced-parameters-v1",
+                "kind": "cardiovascular-purkinje-stewart2009-reduced-parameters",
                 "phenotype": self.phenotype.value,
                 "coefficients": values,
             }
@@ -257,7 +257,7 @@ class PurkinjeStateLayout(StrictModule, NonTrainableState):
         self.names = names
         self.state_size = len(names)
         self.layout_id = canonical_fingerprint(
-            {"kind": "cardiovascular-purkinje-state-layout-v1", "names": list(names)}
+            {"kind": "cardiovascular-purkinje-state-layout", "names": list(names)}
         )
 
     def index(self, name: str, /) -> int:
@@ -359,7 +359,7 @@ class StewartPurkinjeModel(StrictModule, NonTrainableState):
         self.layout = layout
         self.model_id = canonical_fingerprint(
             {
-                "kind": "prepared-cardiovascular-purkinje-stewart2009-reduced-v1",
+                "kind": "prepared-cardiovascular-purkinje-stewart2009-reduced",
                 "parameters": parameters.parameter_id,
                 "layout": layout.layout_id,
             }
@@ -822,7 +822,7 @@ class StewartPurkinjeReactionAdapter:
             "model_id",
             canonical_fingerprint(
                 {
-                    "kind": "cardiovascular-purkinje-reaction-adapter-v1",
+                    "kind": "cardiovascular-purkinje-reaction-adapter",
                     "cell_model": self.cell_model.model_id,
                     "membrane_surface_to_volume_per_mm": (
                         self.scaling.membrane_surface_to_volume_per_mm

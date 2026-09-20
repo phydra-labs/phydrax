@@ -1,7 +1,7 @@
 # Dark-matter production sources and rights ledger
 
 This ledger records scientific-method references. It does not grant redistribution
-rights to code, tables, trained weights, profiles or catalogues; runtime artifacts still
+rights to code, tables, trained weights, profiles or catalogs; runtime artifacts still
 require `ReferenceArtifactManifest` admission.
 
 ## Wave dark matter
@@ -52,6 +52,6 @@ with explicit detailed balance, dynamic mass and a fixed-capacity radiation ledg
 
 ## Runtime and external products
 
-Existing external matter-power, cascade, stellar/terrestrial-profile and catalogue
+Existing external matter-power, cascade, stellar/terrestrial-profile and catalog
 products retain their own upstream package, release, checksum and data-license manifests.
 Scientific citation here is never substituted for an artifact-rights decision.

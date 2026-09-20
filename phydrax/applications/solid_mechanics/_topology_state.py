@@ -240,7 +240,7 @@ class NeuralVariationalStateSolver(AbstractStateSolver):
         support_value = (
             jnp.asarray(True)
             if self.support_function is None
-            else jnp.asarray(self.support_function(design, args), dtype=bool)
+            else jnp.asarray(self.support_function(design, args), dtype=jnp.bool_)
         )
         if support_value.shape != ():
             raise ValueError("Neural proposal support evidence must be scalar.")
@@ -455,8 +455,8 @@ class MechanicsBranchGate(StrictModule, NonTrainableState):
                 )
             )
         )
-        contact = jnp.asarray(contact_event, dtype=bool)
-        fracture = jnp.asarray(fracture_event, dtype=bool)
+        contact = jnp.asarray(contact_event, dtype=jnp.bool_)
+        fracture = jnp.asarray(fracture_event, dtype=jnp.bool_)
         if contact.shape != () or fracture.shape != ():
             raise ValueError("Contact and fracture event indicators must be scalar.")
         branch_matches = jnp.asarray(

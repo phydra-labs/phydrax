@@ -25,7 +25,7 @@ automatically.
 
 ## Knife-edge image formation
 
-`KnifeEdgeSchlierenPlan` applies an explicit cutoff direction and calibrated contrast gain to a reference `ImageAsset`. Its result is a predicted detector quantity compatible with the reference image. It is not relabelled as density.
+`KnifeEdgeSchlierenPlan` applies an explicit cutoff direction and calibrated contrast gain to a reference `ImageAsset`. Its result is a predicted detector quantity compatible with the reference image. It is not relabeled as density.
 
 ## Background-oriented Schlieren
 

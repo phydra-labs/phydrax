@@ -301,14 +301,14 @@ def batch_fixed_topology_cohort(
     if valid_mass <= 0.0:
         raise ValueError("Complete cohort cases must carry positive probability mass.")
     conditional = jnp.asarray(
-        [case.probability_mass / valid_mass for case in complete], dtype=float
+        [case.probability_mass / valid_mass for case in complete], dtype=jnp.float64
     )
     dataset = OperatorDataset(
         dataset.batch,
         dataset.targets,
         dataset.provenance,
         case_log_weights=jnp.log(conditional),
-        case_mask=jnp.ones(conditional.shape, dtype=bool),
+        case_mask=jnp.ones(conditional.shape, dtype=jnp.bool_),
     )
     status_mass = tuple(
         (
@@ -507,7 +507,7 @@ def _cut_groups(
         raise ValueError(
             "A subject-safe split needs one independent subject per partition."
         )
-    sizes = np.asarray([len(group) for group in groups], dtype=int)
+    sizes = np.asarray([len(group) for group in groups], dtype=np.int64)
     cumulative = np.cumsum(sizes)
     total = int(cumulative[-1])
     cuts: list[int] = []
@@ -643,7 +643,7 @@ class TrainOnlyFeaturePreprocessor:
         location = jnp.mean(values, axis=0)
         centered = values - location
         empirical = centered.T @ centered / float(len(records) - 1)
-        dimension = int(values.shape[1])
+        dimension = values.shape[1]
         mean_variance = jnp.trace(empirical) / float(dimension)
         ridge = jnp.maximum(mean_variance * float(ridge_fraction), 1.0e-12)
         covariance = DenseCovariance(empirical + ridge * jnp.eye(dimension))

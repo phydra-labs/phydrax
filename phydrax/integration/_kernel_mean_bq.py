@@ -43,10 +43,10 @@ class FixedBayesianQuadratureDesign(StrictModule):
 
     def __init__(self, points: ArrayLike, /, *, source_indices: ArrayLike | None = None):
         values = jnp.asarray(points)
-        if values.ndim < 2 or int(values.shape[0]) <= 0:
+        if values.ndim < 2 or values.shape[0] <= 0:
             raise ValueError("points must have shape (point,) + kernel_input_shape.")
         if not jnp.issubdtype(values.dtype, jnp.inexact):
-            values = values.astype(float)
+            values = values.astype("float64")
         values = eqx.error_if(
             values,
             jnp.any(~jnp.isfinite(values)),
@@ -64,7 +64,7 @@ class FixedBayesianQuadratureDesign(StrictModule):
 
     @property
     def count(self) -> int:
-        return int(self.points.shape[0])
+        return self.points.shape[0]
 
 
 class SequentialBayesianQuadratureDesign(StrictModule):
@@ -88,16 +88,16 @@ class SequentialBayesianQuadratureDesign(StrictModule):
         initial_indices: ArrayLike | None = None,
     ):
         values = jnp.asarray(candidates)
-        if values.ndim < 2 or int(values.shape[0]) <= 0:
+        if values.ndim < 2 or values.shape[0] <= 0:
             raise ValueError("candidates must have a nonempty candidate axis.")
         if not jnp.issubdtype(values.dtype, jnp.inexact):
-            values = values.astype(float)
+            values = values.astype("float64")
         values = eqx.error_if(
             values,
             jnp.any(~jnp.isfinite(values)),
             "Sequential BQ candidates must be finite.",
         )
-        candidate_count = int(values.shape[0])
+        candidate_count = values.shape[0]
         initial = _positive_integer(initial_count, name="initial_count")
         total = _positive_integer(total_count, name="total_count")
         block = _positive_integer(block_size, name="block_size")
@@ -180,7 +180,7 @@ def prepare_kernel_mean_bayesian_quadrature(
         raise TypeError(
             "Kernel-mean preparation requires FixedBayesianQuadratureDesign or SequentialBayesianQuadratureDesign."
         )
-    if int(points.shape[0]) > plan.max_points:
+    if points.shape[0] > plan.max_points:
         raise ValueError("Prepared BQ support exceeds plan.max_points.")
     matrix = kernel_mean.matrix(points, points)
     kernel_vector = kernel_mean.mean(points)
@@ -200,7 +200,7 @@ def prepare_kernel_mean_bayesian_quadrature(
     return PreparedKernelMeanBayesianQuadrature(
         points=points,
         source_indices=indices,
-        mask=jnp.ones((points.shape[0],), dtype=bool),
+        mask=jnp.ones((points.shape[0],), dtype=jnp.bool_),
         weights=weights,
         kernel_mean=kernel_vector,
         kernel_double_mean=double_mean,
@@ -252,7 +252,7 @@ def _select_sequential(
     candidates = design.candidates
     diagonal = kernel_mean.kernel.diagonal(candidates)
     means = kernel_mean.mean(candidates)
-    used = np.zeros((design.candidate_count,), dtype=bool)
+    used = np.zeros((design.candidate_count,), dtype=np.bool_)
     used[selected] = True
     while True:
         points = candidates[jnp.asarray(selected, dtype=jnp.int32)]

@@ -144,7 +144,7 @@ def mdanalysis_selection(universe, selection: str, /, *, stable_ids=None):
     )
     if ids.shape != (len(universe.atoms),):
         raise ValueError("MDAnalysis stable IDs must align with universe atoms.")
-    mask = np.zeros(ids.shape, dtype=bool)
+    mask = np.zeros(ids.shape, dtype=np.bool_)
     mask[np.asarray(group.indices, dtype=np.int64)] = True
     return AtomisticSelectionPlan(ids, mask)
 

@@ -93,16 +93,16 @@ class PorousAblatingMaterialPlan(StrictModule, NonTrainableState):
         minimum_temperature: float = 50.0,
         maximum_temperature: float = 5000.0,
     ):
-        cp = np.asarray(component_heat_capacities, dtype=float)
-        conductivity = np.asarray(component_conductivities, dtype=float)
-        reference_energy = np.asarray(component_reference_energies, dtype=float)
-        pre = np.asarray(pre_exponentials, dtype=float)
-        exponent = np.asarray(temperature_exponents, dtype=float)
-        activation = np.asarray(activation_energies, dtype=float)
-        solid_yield = np.asarray(solid_yields, dtype=float)
-        gas_yield = np.asarray(pore_gas_yields, dtype=float)
-        gas_masses = np.asarray(pore_gas_molar_masses, dtype=float)
-        heats = np.asarray(reaction_heats, dtype=float)
+        cp = np.asarray(component_heat_capacities, dtype=np.float64)
+        conductivity = np.asarray(component_conductivities, dtype=np.float64)
+        reference_energy = np.asarray(component_reference_energies, dtype=np.float64)
+        pre = np.asarray(pre_exponentials, dtype=np.float64)
+        exponent = np.asarray(temperature_exponents, dtype=np.float64)
+        activation = np.asarray(activation_energies, dtype=np.float64)
+        solid_yield = np.asarray(solid_yields, dtype=np.float64)
+        gas_yield = np.asarray(pore_gas_yields, dtype=np.float64)
+        gas_masses = np.asarray(pore_gas_molar_masses, dtype=np.float64)
+        heats = np.asarray(reaction_heats, dtype=np.float64)
         component_count = cp.size
         reaction_count = pre.size
         if (

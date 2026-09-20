@@ -110,8 +110,8 @@ class PhotonCountingBandpass(StrictModule, NonTrainableState):
         identifier = str(band_id).strip()
         if not identifier:
             raise ValueError("band_id must be non-empty.")
-        wavelength_host = np.asarray(wavelength, dtype=float)
-        throughput_host = np.asarray(throughput, dtype=float)
+        wavelength_host = np.asarray(wavelength, dtype=np.float64)
+        throughput_host = np.asarray(throughput, dtype=np.float64)
         if (
             wavelength_host.ndim != 1
             or wavelength_host.size < 2
@@ -207,7 +207,7 @@ class TransitPhotometryPlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("Transit bandpasses must share one wavelength grid.")
         indices = np.asarray(band_index)
-        exposure = np.asarray(exposure_time, dtype=float)
+        exposure = np.asarray(exposure_time, dtype=np.float64)
         if indices.ndim != 1 or not np.issubdtype(indices.dtype, np.integer):
             raise TypeError("band_index must be a rank-one integer array.")
         if exposure.shape != indices.shape:
@@ -231,7 +231,7 @@ class TransitPhotometryPlan(StrictModule, NonTrainableState):
                 "kind": "transit-photometry-plan",
                 "bands": [band.response_id for band in bands],
                 "band_index": indices.tolist(),
-                "num_measurements": int(indices.size),
+                "num_measurements": indices.size,
             }
         )
 
@@ -243,8 +243,8 @@ class TransitPhotometryPlan(StrictModule, NonTrainableState):
     ) -> TransitPhotometryResult:
         relative = jnp.asarray(relative_flux)
         spectra = jnp.asarray(source_spectral_flux_density)
-        measurements = int(self.band_index.size)
-        wavelength_count = int(self.packed_weights.shape[1])
+        measurements = self.band_index.size
+        wavelength_count = self.packed_weights.shape[1]
         if relative.shape != (measurements,):
             raise ValueError("relative_flux must have the measurement shape.")
         if spectra.shape not in ((wavelength_count,), (measurements, wavelength_count)):
@@ -318,7 +318,7 @@ def transit_poisson_log_prob(
     active = (
         jnp.ones_like(result.poisson_supported)
         if mask is None
-        else jnp.asarray(mask, dtype=bool)
+        else jnp.asarray(mask, dtype=jnp.bool_)
     )
     if active.shape != counts.shape:
         raise ValueError("mask must match observed_counts.")

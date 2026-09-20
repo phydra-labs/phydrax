@@ -20,7 +20,7 @@ def _identity(*args: Any, **kwargs: Any) -> Any:
     return args
 
 
-register_artifact_value("phydrax.nn.utility:identity@1", _identity)
+register_artifact_value("phydrax.nn.utility:identity", _identity)
 
 
 def _tuple(item: Any, /) -> tuple[Any, ...] | None:
@@ -50,7 +50,7 @@ def _get_value_shape(size: SizeLike) -> tuple[int, ...]:
         if k <= 0:
             raise ValueError(f"Size entries must be positive; got {size!r}.")
         return (k,)
-    shape = tuple(int(s) for s in size)
+    shape = tuple(size)
     if not shape:
         return ()
     if any(s <= 0 for s in shape):
@@ -87,7 +87,7 @@ def _get_size(size: SizeLike) -> int:
         if k <= 0:
             raise ValueError(f"Size entries must be positive; got {size!r}.")
         return k
-    shape = tuple(int(s) for s in size)
+    shape = tuple(size)
     if not shape:
         return 1
     n = 1

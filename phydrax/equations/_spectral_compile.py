@@ -244,7 +244,7 @@ class _SpectralEvaluator(StrictModule):
         self.parameter_defaults = tuple(parameter_defaults)
         expressions = tuple(rhs_expressions)
         names = tuple(str(name) for name in output_names)
-        components = tuple(int(count) for count in output_components)
+        components = tuple(output_components)
         if (
             not expressions
             or len(expressions) != len(names)
@@ -253,8 +253,7 @@ class _SpectralEvaluator(StrictModule):
             or any(count <= 0 for count in components)
         ):
             raise ValueError(
-                "Spectral evaluator outputs require aligned expressions, names, "
-                "and positive component counts."
+                "Spectral evaluator outputs require aligned expressions, names, and positive component counts."
             )
         self.rhs_expressions = expressions
         self.output_names = names
@@ -622,7 +621,11 @@ class _SpectralEvaluator(StrictModule):
                 expression = node.args[0]
                 if isinstance(
                     self.evaluation, SphericalSpectralDiscretization
-                ) and node.op in ("gradient", "divergence", "curl"):
+                ) and node.op in (
+                    "gradient",
+                    "divergence",
+                    "curl",
+                ):
                     raise ValueError(
                         "Spherical global-frame gradient/divergence/curl are not "
                         "defined; use explicit spin or coordinate operators."
@@ -1145,8 +1148,7 @@ def _coordinate_axes(
             prepared = discretization.axes[axis]
             if coordinate.periodic != prepared.periodic:
                 raise ValueError(
-                    f"PDE coordinate {coordinate.name!r} periodicity does not match "
-                    f"spectral basis {prepared.family!r}."
+                    f"PDE coordinate {coordinate.name!r} periodicity does not match spectral basis {prepared.family!r}."
                 )
             if coordinate.bounds is not None:
                 actual_bounds = prepared.bounds
@@ -1155,8 +1157,7 @@ def _coordinate_axes(
                     actual_bounds,
                 ):
                     raise ValueError(
-                        f"PDE coordinate {coordinate.name!r} bounds do not match "
-                        "the spectral axis domain."
+                        f"PDE coordinate {coordinate.name!r} bounds do not match the spectral axis domain."
                     )
         output.append((coordinate.name, axes))
         offset += coordinate.size
@@ -1251,8 +1252,7 @@ def compile_spectral_pde(
     )
     if splitting == "semilinear" and unresolved_parameters:
         raise ValueError(
-            "Semilinear spectral compilation requires concrete values for parameters "
-            f"{unresolved_parameters}."
+            f"Semilinear spectral compilation requires concrete values for parameters {unresolved_parameters}."
         )
     layout = SpectralStateLayout(problem.fields, discretization)
     evaluator = _SpectralEvaluator(
@@ -1329,7 +1329,7 @@ def compile_spectral_pde(
             resolved = "spectral-semilinear-diagonal"
         nonlinear_id = canonical_fingerprint(
             {
-                "kind": "spectral-nonlinear-drift-v1",
+                "kind": "spectral-nonlinear-drift",
                 "problem": problem.canonical_hash,
                 "discretization": discretization.prepared_id,
                 "method": prepared_method.prepared_id,
@@ -1350,7 +1350,7 @@ def compile_spectral_pde(
         drift = semilinear
     compilation_id = canonical_fingerprint(
         {
-            "kind": "spectral-pde-compiler-v2",
+            "kind": "spectral-pde-compiler",
             "problem": problem.canonical_hash,
             "discretization": discretization.prepared_id,
             "method": prepared_method.prepared_id,

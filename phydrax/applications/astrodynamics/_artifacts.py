@@ -150,7 +150,7 @@ class AstronomyCoefficientTable(StrictModule, NonTrainableState):
     ):
         names = tuple(sorted(str(name) for name in coefficients))
         values = tuple(
-            jax.lax.stop_gradient(jnp.asarray(coefficients[name], dtype=float))
+            jax.lax.stop_gradient(jnp.asarray(coefficients[name], dtype=jnp.float64))
             for name in names
         )
         if not isinstance(angle_unit, UnitDefinition):

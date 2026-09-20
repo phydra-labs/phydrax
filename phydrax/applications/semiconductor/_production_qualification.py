@@ -18,12 +18,12 @@ from ...qualification import (
 )
 
 
-_FIELD_PROFILE = "semiconductor.detector.fixed-linear-electrostatics.v1"
-_RESPONSE_PROFILE = "semiconductor.detector.prescribed-shockley-ramo.v1"
+_FIELD_PROFILE = "semiconductor.detector.fixed-linear-electrostatics.canonical"
+_RESPONSE_PROFILE = "semiconductor.detector.prescribed-shockley-ramo.canonical"
 
 
 _PROFILE_SPECS: dict[str, tuple[str, Mapping[str, str | int | bool], tuple[str, ...]]] = {
-    "semiconductor.device.isothermal-homojunction-dd.v1": (
+    "semiconductor.device.isothermal-homojunction-dd.canonical": (
         "semiconductor.device.stationary",
         {
             "code_id": "phydrax.applications.semiconductor.PreparedSemiconductorDevice.solve",
@@ -36,7 +36,7 @@ _PROFILE_SPECS: dict[str, tuple[str, Mapping[str, str | int | bool], tuple[str, 
         },
         (),
     ),
-    "semiconductor.device.heterointerface-dd.v1": (
+    "semiconductor.device.heterointerface-dd.canonical": (
         "semiconductor.device.stationary",
         {
             "code_id": "phydrax.applications.semiconductor.PreparedSemiconductorDevice.solve",
@@ -47,9 +47,9 @@ _PROFILE_SPECS: dict[str, tuple[str, Mapping[str, str | int | bool], tuple[str, 
             "execution": "single-device-cpu-float64",
             "resources": "caller-declared-nonlinear-and-mesh-bounds",
         },
-        ("semiconductor.device.isothermal-homojunction-dd.v1",),
+        ("semiconductor.device.isothermal-homojunction-dd.canonical",),
     ),
-    "semiconductor.device.electrothermal-dd.v1": (
+    "semiconductor.device.electrothermal-dd.canonical": (
         "semiconductor.device.electrothermal",
         {
             "code_id": "phydrax.applications.semiconductor.PreparedSemiconductorDevice.solve",
@@ -60,9 +60,9 @@ _PROFILE_SPECS: dict[str, tuple[str, Mapping[str, str | int | bool], tuple[str, 
             "execution": "single-device-cpu-float64",
             "resources": "caller-declared-nonlinear-and-mesh-bounds",
         },
-        ("semiconductor.device.isothermal-homojunction-dd.v1",),
+        ("semiconductor.device.isothermal-homojunction-dd.canonical",),
     ),
-    "semiconductor.quantum.effective-mass-1d.v1": (
+    "semiconductor.quantum.effective-mass-1d.canonical": (
         "semiconductor.quantum.stationary",
         {
             "code_id": "phydrax.applications.semiconductor.quantum.solve_schrodinger_poisson",
@@ -75,7 +75,7 @@ _PROFILE_SPECS: dict[str, tuple[str, Mapping[str, str | int | bool], tuple[str, 
         },
         (),
     ),
-    "semiconductor.device.stationary-quantum-classical-hybrid.v1": (
+    "semiconductor.device.stationary-quantum-classical-hybrid.canonical": (
         "semiconductor.device.stationary-hybrid",
         {
             "code_id": "phydrax.applications.semiconductor.quantum.solve_quantum_classical_interface",
@@ -86,8 +86,8 @@ _PROFILE_SPECS: dict[str, tuple[str, Mapping[str, str | int | bool], tuple[str, 
             "resources": "classical-and-quantum-preallocation-refusal",
         },
         (
-            "semiconductor.device.isothermal-homojunction-dd.v1",
-            "semiconductor.quantum.effective-mass-1d.v1",
+            "semiconductor.device.isothermal-homojunction-dd.canonical",
+            "semiconductor.quantum.effective-mass-1d.canonical",
         ),
     ),
     _FIELD_PROFILE: (
@@ -121,7 +121,7 @@ _PROFILE_SPECS: dict[str, tuple[str, Mapping[str, str | int | bool], tuple[str, 
         },
         (_FIELD_PROFILE,),
     ),
-    "semiconductor.quantum.chain-landauer.v1": (
+    "semiconductor.quantum.chain-landauer.canonical": (
         "semiconductor.quantum.chain-landauer",
         {
             "code_id": "phydrax.applications.semiconductor.quantum.integrate_coherent",
@@ -137,12 +137,11 @@ _PROFILE_SPECS: dict[str, tuple[str, Mapping[str, str | int | bool], tuple[str, 
         },
         (),
     ),
-    "semiconductor.quantum.chain-coherent-ac.v1": (
+    "semiconductor.quantum.chain-coherent-ac.canonical": (
         "semiconductor.quantum.chain-coherent-ac",
         {
             "code_id": (
-                "phydrax.applications.semiconductor.quantum."
-                "finite_frequency_quantum_response"
+                "phydrax.applications.semiconductor.quantum.finite_frequency_quantum_response"
             ),
             "physics": "connected-equilibrium-coherent-kubo-capacitive-hartree",
             "lead_model": "finite-spatial-dilation-with-lead-refinement",
@@ -153,9 +152,9 @@ _PROFILE_SPECS: dict[str, tuple[str, Mapping[str, str | int | bool], tuple[str, 
             "execution": "single-device-cpu-float64",
             "resources": "quantum-resources-dense-dilation-bound",
         },
-        ("semiconductor.quantum.chain-landauer.v1",),
+        ("semiconductor.quantum.chain-landauer.canonical",),
     ),
-    "semiconductor.quantum.chain-finite-lead-transient.v1": (
+    "semiconductor.quantum.chain-finite-lead-transient.canonical": (
         "semiconductor.quantum.chain-finite-lead-transient",
         {
             "code_id": (
@@ -170,9 +169,9 @@ _PROFILE_SPECS: dict[str, tuple[str, Mapping[str, str | int | bool], tuple[str, 
             "execution": "single-device-cpu-float64",
             "resources": "bounded-quadratic-correlation-storage",
         },
-        ("semiconductor.quantum.chain-landauer.v1",),
+        ("semiconductor.quantum.chain-landauer.canonical",),
     ),
-    "semiconductor.quantum.chain-optical-phonon-scba.v1": (
+    "semiconductor.quantum.chain-optical-phonon-scba.canonical": (
         "semiconductor.quantum.chain-optical-phonon-scba",
         {
             "code_id": (
@@ -187,7 +186,7 @@ _PROFILE_SPECS: dict[str, tuple[str, Mapping[str, str | int | bool], tuple[str, 
             "execution": "single-device-cpu-float64",
             "resources": "quantum-resources-energy-correlation-bound",
         },
-        ("semiconductor.quantum.chain-landauer.v1",),
+        ("semiconductor.quantum.chain-landauer.canonical",),
     ),
 }
 

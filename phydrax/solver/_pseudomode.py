@@ -82,7 +82,9 @@ def jaynes_cummings_pseudomode_problem(
         mode.frequency,
         abs(mode.coupling),
     )
-    initial_mode = jnp.zeros((mode.cutoff, mode.cutoff), dtype=complex).at[0, 0].set(1.0)
+    initial_mode = (
+        jnp.zeros((mode.cutoff, mode.cutoff), dtype=jnp.complex128).at[0, 0].set(1.0)
+    )
     system_density = jnp.asarray(initial_system_density)
     initial = jnp.kron(initial_mode, system_density)
     jump = jnp.sqrt(mode.damping) * jnp.kron(cavity.annihilation_matrix(0), jnp.eye(2))

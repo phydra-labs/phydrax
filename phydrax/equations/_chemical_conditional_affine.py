@@ -182,7 +182,7 @@ class ChemicalConditionalAffineDrivers(StrictModule):
         if species.ndim < 1:
             raise ValueError("species_concentrations must have a trailing driver axis.")
         if not jnp.issubdtype(species.dtype, jnp.inexact):
-            species = species.astype(float)
+            species = species.astype("float64")
         temperature_ = jnp.asarray(temperature, dtype=species.dtype)
         pressure_ = jnp.asarray(pressure, dtype=species.dtype)
         if (
@@ -292,10 +292,12 @@ class PreparedChemicalConditionalAffine(StrictModule):
             mechanism
         )
         pivot_affine = np.asarray(certificate.pivot_affine_indices, dtype=np.int32)
-        pivot_incidence = np.zeros((pivot_affine.size, affine_indices.size), dtype=float)
+        pivot_incidence = np.zeros(
+            (pivot_affine.size, affine_indices.size), dtype=np.float64
+        )
         valid_pivot = pivot_affine >= 0
         pivot_incidence[np.nonzero(valid_pivot)[0], pivot_affine[valid_pivot]] = 1.0
-        source_mask = (~valid_pivot).astype(float)
+        source_mask = (~valid_pivot).astype("float64")
         coefficient_orders = orders.copy()
         for channel, local_index in enumerate(pivot_affine):
             if local_index >= 0:
@@ -338,7 +340,7 @@ class PreparedChemicalConditionalAffine(StrictModule):
 
     @property
     def channel_count(self) -> int:
-        return int(self.channel_reaction_indices.shape[0])
+        return self.channel_reaction_indices.shape[0]
 
     def assemble(
         self,
@@ -352,8 +354,7 @@ class PreparedChemicalConditionalAffine(StrictModule):
         driver_values = drivers.species_concentrations
         if driver_values.shape[-1] != self.driver_size:
             raise ValueError(
-                f"Driver species axis must have size {self.driver_size}; "
-                f"got {driver_values.shape[-1]}."
+                f"Driver species axis must have size {self.driver_size}; got {driver_values.shape[-1]}."
             )
         batch_shape = driver_values.shape[:-1]
         multiplier = (
@@ -366,8 +367,7 @@ class PreparedChemicalConditionalAffine(StrictModule):
         expected_multiplier = batch_shape + (self.mechanism.reaction_count,)
         if multiplier.shape != expected_multiplier:
             raise ValueError(
-                f"reaction_multiplier must have shape {expected_multiplier}; "
-                f"got {multiplier.shape}."
+                f"reaction_multiplier must have shape {expected_multiplier}; got {multiplier.shape}."
             )
         full_driver = jnp.zeros(
             batch_shape + (self.mechanism.schema.species_count,),
@@ -481,7 +481,7 @@ class PreparedChemicalConditionalAffine(StrictModule):
                 value=jnp.zeros_like(assembly.forcing),
                 error_estimate=zero,
                 residual_estimate=zero,
-                converged=jnp.ones(batch_shape, dtype=bool),
+                converged=jnp.ones(batch_shape, dtype=jnp.bool_),
                 effective_dimension=jnp.zeros(batch_shape, dtype=jnp.int32),
                 matvec_count=jnp.zeros(batch_shape, dtype=jnp.int32),
                 breakdown_status=jnp.zeros(batch_shape, dtype=jnp.int32),
@@ -620,7 +620,7 @@ def _rate_concentration_dependencies(
         return ()
     if isinstance(rate, (ThirdBodyRatePlan, LindemannRatePlan, TroeRatePlan)):
         efficiencies = np.asarray(rate.efficiencies)
-        return tuple(int(value) for value in np.flatnonzero(efficiencies != 0.0))
+        return tuple(np.flatnonzero(efficiencies != 0.0))
     if isinstance(rate, SurfaceCoverageRatePlan):
         return (rate.species_index,)
     raise TypeError(
@@ -651,7 +651,7 @@ def _directional_arrays(
             orders.append(reverse_orders[reaction_index])
     return (
         np.asarray(reaction_indices, dtype=np.int32),
-        np.asarray(reverse_flags, dtype=bool),
+        np.asarray(reverse_flags, dtype=np.bool_),
         np.asarray(stoichiometry),
         np.asarray(orders),
     )
@@ -781,7 +781,7 @@ def _analyze_conditional_affinity(
         raise ValueError(
             f"Explicit pivots target inactive directions: {unused_explicit}."
         )
-    eligible_array = np.asarray(eligible, dtype=bool)
+    eligible_array = np.asarray(eligible, dtype=np.bool_)
     certificate_id = canonical_fingerprint(
         {
             "kind": "chemical-conditional-affinity-certificate",

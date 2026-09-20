@@ -126,9 +126,9 @@ class PDECoordinate:
     def __post_init__(self) -> None:
         if not self.name or self.kind not in ("space", "time"):
             raise ValueError("PDE coordinates require a name and valid kind.")
-        if int(self.size) <= 0:
+        if self.size <= 0:
             raise ValueError("PDE coordinate size must be positive.")
-        object.__setattr__(self, "size", int(self.size))
+        object.__setattr__(self, "size", self.size)
         if not isinstance(self.dimension, DimensionSignature):
             raise TypeError("PDE coordinate dimension must be a DimensionSignature.")
         if self.bounds is not None:
@@ -370,8 +370,7 @@ def as_expression(value: Any, /) -> PDEExpression:
     if isinstance(value, (Real, Fraction)) and not isinstance(value, bool):
         return PDEExpression.constant(value)
     raise TypeError(
-        "PDE expressions only accept integer, fraction, or float constants "
-        "and PDEExpression nodes."
+        "PDE expressions only accept integer, fraction, or float constants and PDEExpression nodes."
     )
 
 

@@ -18,8 +18,6 @@ def term_label(term: Any, /) -> str:
     return term.label or type(term).__name__
 
 
-
-
 def best_display_value(
     best_value: int | float | None,
     loss: float,
@@ -49,7 +47,7 @@ def _model_loss_tag(index: int, name: str, /) -> str:
 
 
 def _as_scalar(value: Any, /) -> float:
-    return float(jnp.asarray(value, dtype=float).reshape(()))
+    return float(jnp.asarray(value, dtype=jnp.float64).reshape(()))
 
 
 def training_scalars(
@@ -84,7 +82,7 @@ def training_scalars(
     if not log_terms:
         return scalars
 
-    train_values = list(map(float, jnp.asarray(train_terms, dtype=float)))
+    train_values = list(map(float, jnp.asarray(train_terms, dtype=jnp.float64)))
     for index, (name, value) in enumerate(
         zip(train_term_names, train_values, strict=True)
     ):
@@ -93,13 +91,15 @@ def training_scalars(
         for metric_name, metric_value in train_data_metrics[index].items():
             scalars[f"{prefix}/{metric_name}"] = _as_scalar(metric_value)
 
-    model_loss_values = list(map(float, jnp.asarray(train_model_loss_terms, dtype=float)))
+    model_loss_values = list(
+        map(float, jnp.asarray(train_model_loss_terms, dtype=jnp.float64))
+    )
     for index, (name, value) in enumerate(
         zip(train_model_loss_names, model_loss_values, strict=True)
     ):
         scalars[f"train/{_model_loss_tag(index, name)}/loss"] = value
 
-    evaluation_values = list(map(float, jnp.asarray(eval_terms, dtype=float)))
+    evaluation_values = list(map(float, jnp.asarray(eval_terms, dtype=jnp.float64)))
     for index, (name, value) in enumerate(
         zip(evaluation_term_names, evaluation_values, strict=True)
     ):
@@ -125,9 +125,7 @@ def emit_training_scalars(
         "training.step.completed",
         "Training step completed",
         backend=backend,
-        metrics=tuple(
-            {"name": name, "value": value} for name, value in scalars.items()
-        ),
+        metrics=tuple({"name": name, "value": value} for name, value in scalars.items()),
         step=int(step),
         total_steps=int(total_steps),
     )

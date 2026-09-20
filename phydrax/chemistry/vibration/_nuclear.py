@@ -50,7 +50,7 @@ class VibrationalConfigurationResult(StrictModule, NonTrainableState):
         coefficients = jnp.asarray(vci_coefficients, dtype=energy.dtype)
         residuals = jnp.asarray(vci_residuals, dtype=energy.dtype)
         basis = jnp.asarray(basis_quanta, dtype=jnp.int32)
-        roots = int(energy.size)
+        roots = energy.size
         if (
             coefficients.ndim != 2
             or coefficients.shape[1] != roots
@@ -74,7 +74,7 @@ class VibrationalConfigurationResult(StrictModule, NonTrainableState):
         self.vci_coefficients = coefficients
         self.vci_residuals = residuals
         self.basis_quanta = basis
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.plan_id = str(plan_id)
         self.result_id = canonical_fingerprint(
             {
@@ -129,7 +129,7 @@ class VibrationalConfigurationPlan(StrictModule, NonTrainableState):
         sweeps = int(vscf_maximum_sweeps)
         vscf_tolerance_ = float(vscf_tolerance)
         residual_tolerance_ = float(residual_tolerance)
-        dimension = (quanta + 1) ** int(frequency.size)
+        dimension = (quanta + 1) ** frequency.size
         if (
             frequency.shape != (force_field.quadratic.shape[0],)
             or bool(jnp.any(frequency <= 0.0))
@@ -186,7 +186,7 @@ class VibrationalConfigurationPlan(StrictModule, NonTrainableState):
         )
         hamiltonian = np.diag(harmonic) + cubic + quartic
         local_dimension = self.maximum_quanta + 1
-        mode_count = int(self.frequencies.size)
+        mode_count = self.frequencies.size
         modals = [np.eye(local_dimension)[:, 0] for _ in range(mode_count)]
         previous_energy = np.inf
         converged = False
@@ -279,7 +279,7 @@ class HinderedRotorResult(StrictModule, NonTrainableState):
         self.orthonormality_residual = jnp.asarray(
             orthonormality_residual, dtype=energies_.dtype
         ).reshape(())
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.plan_id = str(plan_id)
         self.result_id = canonical_fingerprint(
             {

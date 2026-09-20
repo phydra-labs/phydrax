@@ -86,7 +86,7 @@ def test_modal_observation_ignores_unobserved_nonfinite_targets():
     function = _function(1.0, space)
     target = function.func(0.0)[None, ...]
     mode_index = int(jnp.argmax(function.func.mode_numbers[:, 0] == 1.0))
-    mask = jnp.zeros_like(target, dtype=bool).at[0, mode_index].set(True)
+    mask = jnp.zeros_like(target, dtype="bool").at[0, mode_index].set(True)
     masked_target = jnp.where(mask, target, jnp.asarray(jnp.nan + 0.0j))
     term = phx.terms.ModalObservationTerm(
         jnp.asarray([0.0]),

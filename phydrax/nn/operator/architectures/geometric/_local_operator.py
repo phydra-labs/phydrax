@@ -33,9 +33,7 @@ def _coordinates(
         raise ValueError("Local operators require source and query coordinates.")
     coordinates = samples.coordinates_array(case_shape=case_shape, flatten=True)
     cases = prod(case_shape) if case_shape else 1
-    return coordinates.reshape(
-        (cases, prod(samples.sample_shape), int(coordinates.shape[-1]))
-    )
+    return coordinates.reshape((cases, prod(samples.sample_shape), coordinates.shape[-1]))
 
 
 def _source_values(
@@ -56,8 +54,8 @@ def _source_values(
         raise ValueError(
             "Source values do not contain the source sample shape after case axes."
         )
-    case_shape = tuple(int(size) for size in values.shape[:case_ndim])
-    trailing = tuple(int(size) for size in values.shape[case_ndim + sample_ndim :])
+    case_shape = tuple(values.shape[:case_ndim])
+    trailing = tuple(values.shape[case_ndim + sample_ndim :])
     if not trailing:
         values = values[..., None]
     elif trailing != (int(channels),):
@@ -69,7 +67,7 @@ def _source_values(
 
 def _apply_rows(model: _AbstractBaseModel, values: Array, key: EvalKey, /) -> Array:
     shape = values.shape[:-1]
-    flattened = values.reshape((-1, int(values.shape[-1])))
+    flattened = values.reshape((-1, values.shape[-1]))
     output = jax.vmap(lambda row: model(row, key=key))(flattened)
     return jnp.asarray(output).reshape(shape + (_get_size(model.out_size),))
 
@@ -95,7 +93,7 @@ def _neighbor_data(
     radius: float | None,
     max_neighbors: int | None,
 ) -> tuple[Array, Array, Array, Array, Array, Array]:
-    source_count = int(source_coordinates.shape[1])
+    source_count = source_coordinates.shape[1]
     neighbor_count = (
         source_count if max_neighbors is None else min(int(max_neighbors), source_count)
     )
@@ -194,8 +192,8 @@ class LocalIntegralOperator(AbstractOperatorModel):
         source_coordinates = _coordinates(source, batch.case_shape)
         query_coordinates = _coordinates(batch.require_single_query(), batch.case_shape)
         if (
-            int(source_coordinates.shape[-1]) != self.coord_dim
-            or int(query_coordinates.shape[-1]) != self.coord_dim
+            source_coordinates.shape[-1] != self.coord_dim
+            or query_coordinates.shape[-1] != self.coord_dim
         ):
             raise ValueError(
                 "Source/query coordinate dimension does not match coord_dim."
@@ -210,7 +208,7 @@ class LocalIntegralOperator(AbstractOperatorModel):
         )
         mask = _query_mask(batch.require_single_query(), case_shape)
         chunks = []
-        for start in range(0, int(query_coordinates.shape[1]), self.query_chunk_size):
+        for start in range(0, query_coordinates.shape[1], self.query_chunk_size):
             query = query_coordinates[:, start : start + self.query_chunk_size, :]
             (
                 source_data,
@@ -336,8 +334,8 @@ class LocalDifferentialOperator(AbstractOperatorModel):
         source_coordinates = _coordinates(source, batch.case_shape)
         query_coordinates = _coordinates(batch.require_single_query(), batch.case_shape)
         if (
-            int(source_coordinates.shape[-1]) != self.coord_dim
-            or int(query_coordinates.shape[-1]) != self.coord_dim
+            source_coordinates.shape[-1] != self.coord_dim
+            or query_coordinates.shape[-1] != self.coord_dim
         ):
             raise ValueError(
                 "Source/query coordinate dimension does not match coord_dim."
@@ -352,7 +350,7 @@ class LocalDifferentialOperator(AbstractOperatorModel):
         )
         query_mask = _query_mask(batch.require_single_query(), case_shape)
         chunks = []
-        for start in range(0, int(query_coordinates.shape[1]), self.query_chunk_size):
+        for start in range(0, query_coordinates.shape[1], self.query_chunk_size):
             query = query_coordinates[:, start : start + self.query_chunk_size, :]
             (
                 source_data,
@@ -387,9 +385,9 @@ class LocalDifferentialOperator(AbstractOperatorModel):
             kernels = _apply_rows(self.kernel_model, kernel_inputs, key)
             kernels = kernels.reshape(
                 (
-                    int(query.shape[0]),
-                    int(query.shape[1]),
-                    int(source_data.shape[2]),
+                    query.shape[0],
+                    query.shape[1],
+                    source_data.shape[2],
                     _get_size(self.out_size),
                     _get_size(self.in_size),
                 )

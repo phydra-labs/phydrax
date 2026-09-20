@@ -21,7 +21,7 @@ from ._status import AstrodynamicsStatus
 def _clenshaw(coefficients: Array, coordinate: Array, /) -> Array:
     b1 = jnp.zeros(coefficients.shape[:-1], dtype=coefficients.dtype)
     b2 = jnp.zeros_like(b1)
-    for index in range(int(coefficients.shape[-1]) - 1, 0, -1):
+    for index in range(coefficients.shape[-1] - 1, 0, -1):
         b0 = 2.0 * coordinate * b1 - b2 + coefficients[..., index]
         b2, b1 = b1, b0
     return coordinate * b1 - b2 + coefficients[..., 0]
@@ -55,8 +55,8 @@ class ChebyshevEphemeris(StrictModule, NonTrainableState):
         provenance: AstrodynamicsDataProvenance,
         /,
     ):
-        bounds = np.asarray(segment_bounds, dtype=float)
-        coefficients = np.asarray(position_coefficients, dtype=float)
+        bounds = np.asarray(segment_bounds, dtype=np.float64)
+        coefficients = np.asarray(position_coefficients, dtype=np.float64)
         if (
             bounds.ndim != 1
             or bounds.size < 2
@@ -96,8 +96,8 @@ class ChebyshevEphemeris(StrictModule, NonTrainableState):
                 "kind": "chebyshev-ephemeris",
                 "catalog": catalog.catalog_id,
                 "provenance": provenance.provenance_id,
-                "segments": int(bounds.size - 1),
-                "degree": int(coefficients.shape[-1] - 1),
+                "segments": bounds.size - 1,
+                "degree": coefficients.shape[-1] - 1,
             }
         )
 
@@ -112,7 +112,7 @@ class ChebyshevEphemeris(StrictModule, NonTrainableState):
         segment = jnp.clip(
             jnp.searchsorted(self.segment_bounds, time, side="right") - 1,
             0,
-            int(self.segment_bounds.size) - 2,
+            self.segment_bounds.size - 2,
         )
         start = self.segment_bounds[segment]
         end = self.segment_bounds[segment + 1]

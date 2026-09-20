@@ -75,16 +75,16 @@ def _inputs(
     if values.ndim < 1:
         raise ValueError("p_values must have at least one family axis.")
     if not jnp.issubdtype(values.dtype, jnp.inexact):
-        values = values.astype(float)
+        values = values.astype("float64")
     resolved_axis = int(axis)
     if resolved_axis < 0:
         resolved_axis += values.ndim
     if not 0 <= resolved_axis < values.ndim:
         raise ValueError("axis is out of bounds for p_values.")
     family_mask = (
-        jnp.ones(values.shape, dtype=bool)
+        jnp.ones(values.shape, dtype=jnp.bool_)
         if mask is None
-        else jnp.asarray(mask, dtype=bool)
+        else jnp.asarray(mask, dtype=jnp.bool_)
     )
     if family_mask.shape != values.shape:
         raise ValueError("mask must have the same shape as p_values.")

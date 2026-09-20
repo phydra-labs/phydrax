@@ -87,7 +87,7 @@ def test_active_history_bytes_plateau_with_horizon():
 
     assert short.stats["history_capacity"] == long.stats["history_capacity"]
     assert short.stats["active_history_bytes"] == long.stats["active_history_bytes"]
-    assert int(long.continuation.active_history.size) <= long.stats["history_capacity"]
+    assert long.continuation.active_history.size <= long.stats["history_capacity"]
     assert int(long.stats["num_segments"]) > int(short.stats["num_segments"])
 
 
@@ -140,9 +140,9 @@ def test_rejected_candidate_history_is_functionally_isolated():
         {"y0": jnp.asarray([0.25]), "y1": jnp.asarray([10.0])},
     )
 
-    assert int(accepted.size) == 1
+    assert accepted.size == 1
     assert jnp.allclose(accepted.evaluate(jnp.asarray(0.25)), jnp.asarray([0.25]))
-    assert int(candidate.size) == 2
+    assert candidate.size == 2
     assert jnp.allclose(candidate.evaluate(jnp.asarray(0.5)), jnp.asarray([10.0]))
 
 
@@ -160,8 +160,8 @@ def test_rejected_diffrax_candidates_never_enter_rolling_history():
     active = solution.continuation.active_history
 
     assert int(solution.stats["num_rejected_steps"]) > 0
-    assert int(active.size) == int(solution.stats["num_accepted_steps"])
-    starts = active.logical_starts[: int(active.size)]
+    assert active.size == int(solution.stats["num_accepted_steps"])
+    starts = active.logical_starts[: active.size]
     assert jnp.all(jnp.diff(starts) > 0.0)
 
 

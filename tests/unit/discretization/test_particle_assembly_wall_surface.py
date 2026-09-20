@@ -110,7 +110,7 @@ def test_free_surface_detection_marks_truncated_support_and_pressure_correction(
     particles = phx.discretization.ParticleSetPlan(
         np.arange(5), np.full((5,), 0.1), ambient_dimension=1
     ).prepare()
-    position = jnp.arange(5, dtype=float)[:, None] * 0.1
+    position = jnp.arange(5, dtype="float64")[:, None] * 0.1
     prepared = phx.discretization.DenseParticleNeighborhoodPlan(10).prepare(particles)
     neighborhood = prepared.build(position)
     geometry = phx.discretization.particle_pair_geometry(

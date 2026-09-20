@@ -251,8 +251,8 @@ def _certified_face_values(discretization, face_ids, face_cells):
     ids = np.asarray(face_ids, dtype=np.int32)
     cells = np.asarray(face_cells, dtype=np.int32)
     owners = np.asarray(discretization.owner_cells)[ids]
-    neighbours = np.asarray(discretization.neighbour_cells)[ids]
-    assert np.all((owners == cells) | (neighbours == cells))
+    neighbors = np.asarray(discretization.neighbor_cells)[ids]
+    assert np.all((owners == cells) | (neighbors == cells))
     orientation = np.where(owners == cells, 1.0, -1.0)
     unit = (
         np.asarray(discretization.area_vectors)[ids]
@@ -375,7 +375,7 @@ def _overset_budget(block, cell_count):
     np.add.at(scattered, np.asarray(block.owner_cells), -np.asarray(block.flux_integral))
     np.add.at(
         scattered,
-        np.asarray(block.neighbour_cells),
+        np.asarray(block.neighbor_cells),
         np.asarray(block.flux_integral),
     )
     return scattered
@@ -389,7 +389,7 @@ def _overset_rate_budget(block, cell_count):
     np.add.at(scattered, np.asarray(block.owner_cells), -np.asarray(block.flux_rate))
     np.add.at(
         scattered,
-        np.asarray(block.neighbour_cells),
+        np.asarray(block.neighbor_cells),
         np.asarray(block.flux_rate),
     )
     return scattered
@@ -464,7 +464,7 @@ def test_moved_overset_correction_uses_stage_faces_and_grid_velocity():
         np.asarray((0, 1)),
     )
     np.testing.assert_array_equal(
-        np.unique(np.asarray(shifted_block.neighbour_cells)),
+        np.unique(np.asarray(shifted_block.neighbor_cells)),
         np.asarray((2, 3)),
     )
     moved_budget = _overset_rate_budget(moved_block, discretization.cell_count)

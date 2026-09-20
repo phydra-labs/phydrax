@@ -33,7 +33,7 @@ def _operator():
         return phx.operators.ConnectedConfigurations(
             connected,
             -0.5 * jnp.ones(shape),
-            jnp.ones(shape, dtype=bool),
+            jnp.ones(shape, dtype="bool"),
             configuration_shape=(2,),
         )
 
@@ -316,7 +316,7 @@ def test_vmc_target_factory_identity_is_explicit_and_stable():
 
 def test_vmc_complex_parameter_modes_are_explicit():
     real_model = _TableModel(jnp.zeros((4,)))
-    complex_model = _TableModel(jnp.zeros((4,), dtype=complex))
+    complex_model = _TableModel(jnp.zeros((4,), dtype="complex128"))
 
     with pytest.raises(TypeError, match="holomorphic"):
         phx.solver.VariationalMonteCarloProblem(

@@ -674,7 +674,7 @@ def evaluate_semiconductor_optical_response(
             jnp.asarray(lattice_temperature),
             frequency_input,
         )
-        projection_valid = jnp.ones(density.shape, dtype=bool)
+        projection_valid = jnp.ones(density.shape, dtype=jnp.bool_)
         active_volume = plan.active_volume
         confinement = plan.confinement_factor
         projection_id = "unprojected-active-region-state"

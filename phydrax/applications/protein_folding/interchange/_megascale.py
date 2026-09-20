@@ -5,7 +5,7 @@
 
 Nothing in this module downloads data.  The caller supplies the bytes on disk and
 an exact :class:`ReferenceArtifactManifest`; admission verifies both before any
-scientific row is interpreted.  Derived figure tables remain labelled as such and
+scientific row is interpreted.  Derived figure tables remain labeled as such and
 never acquire invented replicate uncertainty or raw-proteolysis lineage.
 """
 
@@ -129,15 +129,13 @@ def parse_mutation_code(
         match = _MUTATION.fullmatch(token)
         if match is None:
             raise ValueError(
-                "Mutation codes must be WT or colon-separated one-based point "
-                "substitutions such as A12V or A12V:G18D."
+                "Mutation codes must be WT or colon-separated one-based point substitutions such as A12V or A12V:G18D."
             )
         wild_type, position_text, mutant = match.groups()
         position = int(position_text)
         if position < 1 or position in positions or wild_type == mutant:
             raise ValueError(
-                "Mutation positions must be positive and unique, and substitutions "
-                "must change residue identity."
+                "Mutation positions must be positive and unique, and substitutions must change residue identity."
             )
         positions.add(position)
         substitutions.append((wild_type, position, mutant))
@@ -154,8 +152,7 @@ def apply_mutation_code(sequence: str, mutation_code: str, /) -> str:
         index = position - 1
         if index >= len(values) or values[index] != wild_type:
             raise ValueError(
-                f"Mutation {wild_type}{position}{mutant} does not match the exact "
-                "WT construct sequence."
+                f"Mutation {wild_type}{position}{mutant} does not match the exact WT construct sequence."
             )
         values[index] = mutant
     return "".join(values)
@@ -261,8 +258,7 @@ class ProteinStabilityMeasurement:
         mutant_sequence = apply_mutation_code(self.sequence, self.mutation_code)
         if mutant_sequence != self.source_mutant_sequence:
             raise ValueError(
-                "The source mutant sequence does not equal the exact mutation applied "
-                "to the admitted WT construct."
+                "The source mutant sequence does not equal the exact mutation applied to the admitted WT construct."
             )
         _finite(self.value_kcal_per_mol, "value_kcal_per_mol")
         _optional_positive(
@@ -432,8 +428,7 @@ class AdmittedProteinStabilitySource:
             )
         if any(len(identities) != 1 for identities in by_background.values()):
             raise ValueError(
-                "Each mutation background must retain one family, WT sequence, "
-                "and shared-WT identity."
+                "Each mutation background must retain one family, WT sequence, and shared-WT identity."
             )
         construct_sequences = {
             sequence for construct in constructs for sequence in construct.sequences
@@ -695,8 +690,7 @@ def _figure_table_source(
         by_domain.setdefault(domain, []).append(row)
     if set(family_by_domain) != set(by_domain):
         raise ValueError(
-            "family_by_domain must cover source domains exactly; family labels are "
-            "never inferred from PDB names."
+            "family_by_domain must cover source domains exactly; family labels are never inferred from PDB names."
         )
 
     constructs: list[ProteinConstruct] = []
@@ -948,8 +942,7 @@ def admit_megascale_processed_table(
         }
         if not required_lineage.issubset(standard_error_manifest.lineage_ids):
             raise ValueError(
-                "Standard-error manifest lineage must bind every selected source "
-                "name and exact uncertainty value."
+                "Standard-error manifest lineage must bind every selected source name and exact uncertainty value."
             )
         uncertainty_manifest_id = standard_error_manifest.manifest_id
     rows_by_name: dict[str, list[dict[str, str]]] = {}

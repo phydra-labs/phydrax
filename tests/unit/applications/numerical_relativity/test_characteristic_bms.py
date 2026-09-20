@@ -53,8 +53,8 @@ def test_characteristic_minkowski_and_analytic_outgoing_wave_controls():
         inverse_radius,
         mode_l,
         mode_m,
-        np.zeros((nine, 1), dtype=complex),
-        np.zeros((nine, 3, 1), dtype=complex),
+        np.zeros((nine, 1), dtype="complex128"),
+        np.zeros((nine, 3, 1), dtype="complex128"),
         history_name="minkowski-worldtube",
     )
     flat = plan.evolve(minkowski)
@@ -135,7 +135,7 @@ def test_bms_boost_and_translation_controls_preserve_poincare_laws():
     data = BMSScriData(
         times,
         np.full((2, plan.direction_capacity), mass),
-        np.zeros((2, plan.direction_capacity), dtype=complex),
+        np.zeros((2, plan.direction_capacity), dtype="complex128"),
         np.zeros((2, plan.direction_capacity, 4, 4)),
         data_name="rest-bondi-data",
     )
@@ -158,9 +158,7 @@ def test_bms_boost_and_translation_controls_preserve_poincare_laws():
     np.testing.assert_allclose(translated.lorentz_charges, expected_lorentz, atol=2.0e-6)
 
     speed = 0.3
-    boost = BMSFrameTransformation(
-        np.asarray((speed, 0.0, 0.0)), np.zeros(4)
-    )
+    boost = BMSFrameTransformation(np.asarray((speed, 0.0, 0.0)), np.zeros(4))
     boosted = boost.transform_charges(charges)
     gamma = 1.0 / np.sqrt(1.0 - speed**2)
     np.testing.assert_allclose(boosted.four_momentum[:, 0], gamma * mass, rtol=2.0e-6)

@@ -389,8 +389,7 @@ class EnforcementSpec(StrictModule):
                 )
             ):
                 raise ValueError(
-                    "Typed Condition enforcement derives fields and staging from its "
-                    "prepared realization."
+                    "Typed Condition enforcement derives fields and staging from its prepared realization."
                 )
             sources = condition.fields.sources
             if not sources:
@@ -421,8 +420,7 @@ class EnforcementSpec(StrictModule):
             transform, AffineEnforcementTransform
         ):
             raise TypeError(
-                "transform must be an AffineEnforcementTransform; untyped callables "
-                "are not accepted."
+                "transform must be an AffineEnforcementTransform; untyped callables are not accepted."
             )
         if isinstance(condition.on, ComponentSum):
             raise TypeError(
@@ -434,8 +432,7 @@ class EnforcementSpec(StrictModule):
         target_field = condition.fields[0] if field is None else str(field)
         if target_field not in condition.fields:
             raise ValueError(
-                f"Enforcement target field {target_field!r} is not in condition fields "
-                f"{condition.fields!r}."
+                f"Enforcement target field {target_field!r} is not in condition fields {condition.fields!r}."
             )
         resolved_dependencies = (
             tuple(name for name in condition.fields if name != target_field)

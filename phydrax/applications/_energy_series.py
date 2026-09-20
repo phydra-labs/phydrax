@@ -128,7 +128,7 @@ def _monotonic_coordinates(support: SeriesSupport):
 def _leaf_masks(samples: SampledSeries):
     if samples.value_valid is None:
         return jax.tree_util.tree_map(
-            lambda value: jnp.ones(value.shape, dtype=bool), samples.values
+            lambda value: jnp.ones(value.shape, dtype=jnp.bool_), samples.values
         )
     return samples.value_valid
 

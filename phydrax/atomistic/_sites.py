@@ -16,7 +16,7 @@ from jaxtyping import Array, ArrayLike
 from phydrax.ein import contract
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import (
     DenseParticleNeighborhoodPlan,
@@ -57,7 +57,7 @@ class VirtualSiteRule(StrictModule, NonTrainableState):
         if not isinstance(kind, VirtualSiteKind):
             raise TypeError("kind must be VirtualSiteKind.")
         parents = np.asarray(parent_ids)
-        values = np.asarray(coefficients, dtype=float)
+        values = np.asarray(coefficients, dtype=np.float64)
         if parents.ndim != 1 or not np.issubdtype(parents.dtype, np.integer):
             raise TypeError("parent_ids must be an integer vector.")
         if len(set(int(value) for value in parents)) != parents.size:
@@ -119,7 +119,7 @@ class AtomisticInteractionSitePlan(StrictModule, NonTrainableState):
         ids = np.asarray(site_ids)
         numbers = np.asarray(atomic_numbers)
         types = np.asarray(site_type_ids)
-        charge = np.asarray(charges, dtype=float)
+        charge = np.asarray(charges, dtype=np.float64)
         if ids.ndim != 1 or ids.size == 0 or not np.issubdtype(ids.dtype, np.integer):
             raise TypeError("site_ids must be a non-empty integer vector.")
         expected = ids.shape
@@ -134,22 +134,24 @@ class AtomisticInteractionSitePlan(StrictModule, NonTrainableState):
         if np.unique(ids).size != ids.size:
             raise ValueError("Interaction-site IDs must be unique.")
         active = (
-            np.ones(expected, dtype=bool)
+            np.ones(expected, dtype=np.bool_)
             if active_mask is None
-            else np.asarray(active_mask, dtype=bool)
+            else np.asarray(active_mask, dtype=np.bool_)
         )
         elements = (
-            numbers > 0 if element_mask is None else np.asarray(element_mask, dtype=bool)
+            numbers > 0
+            if element_mask is None
+            else np.asarray(element_mask, dtype=np.bool_)
         )
         physical = (
             numbers > 0
             if physical_mask is None
-            else np.asarray(physical_mask, dtype=bool)
+            else np.asarray(physical_mask, dtype=np.bool_)
         )
         output = (
             physical.copy()
             if output_mask is None
-            else np.asarray(output_mask, dtype=bool)
+            else np.asarray(output_mask, dtype=np.bool_)
         )
         if (
             active.shape != expected
@@ -187,7 +189,7 @@ class AtomisticInteractionSitePlan(StrictModule, NonTrainableState):
 
     @property
     def capacity(self) -> int:
-        return int(self.site_ids.size)
+        return self.site_ids.size
 
 
 class AtomisticInteractionSiteState(StrictModule):
@@ -201,8 +203,8 @@ class AtomisticInteractionSiteState(StrictModule):
 
 
 class AbstractAtomisticCoordinateMapPlan(StrictModule, NonTrainableState):
-    plan_id: AbstractAttribute[str]
-    sites: AbstractAttribute[AtomisticInteractionSitePlan]
+    plan_id: eqx.AbstractVar[str]
+    sites: eqx.AbstractVar[AtomisticInteractionSitePlan]
 
     @abc.abstractmethod
     def prepare(
@@ -240,7 +242,7 @@ class AtomisticCoordinateMapPlan(AbstractAtomisticCoordinateMapPlan):
             raise TypeError("virtual_rules must contain VirtualSiteRule values.")
         virtual_by_id = {rule.site_id: rule for rule in rules}
         site_ids = np.asarray(sites.site_ids, dtype=np.int64)
-        physical_mask = np.asarray(sites.physical_mask, dtype=bool)
+        physical_mask = np.asarray(sites.physical_mask, dtype=np.bool_)
         if any(
             int(site_ids[index]) not in virtual_by_id
             for index in np.flatnonzero(~physical_mask & np.asarray(sites.active_mask))
@@ -283,9 +285,9 @@ class AtomisticCoordinateMapPlan(AbstractAtomisticCoordinateMapPlan):
     ) -> "AtomisticCoordinateMapPlan":
         ids = np.asarray(particle_ids)
         active = (
-            np.ones(ids.shape, dtype=bool)
+            np.ones(ids.shape, dtype=np.bool_)
             if active_mask is None
-            else np.asarray(active_mask, dtype=bool)
+            else np.asarray(active_mask, dtype=np.bool_)
         )
         sites = AtomisticInteractionSitePlan(
             ids,

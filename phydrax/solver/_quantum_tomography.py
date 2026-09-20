@@ -137,7 +137,7 @@ class QuantumTomographyResult(StrictModule):
         self.density = jnp.asarray(density)
         self.log_likelihood_history = jnp.asarray(log_likelihood_history)
         self.minimum_eigenvalue_history = jnp.asarray(minimum_eigenvalue_history)
-        self.accepted_history = jnp.asarray(accepted_history, dtype=bool)
+        self.accepted_history = jnp.asarray(accepted_history, dtype=jnp.bool_)
         self.fidelity_to_initial = jnp.asarray(fidelity_to_initial)
         self.identifiable_rank = jnp.asarray(identifiable_rank)
         self.valid = (
@@ -145,7 +145,7 @@ class QuantumTomographyResult(StrictModule):
             & jnp.all(jnp.isfinite(self.log_likelihood_history))
             & jnp.all(self.minimum_eigenvalue_history > 0.0)
         )
-        self.converged = jnp.asarray(converged, dtype=bool)
+        self.converged = jnp.asarray(converged, dtype=jnp.bool_)
         if not isinstance(precision_evidence, PrecisionEvidenceEnvelope):
             raise TypeError("precision_evidence must be PrecisionEvidenceEnvelope.")
         if not isinstance(hermitian_precision_evidence, PrecisionEvidenceEnvelope):
@@ -162,7 +162,6 @@ class QuantumTomographyArtifact(StrictModule):
     povm_id: str = eqx.field(static=True)
     data_id: str = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
-    schema_version: int = eqx.field(static=True)
     precision_evidence: PrecisionEvidenceEnvelope
     hermitian_precision_evidence: PrecisionEvidenceEnvelope
     precision_policy_id: str = eqx.field(static=True)
@@ -180,13 +179,11 @@ class QuantumTomographyArtifact(StrictModule):
         hermitian_precision_evidence: PrecisionEvidenceEnvelope,
         precision_policy_id: str,
         hermitian_precision_policy_id: str,
-        schema_version: int = 2,
     ):
         self.density = jnp.asarray(density)
         self.povm_id = str(povm_id)
         self.data_id = str(data_id)
         self.problem_id = str(problem_id)
-        self.schema_version = int(schema_version)
         self.precision_evidence = precision_evidence
         self.hermitian_precision_evidence = hermitian_precision_evidence
         self.precision_policy_id = str(precision_policy_id)
@@ -307,7 +304,6 @@ def freeze_quantum_tomography(
         hermitian_precision_evidence=result.hermitian_precision_evidence,
         precision_policy_id=problem.precision.policy_id,
         hermitian_precision_policy_id=problem.hermitian_precision.policy_id,
-        schema_version=2,
     )
 
 

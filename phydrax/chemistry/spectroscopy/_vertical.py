@@ -87,7 +87,7 @@ class UVVisibleSpectrumResult(StrictModule, NonTrainableState):
             expected_strength, dtype=positions.dtype
         ).reshape(())
         self.area_residual = jnp.asarray(area_residual, dtype=positions.dtype).reshape(())
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.axis = axis
         self.result_id = canonical_fingerprint(
             {

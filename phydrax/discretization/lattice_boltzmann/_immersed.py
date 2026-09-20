@@ -126,7 +126,7 @@ class ImmersedBoundaryForcingPlan(StrictModule, NonTrainableState):
         scaled_components = []
         valid = jnp.ones(
             (marker_positions.shape[0], self.stencil_offsets.shape[0]),
-            dtype=bool,
+            dtype=jnp.bool_,
         )
         for axis, (grid_axis, periodic) in enumerate(
             zip(grid.structured_axes, self.discretization.periodic, strict=True)
@@ -213,9 +213,9 @@ class ImmersedBoundaryForcingPlan(StrictModule, NonTrainableState):
                 "Marker target velocities and measures have incompatible shapes."
             )
         if fluid_mask is None:
-            mask = jnp.ones(grid_shape, dtype=bool)
+            mask = jnp.ones(grid_shape, dtype=jnp.bool_)
         else:
-            mask = jnp.asarray(fluid_mask, dtype=bool)
+            mask = jnp.asarray(fluid_mask, dtype=jnp.bool_)
             if mask.shape != grid_shape:
                 raise ValueError("fluid_mask must match grid shape.")
         velocity = eqx.error_if(

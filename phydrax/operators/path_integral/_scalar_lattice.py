@@ -110,8 +110,7 @@ class Phi4LatticeAction(AbstractLatticeEuclideanAction):
         field = jnp.asarray(configuration)
         if field.shape != self.configuration_shape:
             raise ValueError(
-                f"Scalar field must have shape {self.configuration_shape}; "
-                f"got {field.shape}."
+                f"Scalar field must have shape {self.configuration_shape}; got {field.shape}."
             )
         if jnp.iscomplexobj(field):
             raise TypeError("Scalar phi4 fields must be real-valued.")
@@ -167,7 +166,7 @@ class LocalPhi4LatticeAction(AbstractIncrementalLatticeAction):
             raise TypeError("base must be Phi4LatticeAction.")
         edges = jnp.asarray(incident_edges, dtype=jnp.int32)
         signs = jnp.asarray(incident_signs, dtype=base.kinetic_scale.dtype)
-        valid = jnp.asarray(incident_valid, dtype=bool)
+        valid = jnp.asarray(incident_valid, dtype=jnp.bool_)
         if edges.shape != signs.shape or edges.shape != valid.shape:
             raise ValueError("Incident edge, sign, and validity arrays must agree.")
         if edges.shape[0] != base.configuration_shape[0]:
@@ -305,7 +304,7 @@ def prepare_local_phi4_action(
         raise ValueError("Local phi4 updates require a diagonal degree-one Hodge map.")
     incidence = action.discretization.topology.incidences[0]
     relation = incidence.relation
-    valid = np.asarray(relation.valid, dtype=bool)
+    valid = np.asarray(relation.valid, dtype=np.bool_)
     source = np.asarray(relation.source_indices, dtype=np.int64)[valid]
     target = np.asarray(relation.target_indices, dtype=np.int64)[valid]
     signs = np.asarray(incidence.signs)[valid]
@@ -313,8 +312,8 @@ def prepare_local_phi4_action(
     counts = np.bincount(source, minlength=num_sites)
     capacity = max(1, int(counts.max(initial=0)))
     incident_edges = np.zeros((num_sites, capacity), dtype=np.int32)
-    incident_signs = np.zeros((num_sites, capacity), dtype=float)
-    incident_valid = np.zeros((num_sites, capacity), dtype=bool)
+    incident_signs = np.zeros((num_sites, capacity), dtype=np.float64)
+    incident_valid = np.zeros((num_sites, capacity), dtype=np.bool_)
     offsets = np.zeros((num_sites,), dtype=np.int32)
     for site, edge, sign in zip(source, target, signs, strict=True):
         slot = offsets[site]

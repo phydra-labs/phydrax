@@ -72,8 +72,7 @@ def _condition(
     )
     if condition.kind == "robin":
         raise ValueError(
-            "Composite AMR diffusion supports periodic, Dirichlet, and "
-            "Neumann boundaries."
+            "Composite AMR diffusion supports periodic, Dirichlet, and Neumann boundaries."
         )
     if condition.kind == "dirichlet" and (
         condition.alpha != 1.0 or condition.beta != 0.0
@@ -145,7 +144,7 @@ class _CompositeAMRFaceRoutes(StrictModule, NonTrainableState):
         finest_shape = topology.plan.global_cell_shapes[-1]
         finest_spacing = topology.plan.level_spacings[-1]
         cell_levels = np.empty((layout.cell_count,), dtype=np.int32)
-        cell_widths = np.empty((layout.cell_count, dimension), dtype=float)
+        cell_widths = np.empty((layout.cell_count, dimension), dtype=np.float64)
         lower_faces: list[dict[int, list[tuple[int, tuple[tuple[int, int], ...]]]]] = [
             {} for _ in range(dimension)
         ]
@@ -164,7 +163,7 @@ class _CompositeAMRFaceRoutes(StrictModule, NonTrainableState):
             offset = layout.cell_offsets[level]
             count = int(np.count_nonzero(np.asarray(metadata.active)))
             logical = np.asarray(metadata.logical_indices, dtype=np.int32)
-            mask_host = np.asarray(mask, dtype=bool)
+            mask_host = np.asarray(mask, dtype=np.bool_)
             block_cells = prod(level_plan.block_shape)
             scale = tuple(
                 fine // coarse
@@ -183,7 +182,7 @@ class _CompositeAMRFaceRoutes(StrictModule, NonTrainableState):
                     level_plan.block_shape
                 )
                 for local_value in np.argwhere(mask_host[slot]):
-                    local = tuple(int(value) for value in local_value)
+                    local = tuple(local_value)
                     cell = (
                         offset
                         + slot * block_cells
@@ -344,16 +343,17 @@ class _CompositeAMRFaceRoutes(StrictModule, NonTrainableState):
         left = np.asarray([key[0] for key in edge_keys], dtype=np.int32)
         right = np.asarray([key[1] for key in edge_keys], dtype=np.int32)
         edge_axis = np.asarray([key[2] for key in edge_keys], dtype=np.int32)
-        edge_periodic = np.asarray([key[3] for key in edge_keys], dtype=bool)
+        edge_periodic = np.asarray([key[3] for key in edge_keys], dtype=np.bool_)
         micro_areas = np.asarray(
             [
                 prod(finest_spacing[other] for other in range(dimension) if other != axis)
                 for axis in edge_axis
             ],
-            dtype=float,
+            dtype=np.float64,
         )
         edge_area = (
-            np.asarray([edge_counts[key] for key in edge_keys], dtype=float) * micro_areas
+            np.asarray([edge_counts[key] for key in edge_keys], dtype=np.float64)
+            * micro_areas
         )
         left_distance = (
             0.5 * cell_widths[left, edge_axis] if edge_keys else np.empty((0,))
@@ -364,7 +364,7 @@ class _CompositeAMRFaceRoutes(StrictModule, NonTrainableState):
         level_jump = (
             cell_levels[left] != cell_levels[right]
             if edge_keys
-            else np.empty((0,), dtype=bool)
+            else np.empty((0,), dtype=np.bool_)
         )
         boundary_keys = tuple(sorted(boundary_counts))
         boundary_cells = np.asarray([key[0] for key in boundary_keys], dtype=np.int32)
@@ -375,10 +375,10 @@ class _CompositeAMRFaceRoutes(StrictModule, NonTrainableState):
                 prod(finest_spacing[other] for other in range(dimension) if other != axis)
                 for axis in boundary_axis
             ],
-            dtype=float,
+            dtype=np.float64,
         )
         boundary_area = (
-            np.asarray([boundary_counts[key] for key in boundary_keys], dtype=float)
+            np.asarray([boundary_counts[key] for key in boundary_keys], dtype=np.float64)
             * boundary_micro_areas
         )
         boundary_distance = (
@@ -834,8 +834,7 @@ class PreparedCompositeAMRDiffusion(AbstractLinearOperator):
         output[0] = _checked(
             output[0],
             jnp.any(jnp.abs(defect.reshape((-1,))) > threshold),
-            "Composite AMR Neumann/periodic right-hand side is incompatible "
-            "with the constant nullspace.",
+            "Composite AMR Neumann/periodic right-hand side is incompatible with the constant nullspace.",
         )
         return tuple(output)
 
@@ -918,14 +917,12 @@ def _coefficient(
             raw = (scalar.astype(coefficient_dtype),)
         else:
             raise ValueError(
-                "Composite AMR coefficient must be positive scalar or contain "
-                "one scalar array per level."
+                "Composite AMR coefficient must be positive scalar or contain one scalar array per level."
             )
     else:
         if len(value) != len(layout.leaf_mask):
             raise ValueError(
-                "Composite AMR coefficient must be positive scalar or contain "
-                "one scalar array per level."
+                "Composite AMR coefficient must be positive scalar or contain one scalar array per level."
             )
         raw = tuple(np.asarray(item, dtype=coefficient_dtype) for item in value)
     if any(
@@ -935,7 +932,7 @@ def _coefficient(
         raise ValueError("Composite AMR coefficient level arrays have incorrect shapes.")
     normalized = []
     for array, mask in zip(raw, layout.leaf_mask, strict=True):
-        mask_host = np.asarray(mask, dtype=bool)
+        mask_host = np.asarray(mask, dtype=np.bool_)
         if np.any(~np.isfinite(array[mask_host])) or np.any(array[mask_host] <= 0.0):
             raise ValueError(
                 "Composite AMR leaf coefficients must be finite and strictly positive."

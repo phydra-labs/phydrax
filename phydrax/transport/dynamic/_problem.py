@@ -89,11 +89,11 @@ def _canonical_support(
         positions = tuple(leaf.dims.index(axis) for axis in leading)
         remaining = tuple(index for index in range(leaf.ndim) if index not in positions)
         canonical = jnp.transpose(jnp.asarray(leaf.data), positions + remaining)
-        observed = tuple(int(size) for size in canonical.shape[: len(leading)])
+        observed = tuple(canonical.shape[: len(leading)])
         expected = (case_shape if present_cases else ()) + atom_shape
         if observed != expected:
             raise ValueError(f"{name} leading shape must be {expected}; got {observed}.")
-        event_shape = tuple(int(size) for size in canonical.shape[len(leading) :])
+        event_shape = tuple(canonical.shape[len(leading) :])
         support = canonical.reshape(
             expected[: len(present_cases)] + (prod(atom_shape),) + event_shape
         )
@@ -109,9 +109,7 @@ def _canonical_support(
     ):
         outputs = tuple(range(weight_rank, data.ndim))
         canonical = jnp.transpose(data, weight_order + outputs)
-        event_shape = tuple(
-            int(size) for size in canonical.shape[len(case_shape) + len(atom_shape) :]
-        )
+        event_shape = tuple(canonical.shape[len(case_shape) + len(atom_shape) :])
         return (
             canonical.reshape(case_shape + (prod(atom_shape),) + event_shape),
             event_shape,
@@ -119,25 +117,22 @@ def _canonical_support(
     shared_prefix = atom_shape
     case_prefix = case_shape + atom_shape
     if tuple(data.shape[: len(case_prefix)]) == case_prefix:
-        event_shape = tuple(int(size) for size in data.shape[len(case_prefix) :])
+        event_shape = tuple(data.shape[len(case_prefix) :])
         return data.reshape(case_shape + (prod(atom_shape),) + event_shape), event_shape
     if tuple(data.shape[: len(shared_prefix)]) == shared_prefix:
-        event_shape = tuple(int(size) for size in data.shape[len(shared_prefix) :])
+        event_shape = tuple(data.shape[len(shared_prefix) :])
         shared = data.reshape((prod(atom_shape),) + event_shape)
         return jnp.broadcast_to(shared, case_shape + shared.shape), event_shape
     if data.ndim >= weight_rank and tuple(data.shape[:weight_rank]) == weight_shape:
         outputs = tuple(range(weight_rank, data.ndim))
         canonical = jnp.transpose(data, weight_order + outputs)
-        event_shape = tuple(
-            int(size) for size in canonical.shape[len(case_shape) + len(atom_shape) :]
-        )
+        event_shape = tuple(canonical.shape[len(case_shape) + len(atom_shape) :])
         return (
             canonical.reshape(case_shape + (prod(atom_shape),) + event_shape),
             event_shape,
         )
     raise ValueError(
-        f"{name} must begin with state shape {atom_shape} or case/state shape "
-        f"{case_shape + atom_shape}."
+        f"{name} must begin with state shape {atom_shape} or case/state shape {case_shape + atom_shape}."
     )
 
 
@@ -156,8 +151,8 @@ def _finish_endpoint(
     provenance: str,
     name: str,
 ) -> _FiniteEndpoint:
-    included = jnp.asarray(included, dtype=bool)
-    values = jnp.asarray(values, dtype=float)
+    included = jnp.asarray(included, dtype=jnp.bool_)
+    values = jnp.asarray(values, dtype=jnp.float64)
     if logarithmic:
         admissible = jnp.isfinite(values) | jnp.isneginf(values)
         values = eqx.error_if(
@@ -187,7 +182,7 @@ def _finish_endpoint(
     )
     probabilities = positive / jnp.sum(positive, axis=-1, keepdims=True)
     if target_mass is not None:
-        mass = jnp.broadcast_to(jnp.asarray(target_mass, dtype=float), case_shape)
+        mass = jnp.broadcast_to(jnp.asarray(target_mass, dtype=jnp.float64), case_shape)
     elif normalized:
         mass = jnp.ones(case_shape, dtype=probabilities.dtype)
     else:
@@ -230,17 +225,17 @@ def _lower_discrete(target: DiscreteMeasureTarget, name: str, /) -> _FiniteEndpo
     case_positions = tuple(weights.dims.index(axis) for axis in case_axes)
     atom_positions = tuple(weights.dims.index(axis) for axis in atom_axes)
     order = case_positions + atom_positions
-    canonical = jnp.transpose(jnp.asarray(weights.data, dtype=float), order)
-    case_shape = tuple(int(canonical.shape[index]) for index in range(len(case_axes)))
+    canonical = jnp.transpose(jnp.asarray(weights.data, dtype=jnp.float64), order)
+    case_shape = tuple(canonical.shape[index] for index in range(len(case_axes)))
     atom_shape = tuple(
-        int(canonical.shape[len(case_axes) + index]) for index in range(len(atom_axes))
+        canonical.shape[len(case_axes) + index] for index in range(len(atom_axes))
     )
     values = canonical.reshape(case_shape + (prod(atom_shape),))
     if target.mask is None:
-        included = jnp.ones_like(values, dtype=bool)
+        included = jnp.ones_like(values, dtype=jnp.bool_)
     else:
         mask = target.mask.broadcast_like(weights)
-        included = jnp.transpose(jnp.asarray(mask.data, dtype=bool), order).reshape(
+        included = jnp.transpose(jnp.asarray(mask.data, dtype=jnp.bool_), order).reshape(
             values.shape
         )
     support, event_shape = _canonical_support(
@@ -251,7 +246,7 @@ def _lower_discrete(target: DiscreteMeasureTarget, name: str, /) -> _FiniteEndpo
         case_shape=case_shape,
         weight_rank=weights.ndim,
         weight_order=order,
-        weight_shape=tuple(int(size) for size in weights.shape),
+        weight_shape=tuple(weights.shape),
         name=f"{name} points",
     )
     return _finish_endpoint(
@@ -277,43 +272,42 @@ def _lower_weighted(target: WeightedSampleTarget, name: str, /) -> _FiniteEndpoi
         case_positions = tuple(weights.dims.index(axis) for axis in case_axes)
         atom_positions = tuple(weights.dims.index(axis) for axis in atom_axes)
         order = case_positions + atom_positions
-        canonical = jnp.transpose(jnp.asarray(weights.data, dtype=float), order)
-        case_shape = tuple(int(canonical.shape[index]) for index in range(len(case_axes)))
+        canonical = jnp.transpose(jnp.asarray(weights.data, dtype=jnp.float64), order)
+        case_shape = tuple(canonical.shape[index] for index in range(len(case_axes)))
         atom_shape = tuple(
-            int(canonical.shape[len(case_axes) + index])
-            for index in range(len(atom_axes))
+            canonical.shape[len(case_axes) + index] for index in range(len(atom_axes))
         )
         values = canonical.reshape(case_shape + (prod(atom_shape),))
         if target.mask is None:
-            included = jnp.ones_like(values, dtype=bool)
+            included = jnp.ones_like(values, dtype=jnp.bool_)
         else:
             mask = cast(cx.AxisArray, target.mask).broadcast_like(weights)
-            included = jnp.transpose(jnp.asarray(mask.data, dtype=bool), order).reshape(
-                values.shape
-            )
+            included = jnp.transpose(
+                jnp.asarray(mask.data, dtype=jnp.bool_), order
+            ).reshape(values.shape)
         weight_rank = weights.ndim
     else:
-        raw = jnp.asarray(target.log_weights, dtype=float)
+        raw = jnp.asarray(target.log_weights, dtype=jnp.float64)
         atom_positions = cast(tuple[int, ...], target.sample_axes)
         case_positions = tuple(
             index for index in range(raw.ndim) if index not in atom_positions
         )
         order = case_positions + atom_positions
         canonical = jnp.transpose(raw, order)
-        case_shape = tuple(int(raw.shape[index]) for index in case_positions)
-        atom_shape = tuple(int(raw.shape[index]) for index in atom_positions)
+        case_shape = tuple(raw.shape[index] for index in case_positions)
+        atom_shape = tuple(raw.shape[index] for index in atom_positions)
         case_axes = tuple(f"case_{index}" for index in range(len(case_shape)))
         atom_axes = atom_positions
         values = canonical.reshape(case_shape + (prod(atom_shape),))
         included_raw = (
-            jnp.ones_like(raw, dtype=bool)
+            jnp.ones_like(raw, dtype=jnp.bool_)
             if target.mask is None
-            else jnp.broadcast_to(jnp.asarray(target.mask, dtype=bool), raw.shape)
+            else jnp.broadcast_to(jnp.asarray(target.mask, dtype=jnp.bool_), raw.shape)
         )
         included = jnp.transpose(included_raw, order).reshape(values.shape)
         weight_rank = raw.ndim
     if target.support_valid is not None:
-        support_valid = jnp.asarray(target.support_valid, dtype=bool)
+        support_valid = jnp.asarray(target.support_valid, dtype=jnp.bool_)
         if support_valid.size != prod(atom_shape):
             raise ValueError(
                 f"{name} support_valid must contain one value per finite state."
@@ -330,9 +324,9 @@ def _lower_weighted(target: WeightedSampleTarget, name: str, /) -> _FiniteEndpoi
         weight_rank=weight_rank,
         weight_order=order,
         weight_shape=(
-            tuple(int(size) for size in weights.shape)
+            tuple(weights.shape)
             if isinstance(target.log_weights, cx.AxisArray)
-            else tuple(int(size) for size in raw.shape)
+            else tuple(raw.shape)
         ),
         name=f"{name} samples",
     )
@@ -366,7 +360,7 @@ def _lower_endpoint(target: FiniteBridgeTarget, name: str, /) -> _FiniteEndpoint
             else target.log_density
         )
         density = jnp.broadcast_to(
-            jnp.asarray(log_density, dtype=float), base.probabilities.shape
+            jnp.asarray(log_density, dtype=jnp.float64), base.probabilities.shape
         )
         base_log = jnp.where(
             base.probabilities > 0.0, jnp.log(base.probabilities), -jnp.inf
@@ -453,7 +447,7 @@ class SchrodingerBridgeProblem(StrictModule):
             grid = times.times
             time_id = times.time_id
         else:
-            grid = jnp.asarray(times, dtype=float)
+            grid = jnp.asarray(times, dtype=jnp.float64)
             time_id = "schrodinger-bridge-grid"
         if grid.ndim != 1 or grid.shape[0] < 2:
             raise ValueError(
@@ -505,8 +499,7 @@ class SchrodingerBridgeProblem(StrictModule):
         state_shape = initial_endpoint.event_shape
         if reference.state_shape != state_shape:
             raise ValueError(
-                "reference.state_shape must equal the endpoint event shape "
-                f"{state_shape}; got {reference.state_shape}."
+                f"reference.state_shape must equal the endpoint event shape {state_shape}; got {reference.state_shape}."
             )
         self.initial = initial_endpoint
         self.terminal = terminal_endpoint
@@ -523,7 +516,7 @@ class SchrodingerBridgeProblem(StrictModule):
         self.case_axes = initial_endpoint.case_axes
         self.case_shape = initial_endpoint.case_shape
         self.state_shape = state_shape
-        self.num_states = int(initial_endpoint.probabilities.shape[-1])
+        self.num_states = initial_endpoint.probabilities.shape[-1]
         self.transition_tolerance = transition_tolerance
         self.mass_tolerance = mass_tolerance
         self.time_id = time_id
@@ -551,7 +544,7 @@ class SchrodingerBridgeProblem(StrictModule):
 
     @property
     def num_steps(self) -> int:
-        return int(self.times.shape[0] - 1)
+        return self.times.shape[0] - 1
 
     @property
     def num_cases(self) -> int:

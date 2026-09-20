@@ -118,7 +118,7 @@ class SymmetryAveragedFeatureLibrary(AbstractFeatureLibrary):
         if weights is None:
             weight_values = np.full((len(actions),), 1.0 / len(actions))
         else:
-            weight_values = np.asarray(tuple(weights), dtype=float)
+            weight_values = np.asarray(tuple(weights), dtype=np.float64)
             if weight_values.shape != (len(actions),):
                 raise ValueError("weights must contain one entry per group action.")
             if not np.all(np.isfinite(weight_values)) or np.any(weight_values < 0.0):

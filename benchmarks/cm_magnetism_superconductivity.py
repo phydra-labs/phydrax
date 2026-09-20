@@ -48,7 +48,7 @@ from phydrax.sparse import EdgeRelation
 
 
 def _constant_family(matrix, *, hermitian):
-    value = np.asarray(matrix, dtype=complex)
+    value = np.asarray(matrix, dtype="complex128")
     count = value.shape[0]
     target = np.repeat(np.arange(count), count)
     source = np.tile(np.arange(count), count)
@@ -56,7 +56,7 @@ def _constant_family(matrix, *, hermitian):
     relation = EdgeRelation(source, target, source_size=count, target_size=count)
     plan = PeriodicTranslationFamilyPlan(
         relation,
-        np.zeros((count * count, 1), dtype=int),
+        np.zeros((count * count, 1), dtype="int64"),
         reverse,
         hermitian=hermitian,
     )
@@ -79,12 +79,12 @@ def _classical_case(site_count: int):
     positions[:, 0] = np.arange(site_count)
     system = AtomisticSystemPlan(
         np.arange(site_count),
-        np.ones(site_count, dtype=int),
+        np.ones(site_count, dtype="int64"),
         np.ones(site_count),
         units,
     ).prepare()
     structure = AtomicStructure(
-        np.ones(site_count, dtype=int),
+        np.ones(site_count, dtype="int64"),
         positions,
         np.ones(site_count),
         units.scale,
@@ -135,7 +135,7 @@ def _lswt_case(site_count: int, q_count: int):
         reference,
         mesh,
         np.arange(q_count)[::-1],
-        np.zeros(q_count, dtype=int),
+        np.zeros(q_count, dtype="int64"),
         energy_unit="reduced-energy",
         maximum_site_count=site_count,
     )
@@ -177,7 +177,7 @@ def _bdg_case(mode_count: int, k_count: int):
     )
     diagonal = np.linspace(-1.0, 1.0, mode_count)
     normal = np.broadcast_to(np.diag(diagonal), (k_count, mode_count, mode_count)).copy()
-    pair = np.zeros((mode_count, mode_count), dtype=complex)
+    pair = np.zeros((mode_count, mode_count), dtype="complex128")
     for index in range(0, mode_count, 2):
         pair[index, index + 1] = 0.2
         pair[index + 1, index] = -0.2
@@ -196,7 +196,7 @@ def _bdg_case(mode_count: int, k_count: int):
         "nambu_dimension": 2 * mode_count,
         "k_points": k_count,
         "seconds": elapsed,
-        "logical_input_bytes": int(normal.nbytes + pairing.nbytes),
+        "logical_input_bytes": normal.nbytes + pairing.nbytes,
         "minimum_gap": float(jnp.min(jnp.abs(eigenvalues))),
     }
 

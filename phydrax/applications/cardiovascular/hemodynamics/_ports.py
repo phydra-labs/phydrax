@@ -230,7 +230,7 @@ class PressureMeasurementDefinition(StrictModule, NonTrainableState):
         *,
         pressure_reference_kpa: float,
     ):
-        weights = np.asarray(cell_weights_mm2, dtype=float)
+        weights = np.asarray(cell_weights_mm2, dtype=np.float64)
         reference = float(pressure_reference_kpa)
         identifier = str(terminal_id)
         if (
@@ -286,8 +286,8 @@ class FlowMeasurementDefinition(StrictModule, NonTrainableState):
         direction: TerminalDirection,
         /,
     ):
-        weights = np.asarray(cell_weights_mm2, dtype=float)
-        normal = np.asarray(outward_normal, dtype=float)
+        weights = np.asarray(cell_weights_mm2, dtype=np.float64)
+        normal = np.asarray(outward_normal, dtype=np.float64)
         identifier = str(terminal_id)
         if (
             weights.ndim != 3
@@ -507,7 +507,9 @@ def terminal_balance_evidence(
             power_relative_tolerance,
         )
     )
-    pressure_tolerance_host = np.asarray(pressure_absolute_tolerance_kpa, dtype=float)
+    pressure_tolerance_host = np.asarray(
+        pressure_absolute_tolerance_kpa, dtype=np.float64
+    )
     if pressure_tolerance_host.shape == ():
         pressure_tolerance_host = np.full(
             (prepared.terminal_count,), float(pressure_tolerance_host)
@@ -621,7 +623,7 @@ def prepare_terminal_measurements(
         raise ValueError("Each circulation p/Q port may bind at most one 3D terminal.")
     axis_names = discretization.grid.axis_names
     cell_area = float(discretization.cell_size) ** 2
-    mask = np.asarray(lumen.fluid_mask, dtype=bool)
+    mask = np.asarray(lumen.fluid_mask, dtype=np.bool_)
     pressure_definitions = []
     flow_definitions = []
     for terminal in values:
@@ -633,14 +635,14 @@ def prepare_terminal_measurements(
             raise ValueError("A periodic grid face cannot be a cardiovascular terminal.")
         face_slice: list[object] = [slice(None)] * 3
         face_slice[axis] = 0 if face.side == "lower" else -1
-        region = np.zeros(discretization.grid.shape, dtype=bool)
+        region = np.zeros(discretization.grid.shape, dtype=np.bool_)
         region[tuple(face_slice)] = mask[tuple(face_slice)]
         if not np.any(region):
             raise ValueError(
                 f"Terminal {terminal.terminal_id!r} has no fluid face cells."
             )
-        weights = cell_area * region.astype(float)
-        normal = np.zeros(3, dtype=float)
+        weights = cell_area * region.astype("float64")
+        normal = np.zeros(3, dtype=np.float64)
         normal[axis] = -1.0 if face.side == "lower" else 1.0
         pressure_definitions.append(
             PressureMeasurementDefinition(

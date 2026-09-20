@@ -45,7 +45,7 @@ class QuantumTrajectoryPlan(StrictModule):
         root_iterations: int = 64,
         root_tolerance: float = 1e-9,
         root_method: str = "toms748",
-        plan_id: str = "quantum-trajectory-v2",
+        plan_id: str = "quantum-trajectory",
         work_budget: NonlinearWorkBudget | None = None,
     ):
         if min(maximum_events, maximum_segments, root_iterations) < 1:
@@ -90,7 +90,7 @@ class QuantumTrajectoryEventTable(StrictModule):
         self.thresholds = jnp.asarray(thresholds)
         self.root_residuals = jnp.asarray(root_residuals)
         self.bracket_widths = jnp.asarray(bracket_widths)
-        self.active = jnp.asarray(active, dtype=bool)
+        self.active = jnp.asarray(active, dtype=jnp.bool_)
 
 
 class QuantumTrajectoryCheckpoint(StrictModule):

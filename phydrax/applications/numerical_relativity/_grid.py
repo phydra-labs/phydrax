@@ -33,7 +33,7 @@ class FixedGridGeometry(StrictModule, NonTrainableState):
         *,
         periodic: bool,
     ):
-        shape_ = tuple(int(value) for value in shape)
+        shape_ = tuple(shape)
         lower_ = tuple(float(value) for value in lower)
         spacing_ = tuple(float(value) for value in spacing)
         if len(shape_) != 3 or any(value < 5 for value in shape_):
@@ -63,7 +63,8 @@ class FixedGridGeometry(StrictModule, NonTrainableState):
     @property
     def upper(self) -> tuple[float, float, float]:
         return tuple(
-            self.lower[i] + self.spacing[i] * (self.shape[i] - (1 if self.periodic else 1))
+            self.lower[i]
+            + self.spacing[i] * (self.shape[i] - (1 if self.periodic else 1))
             for i in range(3)
         )
 
@@ -95,15 +96,13 @@ class FixedGridGeometry(StrictModule, NonTrainableState):
         if width_ < 1 or 2 * width_ >= min(self.shape):
             raise ValueError("boundary width leaves no interior points.")
         if self.periodic:
-            return jnp.zeros(self.shape, dtype=bool)
+            return jnp.zeros(self.shape, dtype=jnp.bool_)
         indices = jnp.meshgrid(
             *(jnp.arange(extent) for extent in self.shape), indexing="ij"
         )
-        mask = jnp.zeros(self.shape, dtype=bool)
+        mask = jnp.zeros(self.shape, dtype=jnp.bool_)
         for axis, extent in enumerate(self.shape):
-            mask = mask | (indices[axis] < width_) | (
-                indices[axis] >= extent - width_
-            )
+            mask = mask | (indices[axis] < width_) | (indices[axis] >= extent - width_)
         return mask
 
     def interior_mask(self, width: int = 1, /) -> Array:

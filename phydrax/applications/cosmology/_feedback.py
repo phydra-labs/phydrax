@@ -67,7 +67,7 @@ class CosmologicalPopulationPlan(StrictModule, NonTrainableState):
             jnp.arange(self.capacity, dtype=jnp.int64),
             jnp.zeros((self.capacity,), dtype=jnp.int32),
             jnp.zeros((self.capacity,), dtype=jnp.int8),
-            jnp.zeros((self.capacity,), dtype=bool),
+            jnp.zeros((self.capacity,), dtype=jnp.bool_),
             jnp.zeros((self.capacity, self.dimension), dtype=dtype),
             jnp.zeros((self.capacity, self.dimension), dtype=dtype),
             jnp.zeros((self.capacity,), dtype=dtype),
@@ -171,7 +171,7 @@ class StochasticStarFormationPlan(StrictModule, NonTrainableState):
         energies = jnp.asarray(gas_energies, dtype=masses.dtype)
         metallicities = jnp.asarray(gas_metallicities, dtype=masses.dtype)
         positions = jnp.asarray(cell_positions, dtype=masses.dtype)
-        eligible_ = jnp.asarray(eligible, dtype=bool)
+        eligible_ = jnp.asarray(eligible, dtype=jnp.bool_)
         scale = jnp.asarray(scale_factor, dtype=masses.dtype)
         if (
             masses.ndim != 1

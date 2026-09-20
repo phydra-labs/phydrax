@@ -151,11 +151,11 @@ class ApparentHorizonSearchPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(mots_plan, MOTSSolvePlan):
             raise TypeError("mots_plan must be a MOTSSolvePlan.")
-        radii = np.asarray(seed_radii, dtype=float).reshape((-1,))
+        radii = np.asarray(seed_radii, dtype=np.float64).reshape((-1,))
         active_ = (
-            np.ones(radii.shape, dtype=bool)
+            np.ones(radii.shape, dtype=np.bool_)
             if active is None
-            else np.asarray(active, dtype=bool)
+            else np.asarray(active, dtype=np.bool_)
         )
         equivalence = float(equivalence_tolerance)
         nesting = float(nesting_tolerance)
@@ -174,7 +174,7 @@ class ApparentHorizonSearchPlan(StrictModule, NonTrainableState):
         self.active = jnp.asarray(active_)
         self.equivalence_tolerance = equivalence
         self.nesting_tolerance = nesting
-        self.candidate_capacity = int(radii.size)
+        self.candidate_capacity = radii.size
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "fixed-capacity-apparent-horizon-search",
@@ -209,9 +209,9 @@ class ApparentHorizonSearchPlan(StrictModule, NonTrainableState):
         if center_.shape != (3,):
             raise ValueError("Search center must have shape (3,).")
         excluded_ = (
-            jnp.zeros((self.candidate_capacity,), dtype=bool)
+            jnp.zeros((self.candidate_capacity,), dtype=jnp.bool_)
             if excluded is None
-            else jnp.asarray(excluded, dtype=bool)
+            else jnp.asarray(excluded, dtype=jnp.bool_)
         )
         if excluded_.shape != (self.candidate_capacity,):
             raise ValueError("Exclusion evidence must match candidate capacity.")
@@ -233,13 +233,9 @@ class ApparentHorizonSearchPlan(StrictModule, NonTrainableState):
         iterations = jnp.stack(tuple(result.iterations for result in results))
         finite = jnp.stack(tuple(result.finite for result in results))
         converged = jnp.stack(tuple(result.converged for result in results))
-        physically_valid = jnp.stack(
-            tuple(result.physically_valid for result in results)
-        )
+        physically_valid = jnp.stack(tuple(result.physically_valid for result in results))
         qualified = jnp.stack(tuple(result.qualified for result in results))
-        derivative_valid = jnp.stack(
-            tuple(result.derivative_valid for result in results)
-        )
+        derivative_valid = jnp.stack(tuple(result.derivative_valid for result in results))
         stable = jnp.stack(tuple(result.stability.stable for result in results))
         statuses = jnp.stack(tuple(result.status for result in results))
         qualified = self.active & qualified
@@ -289,7 +285,7 @@ class ApparentHorizonSearchPlan(StrictModule, NonTrainableState):
         outermost_index = jnp.argmax(
             jnp.where(outermost_mask, mean_radius, -jnp.inf)
         ).astype(jnp.int32)
-        complete = jnp.asarray(search_complete, dtype=bool).reshape(())
+        complete = jnp.asarray(search_complete, dtype=jnp.bool_).reshape(())
         attempts_resolved = jnp.all(~self.active | qualified | effective_excluded)
         search_finite = jnp.all(~self.active | finite | effective_excluded)
         no_surface_certified = (
@@ -322,7 +318,9 @@ class ApparentHorizonSearchPlan(StrictModule, NonTrainableState):
             search_finite,
         )
         selected = SphericalSpectralSurface(
-            coefficients[outermost_index], centers[outermost_index], self.surface_plan.plan_id
+            coefficients[outermost_index],
+            centers[outermost_index],
+            self.surface_plan.plan_id,
         )
         geometry = self.surface_plan.geometry(selected)
         found = found_count > 0
@@ -526,15 +524,14 @@ def quasilocal_horizon_geometry(
         "...i,...ij,...j->...", geometry.outward_normal, curvature, axial
     )
     sign_to_standard_k = -float(convention_.extrinsic_curvature_sign)
-    angular_momentum = sign_to_standard_k * jnp.sum(
-        geometry.area_weights * integrand
-    ) / (8.0 * jnp.pi)
+    angular_momentum = (
+        sign_to_standard_k * jnp.sum(geometry.area_weights * integrand) / (8.0 * jnp.pi)
+    )
     area = geometry.area
     irreducible_mass = jnp.sqrt(jnp.maximum(area, 0.0) / (16.0 * jnp.pi))
     safe_irreducible_mass = jnp.where(irreducible_mass > 0.0, irreducible_mass, 1.0)
     christodoulou_mass = jnp.sqrt(
-        irreducible_mass**2
-        + angular_momentum**2 / (4.0 * safe_irreducible_mass**2)
+        irreducible_mass**2 + angular_momentum**2 / (4.0 * safe_irreducible_mass**2)
     )
     safe_mass = jnp.where(christodoulou_mass > 0.0, christodoulou_mass, 1.0)
     dimensionless_spin = angular_momentum / safe_mass**2
@@ -571,7 +568,9 @@ def quasilocal_horizon_geometry(
     )
 
 
-def kerr_horizon_reference(mass: ArrayLike, spin_parameter: ArrayLike, /) -> KerrHorizonReference:
+def kerr_horizon_reference(
+    mass: ArrayLike, spin_parameter: ArrayLike, /
+) -> KerrHorizonReference:
     """Analytic Kerr outer-horizon geometry in geometric units, ``J = a M``."""
     mass_ = jnp.asarray(mass)
     spin = jnp.asarray(spin_parameter, dtype=mass_.dtype)
@@ -580,12 +579,9 @@ def kerr_horizon_reference(mass: ArrayLike, spin_parameter: ArrayLike, /) -> Ker
     area = 4.0 * jnp.pi * (horizon_radius**2 + spin**2)
     irreducible_mass = jnp.sqrt(jnp.maximum(area, 0.0) / (16.0 * jnp.pi))
     angular_momentum = mass_ * spin
-    safe_irreducible_mass = jnp.where(
-        irreducible_mass > 0.0, irreducible_mass, 1.0
-    )
+    safe_irreducible_mass = jnp.where(irreducible_mass > 0.0, irreducible_mass, 1.0)
     christodoulou_mass = jnp.sqrt(
-        irreducible_mass**2
-        + angular_momentum**2 / (4.0 * safe_irreducible_mass**2)
+        irreducible_mass**2 + angular_momentum**2 / (4.0 * safe_irreducible_mass**2)
     )
     dimensionless_spin = spin / jnp.where(mass_ != 0.0, mass_, 1.0)
     finite = jnp.all(

@@ -48,8 +48,7 @@ class FDResourceEstimate(StrictModule, NonTrainableState):
         precision_resource_assumptions_id: str,
     ):
         values = tuple(
-            int(value)
-            for value in (
+            (
                 state_bytes,
                 halo_bytes,
                 stencil_metadata_bytes,
@@ -209,7 +208,7 @@ class FDExecutionPreflightPlan(StrictModule, NonTrainableState):
                 metadata += operator.execution.report.lowered_metadata_bytes
             else:
                 metadata += sum(
-                    int(np.asarray(value).nbytes)
+                    np.asarray(value).nbytes
                     for value in (operator.indices, operator.weights, operator.valid)
                 )
         temporary_bytes = self.grid.size * self.temporary_fields * itemsize
@@ -248,8 +247,7 @@ class FDExecutionPreflightPlan(StrictModule, NonTrainableState):
         )
         if not estimate.fits_budget:
             raise ValueError(
-                f"FD execution requires {estimate.total_bytes} bytes, exceeding "
-                f"budget {estimate.memory_budget_bytes}."
+                f"FD execution requires {estimate.total_bytes} bytes, exceeding budget {estimate.memory_budget_bytes}."
             )
         return estimate
 

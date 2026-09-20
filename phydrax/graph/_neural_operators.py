@@ -7,6 +7,8 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.tree_util as jtu
 
+from phydrax._strict import StrictModule
+
 from ..sparse import gather_routes, mask_routes, route_reduce
 from ._graph import ensure_graph
 from ._ir import GraphIR
@@ -22,7 +24,7 @@ def _tree_leading_size(tree: ArrayTree) -> int:
     leaves = jtu.tree_leaves(tree)
     if not leaves:
         raise ValueError("Feature tree must contain at least one array leaf.")
-    return int(jnp.asarray(leaves[0]).shape[0])
+    return jnp.asarray(leaves[0]).shape[0]
 
 
 def _multiply_leaf(value: Any, weight: Any, /) -> jnp.ndarray:
@@ -32,7 +34,7 @@ def _multiply_leaf(value: Any, weight: Any, /) -> jnp.ndarray:
         value_arr.ndim != weight_arr.ndim
         and value_arr.ndim > 0
         and weight_arr.ndim > 0
-        and int(value_arr.shape[0]) == int(weight_arr.shape[0])
+        and value_arr.shape[0] == weight_arr.shape[0]
     ):
         while value_arr.ndim < weight_arr.ndim:
             value_arr = jnp.expand_dims(value_arr, axis=-1)
@@ -116,7 +118,7 @@ def _node_field(graph: GraphIR, input_key: str | None, /, *, name: str) -> Array
 
 
 def _node_array(graph: GraphIR, input_key: str | None, /, *, name: str) -> jnp.ndarray:
-    arr = jnp.asarray(_node_field(graph, input_key, name=name), dtype=float)
+    arr = jnp.asarray(_node_field(graph, input_key, name=name), dtype=jnp.float64)
     if arr.ndim == 1:
         return arr[:, None]
     if arr.ndim != 2:
@@ -139,8 +141,8 @@ def _edge_weight(graph: GraphIR, edge_weight_key: str | None, /) -> jnp.ndarray 
         raise TypeError("edge_weight_key requires mapping-valued graph edges.")
     if edge_weight_key not in graph.edges:
         raise KeyError(f"Graph edges do not contain edge_weight_key {edge_weight_key!r}.")
-    weight = jnp.asarray(graph.edges[edge_weight_key], dtype=float)
-    if weight.ndim == 2 and int(weight.shape[1]) == 1:
+    weight = jnp.asarray(graph.edges[edge_weight_key], dtype=jnp.float64)
+    if weight.ndim == 2 and weight.shape[1] == 1:
         return weight[:, 0]
     if weight.ndim != 1:
         raise ValueError("edge weights must have shape (n_edge,) or (n_edge, 1).")
@@ -159,13 +161,13 @@ def _edge_array(
     if edge_key is None:
         if isinstance(graph.edges, Mapping):
             raise TypeError(f"mapping-valued graph edges require edge_key for {name}.")
-        arr = jnp.asarray(graph.edges, dtype=float)
+        arr = jnp.asarray(graph.edges, dtype=jnp.float64)
     else:
         if not isinstance(graph.edges, Mapping):
             raise TypeError("edge_key requires mapping-valued graph edges.")
         if edge_key not in graph.edges:
             raise KeyError(f"Graph edges do not contain edge_key {edge_key!r}.")
-        arr = jnp.asarray(graph.edges[edge_key], dtype=float)
+        arr = jnp.asarray(graph.edges[edge_key], dtype=jnp.float64)
     if arr.ndim == 0:
         raise ValueError(f"{name} edge features must have a leading edge axis.")
     return arr
@@ -180,22 +182,22 @@ def _node_volume(
     n_node: int,
 ) -> jnp.ndarray:
     if volume is not None:
-        out = jnp.asarray(volume, dtype=float)
+        out = jnp.asarray(volume, dtype=jnp.float64)
     elif volume_key is None:
-        out = jnp.ones((n_node,), dtype=float)
+        out = jnp.ones((n_node,), dtype=jnp.float64)
     else:
         if not isinstance(graph.nodes, Mapping):
             raise TypeError("volume_key requires mapping-valued graph nodes.")
         if volume_key not in graph.nodes:
             raise KeyError(f"Graph nodes do not contain volume_key {volume_key!r}.")
-        out = jnp.asarray(graph.nodes[volume_key], dtype=float)
-    if out.ndim == 2 and int(out.shape[1]) == 1:
+        out = jnp.asarray(graph.nodes[volume_key], dtype=jnp.float64)
+    if out.ndim == 2 and out.shape[1] == 1:
         out = out[:, 0]
     if out.ndim != 1:
         raise ValueError(
             "Finite-volume node volumes must have shape (n_node,) or (n_node, 1)."
         )
-    if int(out.shape[0]) != n_node:
+    if out.shape[0] != n_node:
         raise ValueError("Finite-volume node volume length must match graph nodes.")
     return out
 
@@ -257,8 +259,8 @@ def _edge_bias(graph: GraphIR, edge_bias_key: str | None, /) -> jnp.ndarray | No
         raise TypeError("edge_bias_key requires mapping-valued graph edges.")
     if edge_bias_key not in graph.edges:
         raise KeyError(f"Graph edges do not contain edge_bias_key {edge_bias_key!r}.")
-    bias = jnp.asarray(graph.edges[edge_bias_key], dtype=float)
-    if bias.ndim == 2 and int(bias.shape[1]) == 1:
+    bias = jnp.asarray(graph.edges[edge_bias_key], dtype=jnp.float64)
+    if bias.ndim == 2 and bias.shape[1] == 1:
         return bias[:, 0]
     if bias.ndim not in (1, 2):
         raise ValueError(
@@ -280,32 +282,32 @@ def _mask_node_type(
     keep = node_type_ids(graph, type_key=node_type_key) == int(target_node_type)
     if graph.node_mask is not None:
         keep = keep & graph.node_mask
-    return _multiply_tree(tree, keep.astype(float))
+    return _multiply_tree(tree, keep.astype("float64"))
 
 
 def _num_nodes(graph: GraphIR, nodes: ArrayTree, /) -> int:
     if graph.node_mask is not None:
-        return int(graph.node_mask.shape[0])
+        return graph.node_mask.shape[0]
     return _tree_leading_size(nodes)
 
 
 def _num_edges(graph: GraphIR, /) -> int:
     if graph.edge_mask is not None:
-        return int(graph.edge_mask.shape[0])
+        return graph.edge_mask.shape[0]
     if graph.senders is None:
         return int(jnp.asarray(graph.n_edge).sum())
-    return int(graph.senders.shape[0])
+    return graph.senders.shape[0]
 
 
 def _num_graph_nodes(graph: GraphIR, /) -> int:
     if graph.node_mask is not None:
-        return int(graph.node_mask.shape[0])
+        return graph.node_mask.shape[0]
     if graph.nodes is not None:
         return _tree_leading_size(graph.nodes)
     return int(jnp.asarray(graph.n_node).sum())
 
 
-class GraphKernelIntegral(eqx.Module):
+class GraphKernelIntegral(StrictModule):
     """Edge-kernel integral operator over a sparse graph.
 
     The block sends source node features along directed edges, optionally
@@ -382,7 +384,7 @@ class GraphKernelIntegral(eqx.Module):
 
         if self.normalize:
             if edge_measure is None:
-                normalizer = jnp.ones((num_edges,), dtype=float)
+                normalizer = jnp.ones((num_edges,), dtype=jnp.float64)
             else:
                 normalizer = edge_measure
             degree = route_reduce(relation, normalizer)
@@ -396,7 +398,7 @@ class GraphKernelIntegral(eqx.Module):
         return graph.replace(nodes=aggregated, validate=False)
 
 
-class GraphDiffusion(eqx.Module):
+class GraphDiffusion(StrictModule):
     """Physics-encoded incidence diffusion operator over node features."""
 
     conductivity_fn: Callable | None
@@ -453,7 +455,7 @@ class GraphDiffusion(eqx.Module):
         return graph.replace(nodes=diffused, validate=False)
 
 
-class GraphNeuralOperator(eqx.Module):
+class GraphNeuralOperator(StrictModule):
     """Weighted graph neural operator for source-to-target query graphs.
 
     The block reads a named node field, sends source values across graph edges,
@@ -548,7 +550,7 @@ class GraphNeuralOperator(eqx.Module):
             messages,
         )
         if self.normalize:
-            normalizer = jnp.ones((num_edges,), dtype=float)
+            normalizer = jnp.ones((num_edges,), dtype=jnp.float64)
             if edge_weight is not None:
                 normalizer = normalizer * edge_weight
             if edge_measure is not None:
@@ -573,7 +575,7 @@ class GraphNeuralOperator(eqx.Module):
         )
 
 
-class GraphAttentionOperator(eqx.Module):
+class GraphAttentionOperator(StrictModule):
     """Edge-aware attention operator over a sparse graph.
 
     By default this computes scaled dot-product attention from source nodes to
@@ -673,14 +675,13 @@ class GraphAttentionOperator(eqx.Module):
         else:
             logits = jnp.asarray(
                 self.logit_fn(graph.edges, keys[source], queries[target], glob_edge),
-                dtype=float,
+                dtype=jnp.float64,
             )
-            if logits.ndim == 2 and int(logits.shape[1]) == 1:
+            if logits.ndim == 2 and logits.shape[1] == 1:
                 logits = logits[:, 0]
             if logits.ndim not in (1, 2):
                 raise ValueError(
-                    "GraphAttentionOperator logit_fn must return shape "
-                    "(n_edge,), (n_edge, 1), or (n_edge, n_head)."
+                    "GraphAttentionOperator logit_fn must return shape (n_edge,), (n_edge, 1), or (n_edge, n_head)."
                 )
         bias = _edge_bias(graph, self.edge_bias_key)
         if bias is not None:
@@ -693,15 +694,17 @@ class GraphAttentionOperator(eqx.Module):
         queries = (
             nodes
             if self.query_fn is None
-            else jnp.asarray(self.query_fn(nodes), dtype=float)
+            else jnp.asarray(self.query_fn(nodes), dtype=jnp.float64)
         )
         keys = (
-            nodes if self.key_fn is None else jnp.asarray(self.key_fn(nodes), dtype=float)
+            nodes
+            if self.key_fn is None
+            else jnp.asarray(self.key_fn(nodes), dtype=jnp.float64)
         )
         values = (
             nodes
             if self.value_fn is None
-            else jnp.asarray(self.value_fn(nodes), dtype=float)
+            else jnp.asarray(self.value_fn(nodes), dtype=jnp.float64)
         )
         if queries.ndim != 2 or keys.ndim != 2 or values.ndim != 2:
             raise ValueError("query_fn, key_fn, and value_fn must return rank-2 arrays.")
@@ -723,7 +726,7 @@ class GraphAttentionOperator(eqx.Module):
                 graph,
                 self.source_measure_key,
                 self.source_measure,
-                n_node=int(nodes.shape[0]),
+                n_node=nodes.shape[0],
             )
             edge_measure = node_measure[source]
             measure_logits = jnp.where(
@@ -734,7 +737,7 @@ class GraphAttentionOperator(eqx.Module):
             while measure_logits.ndim < logits.ndim:
                 measure_logits = jnp.expand_dims(measure_logits, axis=-1)
             logits = logits + measure_logits
-        weights = segment_softmax(logits, target, int(nodes.shape[0]))
+        weights = segment_softmax(logits, target, nodes.shape[0])
         if graph.edge_mask is not None:
             mask = graph.edge_mask
             while mask.ndim < weights.ndim:
@@ -744,17 +747,17 @@ class GraphAttentionOperator(eqx.Module):
         sent_values = values[source]
         if weights.ndim == 1:
             messages = sent_values * weights[:, None]
-            out = segment_sum(messages, target, int(nodes.shape[0]))
+            out = segment_sum(messages, target, nodes.shape[0])
         else:
             messages = sent_values[:, None, :] * weights[:, :, None]
-            headed = segment_sum(messages, target, int(nodes.shape[0]))
+            headed = segment_sum(messages, target, nodes.shape[0])
             if self.head_reduction == "mean":
                 out = jnp.mean(headed, axis=1)
             else:
                 out = headed.reshape((headed.shape[0], headed.shape[1] * headed.shape[2]))
 
         glob_node = _repeat_globals_for_entities(
-            graph.globals, graph.n_node, int(nodes.shape[0])
+            graph.globals, graph.n_node, nodes.shape[0]
         )
         if self.update_node_fn is not None:
             out = self.update_node_fn(nodes, out, glob_node)
@@ -770,7 +773,7 @@ class GraphAttentionOperator(eqx.Module):
         )
 
 
-class GraphFiniteVolumeDivergence(eqx.Module):
+class GraphFiniteVolumeDivergence(StrictModule):
     """Conservative finite-volume divergence from edge fluxes to graph nodes."""
 
     flux_key: str | None = eqx.field(static=True)
@@ -816,7 +819,7 @@ class GraphFiniteVolumeDivergence(eqx.Module):
         )
 
 
-class GraphFiniteVolumeDiffusion(eqx.Module):
+class GraphFiniteVolumeDiffusion(StrictModule):
     """Finite-volume diffusion operator over cell-centered graph node fields."""
 
     input_key: str | None = eqx.field(static=True)
@@ -885,7 +888,7 @@ class GraphFiniteVolumeDiffusion(eqx.Module):
                 self.distance_key,
                 name="GraphFiniteVolumeDiffusion distance",
             )
-            if distance.ndim == 2 and int(distance.shape[1]) == 1:
+            if distance.ndim == 2 and distance.shape[1] == 1:
                 distance = distance[:, 0]
             if distance.ndim != 1:
                 raise ValueError(
@@ -906,7 +909,7 @@ class GraphFiniteVolumeDiffusion(eqx.Module):
         )
 
 
-class GraphProcessor(eqx.Module):
+class GraphProcessor(StrictModule):
     """Sequential processor for `GraphIR -> GraphIR` blocks."""
 
     blocks: tuple[Callable[[GraphIR], GraphIR], ...]
@@ -925,7 +928,7 @@ class GraphProcessor(eqx.Module):
         return out
 
 
-class RepeatedGraphProcessor(eqx.Module):
+class RepeatedGraphProcessor(StrictModule):
     """Apply one graph block repeatedly."""
 
     block: Callable[[GraphIR], GraphIR]

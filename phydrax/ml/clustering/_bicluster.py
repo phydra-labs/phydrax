@@ -59,7 +59,7 @@ class BiclusterDiagnostics(StrictModule):
         degeneracy: Any,
         method: str,
     ):
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.objective = jnp.asarray(objective)
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32)
@@ -69,9 +69,9 @@ class BiclusterDiagnostics(StrictModule):
         )
         self.row_mass = jnp.asarray(row_mass)
         self.column_mass = jnp.asarray(column_mass)
-        self.row_active = jnp.asarray(row_active, dtype=bool)
-        self.column_active = jnp.asarray(column_active, dtype=bool)
-        self.degeneracy = jnp.asarray(degeneracy, dtype=bool)
+        self.row_active = jnp.asarray(row_active, dtype=jnp.bool_)
+        self.column_active = jnp.asarray(column_active, dtype=jnp.bool_)
+        self.degeneracy = jnp.asarray(degeneracy, dtype=jnp.bool_)
         self.method = str(method)
 
 
@@ -100,11 +100,11 @@ class BiclusterModel(AbstractArrayModel):
         method: str,
     ):
         self.row_centers = jnp.asarray(row_centers)
-        self.row_active = jnp.asarray(row_active, dtype=bool)
+        self.row_active = jnp.asarray(row_active, dtype=jnp.bool_)
         self.column_labels = jax.lax.stop_gradient(
             jnp.asarray(column_labels, dtype=jnp.int32)
         )
-        self.column_active = jnp.asarray(column_active, dtype=bool)
+        self.column_active = jnp.asarray(column_active, dtype=jnp.bool_)
         self.temperature = positive_scalar(
             jnp.asarray(temperature, dtype=real_dtype(self.row_centers.dtype)),
             "temperature",
@@ -175,7 +175,7 @@ def _finish(
     )
     finite = jnp.isfinite(objective) & jnp.all(jnp.isfinite(row_centers), axis=(-2, -1))
     nonempty = jnp.all(row_active, axis=-1) & jnp.all(column_active, axis=-1)
-    infeasible_ = jnp.asarray(infeasible, dtype=bool)
+    infeasible_ = jnp.asarray(infeasible, dtype=jnp.bool_)
     valid = enough & finite & nonempty & ~invalid & ~infeasible_
     status = jnp.where(
         invalid | ~finite,

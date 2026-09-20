@@ -12,6 +12,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+import phydrax.ein as ein
+
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ....qualification import (
     QualificationEvidence,
@@ -142,8 +144,8 @@ class ProteinNucleicMechanicalObservations:
             "contact-probability",
         ):
             raise ValueError("Unsupported protein-nucleic mechanical observable.")
-        observed = np.asarray(values, dtype=float)
-        errors = np.asarray(standard_errors, dtype=float)
+        observed = np.asarray(values, dtype=np.float64)
+        errors = np.asarray(standard_errors, dtype=np.float64)
         if (
             observed.shape != (n,)
             or errors.shape != (n,)
@@ -246,7 +248,7 @@ class ProteinNucleicModelFit:
         )
         units = tuple(sorted({case.independent_unit_id for case in lineage}))
         preparations = tuple(sorted({case.preparation_id for case in lineage}))
-        parameters = np.asarray(fitted_parameters, dtype=float)
+        parameters = np.asarray(fitted_parameters, dtype=np.float64)
         if not parameters.size or not np.all(np.isfinite(parameters)):
             raise ValueError(
                 "Fitted protein-nucleic parameters must be finite and nonempty."
@@ -429,7 +431,7 @@ class ProteinNucleicAffinityInputs:
                 "Affinity rows require exact condition, independent-unit, and standard-state IDs."
             )
         energy_components = tuple(
-            np.asarray(value, dtype=float)
+            np.asarray(value, dtype=np.float64)
             for value in (
                 bound_free_energy,
                 unbound_protein_free_energy,
@@ -438,15 +440,15 @@ class ProteinNucleicAffinityInputs:
             )
         )
         component_errors = tuple(
-            np.asarray(value, dtype=float)
+            np.asarray(value, dtype=np.float64)
             for value in (
                 bound_standard_error,
                 unbound_protein_standard_error,
                 unbound_nucleic_standard_error,
             )
         )
-        observed = np.asarray(observed_binding_free_energy, dtype=float)
-        observation_error = np.asarray(observation_standard_error, dtype=float)
+        observed = np.asarray(observed_binding_free_energy, dtype=np.float64)
+        observation_error = np.asarray(observation_standard_error, dtype=np.float64)
         if any(
             array.shape != (n,) or not np.all(np.isfinite(array))
             for array in (
@@ -468,7 +470,7 @@ class ProteinNucleicAffinityInputs:
         correction_error = (
             None
             if standard_state_standard_error is None
-            else np.asarray(standard_state_standard_error, dtype=float)
+            else np.asarray(standard_state_standard_error, dtype=np.float64)
         )
         if correction_error is not None and (
             correction_error.shape != (n,)
@@ -481,7 +483,7 @@ class ProteinNucleicAffinityInputs:
         covariance = (
             None
             if component_covariance is None
-            else np.asarray(component_covariance, dtype=float)
+            else np.asarray(component_covariance, dtype=np.float64)
         )
         if covariance is not None:
             if components_conditionally_independent:
@@ -533,7 +535,9 @@ class ProteinNucleicAffinityInputs:
                     "Joint covariance disagrees with standard-state correction uncertainty."
                 )
             contrast = np.asarray([1.0, -1.0, -1.0, 1.0])
-            prediction_variance = np.einsum("i,nij,j->n", contrast, covariance, contrast)
+            prediction_variance = ein.contract(
+                "i,nij,j->n", contrast, covariance, contrast
+            )
             prediction_error = np.sqrt(np.maximum(prediction_variance, 0.0))
         elif components_conditionally_independent and correction_error is not None:
             prediction_error = np.sqrt(
@@ -820,8 +824,8 @@ class ProteinNucleicMechanicsPrediction:
         if not isinstance(fit, ProteinNucleicModelFit):
             raise TypeError("fit must be a ProteinNucleicModelFit.")
         _validate_locked_mechanics_campaign(fit.campaign, observations)
-        predicted = np.asarray(values, dtype=float)
-        errors = np.asarray(standard_errors, dtype=float)
+        predicted = np.asarray(values, dtype=np.float64)
+        errors = np.asarray(standard_errors, dtype=np.float64)
         if (
             predicted.shape != observations.values.shape
             or errors.shape != predicted.shape

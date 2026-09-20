@@ -12,7 +12,7 @@ def _scalar_data(values, *, source_id, case_axes=(), case_axis_roles=()):
     values = jnp.asarray(values)
     case_shape = values.shape[:-1]
     coordinates = jnp.broadcast_to(
-        jnp.arange(values.shape[-1], dtype=float), case_shape + (values.shape[-1],)
+        jnp.arange(values.shape[-1], dtype="float64"), case_shape + (values.shape[-1],)
     )
     return phx.dynamics.TrajectoryData(
         coordinates,
@@ -56,7 +56,7 @@ def test_finite_size_growth_recovers_finite_amplitude_linear_rate():
 
 
 def test_recurrence_rqa_preserves_theiler_mask_and_line_statistics():
-    periodic = np.tile(np.arange(8, dtype=float), 25)
+    periodic = np.tile(np.arange(8, dtype="float64"), 25)
     data = _scalar_data(periodic, source_id="periodic-rqa")
 
     result = phx.dynamics.analysis.recurrence_quantification(
@@ -125,7 +125,7 @@ def test_correlation_dimension_records_fit_window_and_theiler_pairs():
 
 
 def test_surrogate_protocol_and_uncertainty_summary_preserve_rng_and_sources():
-    time = jnp.arange(512, dtype=float)
+    time = jnp.arange(512, dtype="float64")
     series = jnp.sin(2.0 * jnp.pi * time / 32.0)
     significance = phx.dynamics.analysis.surrogate_significance(
         series,

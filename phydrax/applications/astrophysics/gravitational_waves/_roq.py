@@ -41,7 +41,7 @@ def prepare_reduced_order_quadrature_likelihood(
         raise TypeError(
             "ROQ requires prepared linear and quadratic empirical interpolation."
         )
-    frequency_count = int(exact.network.frequency.size)
+    frequency_count = exact.network.frequency.size
     if (
         linear_interpolation.reconstruction_matrix.shape[0] != frequency_count
         or quadratic_interpolation.reconstruction_matrix.shape[0] != frequency_count
@@ -73,8 +73,7 @@ def prepare_reduced_order_quadrature_likelihood(
         linear_weights,
         quadratic_weights,
         approximation_id=(
-            "reduced-order-quadrature:"
-            f"{linear_interpolation.artifact_id}:{quadratic_interpolation.artifact_id}"
+            f"reduced-order-quadrature:{linear_interpolation.artifact_id}:{quadratic_interpolation.artifact_id}"
         ),
     )
     return qualify_likelihood(

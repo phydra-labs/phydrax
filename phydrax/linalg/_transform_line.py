@@ -118,7 +118,7 @@ class TransformLineNullspacePolicy(StrictModule, NonTrainableState):
         pin = int(pin_row)
         if zero_index < 0:
             raise ValueError("zero_mode_index must be nonnegative.")
-        if pin < 0 or pin >= int(weights.size):
+        if pin < 0 or pin >= weights.size:
             raise ValueError("pin_row is outside the physical line.")
         right = jnp.ones_like(weights)
         left = weights / jnp.sum(weights)
@@ -206,7 +206,7 @@ class TransformLineRepresentation(StrictModule, NonTrainableState):
             raise ValueError("line_diagonal must be one non-empty rank-one array.")
         lower = jnp.asarray(line_lower, dtype=diagonal.dtype)
         upper = jnp.asarray(line_upper, dtype=diagonal.dtype)
-        expected_off_diagonal = (max(int(diagonal.size) - 1, 0),)
+        expected_off_diagonal = (max(diagonal.size - 1, 0),)
         if lower.shape != expected_off_diagonal or upper.shape != expected_off_diagonal:
             raise ValueError("Line off-diagonals must have length line_size - 1.")
         arrays = (lower, diagonal, upper)
@@ -214,8 +214,8 @@ class TransformLineRepresentation(StrictModule, NonTrainableState):
             raise ValueError("Transform-line coefficients must be finite.")
         physical_shape_list = [0] * dimension
         modal_shape_list = [0] * dimension
-        physical_shape_list[axis] = int(diagonal.size)
-        modal_shape_list[axis] = int(diagonal.size)
+        physical_shape_list[axis] = diagonal.size
+        modal_shape_list[axis] = diagonal.size
         for transverse_axis, transform in zip(transverse_axes, transforms_, strict=True):
             physical_shape_list[transverse_axis] = transform.physical_space.size
             modal_shape_list[transverse_axis] = transform.modal_space.size
@@ -241,7 +241,7 @@ class TransformLineRepresentation(StrictModule, NonTrainableState):
         if periodic_corners is None:
             corners = None
         else:
-            if int(diagonal.size) < 3:
+            if diagonal.size < 3:
                 raise ValueError(
                     "Periodic low-rank line solves require at least 3 points."
                 )
@@ -570,7 +570,7 @@ class PreparedTransformLineSolve(StrictModule, NonTrainableState):
             raise TypeError("plan must be TransformLineSolvePlan.")
         representation = plan.representation
         line_count = int(np.prod(representation.transverse_modal_values.shape))
-        line_size = int(representation.line_diagonal.size)
+        line_size = representation.line_diagonal.size
         periodic_rank = 2 if representation.periodic_corners is not None else 0
         solve_dtype = jnp.result_type(
             representation.line_diagonal.dtype,
@@ -629,8 +629,7 @@ class PreparedTransformLineSolve(StrictModule, NonTrainableState):
             zero_modes = np.flatnonzero(modal_values == 0.0)
             if zero_modes.size != 1 or int(zero_modes[0]) != zero_mode_index:
                 raise ValueError(
-                    "Constant-nullspace solves require one declared all-zero "
-                    "transverse line."
+                    "Constant-nullspace solves require one declared all-zero transverse line."
                 )
             null_diagonal = diagonal[zero_mode_index]
             right_residual = jnp.max(
@@ -779,7 +778,7 @@ class PreparedTransformLineSolve(StrictModule, NonTrainableState):
         transverse_count = 1
         if factors.left_null is not None:
             weight_shape = [1] * rhs.ndim
-            weight_shape[representation.line_axis] = int(factors.left_null.size)
+            weight_shape[representation.line_axis] = factors.left_null.size
             weights = factors.left_null.reshape(tuple(weight_shape))
             transverse_count = int(
                 np.prod(
@@ -884,7 +883,7 @@ def _solve_factored(
     right_hand_side: Array,
     /,
 ) -> Array:
-    line_size = int(pivots.shape[-1])
+    line_size = pivots.shape[-1]
     result = jnp.zeros_like(right_hand_side)
     result = result.at[:, 0, :].set(right_hand_side[:, 0, :])
     for index in range(1, line_size):

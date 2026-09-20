@@ -250,8 +250,7 @@ class PreparedHDivStokes(StrictModule):
     ) -> tuple[Array, Array, Array]:
         if not isinstance(state, tuple) or len(state) != 3:
             raise TypeError(
-                "Constrained H(div) Stokes state must be "
-                "(velocity, pressure, normal_flux_multiplier)."
+                "Constrained H(div) Stokes state must be (velocity, pressure, normal_flux_multiplier)."
             )
         velocity = jnp.asarray(state[0])
         multiplier = jnp.asarray(state[2])
@@ -271,11 +270,10 @@ class PreparedHDivStokes(StrictModule):
         state: tuple[ArrayLike, ...],
         /,
     ) -> tuple[Array, ...]:
-        if int(self.normal_flux_target.size) > 0:
+        if self.normal_flux_target.size > 0:
             if not isinstance(state, tuple) or len(state) != 3:
                 raise TypeError(
-                    "Prescribed normal flow requires state "
-                    "(velocity, pressure, normal_flux_multiplier)."
+                    "Prescribed normal flow requires state (velocity, pressure, normal_flux_multiplier)."
                 )
             return self.constrained_residual(state)
         if not isinstance(state, tuple) or len(state) != 2:
@@ -342,8 +340,7 @@ def _tangential_nitsche_entries(
     )
     incidents: list[list[tuple[int, int]]] = [[] for _ in face_vertices]
     face_by_vertices = {
-        tuple(int(vertex) for vertex in vertices): face
-        for face, vertices in enumerate(face_vertices)
+        tuple(vertices): face for face, vertices in enumerate(face_vertices)
     }
     for cell, vertices in enumerate(cells):
         for local_face, reference_face in enumerate(_REFERENCE_FACES):
@@ -377,26 +374,26 @@ def _tangential_nitsche_entries(
         )
         height = 3.0 * volumes[owner] / areas[face]
         if len(adjacent) == 2:
-            neighbour, neighbour_local = adjacent[1]
-            neighbour_routes = np.asarray(dof_map.cell_dofs[0][neighbour], dtype=np.int32)
-            neighbour_orientation = np.asarray(dof_map.orientations[0][neighbour])
-            neighbour_values, neighbour_gradients = _physical_basis(
+            neighbor, neighbor_local = adjacent[1]
+            neighbor_routes = np.asarray(dof_map.cell_dofs[0][neighbor], dtype=np.int32)
+            neighbor_orientation = np.asarray(dof_map.orientations[0][neighbor])
+            neighbor_values, neighbor_gradients = _physical_basis(
                 element,
-                coordinates[cells[neighbour]],
-                neighbour_local,
-                neighbour_orientation,
+                coordinates[cells[neighbor]],
+                neighbor_local,
+                neighbor_orientation,
             )
-            neighbour_jump = -contract("ab,qkb->qka", projector, neighbour_values)
-            neighbour_strain = 0.5 * (
-                neighbour_gradients + np.swapaxes(neighbour_gradients, -1, -2)
+            neighbor_jump = -contract("ab,qkb->qka", projector, neighbor_values)
+            neighbor_strain = 0.5 * (
+                neighbor_gradients + np.swapaxes(neighbor_gradients, -1, -2)
             )
-            neighbour_stress = viscosity * contract(
-                "ab,qkbc,c->qka", projector, neighbour_strain, normal
+            neighbor_stress = viscosity * contract(
+                "ab,qkbc,c->qka", projector, neighbor_strain, normal
             )
-            stress = np.concatenate((0.5 * owner_stress, neighbour_stress), axis=1)
-            jump = np.concatenate((owner_jump, neighbour_jump), axis=1)
-            routes = np.concatenate((owner_routes, neighbour_routes))
-            height = min(height, 3.0 * volumes[neighbour] / areas[face])
+            stress = np.concatenate((0.5 * owner_stress, neighbor_stress), axis=1)
+            jump = np.concatenate((owner_jump, neighbor_jump), axis=1)
+            routes = np.concatenate((owner_routes, neighbor_routes))
+            height = min(height, 3.0 * volumes[neighbor] / areas[face])
         else:
             stress = owner_stress
             jump = owner_jump
@@ -443,7 +440,7 @@ def _normal_boundary_operators(
     connectivity = mesh.connectivity
     face_entities = mesh.topology.entity_sets[2]
     face_ids = np.asarray(face_entities.entity_ids, dtype=np.int64)
-    boundary_faces = np.asarray(connectivity.boundary_faces, dtype=bool)
+    boundary_faces = np.asarray(connectivity.boundary_faces, dtype=np.bool_)
     if face_ids.shape != boundary_faces.shape:
         raise RuntimeError("Tetrahedral face identity and connectivity disagree.")
     face_by_id = {int(identifier): index for index, identifier in enumerate(face_ids)}
@@ -716,7 +713,7 @@ class HDivStokesPlan(StrictModule):
                 (*problem.state_space.spaces, normal_flux.target),
                 names=("velocity", "pressure", "normal_flux_multiplier"),
             )
-            if int(normal_flux_target.size) > 0
+            if normal_flux_target.size > 0
             else problem.state_space
         )
         probe = jnp.arange(velocity_space.size, dtype=coefficients.dtype) + 1.0

@@ -13,11 +13,11 @@ import pytest
 
 jax.config.update("jax_enable_x64", True)
 
-from phydrax._array_archive import ArrayArchiveCorruptionError  # noqa: E402
-from phydrax.applications.lattice_field._distributed_qcd import (  # noqa: E402
+from phydrax._array_archive import ArrayArchiveCorruptionError
+from phydrax.applications.lattice_field._distributed_qcd import (
     DistributedGaugeTheoryPlan,
 )
-from phydrax.applications.lattice_field._qcd_io import (  # noqa: E402
+from phydrax.applications.lattice_field._qcd_io import (
     gauge_field_from_owned_shards,
     GaugeFieldRecord,
     read_gauge_interchange,
@@ -25,13 +25,13 @@ from phydrax.applications.lattice_field._qcd_io import (  # noqa: E402
     write_gauge_interchange,
     write_native_gauge_archive,
 )
-from phydrax.backends.lattice import (  # noqa: E402
+from phydrax.backends.lattice import (
     LatticeKernelCapabilities,
     LatticeKernelCapabilityError,
     LatticeProviderStatus,
     NativeJaxLatticeProvider,
 )
-from phydrax.discretization._lattice_distribution import (  # noqa: E402
+from phydrax.discretization._lattice_distribution import (
     LatticeDecompositionPlan,
 )
 

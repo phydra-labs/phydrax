@@ -8,6 +8,8 @@ import jax.numpy as jnp
 import jax.tree_util as jtu
 import numpy as np
 
+from phydrax._strict import StrictModule
+
 from ._ir import batch_graphs, GraphIR
 
 
@@ -16,7 +18,7 @@ def _pad_tree_leading(tree, target: int):
         return None
 
     def _pad_leaf(x: jnp.ndarray) -> jnp.ndarray:
-        pad = target - int(x.shape[0])
+        pad = target - x.shape[0]
         if pad < 0:
             raise ValueError("Cannot pad to a smaller leading dimension.")
         if pad == 0:
@@ -46,7 +48,7 @@ def _tree_leading_size(tree) -> int | None:
     leaves = jtu.tree_leaves(tree)
     if not leaves:
         return None
-    return int(jnp.asarray(leaves[0]).shape[0])
+    return jnp.asarray(leaves[0]).shape[0]
 
 
 def _node_count(graph: GraphIR) -> int:
@@ -63,7 +65,7 @@ def _node_count(graph: GraphIR) -> int:
 
 def _edge_count(graph: GraphIR) -> int:
     if graph.senders is not None:
-        return int(graph.senders.shape[0])
+        return graph.senders.shape[0]
     n = _tree_leading_size(graph.edges)
     if n is not None:
         return n
@@ -76,10 +78,10 @@ def _edge_count(graph: GraphIR) -> int:
 
 
 def _graph_count(graph: GraphIR) -> int:
-    return int(graph.n_node.shape[0])
+    return graph.n_node.shape[0]
 
 
-class LayoutPlan(eqx.Module):
+class LayoutPlan(StrictModule):
     """Static shape budget for packed graph execution."""
 
     max_nodes: int = eqx.field(static=True)

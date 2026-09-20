@@ -13,8 +13,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from phydrax import ein
 import phydrax.linalg as la
+from phydrax import ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._spectral._spherical import (
@@ -159,9 +159,10 @@ class SpinWeightedMultipolePlan(StrictModule, NonTrainableState):
         degrees = np.broadcast_to(degree, shape)
         orders = np.broadcast_to(order, shape)
         valid = (np.abs(orders) <= degrees) & (degrees >= abs(spin_))
-        weights = np.asarray(transform.theta_quadrature_weights)[:, None] * np.asarray(
-            transform.phi_quadrature_weights
-        )[None, :]
+        weights = (
+            np.asarray(transform.theta_quadrature_weights)[:, None]
+            * np.asarray(transform.phi_quadrature_weights)[None, :]
+        )
         self.transform = transform
         self.degrees = jnp.asarray(degrees)
         self.orders = jnp.asarray(orders)
@@ -257,7 +258,10 @@ class Psi4ExtractionPlan(StrictModule, NonTrainableState):
         *,
         tetrad_tolerance: float = 1.0e-7,
     ):
-        if not isinstance(multipole_plan, SpinWeightedMultipolePlan) or multipole_plan.spin != -2:
+        if (
+            not isinstance(multipole_plan, SpinWeightedMultipolePlan)
+            or multipole_plan.spin != -2
+        ):
             raise TypeError("Psi4 extraction requires a spin -2 multipole plan.")
         convention_ = Psi4TetradConvention() if convention is None else convention
         if not isinstance(convention_, Psi4TetradConvention):
@@ -293,7 +297,9 @@ class Psi4ExtractionPlan(StrictModule, NonTrainableState):
         sample_shape = self.multipole_plan.transform.sample_shape
         expected = sample_shape + (3,)
         if radial.shape != expected or theta.shape != expected or phi.shape != expected:
-            raise ValueError("Tetrad legs must have the spherical sample shape plus (3,).")
+            raise ValueError(
+                "Tetrad legs must have the spherical sample shape plus (3,)."
+            )
         if curvature.electric.shape != sample_shape + (3, 3):
             raise ValueError("Weyl samples do not match the multipole grid.")
         metric = (
@@ -308,12 +314,13 @@ class Psi4ExtractionPlan(StrictModule, NonTrainableState):
         identity = jnp.eye(3, dtype=gram.dtype)
         orthonormality_error = jnp.max(jnp.abs(gram - identity))
         orientation = la.determinant_small_linear(_METRIC_SOLVE, frame)
-        dyad = (
-            theta + 1j * float(self.convention.dyad_orientation) * phi
-        ) / jnp.sqrt(2.0)
-        radiative_weyl = curvature.electric - 1j * float(
-            self.convention.magnetic_sign
-        ) * curvature.magnetic
+        dyad = (theta + 1j * float(self.convention.dyad_orientation) * phi) / jnp.sqrt(
+            2.0
+        )
+        radiative_weyl = (
+            curvature.electric
+            - 1j * float(self.convention.magnetic_sign) * curvature.magnetic
+        )
         psi4 = float(self.convention.psi4_sign) * ein.contract(
             "...i,...ij,...j->...", jnp.conj(dyad), radiative_weyl, jnp.conj(dyad)
         )
@@ -324,12 +331,8 @@ class Psi4ExtractionPlan(StrictModule, NonTrainableState):
             & jnp.all(jnp.isfinite(psi4))
             & jnp.isfinite(orthonormality_error)
         )
-        tetrad_valid = (
-            orthonormality_error <= self.tetrad_tolerance
-        ) & jnp.all(
-            orientation
-            * float(self.convention.relativity.azimuthal_orientation)
-            > 0.0
+        tetrad_valid = (orthonormality_error <= self.tetrad_tolerance) & jnp.all(
+            orientation * float(self.convention.relativity.azimuthal_orientation) > 0.0
         )
         physically_valid = curvature.physically_valid & finite & tetrad_valid
         qualified = physically_valid & multipoles.qualified
@@ -393,7 +396,9 @@ class FixedFrequencyStrainPlan(StrictModule, NonTrainableState):
             or cutoff >= nyquist
             or tolerance <= 0.0
         ):
-            raise ValueError("Strain integration capacity, frequencies, or tolerance are invalid.")
+            raise ValueError(
+                "Strain integration capacity, frequencies, or tolerance are invalid."
+            )
         omega = 2.0 * np.pi * np.fft.fftfreq(count, d=interval)
         passband = np.abs(omega) >= cutoff
         self.angular_frequencies = jnp.asarray(omega)
@@ -425,7 +430,7 @@ class FixedFrequencyStrainPlan(StrictModule, NonTrainableState):
         strain_spectrum = -filtered_spectrum / safe_omega_squared
         strain = jnp.fft.ifft(strain_spectrum, axis=0)
         filtered_psi4 = jnp.fft.ifft(filtered_spectrum, axis=0)
-        reconstructed = jnp.fft.ifft(-omega**2 * strain_spectrum, axis=0)
+        reconstructed = jnp.fft.ifft(-(omega**2) * strain_spectrum, axis=0)
         difference = reconstructed - filtered_psi4
         absolute_error = jnp.sqrt(jnp.sum(jnp.abs(difference) ** 2))
         norm = jnp.sqrt(jnp.sum(jnp.abs(filtered_psi4) ** 2))
@@ -496,7 +501,7 @@ class FiniteRadiusExtrapolationPlan(StrictModule, NonTrainableState):
         radial_power: float = 1.0,
         convergence_tolerance: float = 5.0e-3,
     ):
-        radii_ = np.asarray(radii, dtype=float).reshape((-1,))
+        radii_ = np.asarray(radii, dtype=np.float64).reshape((-1,))
         order_ = int(order)
         radial_power_ = float(radial_power)
         tolerance = float(convergence_tolerance)
@@ -509,12 +514,14 @@ class FiniteRadiusExtrapolationPlan(StrictModule, NonTrainableState):
             or not np.isfinite(radial_power_)
             or tolerance <= 0.0
         ):
-            raise ValueError("Finite-radius extrapolation support or tolerance is invalid.")
+            raise ValueError(
+                "Finite-radius extrapolation support or tolerance is invalid."
+            )
         inverse_radius = 1.0 / radii_
-        design = np.stack(tuple(inverse_radius**power for power in range(order_ + 1)), axis=-1)
-        projection, _, rank, _ = np.linalg.lstsq(
-            design, np.eye(radii_.size), rcond=None
+        design = np.stack(
+            tuple(inverse_radius**power for power in range(order_ + 1)), axis=-1
         )
+        projection, _, rank, _ = np.linalg.lstsq(design, np.eye(radii_.size), rcond=None)
         lower_design = design[:, :order_]
         lower_projection, _, lower_rank, _ = np.linalg.lstsq(
             lower_design, np.eye(radii_.size), rcond=None
@@ -528,7 +535,7 @@ class FiniteRadiusExtrapolationPlan(StrictModule, NonTrainableState):
         self.order = order_
         self.radial_power = radial_power_
         self.convergence_tolerance = tolerance
-        self.radius_capacity = int(radii_.size)
+        self.radius_capacity = radii_.size
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "finite-radius-wave-extrapolation",
@@ -544,7 +551,9 @@ class FiniteRadiusExtrapolationPlan(StrictModule, NonTrainableState):
     ) -> FiniteRadiusExtrapolationResult:
         values = jnp.asarray(finite_radius_waveforms)
         if values.shape[0] != self.radius_capacity:
-            raise ValueError("Waveform radius axis does not match extrapolation capacity.")
+            raise ValueError(
+                "Waveform radius axis does not match extrapolation capacity."
+            )
         scale_shape = (self.radius_capacity,) + (1,) * (values.ndim - 1)
         scaled = values * self.radii.reshape(scale_shape) ** self.radial_power
         coefficients = ein.contract("kr,r...->k...", self.projection, scaled)
@@ -625,9 +634,7 @@ def vacuum_weyl_curvature(
     metric = jnp.asarray(spatial_metric)
     ricci = jnp.asarray(spatial_ricci, dtype=metric.dtype)
     curvature = jnp.asarray(extrinsic_curvature, dtype=metric.dtype)
-    derivative = jnp.asarray(
-        covariant_derivative_extrinsic_curvature, dtype=metric.dtype
-    )
+    derivative = jnp.asarray(covariant_derivative_extrinsic_curvature, dtype=metric.dtype)
     incompatible_tensors = (
         metric.shape[-2:] != (3, 3)
         or ricci.shape != metric.shape
@@ -651,7 +658,9 @@ def vacuum_weyl_curvature(
 
     determinant = la.determinant_small_linear(_METRIC_SOLVE, metric)
     safe_sqrt_determinant = jnp.sqrt(jnp.maximum(determinant, 0.0))
-    safe_sqrt_determinant = jnp.where(safe_sqrt_determinant > 0.0, safe_sqrt_determinant, 1.0)
+    safe_sqrt_determinant = jnp.where(
+        safe_sqrt_determinant > 0.0, safe_sqrt_determinant, 1.0
+    )
     spatial_orientation = float(
         convention_.spacetime_orientation * convention_.future_time_orientation
     )
@@ -692,8 +701,14 @@ def vacuum_weyl_curvature(
     physically_valid = (
         finite
         & metric_valid
-        & (electric_trace_error <= tolerance * jnp.maximum(jnp.max(jnp.abs(electric)), 1.0))
-        & (magnetic_trace_error <= tolerance * jnp.maximum(jnp.max(jnp.abs(magnetic)), 1.0))
+        & (
+            electric_trace_error
+            <= tolerance * jnp.maximum(jnp.max(jnp.abs(electric)), 1.0)
+        )
+        & (
+            magnetic_trace_error
+            <= tolerance * jnp.maximum(jnp.max(jnp.abs(magnetic)), 1.0)
+        )
     )
     return WeylCurvatureEvidence(
         electric,

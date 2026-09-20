@@ -344,13 +344,10 @@ def test_detector_rejects_excessive_reduced_chi_squared():
 def test_corrected_silicon_profile_records_every_exact_source_stage():
     inputs = {
         "G4_Barrel_EIC.C": (
-            b"void BarrelSetup(PHG4Reco* g4Reco)\n"
-            b"pitch / 10000. / sqrt(12.)\n"
-            b"pitch / 10000. / sqrt(12.)\n"
+            b"void BarrelSetup(PHG4Reco* g4Reco)\npitch / 10000. / sqrt(12.)\npitch / 10000. / sqrt(12.)\n"
         ),
         "G4_FST_EIC.C": (
-            b'Form("SI_L%i_THICKNESS", j + 1)]*Units::um\n'
-            b'Form("SI_L%i_THICKNESS", j)]*Units::um\n'
+            b'Form("SI_L%i_THICKNESS", j + 1)]*Units::um\nForm("SI_L%i_THICKNESS", j)]*Units::um\n'
         ),
         "G4_TrackingSupport.C": (b'Form("SI_L%i_THICKNESS", ilyr)] * Units::um\n'),
     }

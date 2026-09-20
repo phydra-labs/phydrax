@@ -61,8 +61,7 @@ def _validate_method(
     )
     if not supported:
         raise ValueError(
-            f"Method {policy.method.method_id!r} does not support "
-            f"{type(relaxation).__name__}."
+            f"Method {policy.method.method_id!r} does not support {type(relaxation).__name__}."
         )
 
 

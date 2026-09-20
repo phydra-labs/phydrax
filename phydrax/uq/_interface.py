@@ -79,7 +79,7 @@ def interface_predictive_summary(
     """Derive phase and interface uncertainty from coherent level-set draws."""
 
     values = jnp.asarray(level_set_samples)
-    weights = jnp.asarray(quadrature_weights, dtype=float)
+    weights = jnp.asarray(quadrature_weights, dtype=jnp.float64)
     if values.ndim < 2 or jnp.iscomplexobj(values):
         raise ValueError("level_set_samples must be real with draw and point axes.")
     draw_axis = int(sample_axis) % values.ndim
@@ -116,12 +116,12 @@ def select_interface_acquisition(
 ) -> InterfaceAcquisitionResult:
     """Select candidates by uncertainty, physics residual, and sequential diversity."""
 
-    points = jnp.asarray(candidate_points, dtype=float)
-    uncertainty = jnp.asarray(predictive_uncertainty, dtype=float)
-    residual = jnp.asarray(physics_residual, dtype=float)
+    points = jnp.asarray(candidate_points, dtype=jnp.float64)
+    uncertainty = jnp.asarray(predictive_uncertainty, dtype=jnp.float64)
+    residual = jnp.asarray(physics_residual, dtype=jnp.float64)
     if points.ndim != 2 or min(points.shape) <= 0:
         raise ValueError("candidate_points must have shape (candidate, coordinate).")
-    candidate_count = int(points.shape[0])
+    candidate_count = points.shape[0]
     if uncertainty.shape != (candidate_count,) or residual.shape != (candidate_count,):
         raise ValueError("Acquisition signals must contain one value per candidate.")
     if bool(
@@ -144,7 +144,7 @@ def select_interface_acquisition(
     if existing_points is None:
         minimum_distance = jnp.ones((candidate_count,), dtype=points.dtype)
     else:
-        existing = jnp.asarray(existing_points, dtype=float)
+        existing = jnp.asarray(existing_points, dtype=jnp.float64)
         if (
             existing.ndim != 2
             or existing.shape[-1] != points.shape[-1]
@@ -154,7 +154,7 @@ def select_interface_acquisition(
                 "existing_points must have non-empty shape (point, candidate_coordinate)."
             )
         minimum_distance = jnp.min(_pairwise_distances(points, existing), axis=-1)
-    selected = jnp.zeros((candidate_count,), dtype=bool)
+    selected = jnp.zeros((candidate_count,), dtype=jnp.bool_)
     selected_indices = []
     selected_scores = []
     selected_diversity = []

@@ -57,7 +57,7 @@ def explicit_polygon_h1_dirichlet_constraint(
     discretization._field_index(field_name)
     if boundary_mask is not None and domain is not None:
         raise ValueError("Specify boundary_mask or domain, not both.")
-    node_mask = np.asarray(discretization.dof_map.boundary_dof_mask, dtype=bool)
+    node_mask = np.asarray(discretization.dof_map.boundary_dof_mask, dtype=np.bool_)
     if domain is not None:
         if domain.kind != "exterior_facet":
             raise ValueError(
@@ -77,7 +77,7 @@ def explicit_polygon_h1_dirichlet_constraint(
             True
         )
     elif boundary_mask is not None:
-        candidate = np.asarray(boundary_mask, dtype=bool)
+        candidate = np.asarray(boundary_mask, dtype=np.bool_)
         if candidate.shape == discretization.field_space.vector_space.shape:
             node_mask = np.any(
                 candidate.reshape((discretization.dof_map.global_dof_count, -1)),
@@ -89,19 +89,19 @@ def explicit_polygon_h1_dirichlet_constraint(
             raise ValueError(
                 "boundary_mask must have vertex-DOF shape or full field shape."
             )
-        boundary = np.asarray(discretization.dof_map.boundary_dof_mask, dtype=bool)
+        boundary = np.asarray(discretization.dof_map.boundary_dof_mask, dtype=np.bool_)
         if np.any(node_mask & ~boundary):
             raise ValueError("Dirichlet masks may select only exterior vertices.")
     full_space = discretization.field_space.vector_space
     if not isinstance(full_space, ArraySpace):
         raise TypeError("Explicit polygon Dirichlet constraints require ArraySpace.")
     component_count = (
-        int(np.prod(full_space.shape[1:], dtype=int)) if full_space.shape[1:] else 1
+        int(np.prod(full_space.shape[1:], dtype=np.int64)) if full_space.shape[1:] else 1
     )
     selected_components = (
         np.arange(component_count, dtype=np.int32)
         if components is None
-        else np.asarray(tuple(int(value) for value in components), dtype=np.int32)
+        else np.asarray(tuple(components), dtype=np.int32)
     )
     if (
         selected_components.ndim != 1
@@ -112,19 +112,19 @@ def explicit_polygon_h1_dirichlet_constraint(
     ):
         raise ValueError("components must select unique valid flattened components.")
     if boundary_mask is not None:
-        candidate = np.asarray(boundary_mask, dtype=bool)
+        candidate = np.asarray(boundary_mask, dtype=np.bool_)
         if candidate.shape == full_space.shape:
             full_mask = candidate.reshape(
                 (discretization.dof_map.global_dof_count, component_count)
             )
         else:
             full_mask = np.zeros(
-                (discretization.dof_map.global_dof_count, component_count), dtype=bool
+                (discretization.dof_map.global_dof_count, component_count), dtype=np.bool_
             )
             full_mask[:, selected_components] = node_mask[:, None]
     else:
         full_mask = np.zeros(
-            (discretization.dof_map.global_dof_count, component_count), dtype=bool
+            (discretization.dof_map.global_dof_count, component_count), dtype=np.bool_
         )
         full_mask[:, selected_components] = node_mask[:, None]
     roots = _component_roots(discretization)

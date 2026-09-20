@@ -362,7 +362,7 @@ def test_weighted_surface_crossing_preserves_flux_and_applies_density_jacobian()
     )
     crossing = spherical_surface_crossings(
         crossing_states[:, None, :],
-        jnp.ones((2, 1), dtype=bool),
+        jnp.ones((2, 1), dtype="bool"),
         source,
         1.0,
         direction="outward",
@@ -395,7 +395,7 @@ def test_weighted_surface_crossing_preserves_flux_and_applies_density_jacobian()
     )
     oblique = spherical_surface_crossings(
         oblique_states,
-        jnp.ones((1, 2), dtype=bool),
+        jnp.ones((1, 2), dtype="bool"),
         oblique_source,
         1.0,
         direction="outward",
@@ -415,7 +415,7 @@ def test_weighted_surface_crossing_preserves_flux_and_applies_density_jacobian()
     )
     unsupported_crossing = spherical_surface_crossings(
         crossing_states[:, None, :],
-        jnp.ones((2, 1), dtype=bool),
+        jnp.ones((2, 1), dtype="bool"),
         unsupported,
         1.0,
     )
@@ -436,7 +436,7 @@ def test_crossing_and_observation_reductions_accept_traced_evidence():
         )
         crossing = spherical_surface_crossings(
             states[:, None, :],
-            jnp.ones((1, 1), dtype=bool),
+            jnp.ones((1, 1), dtype="bool"),
             source,
             jnp.asarray(1.0),
             direction="outward",

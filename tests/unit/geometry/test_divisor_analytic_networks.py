@@ -63,7 +63,7 @@ def test_cartier_divisor_overlap_units_cocycle_clearance_and_intersection():
         },
         divisor_id="other-coordinate-hyperplane",
     )
-    intersection = divisor.intersection(other, 0, jnp.zeros((2,), dtype=complex))
+    intersection = divisor.intersection(other, 0, jnp.zeros((2,), dtype="complex128"))
     assert bool(intersection.transverse)
     assert bool(intersection.valid)
 

@@ -52,7 +52,7 @@ class MACOperatorPlan(StrictModule, NonTrainableState):
         self.discretization = discretization
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "mac-operator-plan-v1",
+                "kind": "mac-operator-plan",
                 "discretization": discretization.prepared_id,
             }
         )
@@ -85,7 +85,7 @@ class PreparedMACOperators(StrictModule, NonTrainableState):
         transform_eligible = True
         for axis, structured_axis in enumerate(discretization.grid.structured_axes):
             centers = structured_axis.interval_centers
-            widths = np.asarray(structured_axis.interval_widths, dtype=float)
+            widths = np.asarray(structured_axis.interval_widths, dtype=np.float64)
             transform_eligible = transform_eligible and bool(
                 np.allclose(widths, widths[0], rtol=1e-10, atol=1e-12)
             )
@@ -101,7 +101,7 @@ class PreparedMACOperators(StrictModule, NonTrainableState):
                     (0.5 * widths[:1], interior, 0.5 * widths[-1:])
                 )
             reshape = [1] * len(discretization.cell_shape)
-            reshape[axis] = int(distance.size)
+            reshape[axis] = distance.size
             dual_measures.append(
                 discretization.face_measures[axis] * distance.reshape(reshape)
             )
@@ -123,7 +123,7 @@ class PreparedMACOperators(StrictModule, NonTrainableState):
         )
         identifier = canonical_fingerprint(
             {
-                "kind": "prepared-mac-operators-v1",
+                "kind": "prepared-mac-operators",
                 "plan": plan.plan_id,
                 "pressure_space": pressure_space.space_id,
                 "velocity_space": velocity_space.space_id,
@@ -175,7 +175,7 @@ class PreparedMACOperators(StrictModule, NonTrainableState):
             passed=passed,
             report_id=canonical_fingerprint(
                 {
-                    "kind": "mac-operator-report-v1",
+                    "kind": "mac-operator-report",
                     "operators": identifier,
                     "transform_eligible": transform_eligible,
                 }

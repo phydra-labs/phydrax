@@ -42,8 +42,7 @@ def _diffusion_value(
     values = jnp.asarray(diffusion(coordinates))
     if values.ndim != 2 or values.shape[0] != dimension:
         raise ValueError(
-            "diffusion must have pointwise shape "
-            f"({dimension}, noise_dim); got {values.shape}."
+            f"diffusion must have pointwise shape ({dimension}, noise_dim); got {values.shape}."
         )
     return values
 
@@ -86,15 +85,14 @@ def _coordinate_stratonovich_to_ito_drift_point(
     coordinates: Array,
     /,
 ) -> Array:
-    dimension = int(coordinates.shape[0])
+    dimension = coordinates.shape[0]
     drift_value = _vector_value(drift, coordinates, dimension, "drift")
     sigma = _diffusion_value(diffusion, coordinates, dimension)
     derivative = jax.jacfwd(diffusion)(coordinates)
-    expected = (dimension, int(sigma.shape[1]), dimension)
+    expected = (dimension, sigma.shape[1], dimension)
     if derivative.shape != expected:
         raise ValueError(
-            f"diffusion derivative must have pointwise shape {expected}; "
-            f"got {derivative.shape}."
+            f"diffusion derivative must have pointwise shape {expected}; got {derivative.shape}."
         )
     correction = 0.5 * ein.contract("jk,ikj->i", sigma, derivative)
     return drift_value + correction
@@ -116,7 +114,7 @@ def coordinate_stratonovich_to_ito_drift(
     coordinates_ = jnp.asarray(coordinates)
     if coordinates_.ndim < 1:
         raise ValueError("coordinates must have a trailing coordinate axis.")
-    dimension = int(coordinates_.shape[-1])
+    dimension = coordinates_.shape[-1]
     return _pointwise_array(
         lambda point: _coordinate_stratonovich_to_ito_drift_point(
             drift,

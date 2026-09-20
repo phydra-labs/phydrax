@@ -7,8 +7,8 @@ import jax.numpy as jnp
 import phydrax as phx
 
 
-def _catalogue():
-    return phx.particle_physics.ParticleCatalogueReference(
+def _catalog():
+    return phx.particle_physics.ParticleCatalogReference(
         source_id="test-pdg",
         provider_release="test",
         checksum="test-checksum",
@@ -18,7 +18,7 @@ def _catalogue():
 
 def _event_plan(event_capacity=2, particle_capacity=4):
     return phx.particle_physics.ParticleEventPlan(
-        catalogue=_catalogue(),
+        catalog=_catalog(),
         momentum_unit=phx.units.GIGAELECTRONVOLT,
         length_unit=phx.units.MILLIMETER,
         time_unit=phx.units.NANOSECOND,
@@ -99,19 +99,19 @@ def test_duplicate_event_identity_invalidates_every_duplicate():
     events = plan.admit(
         event_ids=jnp.asarray([7, 7]),
         subevent_ids=jnp.asarray([0, 0]),
-        event_active=jnp.ones(2, dtype=bool),
+        event_active=jnp.ones(2, dtype="bool"),
         pdg_ids=jnp.zeros((2, 4), dtype=jnp.int32),
         roles=jnp.zeros((2, 4), dtype=jnp.int32),
         provider_status=jnp.zeros((2, 4), dtype=jnp.int32),
         momenta=jnp.zeros((2, 4, 4)),
         rest_energies=jnp.zeros((2, 4)),
-        particle_active=jnp.zeros((2, 4), dtype=bool),
+        particle_active=jnp.zeros((2, 4), dtype="bool"),
         mother_indices=jnp.full((2, 4, 2), -1),
         production_vertex_indices=jnp.full((2, 4), -1),
         end_vertex_indices=jnp.full((2, 4), -1),
         color_flow=jnp.zeros((2, 4, 2), dtype=jnp.int32),
         production_vertices=jnp.zeros((2, 1, 4)),
-        vertex_active=jnp.zeros((2, 1), dtype=bool),
+        vertex_active=jnp.zeros((2, 1), dtype="bool"),
         weights=weights,
         source_id="duplicate-test",
     )

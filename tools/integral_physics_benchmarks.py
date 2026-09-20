@@ -218,7 +218,6 @@ def run_integral_physics_benchmarks(
     ]
     return {
         "benchmark": "integral-physics",
-        "schema_version": 1,
         "jax_version": jax.__version__,
         "backend": jax.default_backend(),
         "repeats": int(repeats),

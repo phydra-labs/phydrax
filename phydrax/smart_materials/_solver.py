@@ -42,9 +42,9 @@ class SpatialPiezoelectricSystem:
         *,
         symmetry_tolerance: float = 1e-10,
     ) -> SpatialPiezoelectricSystem:
-        mechanical = np.asarray(mechanical_stiffness, dtype=float)
-        dielectric = np.asarray(dielectric_stiffness, dtype=float)
-        coupling = np.asarray(electromechanical_coupling, dtype=float)
+        mechanical = np.asarray(mechanical_stiffness, dtype=np.float64)
+        dielectric = np.asarray(dielectric_stiffness, dtype=np.float64)
+        coupling = np.asarray(electromechanical_coupling, dtype=np.float64)
         if mechanical.ndim != 2 or mechanical.shape[0] != mechanical.shape[1]:
             raise ValueError("Piezoelectric mechanical stiffness must be square.")
         if dielectric.ndim != 2 or dielectric.shape[0] != dielectric.shape[1]:

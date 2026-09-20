@@ -109,7 +109,9 @@ def test_self_adjoint_spectrum_reuses_dense_state_and_refreshes_numeric_values()
     assert bool(result.successful)
     assert jnp.allclose(result.eigenvalues, jnp.linalg.eigvalsh(matrix), atol=1e-12)
     assert jnp.allclose(compiled.eigenvalues, result.eigenvalues, atol=1e-12)
-    assert jnp.allclose(result.inverse_basis @ result.eigenvectors, jnp.eye(4), atol=1e-12)
+    assert jnp.allclose(
+        result.inverse_basis @ result.eigenvectors, jnp.eye(4), atol=1e-12
+    )
     assert prepared.problem.dimension == 4
     assert result.provenance.plan_id == plan.plan_id
     assert plan.cost.retained_bytes > 0
@@ -119,7 +121,10 @@ def test_self_adjoint_spectrum_reuses_dense_state_and_refreshes_numeric_values()
         prepared,
         _standard_problem(changed),
     )
-    assert refreshed.eigen_prepared.numeric_version == prepared.eigen_prepared.numeric_version + 1
+    assert (
+        refreshed.eigen_prepared.numeric_version
+        == prepared.eigen_prepared.numeric_version + 1
+    )
     assert refreshed.plan.plan_id == prepared.plan.plan_id
     assert not jnp.allclose(refreshed.eigenvalues, prepared.eigenvalues)
 
@@ -292,8 +297,7 @@ def test_projector_derivatives_match_explicit_kernel_forward_reverse_and_finite_
     )
     step = 1e-5
     finite_difference = (
-        projector(matrix + step * perturbation)
-        - projector(matrix - step * perturbation)
+        projector(matrix + step * perturbation) - projector(matrix - step * perturbation)
     ) / (2 * step)
     cotangent = jnp.asarray(
         [
@@ -350,8 +354,7 @@ def test_complex_hermitian_projector_derivative_is_cluster_safe_and_matches_fini
     _, tangent = jax.jvp(projector, (matrix,), (perturbation,))
     step = 1e-5
     finite_difference = (
-        projector(matrix + step * perturbation)
-        - projector(matrix - step * perturbation)
+        projector(matrix + step * perturbation) - projector(matrix - step * perturbation)
     ) / (2 * step)
 
     assert jnp.all(jnp.isfinite(tangent))
@@ -400,9 +403,7 @@ def test_generalized_projector_and_density_derivatives_include_metric_perturbati
         (operator, metric),
         (operator_perturbation, metric_perturbation),
     )
-    prepared = eigen.prepare_self_adjoint_spectrum(
-        problem_factory(operator, metric)
-    )
+    prepared = eigen.prepare_self_adjoint_spectrum(problem_factory(operator, metric))
     explicit = eigen.self_adjoint_spectral_projector_derivative(
         prepared,
         selection,
@@ -512,14 +513,9 @@ def test_batched_dense_eigen_lifecycle_handles_standard_generalized_and_complex_
     vectors = generalized_result.eigenvectors
     residual = (
         complex_operator @ vectors
-        - (complex_metric @ vectors)
-        * generalized_result.eigenvalues[..., None, :]
+        - (complex_metric @ vectors) * generalized_result.eigenvalues[..., None, :]
     )
-    metric_gram = (
-        jnp.conj(jnp.swapaxes(vectors, -1, -2))
-        @ complex_metric
-        @ vectors
-    )
+    metric_gram = jnp.conj(jnp.swapaxes(vectors, -1, -2)) @ complex_metric @ vectors
 
     assert jnp.all(generalized_result.successful)
     assert jnp.max(jnp.abs(residual)) < 1e-12
@@ -584,9 +580,7 @@ def test_batched_spectral_subspaces_have_fixed_shapes_mixed_status_and_exact_der
         jnp.asarray(
             [
                 int(eigen.SelfAdjointSpectralSubspaceStatus.SUCCESS),
-                int(
-                    eigen.SelfAdjointSpectralSubspaceStatus.SELECTION_DIMENSION_MISMATCH
-                ),
+                int(eigen.SelfAdjointSpectralSubspaceStatus.SELECTION_DIMENSION_MISMATCH),
             ]
         ),
     )

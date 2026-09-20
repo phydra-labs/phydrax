@@ -95,7 +95,7 @@ class RelativisticBorisPlan(StrictModule, NonTrainableState):
         electric_ = jnp.asarray(electric, dtype=proper.dtype)
         magnetic_ = jnp.asarray(magnetic, dtype=proper.dtype)
         specific = jnp.asarray(specific_charge, dtype=proper.dtype)
-        active = jnp.asarray(active_mask, dtype=bool)
+        active = jnp.asarray(active_mask, dtype=jnp.bool_)
         step = jnp.asarray(step_size, dtype=proper.dtype).reshape(())
         if proper.ndim != 2 or proper.shape[-1] != 3:
             raise ValueError("proper_velocity must have shape (particles,3).")

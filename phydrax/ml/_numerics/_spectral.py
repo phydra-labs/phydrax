@@ -54,14 +54,16 @@ def _fit_one(
     offset = jnp.where(
         total_weight > 0.0,
         jnp.sum(safe_weights[:, None] * safe_values, axis=0)
-        / jnp.maximum(total_weight, jnp.finfo(float).tiny),
+        / jnp.maximum(total_weight, jnp.finfo(jnp.float64).tiny),
         jnp.zeros(values.shape[-1], dtype=values.dtype),
     )
     if not centered:
         offset = jnp.zeros_like(offset)
     centered_values = jnp.where(active[:, None], safe_values - offset, 0)
     weighted = (
-        jnp.sqrt(safe_weights / jnp.maximum(total_weight, jnp.finfo(float).tiny))[:, None]
+        jnp.sqrt(safe_weights / jnp.maximum(total_weight, jnp.finfo(jnp.float64).tiny))[
+            :, None
+        ]
         * centered_values
     )
     _u, singular_values, vh = jnp.linalg.svd(weighted, full_matrices=False)
@@ -128,14 +130,14 @@ def fit_weighted_subspace(
 ) -> SpectralFitResult:
     """Fit a fixed-rank weighted subspace over the penultimate sample axis."""
     x = jnp.asarray(values)
-    w = jnp.asarray(weights, dtype=float)
+    w = jnp.asarray(weights, dtype=jnp.float64)
     if x.ndim < 2 or w.shape != x.shape[:-1]:
         raise ValueError("values and weights must end in (sample, feature) and sample.")
     rank_ = int(rank)
-    available = min(int(x.shape[-2]), int(x.shape[-1]))
+    available = min(x.shape[-2], x.shape[-1])
     if rank_ <= 0 or rank_ > available:
         raise ValueError(f"rank must lie in [1, {available}].")
-    case_shape = tuple(int(size) for size in x.shape[:-2])
+    case_shape = tuple(x.shape[:-2])
     cases = 1
     for size in case_shape:
         cases *= size

@@ -73,7 +73,7 @@ def piv_to_observation_sequence(
         isinstance(field, PhysicalPIVResult2D) for field in fields_
     ):
         raise TypeError("fields must contain one or more PhysicalPIVResult2D values.")
-    times_ = np.asarray(times, dtype=float).reshape((-1,))
+    times_ = np.asarray(times, dtype=np.float64).reshape((-1,))
     if times_.shape != (len(fields_),) or not np.all(np.isfinite(times_)):
         raise ValueError("times must contain one finite value per PIV field.")
     if len(fields_) > 1 and np.any(np.diff(times_) <= 0.0):
@@ -102,7 +102,7 @@ def piv_to_observation_sequence(
         times_,
         values,
         observation_axes=("y", "x", "component"),
-        step_valid=np.ones(times_.shape, dtype=bool),
+        step_valid=np.ones(times_.shape, dtype=np.bool_),
         observation_mask=mask,
         sequence_id=sequence_id,
         sensor_id=source_id,
@@ -185,7 +185,7 @@ def tracks_to_trajectory_data(
         sample_valid=sample_valid,
         transition_valid=transition_valid,
         reset_mask=reset_mask,
-        weights=sample_valid.astype(float),
+        weights=sample_valid.astype("float64"),
         case_axes=("track",),
         case_axis_roles=("case",),
         coordinate_id="time",
@@ -284,9 +284,9 @@ def _native_tracks_to_observations(
     sequence_id: str,
     allow_reset_loss: bool,
 ) -> tuple[ObservationSequence, AdapterReport]:
-    times = np.asarray(tracks.times, dtype=float)
+    times = np.asarray(tracks.times, dtype=np.float64)
     track_ids = np.asarray(tracks.track_ids, dtype=np.int64)
-    observed = np.asarray(tracks.observed, dtype=bool)
+    observed = np.asarray(tracks.observed, dtype=np.bool_)
     observations = np.asarray(tracks.observations)
     if (
         times.ndim != 1
@@ -298,16 +298,14 @@ def _native_tracks_to_observations(
             AdapterStatus.INCONSISTENT_SOURCE,
             "TrackResult arrays are inconsistent with its time capacity.",
         )
-    identities = tuple(
-        int(value) for value in np.unique(track_ids[observed & (track_ids >= 0)])
-    )
+    identities = tuple(np.unique(track_ids[observed & (track_ids >= 0)]))
     if not identities:
         raise AdapterError(
             AdapterStatus.INCONSISTENT_SOURCE,
             "TrackResult has no observed identity-bearing samples.",
         )
     values = np.zeros((len(identities), times.size, 3), dtype=observations.dtype)
-    mask = np.zeros(values.shape, dtype=bool)
+    mask = np.zeros(values.shape, dtype=np.bool_)
     for case, identity in enumerate(identities):
         for step in range(times.size):
             slots = np.flatnonzero(observed[:, step] & (track_ids[:, step] == identity))
@@ -319,7 +317,7 @@ def _native_tracks_to_observations(
             if slots.size == 1:
                 values[case, step] = observations[slots[0], step]
                 mask[case, step] = True
-    has_resets = bool(np.any(np.asarray(tracks.resets, dtype=bool)))
+    has_resets = bool(np.any(np.asarray(tracks.resets, dtype=np.bool_)))
     if has_resets and not allow_reset_loss:
         raise AdapterError(
             AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC,
@@ -332,7 +330,7 @@ def _native_tracks_to_observations(
         case_axes=("track",),
         case_shape=(len(identities),),
         observation_axes=("component",),
-        step_valid=np.ones((len(identities), times.size), dtype=bool),
+        step_valid=np.ones((len(identities), times.size), dtype=np.bool_),
         observation_mask=mask,
         case_ids=tuple(f"track:{identity}" for identity in identities),
         sequence_id=sequence_id,
@@ -383,7 +381,7 @@ def _physical_field_arrays(
     values = np.asarray(
         field.displacement_xy if value == "displacement" else field.velocity_xy
     )
-    valid = np.asarray(field.valid, dtype=bool)
+    valid = np.asarray(field.valid, dtype=np.bool_)
     if (
         positions.ndim != 3
         or positions.shape[-1] != 2
@@ -447,7 +445,7 @@ def _uniform_axis(nodes: np.ndarray, /) -> AxisDiscretization:
             AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC,
             "PreparedTensorGrid adaptation currently requires uniform PIV axes; implicit resampling is forbidden.",
         )
-    weights = np.full(nodes.shape, differences[0], dtype=float)
+    weights = np.full(nodes.shape, differences[0], dtype=np.float64)
     weights[0] *= 0.5
     weights[-1] *= 0.5
     return AxisDiscretization(
@@ -464,12 +462,12 @@ def _pack_tracks(
     tracks: OpenPTVTrackRecords,
     /,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, tuple[int, ...]]:
-    active = np.asarray(tracks.valid, dtype=bool)
+    active = np.asarray(tracks.valid, dtype=np.bool_)
     ids = np.asarray(tracks.track_ids)[active]
     times = np.asarray(tracks.times)[active]
     positions = np.asarray(tracks.positions_xyz)[active]
     resets = np.asarray(tracks.reset_before)[active]
-    track_ids = tuple(int(value) for value in np.unique(ids))
+    track_ids = tuple(np.unique(ids))
     if not track_ids:
         raise AdapterError(
             AdapterStatus.INCONSISTENT_SOURCE,
@@ -477,10 +475,10 @@ def _pack_tracks(
         )
     counts = [int(np.count_nonzero(ids == track_id)) for track_id in track_ids]
     capacity = max(2, max(counts))
-    coordinates = np.zeros((len(track_ids), capacity), dtype=float)
-    states = np.zeros((len(track_ids), capacity, 3), dtype=float)
-    sample_valid = np.zeros((len(track_ids), capacity), dtype=bool)
-    reset_mask = np.zeros((len(track_ids), capacity - 1), dtype=bool)
+    coordinates = np.zeros((len(track_ids), capacity), dtype=np.float64)
+    states = np.zeros((len(track_ids), capacity, 3), dtype=np.float64)
+    sample_valid = np.zeros((len(track_ids), capacity), dtype=np.bool_)
+    reset_mask = np.zeros((len(track_ids), capacity - 1), dtype=np.bool_)
     for case, track_id in enumerate(track_ids):
         selected = np.flatnonzero(ids == track_id)
         order = np.argsort(times[selected], kind="stable")

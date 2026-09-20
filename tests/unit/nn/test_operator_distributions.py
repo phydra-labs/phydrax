@@ -33,7 +33,7 @@ def _batch(*, cases=2, size=6, masked=False):
 def test_gaussian_distribution_matches_dense_log_density_and_masks_samples():
     batch = _batch(masked=True)
     query = batch.require_single_query()
-    mean = jnp.arange(12, dtype=float).reshape((2, 6)) / 10.0
+    mean = jnp.arange(12, dtype="float64").reshape((2, 6)) / 10.0
     scale = jnp.full((2, 6), 0.3)
     factors = jnp.stack(
         (

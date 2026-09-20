@@ -15,7 +15,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._tree_math import tree_norm
 from ..linalg import AbstractVectorSpace
 from ._bifurcation import HopfState, NullspaceEvidence
@@ -123,7 +123,7 @@ class NormalFormLinearSolveResult(StrictModule):
         self.residual_norm = jnp.asarray(residual_norm)
         self.condition_estimate = jnp.asarray(condition_estimate)
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32)
-        self.successful = jnp.asarray(successful, dtype=bool)
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_)
         self.source_status = jnp.asarray(source_status, dtype=jnp.int32)
         self.solver_id = identifier
 
@@ -131,7 +131,7 @@ class NormalFormLinearSolveResult(StrictModule):
 class AbstractNormalFormLinearSolver(StrictModule):
     """Hook for range and shifted solves used by normal-form formulas."""
 
-    solver_id: AbstractAttribute[str]
+    solver_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def solve(
@@ -232,7 +232,7 @@ class NormalFormDiagnostics(StrictModule):
             derivative_evaluations,
             dtype=jnp.int32,
         )
-        self.finite = jnp.asarray(finite, dtype=bool)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
 
 
 class NormalFormProvenance(StrictModule):
@@ -1032,8 +1032,7 @@ def hopf_first_lyapunov(
         raise ValueError("Hopf normal forms require an execution-space endomorphism.")
     if geometry.representation.state_coordinates is not None:
         raise ValueError(
-            "Hopf normal forms for mapped public states require a dedicated "
-            "higher-complex representation."
+            "Hopf normal forms for mapped public states require a dedicated higher-complex representation."
         )
     if not isinstance(linear_solver, AbstractNormalFormLinearSolver):
         raise TypeError("linear_solver must be an AbstractNormalFormLinearSolver.")

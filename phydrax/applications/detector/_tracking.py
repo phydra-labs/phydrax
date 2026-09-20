@@ -47,7 +47,7 @@ class TrackMeasurementBank(StrictModule, NonTrainableState):
         times_ = jnp.asarray(times, dtype=positions_.dtype)
         variances_ = jnp.asarray(variances, dtype=positions_.dtype)
         surfaces = jnp.asarray(surface_ids, dtype=jnp.int32)
-        active_ = jnp.asarray(active, dtype=bool)
+        active_ = jnp.asarray(active, dtype=jnp.bool_)
         if positions_.ndim != 4 or positions_.shape[-1] != 3:
             raise ValueError("positions must have shape (event, track, measurement, 3).")
         expected = positions_.shape[:-1]

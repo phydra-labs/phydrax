@@ -46,8 +46,8 @@ class PreparedMolecularElectronicSector(StrictModule, NonTrainableState):
         system: AtomisticSystemPlan,
         /,
     ):
-        active = np.asarray(system.active_mask, dtype=bool)
-        elements = np.asarray(system.element_mask, dtype=bool)
+        active = np.asarray(system.active_mask, dtype=np.bool_)
+        elements = np.asarray(system.element_mask, dtype=np.bool_)
         numbers = np.asarray(system.atomic_numbers, dtype=np.int64)
         if np.any(active & ~elements):
             raise ValueError(

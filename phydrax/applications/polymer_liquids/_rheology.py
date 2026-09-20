@@ -148,7 +148,7 @@ def polymer_green_kubo_viscosity(
             else (block_index + 1) * block_size
         )
         block = shear[start:stop]
-        block_lag = min(plan.maximum_lag, int(block.shape[0]) - 1)
+        block_lag = min(plan.maximum_lag, block.shape[0] - 1)
         block_correlation = []
         for lag in range(block_lag + 1):
             block_correlation.append(

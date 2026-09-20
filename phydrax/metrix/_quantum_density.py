@@ -482,8 +482,8 @@ class RankStratumEvidence(StrictModule):
         self.threshold = jnp.asarray(threshold)
         self.support_gap = jnp.asarray(support_gap)
         self.discarded_mass = jnp.asarray(discarded_mass)
-        self.ambiguous = jnp.asarray(ambiguous, dtype=bool)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.ambiguous = jnp.asarray(ambiguous, dtype=jnp.bool_)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
 
 
 class RankTransitionProposal(StrictModule):
@@ -513,7 +513,7 @@ class RankTransitionProposal(StrictModule):
         self.trigger = str(trigger)
         self.state_transfer = str(state_transfer)
         self.discarded_mass = jnp.asarray(discarded_mass)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
 
 
 class DensityRankStratification(StrictModule):

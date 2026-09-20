@@ -24,7 +24,7 @@ def fornberg_weights(
     /,
 ) -> np.ndarray:
     """Stable Fornberg recursion for arbitrary distinct one-dimensional nodes."""
-    coordinates = np.asarray(nodes, dtype=float).reshape((-1,))
+    coordinates = np.asarray(nodes, dtype=np.float64).reshape((-1,))
     point = float(evaluation_point)
     derivative = int(derivative_order)
     if coordinates.size == 0 or derivative < 0 or derivative >= coordinates.size:
@@ -33,8 +33,8 @@ def fornberg_weights(
         raise ValueError("Fornberg nodes and evaluation point must be finite.")
     if np.unique(coordinates).size != coordinates.size:
         raise ValueError("Fornberg nodes must be distinct.")
-    count = int(coordinates.size)
-    coefficients = np.zeros((count, derivative + 1), dtype=float)
+    count = coordinates.size
+    coefficients = np.zeros((count, derivative + 1), dtype=np.float64)
     coefficients[0, 0] = 1.0
     c1 = 1.0
     c4 = coordinates[0] - point

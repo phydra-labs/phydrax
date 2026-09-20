@@ -132,7 +132,7 @@ class _ReducedArticulationStateGeometry(AbstractStateGeometry):
     ):
         state_size_ = int(state_size)
         nq_ = int(nq)
-        hinge_indices = tuple(int(index) for index in hinge_dof_indices)
+        hinge_indices = tuple(hinge_dof_indices)
         identifier = str(geometry_id)
         if state_size_ <= 0 or nq_ < 0 or nq_ > state_size_:
             raise ValueError("Reduced-articulation state dimensions are invalid.")
@@ -300,8 +300,7 @@ class ReducedArticulationPlan(StrictModule, NonTrainableState):
         children = _integer_vector(child_body_ids, "child_body_ids")
         if parents.shape != joints.shape or children.shape != joints.shape:
             raise ValueError(
-                "joint_ids, parent_body_ids, and child_body_ids must have "
-                "matching shapes."
+                "joint_ids, parent_body_ids, and child_body_ids must have matching shapes."
             )
         if np.unique(joints).size != joints.size:
             raise ValueError("Reduced-articulation joint IDs must be unique.")
@@ -332,7 +331,7 @@ class ReducedArticulationPlan(StrictModule, NonTrainableState):
 
     @property
     def edge_count(self) -> int:
-        return int(self.joint_ids.shape[0])
+        return self.joint_ids.shape[0]
 
     def prepare(
         self,
@@ -437,8 +436,8 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
             raise ValueError("reference must be the pose used to prepare graph.")
 
         body_id_values = np.asarray(bodies.particles.particle_ids, dtype=np.int64)
-        active = np.asarray(bodies.particles.active_mask, dtype=bool)
-        fixed = np.asarray(bodies.fixed_mask, dtype=bool)
+        active = np.asarray(bodies.particles.active_mask, dtype=np.bool_)
+        fixed = np.asarray(bodies.fixed_mask, dtype=np.bool_)
         body_index_by_id = {
             int(identifier): index for index, identifier in enumerate(body_id_values)
         }
@@ -528,15 +527,13 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
             kind, row, left, right = resolved
             if kind in (int(RigidJointKind.BALL), int(RigidJointKind.DISTANCE)):
                 raise ValueError(
-                    "Reduced articulation supports only fixed, hinge, and "
-                    "prismatic joints."
+                    "Reduced articulation supports only fixed, hinge, and prismatic joints."
                 )
             if left != int(parent_plan_indices[edge]) or right != int(
                 child_plan_indices[edge]
             ):
                 raise ValueError(
-                    "Articulation edges must preserve each existing joint's "
-                    "left-to-right orientation."
+                    "Articulation edges must preserve each existing joint's left-to-right orientation."
                 )
             kinds_plan.append(kind)
             rows_plan.append(row)
@@ -754,12 +751,12 @@ class PreparedReducedArticulation(StrictModule, NonTrainableState):
         self.joint_configuration_slices = tuple(configuration_slices)
         self.joint_velocity_slices = tuple(velocity_slices)
         self.prepared_id = prepared_id
-        self._parent_order = tuple(int(index) for index in parent_indices)
-        self._child_order = tuple(int(index) for index in child_indices)
-        self._kind_order = tuple(int(kind) for kind in joint_kinds)
+        self._parent_order = tuple(parent_indices)
+        self._child_order = tuple(child_indices)
+        self._kind_order = tuple(joint_kinds)
         self._edge_dof_order = tuple(edge_dofs)
         self._hinge_dof_indices = tuple(hinge_dofs)
-        self._body_id_order = tuple(int(identifier) for identifier in self.body_ids)
+        self._body_id_order = tuple(self.body_ids)
         self._body_index_order = tuple(body_order)
 
     @property

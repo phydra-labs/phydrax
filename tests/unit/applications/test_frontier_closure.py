@@ -165,12 +165,12 @@ def test_scalable_pfaffian_phase_survives_ordinary_value_overflow() -> None:
 
 
 def test_flat_kahler_metric_has_zero_native_ricci() -> None:
-    metric = np.tile(np.eye(2, dtype=complex), (2, 1, 1))
+    metric = np.tile(np.eye(2, dtype="complex128"), (2, 1, 1))
     jet = complex_geometry.KahlerMetricJet(
         metric,
-        np.zeros((2, 2, 2, 2), dtype=complex),
-        np.zeros((2, 2, 2, 2), dtype=complex),
-        np.zeros((2, 2, 2, 2, 2), dtype=complex),
+        np.zeros((2, 2, 2, 2), dtype="complex128"),
+        np.zeros((2, 2, 2, 2), dtype="complex128"),
+        np.zeros((2, 2, 2, 2, 2), dtype="complex128"),
         ("first", "second"),
     )
     evidence = complex_geometry.evaluate_calabi_yau_ricci(
@@ -270,7 +270,7 @@ def test_zero_coupling_multimode_envelope_is_identity() -> None:
         propagation_distance=0.02,
         step_size=0.01,
     )
-    field = np.zeros((1, 1, 2, 16), dtype=complex)
+    field = np.zeros((1, 1, 2, 16), dtype="complex128")
     field[0, 0, 0] = np.exp(-(time**2))
     field[0, 0, 1] = 0.5 * np.exp(-0.5 * time**2)
     result = wave.propagate_coupled_envelope(plan, field)
@@ -375,10 +375,10 @@ def test_bfss_fermion_preparation_certifies_rational_action() -> None:
         time_spacing=1.0,
     )
     configuration = supersymmetric_lattice.BFSSConfiguration(
-        np.zeros((4, 1, 1, 1), dtype=complex),
-        np.zeros((4, 1, 1, 1), dtype=complex),
-        np.ones((4, 1, 1), dtype=complex),
-        np.ones((4, 1, 1), dtype=complex),
+        np.zeros((4, 1, 1, 1), dtype="complex128"),
+        np.zeros((4, 1, 1, 1), dtype="complex128"),
+        np.ones((4, 1, 1), dtype="complex128"),
+        np.ones((4, 1, 1), dtype="complex128"),
     )
     plan = supersymmetric_lattice.BFSSFermionPlan(
         bosonic,
@@ -426,7 +426,7 @@ def test_projective_variety_reuses_canonical_sparse_polynomials() -> None:
     )
     point = np.asarray(
         ((1.0, np.exp(1j * np.pi / 5.0), 0.0, 0.0, 0.0),),
-        dtype=complex,
+        dtype="complex128",
     )
     evidence = complex_geometry.assess_projective_variety(plan, point)
     assert plan.system.system_id == system.system_id

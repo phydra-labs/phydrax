@@ -121,7 +121,7 @@ class QualityFlag:
     def __post_init__(self) -> None:
         name = canonical_quantity_text(self.name, "quality flag name")
         meaning = canonical_quantity_text(self.meaning, "quality flag meaning")
-        mask = _readonly(self.mask, "quality flag mask", dtype=bool)
+        mask = _readonly(self.mask, "quality flag mask", dtype=jnp.bool_)
         object.__setattr__(self, "name", name)
         object.__setattr__(self, "meaning", meaning)
         object.__setattr__(self, "mask", mask)
@@ -170,7 +170,7 @@ class PreparedQuantityField(StrictModule, NonTrainableState):
         field_id: str,
     ) -> None:
         values_ = jnp.asarray(values)
-        valid_ = jnp.asarray(valid_mask, dtype=bool)
+        valid_ = jnp.asarray(valid_mask, dtype=jnp.bool_)
         if valid_.ndim > values_.ndim or values_.shape[: valid_.ndim] != valid_.shape:
             raise ValueError("valid_mask must match the leading sample shape of values.")
         uncertainty_ = (
@@ -269,9 +269,9 @@ class QuantityField:
         if values.shape != expected:
             raise ValueError(f"values must have shape {expected}; got {values.shape}.")
         mask = (
-            np.ones(self.support.sample_shape, dtype=bool)
+            np.ones(self.support.sample_shape, dtype=np.bool_)
             if self.valid_mask is None
-            else _readonly(self.valid_mask, "valid_mask", dtype=bool)
+            else _readonly(self.valid_mask, "valid_mask", dtype=jnp.bool_)
         )
         if mask.shape != self.support.sample_shape:
             raise ValueError("valid_mask must have the support sample shape.")

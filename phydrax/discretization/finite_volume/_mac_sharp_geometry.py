@@ -49,11 +49,11 @@ def _box_samples(
     full_measure: np.ndarray,
 ) -> tuple[Array, Array, Array]:
     coordinates = tuple(
-        (np.arange(count, dtype=float) + 0.5) / count - 0.5 for count in subdivisions
+        (np.arange(count, dtype=np.float64) + 0.5) / count - 0.5 for count in subdivisions
     )
-    normalized = np.asarray(tuple(product(*coordinates)), dtype=float)
+    normalized = np.asarray(tuple(product(*coordinates)), dtype=np.float64)
     points = centers[..., None, :] + widths[..., None, :] * normalized
-    half_width = widths / np.asarray(subdivisions, dtype=float)
+    half_width = widths / np.asarray(subdivisions, dtype=np.float64)
     radius = 0.5 * np.sqrt(np.sum(half_width**2, axis=-1))
     capacity = int(np.prod(subdivisions))
     weight = full_measure / capacity
@@ -146,7 +146,7 @@ class MACExactSDFMeasurePlan(StrictModule, NonTrainableState):
         counts = (
             (int(subdivisions),) * dimension
             if isinstance(subdivisions, int)
-            else tuple(int(value) for value in subdivisions)
+            else tuple(subdivisions)
         )
         maximum_error = float(maximum_measure_error_fraction)
         small = float(small_cell_fraction)
@@ -175,7 +175,7 @@ class MACExactSDFMeasurePlan(StrictModule, NonTrainableState):
         face_weights = []
         for normal_axis, centers in enumerate(discretization.face_centers):
             tangential = tuple(axis for axis in range(dimension) if axis != normal_axis)
-            face_widths = np.zeros(np.asarray(centers).shape, dtype=float)
+            face_widths = np.zeros(np.asarray(centers).shape, dtype=np.float64)
             for axis in tangential:
                 shape = [1] * dimension
                 shape[axis] = discretization.grid.structured_axes[

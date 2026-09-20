@@ -98,7 +98,7 @@ def test_homogeneous_operator_ensemble_matches_explicit_member_loop():
     )
     explicit = jnp.stack(
         tuple(
-            member.predict(batch, key=member_key).field("output").values
+            member.evaluate(batch, key=member_key).field("output").values
             for member, member_key in zip(
                 members, jr.split(key, len(members)), strict=True
             )
@@ -133,7 +133,7 @@ def test_heterogeneous_operator_ensemble_matches_explicit_member_loop():
     )
     explicit = jnp.stack(
         tuple(
-            member.predict(batch, key=member_key).field("output").values
+            member.evaluate(batch, key=member_key).field("output").values
             for member, member_key in zip(
                 members, jr.split(key, len(members)), strict=True
             )

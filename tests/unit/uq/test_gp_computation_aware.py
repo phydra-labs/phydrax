@@ -24,7 +24,7 @@ class BlockLimitedSquaredExponentialKernel(phx.kernels.AbstractPositiveDefiniteK
     def matrix(self, left, right, /):
         left_array = jnp.asarray(left)
         right_array = jnp.asarray(right)
-        if int(left_array.shape[0]) > self.max_left_count:
+        if left_array.shape[0] > self.max_left_count:
             raise ValueError("kernel left block exceeded its declared test limit")
         return jax.vmap(
             lambda point: jax.vmap(lambda other: self.pairwise(point, other))(right_array)

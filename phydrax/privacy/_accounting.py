@@ -490,8 +490,7 @@ def account_mechanism_traces(
     composed = events[0] if len(events) == 1 else dp.ComposedDpEvent(events)
     if not accountant.supports(composed):
         raise ValueError(
-            f"{accountant_id} does not support the supplied event under "
-            f"{definition.neighboring_relation.value}."
+            f"{accountant_id} does not support the supplied event under {definition.neighboring_relation.value}."
         )
     epsilon = float(accountant.compose(composed).get_epsilon(budget.delta))
     if not math.isfinite(epsilon):

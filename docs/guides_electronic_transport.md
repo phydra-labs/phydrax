@@ -37,8 +37,8 @@ it.
 ## Periodic independent-particle Kubo
 
 `PeriodicKuboPlan` takes energies in joules, full Hermitian band-basis velocity
-matrices in physical Cartesian metres per second, normalized k weights, primitive
-cell volume in cubic metres, chemical potential, temperature, and an independent
+matrices in physical Cartesian meters per second, normalized k weights, primitive
+cell volume in cubic meters, chemical potential, temperature, and an independent
 `KuboDiamagneticSumRule`.
 
 `raw_transitions()` retains positive-energy interband transitions without a line

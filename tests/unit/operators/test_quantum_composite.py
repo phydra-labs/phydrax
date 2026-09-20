@@ -10,14 +10,14 @@ import pytest
 import phydrax as phx
 
 
-SIGMA_X = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=complex)
-SIGMA_Z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype=complex)
+SIGMA_X = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype="complex128")
+SIGMA_Z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype="complex128")
 
 
 def test_tensor_product_constructs_vector_and_matrix_products():
     time = phx.domain.TimeInterval(0.0, 1.0)
-    zero = time.Function()(jnp.asarray([1.0, 0.0], dtype=complex))
-    one = time.Function()(jnp.asarray([0.0, 1.0], dtype=complex))
+    zero = time.Function()(jnp.asarray([1.0, 0.0], dtype="complex128"))
+    one = time.Function()(jnp.asarray([0.0, 1.0], dtype="complex128"))
     sigma_x = time.Function()(SIGMA_X)
     sigma_z = time.Function()(SIGMA_Z)
 
@@ -67,11 +67,11 @@ def test_embed_operator_places_local_operator_on_selected_subsystem():
 
 def test_partial_trace_recovers_product_density_factors():
     time = phx.domain.TimeInterval(0.0, 1.0)
-    factor_a = time.Function()(jnp.asarray([[1.0, 0.2], [0.0, 0.7]], dtype=complex))
+    factor_a = time.Function()(jnp.asarray([[1.0, 0.2], [0.0, 0.7]], dtype="complex128"))
     factor_b = time.Function()(
         jnp.asarray(
             [[1.0, 0.0], [0.1j, 0.8], [0.0, 0.4]],
-            dtype=complex,
+            dtype="complex128",
         )
     )
     density_a = phx.operators.density_from_factor(factor_a)

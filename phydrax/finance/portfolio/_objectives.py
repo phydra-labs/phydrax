@@ -123,8 +123,8 @@ class BlackLittermanObjective(StrictModule):
         pick = _matrix(pick_matrix, "pick_matrix")
         views = _vector(view_returns, "view_returns")
         covariance = _matrix(view_covariance, "view_covariance")
-        assets = int(equilibrium.shape[0])
-        count = int(views.shape[0])
+        assets = equilibrium.shape[0]
+        count = views.shape[0]
         if pick.shape != (count, assets):
             raise ValueError(
                 f"pick_matrix must have shape ({count}, {assets}); got {pick.shape}."
@@ -152,7 +152,7 @@ class BlackLittermanObjective(StrictModule):
         """Return posterior mean and covariance using the shared rank-safe solver."""
 
         prior = _matrix(covariance, "covariance").astype(self.equilibrium_returns.dtype)
-        assets = int(self.equilibrium_returns.shape[0])
+        assets = self.equilibrium_returns.shape[0]
         if prior.shape != (assets, assets):
             raise ValueError(
                 f"covariance must have shape ({assets}, {assets}); got {prior.shape}."

@@ -477,7 +477,7 @@ class PreparedConservativeDiffusion(AbstractLinearOperator):
         )
         denominator = eqx.error_if(
             denominator,
-            jnp.abs(denominator) <= np.finfo(float).eps,
+            jnp.abs(denominator) <= np.finfo(np.float64).eps,
             "Conservative Robin boundary is singular at the cell center.",
         )
         return (target_ - condition.alpha * state) / denominator
@@ -495,7 +495,7 @@ class PreparedConservativeDiffusion(AbstractLinearOperator):
             previous = jnp.roll(value, 1, axis=axis_index)
             widths = self.precision.reduction(axis.interval_widths)
             reshape = [1] * value.ndim
-            reshape[axis_index] = int(widths.size)
+            reshape[axis_index] = widths.size
             return (value - previous) / widths.reshape(reshape)
         lower_condition, upper_condition = self.plan.boundaries[axis_index]
         lower = _expand_axis(
@@ -530,7 +530,7 @@ class PreparedConservativeDiffusion(AbstractLinearOperator):
         )
         distances = jnp.diff(self.precision.reduction(axis.interval_centers))
         reshape = [1] * value.ndim
-        reshape[axis_index] = int(distances.size)
+        reshape[axis_index] = distances.size
         interior = (right - left) / distances.reshape(reshape)
         return jnp.concatenate((lower, interior, upper), axis=axis_index)
 
@@ -539,7 +539,7 @@ class PreparedConservativeDiffusion(AbstractLinearOperator):
         if axis.periodic:
             width = self.precision.reduction(axis.interval_widths)
             reshape = [1] * value.ndim
-            reshape[axis_index] = int(width.size)
+            reshape[axis_index] = width.size
             return (
                 jnp.roll(value, -1, axis=axis_index) - jnp.roll(value, 1, axis=axis_index)
             ) / (2.0 * width.reshape(reshape))
@@ -563,7 +563,7 @@ class PreparedConservativeDiffusion(AbstractLinearOperator):
         )
         distances = centers[2:] - centers[:-2]
         reshape = [1] * value.ndim
-        reshape[axis_index] = int(distances.size)
+        reshape[axis_index] = distances.size
         center = center / distances.reshape(reshape)
         return jnp.concatenate(
             (
@@ -595,7 +595,7 @@ class PreparedConservativeDiffusion(AbstractLinearOperator):
             structured_axis = grid.structured_axes[axis_index]
             widths = self.precision.reduction(structured_axis.interval_widths)
             width_shape = [1] * len(grid.shape)
-            width_shape[axis_index] = int(widths.size)
+            width_shape[axis_index] = widths.size
             cell_width = widths.reshape(width_shape)
             face_coefficient = self.plan.interpolation.interpolate(
                 coefficient_[..., axis_index, axis_index],
@@ -611,7 +611,7 @@ class PreparedConservativeDiffusion(AbstractLinearOperator):
             centers = self.precision.reduction(structured_axis.interval_centers)
             center_distance = jnp.diff(centers)
             distance_shape = [1] * len(grid.shape)
-            distance_shape[axis_index] = int(center_distance.size)
+            distance_shape[axis_index] = center_distance.size
             interior_distance = center_distance.reshape(distance_shape)
             lower_condition, upper_condition = self.plan.boundaries[axis_index]
             bounds = self.precision.reduction(structured_axis.bounds)
@@ -760,7 +760,7 @@ class PreparedConservativeDiffusion(AbstractLinearOperator):
             structured_axis = grid.structured_axes[axis_index]
             widths = self.precision.reduction(structured_axis.interval_widths)
             reshape = [1] * len(grid.shape)
-            reshape[axis_index] = int(widths.size)
+            reshape[axis_index] = widths.size
             if structured_axis.periodic:
                 difference = jnp.roll(flux, -1, axis=axis_index) - flux
             else:

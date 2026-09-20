@@ -111,7 +111,7 @@ class TranscriptCounts:
         raw = np.asarray(counts)
         if raw.shape != (len(ids), 2) or raw.dtype.kind not in "ifu":
             raise ValueError("Measured counts must have shape (cell, 2), ordered U,S.")
-        mask = np.ones(raw.shape, dtype=bool) if valid is None else np.asarray(valid)
+        mask = np.ones(raw.shape, dtype=np.bool_) if valid is None else np.asarray(valid)
         if mask.dtype != bool or mask.shape != raw.shape:
             raise ValueError("Count validity must be a boolean mask matching counts.")
         active = raw[mask]
@@ -138,7 +138,7 @@ class TranscriptCounts:
                 raise ValueError("Absent coordinates must not contain values.")
             coords = np.zeros(len(ids))
         else:
-            coords = np.asarray(coordinates, dtype=float)
+            coords = np.asarray(coordinates, dtype=np.float64)
             if coords.shape != (len(ids),) or np.any(~np.isfinite(coords)):
                 raise ValueError(
                     "Declared coordinates must be finite with one value per cell."
@@ -146,7 +146,7 @@ class TranscriptCounts:
         for name, value in (
             ("gene", gene),
             ("cell_ids", ids),
-            ("counts", jnp.asarray(np.where(mask, raw, 0), dtype=float)),
+            ("counts", jnp.asarray(np.where(mask, raw, 0), dtype=jnp.float64)),
             ("valid", jnp.asarray(mask)),
             ("coordinates", jnp.asarray(coords)),
             ("coordinate_semantics", coordinate_semantics),
@@ -180,7 +180,7 @@ class TranscriptCounts:
         support = SeriesSupport(
             self.coordinates,
             node_valid=jnp.any(self.valid, axis=-1),
-            edge_valid=jnp.zeros((len(self.cell_ids) - 1,), dtype=bool),
+            edge_valid=jnp.zeros((len(self.cell_ids) - 1,), dtype=jnp.bool_),
             coordinate_name=self.coordinate_semantics,
             coordinate_id=self.observation_id + ":coordinates",
         )

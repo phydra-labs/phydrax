@@ -90,7 +90,7 @@ def _callback_source(dataset, *, read_latency: float, fingerprint: str | None = 
 
 def _device_bytes(batch) -> int:
     return sum(
-        int(leaf.size) * int(leaf.dtype.itemsize)
+        leaf.size * leaf.dtype.itemsize
         for leaf in jax.tree_util.tree_leaves((batch.batch, batch.targets))
         if isinstance(leaf, jax.Array)
     )

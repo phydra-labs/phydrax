@@ -948,7 +948,7 @@ def write_free_surface_checkpoint(
     return write_array_archive(
         path,
         manifest={
-            "kind": "one-phase-free-surface-ale-checkpoint-v2",
+            "kind": "one-phase-free-surface-ale-checkpoint",
             "schema": "pressure-boundary-work-capillary-mesh-epoch",
             "hydrodynamics_id": hydrodynamics.prepared_id,
             "method_id": method.method_id,
@@ -966,7 +966,7 @@ def read_free_surface_checkpoint(
     /,
 ) -> tuple[Array, Array, FreeSurfaceALEContinuationState]:
     manifest, arrays = read_array_archive(path)
-    if manifest.get("kind") != "one-phase-free-surface-ale-checkpoint-v2":
+    if manifest.get("kind") != "one-phase-free-surface-ale-checkpoint":
         raise ValueError("Archive is not a one-phase free-surface checkpoint.")
     if manifest.get("hydrodynamics_id") != hydrodynamics.prepared_id:
         raise ValueError("Free-surface checkpoint model identity mismatch.")

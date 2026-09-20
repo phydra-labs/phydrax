@@ -50,7 +50,7 @@ class DarkHadronPairChannel(StrictModule, NonTrainableState):
         *,
         spectrum_label: str,
     ):
-        identifiers = tuple(int(value) for value in pdg_ids)
+        identifiers = tuple(pdg_ids)
         weight = float(relative_weight)
         label = str(spectrum_label).strip()
         if (
@@ -644,7 +644,7 @@ def fragment_dark_string_chain(
     momenta = jnp.asarray(parton_four_momenta)
     pdg_ids = jnp.asarray(parton_pdg_ids, dtype=jnp.int32)
     colors = jnp.asarray(parton_color_flow, dtype=jnp.int32)
-    active = jnp.asarray(parton_active, dtype=bool)
+    active = jnp.asarray(parton_active, dtype=jnp.bool_)
     random = jnp.asarray(uniforms, dtype=momenta.dtype)
     if (
         momenta.ndim != 2

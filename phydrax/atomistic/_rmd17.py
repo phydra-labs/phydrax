@@ -47,11 +47,11 @@ class RMD17Dataset(StrictModule, NonTrainableState):
 
     @property
     def sample_count(self) -> int:
-        return int(self.positions.shape[0])
+        return self.positions.shape[0]
 
     @property
     def atom_count(self) -> int:
-        return int(self.atomic_numbers.shape[0])
+        return self.atomic_numbers.shape[0]
 
     def take(self, indices: ArrayLike, /) -> tuple[AtomisticBatch, Array, Array]:
         index = np.asarray(indices)
@@ -62,7 +62,7 @@ class RMD17Dataset(StrictModule, NonTrainableState):
             raise IndexError("rMD17 sample index is out of range.")
         if np.unique(index).size != index.size:
             raise ValueError("rMD17 batch indices must be unique.")
-        count = int(index.size)
+        count = index.size
         numbers = np.broadcast_to(
             np.asarray(self.atomic_numbers)[None, :], (count, self.atom_count)
         )

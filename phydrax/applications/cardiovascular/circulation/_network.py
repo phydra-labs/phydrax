@@ -343,7 +343,7 @@ def initialize_consistent_state(
     if state_seed.shape != expected:
         raise ValueError(f"initial_state must have shape {expected}.")
     if not jnp.issubdtype(state_seed.dtype, jnp.inexact):
-        state_seed = state_seed.astype(float)
+        state_seed = state_seed.astype("float64")
     if not bool(jnp.all(jnp.isfinite(state_seed))):
         raise ValueError("initial_state must be finite.")
     differential = prepared.compilation.fixed_state_mask

@@ -394,7 +394,7 @@ def _version_evidence() -> dict[str, str]:
 
 
 def _sparse_bytes(matrix: Any) -> int:
-    return int(matrix.data.nbytes + matrix.indices.nbytes + matrix.indptr.nbytes)
+    return matrix.data.nbytes + matrix.indices.nbytes + matrix.indptr.nbytes
 
 
 __all__ = ["ScipyAdapter"]

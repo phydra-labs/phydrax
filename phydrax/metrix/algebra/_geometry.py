@@ -41,7 +41,7 @@ class _AbstractUnitCoordinateStateGeometry(AbstractStateGeometry):
         self.tolerance = tolerance_
         self.geometry_id = canonical_fingerprint(
             {
-                "kind": "unit-algebra-state-geometry-v1",
+                "kind": "unit-algebra-state-geometry",
                 "algebra": algebra.algebra_id,
                 "tolerance": tolerance_,
             }

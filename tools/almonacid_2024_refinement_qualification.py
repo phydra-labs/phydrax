@@ -77,7 +77,7 @@ def _error(value: dict, reference: dict) -> float:
 def _study(rows: list[dict]) -> dict:
     coarse_error = _error(rows[0], rows[2])
     intermediate_error = _error(rows[1], rows[2])
-    floor = np.finfo(float).tiny
+    floor = np.finfo(np.float64).tiny
     return {
         "levels": rows,
         "coarse_to_fine_error": coarse_error,

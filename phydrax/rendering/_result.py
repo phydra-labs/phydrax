@@ -42,11 +42,11 @@ class RenderEvidence(StrictModule, NonTrainableState):
         support_id: str,
         geometry_id: str,
     ):
-        self.finite = jnp.asarray(finite, dtype=bool)
-        self.coverage_complete = jnp.asarray(coverage_complete, dtype=bool)
-        self.capacity_sufficient = jnp.asarray(capacity_sufficient, dtype=bool)
-        self.visibility_exact = jnp.asarray(visibility_exact, dtype=bool)
-        self.route_stable = jnp.asarray(route_stable, dtype=bool)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
+        self.coverage_complete = jnp.asarray(coverage_complete, dtype=jnp.bool_)
+        self.capacity_sufficient = jnp.asarray(capacity_sufficient, dtype=jnp.bool_)
+        self.visibility_exact = jnp.asarray(visibility_exact, dtype=jnp.bool_)
+        self.route_stable = jnp.asarray(route_stable, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.approximation = str(approximation)
         self.plan_id = str(plan_id)

@@ -56,7 +56,7 @@ class ProteinDynamicsResult:
             states,
             state_layout=layout,
             sample_valid=trajectory.valid & trajectory.sample_mask,
-            reset_mask=jnp.zeros((trajectory.times.size - 1,), dtype=bool),
+            reset_mask=jnp.zeros((trajectory.times.size - 1,), dtype=jnp.bool_),
             coordinate_id=trajectory.units.time_unit.unit_id,
             source_id=self.artifact.artifact_id,
         )
@@ -115,7 +115,7 @@ def run_protein_dynamics(
             velocity_unit, binding.force_field.system.plan.units.velocity_unit
         )
     )
-    speed = np.asarray(velocity, dtype=float) * factor
+    speed = np.asarray(velocity, dtype=np.float64) * factor
     if speed.shape != np.asarray(binding.realized_positions).shape or not np.all(
         np.isfinite(speed)
     ):

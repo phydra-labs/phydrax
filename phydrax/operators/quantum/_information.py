@@ -36,14 +36,14 @@ def _coerce_entropy_base(base: ArrayLike, /) -> Array:
 
 def _density_eigh(value: Any, /, *, role: str) -> tuple[Array, Array]:
     density = validate_matrix_value(value, role=role)
-    if int(density.shape[0]) == 0:
+    if density.shape[0] == 0:
         raise ValueError(f"{role} must be nonempty.")
     density = density * jnp.asarray(1.0)
     adjoint = jnp.conj(density.T)
     real_dtype = jnp.real(density).dtype
     tolerance = (
         100.0
-        * int(density.shape[0])
+        * density.shape[0]
         * jnp.finfo(real_dtype).eps
         * jnp.maximum(1.0, jnp.max(jnp.abs(density)))
     )
@@ -130,8 +130,7 @@ class _StateFidelityCallable(StrictModule):
         )
         if left.shape != right.shape:
             raise ValueError(
-                "Quantum-state dimensions must match for state_fidelity; "
-                f"got {left.shape} and {right.shape}."
+                f"Quantum-state dimensions must match for state_fidelity; got {left.shape} and {right.shape}."
             )
         return jnp.abs(jnp.vdot(left, right)) ** 2
 
@@ -214,8 +213,7 @@ class _TraceDistanceCallable(StrictModule):
         )
         if left.shape != right.shape:
             raise ValueError(
-                "Density-operator dimensions must match for trace_distance; "
-                f"got {left.shape} and {right.shape}."
+                f"Density-operator dimensions must match for trace_distance; got {left.shape} and {right.shape}."
             )
         return 0.5 * jnp.sum(jnp.linalg.svd(left - right, compute_uv=False))
 

@@ -74,11 +74,11 @@ def refine_triangle_mesh(
     source_vertex_set = mesh.entity_set(0)
     target_vertex_set = refined.entity_set(0)
     source_rows = np.zeros((target_vertices.size, 2), dtype=np.int64)
-    weights = np.zeros((target_vertices.size, 2), dtype=float)
-    valid = np.zeros((target_vertices.size, 2), dtype=bool)
+    weights = np.zeros((target_vertices.size, 2), dtype=np.float64)
+    valid = np.zeros((target_vertices.size, 2), dtype=np.bool_)
     source_set = set(int(value) for value in source_vertices)
     midpoint_parent_by_id = {
-        int(midpoint): tuple(int(value) for value in parents)
+        int(midpoint): tuple(parents)
         for midpoint, parents in zip(
             np.asarray(adaptation.midpoint_vertex_ids),
             np.asarray(adaptation.midpoint_parent_vertex_ids),
@@ -128,7 +128,7 @@ def refine_triangle_mesh(
     source_cells = np.asarray(mesh.blocks[0].global_ids, dtype=np.int64)
     target_cells = np.asarray(refined.blocks[0].global_ids, dtype=np.int64)
     refined_parents = {
-        int(parent): tuple(int(value) for value in children[valid_row])
+        int(parent): tuple(children[valid_row])
         for parent, children, valid_row in zip(
             np.asarray(adaptation.parent_cell_ids),
             np.asarray(adaptation.child_cell_ids),
@@ -194,14 +194,14 @@ def project_hp_lineage(
         or lineage.target_topology_id != target.topology_id
     ):
         raise ValueError("hp lineage endpoints do not match supplied topologies.")
-    valid = np.asarray(lineage.valid, dtype=bool)
+    valid = np.asarray(lineage.valid, dtype=np.bool_)
     source_slots = np.asarray(lineage.source_slots, dtype=np.int32)[valid]
     target_slots = np.asarray(lineage.target_slots, dtype=np.int32)[valid]
     source_ids = np.asarray(source.cell_global_ids, dtype=np.int64)[source_slots]
     target_ids = np.asarray(target.cell_global_ids, dtype=np.int64)[target_slots]
     kinds = np.full(source_ids.shape, int(EntityLineageKind.PRESERVED), dtype=np.int32)
-    refinement = np.asarray(lineage.relation_mask("refinement"), dtype=bool)[valid]
-    coarsening = np.asarray(lineage.relation_mask("coarsening"), dtype=bool)[valid]
+    refinement = np.asarray(lineage.relation_mask("refinement"), dtype=np.bool_)[valid]
+    coarsening = np.asarray(lineage.relation_mask("coarsening"), dtype=np.bool_)[valid]
     kinds[refinement] = int(EntityLineageKind.REFINED_FROM)
     kinds[coarsening] = int(EntityLineageKind.COARSENED_INTO)
     dimension = reference_cell_topology(source.cell_kind).dimension

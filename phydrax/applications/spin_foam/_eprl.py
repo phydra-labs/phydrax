@@ -61,8 +61,8 @@ class EPRLVertexPlan(StrictModule):
         precision_bits: int,
         maximum_support_tuples: int,
     ):
-        spins = tuple(int(value) for value in boundary_twice_spins)
-        intertwiners = tuple(int(value) for value in boundary_twice_intertwiners)
+        spins = tuple(boundary_twice_spins)
+        intertwiners = tuple(boundary_twice_intertwiners)
         gamma = float(immirzi_parameter)
         cutoff = int(delta_l)
         strings = tuple(

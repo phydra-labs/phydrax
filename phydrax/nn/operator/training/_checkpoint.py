@@ -27,7 +27,6 @@ from ._normalization import OperatorNormalizationPolicy
 
 
 _OPERATOR_TRAINING_CHECKPOINT_FORMAT = "phydrax-operator-training-checkpoint"
-_OPERATOR_TRAINING_CHECKPOINT_VERSION = 3
 
 
 @dataclass(frozen=True)
@@ -71,7 +70,6 @@ def save_operator_training_checkpoint(
     state_name = state_path.name
     manifest = {
         "format": _OPERATOR_TRAINING_CHECKPOINT_FORMAT,
-        "version": _OPERATOR_TRAINING_CHECKPOINT_VERSION,
         "state_file": state_name,
         "state_sha256": checksum,
         "step": int(step),
@@ -95,7 +93,6 @@ def _read_operator_training_manifest(
     manifest = _read_manifest(source / "manifest.json")
     expected = {
         "format",
-        "version",
         "state_file",
         "state_sha256",
         "step",
@@ -117,10 +114,6 @@ def _read_operator_training_manifest(
         )
     if manifest["format"] != _OPERATOR_TRAINING_CHECKPOINT_FORMAT:
         raise ValueError("File is not a PhydraX operator training checkpoint.")
-    if manifest["version"] != _OPERATOR_TRAINING_CHECKPOINT_VERSION:
-        raise ValueError(
-            "Operator training checkpoint version does not match the current runtime."
-        )
     if not isinstance(manifest["metadata"], dict):
         raise ValueError("Operator training checkpoint metadata must be an object.")
     state_name = manifest["state_file"]

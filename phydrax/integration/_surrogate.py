@@ -265,7 +265,7 @@ class SmolyakSurrogateHierarchyAdapter(StrictModule):
         dimension = _smolyak_interpolant(self.surrogate).axis_labels
         if len(coordinates) != len(dimension):
             raise ValueError("input_sampler returned the wrong number of coordinates.")
-        expected = (int(sample_indices.size),)
+        expected = (sample_indices.size,)
         if any(jnp.asarray(value).shape != expected for value in coordinates):
             raise ValueError(
                 "Every sampled surrogate coordinate must have the leading sample shape."
@@ -278,7 +278,7 @@ class SmolyakSurrogateHierarchyAdapter(StrictModule):
         coordinates: tuple[Array, ...],
         /,
     ) -> FidelityBatchEvaluation:
-        count = int(coordinates[0].size)
+        count = coordinates[0].size
         started = perf_counter()
         if (
             level.level_id == self.hierarchy.levels[0].level_id
@@ -298,7 +298,7 @@ class SmolyakSurrogateHierarchyAdapter(StrictModule):
             raise ValueError("A Smolyak fidelity model must preserve the sample axis.")
         _block_arrays(values)
         elapsed = perf_counter() - started
-        cost = max(elapsed / count, jnp.finfo(float).tiny)
+        cost = max(elapsed / count, jnp.finfo(jnp.float64).tiny)
         return FidelityBatchEvaluation(
             values,
             level_id=level.level_id,

@@ -227,9 +227,9 @@ def initialize_stb(
     if positions.shape != (capacity, 3):
         raise ValueError("positions_xyz must have shape (particle_capacity, 3).")
     if not jnp.issubdtype(positions.dtype, jnp.inexact):
-        positions = positions.astype(float)
+        positions = positions.astype("float64")
     amplitudes = jnp.asarray(amplitude, dtype=positions.dtype)
-    active_ = jnp.asarray(active, dtype=bool)
+    active_ = jnp.asarray(active, dtype=jnp.bool_)
     if amplitudes.shape != (capacity,) or active_.shape != (capacity,):
         raise ValueError("amplitude and active must match particle_capacity.")
     velocities = (
@@ -502,9 +502,9 @@ def run_stb(
     if times_.shape != (images.shape[0],):
         raise ValueError("times must have one entry per image frame.")
     masks = (
-        jnp.ones(images.shape, dtype=bool)
+        jnp.ones(images.shape, dtype=jnp.bool_)
         if valid_masks is None
-        else jnp.asarray(valid_masks, dtype=bool)
+        else jnp.asarray(valid_masks, dtype=jnp.bool_)
     )
     if masks.shape != images.shape:
         raise ValueError("valid_masks must have the observed image sequence shape.")

@@ -85,8 +85,7 @@ class _FixedReactionLayout:
         extra = tuple(name for name in values if name not in self._indices)
         if missing or extra:
             raise ValueError(
-                f"{self.label} entries do not match layout; "
-                f"missing={missing}, extra={extra}."
+                f"{self.label} entries do not match layout; missing={missing}, extra={extra}."
             )
         arrays = tuple(jnp.asarray(values[name]) for name in self.names)
         return jnp.stack(jnp.broadcast_arrays(*arrays), axis=-1)
@@ -103,7 +102,7 @@ class _ExactFirstOrderGates(StrictModule, NonTrainableState):
     substrate_id: str = eqx.field(static=True)
 
     def __init__(self, indices: tuple[int, ...], /, *, substrate_id: str):
-        resolved = tuple(int(index) for index in indices)
+        resolved = tuple(indices)
         if not resolved or any(index < 0 for index in resolved):
             raise ValueError("Exact gate indices must be non-empty and nonnegative.")
         if len(set(resolved)) != len(resolved):
@@ -129,8 +128,7 @@ class _ExactFirstOrderGates(StrictModule, NonTrainableState):
         expected = values.shape[:-1] + (len(self.indices),)
         if steady.shape != expected or time_constant.shape != expected:
             raise ValueError(
-                "Exact gate steady states and time constants must have shape "
-                f"{expected}."
+                f"Exact gate steady states and time constants must have shape {expected}."
             )
         if step.shape not in ((), values.shape[:-1]):
             raise ValueError("dt_ms must be scalar or match the state batch axes.")

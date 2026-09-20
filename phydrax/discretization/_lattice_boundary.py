@@ -60,7 +60,7 @@ class LatticeBoundaryPhasePlan(StrictModule, NonTrainableState):
         values = values.astype(np.result_type(values.dtype, np.complex64), copy=False)
         if np.any(~np.isfinite(values)):
             raise ValueError("Boundary phases must be finite.")
-        periodic = np.asarray(topology.periodic, dtype=bool)
+        periodic = np.asarray(topology.periodic, dtype=np.bool_)
         if np.any(np.abs(np.abs(values[periodic]) - 1.0) > 1.0e-7):
             raise ValueError("Periodic boundary phases must have unit modulus.")
         if np.any(np.abs(values[~periodic] - 1.0) > 1.0e-7):
@@ -119,8 +119,7 @@ class LatticeBoundaryPhasePlan(StrictModule, NonTrainableState):
         field = jnp.asarray(values)
         if field.shape[: self.dimension] != self.topology.axis_sizes:
             raise ValueError(
-                "values must begin with the topology axis sizes "
-                f"{self.topology.axis_sizes}; got {field.shape}."
+                f"values must begin with the topology axis sizes {self.topology.axis_sizes}; got {field.shape}."
             )
         axis_ = _axis(axis, self.dimension)
         offset = int(displacement)
@@ -161,7 +160,7 @@ class CheckerboardEntityLayout(StrictModule, NonTrainableState):
         origin = int(origin_parity)
         if origin not in (0, 1):
             raise ValueError("origin_parity must be zero or one.")
-        active = np.asarray(topology.active_mask, dtype=bool)
+        active = np.asarray(topology.active_mask, dtype=np.bool_)
         if not np.all(active):
             raise ValueError(
                 "Checkerboard certification requires the complete tensor lattice."
@@ -179,9 +178,9 @@ class CheckerboardEntityLayout(StrictModule, NonTrainableState):
         self.even_indices = jnp.asarray(even)
         self.odd_indices = jnp.asarray(odd)
         self.origin_parity = origin
-        self.even_count = int(even.size)
-        self.odd_count = int(odd.size)
-        self.site_count = int(flat.size)
+        self.even_count = even.size
+        self.odd_count = odd.size
+        self.site_count = flat.size
         self.layout_id = canonical_fingerprint(
             {
                 "kind": "checkerboard-entity-layout",

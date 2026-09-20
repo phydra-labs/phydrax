@@ -138,8 +138,8 @@ class FuzzyThreeBodyTerm:
         coefficient: complex,
         /,
     ):
-        creators_ = tuple(int(value) for value in creators)
-        annihilators_ = tuple(int(value) for value in annihilators)
+        creators_ = tuple(creators)
+        annihilators_ = tuple(annihilators)
         coefficient_ = complex(coefficient)
         if len(creators_) != 3 or len(annihilators_) != 3:
             raise ValueError("Three-body terms require three creators and annihilators.")
@@ -266,7 +266,7 @@ class PreparedFuzzySphereManyBody(StrictModule):
 
     @property
     def dimension(self) -> int:
-        return int(self.occupations.shape[0])
+        return self.occupations.shape[0]
 
     def mv(self, vector: ArrayLike, /) -> Array:
         value = jnp.asarray(vector, dtype=self.values.dtype)
@@ -470,7 +470,7 @@ def evaluate_fuzzy_many_body_observables(
     )
     rank = {tuple(value): index for index, value in enumerate(occupations.tolist())}
     for source, occupation_array in enumerate(occupations):
-        occupation = tuple(int(value) for value in occupation_array)
+        occupation = tuple(occupation_array)
         for annihilator in range(prepared.plan.orbital_count):
             removed = _apply_annihilation(
                 occupation,
@@ -701,8 +701,8 @@ def assess_fuzzy_operator_state_correspondence(
     *,
     level_tolerance: float = 1e-6,
 ) -> FuzzyOperatorStateEvidence:
-    levels = np.sort(np.asarray(entanglement_levels, dtype=float))
-    expected = tuple(int(value) for value in expected_counting)
+    levels = np.sort(np.asarray(entanglement_levels, dtype=np.float64))
+    expected = tuple(expected_counting)
     if (
         levels.ndim != 1
         or not levels.size

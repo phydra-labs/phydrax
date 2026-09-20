@@ -224,7 +224,7 @@ class S3HarmonicBasisPlan(StrictModule, NonTrainableState):
         radius: float,
         artifact: ScientificArtifactEnvelope,
     ):
-        indices = tuple(tuple(int(value) for value in index) for index in mode_indices)
+        indices = tuple(tuple(index) for index in mode_indices)
         evaluation = jax.lax.stop_gradient(jnp.asarray(evaluation_matrix))
         gradient = jax.lax.stop_gradient(
             jnp.asarray(gradient_matrix, dtype=evaluation.dtype)

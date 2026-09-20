@@ -128,7 +128,7 @@ def test_irregular_typed_inputs_preserve_case_axes_and_physical_times():
         case_axes=("experiment",),
         case_shape=(2,),
         case_ids=("first", "second"),
-        observation_mask=jnp.zeros((2, 2, 1), dtype=bool),
+        observation_mask=jnp.zeros((2, 2, 1), dtype="bool"),
         sequence_id="typed-input-data",
     )
     prior = phx.stochastic.GaussianStatePrior(

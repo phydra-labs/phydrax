@@ -68,7 +68,7 @@ class TensorBSplineSplatAssignment(AbstractStructuredSplatAssignment):
         if len(axes) != len(layout.shape):
             raise ValueError("Assignment axes must match the target layout dimension.")
         for coordinates, axis in zip(layout.coordinates_by_axis, axes, strict=True):
-            if int(coordinates.size) < self.degree + 1:
+            if coordinates.size < self.degree + 1:
                 raise ValueError(
                     "B-spline target axes need at least degree plus one entities."
                 )
@@ -97,9 +97,7 @@ class TensorBSplineSplatAssignment(AbstractStructuredSplatAssignment):
         *,
         assignment_input: object = None,
     ) -> SplatAssignmentState:
-        self.validate_input(
-            assignment_input, int(position.shape[0]), int(position.shape[1])
-        )
+        self.validate_input(assignment_input, position.shape[0], position.shape[1])
         stencils = tuple(
             _uniform_axis_stencil(
                 self.degree,

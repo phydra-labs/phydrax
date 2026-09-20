@@ -131,14 +131,12 @@ def _physical_tangent(
         projected = jnp.asarray(geometry.project_tangent(point, candidate))
         if projected.shape != tangent_zero.shape:
             raise ValueError(
-                f"{owner} projection must preserve physical tangent shape "
-                f"{tangent_zero.shape}; got {projected.shape}."
+                f"{owner} projection must preserve physical tangent shape {tangent_zero.shape}; got {projected.shape}."
             )
         return projected
     if candidate.shape != tangent_zero.shape:
         raise ValueError(
-            f"{owner} must have physical tangent shape {tangent_zero.shape}; "
-            f"got {candidate.shape}."
+            f"{owner} must have physical tangent shape {tangent_zero.shape}; got {candidate.shape}."
         )
     return candidate
 
@@ -235,8 +233,7 @@ class SeparableHamiltonianVectorField(StrictModule):
         expected = 2 * self.configuration_dimension
         if state_array.shape[-1] != expected:
             raise ValueError(
-                f"Canonical phase state must have trailing dimension {expected}; "
-                f"got {state_array.shape[-1]}."
+                f"Canonical phase state must have trailing dimension {expected}; got {state_array.shape[-1]}."
             )
         return (
             state_array[..., : self.configuration_dimension],
@@ -267,8 +264,7 @@ def _separable_hamiltonian_vector_field(
     vector_field = term.vector_field if isinstance(term, dfx.ODETerm) else None
     if not isinstance(vector_field, SeparableHamiltonianVectorField):
         raise TypeError(
-            "StormerVerlet requires an ODETerm containing "
-            "SeparableHamiltonianVectorField."
+            "StormerVerlet requires an ODETerm containing SeparableHamiltonianVectorField."
         )
     return vector_field, direction
 

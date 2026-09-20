@@ -311,7 +311,7 @@ def test_linear_gaussian_limit_with_partial_missing_observations():
 
 
 def test_all_missing_keeps_mean_and_native_inflation_scales_covariance():
-    problem, _, _ = _case(mask=np.zeros((2, 2), dtype=bool))
+    problem, _, _ = _case(mask=np.zeros((2, 2), dtype="bool"))
     state = initialize_ensemble_filter(
         jax.random.key(8), problem, ensemble_size=10, inflation=1.2
     )

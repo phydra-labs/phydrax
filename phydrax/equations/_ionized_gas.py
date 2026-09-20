@@ -88,8 +88,7 @@ class IonizedMixtureThermodynamicsPlan(StrictModule, NonTrainableState):
             or tolerance <= 0.0
         ):
             raise ValueError(
-                "Ionized thermodynamics requires a negative electron species and "
-                "pressure-bearing ideal electron mode."
+                "Ionized thermodynamics requires a negative electron species and pressure-bearing ideal electron mode."
             )
         active = np.asarray(
             base.modes.modes[mode_index].characteristic_temperatures > 0.0

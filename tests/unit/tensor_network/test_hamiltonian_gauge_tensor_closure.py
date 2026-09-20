@@ -20,7 +20,9 @@ def test_fusion_mps_and_projector_mpo_match_dense_sector():
     projector = build_gauge_projector_mpo(basis)
     dense_state = state.state.to_dense()
     expected_state = (
-        jnp.zeros((9,), dtype=complex).at[jnp.asarray((2, 4, 6))].set(1.0 / jnp.sqrt(3.0))
+        jnp.zeros((9,), dtype="complex128")
+        .at[jnp.asarray((2, 4, 6))]
+        .set(1.0 / jnp.sqrt(3.0))
     )
     assert state.evidence.valid
     assert projector.evidence.valid

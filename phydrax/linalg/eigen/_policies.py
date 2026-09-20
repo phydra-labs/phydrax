@@ -139,8 +139,7 @@ class EigenResourcePolicy(StrictModule):
         preconditioner_applies: int = 1_000_000,
     ):
         values = tuple(
-            int(value)
-            for value in (
+            (
                 preparation_bytes,
                 workspace_bytes,
                 krylov_basis_bytes,

@@ -50,7 +50,7 @@ LennardJonesCombiningRule: TypeAlias = Literal[
 
 
 def _parameters(name: str, value: ArrayLike, /, *, positive: bool = False) -> Array:
-    host = np.asarray(value, dtype=float)
+    host = np.asarray(value, dtype=np.float64)
     if host.ndim != 1 or host.size == 0 or np.any(~np.isfinite(host)):
         raise ValueError(f"{name} must be a non-empty finite vector.")
     if positive and np.any(host <= 0.0):
@@ -158,7 +158,7 @@ class PreparedHarmonicBondPotential(AbstractPreparedAtomisticEnergyTerm):
 
     def energy(self, context: AtomisticPotentialContext, /) -> AtomisticTermEvaluation:
         indices = self.system.topology.bond_indices
-        count = int(indices.shape[0])
+        count = indices.shape[0]
         if count == 0:
             zero = jnp.zeros((), dtype=context.positions.dtype)
             return AtomisticTermEvaluation(
@@ -273,7 +273,7 @@ class PreparedFiniteExtensibleNonlinearElasticBondPotential(
 
     def energy(self, context: AtomisticPotentialContext, /) -> AtomisticTermEvaluation:
         indices = self.system.topology.bond_indices
-        count = int(indices.shape[0])
+        count = indices.shape[0]
         if count == 0:
             zero = jnp.zeros((), dtype=context.positions.dtype)
             return AtomisticTermEvaluation(
@@ -392,7 +392,7 @@ class PreparedHarmonicAnglePotential(AbstractPreparedAtomisticEnergyTerm):
 
     def energy(self, context: AtomisticPotentialContext, /) -> AtomisticTermEvaluation:
         indices = self.system.topology.angle_indices
-        count = int(indices.shape[0])
+        count = indices.shape[0]
         if count == 0:
             zero = jnp.zeros((), dtype=context.positions.dtype)
             return AtomisticTermEvaluation(
@@ -420,8 +420,8 @@ class PreparedHarmonicAnglePotential(AbstractPreparedAtomisticEnergyTerm):
             raw_right,
             jnp.asarray([0.0, 1.0, 0.0], dtype=raw_right.dtype),
         )
-        left_norm = _safe_norm(left)
-        right_norm = _safe_norm(right)
+        _safe_norm(left)
+        _safe_norm(right)
         cross_norm = _safe_norm(jnp.cross(left, right))
         dot = jnp.sum(left * right, axis=-1)
         angle = jnp.arctan2(cross_norm, dot)
@@ -552,7 +552,7 @@ class PreparedPeriodicTorsionPotential(AbstractPreparedAtomisticEnergyTerm):
             if self.plan.improper
             else self.system.topology.torsion_type_ids
         )
-        count = int(indices.shape[0])
+        count = indices.shape[0]
         if count == 0:
             zero = jnp.zeros((), dtype=context.positions.dtype)
             return AtomisticTermEvaluation(
@@ -597,8 +597,8 @@ class PreparedPeriodicTorsionPotential(AbstractPreparedAtomisticEnergyTerm):
         safe_b1 = jnp.where(b1_norm[:, None] > 0.0, b1 / b1_norm[:, None], 0.0)
         v = b0 - contract("ni,ni->n", b0, safe_b1)[:, None] * safe_b1
         w = b2 - contract("ni,ni->n", b2, safe_b1)[:, None] * safe_b1
-        v_norm = _safe_norm(v)
-        w_norm = _safe_norm(w)
+        _safe_norm(v)
+        _safe_norm(w)
         x = contract("ni,ni->n", v, w)
         y = contract("ni,ni->n", jnp.cross(safe_b1, v), w)
         angle = jnp.arctan2(y, x)
@@ -688,8 +688,8 @@ class LennardJonesPotential(AbstractAtomisticEnergyTerm, NonTrainableState):
                 raise ValueError(
                     "Explicit combining requires epsilon and sigma matrices."
                 )
-            explicit_epsilon_host = np.asarray(explicit_epsilon, dtype=float)
-            explicit_sigma_host = np.asarray(explicit_sigma, dtype=float)
+            explicit_epsilon_host = np.asarray(explicit_epsilon, dtype=np.float64)
+            explicit_sigma_host = np.asarray(explicit_sigma, dtype=np.float64)
             expected = (epsilon_.size, epsilon_.size)
             if (
                 explicit_epsilon_host.shape != expected
@@ -808,7 +808,7 @@ class PreparedLennardJonesPotential(AbstractPreparedAtomisticEnergyTerm):
     def energy(self, context: AtomisticPotentialContext, /) -> AtomisticTermEvaluation:
         raw_left_type = context.species[context.pair_left]
         raw_right_type = context.species[context.pair_right]
-        type_count = int(self.plan.epsilon.size)
+        type_count = self.plan.epsilon.size
         valid_types = (
             (raw_left_type >= 0)
             & (raw_left_type < type_count)

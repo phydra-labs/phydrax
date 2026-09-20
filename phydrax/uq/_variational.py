@@ -40,7 +40,7 @@ _FINAL_SAMPLING_TAG = 1
 
 
 def _tree_nbytes(tree: Any, /) -> int:
-    return sum(int(leaf.nbytes) for leaf in jax.tree.leaves(tree) if eqx.is_array(leaf))
+    return sum(leaf.nbytes for leaf in jax.tree.leaves(tree) if eqx.is_array(leaf))
 
 
 def _tree_all_finite(tree: Any, /) -> Array:
@@ -153,7 +153,7 @@ class MeanFieldGaussianFamily(AbstractVariationalFamily):
         *,
         sample_shape: tuple[int, ...] = (),
     ) -> tuple[PyTree[Array], Array]:
-        shape = tuple(int(size) for size in sample_shape)
+        shape = tuple(sample_shape)
         if any(size <= 0 for size in shape):
             raise ValueError("sample_shape dimensions must be positive.")
         locations, treedef = jax.tree.flatten(self.location)
@@ -287,7 +287,7 @@ class VariationalResult(StrictModule):
 
     @property
     def num_draws(self) -> int:
-        return int(self.log_target.shape[0])
+        return self.log_target.shape[0]
 
     def predict(
         self,
@@ -349,7 +349,7 @@ def _write_variational_checkpoint(
         "recorded_steps": jnp.asarray(recorded_steps, dtype=jnp.int32),
         "elbo_history": jnp.asarray(elbo_history),
         "gradient_history": jnp.asarray(gradient_history),
-        "finite_history": jnp.asarray(finite_history, dtype=bool),
+        "finite_history": jnp.asarray(finite_history, dtype=jnp.bool_),
     }
     state = {
         "completed_steps": int(completed),
@@ -396,7 +396,7 @@ def _read_variational_checkpoint(
     recorded_steps = jnp.asarray(arrays["recorded_steps"], dtype=jnp.int32)
     elbo_history = jnp.asarray(arrays["elbo_history"])
     gradient_history = jnp.asarray(arrays["gradient_history"])
-    finite_history = jnp.asarray(arrays["finite_history"], dtype=bool)
+    finite_history = jnp.asarray(arrays["finite_history"], dtype=jnp.bool_)
     if not (
         recorded_steps.ndim == 1
         and elbo_history.shape == recorded_steps.shape
@@ -608,7 +608,7 @@ def fit_variational(
         steps=jnp.asarray(recorded_steps, dtype=jnp.int32),
         elbo=jnp.asarray(elbo_history),
         gradient_norm=jnp.asarray(gradient_history),
-        finite=jnp.asarray(finite_history, dtype=bool),
+        finite=jnp.asarray(finite_history, dtype=jnp.bool_),
         completed_steps=completed,
     )
     duration = previous_duration + perf_counter() - started
@@ -628,8 +628,8 @@ def fit_variational(
         sample_memory_bytes=(
             _tree_nbytes(samples)
             + _tree_nbytes(unconstrained_samples)
-            + int(log_target.nbytes)
-            + int(log_variational.nbytes)
+            + log_target.nbytes
+            + log_variational.nbytes
         ),
         family_memory_bytes=_tree_nbytes(fitted_family),
         approximation_id=f"reverse-kl/{fitted_family.family_id}",

@@ -32,10 +32,10 @@ def _parser() -> argparse.ArgumentParser:
 
 
 def _problem(size: int, dimension: int):
-    indices = jnp.arange(size * dimension, dtype=float)
+    indices = jnp.arange(size * dimension, dtype="float64")
     source_points = jnp.reshape(jnp.sin(0.013 * indices), (size, dimension))
     target_points = jnp.reshape(jnp.cos(0.017 * indices), (size, dimension))
-    weights = cx.Field(jnp.ones((size,), dtype=float), dims=("atom",))
+    weights = cx.Field(jnp.ones((size,), dtype="float64"), dims=("atom",))
     source = phx.integration.discrete(
         source_points,
         weights,
@@ -92,7 +92,7 @@ def _record(
     steady_ms = 1e3 * (time.perf_counter() - started) / repeats
 
     payload = jnp.reshape(
-        jnp.sin(jnp.arange(size * 4, dtype=float)),
+        jnp.sin(jnp.arange(size * 4, dtype="float64")),
         (size, 4),
     )
     apply = eqx.filter_jit(lambda solved, values: solved.apply_source_to_target(values))
@@ -105,7 +105,7 @@ def _record(
     plan_action_ms = 1e3 * (time.perf_counter() - started) / repeats
 
     def scalar(points):
-        weights = cx.Field(jnp.ones((size,), dtype=float), dims=("atom",))
+        weights = cx.Field(jnp.ones((size,), dtype="float64"), dims=("atom",))
         source = phx.integration.discrete(
             points,
             weights,

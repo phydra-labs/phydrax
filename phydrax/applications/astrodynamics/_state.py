@@ -38,8 +38,8 @@ class CartesianOrbitState(StrictModule):
                 "Cartesian orbit position and velocity must have shape (3,)."
             )
         if not jnp.issubdtype(position_.dtype, jnp.inexact):
-            position_ = position_.astype(float)
-            velocity_ = velocity_.astype(float)
+            position_ = position_.astype("float64")
+            velocity_ = velocity_.astype("float64")
         position_ = eqx.error_if(
             position_,
             ~jnp.all(jnp.isfinite(position_)) | ~jnp.all(jnp.isfinite(velocity_)),
@@ -78,7 +78,7 @@ class CartesianOrbitTrajectory(StrictModule, NonTrainableState):
             raise TypeError("context must be an AstrodynamicsContext.")
         times_ = jnp.asarray(times)
         states_ = jnp.asarray(states)
-        valid_ = jnp.asarray(valid, dtype=bool)
+        valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         status_ = jnp.asarray(status, dtype=jnp.int32)
         if times_.ndim != 1 or states_.shape != (times_.shape[0], 6):
             raise ValueError("Trajectory states must have shape (num_times, 6).")
@@ -93,7 +93,7 @@ class CartesianOrbitTrajectory(StrictModule, NonTrainableState):
             {
                 "kind": "cartesian-orbit-trajectory",
                 "context": context.context_id,
-                "num_times": int(times_.shape[0]),
+                "num_times": times_.shape[0],
             }
         )
         self.trajectory_id = generated if trajectory_id is None else str(trajectory_id)

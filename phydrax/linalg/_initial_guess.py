@@ -379,7 +379,7 @@ class LinearSolveHistory(StrictModule):
         solution_coordinates = jax.lax.stop_gradient(self.source.flatten(solution_))
         image_coordinates = jax.lax.stop_gradient(self.target.flatten(image))
         time_ = jnp.asarray(jnp.nan if time is None else time, dtype=self.times.dtype)
-        accepted_ = jnp.asarray(accepted, dtype=bool)
+        accepted_ = jnp.asarray(accepted, dtype=jnp.bool_)
         if accepted_.shape != () or time_.shape != ():
             raise ValueError("History acceptance/time must be scalar.")
 
@@ -491,7 +491,7 @@ def solve_with_history(
         control=control,
         iteration=iteration,
     )
-    accepted_ = jnp.asarray(accepted, dtype=bool) & result.successful
+    accepted_ = jnp.asarray(accepted, dtype=jnp.bool_) & result.successful
     updated = history.update(
         operator,
         result.value,

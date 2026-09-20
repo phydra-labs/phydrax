@@ -43,7 +43,7 @@ def _particle_indices(
         for index, particle_id in enumerate(np.asarray(system.particle_ids))
         if bool(np.asarray(system.active_mask)[index])
     }
-    requested = tuple(int(value) for value in particle_ids)
+    requested = tuple(particle_ids)
     if any(value not in available for value in requested):
         raise ValueError("Constraint references an inactive or unknown particle ID.")
     return tuple(available[value] for value in requested)
@@ -187,9 +187,7 @@ class MolecularConstraintSetPlan(StrictModule, NonTrainableState):
         *,
         physical: bool = True,
     ) -> MolecularConstraintSetPlan:
-        triplets = tuple(
-            tuple(int(value) for value in entry) for entry in particle_id_triplets
-        )
+        triplets = tuple(tuple(entry) for entry in particle_id_triplets)
         targets_ = np.asarray(tuple(float(value) for value in targets))
         if not triplets or targets_.shape != (len(triplets),):
             raise ValueError("Angle triplets and targets must be non-empty and aligned.")
@@ -232,9 +230,7 @@ class MolecularConstraintSetPlan(StrictModule, NonTrainableState):
         *,
         physical: bool = True,
     ) -> MolecularConstraintSetPlan:
-        quartets = tuple(
-            tuple(int(value) for value in entry) for entry in particle_id_quartets
-        )
+        quartets = tuple(tuple(entry) for entry in particle_id_quartets)
         targets_ = np.asarray(tuple(float(value) for value in targets))
         if not quartets or targets_.shape != (len(quartets),):
             raise ValueError(
@@ -336,7 +332,7 @@ class ConstrainedVibrationalAnalysisResult(StrictModule, NonTrainableState):
             rigid_tangent_residual,
             dtype=dtype,
         ).reshape(())
-        successful_ = jnp.asarray(successful, dtype=bool).reshape(())
+        successful_ = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.vibration = vibration
         self.constraint_residual = constraint_residual_
         self.tangent_gradient_residual = tangent_residual
@@ -433,7 +429,7 @@ class ConstrainedVibrationalAnalysisPlan(StrictModule, NonTrainableState):
         if not isinstance(hessian, MolecularHessianResult):
             raise TypeError("hessian must be MolecularHessianResult.")
         _require_structure_matches_system(structure, self.system)
-        active = np.asarray(self.system.active_mask, dtype=bool)
+        active = np.asarray(self.system.active_mask, dtype=np.bool_)
         indices = np.flatnonzero(active)
         positions = jnp.asarray(structure.positions)
         force = np.asarray(forces)
@@ -540,7 +536,7 @@ class ConstrainedVibrationalAnalysisPlan(StrictModule, NonTrainableState):
         rigid_rank = int(np.count_nonzero(singular > rigid_coordinate_threshold))
         internal_basis = tangent @ left[:, rigid_rank:]
         reduced = internal_basis.T @ mass_hessian @ internal_basis
-        count = int(reduced.shape[0])
+        count = reduced.shape[0]
         if count:
             solve = eigensolve(
                 Eigenproblem(

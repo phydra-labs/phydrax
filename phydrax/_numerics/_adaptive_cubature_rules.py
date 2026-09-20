@@ -74,10 +74,10 @@ class AdaptiveCubatureRuleData(StrictModule, NonTrainableState):
         source_id: str,
         maximum_rule_bytes: int = _DEFAULT_MAXIMUM_BYTES,
     ):
-        points_host = np.asarray(points, dtype=float)
-        weights_host = np.asarray(weights, dtype=float).reshape((-1,))
-        embedded_host = np.asarray(embedded_weights, dtype=float).reshape((-1,))
-        split_host = np.asarray(split_weights, dtype=float)
+        points_host = np.asarray(points, dtype=np.float64)
+        weights_host = np.asarray(weights, dtype=np.float64).reshape((-1,))
+        embedded_host = np.asarray(embedded_weights, dtype=np.float64).reshape((-1,))
+        split_host = np.asarray(split_weights, dtype=np.float64)
         if points_host.ndim != 2 or points_host.shape[0] < 1 or points_host.shape[1] < 1:
             raise ValueError(
                 "Adaptive cubature points must have shape (num_points, dimension)."
@@ -106,14 +106,14 @@ class AdaptiveCubatureRuleData(StrictModule, NonTrainableState):
         order = np.lexsort(
             tuple(points_host[:, axis] for axis in range(dimension - 1, -1, -1))
         )
-        points_host = np.asarray(points_host[order], dtype=float)
-        weights_host = np.asarray(weights_host[order], dtype=float)
-        embedded_host = np.asarray(embedded_host[order], dtype=float)
-        split_host = np.asarray(split_host[:, order], dtype=float)
+        points_host = np.asarray(points_host[order], dtype=np.float64)
+        weights_host = np.asarray(weights_host[order], dtype=np.float64)
+        embedded_host = np.asarray(embedded_host[order], dtype=np.float64)
+        split_host = np.asarray(split_host[:, order], dtype=np.float64)
         if num_points > 1 and np.any(np.all(points_host[1:] == points_host[:-1], axis=1)):
             raise ValueError("Adaptive cubature points must be unique.")
 
-        tolerance = 2048.0 * np.finfo(float).eps * max(1, num_points)
+        tolerance = 2048.0 * np.finfo(np.float64).eps * max(1, num_points)
         mass = float(2**dimension)
         if not np.isclose(np.sum(weights_host), mass, rtol=tolerance, atol=tolerance):
             raise ValueError("High cubature weights do not integrate the cube mass.")
@@ -137,8 +137,7 @@ class AdaptiveCubatureRuleData(StrictModule, NonTrainableState):
         )
         if storage_bytes > maximum_bytes:
             raise ValueError(
-                "Adaptive cubature rule requires "
-                f"{storage_bytes} bytes, exceeding maximum_rule_bytes={maximum_bytes}."
+                f"Adaptive cubature rule requires {storage_bytes} bytes, exceeding maximum_rule_bytes={maximum_bytes}."
             )
 
         self.points = jnp.asarray(points_host)
@@ -172,7 +171,7 @@ class AdaptiveCubatureRuleData(StrictModule, NonTrainableState):
 
     @property
     def num_points(self) -> int:
-        return int(self.points.shape[0])
+        return self.points.shape[0]
 
 
 class _GenzMalikHostTable(NamedTuple):
@@ -410,7 +409,7 @@ def _fs_orbit(generators: list[float], dimension: int) -> np.ndarray:
             )
             for choice in signs
         )
-    return np.asarray(sorted(points), dtype=float).reshape((-1, dimension))
+    return np.asarray(sorted(points), dtype=np.float64).reshape((-1, dimension))
 
 
 def _fs_orbit_squares(
@@ -450,7 +449,7 @@ def _genz_malik_host_table(dimension: int, degree: int) -> _GenzMalikHostTable:
             "The Genz--Malik generators do not satisfy their exact moment equations."
         )
 
-    sizes = np.asarray([len(orbit) for orbit in orbits], dtype=int)
+    sizes = np.asarray([len(orbit) for orbit in orbits], dtype=np.int64)
     points = np.concatenate(orbits, axis=0)
     weights = np.repeat(
         np.asarray([float(weight) for weight in high_orbit_weights]), sizes
@@ -462,13 +461,13 @@ def _genz_malik_host_table(dimension: int, degree: int) -> _GenzMalikHostTable:
 
     index = {tuple(map(float, point)): position for position, point in enumerate(points)}
     ratio = float(squares[2] / squares[1])
-    split_weights = np.zeros((dimension, len(points)), dtype=float)
-    center = np.zeros((dimension,), dtype=float)
+    split_weights = np.zeros((dimension, len(points)), dtype=np.float64)
+    center = np.zeros((dimension,), dtype=np.float64)
     for axis in range(dimension):
         split_weights[axis, index[tuple(center)]] = -2.0 * (1.0 - ratio)
         for sign in (1.0, -1.0):
             for generator_index, weight in ((2, 1.0), (1, -ratio)):
-                node = np.zeros((dimension,), dtype=float)
+                node = np.zeros((dimension,), dtype=np.float64)
                 node[axis] = sign * generators[generator_index]
                 split_weights[axis, index[tuple(node)]] = weight
 
@@ -498,7 +497,7 @@ def genz_malik_rule_data(
             f"Genz--Malik degree {degree_} in dimension {dimension_} requires "
             f"{count} points, exceeding maximum_points={maximum_points_}."
         )
-    required_bytes = count * (2 * dimension_ + 2) * np.dtype(float).itemsize
+    required_bytes = count * (2 * dimension_ + 2) * np.dtype(np.float64).itemsize
     if required_bytes > maximum_bytes:
         raise ValueError(
             f"Genz--Malik degree {degree_} in dimension {dimension_} requires "
@@ -545,23 +544,23 @@ def tensor_product_cubature_rule_data(
                 f"Tensor cubature axis {axis} does not carry embedded weights."
             )
     dimension = len(rules)
-    counts = tuple(int(rule.nodes.shape[0]) for rule in rules)
+    counts = tuple(rule.nodes.shape[0] for rule in rules)
     count = math.prod(counts)
     if count > maximum_points_:
         raise ValueError(
-            f"Tensor cubature requires {count} points, exceeding "
-            f"maximum_points={maximum_points_}."
+            f"Tensor cubature requires {count} points, exceeding maximum_points={maximum_points_}."
         )
-    required_bytes = count * (2 * dimension + 2) * np.dtype(float).itemsize
+    required_bytes = count * (2 * dimension + 2) * np.dtype(np.float64).itemsize
     if required_bytes > maximum_bytes:
         raise ValueError(
-            f"Tensor cubature requires {required_bytes} bytes, exceeding "
-            f"maximum_rule_bytes={maximum_bytes}."
+            f"Tensor cubature requires {required_bytes} bytes, exceeding maximum_rule_bytes={maximum_bytes}."
         )
 
-    nodes = tuple(np.asarray(rule.nodes, dtype=float) for rule in rules)
-    high = tuple(np.asarray(rule.weights, dtype=float) for rule in rules)
-    embedded = tuple(np.asarray(rule.embedded_weights, dtype=float) for rule in rules)
+    nodes = tuple(np.asarray(rule.nodes, dtype=np.float64) for rule in rules)
+    high = tuple(np.asarray(rule.weights, dtype=np.float64) for rule in rules)
+    embedded = tuple(
+        np.asarray(rule.embedded_weights, dtype=np.float64) for rule in rules
+    )
     points = np.stack(np.meshgrid(*nodes, indexing="ij"), axis=-1).reshape(
         (-1, dimension)
     )

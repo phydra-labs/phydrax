@@ -16,7 +16,7 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._interpolation import apply_gather_stencil, rectilinear_stencil
 from .._physical import RelativityScaleContract
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..units import UnitDefinition
 
@@ -152,8 +152,8 @@ class RelativisticEOSTableEvidence(StrictModule, NonTrainableState):
 class AbstractRelativisticEOS(StrictModule, NonTrainableState):
     """Immutable relativistic EOS evaluated in one explicit physical scale."""
 
-    scale: AbstractAttribute[RelativityScaleContract]
-    eos_id: AbstractAttribute[str]
+    scale: eqx.AbstractVar[RelativityScaleContract]
+    eos_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def evaluate(
@@ -307,7 +307,7 @@ def _broadcast_state_inputs(
 
 def _upper_violation(value: Array, upper: float | None, /) -> Array:
     if upper is None:
-        return jnp.zeros_like(value, dtype=bool)
+        return jnp.zeros_like(value, dtype=jnp.bool_)
     return value > jnp.asarray(upper, dtype=value.dtype)
 
 
@@ -413,7 +413,7 @@ def _domain_evidence(
 
 
 def _finite_outputs(*values: Array) -> Array:
-    result = jnp.ones_like(values[0], dtype=bool)
+    result = jnp.ones_like(values[0], dtype=jnp.bool_)
     for value in values:
         result = result & jnp.isfinite(value)
     return result
@@ -557,8 +557,8 @@ class GammaLawEOS(AbstractRelativisticEOS):
             (pressure >= 0.0) & (enthalpy > 0.0) & (sound_speed_squared >= 0.0)
         )
         causal = sound_speed_squared <= light_speed_squared
-        false = jnp.zeros_like(density, dtype=bool)
-        true = jnp.ones_like(density, dtype=bool)
+        false = jnp.zeros_like(density, dtype=jnp.bool_)
+        true = jnp.ones_like(density, dtype=jnp.bool_)
         evidence = _domain_evidence(
             input_finite=input_finite,
             output_finite=output_finite,
@@ -637,12 +637,11 @@ class PiecewisePolytropicEOS(AbstractRelativisticEOS):
     ):
         if not isinstance(scale, RelativityScaleContract):
             raise TypeError("scale must be a RelativityScaleContract.")
-        breaks = np.asarray(density_breaks, dtype=float)
-        gammas = np.asarray(adiabatic_indices, dtype=float)
+        breaks = np.asarray(density_breaks, dtype=np.float64)
+        gammas = np.asarray(adiabatic_indices, dtype=np.float64)
         if breaks.ndim != 1 or gammas.shape != (breaks.size + 1,):
             raise ValueError(
-                "adiabatic_indices must contain exactly one more entry than "
-                "the rank-one density_breaks array."
+                "adiabatic_indices must contain exactly one more entry than the rank-one density_breaks array."
             )
         if (
             np.any(~np.isfinite(breaks))
@@ -667,8 +666,7 @@ class PiecewisePolytropicEOS(AbstractRelativisticEOS):
             or density_lower < 0.0
         ):
             raise ValueError(
-                "Initial energy offset and minimum_density must be finite and "
-                "non-negative."
+                "Initial energy offset and minimum_density must be finite and non-negative."
             )
         density_upper = _optional_upper_bound(
             maximum_density, density_lower, "maximum_density"
@@ -721,8 +719,7 @@ class PiecewisePolytropicEOS(AbstractRelativisticEOS):
                     or sound_speed_squared > light_speed_squared
                 ):
                     raise ValueError(
-                        "Piecewise-polytropic parameters are unstable or acausal "
-                        "on the declared density domain."
+                        "Piecewise-polytropic parameters are unstable or acausal on the declared density domain."
                     )
         source = _declared_text(provenance, "provenance")
         self.scale = scale
@@ -816,7 +813,7 @@ class PiecewisePolytropicEOS(AbstractRelativisticEOS):
             branch_derivative_valid,
         ) = self._cold_values(density)
         input_finite = jnp.isfinite(density)
-        cold_constraint = jnp.ones_like(density, dtype=bool)
+        cold_constraint = jnp.ones_like(density, dtype=jnp.bool_)
         if supplied is not None:
             expected = energy if supplied_kind == "energy" else pressure
             scale = jnp.maximum(1.0, jnp.abs(expected))
@@ -851,8 +848,8 @@ class PiecewisePolytropicEOS(AbstractRelativisticEOS):
             & (sound_speed_squared >= 0.0)
         )
         causal = sound_speed_squared <= light_speed_squared
-        false = jnp.zeros_like(density, dtype=bool)
-        true = jnp.ones_like(density, dtype=bool)
+        false = jnp.zeros_like(density, dtype=jnp.bool_)
+        true = jnp.ones_like(density, dtype=jnp.bool_)
         evidence = _domain_evidence(
             input_finite=input_finite,
             output_finite=output_finite,
@@ -1035,8 +1032,8 @@ class HybridColdThermalEOS(AbstractRelativisticEOS):
             & (sound_speed_squared >= 0.0)
         )
         causal = sound_speed_squared <= light_speed_squared
-        false = jnp.zeros_like(density, dtype=bool)
-        true = jnp.ones_like(density, dtype=bool)
+        false = jnp.zeros_like(density, dtype=jnp.bool_)
+        true = jnp.ones_like(density, dtype=jnp.bool_)
         evidence = _domain_evidence(
             input_finite=input_finite,
             output_finite=output_finite,
@@ -1134,9 +1131,9 @@ class TabulatedFiniteTemperatureEOS(AbstractRelativisticEOS):
     ):
         if not isinstance(scale, RelativityScaleContract):
             raise TypeError("scale must be a RelativityScaleContract.")
-        density = np.asarray(density_nodes, dtype=float)
-        temperature = np.asarray(temperature_nodes, dtype=float)
-        composition = np.asarray(composition_nodes, dtype=float)
+        density = np.asarray(density_nodes, dtype=np.float64)
+        temperature = np.asarray(temperature_nodes, dtype=np.float64)
+        composition = np.asarray(composition_nodes, dtype=np.float64)
         axes = (density, temperature, composition)
         if any(axis.ndim != 1 or axis.size < 2 for axis in axes):
             raise ValueError(
@@ -1150,8 +1147,8 @@ class TabulatedFiniteTemperatureEOS(AbstractRelativisticEOS):
             raise ValueError("Density and temperature nodes must be strictly positive.")
         if composition[0] < 0.0 or composition[-1] > 1.0:
             raise ValueError("Composition nodes must lie in the closed interval [0, 1].")
-        pressure_values = np.asarray(pressure, dtype=float)
-        energy_values = np.asarray(specific_internal_energy, dtype=float)
+        pressure_values = np.asarray(pressure, dtype=np.float64)
+        energy_values = np.asarray(specific_internal_energy, dtype=np.float64)
         expected_shape = (density.size, temperature.size, composition.size)
         if (
             pressure_values.shape != expected_shape
@@ -1289,8 +1286,7 @@ class TabulatedFiniteTemperatureEOS(AbstractRelativisticEOS):
                     )
                     if not np.isfinite(heat_capacity_lower) or heat_capacity_lower <= 0.0:
                         raise ValueError(
-                            "Tabulated specific energy must have finite positive "
-                            "heat capacity."
+                            "Tabulated specific energy must have finite positive heat capacity."
                         )
                     if (
                         not np.isfinite(adiabatic_lower)
@@ -1507,7 +1503,7 @@ class TabulatedFiniteTemperatureEOS(AbstractRelativisticEOS):
             total_energy_density,
             enthalpy,
         )
-        true = jnp.ones_like(density, dtype=bool)
+        true = jnp.ones_like(density, dtype=jnp.bool_)
         evidence = _domain_evidence(
             input_finite=input_finite,
             output_finite=output_finite,
@@ -1584,7 +1580,7 @@ class TabulatedFiniteTemperatureEOS(AbstractRelativisticEOS):
             thermal_above=thermal_above,
             composition_below=composition_below,
             composition_above=composition_above,
-            converged=jnp.ones_like(density, dtype=bool),
+            converged=jnp.ones_like(density, dtype=jnp.bool_),
             branch_derivative_valid=branch_valid,
             expose_temperature=input_finite & within_domain,
         )
@@ -1596,7 +1592,7 @@ class TabulatedFiniteTemperatureEOS(AbstractRelativisticEOS):
         field_index: int,
         /,
     ) -> Array:
-        shape = density.shape + (int(self.temperature_nodes.size),)
+        shape = density.shape + (self.temperature_nodes.size,)
         density_grid = jnp.broadcast_to(density[..., None], shape)
         temperature_grid = jnp.broadcast_to(self.temperature_nodes, shape)
         composition_grid = jnp.broadcast_to(composition[..., None], shape)

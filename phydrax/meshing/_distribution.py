@@ -210,7 +210,9 @@ class MeshDistribution(StrictModule, NonTrainableState):
         native_rows = {int(value): row for row, value in enumerate(native)}
         halo_rows: list[np.ndarray] = []
         normalized_halos: list[np.ndarray] = []
-        dependencies = np.zeros((partition.part_count, partition.part_count), dtype=bool)
+        dependencies = np.zeros(
+            (partition.part_count, partition.part_count), dtype=np.bool_
+        )
         for rank, halo in enumerate(halos):
             if (
                 halo.ndim != 1

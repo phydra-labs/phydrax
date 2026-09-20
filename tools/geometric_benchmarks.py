@@ -20,7 +20,7 @@ from benchmarks._runtime import synchronize
 
 def _output_bytes(tree: Any) -> int:
     return sum(
-        int(leaf.size * leaf.dtype.itemsize)
+        leaf.size * leaf.dtype.itemsize
         for leaf in jax.tree.leaves(tree)
         if isinstance(leaf, jax.Array)
     )
@@ -250,7 +250,7 @@ def _csg_setup(grid_size: int):
     target_training_field = target.boundary_field(training_points)
 
     boundary_count = max(64, 4 * grid_size)
-    index = jnp.arange(boundary_count, dtype=float)
+    index = jnp.arange(boundary_count, dtype="float64")
     z = 1.0 - 2.0 * (index + 0.5) / boundary_count
     angle = jnp.pi * (3.0 - jnp.sqrt(5.0)) * index
     radius = jnp.sqrt(jnp.maximum(1.0 - z**2, 0.0))
@@ -569,7 +569,7 @@ def run_csg_continuation(
         )
     }
     return {
-        "schema": "phydrax.csg-continuation.v1",
+        "schema": "phydrax.csg-continuation",
         "jax_version": jax.__version__,
         "backend": jax.default_backend(),
         "steps": steps,

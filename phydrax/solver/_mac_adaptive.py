@@ -278,7 +278,7 @@ class MACAcceptedGridTrace(StrictModule):
 
     @property
     def capacity(self) -> int:
-        return int(self.step_sizes.size)
+        return self.step_sizes.size
 
 
 class MACAdaptiveAttemptJournal(StrictModule):
@@ -422,7 +422,7 @@ class MACAdaptiveRolloutPlan(StrictModule, NonTrainableState):
             retry_count=jnp.asarray(0, dtype=jnp.int32),
             grid_times=times,
             grid_step_sizes=jnp.zeros((self.policy.maximum_steps,), dtype=state.dtype),
-            grid_valid_steps=jnp.zeros((self.policy.maximum_steps,), dtype=bool),
+            grid_valid_steps=jnp.zeros((self.policy.maximum_steps,), dtype=jnp.bool_),
             output_cursor=jnp.asarray(0, dtype=jnp.int32),
             forcing_state=forcing,
             dynamics_id=self.dynamics.compilation_id,
@@ -560,7 +560,7 @@ class MACAdaptiveRolloutPlan(StrictModule, NonTrainableState):
         )
         times = jnp.full((policy.maximum_steps + 1,), time0, dtype=state0.dtype)
         steps = jnp.zeros((policy.maximum_steps,), dtype=state0.dtype)
-        valid_steps = jnp.zeros((policy.maximum_steps,), dtype=bool)
+        valid_steps = jnp.zeros((policy.maximum_steps,), dtype=jnp.bool_)
         initial_status = jnp.where(
             initial_valid,
             int(MACAdaptiveStatus.ATTEMPT_CAPACITY_REACHED),

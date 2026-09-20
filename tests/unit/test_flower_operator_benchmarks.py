@@ -5,15 +5,15 @@ import jax.numpy as jnp
 
 import phydrax as phx
 from tools.operator_benchmarks.models import compatible_architectures
+from tools.operator_benchmarks.protocol import (
+    scenario_checksum,
+    standard_operator_benchmark_ladders,
+)
 from tools.operator_benchmarks.scenarios import (
     add_sensor_dropout_shift,
     periodic_acoustic_wave_scenario,
     periodic_advection_scenario,
     periodic_burgers_scenario,
-)
-from tools.operator_benchmarks.v2 import (
-    scenario_checksum,
-    standard_operator_benchmark_ladders,
 )
 
 

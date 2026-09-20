@@ -24,7 +24,7 @@ def _condition(field_names, matrices, target):
     shape = tuple(jnp.asarray(target).shape)
     source = ProductFieldSpec(
         tuple(
-            FieldSpec(name, ArrayCodomain.from_shape((2,), dtype=float))
+            FieldSpec(name, ArrayCodomain.from_shape((2,), dtype="float64"))
             for name in field_names
         )
     )
@@ -38,8 +38,8 @@ def _condition(field_names, matrices, target):
         "finite-linear-test",
         source,
         operator,
-        ArrayCodomain.from_shape(shape, dtype=float),
-        Equality(jnp.asarray(target, dtype=float)),
+        ArrayCodomain.from_shape(shape, dtype="float64"),
+        Equality(jnp.asarray(target, dtype="float64")),
     )
 
 

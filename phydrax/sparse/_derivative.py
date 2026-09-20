@@ -376,7 +376,7 @@ class SparseDerivativeVerification(StrictModule):
         num_probes: int,
         plan_id: str,
     ):
-        self.passed = jnp.asarray(passed, dtype=bool)
+        self.passed = jnp.asarray(passed, dtype=jnp.bool_)
         self.maximum_absolute_error = jnp.asarray(maximum_absolute_error)
         self.maximum_relative_error = jnp.asarray(maximum_relative_error)
         self.reference_scale = jnp.asarray(reference_scale)
@@ -750,16 +750,14 @@ def _compile_sparse_derivative(
     _, argument_specs = _argument_signature(sample_args)
     if not jnp.issubdtype(coordinates.dtype, jnp.inexact):
         raise TypeError(
-            "Sparse derivative coordinates must use a real or complex inexact dtype; "
-            f"got {coordinates.dtype}."
+            f"Sparse derivative coordinates must use a real or complex inexact dtype; got {coordinates.dtype}."
         )
     converted = eqx.filter_closure_convert(function, coordinates, sample_args)
     output = jax.eval_shape(converted, coordinates, sample_args)
     if derivative_kind == "jacobian":
         if output.shape != (target.size,):
             raise ValueError(
-                f"Sparse Jacobian output must have shape {(target.size,)}; "
-                f"got {output.shape}."
+                f"Sparse Jacobian output must have shape {(target.size,)}; got {output.shape}."
             )
         if not jnp.issubdtype(output.dtype, jnp.inexact):
             raise TypeError("Sparse Jacobian outputs must use an inexact dtype.")
@@ -1071,9 +1069,7 @@ def _argument_signature(
                 "Sparse derivative arguments must be array-like PyTree leaves."
             )
         array = jnp.asarray(leaf)
-        specs.append(
-            (tuple(int(size) for size in array.shape), jnp.dtype(array.dtype).str)
-        )
+        specs.append((tuple(array.shape), jnp.dtype(array.dtype).str))
     return structure, tuple(specs)
 
 

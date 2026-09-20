@@ -182,8 +182,7 @@ def _case_transition_matrix(
     expected = (problem.num_states, problem.num_states)
     if matrix.shape != expected:
         raise ValueError(
-            "reference.log_prob must return one scalar per finite state pair; "
-            f"expected {expected}, got {matrix.shape}."
+            f"reference.log_prob must return one scalar per finite state pair; expected {expected}, got {matrix.shape}."
         )
     return matrix
 
@@ -228,10 +227,10 @@ def _log_matrix_product(left: Array, right: Array, /) -> Array:
 
 
 def _endpoint_reference(log_transitions: Array, initial_probabilities: Array, /) -> Array:
-    size = int(log_transitions.shape[-1])
-    identity = jnp.where(jnp.eye(size, dtype=bool), 0.0, -jnp.inf)
+    size = log_transitions.shape[-1]
+    identity = jnp.where(jnp.eye(size, dtype=jnp.bool_), 0.0, -jnp.inf)
     product = identity
-    for step in range(int(log_transitions.shape[0])):
+    for step in range(log_transitions.shape[0]):
         product = _log_matrix_product(product, log_transitions[step])
     return _safe_log(initial_probabilities)[:, None] + product
 
@@ -394,12 +393,12 @@ def _messages(
     /,
 ) -> tuple[Array, Array]:
     forward = [_safe_log(reference_initial) + log_a]
-    for step in range(int(log_transitions.shape[0])):
+    for step in range(log_transitions.shape[0]):
         forward.append(
             jsp.special.logsumexp(forward[-1][:, None] + log_transitions[step], axis=-2)
         )
     backward = [log_b]
-    for step in range(int(log_transitions.shape[0]) - 1, -1, -1):
+    for step in range(log_transitions.shape[0] - 1, -1, -1):
         backward.append(
             jsp.special.logsumexp(log_transitions[step] + backward[-1][None, :], axis=-1)
         )
@@ -413,7 +412,7 @@ def _doob_and_marginals(
     marginals = jnp.exp(forward + backward - log_normalizer)
     probabilities = []
     valid_rows = []
-    for step in range(int(log_transitions.shape[0])):
+    for step in range(log_transitions.shape[0]):
         denominator = backward[step]
         row_valid = jnp.isfinite(denominator)
         log_controlled = (

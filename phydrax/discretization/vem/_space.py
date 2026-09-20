@@ -245,13 +245,13 @@ class VirtualElementDiscretization(AbstractPreparedDiscretization):
             layouts.append(
                 EntityDofLayout(
                     mesh.topology.entity_sets[0].entity_set_id,
-                    int(mesh.coordinates.shape[0]),
+                    mesh.coordinates.shape[0],
                     dof_map.vertex_dof_count,
                     dofs_per_entity=vertex_width,
                 )
             )
             names.append("vertices")
-        edge_count = int(mesh.connectivity.edges.shape[0])
+        edge_count = mesh.connectivity.edges.shape[0]
         edge_width = element.edge_dofs_per_entity
         if edge_width:
             layouts.append(

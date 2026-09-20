@@ -26,7 +26,7 @@ def _batch(values, axis, *, source_mask, query_mask, quadrature):
 
 
 def test_cno_masks_invalid_sources_before_lifting_and_zeros_invalid_queries():
-    nodes = jnp.arange(9, dtype=float) / 9
+    nodes = jnp.arange(9, dtype="float64") / 9
     quadrature = jnp.linspace(0.5, 1.5, 9)
     axis = phx.nn.operator.OperatorAxis(
         "x",
@@ -73,7 +73,7 @@ def test_cno_masks_invalid_sources_before_lifting_and_zeros_invalid_queries():
 
 
 def test_cno_uniform_measure_full_support_matches_array_evaluation():
-    nodes = -1.0 + 2.0 * jnp.arange(11, dtype=float) / 11
+    nodes = -1.0 + 2.0 * jnp.arange(11, dtype="float64") / 11
     axis = phx.nn.operator.OperatorAxis(
         "x",
         nodes,
@@ -82,7 +82,7 @@ def test_cno_uniform_measure_full_support_matches_array_evaluation():
         periodic=True,
     )
     values = jnp.cos(3.0 * nodes)
-    mask = jnp.ones(11, dtype=bool)
+    mask = jnp.ones(11, dtype="bool")
     model = phx.nn.operator.architectures.CNO(
         spatial_ndim=1,
         width=3,
@@ -108,7 +108,7 @@ def test_cno_uniform_measure_full_support_matches_array_evaluation():
 def test_periodic_coordinate_features_have_equal_interior_and_seam_chords():
     axis = phx.nn.operator.OperatorAxis(
         "x",
-        jnp.arange(13, dtype=float) / 13,
+        jnp.arange(13, dtype="float64") / 13,
         basis="fourier",
         periodic=True,
     )
@@ -171,14 +171,14 @@ def test_cno_rejects_axes_outside_periodic_uniform_fourier_contract(axis):
 def test_cno_rejects_noncoincident_source_and_query_axes():
     source_axis = phx.nn.operator.OperatorAxis(
         "x",
-        jnp.arange(7, dtype=float) / 7,
+        jnp.arange(7, dtype="float64") / 7,
         basis="fourier",
         periodic=True,
         quadrature_weights=jnp.ones((7,)),
     )
     query_axis = phx.nn.operator.OperatorAxis(
         "x",
-        0.1 + jnp.arange(7, dtype=float) / 7,
+        0.1 + jnp.arange(7, dtype="float64") / 7,
         basis="fourier",
         periodic=True,
         quadrature_weights=jnp.ones((7,)),
@@ -244,7 +244,7 @@ def test_cno_oversampled_activation_uses_explicit_periodic_spatial_axes():
 def test_cno_rejects_missing_physical_source_quadrature():
     axis = phx.nn.operator.OperatorAxis(
         "x",
-        jnp.arange(7, dtype=float) / 7,
+        jnp.arange(7, dtype="float64") / 7,
         basis="fourier",
         periodic=True,
     )
@@ -277,7 +277,7 @@ def test_cno_rejects_missing_physical_source_quadrature():
 def test_uno_transports_masked_measure_and_zeros_invalid_queries():
     axis = phx.nn.operator.OperatorAxis(
         "x",
-        jnp.arange(7, dtype=float) / 7,
+        jnp.arange(7, dtype="float64") / 7,
         quadrature_weights=jnp.ones((7,)),
         basis="fourier",
         periodic=True,

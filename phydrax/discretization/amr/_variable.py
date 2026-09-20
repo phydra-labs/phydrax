@@ -80,7 +80,7 @@ class VariablePatchLevelPlan(StrictModule, NonTrainableState):
         return len(self.buckets[0].signature.envelope_shape)
 
     def bucket_for_extent(self, extent: Sequence[int], /) -> int | None:
-        values = tuple(int(value) for value in extent)
+        values = tuple(extent)
         candidates = tuple(
             (prod(bucket.signature.envelope_shape), bucket.signature.signature_id, index)
             for index, bucket in enumerate(self.buckets)
@@ -129,14 +129,15 @@ class VariablePatchHierarchyPlan(StrictModule, NonTrainableState):
         if any(axis.primary_entity != "interval" for axis in grid.axes):
             raise ValueError("Variable patch AMR requires interval-primary tensor axes.")
         widths = tuple(
-            np.asarray(axis.interval_widths, dtype=float) for axis in grid.structured_axes
+            np.asarray(axis.interval_widths, dtype=np.float64)
+            for axis in grid.structured_axes
         )
         if any(
             axis.basis != "uniform" or width.size == 0 or not np.all(width == width[0])
             for axis, width in zip(grid.axes, widths, strict=True)
         ):
             raise ValueError("Variable patch AMR requires uniform reference tensor axes.")
-        base_shape = tuple(int(value) for value in grid.shape)
+        base_shape = tuple(grid.shape)
         if any(
             any(
                 start < 0 or stop > extent
@@ -235,7 +236,7 @@ class VariablePatchLevelMetadata(StrictModule, NonTrainableState):
             ):
                 raise ValueError("Variable patch box does not fit its assigned bucket.")
             canonical = tuple(sorted(group, key=lambda box: box.box_id))
-            active_array = np.zeros((bucket.lane_capacity,), dtype=bool)
+            active_array = np.zeros((bucket.lane_capacity,), dtype=np.bool_)
             lower_array = np.zeros((bucket.lane_capacity, plan.dimension), dtype=np.int32)
             extent_array = np.zeros(
                 (bucket.lane_capacity, plan.dimension), dtype=np.int32
@@ -281,7 +282,7 @@ class VariablePatchLevelMetadata(StrictModule, NonTrainableState):
     def locate(
         self, coordinate: Sequence[int], /
     ) -> tuple[int, int, LogicalPatchBox] | None:
-        point = tuple(int(value) for value in coordinate)
+        point = tuple(coordinate)
         for bucket, lane, box in self.active_boxes():
             if box.contains_cell(point):
                 return bucket, lane, box
@@ -437,8 +438,8 @@ class VariablePatchHierarchyTopology(StrictModule, NonTrainableState):
     def covers_region(
         self, level: int, lower: Sequence[int], upper: Sequence[int], /
     ) -> bool:
-        lower_ = tuple(int(value) for value in lower)
-        upper_ = tuple(int(value) for value in upper)
+        lower_ = tuple(lower)
+        upper_ = tuple(upper)
         if len(lower_) != len(upper_) or any(
             stop <= start for start, stop in zip(lower_, upper_, strict=True)
         ):
@@ -480,8 +481,7 @@ class PatchClusteringPolicy(StrictModule, NonTrainableState):
             or aspect < 1.0
         ):
             raise ValueError(
-                "Patch clustering fill ratio must be in (0, 1] and aspect ratio "
-                "must be finite and at least one."
+                "Patch clustering fill ratio must be in (0, 1] and aspect ratio must be finite and at least one."
             )
         self.minimum_fill_ratio = fill
         self.maximum_aspect_ratio = aspect
@@ -550,13 +550,11 @@ class VariablePatchCompileEvidence(StrictModule, NonTrainableState):
         route_capacity_required: Sequence[int],
         /,
     ):
-        tags = tuple(int(value) for value in tag_counts)
-        counts = tuple(tuple(int(value) for value in row) for row in patch_counts)
-        capacities = tuple(
-            tuple(int(value) for value in row) for row in bucket_capacities
-        )
-        padding = tuple(int(value) for value in padding_cells)
-        routes = tuple(int(value) for value in route_capacity_required)
+        tags = tuple(tag_counts)
+        counts = tuple(tuple(row) for row in patch_counts)
+        capacities = tuple(tuple(row) for row in bucket_capacities)
+        padding = tuple(padding_cells)
+        routes = tuple(route_capacity_required)
         if (
             len(tags) != len(counts)
             or len(counts) != len(capacities)
@@ -653,15 +651,15 @@ def _components(
             cell = queue.popleft()
             for axis in range(len(cell)):
                 for direction in (-1, 1):
-                    neighbour = list(cell)
-                    neighbour[axis] += direction
+                    neighbor = list(cell)
+                    neighbor[axis] += direction
                     if periodic[axis]:
-                        neighbour[axis] %= shape[axis]
-                    neighbour_ = tuple(neighbour)
-                    if neighbour_ in remaining:
-                        remaining.remove(neighbour_)
-                        component.add(neighbour_)
-                        queue.append(neighbour_)
+                        neighbor[axis] %= shape[axis]
+                    neighbor_ = tuple(neighbor)
+                    if neighbor_ in remaining:
+                        remaining.remove(neighbor_)
+                        component.add(neighbor_)
+                        queue.append(neighbor_)
         result.append(component)
     return tuple(result)
 
@@ -885,16 +883,16 @@ class VariablePatchTopologyCompiler(StrictModule, NonTrainableState):
             )
         ):
             expected = (bucket.lane_capacity,) + bucket.signature.envelope_shape
-            if tags.shape != expected or tags.dtype != np.dtype(bool):
+            if tags.shape != expected or tags.dtype != np.dtype(np.bool_):
                 raise ValueError(
                     "Variable patch tags must have exact Boolean bucket-envelope shapes."
                 )
-            active_host = np.asarray(active, dtype=bool)
+            active_host = np.asarray(active, dtype=np.bool_)
             lower_host = np.asarray(lower, dtype=np.int32)
             extent_host = np.asarray(extent, dtype=np.int32)
             for lane in range(bucket.lane_capacity):
                 valid = tuple(slice(0, int(value)) for value in extent_host[lane])
-                invalid = np.ones(bucket.signature.envelope_shape, dtype=bool)
+                invalid = np.ones(bucket.signature.envelope_shape, dtype=np.bool_)
                 if active_host[lane]:
                     invalid[valid] = False
                 if np.any(tags[lane] & invalid):
@@ -1182,7 +1180,7 @@ class VariablePatchFieldState(StrictModule):
             strict=True,
         ):
             envelope = value.shape[1 : 1 + extent.shape[1]]
-            lane_count = int(active.shape[0])
+            lane_count = active.shape[0]
             valid = jnp.asarray(active).reshape((lane_count,) + (1,) * len(envelope))
             for axis, size in enumerate(envelope):
                 coordinate = jnp.arange(size).reshape(

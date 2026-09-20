@@ -4,6 +4,8 @@
 
 """Composable finite supports, field spaces, measures, and approximation records."""
 
+from importlib import import_module
+
 from . import (
     amr,
     bem as bem,
@@ -121,9 +123,7 @@ from ._lagrangian_marker import (
     LagrangianMarkerKinematics,
     LagrangianMarkerSetPlan,
 )
-from ._lattice_boundary import *  # noqa: F403
 from ._lattice_boundary import __all__ as _lattice_boundary_all
-from ._lattice_distribution import *  # noqa: F403
 from ._lattice_distribution import __all__ as _lattice_distribution_all
 from ._lifecycle import (
     AbstractDiscretizationPlan,
@@ -404,7 +404,6 @@ from .amr import (
     VariablePatchPhysicalBoundaryRequest,
     VariablePatchTopologyCompiler,
 )
-from .bem import *  # noqa: F403
 from .bem import __all__ as _bem_all
 from .collocation import chebyshev_lobatto_matrices, ChebyshevCollocation
 from .contact import (
@@ -527,7 +526,6 @@ from .contact import (
     static_collision_operator,
     SweepAndPruneContactSearchPlan,
 )
-from .discrete_velocity import *  # noqa: F403
 from .discrete_velocity import __all__ as _discrete_velocity_all
 from .explicit_polygon_h1 import (
     evaluate_explicit_polygon_h1_reconstruction,
@@ -1155,7 +1153,6 @@ from .flip import (
     SparseFLIPTransferState,
     transition_ale_flip_epoch,
 )
-from .lattice_boltzmann import *  # noqa: F403
 from .lattice_boltzmann import (
     __all__ as _lattice_boltzmann_all,
     BGKCollisionPlan,
@@ -2010,7 +2007,6 @@ from .pic import (
     UnstructuredWhitneyCurrentPlan,
     UnstructuredWhitneyCurrentResult,
 )
-from .spatial import *  # noqa: F403
 from .spatial import __all__ as _spatial_all
 from .spectral import (
     AbstractDealiasingPlan,
@@ -2195,7 +2191,6 @@ from .splatting import (
     TensorBSplineSplatAssignment,
     UniformGIMPSplatAssignment,
 )
-from .surfel import *  # noqa: F403
 from .surfel import __all__ as _surfel_all
 from .vem import (
     adapt_virtual_element_hp,
@@ -2233,8 +2228,33 @@ from .vem import (
     VirtualElementStabilizationEvidence,
     VirtualElementStabilizationPolicy,
 )
-from .vortex import *  # noqa: F403
 from .vortex import __all__ as _vortex_all
+
+
+_FACADE_EXPORT_MODULES = (
+    "._lattice_boundary",
+    "._lattice_distribution",
+    ".bem",
+    ".discrete_velocity",
+    ".lattice_boltzmann",
+    ".spatial",
+    ".surfel",
+    ".vortex",
+)
+
+
+def __getattr__(name: str):
+    for module_name in reversed(_FACADE_EXPORT_MODULES):
+        module = import_module(module_name, __package__)
+        if name in module.__all__:
+            value = getattr(module, name)
+            globals()[name] = value
+            return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
 
 
 __all__ = [

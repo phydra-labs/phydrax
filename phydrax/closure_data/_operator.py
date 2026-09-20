@@ -333,8 +333,7 @@ def prepare_closure_operator_datasets(
             assignment.assignment_id for assignment in expected_assignments
         }:
             raise ValueError(
-                "Closure normalizer was not fitted on the complete authoritative "
-                "training split."
+                "Closure normalizer was not fitted on the complete authoritative training split."
             )
 
     split_batches: dict[DatasetSplit, list[OperatorBatch]] = {
@@ -465,8 +464,7 @@ class TrainedClosureOperatorPredictor(StrictModule, NonTrainableState):
             )
         if trained.output_pipeline is not None:
             raise ValueError(
-                "Closure-trained operators must leave stress policy enforcement "
-                "to the learned-stress binding."
+                "Closure-trained operators must leave stress policy enforcement to the learned-stress binding."
             )
         if template.case_shape:
             raise ValueError("Closure predictor templates must have no case axes.")
@@ -483,9 +481,7 @@ class TrainedClosureOperatorPredictor(StrictModule, NonTrainableState):
             )
         if target not in {field.name for field in trained.task.target_fields}:
             raise ValueError("Closure predictor target is absent from the operator task.")
-        shape = (
-            None if output_shape is None else tuple(int(size) for size in output_shape)
-        )
+        shape = None if output_shape is None else tuple(output_shape)
         if shape is not None and (not shape or any(size <= 0 for size in shape)):
             raise ValueError(
                 "Closure predictor output_shape must contain positive sizes."

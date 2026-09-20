@@ -429,7 +429,7 @@ class MovingMultivaluedCutCellPlan(StrictModule, NonTrainableState):
         source_content = state.content[:source_count]
         overlap_content = transition.remap.apply_content(
             source_content,
-            target_active_mask=jnp.ones((target_count,), dtype=bool),
+            target_active_mask=jnp.ones((target_count,), dtype=jnp.bool_),
         )
         target_volumes = target.component_volumes[:target_count]
         source_volumes = state.complex.component_volumes[:source_count]

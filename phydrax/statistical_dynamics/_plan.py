@@ -65,7 +65,7 @@ class QuadraticDynamics(StrictModule, NonTrainableState):
         quadratic_ = jnp.asarray(quadratic)
         if constant_.ndim != 1 or constant_.shape[0] < 1:
             raise ValueError("Quadratic dynamics require a non-empty constant vector.")
-        dimension = int(constant_.shape[0])
+        dimension = constant_.shape[0]
         if linear_.shape != (dimension, dimension) or quadratic_.shape != (
             dimension,
             dimension,

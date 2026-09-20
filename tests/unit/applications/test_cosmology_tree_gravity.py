@@ -12,7 +12,7 @@ cosmology = phx.applications.cosmology
 def _direct(positions, masses, softening):
     displacement = positions[None, :, :] - positions[:, None, :]
     squared = jnp.sum(displacement**2, axis=-1) + softening**2
-    mask = ~jnp.eye(positions.shape[0], dtype=bool)
+    mask = ~jnp.eye(positions.shape[0], dtype="bool")
     return jnp.sum(
         jnp.where(
             mask[..., None],
@@ -203,7 +203,7 @@ def test_treepm_cartesian_fmm_short_range_matches_split_reference():
     )
     expected = jnp.sum(
         jnp.where(
-            (~jnp.eye(positions.shape[0], dtype=bool) & (radius <= split.cutoff))[
+            (~jnp.eye(positions.shape[0], dtype="bool") & (radius <= split.cutoff))[
                 ..., None
             ],
             masses[None, :, None] * displacement * factor[..., None],

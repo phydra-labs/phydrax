@@ -333,7 +333,7 @@ class DeepBSDEShootingTerm(AbstractSamplingTerm):
             _validate_paths(fixed_paths, problem)
         if sampling_mode == "resample" and fixed_paths is not None:
             raise ValueError("fixed_paths is valid only for fixed sampling.")
-        weight = jnp.asarray(terminal_weight, dtype=float).reshape(())
+        weight = jnp.asarray(terminal_weight, dtype=jnp.float64).reshape(())
         if bool(~jnp.isfinite(weight)) or float(weight) < 0.0:
             raise ValueError("terminal_weight must be finite and nonnegative.")
         self.problem = problem

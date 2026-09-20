@@ -325,8 +325,7 @@ class CapstanTendonFrictionPlan(StrictModule, NonTrainableState):
             )
         if not np.all(np.isfinite(factors)):
             raise ValueError(
-                "friction_coefficients times wrap_angles must yield finite "
-                "capstan factors in the active JAX precision."
+                "friction_coefficients times wrap_angles must yield finite capstan factors in the active JAX precision."
             )
         generated = canonical_fingerprint(
             {
@@ -353,11 +352,11 @@ class CapstanTendonFrictionPlan(StrictModule, NonTrainableState):
 
     @property
     def span_count(self) -> int:
-        return int(self.axial_rigidity.shape[0])
+        return self.axial_rigidity.shape[0]
 
     @property
     def eyelet_count(self) -> int:
-        return int(self.friction_coefficients.shape[0])
+        return self.friction_coefficients.shape[0]
 
     def prepare(
         self,

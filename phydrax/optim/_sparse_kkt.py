@@ -76,8 +76,8 @@ def plan_sparse_augmented_kkt(
     equality_lookup = {int(value): index for index, value in enumerate(equality_indices)}
     general_lookup = {int(value): index for index, value in enumerate(general_indices)}
     n = program.num_variables
-    nc = int(equality_indices.size)
-    nd = int(general_indices.size)
+    nc = equality_indices.size
+    nd = general_indices.size
     x_offset = 0
     slack_offset = n
     equality_offset = n + nd

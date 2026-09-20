@@ -106,8 +106,8 @@ class MomentumRoute(StrictModule, NonTrainableState):
     route_id: str = eqx.field(static=True)
 
     def __init__(self, momentum: ArrayLike, frequency: ArrayLike = 0.0, /):
-        momentum_host = np.asarray(momentum, dtype=float)
-        frequency_host = np.asarray(frequency, dtype=float)
+        momentum_host = np.asarray(momentum, dtype=np.float64)
+        frequency_host = np.asarray(frequency, dtype=np.float64)
         if momentum_host.ndim != 1 or momentum_host.size == 0:
             raise ValueError("momentum must be a non-empty rank-one vector.")
         if frequency_host.shape != ():
@@ -118,7 +118,7 @@ class MomentumRoute(StrictModule, NonTrainableState):
         frequency_host = np.where(frequency_host == 0.0, 0.0, frequency_host)
         self.momentum = jnp.asarray(momentum_host)
         self.frequency = jnp.asarray(frequency_host)
-        self.dimension = int(momentum_host.size)
+        self.dimension = momentum_host.size
         self.route_id = canonical_fingerprint(
             {
                 "kind": "momentum-frequency-route",
@@ -680,7 +680,7 @@ class DiagramGraph(StrictModule, NonTrainableState):
             for index, leg in enumerate(canonical_external_unsorted)
         )
 
-        residual = np.zeros((len(canonical_vertices), dimension + 1), dtype=float)
+        residual = np.zeros((len(canonical_vertices), dimension + 1), dtype=np.float64)
         for line in canonical_lines:
             route = np.concatenate(
                 (np.asarray(line.route.momentum), np.asarray(line.route.frequency)[None])

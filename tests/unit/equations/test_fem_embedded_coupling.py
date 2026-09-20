@@ -58,9 +58,9 @@ def test_cut_cell_merge_and_sliding_mortar_are_exactly_conservative():
     current = PreparedDGTraceRoute(
         "conforming",
         jnp.asarray((0,)),
-        neighbour_dofs=jnp.asarray((1,)),
+        neighbor_dofs=jnp.asarray((1,)),
         owner_basis=jnp.asarray(((1.0,),)),
-        neighbour_basis=jnp.asarray(((1.0,),)),
+        neighbor_basis=jnp.asarray(((1.0,),)),
         physical_points=jnp.asarray(((0.0, 0.0),)),
         physical_weights=jnp.asarray((1.0,)),
         normal=jnp.asarray(((1.0, 0.0),)),
@@ -69,9 +69,9 @@ def test_cut_cell_merge_and_sliding_mortar_are_exactly_conservative():
     next_route = PreparedDGTraceRoute(
         "conforming",
         jnp.asarray((0,)),
-        neighbour_dofs=jnp.asarray((1,)),
+        neighbor_dofs=jnp.asarray((1,)),
         owner_basis=jnp.asarray(((1.0,),)),
-        neighbour_basis=jnp.asarray(((1.0,),)),
+        neighbor_basis=jnp.asarray(((1.0,),)),
         physical_points=jnp.asarray(((0.1, 0.0),)),
         physical_weights=jnp.asarray((1.2,)),
         normal=jnp.asarray(((1.0, 0.0),)),
@@ -80,5 +80,5 @@ def test_cut_cell_merge_and_sliding_mortar_are_exactly_conservative():
     sliding = SlidingMortarPlan(
         (MovingTraceRoute(current, next_route),), jnp.asarray((0.75,))
     )
-    owner, neighbour = sliding.flux_contributions(0.5, (jnp.asarray(((2.0,),)),))[0]
-    np.testing.assert_allclose(owner + neighbour, 0.0, atol=2.0e-12)
+    owner, neighbor = sliding.flux_contributions(0.5, (jnp.asarray(((2.0,),)),))[0]
+    np.testing.assert_allclose(owner + neighbor, 0.0, atol=2.0e-12)

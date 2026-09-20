@@ -71,11 +71,11 @@ from ._partition import (
 )
 
 
-_FRAME_TOLERANCE = 128.0 * np.finfo(float).eps
+_FRAME_TOLERANCE = 128.0 * np.finfo(np.float64).eps
 
 
 def _vector3(value: Sequence[float], name: str) -> tuple[float, float, float]:
-    array = np.asarray(value, dtype=float)
+    array = np.asarray(value, dtype=np.float64)
     if array.shape != (3,) or not np.all(np.isfinite(array)):
         raise ValueError(f"{name} must be a finite three-vector.")
     return tuple(float(component) for component in array)
@@ -136,7 +136,7 @@ class PlanarEmbedding:
     def to_world(self, coordinates: Any, /) -> np.ndarray:
         """Map coordinates with trailing dimension two into the world frame."""
 
-        planar = np.asarray(coordinates, dtype=float)
+        planar = np.asarray(coordinates, dtype=np.float64)
         if planar.ndim == 0 or planar.shape[-1] != 2:
             raise ValueError("Planar coordinates must have trailing dimension two.")
         if not np.all(np.isfinite(planar)):
@@ -147,7 +147,7 @@ class PlanarEmbedding:
     def to_planar(self, points: Any, /) -> np.ndarray:
         """Return the exact frame coordinates of world points on the plane."""
 
-        world = np.asarray(points, dtype=float)
+        world = np.asarray(points, dtype=np.float64)
         if world.ndim == 0 or world.shape[-1] != 3:
             raise ValueError("World points must have trailing dimension three.")
         if not np.all(np.isfinite(world)):
@@ -158,7 +158,7 @@ class PlanarEmbedding:
     def plane_residual(self, points: Any, /) -> np.ndarray:
         """Return the signed world-frame residual along the plane normal."""
 
-        world = np.asarray(points, dtype=float)
+        world = np.asarray(points, dtype=np.float64)
         if world.ndim == 0 or world.shape[-1] != 3:
             raise ValueError("World points must have trailing dimension three.")
         if not np.all(np.isfinite(world)):
@@ -341,7 +341,7 @@ def _operand_descriptor(operand: PlanarPartitionOperand) -> tuple[object, ...]:
 
 
 def _mesh_loops(region: PlanarMeshRegion, /) -> tuple[np.ndarray, ...]:
-    vertices = np.asarray(region.vertices, dtype=float)
+    vertices = np.asarray(region.vertices, dtype=np.float64)
     edges = np.asarray(region.edges, dtype=np.int64)
     offsets = np.asarray(region.loop_offsets, dtype=np.int64)
     if vertices.ndim != 2 or vertices.shape[1] != 2 or not np.all(np.isfinite(vertices)):
@@ -491,7 +491,7 @@ def _roundoff_tolerance(embedding: PlanarEmbedding, points: np.ndarray) -> float
         float(np.max(np.abs(np.asarray(embedding.origin)))),
         float(np.max(np.abs(points))) if points.size else 0.0,
     )
-    return 512.0 * np.finfo(float).eps * scale
+    return 512.0 * np.finfo(np.float64).eps * scale
 
 
 def _face_vertices(face: Any, /) -> np.ndarray:
@@ -499,7 +499,7 @@ def _face_vertices(face: Any, /) -> np.ndarray:
     for vertex in _explore_unique(face, TopAbs_VERTEX, TopoDS.Vertex_s):
         point = BRep_Tool.Pnt_s(vertex)
         points.append((point.X(), point.Y(), point.Z()))
-    return np.asarray(points, dtype=float)
+    return np.asarray(points, dtype=np.float64)
 
 
 def _require_coplanar_face(face: Any, embedding: PlanarEmbedding, /) -> None:
@@ -510,7 +510,7 @@ def _require_coplanar_face(face: Any, embedding: PlanarEmbedding, /) -> None:
         raise ValueError("Persisted planar partition faces must be exact planes.")
     plane = adaptor.Plane()
     direction = plane.Position().Direction()
-    normal = np.asarray((direction.X(), direction.Y(), direction.Z()), dtype=float)
+    normal = np.asarray((direction.X(), direction.Y(), direction.Z()), dtype=np.float64)
     if face.Orientation() == TopAbs_REVERSED:
         normal = -normal
     vertices = _face_vertices(face)
@@ -519,7 +519,7 @@ def _require_coplanar_face(face: Any, embedding: PlanarEmbedding, /) -> None:
         normal,
         np.asarray(embedding.normal),
         rtol=0.0,
-        atol=512.0 * np.finfo(float).eps,
+        atol=512.0 * np.finfo(np.float64).eps,
     ):
         raise ValueError(
             "Every planar source face must have the embedding's positive orientation."

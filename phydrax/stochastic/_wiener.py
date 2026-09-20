@@ -142,12 +142,12 @@ class WienerRealization(StrictModule):
         if not end > start:
             raise ValueError("WienerRealization support requires end > start.")
 
-        noise = tuple(int(size) for size in noise_shape)
+        noise = tuple(noise_shape)
         if not noise or any(size <= 0 for size in noise):
             raise ValueError(
                 "WienerRealization noise_shape must contain positive dimensions."
             )
-        samples = tuple(int(size) for size in sample_shape)
+        samples = tuple(sample_shape)
         if any(size <= 0 for size in samples):
             raise ValueError("WienerRealization sample dimensions must be positive.")
 
@@ -177,17 +177,15 @@ class WienerRealization(StrictModule):
             indices = jnp.asarray(_path_indices, dtype=jnp.uint32)
             if tuple(indices.shape) != expected_shape:
                 raise ValueError(
-                    "WienerRealization path indices must match sample_shape; "
-                    f"got {indices.shape} and {expected_shape}."
+                    f"WienerRealization path indices must match sample_shape; got {indices.shape} and {expected_shape}."
                 )
         if _path_signs is None:
-            signs = jnp.ones(expected_shape, dtype=float)
+            signs = jnp.ones(expected_shape, dtype=jnp.float64)
         else:
-            signs = jnp.asarray(_path_signs, dtype=float)
+            signs = jnp.asarray(_path_signs, dtype=jnp.float64)
             if tuple(signs.shape) != expected_shape:
                 raise ValueError(
-                    "WienerRealization path signs must match sample_shape; "
-                    f"got {signs.shape} and {expected_shape}."
+                    f"WienerRealization path signs must match sample_shape; got {signs.shape} and {expected_shape}."
                 )
             if not bool(jnp.all(jnp.isin(signs, jnp.asarray([-1.0, 1.0])))):
                 raise ValueError("WienerRealization path signs must be +1 or -1.")
@@ -312,7 +310,7 @@ class WienerRealization(StrictModule):
         ends: Array,
         /,
         *,
-        dtype: jnp.dtype | type = float,
+        dtype: jnp.dtype | type = jnp.float64,
     ) -> Array:
         """Evaluate reproducible Brownian increments on matching interval arrays.
 

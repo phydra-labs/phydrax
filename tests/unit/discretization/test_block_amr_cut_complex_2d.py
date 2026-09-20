@@ -77,16 +77,13 @@ def test_two_dimensional_multivalued_fv_preserves_uniform_wall_state():
     state = state.at[: complex_.component_count].set(conserved)
     boundaries = {}
     for face in range(complex_.face_count):
-        if int(complex_.face_neighbour_components[face]) >= 0:
+        if int(complex_.face_neighbor_components[face]) >= 0:
             continue
         if int(complex_.face_kinds[face]) == 2:
             name = f"embedded-{int(complex_.face_body_tags[face])}"
             boundaries[name] = phx.discretization.SlipWallBoundary()
         else:
-            name = (
-                f"physical-{int(complex_.face_axes[face])}-"
-                f"{int(complex_.face_sides[face])}"
-            )
+            name = f"physical-{int(complex_.face_axes[face])}-{int(complex_.face_sides[face])}"
             boundaries[name] = phx.discretization.ExtrapolationBoundary()
 
     advanced = complex_.ssprk33_step(

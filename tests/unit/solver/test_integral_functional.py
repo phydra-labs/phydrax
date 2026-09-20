@@ -192,7 +192,7 @@ def test_integral_functional_nonfinite_integrand_policy_is_narrow():
 
 def test_integral_functional_from_operator_forwards_nonfinite_policy():
     domain = phx.domain.ScalarInterval(0.0, 1.0, label="x")
-    parameter = domain.Parameter(1.0)
+    domain.Parameter(1.0)
     objective = phx.terms.IntegralFunctional.from_operator(
         source=phx.integration.per_step(
             phx.integration.over(domain.component()),

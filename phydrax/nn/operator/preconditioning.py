@@ -38,7 +38,7 @@ from .training._trained_operator import TrainedOperator
 
 def _resident_storage_bytes(value: object, /) -> int:
     arrays = {id(leaf): leaf for leaf in jax.tree.leaves(value) if eqx.is_array(leaf)}
-    return sum(int(array.size * array.dtype.itemsize) for array in arrays.values())
+    return sum(array.size * array.dtype.itemsize for array in arrays.values())
 
 
 def _source_identifier(source: PreconditionerSource, /) -> str:

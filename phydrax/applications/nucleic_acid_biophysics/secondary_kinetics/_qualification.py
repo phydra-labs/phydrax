@@ -253,7 +253,7 @@ def _group_scores(
     result: list[GroupedTraceScore] = []
     for group in groups:
         indices = tuple(i for i, trace in enumerate(traces) if coordinate(trace) == group)
-        observation_count = sum(int(traces[i].time_seconds.size) for i in indices)
+        observation_count = sum(traces[i].time_seconds.size for i in indices)
         log_score = sum(case_scores[i] for i in indices) / observation_count
         coverage = tuple(_coverage(traces[i], predictions[i]) for i in indices)
         covered = sum(value[0] for value in coverage)
@@ -432,7 +432,7 @@ def _completed_evaluation(
         case_scores,
         kind="preparation",
     )
-    total_observations = sum(int(trace.time_seconds.size) for trace in traces)
+    total_observations = sum(trace.time_seconds.size for trace in traces)
     active_coverages = tuple(
         _coverage(trace, predicted)
         for trace, predicted in zip(traces, prediction.predictions, strict=True)
@@ -684,8 +684,7 @@ def qualify_strand_displacement_models(
         "parameter-identifiability"
     }:
         raise ValueError(
-            "Mechanistic qualification must require the effective stages plus "
-            "parameter-identifiability."
+            "Mechanistic qualification must require the effective stages plus parameter-identifiability."
         )
     mechanistic_criteria = {
         criterion.metric_id: criterion for criterion in mechanistic_claim_profile.criteria

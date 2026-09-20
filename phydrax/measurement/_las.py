@@ -167,7 +167,7 @@ class LasPointProvider:
             attributes.append(
                 _field(
                     f"{product_id}.gps-time",
-                    np.asarray(las["gps_time"], dtype=float),
+                    np.asarray(las["gps_time"], dtype=np.float64),
                     support,
                     _quantity("gps-time", "sample-time", SECOND),
                     ValueKind.REAL_SCALAR,

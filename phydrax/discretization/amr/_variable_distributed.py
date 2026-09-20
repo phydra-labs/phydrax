@@ -42,9 +42,7 @@ class VariablePatchPartitionPlan(StrictModule, NonTrainableState):
         /,
     ):
         parts = int(part_count)
-        capacities = tuple(
-            tuple(int(value) for value in row) for row in local_lane_capacities
-        )
+        capacities = tuple(tuple(row) for row in local_lane_capacities)
         if (
             parts <= 0
             or not capacities
@@ -128,16 +126,16 @@ class PreparedVariablePatchPartition(StrictModule, NonTrainableState):
             level_owners = []
             level_slots = []
             level_counts = []
-            accumulated = np.zeros((plan.part_count,), dtype=float)
+            accumulated = np.zeros((plan.part_count,), dtype=np.float64)
             used = [np.zeros((plan.part_count,), dtype=np.int32) for _ in capacities]
             for bucket_index, (bucket, active, supplied_cost) in enumerate(
                 zip(metadata.plan.buckets, metadata.active, level_costs, strict=True)
             ):
-                active_host = np.asarray(active, dtype=bool)
+                active_host = np.asarray(active, dtype=np.bool_)
                 cost = (
-                    np.ones((bucket.lane_capacity,), dtype=float)
+                    np.ones((bucket.lane_capacity,), dtype=np.float64)
                     if supplied_cost is None
-                    else np.asarray(supplied_cost, dtype=float)
+                    else np.asarray(supplied_cost, dtype=np.float64)
                 )
                 if cost.shape != (bucket.lane_capacity,) or np.any(
                     active_host & (~np.isfinite(cost) | (cost <= 0.0))
@@ -258,7 +256,7 @@ class PreparedVariablePatchPartition(StrictModule, NonTrainableState):
                     (self.plan.part_count, capacity) + values.shape[1:],
                     dtype=values.dtype,
                 )
-                for lane in np.flatnonzero(np.asarray(active, dtype=bool)):
+                for lane in np.flatnonzero(np.asarray(active, dtype=np.bool_)):
                     packed = packed.at[int(owner[lane]), int(local[lane])].set(
                         values[lane]
                     )
@@ -308,7 +306,7 @@ class PreparedVariablePatchPartition(StrictModule, NonTrainableState):
                     (bucket.lane_capacity,) + packed_bucket.shape[2:],
                     dtype=packed_bucket.dtype,
                 )
-                for lane in np.flatnonzero(np.asarray(active, dtype=bool)):
+                for lane in np.flatnonzero(np.asarray(active, dtype=np.bool_)):
                     canonical = canonical.at[lane].set(
                         packed_bucket[int(owner[lane]), int(local[lane])]
                     )

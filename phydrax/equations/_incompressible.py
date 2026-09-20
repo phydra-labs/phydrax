@@ -75,7 +75,7 @@ class IncompressibleFlowProblem(StrictModule):
         raw_viscosity = jnp.asarray(viscosity)
         if jnp.iscomplexobj(raw_viscosity):
             raise TypeError("viscosity must be real.")
-        viscosity_ = raw_viscosity.astype(float)
+        viscosity_ = raw_viscosity.astype("float64")
         if viscosity_.shape != () or not bool(
             jnp.isfinite(viscosity_) & (viscosity_ >= 0.0)
         ):
@@ -93,7 +93,7 @@ class IncompressibleFlowProblem(StrictModule):
         identifier = (
             canonical_fingerprint(
                 {
-                    "kind": "incompressible-flow-problem-v1",
+                    "kind": "incompressible-flow-problem",
                     "dimension": dimension,
                     "viscosity": float(viscosity_),
                     "forcing": source_id,
@@ -138,7 +138,7 @@ class _PeriodicRotationalDrift(StrictModule):
         self.dynamic_les = dynamic_les
         if algebraic_les is None and dynamic_les is None:
             payload = {
-                "kind": "periodic-incompressible-rotational-drift-v1",
+                "kind": "periodic-incompressible-rotational-drift",
                 "dimension": problem.spatial_dimension,
                 "forcing": problem.forcing_id,
                 "discretization": discretization.prepared_id,
@@ -855,7 +855,7 @@ def compile_periodic_incompressible_flow(
     )
     if prepared_les is None and prepared_dynamic is None:
         compilation_payload = {
-            "kind": "periodic-incompressible-compiler-v1",
+            "kind": "periodic-incompressible-compiler",
             "problem": problem.problem_id,
             "nonlinear": nonlinear.nonlinear_id,
             "discretization": discretization.prepared_id,

@@ -210,7 +210,7 @@ def test_finite_minimum_counts_declared_and_nonfinite_invalidity():
     space = phx.optim.FiniteProductSpace(phx.optim.FiniteAxis(jnp.arange(5.0)))
 
     def evaluator(value):
-        score = jnp.asarray([2.0, jnp.nan, -jnp.inf, 0.0, 1.0])[value.astype(int)]
+        score = jnp.asarray([2.0, jnp.nan, -jnp.inf, 0.0, 1.0])[value.astype("int64")]
         return score, value != 3.0
 
     result = phx.optim.search_finite(evaluator, space)
@@ -238,7 +238,7 @@ def test_finite_search_configuration_and_evaluator_contract_are_strict():
     space = phx.optim.FiniteProductSpace(phx.optim.FiniteAxis(jnp.asarray([0.0, 1.0])))
     with pytest.raises(TypeError, match="floating"):
         phx.optim.search_finite(
-            lambda value: (value.astype(int), jnp.asarray(True)), space
+            lambda value: (value.astype("int64"), jnp.asarray(True)), space
         )
     with pytest.raises(ValueError, match="boolean scalar"):
         phx.optim.search_finite(lambda value: (value, jnp.asarray([True])), space)

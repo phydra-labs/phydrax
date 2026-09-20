@@ -7,9 +7,9 @@ from phydrax.linalg import ArraySpace
 
 def test_explicit_linear_representation_round_trips_without_model_introspection():
     field_spec = ProductFieldSpec(
-        (FieldSpec("u", ArrayCodomain.from_shape((2,), dtype=float)),)
+        (FieldSpec("u", ArrayCodomain.from_shape((2,), dtype="float64")),)
     )
-    space = ArraySpace((2,), dtype=float)
+    space = ArraySpace((2,), dtype="float64")
     representation = finite_feature_linear_representation(
         field_spec,
         space,

@@ -129,9 +129,9 @@ def rate_to_watts(rate, carrier, time_unit):
 
 
 def make_dispatch_system(heat_W, electric_W, duration_s):
-    heat = np.asarray(heat_W, dtype=float)
-    electric = np.asarray(electric_W, dtype=float)
-    duration = np.asarray(duration_s, dtype=float)
+    heat = np.asarray(heat_W, dtype="float64")
+    electric = np.asarray(electric_W, dtype="float64")
+    duration = np.asarray(duration_s, dtype="float64")
     if heat.ndim != 1 or electric.shape != heat.shape or duration.shape != heat.shape:
         raise ValueError(
             "Heat, electricity and physical interval durations must share one interval axis."

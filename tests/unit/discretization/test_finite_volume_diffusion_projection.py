@@ -43,19 +43,11 @@ def test_compressible_viscous_flux_vanishes_for_constant_primitive_state():
         phx.discretization.FiniteVolumeBoundarySet.periodic(("x",)),
     ).prepare()
 
-    fluxes = viscous.face_fluxes(
-        system, 0.0, state, discretization, halo
-    )
-    residual = viscous.residual(
-        system, 0.0, state, discretization, halo
-    )
+    fluxes = viscous.face_fluxes(system, 0.0, state, discretization, halo)
+    residual = viscous.residual(system, 0.0, state, discretization, halo)
 
     np.testing.assert_allclose(fluxes[0], 0.0, atol=1e-13)
     np.testing.assert_allclose(residual, 0.0, atol=1e-13)
-
-
-
-
 
 
 def test_compiled_finite_volume_linearization_matches_direct_jvp():
@@ -77,9 +69,7 @@ def test_compiled_finite_volume_linearization_matches_direct_jvp():
         phx.discretization.PiecewiseConstantReconstruction(),
         phx.discretization.RusanovFluxPlan(),
     )
-    compiled = phx.equations.compile_conservation_problem(
-        problem, discretization, method
-    )
+    compiled = phx.equations.compile_conservation_problem(problem, discretization, method)
     x = grid.structured_axes[0].interval_centers
     state = jnp.sin(2.0 * jnp.pi * x)[..., None]
     tangent = jnp.cos(4.0 * jnp.pi * x)[..., None]

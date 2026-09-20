@@ -97,11 +97,11 @@ class TemperedSMCResult(StrictModule):
 
     @property
     def num_particles(self) -> int:
-        return int(self.final_weights.shape[0])
+        return self.final_weights.shape[0]
 
     @property
     def num_tempering_steps(self) -> int:
-        return int(self.temperatures.shape[0] - 1)
+        return self.temperatures.shape[0] - 1
 
     def posterior_measure(self) -> WeightedSampleTarget:
         """Expose final dependent particles as a normalized weighted measure."""
@@ -196,8 +196,7 @@ def sample_tempered_smc(
         raise ValueError("num_particles must be at least two.")
     if mcmc_steps <= 0 or integration_steps <= 0 or tempering_steps <= 0:
         raise ValueError(
-            "num_mcmc_steps, num_integration_steps, and max_tempering_steps "
-            "must be positive."
+            "num_mcmc_steps, num_integration_steps, and max_tempering_steps must be positive."
         )
     if not 0.0 < float(target_ess) < 1.0:
         raise ValueError("target_ess must lie strictly between zero and one.")
@@ -219,17 +218,16 @@ def sample_tempered_smc(
         raise ValueError("checkpoint_id is required for tempered SMC checkpointing.")
 
     dimension = sum(
-        int(jnp.asarray(leaf).size)
+        jnp.asarray(leaf).size
         for leaf in jax.tree_util.tree_leaves(problem.initial_position)
     )
     if inverse_mass_matrix is None:
         mass_matrix = jnp.ones(dimension)
     else:
-        mass_matrix = jnp.asarray(inverse_mass_matrix, dtype=float)
+        mass_matrix = jnp.asarray(inverse_mass_matrix, dtype=jnp.float64)
         if mass_matrix.shape not in ((dimension,), (dimension, dimension)):
             raise ValueError(
-                "inverse_mass_matrix must have shape (dimension,) or "
-                "(dimension, dimension)."
+                "inverse_mass_matrix must have shape (dimension,) or (dimension, dimension)."
             )
         if not bool(jnp.all(jnp.isfinite(mass_matrix))):
             raise ValueError("inverse_mass_matrix must be finite.")
@@ -283,7 +281,7 @@ def sample_tempered_smc(
         )
     )
     mcmc_parameters = {
-        "step_size": jnp.asarray([step_size], dtype=float),
+        "step_size": jnp.asarray([step_size], dtype=jnp.float64),
         "inverse_mass_matrix": mass_matrix[None, ...],
         "num_integration_steps": jnp.asarray([integration_steps]),
     }
@@ -425,7 +423,7 @@ def sample_tempered_smc(
         log_evidence=jnp.sum(log_evidence_terms),
         root_key=root_key,
         duration_seconds=duration,
-        num_unique_initial_particles=int(jnp.unique(lineage).size),
+        num_unique_initial_particles=jnp.unique(lineage).size,
         resampling_method=resampling_method,
     )
 
@@ -556,7 +554,7 @@ def _validate_particles(
 
 def _tree_nbytes(tree: PyTree[Any], /) -> int:
     return sum(
-        int(jnp.asarray(leaf).nbytes)
+        jnp.asarray(leaf).nbytes
         for leaf in jax.tree_util.tree_leaves(tree)
         if eqx.is_array(leaf)
     )

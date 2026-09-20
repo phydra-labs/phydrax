@@ -31,7 +31,7 @@ from phydrax.particle_physics._dark_shower import (
     sudakov_no_emission_probability,
 )
 from phydrax.particle_physics._events import ParticleEventPlan
-from phydrax.particle_physics._identity import ParticleCatalogueReference, ParticleRole
+from phydrax.particle_physics._identity import ParticleCatalogReference, ParticleRole
 from phydrax.particle_physics._species import ParticleSpeciesTable
 from phydrax.particle_physics._weights import EventWeightSet, WeightVariationKind
 from phydrax.solver._dark_sector_epoch_runtime import (
@@ -105,7 +105,7 @@ def _runtime(frontier_capacity=8):
 
 def _shower_plan():
     units, frame = _units_and_frame()
-    catalogue = ParticleCatalogueReference(
+    catalog = ParticleCatalogReference(
         source_id="dark-test",
         provider_release="test",
         checksum="species-checksum",
@@ -115,7 +115,7 @@ def _shower_plan():
         jnp.asarray((100, 101)),
         jnp.asarray((0.0, 0.0)),
         jnp.asarray((1.0, 0.0)),
-        catalogue=catalogue,
+        catalog=catalog,
         energy_unit=units.energy_unit,
         charge_unit=COULOMB,
     )
@@ -150,7 +150,7 @@ def _shower_plan():
 
 def _event(plan, particle_capacity=5):
     event_plan = ParticleEventPlan(
-        catalogue=plan.species.catalogue,
+        catalog=plan.species.catalog,
         momentum_unit=plan.units.energy_unit,
         length_unit=plan.units.scale.dimensional_scale.length_unit,
         time_unit=plan.units.scale.dimensional_scale.time_unit,
@@ -159,7 +159,7 @@ def _event(plan, particle_capacity=5):
         vertex_capacity=2,
         provider_status_namespace="native-dark-shower",
     ).prepare()
-    active = jnp.zeros((1, particle_capacity), dtype=bool).at[0, 0].set(True)
+    active = jnp.zeros((1, particle_capacity), dtype="bool").at[0, 0].set(True)
     momenta = (
         jnp.zeros((1, particle_capacity, 4))
         .at[0, 0]
@@ -197,7 +197,7 @@ def _event(plan, particle_capacity=5):
         end_vertex_indices=jnp.full((1, particle_capacity), -1),
         color_flow=color,
         production_vertices=jnp.zeros((1, 2, 4)),
-        vertex_active=jnp.zeros((1, 2), dtype=bool),
+        vertex_active=jnp.zeros((1, 2), dtype="bool"),
         weights=weights,
         source_id="hard-event",
     )

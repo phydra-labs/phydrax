@@ -58,7 +58,7 @@ def _rt0_tabulate(points: ArrayLike, /) -> tuple[Array, Array]:
 def _bdm1_coefficients() -> np.ndarray:
     # psi_(vertex,component) = lambda_vertex e_component. Face moments use
     # lambda at each oriented reference-face vertex.
-    matrix = np.zeros((12, 12), dtype=float)
+    matrix = np.zeros((12, 12), dtype=np.float64)
     row = 0
     for face, vertices in enumerate(_FACE_VERTICES):
         normal = _FACE_NORMALS[face]
@@ -196,7 +196,7 @@ def _bdm2_coefficients() -> np.ndarray:
     # [P2]^3 has 30 coefficients. Twenty-four face moments use the degree-two
     # Bernstein basis, whose permutation follows face vertices/edges. Six
     # interior moments use the lowest Nedelec space: constants and rotations.
-    matrix = np.zeros((30, 30), dtype=float)
+    matrix = np.zeros((30, 30), dtype=np.float64)
     for face_index, face in enumerate(_FACE_VERTICES):
         points, weights, barycentric = _face_quadrature(face)
         monomials = _p2_monomials_numpy(points)

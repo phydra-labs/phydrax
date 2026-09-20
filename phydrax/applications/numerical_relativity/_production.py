@@ -113,7 +113,7 @@ def _finite_time(value: object, owner: str, /) -> float:
 
 def _host_bool(value: object, owner: str, /) -> bool:
     array = np.asarray(value)
-    if array.shape != () or array.dtype != np.dtype(bool):
+    if array.shape != () or array.dtype != np.dtype(np.bool_):
         raise TypeError(f"{owner} must be a scalar Boolean array.")
     return bool(array)
 
@@ -1229,9 +1229,9 @@ class NumericalRelativityCancellationManifest(StrictModule, NonTrainableState):
         /,
     ):
         production._require_prepared(prepared)
-        if not isinstance(state, ProductionRunState) or state.status != "cancelled":
+        if not isinstance(state, ProductionRunState) or state.status != "canceled":
             raise ValueError(
-                "Cancellation manifests require a cancelled production state."
+                "Cancellation manifests require a canceled production state."
             )
         if not isinstance(receipt, CheckpointCommitReceipt):
             raise TypeError("Cancellation requires a checkpoint commit receipt.")
@@ -1246,7 +1246,7 @@ class NumericalRelativityCancellationManifest(StrictModule, NonTrainableState):
             or verified.accepted_step != step_index
         ):
             raise ValueError(
-                "Checkpoint commit receipt does not bind the cancelled runtime state."
+                "Checkpoint commit receipt does not bind the canceled runtime state."
             )
         reason_ = _bounded_detail(
             reason,
@@ -1773,11 +1773,11 @@ class NumericalRelativityProductionPlan(StrictModule, NonTrainableState):
         if (
             not isinstance(result, ProductionRunResult)
             or result.run_id != prepared.run_id
-            or result.state.status != "cancelled"
+            or result.state.status != "canceled"
             or result.failure is not None
         ):
             raise ValueError(
-                "Cancellation manifest requires this runtime's cancelled result."
+                "Cancellation manifest requires this runtime's canceled result."
             )
         preserved, receipt = prepared.commit_checkpoint(result.state)
         verified = prepared.checkpoint_store.verify_commit(receipt)

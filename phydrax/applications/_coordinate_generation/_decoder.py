@@ -63,7 +63,7 @@ class AbstractCoordinateDecoder(StrictModule, NonTrainableState):
 
 
 class CartesianCoordinateDecoder(AbstractCoordinateDecoder):
-    """Original mass-centred Cartesian representation, preserved as baseline."""
+    """Original mass-centered Cartesian representation, preserved as baseline."""
 
     support: PreparedCoordinateSupport
     _support_id: str = eqx.field(static=True)

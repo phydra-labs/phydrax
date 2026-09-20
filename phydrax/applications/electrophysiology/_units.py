@@ -5,7 +5,7 @@
 """Explicit unit definitions and conversions for electrophysiology quantities.
 
 Compiled kernels use millivolts, milliseconds, nanoamperes, microsiemens,
-nanofarads, micrometres, millimolar concentrations, and kelvin. Conversion is
+nanofarads, micrometers, millimolar concentrations, and kelvin. Conversion is
 kept at host-facing boundaries so every numerical field has an unambiguous unit.
 """
 

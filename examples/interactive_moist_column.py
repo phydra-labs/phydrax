@@ -6,7 +6,7 @@
 
 PYTHONPATH=. python examples/interactive_moist_column.py --steps 1800 --dt 2
 A longer experiment can use --spinup-steps 43200; report rejection rather than
-silently changing the physical timestep. Grey coefficients below are explicit
+silently changing the physical timestep. Gray coefficients below are explicit
 illustrative calibration choices, not observed optical constants.
 """
 
@@ -36,7 +36,7 @@ def build_column(layers=8):
         shortwave_scattering=(0.0, 0.0, 60.0, 30.0),
         longwave_absorption=(1e-4, 0.08, 50.0, 25.0),
         shortwave_asymmetry=(0.0, 0.0, 0.85, 0.7),
-        reference_id="illustrative-grey-forced-column-calibration",
+        reference_id="illustrative-gray-forced-column-calibration",
     )
     plan = InteractiveMoistColumnPlan(
         thermo,
@@ -184,7 +184,7 @@ def main():
     report = physical_report(plan, initial, final, args.dt, forcing)
     report.update(
         forcing=forcing,
-        optical_reference="illustrative grey; not observational calibration",
+        optical_reference="illustrative gray; not observational calibration",
         scope="forced fixed-volume caloric column, not a hydrostatic or momentum solver",
     )
     print(json.dumps(report, indent=2))

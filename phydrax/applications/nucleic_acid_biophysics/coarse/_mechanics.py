@@ -125,7 +125,7 @@ class PreparedNucleotideModel(StrictModule):
         ids, sites, geometry = (
             np.asarray(plan.body_ids),
             np.asarray(plan.site_ids),
-            np.asarray(plan.reference_sites, dtype=float),
+            np.asarray(plan.reference_sites, dtype=np.float64),
         )
         if (
             ids.shape != (n,)

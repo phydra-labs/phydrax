@@ -133,10 +133,10 @@ class CosmologicalParticleMeshPlan(StrictModule, NonTrainableState):
         for axis, length in zip(grid.axes, kinematics.box_size, strict=True):
             if not axis.periodic or axis.bounds is None:
                 raise ValueError("Cosmological PM requires finite periodic grid axes.")
-            bounds = np.asarray(axis.bounds, dtype=float)
+            bounds = np.asarray(axis.bounds, dtype=np.float64)
             if abs(bounds[0]) > 1.0e-12 or abs(bounds[1] - length) > 1.0e-12:
                 raise ValueError("Cosmological PM grid bounds must match [0, box_size].")
-        schedule_host = np.asarray(scale_factors, dtype=float).reshape((-1,))
+        schedule_host = np.asarray(scale_factors, dtype=np.float64).reshape((-1,))
         if (
             schedule_host.size < 2
             or np.any(~np.isfinite(schedule_host))

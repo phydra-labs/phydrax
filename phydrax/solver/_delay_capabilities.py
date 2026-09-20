@@ -255,13 +255,13 @@ def adaptive_stochastic_delay_step_doubling(
     attempt_times = jnp.zeros((n,), dtype=t0.dtype)
     attempt_steps = jnp.zeros((n,), dtype=t0.dtype)
     errors = jnp.zeros((n,), dtype=state0.real.dtype)
-    accepted_attempts = jnp.zeros((n,), dtype=bool)
-    attempt_active = jnp.zeros((n,), dtype=bool)
+    accepted_attempts = jnp.zeros((n,), dtype=jnp.bool_)
+    attempt_active = jnp.zeros((n,), dtype=jnp.bool_)
     accepted_times = jnp.zeros((m + 1,), dtype=t0.dtype).at[0].set(t0)
     accepted_states = (
         jnp.zeros((m + 1,) + state0.shape, dtype=state0.dtype).at[0].set(state0)
     )
-    accepted_active = jnp.zeros((m + 1,), dtype=bool).at[0].set(True)
+    accepted_active = jnp.zeros((m + 1,), dtype=jnp.bool_).at[0].set(True)
 
     def body(index, carry):
         (
@@ -437,7 +437,7 @@ class ExponentialConvolutionDelay(StrictModule, NonTrainableState):
             {
                 "kind": "exponential-convolution-delay",
                 "name": name,
-                "rank": int(rates_.size),
+                "rank": rates_.size,
             }
         )
 
@@ -600,7 +600,7 @@ class DelayPrimalTape(StrictModule, NonTrainableState):
     ):
         times_ = jnp.asarray(times)
         states_ = jnp.asarray(states)
-        active_ = jnp.asarray(active, dtype=bool)
+        active_ = jnp.asarray(active, dtype=jnp.bool_)
         if (
             times_.ndim != 1
             or states_.ndim == 0
@@ -706,7 +706,7 @@ def backsolve_delay_adjoint(
         raise ValueError("loss_impulses must match tape states.")
     args_gradient = None if args is None else jax.tree.map(jnp.zeros_like, args)
     if capacity == 0:
-        empty_active = jnp.zeros((0,), dtype=bool)
+        empty_active = jnp.zeros((0,), dtype=jnp.bool_)
         empty_residuals = jnp.zeros((0,), dtype=tape.states.real.dtype)
         evidence = DelayBacksolveEvidence(
             empty_active,
@@ -746,8 +746,8 @@ def backsolve_delay_adjoint(
     terminal_value = cotangent + impulses[terminal_index]
     lambdas = jnp.zeros_like(tape.states).at[terminal_index].set(terminal_value)
     residuals = jnp.zeros((capacity - 1,), dtype=tape.states.real.dtype)
-    active = jnp.zeros((capacity - 1,), dtype=bool)
-    covered = jnp.zeros((capacity - 1,), dtype=bool)
+    active = jnp.zeros((capacity - 1,), dtype=jnp.bool_)
+    covered = jnp.zeros((capacity - 1,), dtype=jnp.bool_)
 
     def body(reverse_index, carry):
         index = capacity - 2 - reverse_index

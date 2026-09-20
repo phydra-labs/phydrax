@@ -49,9 +49,9 @@ class ExchangePathPlan(StrictModule):
             )
         capacity, particles = map(int, table.shape)
         mask = (
-            np.ones((capacity,), dtype=bool)
+            np.ones((capacity,), dtype=np.bool_)
             if active is None
-            else np.asarray(active, dtype=bool)
+            else np.asarray(active, dtype=np.bool_)
         )
         if mask.shape != (capacity,) or not np.any(mask):
             raise ValueError("active must select at least one permutation row.")
@@ -62,7 +62,7 @@ class ExchangePathPlan(StrictModule):
                     "Every active row must be a permutation of all particles."
                 )
         active_rows = table[mask]
-        unique_count = int(np.unique(active_rows, axis=0).shape[0])
+        unique_count = np.unique(active_rows, axis=0).shape[0]
         if unique_count != int(mask.sum()):
             raise ValueError("Active permutation rows must be unique.")
         full = unique_count == math.factorial(particles)

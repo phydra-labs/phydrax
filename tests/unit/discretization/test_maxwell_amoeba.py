@@ -40,7 +40,7 @@ def test_maxwell_db_state_boundaries_observers_and_cpml_are_composable():
         observers=(probe, dft),
         pml=pml,
     ).prepare()
-    electric = jnp.sin(jnp.arange(n1, dtype=float) / 9.0)
+    electric = jnp.sin(jnp.arange(n1, dtype="float64") / 9.0)
     displacement = runtime.constitutive.electric_displacement(electric, None)
     magnetic = bridge.exterior_derivative(1, electric)
     unconstrained = runtime.pack(displacement, magnetic)
@@ -70,7 +70,7 @@ def test_maxwell_db_state_boundaries_observers_and_cpml_are_composable():
 
 def test_periodic_and_bloch_cochain_derivatives_preserve_chain_identity():
     bridge = phx.discretization.StructuredCochainBridge(_grid(periodic=True))
-    values = jnp.sin(jnp.arange(bridge.cochain.cell_counts[0], dtype=float))
+    values = jnp.sin(jnp.arange(bridge.cochain.cell_counts[0], dtype="float64"))
     np.testing.assert_allclose(
         bridge.exterior_derivative(1, bridge.exterior_derivative(0, values)),
         0.0,
@@ -159,15 +159,15 @@ def test_frequency_modes_adjoints_and_reversible_execution():
     operator = phx.solver.maxwell.FrequencyMaxwellOperator(
         bridge.cochain, runtime.layout, runtime.constitutive, 0.5
     )
-    field = jnp.ones((operator.size,), dtype=complex)
+    field = jnp.ones((operator.size,), dtype="complex128")
     assert operator.mv(field).shape == field.shape
     if operator.size <= 256:
         modes = operator.eigensystem(min(2, operator.size))
         assert jnp.all(modes.residuals < 1e-7)
-    identity = jnp.eye(2, dtype=complex)
+    identity = jnp.eye(2, dtype="complex128")
     transverse = phx.solver.maxwell.FixedFrequencyGuidedModePlan(
-        -jnp.diag(jnp.asarray([4.0, 1.0], dtype=complex)),
-        jnp.zeros((2, 2), dtype=complex),
+        -jnp.diag(jnp.asarray([4.0, 1.0], dtype="complex128")),
+        jnp.zeros((2, 2), dtype="complex128"),
         identity,
         1,
         angular_frequency=1.0,
@@ -175,7 +175,7 @@ def test_frequency_modes_adjoints_and_reversible_execution():
         right_magnetic_trace_coefficients=(identity,),
         left_electric_trace_coefficients=(identity,),
         left_magnetic_trace_coefficients=(identity,),
-        divergence_coefficients=(jnp.zeros((1, 2), dtype=complex),),
+        divergence_coefficients=(jnp.zeros((1, 2), dtype="complex128"),),
         power_pairing=identity,
         target_propagation_constant=2.0,
     ).solve()
@@ -329,7 +329,7 @@ def test_high_order_teno_filter_lowering_and_neutral_guardrails():
         ("y",),
         lambda state: {"y": 2.0 * state["x"]},
         lambda state: {"y": 2.0 * state["x"]},
-        implementation_id="double-v1",
+        implementation_id="double",
     )
     parity = phx.discretization.compare_lowered_backends(
         phx.discretization.LoweredOperatorProgram(buffers, (kernel,)),
@@ -340,7 +340,7 @@ def test_high_order_teno_filter_lowering_and_neutral_guardrails():
     neutral = phx.export.NeutralPointCloudSchema(
         jnp.asarray([[0.0], [1.0]]),
         jnp.ones((2,)),
-        jnp.zeros((2,), dtype=int),
+        jnp.zeros((2,), dtype="int64"),
     )
     assert phx.export.NeutralAdapterBoundary().export(neutral)["kind"] == "point_cloud"
     with pytest.raises(ValueError, match="forbidden"):

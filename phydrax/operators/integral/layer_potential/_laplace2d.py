@@ -37,7 +37,7 @@ class LaplaceLayerKernel2D(AbstractLayerKernel):
     def __init__(self):
         self._kernel_id = canonical_fingerprint(
             {
-                "kind": "laplace-layer-kernel-2d-v1",
+                "kind": "laplace-layer-kernel-2d",
                 "fundamental_solution": "-log-distance/(2*pi)",
                 "normal": "outward-source",
             }
@@ -108,16 +108,16 @@ class LaplaceLayerPotential2D(AbstractArrayModel):
         if kind not in ("single", "double"):
             raise ValueError("Laplace layer kind must be 'single' or 'double'.")
         density_ = (
-            jnp.zeros((panelization.node_count,), dtype=float)
+            jnp.zeros((panelization.node_count,), dtype=jnp.float64)
             if density is None
-            else jnp.asarray(density, dtype=float)
+            else jnp.asarray(density, dtype=jnp.float64)
         )
         if density_.shape != (panelization.node_count,):
             raise ValueError("Layer density must contain one scalar per source node.")
         kernel = LaplaceLayerKernel2D()
         representation_id = canonical_fingerprint(
             {
-                "kind": "discrete-laplace-layer-potential-2d-v1",
+                "kind": "discrete-laplace-layer-potential-2d",
                 "kernel_id": kernel.kernel_id,
                 "panelization_id": panelization.panelization_id,
                 "layer_kind": kind,
@@ -184,7 +184,7 @@ class LaplaceLayerPotential2D(AbstractArrayModel):
 
     def __call__(self, target: Array, /, *, key=None) -> Array:
         del key
-        value = jnp.asarray(target, dtype=float)
+        value = jnp.asarray(target, dtype=jnp.float64)
         if value.shape != (2,):
             raise ValueError(
                 f"Laplace layer target must have shape (2,); got {value.shape}."
@@ -197,7 +197,7 @@ class LaplaceLayerPotential2D(AbstractArrayModel):
         )
 
     def _evaluate_direct(self, targets: ArrayLike, /) -> Array:
-        values = jnp.asarray(targets, dtype=float)
+        values = jnp.asarray(targets, dtype=jnp.float64)
         if values.ndim != 2 or values.shape[1] != 2 or values.shape[0] == 0:
             raise ValueError("Direct layer targets must have shape (target_count, 2).")
         return jax.vmap(self)(values)
@@ -257,7 +257,7 @@ def double_layer_principal_value_matrix(
 
     if not isinstance(panelization, BoundaryPanelization2D):
         raise TypeError("panelization must be BoundaryPanelization2D.")
-    kernel = LaplaceLayerKernel2D()
+    LaplaceLayerKernel2D()
     targets = panelization.points
     sources = panelization.points
     normals = panelization.normals

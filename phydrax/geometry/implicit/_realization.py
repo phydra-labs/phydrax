@@ -202,15 +202,19 @@ class ImplicitSurfaceEvidence(StrictModule):
     ):
         self.projection = projection
         self.sign_pattern_unchanged = jnp.asarray(
-            sign_pattern_unchanged, dtype=bool
+            sign_pattern_unchanged, dtype=jnp.bool_
         ).reshape(())
         self.qef_solve_status = jnp.asarray(qef_solve_status, dtype=jnp.int32)
-        self.minimum_face_area = jnp.asarray(minimum_face_area, dtype=float).reshape(())
-        self.minimum_orientation_margin = jnp.asarray(
-            minimum_orientation_margin, dtype=float
+        self.minimum_face_area = jnp.asarray(
+            minimum_face_area, dtype=jnp.float64
         ).reshape(())
-        self.intersection_free = jnp.asarray(intersection_free, dtype=bool).reshape(())
-        self.finite = jnp.asarray(finite, dtype=bool).reshape(())
+        self.minimum_orientation_margin = jnp.asarray(
+            minimum_orientation_margin, dtype=jnp.float64
+        ).reshape(())
+        self.intersection_free = jnp.asarray(intersection_free, dtype=jnp.bool_).reshape(
+            ()
+        )
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_).reshape(())
         self.status = jnp.asarray(status, dtype=jnp.int32).reshape(())
         self.plan_id = str(plan_id)
         self.topology_id = str(topology_id)
@@ -248,7 +252,7 @@ class ImplicitSurfaceRealization(StrictModule):
         *,
         source_id: str,
     ):
-        proposed = jnp.asarray(proposed_vertices, dtype=float)
+        proposed = jnp.asarray(proposed_vertices, dtype=jnp.float64)
         safe = jnp.asarray(vertices, dtype=proposed.dtype)
         faces_ = jnp.asarray(faces, dtype=jnp.int32)
         if proposed.ndim != 2 or proposed.shape[1] != 3 or safe.shape != proposed.shape:
@@ -325,16 +329,16 @@ class ImplicitSurfacePlan(StrictModule):
         if not isinstance(projection, ImplicitPointProjectionPlan):
             raise TypeError("projection must be ImplicitPointProjectionPlan.")
         arrays = {
-            "grid_points": np.asarray(grid_points, dtype=float),
-            "inside_pattern": np.asarray(inside_pattern, dtype=bool),
+            "grid_points": np.asarray(grid_points, dtype=np.float64),
+            "inside_pattern": np.asarray(inside_pattern, dtype=np.bool_),
             "vertex_anchor_indices": np.asarray(vertex_anchor_indices, dtype=np.int32),
-            "vertex_anchor_mask": np.asarray(vertex_anchor_mask, dtype=bool),
-            "qef_regularization": np.asarray(qef_regularization, dtype=float),
-            "cell_lower": np.asarray(cell_lower, dtype=float),
-            "cell_upper": np.asarray(cell_upper, dtype=float),
-            "base_vertices": np.asarray(base_vertices, dtype=float),
+            "vertex_anchor_mask": np.asarray(vertex_anchor_mask, dtype=np.bool_),
+            "qef_regularization": np.asarray(qef_regularization, dtype=np.float64),
+            "cell_lower": np.asarray(cell_lower, dtype=np.float64),
+            "cell_upper": np.asarray(cell_upper, dtype=np.float64),
+            "base_vertices": np.asarray(base_vertices, dtype=np.float64),
             "faces": np.asarray(faces, dtype=np.int32),
-            "base_face_normals": np.asarray(base_face_normals, dtype=float),
+            "base_face_normals": np.asarray(base_face_normals, dtype=np.float64),
             "intersection_pairs": np.asarray(intersection_pairs, dtype=np.int32),
         }
         vertices = arrays["base_vertices"].shape[0]

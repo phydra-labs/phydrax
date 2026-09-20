@@ -876,7 +876,7 @@ def _differentiable_spectral_benchmark(
         & (tangent_error < 1e-10)
     )
     return {
-        "batch_size": int(matrices.shape[0]),
+        "batch_size": matrices.shape[0],
         "dimension": dimension,
         "selected_dimension": selected_dimension,
         "preparation_ms": preparation_ms,

@@ -175,7 +175,7 @@ class DistributedCovarianceLayout(StrictModule, NonTrainableState):
         *,
         storage: CovarianceStorage = "dense",
         factor_rank: int | None = None,
-        dtype: Any = float,
+        dtype: Any = jnp.float64,
         maximum_local_bytes: int = 512 * 1024 * 1024,
     ):
         dimension = _positive_integer(covariance_dimension, "covariance_dimension")

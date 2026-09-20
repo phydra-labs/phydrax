@@ -143,7 +143,7 @@ def replay_trigger_menu(
     if not isinstance(menu, TriggerMenu):
         raise TypeError("menu must be TriggerMenu.")
     event_ids_ = jnp.asarray(event_ids)
-    raw = jnp.asarray(raw_decisions, dtype=bool)
+    raw = jnp.asarray(raw_decisions, dtype=jnp.bool_)
     event_count = event_ids_.shape[0]
     line_count = len(menu.lines)
     if event_ids_.ndim != 1 or raw.shape != (event_count, line_count):
@@ -188,7 +188,7 @@ def replay_trigger_menu(
         )
         resource_valid = resource_valid.at[:, index].set(valid_resource)
         post = post.at[:, index].set(seeded & keep & valid_resource)
-    membership = jnp.zeros((event_count, len(menu.stream_names)), dtype=bool)
+    membership = jnp.zeros((event_count, len(menu.stream_names)), dtype=jnp.bool_)
     stream_indices = {name: index for index, name in enumerate(menu.stream_names)}
     for line_index, line in enumerate(menu.lines):
         for stream_name in line.stream_names:

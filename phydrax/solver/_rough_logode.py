@@ -16,6 +16,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from phydrax._strict import StrictModule
+
 from ..linalg import (
     ArraySpace,
     FunctionLinearOperator,
@@ -77,7 +79,7 @@ def _logode_solver_id(
     explicit_fields: LiftedRoughVectorFields | None,
     /,
 ) -> str:
-    digest = hashlib.sha256(b"phydrax-rough-solver:logode:v1\0")
+    digest = hashlib.sha256(b"phydrax-rough-solver:logode\0")
     _update_configuration_digest(digest, ode_solver)
     _update_configuration_digest(digest, stepsize_controller)
     _update_configuration_digest(digest, adjoint)
@@ -101,8 +103,7 @@ def _validate_log_control(
     expected_dimension = problem.driver_dimension + int(control.joint_time)
     if control.dimension != expected_dimension:
         raise ValueError(
-            "Log-signature dimension must equal the problem driver dimension plus "
-            "its optional time channel."
+            "Log-signature dimension must equal the problem driver dimension plus its optional time channel."
         )
     if not control.joint_time and (problem.has_drift or problem.time_dependent):
         raise ValueError(
@@ -212,8 +213,7 @@ def _explicit_log_field(
     expected = problem.tangent_shape + (control.primitive_basis.size,)
     if tangents.shape != expected:
         raise ValueError(
-            f"explicit_fields must return physical tangent shape {expected}; "
-            f"got {tangents.shape}."
+            f"explicit_fields must return physical tangent shape {expected}; got {tangents.shape}."
         )
     local_fields = jax.vmap(
         lambda tangent: _local_field(retraction, local, tangent),
@@ -391,14 +391,14 @@ class LogODE(AbstractRoughSolver):
         return states, statuses, statistics
 
 
-class _MatrixOperator(eqx.Module):
+class _MatrixOperator(StrictModule):
     matrix: Array
 
     def __call__(self, value: Array, /) -> Array:
         return (self.matrix @ value.reshape((-1,))).reshape(value.shape)
 
 
-class _CommutatorOperator(eqx.Module):
+class _CommutatorOperator(StrictModule):
     left: Callable[[Array], ArrayLike]
     right: Callable[[Array], ArrayLike]
 
@@ -408,7 +408,7 @@ class _CommutatorOperator(eqx.Module):
         )
 
 
-class _WeightedOperator(eqx.Module):
+class _WeightedOperator(StrictModule):
     operators: tuple[Callable[[Array], ArrayLike], ...]
     coefficients: Array
 
@@ -423,7 +423,7 @@ def _operator(value: Any, /) -> Callable[[Array], ArrayLike]:
     if callable(value):
         return value
     matrix = jnp.asarray(value)
-    if matrix.ndim != 2 or int(matrix.shape[0]) != int(matrix.shape[1]):
+    if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1]:
         raise ValueError("A matrix linear operator must be square.")
     return _MatrixOperator(matrix)
 
@@ -497,8 +497,7 @@ class LinearLogODE(AbstractRoughSolver):
             or problem.state_shape != problem.tangent_shape
         ):
             raise ValueError(
-                "LinearLogODE requires equal point, local, and tangent spaces "
-                "with trivial Euclidean geometry."
+                "LinearLogODE requires equal point, local, and tangent spaces with trivial Euclidean geometry."
             )
         if len(self.operators) != log_control.dimension:
             raise ValueError(

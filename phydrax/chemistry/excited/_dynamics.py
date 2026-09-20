@@ -18,7 +18,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...ein import contract
 from ...solver import solve_unitary_propagator, UnitaryPropagatorProblem
@@ -61,7 +61,7 @@ class NonadiabaticSurfaceEvaluation(StrictModule, NonTrainableState):
         coupling = jnp.asarray(derivative_couplings, dtype=energy.real.dtype)
         states = tuple(str(value).strip() for value in state_ids)
         provider = str(provider_id).strip()
-        count = int(energy.size)
+        count = energy.size
         spin_orbit = (
             jnp.zeros((count, count), dtype=jnp.result_type(energy.dtype, jnp.complex64))
             if spin_orbit_couplings is None
@@ -88,7 +88,7 @@ class NonadiabaticSurfaceEvaluation(StrictModule, NonTrainableState):
         )
         hermiticity = jnp.max(jnp.abs(spin_orbit - jnp.conj(spin_orbit.T)), initial=0.0)
         valid = (
-            jnp.asarray(successful, dtype=bool)
+            jnp.asarray(successful, dtype=jnp.bool_)
             & jnp.all(jnp.isfinite(energy))
             & jnp.all(jnp.isfinite(gradient))
             & jnp.all(jnp.isfinite(coupling))
@@ -121,7 +121,7 @@ class NonadiabaticSurfaceEvaluation(StrictModule, NonTrainableState):
 
 
 class AbstractNonadiabaticSurfaceProvider(StrictModule, NonTrainableState):
-    provider_id: AbstractAttribute[str]
+    provider_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def evaluate(self, positions: ArrayLike, /) -> NonadiabaticSurfaceEvaluation:
@@ -220,7 +220,7 @@ class FewestSwitchesSurfaceHoppingPlan(StrictModule, NonTrainableState):
             raise TypeError(
                 "provider must implement AbstractNonadiabaticSurfaceProvider."
             )
-        mass = jnp.asarray(masses, dtype=float).reshape((-1,))
+        mass = jnp.asarray(masses, dtype=jnp.float64).reshape((-1,))
         dt = float(time_step)
         substeps = int(electronic_substeps)
         hbar_ = float(hbar)
@@ -325,7 +325,7 @@ class FewestSwitchesSurfaceHoppingPlan(StrictModule, NonTrainableState):
         )
         problem = UnitaryPropagatorProblem(
             lambda time, args: args,
-            int(coefficients.size),
+            coefficients.size,
             t0=0.0,
             t1=self.time_step,
             hbar=self.hbar,

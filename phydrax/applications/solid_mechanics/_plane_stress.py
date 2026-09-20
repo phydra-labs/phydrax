@@ -71,7 +71,9 @@ class PlaneStressKinematics(StrictModule):
         if deformation.shape[-2:] != (2, 2):
             raise ValueError("Plane-stress deformation gradients must end in 2x2.")
         if not jnp.issubdtype(deformation.dtype, jnp.inexact):
-            deformation = deformation.astype(jnp.result_type(deformation.dtype, float))
+            deformation = deformation.astype(
+                jnp.result_type(deformation.dtype, jnp.float64)
+            )
         batch_shape = deformation.shape[:-2]
         eta = jnp.asarray(log_thickness_stretch, dtype=deformation.dtype)
         thickness = jnp.asarray(reference_thickness, dtype=deformation.dtype)
@@ -180,14 +182,15 @@ class BlockDiagonalPlaneStressReductionPlan(StrictModule, NonTrainableState):
     ) -> BlockDiagonalPlaneStressReductionResponse:
         if not isinstance(law, HyperelasticLaw):
             raise TypeError(
-                "law must be a pure HyperelasticLaw; mixed pressure laws require "
-                "CoupledPlaneStressIncompressiblePlan."
+                "law must be a pure HyperelasticLaw; mixed pressure laws require CoupledPlaneStressIncompressiblePlan."
             )
         deformation = jnp.asarray(deformation_gradient)
         if deformation.shape[-2:] != (2, 2):
             raise ValueError("Plane-stress deformation gradients must end in 2x2.")
         if not jnp.issubdtype(deformation.dtype, jnp.inexact):
-            deformation = deformation.astype(jnp.result_type(deformation.dtype, float))
+            deformation = deformation.astype(
+                jnp.result_type(deformation.dtype, jnp.float64)
+            )
         batch_shape = deformation.shape[:-2]
         thickness = jnp.asarray(reference_thickness, dtype=deformation.dtype)
         try:
@@ -491,7 +494,9 @@ class CoupledPlaneStressIncompressiblePlan(StrictModule, NonTrainableState):
         if deformation.shape[-2:] != (2, 2):
             raise ValueError("Coupled plane-stress gradients must end in 2x2.")
         if not jnp.issubdtype(deformation.dtype, jnp.inexact):
-            deformation = deformation.astype(jnp.result_type(deformation.dtype, float))
+            deformation = deformation.astype(
+                jnp.result_type(deformation.dtype, jnp.float64)
+            )
         batch_shape = deformation.shape[:-2]
         thickness = jnp.asarray(reference_thickness, dtype=deformation.dtype)
         try:

@@ -29,12 +29,12 @@ def safe_weighted_values(
     mask: ArrayLike | None = None,
 ) -> tuple[Array, Array]:
     values_ = jnp.asarray(values)
-    weights_ = jnp.asarray(weights, dtype=float)
+    weights_ = jnp.asarray(weights, dtype=jnp.float64)
     if values_.shape[: weights_.ndim] != weights_.shape:
         raise ValueError("weights must match the leading value axes.")
-    included = jnp.ones(weights_.shape, dtype=bool)
+    included = jnp.ones(weights_.shape, dtype=jnp.bool_)
     if mask is not None:
-        included = jnp.broadcast_to(jnp.asarray(mask, dtype=bool), weights_.shape)
+        included = jnp.broadcast_to(jnp.asarray(mask, dtype=jnp.bool_), weights_.shape)
     valid_weight = included & jnp.isfinite(weights_) & (weights_ >= 0.0)
     safe_weights = jnp.where(valid_weight, weights_, 0.0)
     contributing = valid_weight & (weights_ > 0.0)
@@ -76,13 +76,13 @@ def weighted_mean(
     )
     return jnp.where(
         expanded > 0.0,
-        numerator / jnp.maximum(expanded, jnp.finfo(float).tiny),
+        numerator / jnp.maximum(expanded, jnp.finfo(jnp.float64).tiny),
         0,
     )
 
 
 def effective_sample_size(weights: ArrayLike, /, *, axis: int = -1) -> Array:
-    weights_ = jnp.asarray(weights, dtype=float)
+    weights_ = jnp.asarray(weights, dtype=jnp.float64)
     valid = jnp.all(
         jnp.isfinite(weights_) & (weights_ >= 0.0),
         axis=axis,
@@ -103,7 +103,7 @@ def weighted_covariance(
     correction: float = 0.0,
 ) -> tuple[Array, Array, Array]:
     x = jnp.asarray(features)
-    w = jnp.asarray(weights, dtype=float)
+    w = jnp.asarray(weights, dtype=jnp.float64)
     if x.ndim < 2 or w.shape != x.shape[:-1]:
         raise ValueError("features and weights must end in (sample, feature) and sample.")
     correction_ = float(correction)
@@ -121,7 +121,7 @@ def weighted_covariance(
         "...ni,...n,...nj->...ij", jnp.conj(centered), safe_w, centered
     )
     total = jnp.sum(safe_w, axis=-1)
-    denominator = jnp.maximum(total - correction_, jnp.finfo(float).tiny)
+    denominator = jnp.maximum(total - correction_, jnp.finfo(jnp.float64).tiny)
     covariance = scatter / denominator[..., None, None]
     valid_weights = jnp.all(jnp.isfinite(w) & (w >= 0.0), axis=-1)
     valid = (
@@ -144,7 +144,7 @@ def segmented_weighted_sum(
     """Reduce weighted samples into a fixed number of segments."""
     x = jnp.asarray(values)
     segments = jnp.asarray(segment_ids, dtype=jnp.int32)
-    w = jnp.asarray(weights, dtype=float)
+    w = jnp.asarray(weights, dtype=jnp.float64)
     if x.ndim < 1 or segments.shape != w.shape or x.shape[: w.ndim] != w.shape:
         raise ValueError("values, segment_ids, and weights must share case/sample axes.")
     count = int(num_segments)
@@ -194,7 +194,7 @@ def segmented_weighted_mean(
     expanded_mass = mass.reshape(mass.shape + (1,) * value_rank)
     means = jnp.where(
         expanded_mass > 0.0,
-        totals / jnp.maximum(expanded_mass, jnp.finfo(float).tiny),
+        totals / jnp.maximum(expanded_mass, jnp.finfo(jnp.float64).tiny),
         0,
     )
     return means, mass
@@ -210,7 +210,7 @@ def class_weighted_moments(
 ) -> tuple[Array, Array, Array, Array]:
     x = jnp.asarray(features)
     y = jnp.asarray(labels, dtype=jnp.int32)
-    w = jnp.asarray(weights, dtype=float)
+    w = jnp.asarray(weights, dtype=jnp.float64)
     if y.shape != x.shape[:-1] or w.shape != y.shape:
         raise ValueError("Class moments require aligned sample labels and weights.")
     classes = int(num_classes)
@@ -223,17 +223,17 @@ def class_weighted_moments(
     class_weights = safe_w[..., :, None] * membership
     mass = jnp.sum(class_weights, axis=-2)
     means = ein.contract("...nc,...nf->...cf", class_weights, safe_x)
-    means = means / jnp.maximum(mass[..., :, None], jnp.finfo(float).tiny)
+    means = means / jnp.maximum(mass[..., :, None], jnp.finfo(jnp.float64).tiny)
     centered = safe_x[..., :, None, :] - means[..., None, :, :]
     active = class_weights[..., :, :, None] > 0.0
     squared = jnp.real(centered * jnp.conj(centered))
     variance = jnp.sum(
         class_weights[..., :, :, None] * jnp.where(active, squared, 0),
         axis=-3,
-    ) / jnp.maximum(mass[..., :, None], jnp.finfo(float).tiny)
+    ) / jnp.maximum(mass[..., :, None], jnp.finfo(jnp.float64).tiny)
     prior = mass / jnp.maximum(
         jnp.sum(mass, axis=-1, keepdims=True),
-        jnp.finfo(float).tiny,
+        jnp.finfo(jnp.float64).tiny,
     )
     return mass, means, variance, prior
 

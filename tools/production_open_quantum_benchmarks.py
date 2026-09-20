@@ -26,22 +26,22 @@ def _benchmark(function, argument, repeats):
     return {
         "compile_and_first_seconds": first,
         "steady_seconds": (perf_counter() - start) / repeats,
-        "output_bytes": int(output.size * output.dtype.itemsize),
+        "output_bytes": output.size * output.dtype.itemsize,
     }
 
 
 def run_benchmarks(*, repeats=3):
     state = phx.tensor_network.product_mps(
-        jnp.asarray([[1.0, 0.0], [0.0, 1.0]], dtype=complex)
+        jnp.asarray([[1.0, 0.0], [0.0, 1.0]], dtype="complex128")
     )
     hamiltonian = phx.tensor_network.NearestNeighborHamiltonian(
-        (jnp.zeros((4, 4), dtype=complex),),
+        (jnp.zeros((4, 4), dtype="complex128"),),
         (2, 2),
         hamiltonian_id="benchmark-zero",
     )
     fermionic = phx.solver.damped_fermionic_mode(0.4, 0.25)
     process = phx.tensor_network.markov_process_tensor(
-        (jnp.eye(4, dtype=complex),),
+        (jnp.eye(4, dtype="complex128"),),
         jnp.asarray([[0.7 + 0j, 0j], [0j, 0.3 + 0j]]),
     )
     return {

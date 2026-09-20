@@ -232,7 +232,7 @@ class CertifiedRationalApproximation(StrictModule):
         absolute = jnp.asarray(maximum_absolute_error)
         relative = jnp.asarray(maximum_relative_error)
         witness_ = jnp.asarray(witness)
-        successful_ = jnp.asarray(successful, dtype=bool)
+        successful_ = jnp.asarray(successful, dtype=jnp.bool_)
         if points.ndim != 1 or errors.shape != points.shape or points.size < 2:
             raise ValueError(
                 "Extremal points and errors must be matching nonempty vectors."

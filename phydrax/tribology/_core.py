@@ -31,14 +31,14 @@ def reynolds_1d_pressure(
     inlet_pressure_pa: float = 0.0,
     outlet_pressure_pa: float = 0.0,
 ) -> Array:
-    height = np.asarray(film_thickness_m, dtype=float)
+    height = np.asarray(film_thickness_m, dtype=np.float64)
     if height.ndim != 1 or height.size < 3 or np.any(height <= 0.0):
         raise ValueError("Film thickness must be a positive vector with interior points.")
     if spacing_m <= 0.0 or viscosity_pa_s <= 0.0:
         raise ValueError("Lubrication spacing and viscosity must be positive.")
     count = height.size
-    matrix = np.zeros((count, count), dtype=float)
-    right = np.zeros((count,), dtype=float)
+    matrix = np.zeros((count, count), dtype=np.float64)
+    right = np.zeros((count,), dtype=np.float64)
     matrix[0, 0] = 1.0
     matrix[-1, -1] = 1.0
     right[0] = inlet_pressure_pa

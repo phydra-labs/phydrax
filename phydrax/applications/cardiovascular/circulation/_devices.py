@@ -112,9 +112,9 @@ class PumpHeadFlowMap(StrictModule, NonTrainableState):
         /,
     ):
         name = str(map_name).strip()
-        flow_host = np.asarray(flow_axis_mm3_per_ms, dtype=float)
-        speed_host = np.asarray(speed_axis_rpm, dtype=float)
-        head_host = np.asarray(head_kPa, dtype=float)
+        flow_host = np.asarray(flow_axis_mm3_per_ms, dtype=np.float64)
+        speed_host = np.asarray(speed_axis_rpm, dtype=np.float64)
+        head_host = np.asarray(head_kPa, dtype=np.float64)
         if not name:
             raise ValueError("map_name must be non-empty.")
         if flow_host.ndim != 1 or speed_host.ndim != 1:
@@ -147,7 +147,7 @@ class PumpHeadFlowMap(StrictModule, NonTrainableState):
         self.map_name = name
         self.map_id = canonical_fingerprint(
             {
-                "kind": "pump-head-flow-speed-map-v1",
+                "kind": "pump-head-flow-speed-map",
                 "map_name": name,
                 "flow_axis_mm3_per_ms": flow_host.tolist(),
                 "speed_axis_rpm": speed_host.tolist(),
@@ -261,7 +261,7 @@ class PacemakerControllerPlan(StrictModule, NonTrainableState):
         self.minimum_interval_ms = minimum
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "causal-inhibited-pacemaker-v1",
+                "kind": "causal-inhibited-pacemaker",
                 "lower_rate_bpm": lower,
                 "upper_rate_bpm": upper,
                 "refractory_period_ms": refractory,
@@ -330,7 +330,7 @@ def step_pacemaker_controller(
 ) -> PacemakerStepResult:
     """Consume only the current sample; invalid/noncausal samples do not commit."""
     sample_time = jnp.asarray(sample_time_ms, dtype=state.time_ms.dtype).reshape(())
-    sensed = jnp.asarray(sensed_depolarization, dtype=bool).reshape(())
+    sensed = jnp.asarray(sensed_depolarization, dtype=jnp.bool_).reshape(())
     finite = jnp.isfinite(sample_time)
     causal = sample_time > state.time_ms
     elapsed = sample_time - state.last_activation_time_ms
@@ -406,7 +406,7 @@ def replay_pacemaker_controller(
 ) -> PacemakerReplayTrace:
     """Replay a fixed sequence through the same causal transition function."""
     times = jnp.asarray(sample_time_ms, dtype=initial_state.time_ms.dtype)
-    sensed = jnp.asarray(sensed_depolarization, dtype=bool)
+    sensed = jnp.asarray(sensed_depolarization, dtype=jnp.bool_)
     if times.ndim != 1 or sensed.shape != times.shape:
         raise ValueError("Pacemaker replay arrays must be equal one-dimensional shapes.")
 
@@ -504,7 +504,7 @@ class PumpControllerPlan(StrictModule, NonTrainableState):
         self.timing_tolerance_ms = tolerance
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "causal-pump-pi-controller-v1",
+                "kind": "causal-pump-pi-controller",
                 "sample_period_ms": period,
                 "proportional_gain_rpm_ms_per_mm3": kp,
                 "integral_gain_rpm_per_mm3": ki,
@@ -774,7 +774,7 @@ class Cannula(StrictModule, NonTrainableState):
         self.linear_resistance_kPa_ms_per_mm3 = values[5]
         self.element_id = canonical_fingerprint(
             {
-                "kind": "cannula-v1",
+                "kind": "cannula",
                 "cannula_id": self.cannula_id,
                 "length_mm": self.length_mm,
                 "inner_diameter_mm": self.inner_diameter_mm,
@@ -835,7 +835,7 @@ class TubingSegment(StrictModule, NonTrainableState):
         self.linear_resistance_kPa_ms_per_mm3 = values[5]
         self.element_id = canonical_fingerprint(
             {
-                "kind": "tubing-segment-v1",
+                "kind": "tubing-segment",
                 "tubing_id": self.tubing_id,
                 "length_mm": self.length_mm,
                 "inner_diameter_mm": self.inner_diameter_mm,
@@ -897,7 +897,7 @@ class HydraulicOxygenator(StrictModule, NonTrainableState):
         self.supports_gas_exchange = False
         self.element_id = canonical_fingerprint(
             {
-                "kind": "hydraulic-oxygenator-v1",
+                "kind": "hydraulic-oxygenator",
                 "oxygenator_id": identifier,
                 "linear_resistance_kPa_ms_per_mm3": linear,
                 "quadratic_loss_kPa_ms2_per_mm6": quadratic,
@@ -1110,7 +1110,7 @@ class ECMOCircuitPlan(StrictModule, NonTrainableState):
         self.residual_tolerance_kPa = tolerance
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "ecmo-circuit-plan-v1",
+                "kind": "ecmo-circuit-plan",
                 "pump_map": pump_map.map_id,
                 "drainage_cannula": drainage_cannula.element_id,
                 "return_cannula": return_cannula.element_id,

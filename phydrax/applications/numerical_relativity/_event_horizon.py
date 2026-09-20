@@ -82,12 +82,14 @@ class CompletedSpacetimeHistory(StrictModule, NonTrainableState):
                 "Event-horizon tracing requires an explicitly completed spacetime history."
             )
         if not isinstance(completion_id, str) or not completion_id:
-            raise ValueError("completion_id must identify the immutable completed history.")
+            raise ValueError(
+                "completion_id must identify the immutable completed history."
+            )
         if not isinstance(history_name, str) or not history_name:
             raise ValueError("history_name must be a nonempty string.")
-        times_host = np.asarray(times, dtype=float)
+        times_host = np.asarray(times, dtype=np.float64)
         axes = tuple(
-            np.asarray(axis, dtype=float)
+            np.asarray(axis, dtype=np.float64)
             for axis in (x_coordinates, y_coordinates, z_coordinates)
         )
         if (
@@ -105,8 +107,8 @@ class CompletedSpacetimeHistory(StrictModule, NonTrainableState):
             for axis in axes
         ):
             raise ValueError("Cartesian history axes must be finite and increasing.")
-        grid_shape = tuple(int(axis.size) for axis in axes)
-        leading_shape = (int(times_host.size),) + grid_shape
+        grid_shape = tuple(axis.size for axis in axes)
+        leading_shape = (times_host.size,) + grid_shape
         if geometry.leading_shape != leading_shape:
             raise ValueError(
                 "ADM geometry leading shape must be (times, x, y, z) for offline tracing."
@@ -117,7 +119,7 @@ class CompletedSpacetimeHistory(StrictModule, NonTrainableState):
         self.y_coordinates = jnp.asarray(axes[1], dtype=geometry.alpha.dtype)
         self.z_coordinates = jnp.asarray(axes[2], dtype=geometry.alpha.dtype)
         self.geometry = geometry
-        self.time_capacity = int(times_host.size)
+        self.time_capacity = times_host.size
         self.grid_shape = grid_shape
         self.completion_id = completion_id
         self.history_id = canonical_fingerprint(
@@ -186,12 +188,8 @@ def _axis_bracket(axis: Array, query: Array, /) -> tuple[Array, Array, Array]:
 def _coordinate_derivative(values: Array, nodes: Array, /) -> Array:
     previous_width = nodes[1:-1] - nodes[:-2]
     next_width = nodes[2:] - nodes[1:-1]
-    previous_weight = -next_width / (
-        previous_width * (previous_width + next_width)
-    )
-    center_weight = (next_width - previous_width) / (
-        previous_width * next_width
-    )
+    previous_weight = -next_width / (previous_width * (previous_width + next_width))
+    center_weight = (next_width - previous_width) / (previous_width * next_width)
     next_weight = previous_width / (next_width * (previous_width + next_width))
     extra_axes = (1,) * (values.ndim - 1)
     interior = (
@@ -232,9 +230,7 @@ def _spatial_interpolate(
             y_weight = wy if oy else 1.0 - wy
             for oz in (0, 1):
                 z_weight = wz if oz else 1.0 - wz
-                weight = (x_weight * y_weight * z_weight).reshape(
-                    (-1,) + tail_axes
-                )
+                weight = (x_weight * y_weight * z_weight).reshape((-1,) + tail_axes)
                 result = result + weight * values[ix + ox, iy + oy, iz + oz]
     return result, covered_x & covered_y & covered_z
 
@@ -294,28 +290,20 @@ def _sample_hamilton_flow(
     inverse_metric, _ = _spacetime_interpolate(
         history.geometry.inverse_spatial_metric, history, time, positions
     )
-    alpha_gradient, _ = _spacetime_interpolate(
-        gradient_alpha, history, time, positions
-    )
-    beta_gradient, _ = _spacetime_interpolate(
-        gradient_beta, history, time, positions
-    )
+    alpha_gradient, _ = _spacetime_interpolate(gradient_alpha, history, time, positions)
+    beta_gradient, _ = _spacetime_interpolate(gradient_beta, history, time, positions)
     inverse_gradient, _ = _spacetime_interpolate(
         gradient_inverse_metric, history, time, positions
     )
     support, _ = _spacetime_interpolate(support_field, history, time, positions)
 
     raised_covector = ein.contract("gij,gj->gi", inverse_metric, covectors)
-    spatial_momentum_squared = ein.contract(
-        "gi,gi->g", covectors, raised_covector
-    )
+    spatial_momentum_squared = ein.contract("gi,gi->g", covectors, raised_covector)
     tiny = jnp.finfo(alpha.dtype).tiny
     frequency = jnp.sqrt(jnp.maximum(spatial_momentum_squared, tiny))
     relative_velocity = alpha[:, None] * raised_covector / frequency[:, None]
     coordinate_velocity = relative_velocity - beta
-    inverse_force = ein.contract(
-        "gijk,gj,gk->gi", inverse_gradient, covectors, covectors
-    )
+    inverse_force = ein.contract("gijk,gj,gk->gi", inverse_gradient, covectors, covectors)
     shift_force = ein.contract("gij,gj->gi", beta_gradient, covectors)
     covector_rate = (
         -frequency[:, None] * alpha_gradient
@@ -394,12 +382,8 @@ def _rk4_step(
         positions + step * k3x,
         covectors + step * k3p,
     )
-    candidate_positions = positions + step * (
-        k1x + 2.0 * k2x + 2.0 * k3x + k4x
-    ) / 6.0
-    candidate_covectors = covectors + step * (
-        k1p + 2.0 * k2p + 2.0 * k3p + k4p
-    ) / 6.0
+    candidate_positions = positions + step * (k1x + 2.0 * k2x + 2.0 * k3x + k4x) / 6.0
+    candidate_covectors = covectors + step * (k1p + 2.0 * k2p + 2.0 * k3p + k4p) / 6.0
     covered = covered1 & covered2 & covered3 & covered4
     null_valid = null1 & null2 & null3 & null4
     finite = finite1 & finite2 & finite3 & finite4
@@ -458,13 +442,13 @@ class OfflineEventHorizonTracingPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(terminal_surface, SphericalSpectralSurface):
             raise TypeError("terminal_surface must be a SphericalSpectralSurface.")
-        positions = np.asarray(terminal_positions, dtype=float)
-        covectors = np.asarray(terminal_covectors, dtype=float)
-        active = np.asarray(terminal_active, dtype=bool)
+        positions = np.asarray(terminal_positions, dtype=np.float64)
+        covectors = np.asarray(terminal_covectors, dtype=np.float64)
+        active = np.asarray(terminal_active, dtype=np.bool_)
         neighbors = np.asarray(neighbor_indices)
         if positions.ndim != 2 or positions.shape[1] != 3 or positions.shape[0] == 0:
             raise ValueError("terminal_positions must have shape (generators, 3).")
-        generator_count = int(positions.shape[0])
+        generator_count = positions.shape[0]
         if covectors.shape != positions.shape:
             raise ValueError("terminal_covectors must match terminal_positions.")
         if active.shape != (generator_count,):
@@ -476,14 +460,18 @@ class OfflineEventHorizonTracingPlan(StrictModule, NonTrainableState):
             or np.any(~np.isfinite(covectors))
             or np.any(active & (np.sum(covectors * covectors, axis=-1) == 0.0))
         ):
-            raise ValueError("Active terminal positions/covectors must be finite and nonzero.")
+            raise ValueError(
+                "Active terminal positions/covectors must be finite and nonzero."
+            )
         if (
             neighbors.ndim != 2
             or neighbors.shape[0] != generator_count
             or neighbors.shape[1] == 0
             or not np.issubdtype(neighbors.dtype, np.integer)
         ):
-            raise TypeError("neighbor_indices must be an integer generator-neighbor table.")
+            raise TypeError(
+                "neighbor_indices must be an integer generator-neighbor table."
+            )
         if np.any((neighbors < -1) | (neighbors >= generator_count)):
             raise ValueError("neighbor_indices must use generator indices or -1 padding.")
         if np.any(neighbors == np.arange(generator_count)[:, None]):
@@ -534,7 +522,7 @@ class OfflineEventHorizonTracingPlan(StrictModule, NonTrainableState):
         self.time_capacity = time_count
         self.grid_shape = grid_shape_
         self.generator_capacity = generator_count
-        self.neighbor_capacity = int(neighbors.shape[1])
+        self.neighbor_capacity = neighbors.shape[1]
         self.absolute_tolerance = absolute
         self.covector_absolute_tolerance = covector_absolute
         self.relative_tolerance = relative
@@ -587,9 +575,7 @@ class OfflineEventHorizonTracingPlan(StrictModule, NonTrainableState):
         )
         gradient_beta = jnp.stack(
             tuple(
-                _grid_derivative(
-                    geometry.beta_contravariant, axis_nodes, axis_index + 1
-                )
+                _grid_derivative(geometry.beta_contravariant, axis_nodes, axis_index + 1)
                 for axis_index, axis_nodes in enumerate(axes)
             ),
             axis=-2,
@@ -668,12 +654,18 @@ class OfflineEventHorizonTracingPlan(StrictModule, NonTrainableState):
             covered = coarse[2] & half[2] & fine[2]
             null_valid = coarse[3] & half[3] & fine[3]
             residual = jnp.maximum(coarse[4], jnp.maximum(half[4], fine[4]))
-            position_error = jnp.sqrt(
-                ein.contract("gi,gi->g", fine[0] - coarse[0], fine[0] - coarse[0])
-            ) / 15.0
-            covector_error = jnp.sqrt(
-                ein.contract("gi,gi->g", fine[1] - coarse[1], fine[1] - coarse[1])
-            ) / 15.0
+            position_error = (
+                jnp.sqrt(
+                    ein.contract("gi,gi->g", fine[0] - coarse[0], fine[0] - coarse[0])
+                )
+                / 15.0
+            )
+            covector_error = (
+                jnp.sqrt(
+                    ein.contract("gi,gi->g", fine[1] - coarse[1], fine[1] - coarse[1])
+                )
+                / 15.0
+            )
             finite_candidate = (
                 coarse[5]
                 & half[5]
@@ -774,9 +766,7 @@ class OfflineEventHorizonTracingPlan(StrictModule, NonTrainableState):
         )
         covector_scale = jnp.maximum(
             jnp.sqrt(
-                ein.contract(
-                    "tgi,tgi->tg", covector_trajectories, covector_trajectories
-                )
+                ein.contract("tgi,tgi->tg", covector_trajectories, covector_trajectories)
             ),
             1.0,
         )
@@ -784,16 +774,13 @@ class OfflineEventHorizonTracingPlan(StrictModule, NonTrainableState):
             self.absolute_tolerance + self.relative_tolerance * trajectory_scale
         )
         covector_limit = (
-            self.covector_absolute_tolerance
-            + self.relative_tolerance * covector_scale
+            self.covector_absolute_tolerance + self.relative_tolerance * covector_scale
         )
         convergence_ratio = jnp.maximum(
             convergence_error / position_limit,
             covector_convergence_error / covector_limit,
         )
-        geodesic_residual = jnp.sqrt(
-            convergence_error**2 + covector_convergence_error**2
-        )
+        geodesic_residual = jnp.sqrt(convergence_error**2 + covector_convergence_error**2)
 
         safe_neighbors = jnp.clip(self.neighbor_indices, 0, self.generator_capacity - 1)
         neighbor_positions = trajectories[:, safe_neighbors, :]
@@ -820,9 +807,7 @@ class OfflineEventHorizonTracingPlan(StrictModule, NonTrainableState):
             & jnp.all(jnp.isfinite(null_residual))
             & jnp.all(geometry.finite)
         )
-        geodesic_valid = jnp.all(
-            (~generator_active) | (convergence_ratio <= 1.0)
-        )
+        geodesic_valid = jnp.all((~generator_active) | (convergence_ratio <= 1.0))
         converged = geodesic_valid
         physically_valid = (
             jnp.all(null_valid)
@@ -832,9 +817,9 @@ class OfflineEventHorizonTracingPlan(StrictModule, NonTrainableState):
         qualified = finite & converged & physically_valid & coverage_complete
         derivative_valid = qualified & (~caustic_detected)
         status = jnp.asarray(int(EventHorizonStatus.SUCCESS), dtype=jnp.int32)
-        status = status | jnp.where(
-            finite, 0, int(EventHorizonStatus.NONFINITE)
-        ).astype(jnp.int32)
+        status = status | jnp.where(finite, 0, int(EventHorizonStatus.NONFINITE)).astype(
+            jnp.int32
+        )
         status = status | jnp.where(
             converged, 0, int(EventHorizonStatus.NOT_CONVERGED)
         ).astype(jnp.int32)

@@ -80,7 +80,7 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
             raise ValueError("Unsupported reference cell kind.")
         if order < 0:
             raise ValueError("Finite-element degree must be non-negative.")
-        nodes = np.asarray(reference_nodes, dtype=float)
+        nodes = np.asarray(reference_nodes, dtype=np.float64)
         dimension = {
             "interval": 1,
             "triangle": 2,
@@ -97,7 +97,7 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
         if not np.all(np.isfinite(nodes)):
             raise ValueError("Reference nodes must be finite.")
         normalized_entity_dofs = tuple(
-            tuple(tuple(int(dof) for dof in entity) for entity in dimension_entities)
+            tuple(tuple(entity) for entity in dimension_entities)
             for dimension_entities in entity_dofs
         )
         if len(normalized_entity_dofs) != dimension + 1:
@@ -112,7 +112,7 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
             raise ValueError(
                 "Each local DOF must belong to exactly one reference entity."
             )
-        values = tuple(int(size) for size in value_shape)
+        values = tuple(value_shape)
         if any(size <= 0 for size in values):
             raise ValueError("Finite-element value dimensions must be positive.")
         if tabulator is not None and not callable(tabulator):
@@ -149,11 +149,11 @@ class FiniteElementSpec(StrictModule, NonTrainableState):
 
     @property
     def topological_dimension(self) -> int:
-        return int(self.reference_nodes.shape[1])
+        return self.reference_nodes.shape[1]
 
     @property
     def local_dof_count(self) -> int:
-        return int(self.reference_nodes.shape[0])
+        return self.reference_nodes.shape[0]
 
     def tabulate(self, points: ArrayLike, /) -> tuple[Array, Array]:
         """Return basis values and reference gradients at reference points."""
@@ -446,8 +446,7 @@ def lagrange_element(cell_kind: str, degree: int, /) -> FiniteElementSpec:
 
         return HybridReferenceFamily(cell, order).finite_element()
     raise ValueError(
-        "Implemented Lagrange elements require a supported simplex/tensor cell "
-        "and polynomial degree."
+        "Implemented Lagrange elements require a supported simplex/tensor cell and polynomial degree."
     )
 
 

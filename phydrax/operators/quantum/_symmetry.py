@@ -39,10 +39,10 @@ class FiniteSignedPermutationSymmetry(StrictModule):
     ):
         permutations_host = np.asarray(permutations)
         signs_host = np.asarray(signs)
-        characters_host = np.asarray(characters, dtype=complex)
+        characters_host = np.asarray(characters, dtype=np.complex128)
         if permutations_host.ndim != 2 or permutations_host.shape[0] < 1:
             raise ValueError("permutations must have shape (group, site).")
-        order, num_sites = (int(size) for size in permutations_host.shape)
+        order, num_sites = (size for size in permutations_host.shape)
         if signs_host.shape != (order, num_sites):
             raise ValueError("signs must match permutations shape.")
         if characters_host.shape != (order,):
@@ -58,15 +58,15 @@ class FiniteSignedPermutationSymmetry(StrictModule):
             raise ValueError("Sector characters must be finite and unit-modulus.")
         action_keys = [
             (
-                tuple(int(value) for value in permutation),
-                tuple(int(value) for value in sign),
+                tuple(permutation),
+                tuple(sign),
             )
             for permutation, sign in zip(permutations_host, signs_host, strict=True)
         ]
         if len(set(action_keys)) != order:
             raise ValueError("Finite symmetry actions must be unique.")
         action_indices = {key: index for index, key in enumerate(action_keys)}
-        identity_key = (tuple(expected), tuple(np.ones((num_sites,), dtype=int)))
+        identity_key = (tuple(expected), tuple(np.ones((num_sites,), dtype=np.int64)))
         if identity_key not in action_indices:
             raise ValueError("Finite symmetry actions must contain the identity.")
         identity_index = action_indices[identity_key]
@@ -77,8 +77,8 @@ class FiniteSignedPermutationSymmetry(StrictModule):
                 permutation = permutations_host[right][permutations_host[left]]
                 sign = signs_host[left] * signs_host[right][permutations_host[left]]
                 key = (
-                    tuple(int(value) for value in permutation),
-                    tuple(int(value) for value in sign),
+                    tuple(permutation),
+                    tuple(sign),
                 )
                 if key not in action_indices:
                     raise ValueError("Signed permutation actions are not closed.")
@@ -121,7 +121,7 @@ class FiniteSignedPermutationSymmetry(StrictModule):
     def act(self, configuration: ArrayLike, /) -> Array:
         """Return every signed group image with one new penultimate group axis."""
         values = jnp.asarray(configuration)
-        if values.ndim < 1 or int(values.shape[-1]) != self.num_sites:
+        if values.ndim < 1 or values.shape[-1] != self.num_sites:
             raise ValueError(
                 f"configuration must end in ({self.num_sites},); got {values.shape}."
             )

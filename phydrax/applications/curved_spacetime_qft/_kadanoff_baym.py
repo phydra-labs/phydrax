@@ -54,7 +54,7 @@ class WignerGradientPlan(StrictModule, NonTrainableState):
         *,
         boundary: str = "periodic",
     ):
-        shape = tuple(int(value) for value in phase_space_shape)
+        shape = tuple(phase_space_shape)
         x_steps = tuple(float(value) for value in spacetime_spacings)
         p_steps = tuple(float(value) for value in momentum_spacings)
         if not x_steps or len(x_steps) != len(p_steps):
@@ -349,7 +349,7 @@ def initialize_kadanoff_baym_memory(
         zeros,
         zeros,
         jnp.zeros((plan.memory_depth,), dtype=plan.off_shell.energy_nodes.dtype),
-        jnp.zeros((plan.memory_depth,), dtype=bool),
+        jnp.zeros((plan.memory_depth,), dtype=jnp.bool_),
         jnp.asarray(0, dtype=jnp.int32),
         jnp.asarray(0, dtype=jnp.int64),
         jnp.asarray(0.0, dtype=plan.off_shell.energy_nodes.dtype),
@@ -439,7 +439,7 @@ def kadanoff_baym_memory_evidence(
         & jnp.isfinite(memory.discarded_tail_bound)
     )
     pair_active = memory.valid[:, None] & memory.valid[None, :]
-    distinct = ~jnp.eye(plan.memory_depth, dtype=bool)
+    distinct = ~jnp.eye(plan.memory_depth, dtype=jnp.bool_)
     duplicate_time = (
         pair_active
         & distinct

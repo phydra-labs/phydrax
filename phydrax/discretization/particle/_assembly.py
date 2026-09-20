@@ -59,7 +59,7 @@ class ParticlePopulation(StrictModule, NonTrainableState):
         )
         if role not in allowed:
             raise ValueError("Unknown particle population role.")
-        shape = None if state_shape is None else tuple(int(size) for size in state_shape)
+        shape = None if state_shape is None else tuple(state_shape)
         if shape is not None and (not shape or any(size <= 0 for size in shape)):
             raise ValueError("state_shape must contain positive dimensions or be None.")
         dynamic = role in ("dynamic-fluid", "dynamic-rigid", "material-phase")
@@ -167,7 +167,7 @@ class ParticleAssemblyStateLayout(StrictModule, NonTrainableState):
             if value.shape != shape:
                 raise ValueError("Assembly state shape does not match its population.")
         if not values:
-            return jnp.zeros((0,), dtype=float)
+            return jnp.zeros((0,), dtype=jnp.float64)
         return jnp.concatenate(tuple(value.reshape((-1,)) for value in values))
 
     def unpack(self, state: ArrayLike, /) -> tuple[Array, ...]:
@@ -289,7 +289,7 @@ class ParticleExchangeLedger(StrictModule):
         exchange = jnp.where(mask, exchange, 0.0)
         total = compensated_sum(scattered, axis=0)
         defect = jnp.linalg.norm(jnp.asarray(total).reshape((-1,)))
-        dimension = int(geometry.displacement.shape[-1])
+        dimension = geometry.displacement.shape[-1]
         if exchange.ndim == 2 and exchange.shape[-1] == dimension:
             if dimension == 3:
                 torque = compensated_sum(

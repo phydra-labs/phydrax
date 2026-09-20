@@ -78,8 +78,8 @@ def test_sgd_regression_multioutput_masks_weights_sparse_determinism_jit_and_gra
     batch = MLBatch(
         features,
         targets,
-        target_mask=jnp.ones_like(targets, dtype=bool).at[2, 1].set(False),
-        sample_mask=jnp.ones((features.shape[0],), dtype=bool).at[5].set(False),
+        target_mask=jnp.ones_like(targets, dtype="bool").at[2, 1].set(False),
+        sample_mask=jnp.ones((features.shape[0],), dtype="bool").at[5].set(False),
         sample_weight=weights,
     )
     first = recipe.fit_batch(batch, key=jax.random.key(1))

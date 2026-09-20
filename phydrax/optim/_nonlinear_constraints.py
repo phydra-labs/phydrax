@@ -16,6 +16,10 @@ from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, PyTree
 
 from .._strict import StrictModule
+from .._tree_math import (
+    tree_allfinite as _tree_allfinite,
+    tree_norm as _tree_norm,
+)
 from ..linalg import (
     DenseLinearOperator,
     DenseLU,
@@ -27,8 +31,6 @@ from ._bounds import ProjectedLBFGS
 from ._iterative._base import AbstractMinimizationMethod
 from ._iterative._globalization import armijo_backtracking, ArmijoLineSearch
 from ._iterative._types import (
-    _tree_allfinite,
-    _tree_norm,
     ConstrainedOptimalityCertificate,
     MinimizationProblem,
     MinimizationResult,
@@ -184,7 +186,7 @@ def _constraint_layout(
             template,
             name=upper_name,
         )
-        size = int(lower_flat.size)
+        size = lower_flat.size
         if lower_static is not None and upper_static is not None:
             local_equal = (
                 np.isfinite(lower_static)
@@ -192,14 +194,14 @@ def _constraint_layout(
                 & (lower_static == upper_static)
             )
         else:
-            local_equal = np.zeros((size,), dtype=bool)
+            local_equal = np.zeros((size,), dtype=np.bool_)
         local_lower = (
-            np.ones((size,), dtype=bool)
+            np.ones((size,), dtype=np.bool_)
             if lower_static is None
             else np.isfinite(lower_static)
         ) & ~local_equal
         local_upper = (
-            np.ones((size,), dtype=bool)
+            np.ones((size,), dtype=np.bool_)
             if upper_static is None
             else np.isfinite(upper_static)
         ) & ~local_equal
@@ -222,7 +224,7 @@ def _constraint_layout(
             parameters,
         )
         coordinate_count = sum(
-            int(specification.size) for specification in jax.tree.leaves(value_shape)
+            specification.size for specification in jax.tree.leaves(value_shape)
         )
         append_bounds(
             constraint.lower,
@@ -710,7 +712,7 @@ class SQP(AbstractMinimizationMethod):
         )
 
 
-class _AugmentedLagrangianState(eqx.Module):
+class _AugmentedLagrangianState(StrictModule):
     """Array-only carry for the staged augmented-Lagrangian outer iteration."""
 
     outer: Array
@@ -1278,7 +1280,7 @@ def _exact_lagrangian_hessian(
     return jax.hessian(lagrangian)(coordinates)
 
 
-class _FilterSearchResult(eqx.Module):
+class _FilterSearchResult(StrictModule):
     parameters: Array
     value: Array
     violation: Array
@@ -1569,7 +1571,7 @@ def _filter_backtracking(
     )
 
 
-class _SQPState(eqx.Module):
+class _SQPState(StrictModule):
     """Array-only carry for staged SQP iteration and globalization."""
 
     iteration: Array
@@ -1616,11 +1618,10 @@ def _solve_sqp(
     ).astype(jnp.int32)
     layout = _constraint_layout(problem, parameters, args)
     flat_parameters, _ = ravel_pytree(parameters)
-    dimension = int(flat_parameters.size)
+    dimension = flat_parameters.size
     if dimension > method.max_dense_dimension:
         raise ValueError(
-            f"SQP has {dimension} variables, exceeding max_dense_dimension="
-            f"{method.max_dense_dimension}."
+            f"SQP has {dimension} variables, exceeding max_dense_dimension={method.max_dense_dimension}."
         )
     integer_zero = jnp.asarray(0, dtype=jnp.int32)
     scalar_zero = jnp.asarray(0.0, dtype=flat_parameters.dtype)

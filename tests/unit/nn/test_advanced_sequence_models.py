@@ -58,14 +58,14 @@ def test_linear_recurrent_model_continues_exactly_across_sequence_chunks():
     unit = LinearRecurrentUnit(3, 4, dtype=jnp.float64, key=jr.key(3))
     model = LinearRecurrentModel(unit)
     values = jr.normal(jr.key(4), (8, 3), dtype=jnp.float64)
-    whole_batch = RecurrentBatch(values, jnp.ones((8,), dtype=bool))
+    whole_batch = RecurrentBatch(values, jnp.ones((8,), dtype="bool"))
     whole = model.evaluate_with_state(whole_batch)
 
     first = model.evaluate_with_state(
-        RecurrentBatch(values[:3], jnp.ones((3,), dtype=bool))
+        RecurrentBatch(values[:3], jnp.ones((3,), dtype="bool"))
     )
     second = model.evaluate_with_state(
-        RecurrentBatch(values[3:], jnp.ones((5,), dtype=bool)),
+        RecurrentBatch(values[3:], jnp.ones((5,), dtype="bool")),
         initial_state=first.final_state,
     )
     assert jnp.allclose(
@@ -116,13 +116,13 @@ def test_selective_sequence_streaming_preserves_physical_time_and_convolution_st
     values = jr.normal(jr.key(7), (7, 3), dtype=jnp.float64)
     times = jnp.array([0.0, 0.1, 0.4, 0.9, 1.0, 1.7, 2.2])
     whole = model.evaluate_with_state(
-        RecurrentBatch(values, jnp.ones((7,), dtype=bool), time=times)
+        RecurrentBatch(values, jnp.ones((7,), dtype="bool"), time=times)
     )
     first = model.evaluate_with_state(
-        RecurrentBatch(values[:3], jnp.ones((3,), dtype=bool), time=times[:3])
+        RecurrentBatch(values[:3], jnp.ones((3,), dtype="bool"), time=times[:3])
     )
     second = model.evaluate_with_state(
-        RecurrentBatch(values[3:], jnp.ones((4,), dtype=bool), time=times[3:]),
+        RecurrentBatch(values[3:], jnp.ones((4,), dtype="bool"), time=times[3:]),
         initial_state=first.final_state,
     )
 
@@ -149,12 +149,12 @@ def test_selective_sequence_resets_isolate_segments_and_has_no_future_leakage():
     times = jnp.array([0.0, 0.2, 0.7, 1.0, 3.0, 3.1, 3.6, 4.2])
     reset = jnp.array([False, False, False, False, True, False, False, False])
     packed = model(
-        RecurrentBatch(values, jnp.ones((8,), dtype=bool), reset=reset, time=times)
+        RecurrentBatch(values, jnp.ones((8,), dtype="bool"), reset=reset, time=times)
     )
     first_chunk = model.evaluate_with_state(
         RecurrentBatch(
             values[:2],
-            jnp.ones((2,), dtype=bool),
+            jnp.ones((2,), dtype="bool"),
             reset=reset[:2],
             time=times[:2],
         )
@@ -162,7 +162,7 @@ def test_selective_sequence_resets_isolate_segments_and_has_no_future_leakage():
     second_chunk = model.evaluate_with_state(
         RecurrentBatch(
             values[2:],
-            jnp.ones((6,), dtype=bool),
+            jnp.ones((6,), dtype="bool"),
             reset=reset[2:],
             time=times[2:],
         ),
@@ -174,20 +174,24 @@ def test_selective_sequence_resets_isolate_segments_and_has_no_future_leakage():
         atol=2e-9,
         rtol=2e-9,
     )
-    first = model(RecurrentBatch(values[:4], jnp.ones((4,), dtype=bool), time=times[:4]))
-    second = model(RecurrentBatch(values[4:], jnp.ones((4,), dtype=bool), time=times[4:]))
+    first = model(
+        RecurrentBatch(values[:4], jnp.ones((4,), dtype="bool"), time=times[:4])
+    )
+    second = model(
+        RecurrentBatch(values[4:], jnp.ones((4,), dtype="bool"), time=times[4:])
+    )
     assert jnp.allclose(packed, jnp.concatenate((first, second)), atol=2e-9, rtol=2e-9)
 
     changed = values.at[5:].set(1000.0)
     changed_output = model(
-        RecurrentBatch(changed, jnp.ones((8,), dtype=bool), reset=reset, time=times)
+        RecurrentBatch(changed, jnp.ones((8,), dtype="bool"), reset=reset, time=times)
     )
     assert jnp.array_equal(changed_output[:5], packed[:5])
 
 
 def test_recurrent_consumers_preserve_backward_time_direction_in_internal_batches():
     values = jr.normal(jr.key(20), (4, 3), dtype=jnp.float64)
-    valid = jnp.ones((4,), dtype=bool)
+    valid = jnp.ones((4,), dtype="bool")
     decreasing_times = jnp.asarray((6.0, 3.0, 1.0, 0.0))
     backward = RecurrentBatch(
         values,

@@ -139,7 +139,7 @@ def test_finite_window_odd_even_padding_crops_to_same_grid_and_spreads_gaussian(
 
 def test_finite_window_leakage_is_explicit_failure():
     space = _finite_space(shape=(17, 18))
-    values = jnp.zeros(space.shape, dtype=complex).at[8, 9].set(1.0)
+    values = jnp.zeros(space.shape, dtype="complex128").at[8, 9].set(1.0)
     field = ScalarPlaneField(space, values, 5.0, 0.0)
     prepared = AngularSpectrumPlan(
         ((2, 3), (3, 2)), maximum_leakage_fraction=0.0

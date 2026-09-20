@@ -53,7 +53,7 @@ def _resolved_schedule(periods=2):
         ends,
         ends,
         jnp.ones((periods,)),
-        jnp.ones((periods,), dtype=bool),
+        jnp.ones((periods,), dtype="bool"),
         "weekend",
         "calendar-snapshot",
         f"annual-{periods}",
@@ -61,9 +61,9 @@ def _resolved_schedule(periods=2):
     )
     return ResolvedRateSchedule(
         schedule,
-        jnp.arange(periods, dtype=float),
-        jnp.arange(1, periods + 1, dtype=float),
-        jnp.arange(1, periods + 1, dtype=float),
+        jnp.arange(periods, dtype="float64"),
+        jnp.arange(1, periods + 1, dtype="float64"),
+        jnp.arange(1, periods + 1, dtype="float64"),
         valuation_date=VALUATION_DATE,
         curve_time_day_count=DayCount.ACT_365F,
     )
@@ -77,7 +77,7 @@ def _curve(curve_id, currency, nodes, *, representation="log_discount", role="di
         valuation_date=VALUATION_DATE,
         currency=currency,
         representation=representation,
-        grid=CurveGrid(jnp.arange(nodes.shape[0], dtype=float)),
+        grid=CurveGrid(jnp.arange(nodes.shape[0], dtype="float64")),
         interpolation=POLICY,
     )
     return PreparedCurve(definition, nodes)
@@ -122,7 +122,7 @@ def test_fra_start_discounting_and_futures_price_quote_conventions_are_explicit(
     projection = _curve(
         "projection",
         USD,
-        -jnp.log1p(simple_rate) * jnp.arange(4, dtype=float),
+        -jnp.log1p(simple_rate) * jnp.arange(4, dtype="float64"),
         role="projection",
     )
     curves = CurveSet((_curve("discount", USD, jnp.zeros((4,))), projection))
@@ -177,7 +177,7 @@ def test_payer_receiver_swap_parity_is_exact_under_identical_curves():
     projection = _curve(
         "projection",
         USD,
-        -jnp.log1p(simple_rate) * jnp.arange(4, dtype=float),
+        -jnp.log1p(simple_rate) * jnp.arange(4, dtype="float64"),
         role="projection",
     )
     curves = CurveSet((_curve("discount", USD, jnp.zeros((4,))), projection))
@@ -205,7 +205,7 @@ def test_payer_receiver_swap_parity_is_exact_under_identical_curves():
             gearing=1.0,
             pay_receive=floating_direction,
             fixing_values=jnp.zeros((2,)),
-            fixing_mask=jnp.zeros((2,), dtype=bool),
+            fixing_mask=jnp.zeros((2,), dtype="bool"),
             exchange_initial=False,
             exchange_final=False,
         )
@@ -236,7 +236,7 @@ def test_cross_currency_swap_retains_both_notional_exchange_streams():
         gearing=1.0,
         pay_receive=PayReceive.RECEIVE,
         fixing_values=jnp.zeros((2,)),
-        fixing_mask=jnp.zeros((2,), dtype=bool),
+        fixing_mask=jnp.zeros((2,), dtype="bool"),
         exchange_initial=True,
         exchange_final=True,
     )
@@ -251,7 +251,7 @@ def test_cross_currency_swap_retains_both_notional_exchange_streams():
         gearing=1.0,
         pay_receive=PayReceive.PAY,
         fixing_values=jnp.zeros((2,)),
-        fixing_mask=jnp.zeros((2,), dtype=bool),
+        fixing_mask=jnp.zeros((2,), dtype="bool"),
         exchange_initial=True,
         exchange_final=True,
     )

@@ -88,7 +88,7 @@ class PreparedGaussianScreening(StrictModule, NonTrainableState):
             raise TypeError("plan must be GaussianScreeningPlan.")
         if not isinstance(basis, PreparedGaussianBasis):
             raise TypeError("basis must be PreparedGaussianBasis.")
-        coordinate = np.asarray(positions, dtype=float)
+        coordinate = np.asarray(positions, dtype=np.float64)
         if (
             coordinate.ndim != 2
             or coordinate.shape[1] != 3
@@ -149,7 +149,7 @@ class PreparedGaussianScreening(StrictModule, NonTrainableState):
 
     @property
     def total_quartet_count(self) -> int:
-        return int(self.pair_bounds.shape[0]) ** 4
+        return self.pair_bounds.shape[0] ** 4
 
     def geometry_valid(self, positions: ArrayLike, /) -> Array:
         coordinate = jnp.asarray(positions, dtype=self.reference_positions.dtype)

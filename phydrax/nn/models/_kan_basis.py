@@ -61,15 +61,13 @@ def _validate_edge_arrays(
     inputs_ = jnp.asarray(inputs)
     if coefficients_.ndim != 3:
         raise ValueError("Edge coefficients must have shape (out_size, in_size, count).")
-    if int(coefficients_.shape[-1]) != coefficient_count:
+    if coefficients_.shape[-1] != coefficient_count:
         raise ValueError(
-            f"Expected {coefficient_count} coefficients per edge, got "
-            f"{coefficients_.shape[-1]}."
+            f"Expected {coefficient_count} coefficients per edge, got {coefficients_.shape[-1]}."
         )
     if inputs_.shape != coefficients_.shape[:2]:
         raise ValueError(
-            "Edge inputs must have shape (out_size, in_size) matching the "
-            "coefficient array."
+            "Edge inputs must have shape (out_size, in_size) matching the coefficient array."
         )
     return coefficients_, inputs_
 
@@ -378,7 +376,7 @@ class BSplineEdgeBasis(AbstractEdgeBasis):
             coefficients, inputs, self.coefficient_count
         )
         if isinstance(self.grid, (BSplineGridBank, TrainableBSplineGridBank)):
-            if self.grid.num_grids != int(coefficients_.shape[1]):
+            if self.grid.num_grids != coefficients_.shape[1]:
                 raise ValueError(
                     "B-spline grid-bank size must match the edge input axis."
                 )
@@ -389,7 +387,7 @@ class BSplineEdgeBasis(AbstractEdgeBasis):
                 degree=self.degree,
                 bounds="clip",
             ).values
-        case_shape = tuple(int(size) for size in coefficients_.shape[:2])
+        case_shape = tuple(coefficients_.shape[:2])
         return bspline_evaluate(
             self.grid.knots,
             coefficients_,
@@ -401,13 +399,9 @@ class BSplineEdgeBasis(AbstractEdgeBasis):
 
     def regularization(self, coefficients: ArrayLike) -> Array:
         coefficients_ = jnp.asarray(coefficients)
-        if (
-            coefficients_.ndim != 3
-            or int(coefficients_.shape[-1]) != self.coefficient_count
-        ):
+        if coefficients_.ndim != 3 or coefficients_.shape[-1] != self.coefficient_count:
             raise ValueError(
-                "B-spline edge coefficients must have shape "
-                "(out_size, in_size, coefficient_count)."
+                "B-spline edge coefficients must have shape (out_size, in_size, coefficient_count)."
             )
         if self._quadrature is None:
             quadrature_points, quadrature_weights = self.grid.derivative_quadrature(
@@ -419,16 +413,16 @@ class BSplineEdgeBasis(AbstractEdgeBasis):
         quadrature_points = quadrature_points.astype(coefficients_.real.dtype)
         quadrature_weights = quadrature_weights.astype(coefficients_.real.dtype)
         if isinstance(self.grid, (BSplineGridBank, TrainableBSplineGridBank)):
-            if self.grid.num_grids != int(coefficients_.shape[1]):
+            if self.grid.num_grids != coefficients_.shape[1]:
                 raise ValueError(
                     "B-spline grid-bank size must match the edge input axis."
                 )
             query = jnp.broadcast_to(
                 quadrature_points[None, :, :],
                 (
-                    int(coefficients_.shape[0]),
-                    int(coefficients_.shape[1]),
-                    int(quadrature_points.shape[1]),
+                    coefficients_.shape[0],
+                    coefficients_.shape[1],
+                    quadrature_points.shape[1],
                 ),
             )
             derivative = bspline_batched_evaluate(
@@ -449,10 +443,10 @@ class BSplineEdgeBasis(AbstractEdgeBasis):
                     )
                 )
             return penalty
-        case_shape = tuple(int(size) for size in coefficients_.shape[:2])
+        case_shape = tuple(coefficients_.shape[:2])
         query = jnp.broadcast_to(
             quadrature_points,
-            (*case_shape, int(quadrature_points.shape[0])),
+            (*case_shape, quadrature_points.shape[0]),
         )
         derivative = bspline_evaluate(
             self.grid.knots,
@@ -491,8 +485,7 @@ class RationalBSplineEdgeParameters(StrictModule):
         raw_log_weights_ = jnp.asarray(raw_log_weights)
         if control_values_.ndim != 3:
             raise ValueError(
-                "Rational B-spline control values must have shape "
-                "(out_size, in_size, coefficient_count)."
+                "Rational B-spline control values must have shape (out_size, in_size, coefficient_count)."
             )
         if raw_log_weights_.shape != control_values_.shape:
             raise ValueError(
@@ -695,12 +688,11 @@ class RationalBSplineEdgeBasis(AbstractEdgeBasis):
         raw_log_weights = jnp.asarray(parameters.raw_log_weights)
         if (
             control_values.ndim != 3
-            or int(control_values.shape[-1]) != self.coefficient_count
+            or control_values.shape[-1] != self.coefficient_count
             or raw_log_weights.shape != control_values.shape
         ):
             raise ValueError(
-                "Rational B-spline parameter arrays must have shape "
-                "(out_size, in_size, coefficient_count)."
+                "Rational B-spline parameter arrays must have shape (out_size, in_size, coefficient_count)."
             )
         if jnp.issubdtype(raw_log_weights.dtype, jnp.complexfloating):
             raise TypeError("Rational B-spline raw log-weights must be real-valued.")
@@ -710,7 +702,7 @@ class RationalBSplineEdgeBasis(AbstractEdgeBasis):
                 "Rational edge inputs must match the output-by-input parameter axes."
             )
         if isinstance(self.grid, (BSplineGridBank, TrainableBSplineGridBank)) and (
-            self.grid.num_grids != int(control_values.shape[1])
+            self.grid.num_grids != control_values.shape[1]
         ):
             raise ValueError(
                 "Rational spline grid-bank size must match the edge input axis."
@@ -737,7 +729,7 @@ class RationalBSplineEdgeBasis(AbstractEdgeBasis):
                 derivative_order=derivative_order,
                 bounds="clip",
             ).values
-        case_shape = tuple(int(size) for size in coefficients.shape[:2])
+        case_shape = tuple(coefficients.shape[:2])
         return bspline_evaluate(
             self.grid.knots,
             coefficients,
@@ -813,9 +805,9 @@ class RationalBSplineEdgeBasis(AbstractEdgeBasis):
             query = jnp.broadcast_to(
                 quadrature_points[None, :, :],
                 (
-                    int(control_values.shape[0]),
-                    int(control_values.shape[1]),
-                    int(quadrature_points.shape[1]),
+                    control_values.shape[0],
+                    control_values.shape[1],
+                    quadrature_points.shape[1],
                 ),
             )
             integration_weights = quadrature_weights[None, :, :]
@@ -823,9 +815,9 @@ class RationalBSplineEdgeBasis(AbstractEdgeBasis):
             query = jnp.broadcast_to(
                 quadrature_points,
                 (
-                    int(control_values.shape[0]),
-                    int(control_values.shape[1]),
-                    int(quadrature_points.shape[0]),
+                    control_values.shape[0],
+                    control_values.shape[1],
+                    quadrature_points.shape[0],
                 ),
             )
             integration_weights = quadrature_weights

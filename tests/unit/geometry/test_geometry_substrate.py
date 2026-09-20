@@ -100,7 +100,7 @@ def test_bounded_rejection_reports_failure_without_hanging_or_underfilling_silen
     def run(key):
         return phx.geometry.bounded_rejection_sample(
             lambda _key, count: jnp.zeros((count, 2)),
-            lambda points: jnp.zeros((points.shape[0],), dtype=bool),
+            lambda points: jnp.zeros((points.shape[0],), dtype="bool"),
             num_points=5,
             point_dimension=2,
             key=key,

@@ -91,7 +91,7 @@ class ModalityObservation(StrictModule, NonTrainableState):
         timebase = _optional_text(timebase_id, "timebase_id")
         asset = _optional_text(asset_id, "asset_id")
         values_ = jax.lax.stop_gradient(jnp.asarray(values))
-        mask = jax.lax.stop_gradient(jnp.asarray(valid_mask, dtype=bool))
+        mask = jax.lax.stop_gradient(jnp.asarray(valid_mask, dtype=jnp.bool_))
         if values_.shape != mask.shape or values_.size == 0:
             raise ValueError(
                 "Observation values and valid_mask must share a non-empty shape."
@@ -107,7 +107,7 @@ class ModalityObservation(StrictModule, NonTrainableState):
             )
         if bool(jnp.any(mask & ~jnp.isfinite(values_))):
             raise ValueError("Valid observation samples must be finite.")
-        shape = tuple(int(size) for size in values_.shape)
+        shape = tuple(values_.shape)
         self.values = values_
         self.valid_mask = mask
         self.record_id = record
@@ -179,14 +179,14 @@ class LinearNuisanceModel(StrictModule, NonTrainableState):
     model_id: str = eqx.field(static=True)
 
     def __init__(self, basis: ArrayLike, prior: AbstractProbabilityLaw, /):
-        matrix = jax.lax.stop_gradient(jnp.asarray(basis, dtype=float))
+        matrix = jax.lax.stop_gradient(jnp.asarray(basis, dtype=jnp.float64))
         if matrix.ndim != 2 or matrix.shape[0] == 0 or matrix.shape[1] == 0:
             raise ValueError("Nuisance basis must be a non-empty matrix.")
         if bool(jnp.any(~jnp.isfinite(matrix))):
             raise ValueError("Nuisance basis must be finite.")
         if not isinstance(prior, AbstractProbabilityLaw):
             raise TypeError("prior must implement AbstractProbabilityLaw.")
-        count = int(matrix.shape[1])
+        count = matrix.shape[1]
         prior_shape = tuple(prior.batch_shape) + tuple(prior.event_shape)
         if prior_shape and prior_shape != (count,):
             raise ValueError("Nuisance prior shape must match the nuisance basis width.")
@@ -231,7 +231,7 @@ class GaussianModelDiscrepancy(StrictModule, NonTrainableState):
         covariance_factor: ArrayLike | None = None,
         /,
     ):
-        mean_ = jax.lax.stop_gradient(jnp.asarray(mean, dtype=float).reshape(-1))
+        mean_ = jax.lax.stop_gradient(jnp.asarray(mean, dtype=jnp.float64).reshape(-1))
         factor = (
             jnp.zeros((mean_.size, 0), dtype=mean_.dtype)
             if covariance_factor is None
@@ -255,11 +255,11 @@ class GaussianModelDiscrepancy(StrictModule, NonTrainableState):
 
     @property
     def size(self) -> int:
-        return int(self.mean.size)
+        return self.mean.size
 
     @property
     def stochastic(self) -> bool:
-        return int(self.covariance_factor.shape[1]) > 0
+        return self.covariance_factor.shape[1] > 0
 
     @property
     def covariance(self) -> Array:
@@ -273,7 +273,7 @@ def _selection_and_gauge(
 ) -> tuple[Array, Array]:
     active_host = np.flatnonzero(np.asarray(observation.valid_mask).reshape(-1))
     active = jnp.asarray(active_host, dtype=jnp.int32)
-    count = int(active_host.size)
+    count = active_host.size
     if gauge is None:
         return active, jnp.eye(count, dtype=observation.values.dtype)
     if not isinstance(gauge, ReferenceGauge):
@@ -363,7 +363,7 @@ class ModalityLikelihoodChannel(StrictModule, NonTrainableState):
         if nuisance is not None and nuisance.basis.shape[0] != observation.size:
             raise ValueError("Nuisance basis row count must match the observation size.")
         active, gauge_matrix = _selection_and_gauge(observation, gauge)
-        output_size = int(gauge_matrix.shape[0])
+        output_size = gauge_matrix.shape[0]
         if covariance is not None and covariance.layout.size != output_size:
             raise ValueError(
                 "Covariance layout size must match masked/gauged observations."

@@ -89,9 +89,9 @@ class IterationCoordinates(StrictModule):
         self.attempt = jnp.asarray(attempt, dtype=jnp.int32)
         self.accepted = jnp.asarray(accepted, dtype=jnp.int32)
         self.rejected = jnp.asarray(rejected, dtype=jnp.int32)
-        self.active = jnp.asarray(active, dtype=bool)
-        self.committed = jnp.asarray(committed, dtype=bool)
-        self.terminal = jnp.asarray(terminal, dtype=bool)
+        self.active = jnp.asarray(active, dtype=jnp.bool_)
+        self.committed = jnp.asarray(committed, dtype=jnp.bool_)
+        self.terminal = jnp.asarray(terminal, dtype=jnp.bool_)
 
 
 class IterationRecord(StrictModule):
@@ -204,7 +204,7 @@ class IterationDecision(StrictModule):
     stop: Array
 
     def __init__(self, stop: ArrayLike = False, /):
-        stop_ = jnp.asarray(stop, dtype=bool)
+        stop_ = jnp.asarray(stop, dtype=jnp.bool_)
         if stop_.shape != ():
             raise ValueError("Iteration stop decisions must be scalar.")
         self.stop = stop_
@@ -770,7 +770,7 @@ def update_iteration(
     stop_requested = state.stop_requested
     stop_rule = plan.stop_rule
     if stop_rule is not None:
-        evaluate = active & jnp.asarray(allow_stop, dtype=bool) & ~stop_requested
+        evaluate = active & jnp.asarray(allow_stop, dtype=jnp.bool_) & ~stop_requested
         candidate_state, decision = jax.lax.cond(
             evaluate,
             lambda operands: stop_rule.evaluate(operands[0], operands[1]),
@@ -1037,7 +1037,7 @@ def _tree_select(
     when_false: PyTree[Any],
     /,
 ) -> PyTree[Any]:
-    predicate_ = jnp.asarray(predicate, dtype=bool)
+    predicate_ = jnp.asarray(predicate, dtype=jnp.bool_)
     return jax.tree.map(
         lambda true, false: jnp.where(predicate_, true, false),
         when_true,

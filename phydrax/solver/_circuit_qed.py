@@ -157,7 +157,7 @@ class CircuitInteraction(StrictModule):
         *,
         interaction_id: str | None = None,
     ):
-        targets = tuple(int(index) for index in target_indices)
+        targets = tuple(target_indices)
         names = tuple(str(name) for name in operator_names)
         if (
             not targets
@@ -392,9 +392,9 @@ class CircuitQEDDeviceParameters(StrictModule):
         ):
             raise TypeError("Interaction strengths and drive scales must be real.")
         if not jnp.issubdtype(strengths.dtype, jnp.inexact):
-            strengths = strengths.astype(float)
+            strengths = strengths.astype("float64")
         if not jnp.issubdtype(scales.dtype, jnp.inexact):
-            scales = scales.astype(float)
+            scales = scales.astype("float64")
         self.mode_parameters = modes
         self.interaction_strengths = strengths
         self.drive_scales = scales

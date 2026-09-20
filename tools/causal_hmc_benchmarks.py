@@ -189,7 +189,7 @@ def run_causal_hmc_benchmarks(*, quick: bool = False) -> dict[str, Any]:
                         )
                     )
     return {
-        "schema": "phydrax-causal-hmc-benchmark-v1",
+        "schema": "phydrax-causal-hmc-benchmark",
         "backend": jax.default_backend(),
         "quick": bool(quick),
         "cases": cases,

@@ -63,8 +63,8 @@ class PICOpenBoundaryPlan(StrictModule, NonTrainableState):
         *,
         kinds: tuple[PICBoundaryKind, ...],
     ):
-        lo = np.asarray(lower, dtype=float)
-        hi = np.asarray(upper, dtype=float)
+        lo = np.asarray(lower, dtype=np.float64)
+        hi = np.asarray(upper, dtype=np.float64)
         if lo.ndim != 1 or hi.shape != lo.shape or lo.size not in (1, 2, 3):
             raise ValueError("PIC boundary bounds are invalid.")
         if np.any(~np.isfinite(lo)) or np.any(~np.isfinite(hi)) or np.any(hi <= lo):
@@ -84,7 +84,7 @@ class PICOpenBoundaryPlan(StrictModule, NonTrainableState):
             }
         )
 
-    def initialize_surface(self, dtype=float) -> PICBoundarySurfaceState:
+    def initialize_surface(self, dtype=jnp.float64) -> PICBoundarySurfaceState:
         shape = (len(self.kinds),)
         return PICBoundarySurfaceState(
             jnp.zeros(shape, dtype=dtype),
@@ -138,9 +138,7 @@ class PICOpenBoundaryPlan(StrictModule, NonTrainableState):
         hit = population.active & jnp.isfinite(fraction) & (fraction < 1.0)
         safe_fraction = jnp.where(hit, fraction, 1.0)
         hit_position = start + safe_fraction[:, None] * delta
-        kind_values = jnp.asarray(
-            tuple(int(value) for value in self.kinds), dtype=jnp.int32
-        )
+        kind_values = jnp.asarray(tuple(self.kinds), dtype=jnp.int32)
         kind = kind_values[face]
         absorb = hit & (kind == int(PICBoundaryKind.ABSORB))
         reflect = hit & (kind == int(PICBoundaryKind.REFLECT))

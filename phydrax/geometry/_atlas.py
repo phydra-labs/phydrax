@@ -50,8 +50,8 @@ class TrimDomain(StrictModule):
     holes: tuple[Array, ...]
 
     def __init__(self, outer: Array, holes: Sequence[Array] = ()):
-        outer_host = np.asarray(outer, dtype=float)
-        hole_hosts = tuple(np.asarray(hole, dtype=float) for hole in holes)
+        outer_host = np.asarray(outer, dtype=np.float64)
+        hole_hosts = tuple(np.asarray(hole, dtype=np.float64) for hole in holes)
         if outer_host.ndim != 2 or outer_host.shape[1] != 2 or outer_host.shape[0] < 3:
             raise ValueError("TrimDomain.outer must have shape (num_points >= 3, 2).")
         if any(
@@ -59,8 +59,8 @@ class TrimDomain(StrictModule):
             for hole in hole_hosts
         ):
             raise ValueError("Every trim hole must have shape (num_points >= 3, 2).")
-        self.outer = jnp.asarray(outer_host, dtype=float)
-        self.holes = tuple(jnp.asarray(hole, dtype=float) for hole in hole_hosts)
+        self.outer = jnp.asarray(outer_host, dtype=jnp.float64)
+        self.holes = tuple(jnp.asarray(hole, dtype=jnp.float64) for hole in hole_hosts)
 
     @staticmethod
     def _inside_loop(points: Array, loop: Array) -> Array:
@@ -77,7 +77,7 @@ class TrimDomain(StrictModule):
         return jnp.sum(crossing & (x < intersection), axis=-1) % 2 == 1
 
     def contains(self, reference: Array, /) -> Array:
-        reference_ = jnp.asarray(reference, dtype=float)
+        reference_ = jnp.asarray(reference, dtype=jnp.float64)
         inside = self._inside_loop(reference_, self.outer)
         for hole in self.holes:
             inside &= ~self._inside_loop(reference_, hole)
@@ -93,10 +93,10 @@ class BoundaryFrame(StrictModule):
     jacobian: Array
 
     def __init__(self, *, origin: Array, tangents: Array, normal: Array, jacobian: Array):
-        self.origin = jnp.asarray(origin, dtype=float)
-        self.tangents = jnp.asarray(tangents, dtype=float)
-        self.normal = jnp.asarray(normal, dtype=float)
-        self.jacobian = jnp.asarray(jacobian, dtype=float)
+        self.origin = jnp.asarray(origin, dtype=jnp.float64)
+        self.tangents = jnp.asarray(tangents, dtype=jnp.float64)
+        self.normal = jnp.asarray(normal, dtype=jnp.float64)
+        self.jacobian = jnp.asarray(jacobian, dtype=jnp.float64)
 
 
 class BoundaryAtlas(StrictModule):
@@ -132,9 +132,9 @@ class BoundaryAtlas(StrictModule):
         if len(tags) != mapping.num_charts or any(not tag for tag in tags):
             raise ValueError("physical_tags must contain one non-empty tag per chart.")
         orientation_ = (
-            jnp.ones((mapping.num_charts,), dtype=float)
+            jnp.ones((mapping.num_charts,), dtype=jnp.float64)
             if orientation is None
-            else jnp.asarray(orientation, dtype=float).reshape((-1,))
+            else jnp.asarray(orientation, dtype=jnp.float64).reshape((-1,))
         )
         if orientation_.shape != (mapping.num_charts,):
             raise ValueError("orientation must contain one sign per chart.")
@@ -142,9 +142,9 @@ class BoundaryAtlas(StrictModule):
         if np.any((orientation_host != 1.0) & (orientation_host != -1.0)):
             raise ValueError("orientation entries must be +1 or -1.")
         seam_owner_ = (
-            jnp.ones((mapping.num_charts,), dtype=bool)
+            jnp.ones((mapping.num_charts,), dtype=jnp.bool_)
             if seam_owner is None
-            else jnp.asarray(seam_owner, dtype=bool).reshape((-1,))
+            else jnp.asarray(seam_owner, dtype=jnp.bool_).reshape((-1,))
         )
         if seam_owner_.shape != (mapping.num_charts,):
             raise ValueError("seam_owner must contain one flag per chart.")
@@ -178,17 +178,12 @@ class BoundaryAtlas(StrictModule):
         return self.mapping.reference_dimension
 
     @property
-    def reference_dim(self) -> int:
-        """Compatibility spelling used by integration reference rules."""
-        return self.reference_dimension
-
-    @property
     def ambient_dimension(self) -> int:
         return self.mapping.ambient_dimension
 
     def _validate_inputs(self, chart_indices: Array, reference: Array):
         indices = jnp.asarray(chart_indices, dtype=jnp.int32)
-        reference_ = jnp.asarray(reference, dtype=float)
+        reference_ = jnp.asarray(reference, dtype=jnp.float64)
         if reference_.shape[:-1] != indices.shape:
             raise ValueError("chart_indices must match reference leading dimensions.")
         if reference_.shape[-1] != self.reference_dimension:
@@ -211,7 +206,7 @@ class BoundaryAtlas(StrictModule):
         if self.reference_dimension != 2 or all(
             trim is None for trim in self.trim_domains
         ):
-            return jnp.ones(indices.shape, dtype=bool)
+            return jnp.ones(indices.shape, dtype=jnp.bool_)
         flat_indices = indices.reshape((-1,))
         flat_reference = reference_.reshape((-1, self.reference_dimension))
         branches = tuple(
@@ -228,7 +223,7 @@ class BoundaryAtlas(StrictModule):
         return values.reshape(indices.shape)
 
     def differential(self, chart_indices: Array, reference: Array, /) -> Array:
-        """Return chart derivatives with shape ``(..., ambient_dim, reference_dim)``."""
+        """Return chart derivatives with shape ``(..., ambient_dim, reference_dimension)``."""
         indices, reference_ = self._validate_inputs(chart_indices, reference)
         leading = indices.shape
         flat_indices = indices.reshape((-1,))
@@ -282,7 +277,7 @@ class BoundaryAtlas(StrictModule):
         tags: Sequence[str] | None = None,
     ) -> BoundaryAtlas:
         """Select charts by source entity ID and/or physical tag."""
-        mask = np.ones((self.num_charts,), dtype=bool)
+        mask = np.ones((self.num_charts,), dtype=np.bool_)
         if entity_ids is not None:
             mask &= np.isin(
                 np.asarray(self.source_entity_ids),
@@ -348,7 +343,7 @@ class _TranslatedBoundaryMap(AbstractBoundaryMap):
     offset: Array
 
     def __init__(self, base: AbstractBoundaryMap, offset: Array):
-        offset_ = jnp.asarray(offset, dtype=float).reshape((-1,))
+        offset_ = jnp.asarray(offset, dtype=jnp.float64).reshape((-1,))
         if offset_.shape != (base.ambient_dimension,):
             raise ValueError(
                 f"Translation offset must have shape ({base.ambient_dimension},)."
@@ -380,8 +375,8 @@ class _CircleBoundaryMap(AbstractBoundaryMap):
     radius: Array
 
     def __init__(self, center: Array, radius: Array):
-        self.center = jnp.asarray(center, dtype=float).reshape((2,))
-        self.radius = jnp.asarray(radius, dtype=float).reshape(())
+        self.center = jnp.asarray(center, dtype=jnp.float64).reshape((2,))
+        self.radius = jnp.asarray(radius, dtype=jnp.float64).reshape(())
 
     @property
     def num_charts(self) -> int:
@@ -410,8 +405,8 @@ class _SphereBoundaryMap(AbstractBoundaryMap):
     radius: Array
 
     def __init__(self, center: Array, radius: Array):
-        self.center = jnp.asarray(center, dtype=float).reshape((3,))
-        self.radius = jnp.asarray(radius, dtype=float).reshape(())
+        self.center = jnp.asarray(center, dtype=jnp.float64).reshape((3,))
+        self.radius = jnp.asarray(radius, dtype=jnp.float64).reshape(())
 
     @property
     def num_charts(self) -> int:
@@ -459,8 +454,8 @@ class _BoxBoundaryMap(AbstractBoundaryMap):
     jacobians: Array
 
     def __init__(self, center: Array, size: Array):
-        center_ = jnp.asarray(center, dtype=float).reshape((3,))
-        size_ = jnp.asarray(size, dtype=float).reshape((3,))
+        center_ = jnp.asarray(center, dtype=jnp.float64).reshape((3,))
+        size_ = jnp.asarray(size, dtype=jnp.float64).reshape((3,))
         half = 0.5 * size_
         hx, hy, hz = half
         dx, dy, dz = size_
@@ -548,7 +543,7 @@ def sphere_boundary_atlas(
     return BoundaryAtlas(
         _SphereBoundaryMap(center, radius),
         source_entity_ids=jnp.asarray([0, 0], dtype=jnp.int32),
-        orientation=-jnp.ones((2,), dtype=float),
+        orientation=-jnp.ones((2,), dtype=jnp.float64),
         source_id=source_id,
         trim_domains=(TrimDomain(triangle), TrimDomain(triangle)),
     )

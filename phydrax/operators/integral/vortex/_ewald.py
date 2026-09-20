@@ -70,7 +70,7 @@ class PeriodicVortexEwaldPlan(AbstractVortexVelocityPlan):
         compatibility_tolerance: float = 1.0e-12,
         precision: VortexPrecisionPolicy | None = None,
     ):
-        period_host = np.asarray(periods, dtype=float)
+        period_host = np.asarray(periods, dtype=np.float64)
         if (
             period_host.ndim != 1
             or period_host.size not in (2, 3)
@@ -78,7 +78,7 @@ class PeriodicVortexEwaldPlan(AbstractVortexVelocityPlan):
             or np.any(period_host <= 0.0)
         ):
             raise ValueError("Ewald periods require a finite positive 2- or 3-vector.")
-        dimension = int(period_host.size)
+        dimension = period_host.size
         alpha = float(splitting_parameter)
         real_radius = int(real_image_radius)
         mode_radius = int(reciprocal_mode_radius)
@@ -96,7 +96,7 @@ class PeriodicVortexEwaldPlan(AbstractVortexVelocityPlan):
             tuple(
                 itertools.product(range(-real_radius, real_radius + 1), repeat=dimension)
             ),
-            dtype=float,
+            dtype=np.float64,
         )
         mode_tuples = tuple(
             mode
@@ -105,7 +105,7 @@ class PeriodicVortexEwaldPlan(AbstractVortexVelocityPlan):
             )
             if any(value != 0 for value in mode)
         )
-        reciprocal = 2.0 * np.pi * np.asarray(mode_tuples, dtype=float) / period_host
+        reciprocal = 2.0 * np.pi * np.asarray(mode_tuples, dtype=np.float64) / period_host
         precision_ = VortexPrecisionPolicy() if precision is None else precision
         self.periods = jnp.asarray(period_host)
         self.splitting_parameter = alpha
@@ -203,7 +203,7 @@ class PreparedPeriodicVortexEwald(AbstractPreparedVortexVelocity):
         )
         squared = jnp.sum(displacement * displacement, axis=-1)
         zero_shift = jnp.all(self.plan.real_shifts == 0.0, axis=-1)
-        self_pair = jnp.zeros(squared.shape, dtype=bool)
+        self_pair = jnp.zeros(squared.shape, dtype=jnp.bool_)
         if target_identity is not None:
             source_index = jnp.arange(source.capacity, dtype=jnp.int32)
             self_pair = (

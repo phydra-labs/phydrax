@@ -40,7 +40,7 @@ def candidate(model):
 
 
 def test_total_degree_one_weak_constraint_is_cell_local(model):
-    # A slope in one cell must not leak into its neighbour, and the exact four
+    # A slope in one cell must not leak into its neighbor, and the exact four
     # test moments are those of 1,x,y,z, not tensor Q1's eight nodal modes.
     state = model.state
     dilation = state.dilation_coefficients.at[0, 1].set(0.06)

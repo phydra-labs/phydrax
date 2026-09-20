@@ -56,7 +56,7 @@ def _deep_result(path_id="validation-path"):
         jnp.zeros((2, 1, 1)),
         jnp.zeros((2, 1)),
         jnp.zeros((2, 1)),
-        jnp.ones((2,), dtype=bool),
+        jnp.ones((2,), dtype="bool"),
         paths,
     )
     diagnostics = DeepBSDEShootingDiagnostics(
@@ -94,7 +94,7 @@ def _deep_applicability(training_path_id):
     )
 
 
-def test_deep_bsde_validation_cannot_be_relabelled_from_training():
+def test_deep_bsde_validation_cannot_be_relabeled_from_training():
     result = _deep_result()
     separated = deep_bsde_independent_validation(
         _deep_applicability("training-path"),
@@ -123,7 +123,7 @@ def _tensor_fixture(dense, relative_tolerance):
     law = _law()
     grid = TensorizedGrid.uniform(((0.0, 1.0), (0.0, 1.0)), (2, 2))
     approximation = TensorTrain.from_dense(
-        jnp.asarray(dense, dtype=float),
+        jnp.asarray(dense, dtype="float64"),
         max_ranks=2,
         relative_tolerance=relative_tolerance,
     )
@@ -146,7 +146,7 @@ def _tensor_fixture(dense, relative_tolerance):
         applicability,
         approximation,
         indices,
-        jnp.asarray(dense, dtype=float).reshape((-1,)),
+        jnp.asarray(dense, dtype="float64").reshape((-1,)),
         validation_id="tensor-validation",
         validation_independence_id="tensor-holdout",
     )

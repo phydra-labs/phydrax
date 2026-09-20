@@ -247,7 +247,7 @@ def test_operator_batch_preserves_case_times_masks_and_prediction_contract():
 
     result = model(batch)
     direct = model.recurrent(values, coordinates[..., 0], mask=mask)
-    prediction = model.predict(batch)
+    prediction = model.evaluate(batch)
     contract = model.operator_contract
 
     assert result.shape == (2, 5, 3)
@@ -325,7 +325,7 @@ def test_scalar_length_one_operator_batch_preserves_singleton_case_axis():
         key=jr.key(16),
     )
     coordinates = jnp.zeros((1, 1, 1))
-    mask = jnp.ones((1, 1), dtype=bool)
+    mask = jnp.ones((1, 1), dtype="bool")
     batch = phx.nn.operator.OperatorBatch(
         inputs={
             "signal": phx.nn.operator.FunctionSamples(

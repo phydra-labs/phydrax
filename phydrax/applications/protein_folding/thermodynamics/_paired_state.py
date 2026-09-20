@@ -380,7 +380,7 @@ def close_free_energy_at_reference(
         raise ValueError(
             "Experimental closure must lie inside the enthalpy model's sampled interval."
         )
-    covariance = np.asarray(experimental_covariance, dtype=float)
+    covariance = np.asarray(experimental_covariance, dtype=np.float64)
     if (
         covariance.shape != (2, 2)
         or not np.all(np.isfinite(covariance))

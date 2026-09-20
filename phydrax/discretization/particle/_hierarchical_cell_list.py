@@ -175,10 +175,10 @@ class PreparedHierarchicalRadiusParticleNeighborhood(
             raise ValueError("Interaction radii must match particle capacity.")
         if plan.box.ambient_dimension != particles.ambient_dimension:
             raise ValueError("ParticleBox dimension does not match particle support.")
-        level_count = int(plan.level_edges.shape[0] - 1)
+        level_count = plan.level_edges.shape[0] - 1
         dimension = particles.ambient_dimension
-        lengths = np.asarray(plan.box.lengths, dtype=float)
-        upper_edges = np.asarray(plan.level_edges[1:], dtype=float)
+        lengths = np.asarray(plan.box.lengths, dtype=np.float64)
+        upper_edges = np.asarray(plan.level_edges[1:], dtype=np.float64)
         shapes = []
         widths = []
         strides = []
@@ -188,7 +188,7 @@ class PreparedHierarchicalRadiusParticleNeighborhood(
             shape = tuple(
                 max(int(np.floor(length / desired_width)), 1) for length in lengths
             )
-            width = lengths / np.asarray(shape, dtype=float)
+            width = lengths / np.asarray(shape, dtype=np.float64)
             shapes.append(shape)
             widths.append(width)
             strides.append(_cell_strides(shape))
@@ -235,7 +235,7 @@ class PreparedHierarchicalRadiusParticleNeighborhood(
                 "particle_capacity": particles.capacity,
                 "radius_levels": level_count,
                 "maximum_level_population": int(np.max(level_population)),
-                "neighbor_width": int(offsets.shape[0]),
+                "neighbor_width": offsets.shape[0],
                 "maximum_particles_per_cell": plan.maximum_particles_per_cell,
                 "candidate_slot_count": candidate_slots,
                 "pair_capacity": plan.maximum_pairs,
@@ -273,7 +273,7 @@ class PreparedHierarchicalRadiusParticleNeighborhood(
         self.box = plan.box
         self.backend = plan.backend
         self.level_count = level_count
-        self.neighbor_width = int(offsets.shape[0])
+        self.neighbor_width = offsets.shape[0]
         self.pair_capacity = plan.maximum_pairs
         self.particle_capacity = particles.capacity
         self.ambient_dimension = dimension
@@ -362,14 +362,14 @@ class PreparedHierarchicalRadiusParticleNeighborhood(
             raise ValueError(f"Particle positions must have shape {expected}.")
         active = self.active_mask
         if active_mask is not None:
-            requested = jnp.asarray(active_mask, dtype=bool)
+            requested = jnp.asarray(active_mask, dtype=jnp.bool_)
             if requested.shape != (self.particle_capacity,):
                 raise ValueError("active_mask must have particle-capacity shape.")
             active = active & requested
         level_coordinates = []
         level_cells = []
         level_groups = []
-        domain_violations = jnp.zeros((self.particle_capacity,), dtype=bool)
+        domain_violations = jnp.zeros((self.particle_capacity,), dtype=jnp.bool_)
         maximum_occupancy = jnp.zeros((), dtype=jnp.int32)
         cell_overflow_count = jnp.zeros((), dtype=jnp.int32)
         indices = jnp.arange(self.particle_capacity, dtype=jnp.int32)

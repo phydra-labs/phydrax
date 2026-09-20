@@ -203,7 +203,7 @@ class WholeCellState(StrictModule):
         lineage_id: str,
         /,
     ):
-        amounts = jnp.asarray(values, dtype=float)
+        amounts = jnp.asarray(values, dtype=jnp.float64)
         source = jnp.asarray(source_ledger, dtype=amounts.dtype)
         sink = jnp.asarray(sink_ledger, dtype=amounts.dtype)
         epoch_value = jnp.asarray(epoch, dtype=jnp.int32)
@@ -459,7 +459,7 @@ class PreparedWholeCellAssembly(StrictModule, NonTrainableState):
                 mapping[local_species[species_name]] = field_index[field_name]
             mappings.append(jnp.asarray(mapping))
             for local_row in np.asarray(binding.network.stoichiometry):
-                global_row = np.zeros(plan.field_capacity, dtype=float)
+                global_row = np.zeros(plan.field_capacity, dtype=np.float64)
                 global_row[mapping] = local_row
                 global_rows.append(global_row)
         rows = np.asarray(global_rows)
@@ -481,20 +481,20 @@ class PreparedWholeCellAssembly(StrictModule, NonTrainableState):
             singular_values = np.linalg.svd(block, compute_uv=False)
             threshold = (
                 max(block.shape)
-                * np.finfo(float).eps
+                * np.finfo(np.float64).eps
                 * max(float(np.max(singular_values, initial=0.0)), 1.0)
             )
             rank = int(np.sum(singular_values > threshold))
             _, _, right = np.linalg.svd(block, full_matrices=True)
             for local_basis in right[rank:]:
-                embedded = np.zeros(plan.field_capacity, dtype=float)
+                embedded = np.zeros(plan.field_capacity, dtype=np.float64)
                 embedded[indices] = local_basis
                 basis_rows.append(embedded)
                 basis_units.append(f"{quantity}:{unit}")
         basis = (
             np.asarray(basis_rows)
             if basis_rows
-            else np.zeros((0, plan.field_capacity), dtype=float)
+            else np.zeros((0, plan.field_capacity), dtype=np.float64)
         )
         order = tuple(process_index[item.process_name] for item in plan.schedule)
         field_mask = np.arange(plan.field_capacity) < len(plan.fields)
@@ -524,7 +524,7 @@ class PreparedWholeCellAssembly(StrictModule, NonTrainableState):
         raw = jnp.asarray(values)
         if raw.dtype == jnp.bool_:
             raise TypeError("Initial whole-cell values must not be boolean.")
-        amounts = raw.astype(float)
+        amounts = raw.astype("float64")
         if amounts.shape == (len(self.plan.fields),):
             amounts = jnp.pad(
                 amounts, (0, self.plan.field_capacity - len(self.plan.fields))
@@ -590,8 +590,8 @@ class PreparedWholeCellAssembly(StrictModule, NonTrainableState):
         total_delta = jnp.zeros_like(state.values)
         total_source = jnp.zeros_like(state.values)
         total_sink = jnp.zeros_like(state.values)
-        process_valid = jnp.ones((self.plan.process_capacity,), dtype=bool)
-        process_regime_valid = jnp.ones((self.plan.process_capacity,), dtype=bool)
+        process_valid = jnp.ones((self.plan.process_capacity,), dtype=jnp.bool_)
+        process_regime_valid = jnp.ones((self.plan.process_capacity,), dtype=jnp.bool_)
         required_regime_valid = jnp.asarray(True)
         for schedule_index, binding_index in enumerate(self.process_order):
             schedule = self.plan.schedule[schedule_index]

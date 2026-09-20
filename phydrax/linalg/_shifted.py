@@ -91,7 +91,7 @@ class ShiftedLinearSystemFamily(StrictModule):
                     "kind": "shifted-linear-system-family",
                     "operator": operator.operator_id,
                     "source": operator.source.space_id,
-                    "count": int(values.size),
+                    "count": values.size,
                     "dtype": np.dtype(values.dtype).str,
                     "convention": "shift-minus-operator",
                     "spectral_interval": interval_structure,
@@ -109,7 +109,7 @@ class ShiftedLinearSystemFamily(StrictModule):
 
     @property
     def num_shifts(self) -> int:
-        return int(self.shifts.size)
+        return self.shifts.size
 
 
 class ShiftedSolveResourcePolicy(StrictModule):
@@ -582,9 +582,9 @@ def _execute_retained_shifted(
             condition_estimate=conditions,
             stability_lower_bound=jnp.full(shifts.shape, jnp.nan, dtype=real_dtype),
             forward_error_upper_bound=jnp.full(shifts.shape, jnp.inf, dtype=real_dtype),
-            forward_error_bound_available=jnp.zeros(shifts.shape, dtype=bool),
-            forward_error_bound_certified=jnp.zeros(shifts.shape, dtype=bool),
-            curvature_failure=jnp.zeros(shifts.shape, dtype=bool),
+            forward_error_bound_available=jnp.zeros(shifts.shape, dtype=jnp.bool_),
+            forward_error_bound_certified=jnp.zeros(shifts.shape, dtype=jnp.bool_),
+            curvature_failure=jnp.zeros(shifts.shape, dtype=jnp.bool_),
             iterations=iterations,
             reference_shift=jnp.asarray(jnp.nan, dtype=real_dtype),
             krylov_breakdown_status=decomposition.breakdown_status,
@@ -759,8 +759,7 @@ def _execute_streaming_shifted(
         stability_evidence=evidence,
         stability_scope=scope,
         provenance=(
-            "streaming three-term multi-shift Lanczos with direct "
-            "original-system residual verification"
+            "streaming three-term multi-shift Lanczos with direct original-system residual verification"
         ),
     )
 
@@ -1147,7 +1146,7 @@ def _unflatten_batched(template: PyTree[Any], coordinates: Array, /) -> PyTree[A
     offset = 0
     for leaf in leaves:
         array = jnp.asarray(leaf)
-        size = int(array.size)
+        size = array.size
         rebuilt.append(
             coordinates[:, offset : offset + size].reshape(
                 (coordinates.shape[0],) + array.shape

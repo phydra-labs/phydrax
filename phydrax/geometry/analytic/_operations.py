@@ -17,6 +17,7 @@ from jax.scipy.special import logsumexp
 from jaxtyping import Array
 
 import phydrax.ein as ein
+from phydrax._strict import StrictModule
 
 from ..._numerics._quadrature_rules import gauss_legendre_data
 from .._atlas import AbstractBoundaryMap, BoundaryAtlas
@@ -62,15 +63,15 @@ from ..design._schema import (
 )
 
 
-class RigidFrame(eqx.Module):
+class RigidFrame(StrictModule):
     """Validated right-handed rigid frame represented by rotation and translation."""
 
     rotation: Array
     translation: Array
 
     def __init__(self, rotation: Any, translation: Any):
-        rotation_host = np.asarray(rotation, dtype=float)
-        translation_host = np.asarray(translation, dtype=float)
+        rotation_host = np.asarray(rotation, dtype=np.float64)
+        translation_host = np.asarray(translation, dtype=np.float64)
         if rotation_host.ndim != 2 or rotation_host.shape[0] != rotation_host.shape[1]:
             raise ValueError("rotation must be a square matrix.")
         dimension = rotation_host.shape[0]
@@ -87,8 +88,8 @@ class RigidFrame(eqx.Module):
             raise ValueError("rotation must be orthogonal.")
         if not np.isclose(np.linalg.det(rotation_host), 1.0, rtol=1e-10, atol=1e-12):
             raise ValueError("rotation must be right-handed with determinant one.")
-        self.rotation = jnp.asarray(rotation_host, dtype=float)
-        self.translation = jnp.asarray(translation_host, dtype=float)
+        self.rotation = jnp.asarray(rotation_host, dtype=jnp.float64)
+        self.translation = jnp.asarray(translation_host, dtype=jnp.float64)
 
     @property
     def dimension(self) -> int:
@@ -108,7 +109,7 @@ class RigidFrame(eqx.Module):
         *,
         translation: Any = (0.0, 0.0, 0.0),
     ) -> RigidFrame:
-        axis_host = np.asarray(axis, dtype=float)
+        axis_host = np.asarray(axis, dtype=np.float64)
         if axis_host.shape != (3,) or not np.all(np.isfinite(axis_host)):
             raise ValueError("axis must be a finite three-vector.")
         norm = np.linalg.norm(axis_host)
@@ -142,8 +143,8 @@ class _AffineBoundaryMap(AbstractBoundaryMap):
 
     def __init__(self, base: AbstractBoundaryMap, linear: Array, offset: Array):
         self.base = base
-        self.linear = jnp.asarray(linear, dtype=float)
-        self.offset = jnp.asarray(offset, dtype=float)
+        self.linear = jnp.asarray(linear, dtype=jnp.float64)
+        self.offset = jnp.asarray(offset, dtype=jnp.float64)
 
     @property
     def num_charts(self) -> int:
@@ -162,7 +163,7 @@ class _AffineBoundaryMap(AbstractBoundaryMap):
 
     def jacobian(self, chart_indices: Array, reference: Array, /) -> Array:
         indices = jnp.asarray(chart_indices, dtype=jnp.int32)
-        reference_ = jnp.asarray(reference, dtype=float)
+        reference_ = jnp.asarray(reference, dtype=jnp.float64)
         leading = reference_.shape[:-1]
         flat_indices = indices.reshape((-1,))
         flat_reference = reference_.reshape((-1, self.reference_dimension))
@@ -189,8 +190,8 @@ class _AffineCubatureMap(AbstractCubatureMap):
         offset: Array,
     ):
         self.base = base
-        self.linear = jnp.asarray(linear, dtype=float)
-        self.offset = jnp.asarray(offset, dtype=float)
+        self.linear = jnp.asarray(linear, dtype=jnp.float64)
+        self.offset = jnp.asarray(offset, dtype=jnp.float64)
 
     @property
     def num_charts(self) -> int:
@@ -220,7 +221,7 @@ class _AffineCubatureMap(AbstractCubatureMap):
         /,
     ) -> CubatureMapEvaluation:
         indices = jnp.asarray(chart_indices, dtype=jnp.int32)
-        reference_ = jnp.asarray(reference, dtype=float)
+        reference_ = jnp.asarray(reference, dtype=jnp.float64)
         leading = reference_.shape[:-1]
         flat_indices = indices.reshape((-1,))
         flat_reference = reference_.reshape((-1, self.reference_dimension))
@@ -417,9 +418,7 @@ class _RigidTransformKernel(GeometryKernel):
         if not isinstance(result, ClosestPointResult):
             raise TypeError("Child closest-point query returned an invalid result.")
         physical_id = (
-            self.source_id
-            if result.exact_to_physical
-            else result.physical_geometry_id
+            self.source_id if result.exact_to_physical else result.physical_geometry_id
         )
         return ClosestPointResult(
             closest_point=result.closest_point @ rotation.T + translation,
@@ -451,7 +450,8 @@ class _RigidTransformKernel(GeometryKernel):
             tuple(
                 jnp.where(
                     jnp.asarray(
-                        [(index >> axis) & 1 for axis in range(dimension)], dtype=bool
+                        [(index >> axis) & 1 for axis in range(dimension)],
+                        dtype=jnp.bool_,
                     ),
                     bounds[1],
                     bounds[0],
@@ -537,7 +537,7 @@ class Scaling(GeometrySource):
     ):
         if not isinstance(child, GeometrySource):
             raise TypeError("child must be a GeometrySource.")
-        scale_host = np.asarray(scale, dtype=float)
+        scale_host = np.asarray(scale, dtype=np.float64)
         if scale_host.ndim == 0:
             if not np.isfinite(scale_host) or float(scale_host) <= 0.0:
                 raise ValueError("scale must be finite and positive.")
@@ -552,9 +552,11 @@ class Scaling(GeometrySource):
         else:
             raise ValueError("scale must be a positive scalar or vector.")
         if center is None:
-            center_host = np.zeros((1 if scalar_scale else scale_host.size,), dtype=float)
+            center_host = np.zeros(
+                (1 if scalar_scale else scale_host.size,), dtype=np.float64
+            )
         else:
-            center_host = np.asarray(center, dtype=float)
+            center_host = np.asarray(center, dtype=np.float64)
         if (
             center_host.ndim != 1
             or center_host.size == 0
@@ -562,8 +564,8 @@ class Scaling(GeometrySource):
         ):
             raise ValueError("center must be a finite vector.")
         self.child = child
-        self.scale = jnp.asarray(scale_host, dtype=float)
-        self.center = jnp.asarray(center_host, dtype=float)
+        self.scale = jnp.asarray(scale_host, dtype=jnp.float64)
+        self.center = jnp.asarray(center_host, dtype=jnp.float64)
         self.uniform = uniform
         self.feature_id = feature_id or f"scaling-{uuid4().hex}"
 
@@ -691,9 +693,7 @@ class _ScalingKernel(GeometryKernel):
             raise TypeError("Child closest-point query returned an invalid result.")
         factor = scale[0]
         physical_id = (
-            self.source_id
-            if result.exact_to_physical
-            else result.physical_geometry_id
+            self.source_id if result.exact_to_physical else result.physical_geometry_id
         )
         return ClosestPointResult(
             closest_point=center + (result.closest_point - center) * scale,
@@ -1006,7 +1006,7 @@ class BlendCSG(GeometrySource):
         if operation not in ("union", "intersection", "difference"):
             raise ValueError("Unsupported blend operation.")
         self.children = children_
-        self.width = jnp.asarray(width_, dtype=float)
+        self.width = jnp.asarray(width_, dtype=jnp.float64)
         self.operation = operation
         self.feature_id = feature_id or f"blend-{uuid4().hex}"
 

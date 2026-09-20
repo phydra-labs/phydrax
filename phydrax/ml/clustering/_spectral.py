@@ -112,7 +112,7 @@ class SpectralClustering(AbstractRecipe):
             w[..., :, None] * w[..., None, :]
         )
         pair_active = active[..., :, None] & active[..., None, :]
-        adjacency = jnp.where(pair_active & ~jnp.eye(n, dtype=bool), adjacency, 0.0)
+        adjacency = jnp.where(pair_active & ~jnp.eye(n, dtype=jnp.bool_), adjacency, 0.0)
         degree = jnp.sum(adjacency, axis=-1)
         inverse_root = jnp.where(degree > 0.0, jax.lax.rsqrt(degree), 0.0)
         normalized = inverse_root[..., :, None] * adjacency * inverse_root[..., None, :]
@@ -234,7 +234,9 @@ def _agglomerate_one(
                 / jnp.maximum(mass[:, None] + mass[None, :], jnp.finfo(w.dtype).tiny)
             )
         candidates = (
-            active[:, None] & active[None, :] & jnp.triu(jnp.ones((n, n), dtype=bool), 1)
+            active[:, None]
+            & active[None, :]
+            & jnp.triu(jnp.ones((n, n), dtype=jnp.bool_), 1)
         )
         should_merge = jnp.sum(active) > cluster_count
         # Row-major flattening makes the first equal-distance pair lexicographic by (left, right).

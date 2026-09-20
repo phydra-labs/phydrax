@@ -149,8 +149,7 @@ class _BRepKernel(GeometryKernel):
             regularity=FieldRegularity.PIECEWISE_SMOOTH,
             safe_step_factor=1.0,
             validity_region=(
-                f"watertight query mesh; linear deflection "
-                f"{self.model.report.linear_deflection:g}"
+                f"watertight query mesh; linear deflection {self.model.report.linear_deflection:g}"
             ),
             parameter_differentiable=False,
             provenance=("occt_brep", "reported_query_tessellation"),
@@ -182,7 +181,7 @@ class _BRepKernel(GeometryKernel):
         return jnp.abs(winding / (4.0 * jnp.pi)) > 0.5
 
     def boundary_field(self, state: DesignState, points: Array, /) -> Array:
-        points_ = jnp.asarray(points, dtype=float)
+        points_ = jnp.asarray(points, dtype=jnp.float64)
         query = self._query(points_)
         return _oriented_boundary_field(
             points_,
@@ -199,7 +198,7 @@ class _BRepKernel(GeometryKernel):
         points_ = jnp.asarray(points, dtype=self.mesh.vertices.dtype)
         query = self._query(points_)
         leading = points_.shape[:-1]
-        unavailable = jnp.zeros(leading, dtype=bool)
+        unavailable = jnp.zeros(leading, dtype=jnp.bool_)
         return represented_mesh_closest_point(
             points_,
             closest_point=query.closest_point,

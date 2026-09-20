@@ -41,7 +41,7 @@ class CochainRatePartition(StrictModule, NonTrainableState):
         while changed:
             changed = False
             for degree, incidence in enumerate(cochain.topology.incidences):
-                valid = np.asarray(incidence.relation.valid, dtype=bool)
+                valid = np.asarray(incidence.relation.valid, dtype=np.bool_)
                 lower = np.asarray(incidence.relation.source_indices)[valid]
                 upper = np.asarray(incidence.relation.target_indices)[valid]
                 required = np.maximum(values[degree][lower], values[degree + 1][upper])

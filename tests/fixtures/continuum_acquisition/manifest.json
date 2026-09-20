@@ -3,7 +3,7 @@
   "full_mta_admitted": false,
   "missing_full_mta": [
     "One coherent same-subject muscle, aponeurosis and tendon geometry/mesh with domain and interface labels.",
-    "Co-registered muscle fibre, aponeurosis collagen and tendon orientation fields.",
+    "Co-registered muscle fiber, aponeurosis collagen and tendon orientation fields.",
     "Reference/preload or stress-free reconstruction, source-specific material calibration and unit conventions.",
     "Matched boundary/load/activation protocol, force or torque/moment-arm measurements and interface assumptions.",
     "Held-out muscle, aponeurosis and free-tendon deformation fields; identifiable rate/contact data for any viscoelastic/sliding claim.",
@@ -41,7 +41,7 @@
     },
     {
       "anatomy": "Rectus femoris, one 42-year-old male, MRI and DTI",
-      "outcome": "Open article read. Methods describe MRI/DTI acquisition and MTA construction, but Data availability says: No datasets were generated or analysed during the current study. No associated raw files are linked. This is not proof the data never existed; no reproducible released bundle acquired.",
+      "outcome": "Open article read. Methods describe MRI/DTI acquisition and MTA construction, but Data availability says: No datasets were generated or analyzed during the current study. No associated raw files are linked. This is not proof the data never existed; no reproducible released bundle acquired.",
       "source_id": "doi:10.1007/s10237-025-01989-w",
       "url": "https://pmc.ncbi.nlm.nih.gov/articles/PMC12454537/"
     },
@@ -54,7 +54,7 @@
       "query": "\"Diniz\" \"aponeurotic\" \"Achilles\" dataset OR mesh OR supplementary"
     },
     {
-      "outcome": "Related fibre imaging and modeling papers found; no single acquired bundle supplies co-registered geometry, all tissue fields, preload, activation/force and held-out deformation.",
+      "outcome": "Related fiber imaging and modeling papers found; no single acquired bundle supplies co-registered geometry, all tissue fields, preload, activation/force and held-out deformation.",
       "query": "open dataset muscle aponeurosis tendon MRI DTI force ultrasound finite element mesh"
     }
   ],

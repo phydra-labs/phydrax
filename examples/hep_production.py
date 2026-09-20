@@ -15,7 +15,7 @@ def main() -> None:
     detector = phx.applications.detector
     calorimetry = detector.calorimetry
     analysis = phx.applications.collider_analysis
-    catalogue = phx.particle_physics.ParticleCatalogueReference(
+    catalog = phx.particle_physics.ParticleCatalogReference(
         source_id="example-pdg",
         provider_release="example",
         checksum="example-checksum",
@@ -67,7 +67,7 @@ def main() -> None:
         coupling_scheme_id="example",
     ).prepare(lambda incoming_momenta, outgoing_momenta: jnp.asarray(1.0))
     event_plan = phx.particle_physics.ParticleEventPlan(
-        catalogue=catalogue,
+        catalog=catalog,
         momentum_unit=phx.units.GIGAELECTRONVOLT,
         length_unit=phx.units.MILLIMETER,
         time_unit=phx.units.NANOSECOND,
@@ -103,8 +103,8 @@ def main() -> None:
         readout_ids=jnp.asarray([0, 0]),
         centroids=jnp.asarray([[0.0, 0.0, 1.0], [0.0, 0.0, 2.0]]),
         volumes=jnp.ones(2),
-        active=jnp.ones(2, dtype=bool),
-        dead=jnp.zeros(2, dtype=bool),
+        active=jnp.ones(2, dtype="bool"),
+        dead=jnp.zeros(2, dtype="bool"),
         senders=jnp.asarray([0, 1]),
         receivers=jnp.asarray([1, 0]),
         conditions_id=conditions.conditions_id,
@@ -119,7 +119,7 @@ def main() -> None:
         positions=jnp.zeros((4, 2, 3)),
         times=jnp.zeros((4, 2)),
         energies=hit_energy,
-        active=jnp.ones((4, 2), dtype=bool),
+        active=jnp.ones((4, 2), dtype="bool"),
         conditions_id=conditions.conditions_id,
     )
     incident = jnp.sum(hit_energy, axis=1)
@@ -129,7 +129,7 @@ def main() -> None:
         incident,
         incident,
         leakage_energy=jnp.zeros(4),
-        leakage_known=jnp.ones(4, dtype=bool),
+        leakage_known=jnp.ones(4, dtype="bool"),
         source_id=produced.prepared_id,
     )
     response = calorimetry.apply_calorimeter_response(

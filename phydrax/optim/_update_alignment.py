@@ -203,8 +203,8 @@ class ConflictFreeUpdateStatistics(StrictModule):
         if not isinstance(result, ConflictFreeUpdateResult):
             raise TypeError("result must be a ConflictFreeUpdateResult.")
         integer = jnp.asarray(1, dtype=self.steps.dtype)
-        gradient = jnp.asarray(gradient_conflict, dtype=bool)
-        constructed = jnp.asarray(constructed_conflict, dtype=bool)
+        gradient = jnp.asarray(gradient_conflict, dtype=jnp.bool_)
+        constructed = jnp.asarray(constructed_conflict, dtype=jnp.bool_)
         return ConflictFreeUpdateStatistics(
             self.steps + integer,
             self.gradient_conflict_steps + gradient.astype(self.steps.dtype),
@@ -333,7 +333,7 @@ def _small_active_set_dual(
     tolerance: Array,
     policy: ConflictFreeUpdatePolicy,
 ) -> tuple[Array, Array]:
-    count = int(linear.shape[0])
+    count = linear.shape[0]
     zero = jnp.zeros_like(linear)
     empty_feasible = jnp.all(linear >= -tolerance)
     best = zero
@@ -376,7 +376,7 @@ def _dual_solution(
     tolerance: Array,
     policy: ConflictFreeUpdatePolicy,
 ) -> tuple[Array, Array, str]:
-    count = int(linear.shape[0])
+    count = linear.shape[0]
     if count <= 3:
         value, successful = _small_active_set_dual(
             matrix,
@@ -424,9 +424,9 @@ def project_conflict_free_direction(
         raise TypeError("policy must be a ConflictFreeUpdatePolicy.")
     count = len(gradients)
     active_mask = (
-        jnp.ones((count,), dtype=bool)
+        jnp.ones((count,), dtype=jnp.bool_)
         if active is None
-        else jnp.asarray(active, dtype=bool)
+        else jnp.asarray(active, dtype=jnp.bool_)
     )
     if active_mask.shape != (count,):
         raise ValueError("active must contain one Boolean per objective gradient.")

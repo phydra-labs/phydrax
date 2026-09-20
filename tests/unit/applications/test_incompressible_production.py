@@ -483,7 +483,7 @@ def test_periodic_les_production_uses_guarded_first_stage_and_statistics(tmp_pat
     np.testing.assert_allclose(
         guarded_result.accepted_state,
         reused_result.accepted_state,
-        atol=np.finfo(float).eps,
+        atol=np.finfo(np.float64).eps,
     )
     assert bool(snapshot.sgs_available)
     assert bool(snapshot.sgs_stability_available)

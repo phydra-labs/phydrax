@@ -32,7 +32,7 @@ _MAC_LES_REGIME = "incompressible-unit-density"
 
 def _axis_values(values: Array, dimension: int, axis: int, /) -> Array:
     shape = [1] * dimension
-    shape[axis] = int(values.size)
+    shape[axis] = values.size
     return values.reshape(tuple(shape))
 
 
@@ -83,7 +83,7 @@ def _wall_center_derivative(
     /,
 ) -> Array:
     moved = jnp.moveaxis(value, axis, 0)
-    count = int(coordinates.size)
+    count = coordinates.size
     if count == 1:
         return jnp.zeros_like(value)
     if count == 2:
@@ -230,8 +230,7 @@ class PreparedMACAlgebraicLES(StrictModule, NonTrainableState):
             or resolved_filter.repeated_filter_semantics != "unmodeled"
         ):
             raise ValueError(
-                "Prepared LES filter semantics do not match the structured MAC "
-                "implicit grid-volume filter."
+                "Prepared LES filter semantics do not match the structured MAC implicit grid-volume filter."
             )
         discretization = momentum.operators.discretization
         if provenance.discretization_id != discretization.prepared_id:

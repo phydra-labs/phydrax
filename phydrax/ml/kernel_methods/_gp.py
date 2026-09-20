@@ -67,7 +67,7 @@ class GaussianProcessClassifierModel(AbstractArrayModel):
         self.posteriors = tuple(posteriors)
         self.feature_count = int(feature_count)
         self.class_count = int(class_count)
-        self.case_shape = tuple(int(size) for size in case_shape)
+        self.case_shape = tuple(case_shape)
         self.in_size = self.feature_count
         self.out_size = self.class_count
 
@@ -84,7 +84,7 @@ class GaussianProcessClassifierModel(AbstractArrayModel):
                     f"Query must begin with fitted case shape {self.case_shape}."
                 )
             query_shape = points.shape[len(self.case_shape) : -1]
-            q = _size(tuple(int(s) for s in query_shape)) if query_shape else 1
+            q = _size(tuple(query_shape)) if query_shape else 1
             cases = _size(self.case_shape)
             flat = points.reshape((cases, q, self.feature_count))
             outputs = []
@@ -131,7 +131,7 @@ class GaussianProcessClassifierRecipe(AbstractRecipe):
             raise TypeError("state must be a GaussianProcessLikelihoodState.")
         if int(class_count) < 2 or int(iterations) <= 0:
             raise ValueError("class_count must be at least two and iterations positive.")
-        floor = jnp.asarray(curvature_floor, dtype=float)
+        floor = jnp.asarray(curvature_floor, dtype=jnp.float64)
         if floor.ndim != 0:
             raise ValueError("curvature_floor must be a scalar.")
         floor = eqx.error_if(

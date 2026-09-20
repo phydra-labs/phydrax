@@ -131,7 +131,7 @@ def integrate_fixed_probability(
         status,
         int(IntegrationStatus.NONFINITE_INTEGRAND),
     )
-    count = int(batch.weights.data.size)
+    count = batch.weights.data.size
     diagnostics = FixedQuadratureDiagnostics(
         status=status,
         num_evaluations=jnp.asarray(count, dtype=jnp.int32),

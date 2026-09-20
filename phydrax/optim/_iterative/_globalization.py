@@ -91,9 +91,9 @@ class ArmijoResult(StrictModule):
         self.value = jnp.asarray(value)
         self.rate = jnp.asarray(rate)
         self.evaluations = jnp.asarray(evaluations, dtype=jnp.int32)
-        self.accepted = jnp.asarray(accepted, dtype=bool)
+        self.accepted = jnp.asarray(accepted, dtype=jnp.bool_)
         self.directional_derivative = jnp.asarray(directional_derivative)
-        self.finite_candidate_seen = jnp.asarray(finite_candidate_seen, dtype=bool)
+        self.finite_candidate_seen = jnp.asarray(finite_candidate_seen, dtype=jnp.bool_)
 
 
 def armijo_backtracking(
@@ -130,7 +130,7 @@ def armijo_backtracking(
     directional = jnp.asarray(directional_derivative)
     if directional.shape != ():
         raise ValueError("Armijo directional derivative must be scalar.")
-    scalar_dtype = jnp.result_type(initial_value, directional, float)
+    scalar_dtype = jnp.result_type(initial_value, directional, jnp.float64)
     initial_rate = jnp.asarray(policy.initial_rate, dtype=scalar_dtype)
     minimum_rate = jnp.asarray(policy.minimum_rate, dtype=scalar_dtype)
     contraction = jnp.asarray(policy.contraction, dtype=scalar_dtype)
@@ -159,7 +159,7 @@ def armijo_backtracking(
         candidate = step(base, tangent, rate)
         candidate_value = jnp.asarray(value_function(candidate)).reshape(())
         finite = jnp.isfinite(candidate_value) & jnp.asarray(
-            contains(candidate), dtype=bool
+            contains(candidate), dtype=jnp.bool_
         )
         armijo_bound = initial_value + sufficient_decrease * rate * directional
         accepted = finite & (directional < 0.0) & (candidate_value <= armijo_bound)
@@ -244,8 +244,7 @@ class StrongWolfeLineSearch(StrictModule):
             raise ValueError("expansion must be finite and greater than one.")
         if not 0.0 < decrease < curvature_ < 1.0:
             raise ValueError(
-                "Strong-Wolfe constants must satisfy 0 < sufficient_decrease "
-                "< curvature < 1."
+                "Strong-Wolfe constants must satisfy 0 < sufficient_decrease < curvature < 1."
             )
         if steps < 1:
             raise ValueError("maximum_steps must be positive.")
@@ -303,14 +302,14 @@ class StrongWolfeResult(StrictModule):
         self.gradient = gradient
         self.rate = jnp.asarray(rate)
         self.evaluations = jnp.asarray(evaluations, dtype=jnp.int32)
-        self.accepted = jnp.asarray(accepted, dtype=bool)
+        self.accepted = jnp.asarray(accepted, dtype=jnp.bool_)
         self.initial_directional_derivative = jnp.asarray(initial_directional_derivative)
         self.directional_derivative = jnp.asarray(directional_derivative)
         self.sufficient_decrease_satisfied = jnp.asarray(
-            sufficient_decrease_satisfied, dtype=bool
+            sufficient_decrease_satisfied, dtype=jnp.bool_
         )
-        self.curvature_satisfied = jnp.asarray(curvature_satisfied, dtype=bool)
-        self.finite_candidate_seen = jnp.asarray(finite_candidate_seen, dtype=bool)
+        self.curvature_satisfied = jnp.asarray(curvature_satisfied, dtype=jnp.bool_)
+        self.finite_candidate_seen = jnp.asarray(finite_candidate_seen, dtype=jnp.bool_)
 
 
 def strong_wolfe_line_search(
@@ -347,7 +346,7 @@ def strong_wolfe_line_search(
     initial_directional = jnp.asarray(_tree_inner(gradient, direction))
     if initial_directional.shape != ():
         raise ValueError("Strong-Wolfe directional derivative must be scalar.")
-    scalar_dtype = jnp.result_type(initial_value, initial_directional, float)
+    scalar_dtype = jnp.result_type(initial_value, initial_directional, jnp.float64)
     zero = jnp.asarray(0.0, dtype=scalar_dtype)
     initial_rate = jnp.asarray(policy.initial_rate, dtype=scalar_dtype)
     minimum_rate = jnp.asarray(policy.minimum_rate, dtype=scalar_dtype)
@@ -404,7 +403,7 @@ def strong_wolfe_line_search(
         finite = (
             jnp.isfinite(candidate_value)
             & jnp.isfinite(candidate_directional)
-            & jnp.asarray(contains(candidate), dtype=bool)
+            & jnp.asarray(contains(candidate), dtype=jnp.bool_)
             & _tree_allfinite(candidate_gradient)
         )
         armijo = (

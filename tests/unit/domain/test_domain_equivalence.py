@@ -42,10 +42,13 @@ def test_interval1d_equivalence():
 
 
 def test_dataset_domain_equivalence():
-    data1 = {"a": jnp.zeros((4, 2), dtype=float), "b": jnp.ones((4,), dtype=float)}
+    data1 = {
+        "a": jnp.zeros((4, 2), dtype="float64"),
+        "b": jnp.ones((4,), dtype="float64"),
+    }
     data2 = {
-        "a": jnp.ones((4, 2), dtype=float) * 3.0,
-        "b": jnp.arange(4.0, dtype=float),
+        "a": jnp.ones((4, 2), dtype="float64") * 3.0,
+        "b": jnp.arange(4.0, dtype="float64"),
     }
     dom1 = DatasetDomain(data1, label="data", measure="probability")
     dom2 = DatasetDomain(data2, label="data", measure="probability")
@@ -57,7 +60,7 @@ def test_dataset_domain_equivalence():
     dom4 = DatasetDomain(data2, label="other", measure="probability")
     assert not dom1.same_support(dom4)
 
-    data3 = {"a": jnp.zeros((4, 3), dtype=float)}
+    data3 = {"a": jnp.zeros((4, 3), dtype="float64")}
     dom5 = DatasetDomain(data3, label="data", measure="probability")
     assert not dom1.same_support(dom5)
 
@@ -69,7 +72,7 @@ def test_geometry2d_equivalence_strong():
             [1.0, 0.0, 0.0],
             [0.0, 1.0, 0.0],
         ],
-        dtype=float,
+        dtype="float64",
     )
     faces = np.array([[0, 1, 2]], dtype=np.int64)
     mesh1 = meshio.Mesh(points=points, cells=[("triangle", faces)])
@@ -103,7 +106,7 @@ def test_geometry3d_equivalence_strong():
             [0.0, 1.0, 0.0],
             [0.0, 0.0, 1.0],
         ],
-        dtype=float,
+        dtype="float64",
     )
     faces = np.array(
         [

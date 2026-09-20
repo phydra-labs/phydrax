@@ -353,10 +353,9 @@ def seed_decay_frontier_from_host(
         or str(frame_realization_id) != plan.frame_realization_id
     ):
         raise ValueError(
-            "Host event seeding requires exact momentum-unit, local-frame, "
-            "and frame-realization identities."
+            "Host event seeding requires exact momentum-unit, local-frame, and frame-realization identities."
         )
-    active_species = np.asarray(plan.species.active, dtype=bool)
+    active_species = np.asarray(plan.species.active, dtype=np.bool_)
     species_ids = np.asarray(plan.species.pdg_ids)
     slot_by_id = {
         int(identifier): int(slot)
@@ -371,7 +370,7 @@ def seed_decay_frontier_from_host(
         for value in event.particles
         if value.role is ParticleRole.OUTGOING and value.pdg_id in owned
     )
-    clocks = np.asarray(clock_uniforms, dtype=float)
+    clocks = np.asarray(clock_uniforms, dtype=np.float64)
     if (
         clocks.shape != (len(particles),)
         or np.any(~np.isfinite(clocks))
@@ -457,7 +456,7 @@ def _cascade_tables(plan: DarkDecayCascadePlan):
         jnp.asarray(daughter_slots, dtype=jnp.int8),
         jnp.asarray(branching),
         jnp.asarray(daughter_lifetime),
-        jnp.asarray(daughter_owned, dtype=bool),
+        jnp.asarray(daughter_owned, dtype=jnp.bool_),
         jnp.asarray([charge_by_id[value] for value in parent_ids]),
         jnp.asarray([[charge_by_id[value] for value in pair] for pair in daughter_ids]),
         tuple(decay_plans),
@@ -550,7 +549,7 @@ def evolve_decay_cascade_epoch(
     event_values = jnp.zeros_like(state.event_values)
     event_mask = jnp.zeros_like(state.event_mask)
     event_status = jnp.zeros_like(state.event_status)
-    decayed = jnp.zeros((plan.runtime_plan.work_capacity,), dtype=bool)
+    decayed = jnp.zeros((plan.runtime_plan.work_capacity,), dtype=jnp.bool_)
     prompt = jnp.zeros_like(decayed)
     delayed = jnp.zeros_like(decayed)
     deferred = jnp.zeros_like(decayed)
@@ -981,7 +980,7 @@ def materialize_decay_frontier_work(
     if result.state.plan.plan_id != plan.runtime_plan.plan_id:
         raise ValueError("evidence was produced by a different cascade plan.")
     state = result.state
-    mask = np.asarray(state.frontier_mask, dtype=bool)
+    mask = np.asarray(state.frontier_mask, dtype=np.bool_)
     values = np.asarray(state.frontier_values)
     slots = np.asarray(state.frontier_status, dtype=np.int8)
     species_ids = np.asarray(plan.species.pdg_ids)
@@ -1061,7 +1060,7 @@ def commit_decay_cascade_epoch(
     if result.state.plan.plan_id != coordinator.plan.plan_id:
         raise ValueError("coordinator and cascade result use different runtime plans.")
     active_rows = np.asarray(result.state.frontier_ids)[
-        np.asarray(result.state.frontier_mask, dtype=bool)
+        np.asarray(result.state.frontier_mask, dtype=np.bool_)
     ]
     deferred_ids = {decode_content_id(value) for value in active_rows}
     supplied_work = tuple(work_items)

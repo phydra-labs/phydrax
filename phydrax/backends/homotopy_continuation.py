@@ -266,8 +266,8 @@ class HomotopyContinuationRequest(StrictModule):
         system = str(system_id).strip()
         equation_count_ = int(equation_count)
         variable_count_ = int(variable_count)
-        rows = tuple(int(value) for value in equation_indices)
-        powers = tuple(tuple(int(value) for value in row) for row in exponents)
+        rows = tuple(equation_indices)
+        powers = tuple(tuple(row) for row in exponents)
         values = tuple(complex(value) for value in coefficients)
         if not request or not support or not system:
             raise ValueError("Request, support and system identities must be nonempty.")

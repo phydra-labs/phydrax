@@ -31,7 +31,7 @@ def _asset(name, values):
         phx.measurement.ValueLayout.scalar(),
         support,
         phx.measurement.SamplingSemantics(phx.measurement.SpatialSamplingKind.POINT),
-        np.asarray(values, dtype=float),
+        np.asarray(values, dtype="float64"),
     )
     return phx.measurement.MeasurementAsset.from_single_reference(
         name,

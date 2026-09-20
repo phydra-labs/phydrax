@@ -127,7 +127,7 @@ def _grid_from_dataset(
         raise ValueError("Declared grid variable or coordinate is absent.")
     values = dataset[variable]
     selected = (values, dataset.coords[x_name], dataset.coords[y_name])
-    decoded_nodes = sum(int(item.size) for item in selected)
+    decoded_nodes = sum(item.size for item in selected)
     attribute_count = len(dataset.attrs) + sum(len(item.attrs) for item in selected)
     if (
         decoded_nodes > limits.max_nodes

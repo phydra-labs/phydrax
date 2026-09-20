@@ -480,7 +480,7 @@ def test_inconsistent_modeled_transfer_is_rejected_with_energy_status():
             -jnp.abs(result.rate.ksgs_raw_production_density),
             jnp.zeros_like(
                 result.rate.ksgs.evidence.production_nonnegative,
-                dtype=bool,
+                dtype="bool",
             ),
         ),
     )

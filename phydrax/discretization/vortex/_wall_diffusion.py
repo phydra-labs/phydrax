@@ -98,7 +98,7 @@ class WallCorrectedPSEPlan(StrictModule, NonTrainableState):
         active_pair = (
             source.active_mask[:, None]
             & source.active_mask[None, :]
-            & ~jnp.eye(source.capacity, dtype=bool)
+            & ~jnp.eye(source.capacity, dtype=jnp.bool_)
             & (squared < (self.cutoff_factor * epsilon) ** 2)
         )
         mirror_pair = (

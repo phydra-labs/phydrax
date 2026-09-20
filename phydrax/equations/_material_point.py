@@ -13,7 +13,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import (
     DiscretizationBundle,
@@ -120,8 +120,8 @@ class MPMConstitutiveResponse(StrictModule):
         history = jnp.asarray(trial_state)
         energy = jnp.asarray(reference_energy_density)
         speed = jnp.asarray(maximum_wave_speed)
-        successful_ = jnp.asarray(successful, dtype=bool)
-        admissible_ = jnp.asarray(admissible, dtype=bool)
+        successful_ = jnp.asarray(successful, dtype=jnp.bool_)
+        admissible_ = jnp.asarray(admissible, dtype=jnp.bool_)
         if stress.ndim < 2 or stress.shape[-1] != stress.shape[-2]:
             raise ValueError("First-Piola stress must end in one square tensor.")
         batch_shape = stress.shape[:-2]
@@ -161,11 +161,11 @@ class MPMLinearizedConstitutiveResponse(StrictModule):
 class AbstractMPMConstitutivePlan(StrictModule, NonTrainableState):
     """Fixed-shape material update required by explicit material-point dynamics."""
 
-    dimension: AbstractAttribute[int]
-    kinematics: AbstractAttribute[MPMKinematics]
-    state_shape: AbstractAttribute[tuple[int, ...]]
-    capabilities: AbstractAttribute[MPMConstitutiveCapabilities]
-    plan_id: AbstractAttribute[str]
+    dimension: eqx.AbstractVar[int]
+    kinematics: eqx.AbstractVar[MPMKinematics]
+    state_shape: eqx.AbstractVar[tuple[int, ...]]
+    capabilities: eqx.AbstractVar[MPMConstitutiveCapabilities]
+    plan_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def initialize_state(self, batch_shape: tuple[int, ...], dtype: Any, /) -> Array:

@@ -146,7 +146,7 @@ class FrequencyDomainPolarizations(StrictModule):
         declared = (
             jnp.asarray(True)
             if valid is None
-            else jnp.asarray(valid, dtype=bool).reshape(())
+            else jnp.asarray(valid, dtype=jnp.bool_).reshape(())
         )
         valid_ = declared & finite
         status = jnp.where(

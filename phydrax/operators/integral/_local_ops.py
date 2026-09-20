@@ -13,7 +13,7 @@ import jax.scipy as jsp
 
 from phydrax.domain import DomainFunction
 
-from ..._sampling import unit_design
+from ..._sampling import materialize_design
 from ..differential._domain_ops import _factor_and_dim
 from ._ctx import _compile_ctx_integrand
 
@@ -30,11 +30,16 @@ def _uniform_ball_rule(
     count_ = int(count)
     if radius_ <= 0.0 or dimension_ <= 0 or count_ <= 0:
         raise ValueError("radius, dimension, and count must be positive.")
-    design = unit_design("halton", count=count_, dimension=dimension_ + 1, key=None)
+    design = materialize_design(
+        "halton",
+        count=count_,
+        dimension=dimension_ + 1,
+        key=None,
+    )
     probability = jnp.clip(
         design[:, :dimension_],
-        jnp.finfo(float).eps,
-        1.0 - jnp.finfo(float).eps,
+        jnp.finfo(jnp.float64).eps,
+        1.0 - jnp.finfo(jnp.float64).eps,
     )
     direction = jsp.special.ndtri(probability)
     direction = direction / jnp.linalg.norm(direction, axis=1, keepdims=True)
@@ -47,7 +52,7 @@ def _uniform_ball_rule(
     )
     return {
         "offsets": offsets,
-        "weights": jnp.full((count_,), volume / count_, dtype=float),
+        "weights": jnp.full((count_,), volume / count_, dtype=jnp.float64),
     }
 
 
@@ -87,8 +92,8 @@ def local_integral(
     factor, var_dim = _factor_and_dim(u, var)
     del factor
 
-    offsets = jnp.asarray(ball_quad["offsets"], dtype=float)  # (Ny, d)
-    w = jnp.asarray(ball_quad["weights"], dtype=float)  # (Ny,)
+    offsets = jnp.asarray(ball_quad["offsets"], dtype=jnp.float64)  # (Ny, d)
+    w = jnp.asarray(ball_quad["weights"], dtype=jnp.float64)  # (Ny,)
 
     if offsets.ndim != 2 or offsets.shape[1] != int(var_dim):
         raise ValueError(
@@ -130,11 +135,11 @@ def local_integral(
         x = args[x_pos]
         if isinstance(x, tuple):
             raise ValueError("local_integral does not support coord-separable inputs.")
-        x = jnp.asarray(x, dtype=float)
+        x = jnp.asarray(x, dtype=jnp.float64)
 
         t = None
         if t_pos is not None:
-            t = jnp.asarray(args[t_pos], dtype=float).reshape(())
+            t = jnp.asarray(args[t_pos], dtype=jnp.float64).reshape(())
 
         u_args = [args[i] for i in u_pos]
         ux = u.func(*u_args, key=key, **kwargs)

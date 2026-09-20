@@ -419,9 +419,9 @@ class MedicalImageAsset:
             )
         support = MedicalImageSupport(
             (
-                int(raw_values.shape[0]),
-                int(raw_values.shape[1]),
-                int(raw_values.shape[2]),
+                raw_values.shape[0],
+                raw_values.shape[1],
+                raw_values.shape[2],
             ),
             self.spatial_affine,
             self.time_axis,

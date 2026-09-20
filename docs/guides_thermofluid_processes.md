@@ -222,7 +222,7 @@ adds an unrequested loss correlation.
 
 Available DAE components are pressure and flow boundaries, two-port channels,
 linear compliance, inertance, and zero-volume junctions. Compliance exposes
-stored volume and enforces `V - V0 = C (p - p_ref)` together with
+stored volume and enforces `V - Canonical = C (p - p_ref)` together with
 `C dp/dt = q_into`; inertance enforces
 `p_left - p_right = I dq_left/dt`.
 

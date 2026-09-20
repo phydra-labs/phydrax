@@ -71,9 +71,9 @@ class PreparedReplaySchedule(StrictModule, NonTrainableState):
 
 
 def _optimal_replay_blocks(costs: np.ndarray, block_count: int, /) -> tuple[int, ...]:
-    count = int(costs.size)
+    count = costs.size
     blocks = min(int(block_count), count)
-    prefix = np.concatenate((np.zeros((1,), dtype=float), np.cumsum(costs)))
+    prefix = np.concatenate((np.zeros((1,), dtype=np.float64), np.cumsum(costs)))
     infinity = float("inf")
     objective = np.full((blocks + 1, count + 1), infinity)
     predecessor = np.full((blocks + 1, count + 1), -1, dtype=np.int32)
@@ -120,11 +120,11 @@ def prepare_replay_schedule(
     if policy.cost_model == "uniform":
         if step_costs is not None:
             raise ValueError("Uniform replay preparation does not accept step_costs.")
-        costs = np.ones((count,), dtype=float)
+        costs = np.ones((count,), dtype=np.float64)
     else:
         if step_costs is None:
             raise ValueError("Declared replay preparation requires step_costs.")
-        costs = np.asarray(step_costs, dtype=float)
+        costs = np.asarray(step_costs, dtype=np.float64)
         if costs.shape != (count,) or np.any(~np.isfinite(costs)) or np.any(costs < 0.0):
             raise ValueError("Declared replay costs must be finite nonnegative steps.")
     lengths = _optimal_replay_blocks(costs, slots)

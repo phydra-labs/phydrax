@@ -40,7 +40,7 @@ class CubatureMapEvaluation(StrictModule):
     ):
         points_ = jnp.asarray(points)
         scale = jnp.asarray(measure_scale, dtype=jnp.real(points_).dtype)
-        admissible_ = jnp.asarray(admissible, dtype=bool)
+        admissible_ = jnp.asarray(admissible, dtype=jnp.bool_)
         orientation_ = jnp.asarray(orientation, dtype=scale.dtype)
         if points_.shape[:-1] != scale.shape:
             raise ValueError("measure_scale must match mapped-point leading dimensions.")
@@ -116,13 +116,12 @@ class AbstractCubatureMap(StrictModule):
         )
         if measure_scale.shape != points.shape[:-1]:
             raise ValueError(
-                "Legacy CubatureMap.jacobian must return scalar measure scale "
-                "matching mapped-point leading dimensions."
+                "Legacy CubatureMap.jacobian must return scalar measure scale matching mapped-point leading dimensions."
             )
         orientation = jnp.ones_like(measure_scale)
         mask = self.reference_mask(chart_indices, reference)
         admissible = (
-            jnp.asarray(mask, dtype=bool)
+            jnp.asarray(mask, dtype=jnp.bool_)
             & jnp.all(jnp.isfinite(points), axis=-1)
             & jnp.isfinite(measure_scale)
             & (measure_scale > 0)
@@ -189,7 +188,7 @@ class CubatureAtlas(StrictModule):
 
     def _validate_inputs(self, chart_indices: Array, reference: Array):
         indices = jnp.asarray(chart_indices, dtype=jnp.int32)
-        reference_ = jnp.asarray(reference, dtype=float)
+        reference_ = jnp.asarray(reference, dtype=jnp.float64)
         if reference_.shape[:-1] != indices.shape:
             raise ValueError("chart_indices must match reference leading dimensions.")
         if reference_.shape[-1] != self.reference_dimension:
@@ -225,7 +224,7 @@ class CubatureAtlas(StrictModule):
         entity_ids: Sequence[int] | None = None,
         tags: Sequence[str] | None = None,
     ) -> CubatureAtlas:
-        mask = np.ones((self.num_charts,), dtype=bool)
+        mask = np.ones((self.num_charts,), dtype=np.bool_)
         if entity_ids is not None:
             mask &= np.isin(
                 np.asarray(self.source_entity_ids),
@@ -263,7 +262,7 @@ class _SelectedCubatureMap(AbstractCubatureMap):
 
     @property
     def num_charts(self) -> int:
-        return int(self.chart_indices.shape[0])
+        return self.chart_indices.shape[0]
 
     @property
     def reference_domain(self) -> CubatureReference:
@@ -297,7 +296,7 @@ class _TranslatedCubatureMap(AbstractCubatureMap):
 
     def __init__(self, base: AbstractCubatureMap, offset: Array):
         self.base = base
-        self.offset = jnp.asarray(offset, dtype=float)
+        self.offset = jnp.asarray(offset, dtype=jnp.float64)
 
     @property
     def num_charts(self) -> int:

@@ -13,7 +13,7 @@ class MaterialActivationState(StrictModule, NonTrainableState):
     activation_time_s: Array
 
     def __init__(self, active: ArrayLike, activation_time_s: ArrayLike, /):
-        a = jnp.asarray(active, dtype=bool)
+        a = jnp.asarray(active, dtype=jnp.bool_)
         t = jnp.asarray(activation_time_s)
         if a.shape != t.shape:
             raise ValueError("Activation arrays must align.")
@@ -21,14 +21,14 @@ class MaterialActivationState(StrictModule, NonTrainableState):
         self.activation_time_s = t
 
     def activate(self, selection: ArrayLike, time_s: ArrayLike, /):
-        s = jnp.asarray(selection, dtype=bool)
+        s = jnp.asarray(selection, dtype=jnp.bool_)
         newly = s & ~self.active
         return MaterialActivationState(
             self.active | s, jnp.where(newly, jnp.asarray(time_s), self.activation_time_s)
         )
 
     def remove(self, selection: ArrayLike, /):
-        s = jnp.asarray(selection, dtype=bool)
+        s = jnp.asarray(selection, dtype=jnp.bool_)
         return MaterialActivationState(self.active & ~s, self.activation_time_s)
 
 

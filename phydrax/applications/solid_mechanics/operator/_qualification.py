@@ -149,7 +149,7 @@ class MechanicsQualificationMetric(StrictModule, NonTrainableState):
         if jnp.iscomplexobj(value):
             raise TypeError("Qualification metrics must be real.")
         if not jnp.issubdtype(value.dtype, jnp.inexact):
-            value = value.astype(float)
+            value = value.astype("float64")
         value = eqx.error_if(
             value,
             invalid_measure,
@@ -431,7 +431,7 @@ def qualify_mechanics_operator(
         metric_risks[metric.name] = qualification.parameter_reduction.evaluate(
             values,
             probability_weights=parameter_weights,
-            valid=jnp.ones(values.shape, dtype=bool),
+            valid=jnp.ones(values.shape, dtype=jnp.bool_),
         )
         observed[metric.name] = jnp.max(values)
     evidence_fingerprint = canonical_fingerprint(

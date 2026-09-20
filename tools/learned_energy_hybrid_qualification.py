@@ -392,7 +392,7 @@ def _relative_l2(candidate: Any, reference: Any, /) -> float:
     reference_array = np.asarray(reference)
     numerator = float(np.linalg.norm((candidate_array - reference_array).reshape(-1)))
     denominator = max(
-        float(np.linalg.norm(reference_array.reshape(-1))), np.finfo(float).tiny
+        float(np.linalg.norm(reference_array.reshape(-1))), np.finfo(np.float64).tiny
     )
     return numerator / denominator
 
@@ -956,8 +956,7 @@ def _feature_record(
         "tracker_plan_id": tracker.plan_id,
         "quantity": quantity_name,
         "definition": (
-            "strongest discrete gradient in the pure-FV reference direction "
-            "within the declared interval"
+            "strongest discrete gradient in the pure-FV reference direction within the declared interval"
         ),
         "compression_sign": compression_sign,
         "search_interval": list(interval),
@@ -1214,7 +1213,11 @@ def _dynamic_decision_record(
     exit_cell = (12, 2)
     shock_cell = (16, 2)
     owned = (
-        jnp.zeros(shape, dtype=bool).at[hysteresis_cell].set(True).at[exit_cell].set(True)
+        jnp.zeros(shape, dtype="bool")
+        .at[hysteresis_cell]
+        .set(True)
+        .at[exit_cell]
+        .set(True)
     )
     state = plan.initialize(owned)
     score = (
@@ -1226,11 +1229,11 @@ def _dynamic_decision_record(
         .at[shock_cell]
         .set(0.0)
     )
-    shock = jnp.zeros(shape, dtype=bool).at[shock_cell].set(True)
+    shock = jnp.zeros(shape, dtype="bool").at[shock_cell].set(True)
     first = plan.propose(state, score, shock)
     repeated = plan.propose(state, score, shock)
 
-    dwell_owned = jnp.zeros(shape, dtype=bool).at[exit_cell].set(True)
+    dwell_owned = jnp.zeros(shape, dtype="bool").at[exit_cell].set(True)
     dwell_state = DynamicHybridOwnershipState(
         dwell_owned,
         jnp.zeros(shape, dtype=jnp.int32),
@@ -1241,7 +1244,7 @@ def _dynamic_decision_record(
     dwell_decision = plan.propose(
         dwell_state,
         jnp.zeros(shape, dtype=jnp.float64),
-        jnp.zeros(shape, dtype=bool),
+        jnp.zeros(shape, dtype="bool"),
     )
     return {
         "plan_id": plan.plan_id,
@@ -1316,7 +1319,7 @@ def _dynamic_migration_record(
             perturbed_kinetic.total_energy_populations
         ),
     )
-    owned = jnp.zeros(shape, dtype=bool).at[exit_cell].set(True)
+    owned = jnp.zeros(shape, dtype="bool").at[exit_cell].set(True)
     state = DynamicHybridCompositeState(
         finite_volume,
         kinetic,
@@ -1329,7 +1332,7 @@ def _dynamic_migration_record(
         .at[enter_cell]
         .set(1.0)
     )
-    decision = plan.propose(state.ownership, score, jnp.zeros(shape, dtype=bool))
+    decision = plan.propose(state.ownership, score, jnp.zeros(shape, dtype="bool"))
     deferred = plan.migrate(state, decision, jnp.asarray(False))
     migrated = plan.migrate(state, decision, jnp.asarray(True))
     pre_kinetic_moments = method.moments(state.kinetic).conserved
@@ -1419,7 +1422,7 @@ def _dynamic_failed_lift(
         EulerSystem(2, material=plan.method.material), plan.learned_energy
     )
     finite_volume = finite_volume.at[exit_cell].set(unsupported)
-    owned = jnp.zeros(plan.spatial_shape, dtype=bool).at[exit_cell].set(True)
+    owned = jnp.zeros(plan.spatial_shape, dtype="bool").at[exit_cell].set(True)
     state = DynamicHybridCompositeState(
         finite_volume,
         kinetic,
@@ -1429,7 +1432,7 @@ def _dynamic_failed_lift(
     decision = plan.propose(
         state.ownership,
         score,
-        jnp.zeros(plan.spatial_shape, dtype=bool),
+        jnp.zeros(plan.spatial_shape, dtype="bool"),
     )
     result = plan.migrate(state, decision, jnp.asarray(True))
     candidate_checkpoint = _ExpectedRefusal(

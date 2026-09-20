@@ -55,8 +55,7 @@ class LatticeFrontierCapacity(StrictModule, NonTrainableState):
         maximum_bytes: int,
     ):
         values = tuple(
-            int(value)
-            for value in (
+            (
                 maximum_atoms,
                 maximum_qpoints,
                 maximum_branches,

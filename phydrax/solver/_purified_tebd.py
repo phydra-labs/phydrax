@@ -139,7 +139,7 @@ def solve_purified_strang(
     maximum_purification_dimension: int,
 ) -> PurifiedStrangResult:
     state = problem.initial_state
-    step = jnp.asarray(step_size, dtype=float).reshape(())
+    step = jnp.asarray(step_size, dtype=jnp.float64).reshape(())
     count = int(steps)
     if (
         count < 0

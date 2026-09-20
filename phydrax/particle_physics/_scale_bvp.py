@@ -278,7 +278,7 @@ def solve_scale_bvp(
         trajectory=evaluation.trajectory,
         residual=evaluation.residual,
         residual_history=jnp.asarray(histories),
-        accepted_steps=jnp.asarray(accepted, dtype=bool),
+        accepted_steps=jnp.asarray(accepted, dtype=jnp.bool_),
         status=jnp.asarray(int(status), dtype=jnp.int32),
         converged=jnp.asarray(converged),
         finite=finite,

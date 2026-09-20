@@ -46,7 +46,7 @@ def test_polyhedral_cube_geometry_is_closed_and_positive():
             (1, 1, 1),
             (0, 1, 1),
         ],
-        dtype=float,
+        dtype="float64",
     )
     cells = (
         (
@@ -95,7 +95,7 @@ def test_polyhedral_flux_vectors_are_owner_oriented_across_shared_face():
             (2, 0, 1),
             (2, 1, 1),
         ],
-        dtype=float,
+        dtype="float64",
     )
     cells = (
         (
@@ -120,18 +120,18 @@ def test_polyhedral_flux_vectors_are_owner_oriented_across_shared_face():
     ).prepare()
 
     owner = np.asarray(finite_volume.owner_cells)
-    neighbour = np.asarray(finite_volume.neighbour_cells)
+    neighbor = np.asarray(finite_volume.neighbor_cells)
     face_centers = np.asarray(finite_volume.face_centers)
     cell_centers = np.asarray(finite_volume.cell_centers)
     area_vectors = np.asarray(finite_volume.area_vectors)
-    interior = neighbour >= 0
+    interior = neighbor >= 0
     assert np.count_nonzero(interior) == 1
     assert np.all(
         np.sum((face_centers - cell_centers[owner]) * area_vectors, axis=-1) > 0.0
     )
     assert np.all(
         np.sum(
-            (face_centers[interior] - cell_centers[neighbour[interior]])
+            (face_centers[interior] - cell_centers[neighbor[interior]])
             * area_vectors[interior],
             axis=-1,
         )
@@ -141,7 +141,7 @@ def test_polyhedral_flux_vectors_are_owner_oriented_across_shared_face():
     face_flux = area_vectors[:, 0]
     cell_flux = np.zeros((finite_volume.cell_count,))
     np.add.at(cell_flux, owner, face_flux)
-    np.add.at(cell_flux, neighbour[interior], -face_flux[interior])
+    np.add.at(cell_flux, neighbor[interior], -face_flux[interior])
     np.testing.assert_allclose(cell_flux, 0.0, atol=1e-14)
 
 

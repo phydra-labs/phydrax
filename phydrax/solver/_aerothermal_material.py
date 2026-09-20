@@ -47,11 +47,11 @@ class ConjugateAerothermalInterfacePlan(StrictModule, NonTrainableState):
         material_cell_volumes: ArrayLike,
         /,
     ):
-        fluid = np.asarray(fluid_to_mortar, dtype=float)
-        material = np.asarray(material_to_mortar, dtype=float)
-        measures = np.asarray(mortar_measures, dtype=float)
-        face_to_cell = np.asarray(material_face_to_cell, dtype=float)
-        volumes = np.asarray(material_cell_volumes, dtype=float)
+        fluid = np.asarray(fluid_to_mortar, dtype=np.float64)
+        material = np.asarray(material_to_mortar, dtype=np.float64)
+        measures = np.asarray(mortar_measures, dtype=np.float64)
+        face_to_cell = np.asarray(material_face_to_cell, dtype=np.float64)
+        volumes = np.asarray(material_cell_volumes, dtype=np.float64)
         mortar_count = measures.size
         if (
             fluid.ndim != 2
@@ -236,8 +236,8 @@ class ConservativeRecessionRemapPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, gas_overlap: ArrayLike, material_overlap: ArrayLike, /):
-        gas = np.asarray(gas_overlap, dtype=float)
-        material = np.asarray(material_overlap, dtype=float)
+        gas = np.asarray(gas_overlap, dtype=np.float64)
+        material = np.asarray(material_overlap, dtype=np.float64)
         if (
             gas.ndim != 2
             or material.ndim != 2

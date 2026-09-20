@@ -57,8 +57,7 @@ class HEOMHierarchy(StrictModule):
         auxiliary_count = comb(terms + depth_, depth_)
         if auxiliary_count > capacity:
             raise ValueError(
-                f"HEOM hierarchy requires {auxiliary_count} auxiliaries; "
-                f"capacity is {capacity}."
+                f"HEOM hierarchy requires {auxiliary_count} auxiliaries; capacity is {capacity}."
             )
         indices = tuple(
             values
@@ -88,7 +87,7 @@ class HEOMHierarchy(StrictModule):
         self.term_count = terms
         self.auxiliary_count = len(indices)
         self.edge_count = sum(
-            neighbour >= 0 for row in upward + downward for neighbour in row
+            neighbor >= 0 for row in upward + downward for neighbor in row
         )
 
 
@@ -412,14 +411,14 @@ def drude_lorentz_qubit_heom(
     depth: int = 2,
 ) -> HEOMProblem:
     expansion = BathCorrelationExpansion(
-        jnp.asarray([float(coupling_strength)], dtype=complex),
-        jnp.asarray([float(decay_rate)], dtype=complex),
+        jnp.asarray([float(coupling_strength)], dtype=jnp.complex128),
+        jnp.asarray([float(decay_rate)], dtype=jnp.complex128),
         expansion_id="drude-lorentz-one-term",
     )
     hierarchy = HEOMHierarchy(1, depth)
-    sigma_z = jnp.asarray([[1, 0], [0, -1]], dtype=complex)
+    sigma_z = jnp.asarray([[1, 0], [0, -1]], dtype=jnp.complex128)
     return HEOMProblem(
-        jnp.zeros((2, 2), dtype=complex),
+        jnp.zeros((2, 2), dtype=jnp.complex128),
         sigma_z,
         expansion,
         hierarchy,

@@ -1,11 +1,12 @@
 """Prepared boundary layer representations, discretizations, and evaluators."""
 
+from importlib import import_module
+
 from ._acceleration import (
     AbstractLayerBackend,
     DirectNearFarReferenceBackend2D,
     LayerBackendEvaluation2D,
 )
-from ._adaptive_boundary import *  # noqa: F403
 from ._adaptive_boundary import __all__ as _adaptive_boundary_all
 from ._core import (
     AbstractLayerKernel,
@@ -17,9 +18,7 @@ from ._core import (
     LayerDiscretizationReport,
     LayerPotentialTargetReport,
 )
-from ._displacement_discontinuity3d import *  # noqa: F403
 from ._displacement_discontinuity3d import __all__ as _displacement_discontinuity_all
-from ._elasticity3d import *  # noqa: F403
 from ._elasticity3d import __all__ as _elasticity_all
 from ._evaluation import (
     evaluate_layer_potential,
@@ -27,12 +26,9 @@ from ._evaluation import (
     LayerEvaluationReport,
     LayerEvaluationResult,
 )
-from ._fast_provider import *  # noqa: F403
 from ._fast_provider import __all__ as _fast_provider_all
 from ._fmm2d import LaplaceFMMBackend2D, LaplaceFMMEvaluation2D
-from ._free_surface_green3d import *  # noqa: F403
 from ._free_surface_green3d import __all__ as _free_surface_green_all
-from ._free_surface_hydrodynamics3d import *  # noqa: F403
 from ._free_surface_hydrodynamics3d import __all__ as _free_surface_hydrodynamics_all
 from ._galerkin3d import (
     LaplaceSingleLayerDP0AssemblyReport3D,
@@ -51,7 +47,6 @@ from ._helmholtz3d import (
     HelmholtzLayerKernel3D,
     HelmholtzLayerPotential3D,
 )
-from ._hierarchical3d import *  # noqa: F403
 from ._hierarchical3d import __all__ as _hierarchical3d_all
 from ._laplace2d import (
     double_layer_principal_value_matrix,
@@ -63,25 +58,16 @@ from ._laplace3d import (
     LaplaceLayerKernel3D,
     LaplaceLayerPotential3D,
 )
-from ._maxwell3d import *  # noqa: F403
 from ._maxwell3d import __all__ as _maxwell_all
-from ._modified_helmholtz3d import *  # noqa: F403
 from ._modified_helmholtz3d import __all__ as _modified_helmholtz_all
-from ._periodic_core3d import *  # noqa: F403
 from ._periodic_core3d import __all__ as _periodic_core_all
-from ._periodic_free_surface3d import *  # noqa: F403
 from ._periodic_free_surface3d import __all__ as _periodic_free_surface_all
-from ._periodic_helmholtz3d import *  # noqa: F403
 from ._periodic_helmholtz3d import __all__ as _periodic_helmholtz_all
-from ._periodic_laplace3d import *  # noqa: F403
 from ._periodic_laplace3d import __all__ as _periodic_laplace_all
-from ._periodic_maxwell_boundary3d import *  # noqa: F403
 from ._periodic_maxwell_boundary3d import __all__ as _periodic_maxwell_boundary_all
-from ._periodic_modified_helmholtz3d import *  # noqa: F403
 from ._periodic_modified_helmholtz3d import (
     __all__ as _periodic_modified_helmholtz_all,
 )
-from ._periodic_vector3d import *  # noqa: F403
 from ._periodic_vector3d import __all__ as _periodic_vector_all
 from ._qbx2d import evaluate_qbx_2d, QBXEvaluation2D
 from ._qbx3d import evaluate_qbx_3d, QBXEvaluation3D
@@ -95,25 +81,59 @@ from ._quadrature3d import (
     evaluate_double_layer_self_triangle_3d,
     evaluate_single_layer_self_triangle_3d,
 )
-from ._qualification import *  # noqa: F403
 from ._qualification import __all__ as _qualification_all
 from ._rcip import RCIPPreconditioner2D
-from ._scalar_calderon3d import *  # noqa: F403
 from ._scalar_calderon3d import __all__ as _scalar_calderon_all
-from ._scalar_conforming3d import *  # noqa: F403
 from ._scalar_conforming3d import __all__ as _scalar_conforming_all
-from ._scalar_formulations3d import *  # noqa: F403
 from ._scalar_formulations3d import __all__ as _scalar_formulations_all
-from ._scalar_interfaces3d import *  # noqa: F403
 from ._scalar_interfaces3d import __all__ as _scalar_interfaces_all
-from ._scalar_screens3d import *  # noqa: F403
 from ._scalar_screens3d import __all__ as _scalar_screens_all
-from ._scalar_trace import *  # noqa: F403
 from ._scalar_trace import __all__ as _scalar_trace_all
-from ._stokes3d import *  # noqa: F403
 from ._stokes3d import __all__ as _stokes_all
 from ._surface3d import SurfacePanelization3D, SurfaceTargetReport3D
 from ._treecode2d import LaplaceTreecodeBackend2D, LaplaceTreecodeEvaluation2D
+
+
+_FACADE_EXPORT_MODULES = (
+    "._adaptive_boundary",
+    "._displacement_discontinuity3d",
+    "._elasticity3d",
+    "._fast_provider",
+    "._free_surface_green3d",
+    "._free_surface_hydrodynamics3d",
+    "._hierarchical3d",
+    "._maxwell3d",
+    "._modified_helmholtz3d",
+    "._periodic_core3d",
+    "._periodic_free_surface3d",
+    "._periodic_helmholtz3d",
+    "._periodic_laplace3d",
+    "._periodic_maxwell_boundary3d",
+    "._periodic_modified_helmholtz3d",
+    "._periodic_vector3d",
+    "._qualification",
+    "._scalar_calderon3d",
+    "._scalar_conforming3d",
+    "._scalar_formulations3d",
+    "._scalar_interfaces3d",
+    "._scalar_screens3d",
+    "._scalar_trace",
+    "._stokes3d",
+)
+
+
+def __getattr__(name: str):
+    for module_name in reversed(_FACADE_EXPORT_MODULES):
+        module = import_module(module_name, __package__)
+        if name in module.__all__:
+            value = getattr(module, name)
+            globals()[name] = value
+            return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
 
 
 __all__ = [

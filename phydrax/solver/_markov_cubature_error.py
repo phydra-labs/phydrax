@@ -165,9 +165,9 @@ def refine_markov_cubature(
         raise TypeError("plan must be a MarkovCubaturePlan.")
     if not isinstance(policy, MarkovCubatureRefinementPolicy):
         raise TypeError("policy must be a MarkovCubatureRefinementPolicy.")
-    nodes = np.asarray(plan.temporal_mesh.nodes, dtype=float)
-    active = np.asarray(plan.temporal_mesh.active_intervals, dtype=bool)
-    errors = np.asarray(interval_errors, dtype=float)
+    nodes = np.asarray(plan.temporal_mesh.nodes, dtype=np.float64)
+    active = np.asarray(plan.temporal_mesh.active_intervals, dtype=np.bool_)
+    errors = np.asarray(interval_errors, dtype=np.float64)
     if (
         errors.shape != active.shape
         or np.any(~np.isfinite(errors))

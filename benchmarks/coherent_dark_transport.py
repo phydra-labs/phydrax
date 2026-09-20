@@ -95,8 +95,8 @@ def benchmark(cells: int, momenta: int, repeats: int) -> dict:
         None,
         species=species,
         statistics=jnp.asarray((-1,), dtype=jnp.int8),
-        spatial_active=jnp.ones((cells,), dtype=bool),
-        momentum_active=jnp.ones((momenta,), dtype=bool),
+        spatial_active=jnp.ones((cells,), dtype="bool"),
+        momentum_active=jnp.ones((momenta,), dtype="bool"),
         units=units,
         frame=frame,
     )
@@ -147,14 +147,14 @@ def benchmark(cells: int, momenta: int, repeats: int) -> dict:
             "momenta": momenta,
             "species": 1,
             "internal_dimension": 2,
-            "density_matrix_elements": int(state.density_matrix.size),
-            "density_matrix_bytes": int(state.density_matrix.nbytes),
+            "density_matrix_elements": state.density_matrix.size,
+            "density_matrix_bytes": state.density_matrix.nbytes,
             "hamiltonian_broadcast_elements": int(np.prod(plan.density_shape)),
             "hamiltonian_broadcast_bytes": int(
                 np.prod(plan.density_shape) * hamiltonian.dtype.itemsize
             ),
-            "kraus_elements": int(kraus.size),
-            "kraus_bytes": int(kraus.nbytes),
+            "kraus_elements": kraus.size,
+            "kraus_bytes": kraus.nbytes,
             "maximum_matrix_bytes": plan.maximum_matrix_bytes,
         },
         "identities": {

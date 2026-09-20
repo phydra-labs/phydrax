@@ -12,9 +12,7 @@ def test_error_norms_and_observed_order_use_physical_cell_measure():
     numerical = jnp.asarray([[1.1], [1.8], [3.2]])
     exact = jnp.asarray([[1.0], [2.0], [3.0]])
     volumes = jnp.asarray([0.2, 0.5, 0.3])
-    norms = phx.equations.finite_volume_error_norms(
-        numerical, exact, volumes
-    )
+    norms = phx.equations.finite_volume_error_norms(numerical, exact, volumes)
     expected_l1 = 0.2 * 0.1 + 0.5 * 0.2 + 0.3 * 0.2
     np.testing.assert_allclose(norms.l1, expected_l1)
     np.testing.assert_allclose(norms.linf, 0.2)
@@ -49,9 +47,7 @@ def test_sod_case_and_viscous_reference_profiles_are_physical():
     couette = phx.equations.couette_velocity_profile(y, 0.0, 2.0)
     poiseuille = phx.equations.poiseuille_velocity_profile(y, -2.0, 1.0)
     np.testing.assert_allclose(couette, 2.0 * y)
-    np.testing.assert_allclose(
-        poiseuille[jnp.asarray([0, -1])], 0.0, atol=0.0
-    )
+    np.testing.assert_allclose(poiseuille[jnp.asarray([0, -1])], 0.0, atol=0.0)
 
 
 def test_severe_euler_reference_initial_states_are_admissible():

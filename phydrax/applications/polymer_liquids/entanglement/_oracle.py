@@ -67,14 +67,14 @@ def export_z1plus_lammps_dump(
         raise TypeError("plan must be Z1PlusExportPlan.")
     if not isinstance(snapshot, PrimitivePathSnapshot):
         raise TypeError("snapshot must be PrimitivePathSnapshot.")
-    positions = np.asarray(snapshot.unwrapped_positions, dtype=float)
-    active = np.asarray(snapshot.chain_mask, dtype=bool)
+    positions = np.asarray(snapshot.unwrapped_positions, dtype=np.float64)
+    active = np.asarray(snapshot.chain_mask, dtype=np.bool_)
     indices = np.asarray(snapshot.chain_indices, dtype=np.int32)
     particle_ids = np.asarray(snapshot.stable_particle_ids, dtype=np.int64)
     selected = indices[active]
     if snapshot.cell_vectors.shape != (3, 3):
         raise ValueError("Z1+ LAMMPS export requires one full periodic 3-D cell.")
-    vectors = np.asarray(snapshot.cell_vectors, dtype=float)
+    vectors = np.asarray(snapshot.cell_vectors, dtype=np.float64)
     off_diagonal = vectors - np.diag(np.diag(vectors))
     if not np.allclose(off_diagonal, 0.0):
         raise ValueError("Initial Z1+ interchange supports orthorhombic cells only.")
@@ -88,7 +88,7 @@ def export_z1plus_lammps_dump(
         "ITEM: TIMESTEP",
         str(int(snapshot.step_index)),
         "ITEM: NUMBER OF ATOMS",
-        str(int(selected.size)),
+        str(selected.size),
         "ITEM: BOX BOUNDS pp pp pp",
         f"0 {lengths[0]:.17g}",
         f"0 {lengths[1]:.17g}",
@@ -142,9 +142,9 @@ def import_z1plus_result(
         raise ValueError("Missing Z1+ result fields: " + ", ".join(sorted(missing)))
     if str(record["source_snapshot_id"]) != source.snapshot_id:
         raise ValueError("Z1+ result belongs to another source snapshot.")
-    positions = np.asarray(record["primitive_positions"], dtype=float)
-    mask = np.asarray(record["primitive_mask"], dtype=bool)
-    contour = np.asarray(record["contour_lengths"], dtype=float)
+    positions = np.asarray(record["primitive_positions"], dtype=np.float64)
+    mask = np.asarray(record["primitive_mask"], dtype=np.bool_)
+    contour = np.asarray(record["contour_lengths"], dtype=np.float64)
     kinks = np.asarray(record["kink_counts"], dtype=np.int32)
     chain_count = source.chain_indices.shape[0]
     if (

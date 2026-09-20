@@ -4,9 +4,10 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from enum import IntEnum
 from math import isfinite
-from typing import Any, Callable, Literal, NamedTuple, TypeAlias
+from typing import Any, Literal, NamedTuple, TypeAlias
 
 import equinox as eqx
 import jax
@@ -28,6 +29,8 @@ from ..linalg import (
     LinearSolvePolicy,
     prepare as prepare_linear,
     prepare_linearization,
+    PreparedLinearization,
+    PreparedLinearSolve,
     PyTreeSpace,
     solve as solve_linear,
     transpose,
@@ -157,13 +160,13 @@ class SensitivityEvidence(StrictModule):
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.condition_estimate = jnp.asarray(condition_estimate)
         self.residual_norm = jnp.asarray(residual_norm)
-        self.finite = jnp.asarray(finite, dtype=bool)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
         self.mode = mode
         self.precision_evidence = precision_evidence
         self.linear_plan_id = str(linear_plan_id)
         self.primal_residual_norm = jnp.asarray(primal_residual_norm)
         self.primal_residual_tolerance = jnp.asarray(primal_residual_tolerance)
-        self.primal_valid = jnp.asarray(primal_valid, dtype=bool)
+        self.primal_valid = jnp.asarray(primal_valid, dtype=jnp.bool_)
         self.linear_status = jnp.asarray(linear_status, dtype=jnp.int32)
 
     @property
@@ -181,9 +184,9 @@ def _coordinate_norm(value: Array, precision: NonlinearPrecisionPolicy, /) -> Ar
 
 
 class _RootSystem(NamedTuple):
-    linearization: Any
+    linearization: PreparedLinearization
     operator: JacobianLinearOperator
-    prepared: Any
+    prepared: PreparedLinearSolve
     residual: PyTree[Array]
     primal_residual_norm: Array
     primal_finite: Array
@@ -260,19 +263,15 @@ def _implicit_status(system, linear_result, finite, condition, policy):
     ).astype(jnp.int32)
 
 
-def root_solution_jvp(
+def _root_solution_jvp_from_system(
     problem: NonlinearSystemProblem,
     state: PyTree[Any],
     args: Any,
     tangent_args: Any,
+    policy: SensitivityPolicy,
+    system: _RootSystem,
     /,
-    *,
-    policy: SensitivityPolicy | None = None,
 ) -> SolutionMapDerivative:
-    policy_ = SensitivityPolicy("implicit-forward") if policy is None else policy
-    if policy_.mode not in ("implicit-forward", "implicit-reverse"):
-        raise ValueError("root_solution_jvp requires an implicit sensitivity mode.")
-    system = _root_system(problem, state, args, policy_)
     _, argument_action = jax.jvp(
         lambda current_args: problem.residual(state, current_args),
         (args,),
@@ -282,13 +281,13 @@ def root_solution_jvp(
         system.prepared,
         tree_negative(argument_action),
     )
-    tangent = policy_.precision.direction(linear_result.value)
+    tangent = policy.precision.direction(linear_result.value)
     derivative_residual = tree_add(system.operator.mv(tangent), argument_action)
     finite = tree_allfinite(tangent) & tree_allfinite(derivative_residual)
-    condition = policy_.precision.decision(
+    condition = policy.precision.decision(
         jnp.max(linear_result.diagnostics.condition_estimate)
     )
-    status = _implicit_status(system, linear_result, finite, condition, policy_)
+    status = _implicit_status(system, linear_result, finite, condition, policy)
     successful = status == int(SensitivityStatus.SUCCESS)
     tangent = jax.tree.map(
         lambda value: jnp.where(
@@ -305,20 +304,43 @@ def root_solution_jvp(
             condition,
             _coordinate_norm(
                 system.linearization.target.flatten(derivative_residual),
-                policy_.precision,
+                policy.precision,
             ),
             finite,
             mode="implicit-forward",
-            precision_evidence=policy_.precision.evidence_for(
+            precision_evidence=policy.precision.evidence_for(
                 state,
                 system.residual,
             ),
             linear_plan_id=linear_result.provenance.plan_id,
             primal_residual_norm=system.primal_residual_norm,
-            primal_residual_tolerance=policy_.primal_residual_tolerance,
+            primal_residual_tolerance=policy.primal_residual_tolerance,
             primal_valid=system.primal_valid,
             linear_status=jnp.max(linear_result.status),
         ),
+    )
+
+
+def root_solution_jvp(
+    problem: NonlinearSystemProblem,
+    state: PyTree[Any],
+    args: Any,
+    tangent_args: Any,
+    /,
+    *,
+    policy: SensitivityPolicy | None = None,
+) -> SolutionMapDerivative:
+    policy_ = SensitivityPolicy("implicit-forward") if policy is None else policy
+    if policy_.mode not in ("implicit-forward", "implicit-reverse"):
+        raise ValueError("root_solution_jvp requires an implicit sensitivity mode.")
+    system = _root_system(problem, state, args, policy_)
+    return _root_solution_jvp_from_system(
+        problem,
+        state,
+        args,
+        tangent_args,
+        policy_,
+        system,
     )
 
 
@@ -481,12 +503,18 @@ def root_solution_second_jvp(
     policy: SensitivityPolicy | None = None,
 ) -> SolutionMapDerivative:
     policy_ = SensitivityPolicy("implicit-forward") if policy is None else policy
-    first = root_solution_jvp(
+    if policy_.mode not in ("implicit-forward", "implicit-reverse"):
+        raise ValueError(
+            "root_solution_second_jvp requires an implicit sensitivity mode."
+        )
+    system = _root_system(problem, state, args, policy_)
+    first = _root_solution_jvp_from_system(
         problem,
         state,
         args,
         tangent_args,
-        policy=policy_,
+        policy_,
+        system,
     )
     second_args = (
         jax.tree.map(jnp.zeros_like, tangent_args)
@@ -523,7 +551,6 @@ def root_solution_second_jvp(
         (zero,),
         (jnp.asarray(1.0),),
     )[1]
-    system = _root_system(problem, state, args, policy_)
     linear_result = solve_linear(
         system.prepared,
         tree_negative(forcing),
@@ -680,8 +707,8 @@ __all__ = [
     "SolutionMapDerivative",
     "differentiate_iterations_jvp",
     "direct_loss_minimization_gradient",
-    "root_solution_jvp",
-    "root_solution_vjp",
     "minimizer_solution_jvp",
+    "root_solution_jvp",
     "root_solution_second_jvp",
+    "root_solution_vjp",
 ]

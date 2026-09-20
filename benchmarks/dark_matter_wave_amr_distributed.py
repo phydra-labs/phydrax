@@ -57,7 +57,7 @@ def _problem(cells: int):
     )
     fd = phx.discretization.FDAMRHierarchyPlan(hierarchy).prepare()
     initial = fd.initial_topology()
-    tags = jnp.zeros((base_blocks, 4), dtype=bool)
+    tags = jnp.zeros((base_blocks, 4), dtype="bool")
     first = base_blocks // 4
     stop = max(first + 1, 3 * base_blocks // 4)
     tags = tags.at[first:stop, 1:3].set(True)
@@ -138,7 +138,7 @@ def main() -> None:
     if arguments.parts is None:
         part_counts = tuple(value for value in (1, 2, 4, 8, 16, 32) if value <= available)
     else:
-        part_counts = tuple(int(value) for value in arguments.parts.split(","))
+        part_counts = tuple(arguments.parts.split(","))
     if (
         not part_counts
         or any(value < 1 or value > available for value in part_counts)

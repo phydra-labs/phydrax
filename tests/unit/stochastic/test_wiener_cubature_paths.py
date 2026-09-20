@@ -60,8 +60,8 @@ def test_straight_gaussian_paths_are_degree_three_signature_certified():
 def test_expected_brownian_signature_uses_noncommutative_generator():
     from phydrax.stochastic._cubature_path import _expected_wiener_signature_level
 
-    fourth = _expected_wiener_signature_level(2, 4, np.dtype(float))
-    sixth = _expected_wiener_signature_level(2, 6, np.dtype(float))
+    fourth = _expected_wiener_signature_level(2, 4, np.dtype(np.float64))
+    sixth = _expected_wiener_signature_level(2, 6, np.dtype(np.float64))
 
     assert fourth[1, 1, 1, 1] == pytest.approx(1.0 / 8.0)
     assert fourth[1, 1, 2, 2] == pytest.approx(1.0 / 8.0)

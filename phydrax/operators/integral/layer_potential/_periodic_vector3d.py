@@ -162,8 +162,8 @@ def _canonical_displacements(
     bloch_wavevector: np.ndarray,
     /,
 ) -> tuple[np.ndarray, np.ndarray]:
-    lattice = np.asarray(cell.vectors, dtype=float)
-    inverse = np.asarray(cell.inverse_vectors, dtype=float)
+    lattice = np.asarray(cell.vectors, dtype=np.float64)
+    inverse = np.asarray(cell.inverse_vectors, dtype=np.float64)
     fractional = displacements @ inverse
     image_indices = np.floor(fractional + 0.5).astype(np.int64)
     translations = image_indices @ lattice
@@ -182,7 +182,7 @@ def _helmholtz_dyadic_ewald_block(
 ) -> _DyadicEwaldBlock:
     """Differentiate the same finite Ewald scalar family analytically."""
 
-    vectors = np.asarray(displacements, dtype=float)
+    vectors = np.asarray(displacements, dtype=np.float64)
     if vectors.ndim != 2 or vectors.shape[1] != 3 or np.any(~np.isfinite(vectors)):
         raise ValueError(
             "Dyadic Ewald displacements must be finite with shape (count, 3)."
@@ -200,10 +200,10 @@ def _helmholtz_dyadic_ewald_block(
     count = vectors.shape[0]
     identity = np.eye(3, dtype=np.complex128)
     hessian = np.zeros((count, 3, 3), dtype=np.complex128)
-    real_shell_accumulator = np.zeros((count,), dtype=float)
-    reciprocal_shell_accumulator = np.zeros((count,), dtype=float)
+    real_shell_accumulator = np.zeros((count,), dtype=np.float64)
+    reciprocal_shell_accumulator = np.zeros((count,), dtype=np.float64)
 
-    lattice = np.asarray(cell.vectors, dtype=float)
+    lattice = np.asarray(cell.vectors, dtype=np.float64)
     real_indices = _integer_cube(policy.real_cutoff)
     real_shifts = real_indices @ lattice
     real_phases = np.exp(1j * (real_shifts @ bloch_wavevector))
@@ -212,7 +212,7 @@ def _helmholtz_dyadic_ewald_block(
     b = screening / (2.0 * eta)
     normalization = 8.0 * math.pi
     singular_scale = max(float(np.linalg.norm(lattice, ord=2)), 1.0)
-    singular_tolerance = 64.0 * np.finfo(float).eps * singular_scale
+    singular_tolerance = 64.0 * np.finfo(np.float64).eps * singular_scale
 
     for mode, shift in enumerate(real_shifts):
         difference = vectors - shift[None, :]
@@ -256,7 +256,7 @@ def _helmholtz_dyadic_ewald_block(
                 dyadic_term.reshape((count, 9)), axis=1
             )
 
-    reciprocal = np.asarray(periodic_reciprocal_vectors_3d(cell), dtype=float)
+    reciprocal = np.asarray(periodic_reciprocal_vectors_3d(cell), dtype=np.float64)
     reciprocal_indices = _integer_cube(policy.reciprocal_cutoff)
     wavevectors = reciprocal_indices @ reciprocal + bloch_wavevector[None, :]
     wavevector_norm_squared = np.sum(wavevectors * wavevectors, axis=1)
@@ -295,9 +295,9 @@ def _helmholtz_dyadic_ewald_block(
 def _surface_fractional_clearance(
     current_space: RWGSurfaceCurrentSpace3D, cell: PeriodicCell, /
 ) -> float:
-    vertices = np.asarray(current_space.surface.vertices, dtype=float)
-    origin = np.asarray(cell.origin, dtype=float)
-    inverse = np.asarray(cell.inverse_vectors, dtype=float)
+    vertices = np.asarray(current_space.surface.vertices, dtype=np.float64)
+    origin = np.asarray(cell.origin, dtype=np.float64)
+    inverse = np.asarray(cell.inverse_vectors, dtype=np.float64)
     fractional = (vertices - origin) @ inverse
     return float(np.min(np.minimum(fractional, 1.0 - fractional)))
 
@@ -308,15 +308,15 @@ def _periodic_target_clearance(
     cell: PeriodicCell,
     /,
 ) -> float:
-    lattice = np.asarray(cell.vectors, dtype=float)
-    origin = np.asarray(cell.origin, dtype=float)
-    inverse = np.asarray(cell.inverse_vectors, dtype=float)
+    lattice = np.asarray(cell.vectors, dtype=np.float64)
+    origin = np.asarray(cell.origin, dtype=np.float64)
+    inverse = np.asarray(cell.inverse_vectors, dtype=np.float64)
     target_fractional = (targets - origin) @ inverse
     wrapped_targets = origin + (target_fractional - np.floor(target_fractional)) @ lattice
-    triangles = np.asarray(current_space.surface.vertices, dtype=float)[
+    triangles = np.asarray(current_space.surface.vertices, dtype=np.float64)[
         np.asarray(current_space.surface.triangles)
     ]
-    translations = np.asarray(cell.image_shifts, dtype=int) @ lattice
+    translations = np.asarray(cell.image_shifts, dtype=np.int64) @ lattice
     return min(
         _point_triangle_distance(target, triangle + translation)
         for target in wrapped_targets
@@ -330,8 +330,8 @@ def _charge_neutrality_defect(
     policy: PeriodicEwaldPolicy3D,
     /,
 ) -> float:
-    areas = np.asarray(current_space.surface.face_areas, dtype=float)
-    divergence = np.asarray(current_space.divergence_matrix, dtype=float)
+    areas = np.asarray(current_space.surface.face_areas, dtype=np.float64)
+    divergence = np.asarray(current_space.divergence_matrix, dtype=np.float64)
     charges = areas @ divergence
     scales = areas @ np.abs(divergence)
     tolerances = (
@@ -419,12 +419,12 @@ def prepare_periodic_maxwell_electric_field_action_3d(
             "The RWG surface does not satisfy its certified fractional cell clearance."
         )
 
-    target_count = int(points.shape[0])
+    target_count = points.shape[0]
     face_count = surface.face_count
     edge_count = current_space.size
     pair_count = target_count * face_count
     dense_entries = target_count * 3 * edge_count
-    clearance_pair_count = pair_count * int(cell.image_shifts.shape[0])
+    clearance_pair_count = pair_count * cell.image_shifts.shape[0]
     if dense_entries > selected.max_matrix_entries:
         raise PeriodicVectorResourceError(
             "Periodic Maxwell dense action exceeds max_matrix_entries."
@@ -470,8 +470,8 @@ def prepare_periodic_maxwell_electric_field_action_3d(
             face_basis[face, :, face_edges[face, local_edge]] = local_basis[
                 face, local_edge
             ]
-    areas = np.asarray(surface.face_areas, dtype=float)
-    centroids = np.asarray(surface.face_centroids, dtype=float)
+    areas = np.asarray(surface.face_areas, dtype=np.float64)
+    centroids = np.asarray(surface.face_centroids, dtype=np.float64)
     displacements = (points[:, None, :] - centroids[None, :, :]).reshape((-1, 3))
     reduced_displacements, bloch_phases = _canonical_displacements(
         displacements, cell, wavevector
@@ -522,7 +522,7 @@ def prepare_periodic_maxwell_electric_field_action_3d(
     action_workspace = int((target_count * 3 + edge_count) * flat_matrix.dtype.itemsize)
     action_id = canonical_fingerprint(
         {
-            "kind": "periodic-maxwell-electric-field-action-3d-v1",
+            "kind": "periodic-maxwell-electric-field-action-3d",
             "source_space": current_space.space_id,
             "cell": cell.cell_id,
             "policy": selected.policy_id,
@@ -546,7 +546,7 @@ def prepare_periodic_maxwell_electric_field_action_3d(
     )
     support_id = canonical_fingerprint(
         {
-            "kind": "periodic-maxwell-electric-field-support-3d-v1",
+            "kind": "periodic-maxwell-electric-field-support-3d",
             "action": action_id,
             "matrix": array_tree_fingerprint(flat_matrix),
         }
@@ -567,8 +567,7 @@ def prepare_periodic_maxwell_electric_field_action_3d(
             "Helmholtz real/reciprocal Ewald family"
         ),
         provider=(
-            "SciPy/NumPy bounded host Ewald differentiation and PHYDRA RWG/"
-            "DenseLinearOperator fixed-shape JAX actions"
+            "SciPy/NumPy bounded host Ewald differentiation and PHYDRA RWG/DenseLinearOperator fixed-shape JAX actions"
         ),
         precision=precision_description,
         resource_evidence=(

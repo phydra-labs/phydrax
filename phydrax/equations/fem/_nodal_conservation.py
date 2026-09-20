@@ -261,13 +261,13 @@ def _same_block_interior_domain(
         return None
     domain = discretization.interior_facet_domain
     owners = np.asarray(domain.owner_cells, dtype=np.int32)
-    neighbours = np.asarray(domain.neighbour_cells, dtype=np.int32)
+    neighbors = np.asarray(domain.neighbor_cells, dtype=np.int32)
     offsets = np.cumsum(
         (0,) + tuple(block.cell_count for block in discretization.mesh.blocks)
     )
     owner_blocks = np.searchsorted(offsets[1:], owners, side="right")
-    neighbour_blocks = np.searchsorted(offsets[1:], neighbours, side="right")
-    rows = np.flatnonzero(owner_blocks == neighbour_blocks)
+    neighbor_blocks = np.searchsorted(offsets[1:], neighbors, side="right")
+    rows = np.flatnonzero(owner_blocks == neighbor_blocks)
     if rows.size == 0:
         return None
     entity_indices = np.asarray(domain.entity_indices)[rows]
@@ -277,17 +277,15 @@ def _same_block_interior_domain(
         domain.support_id,
         domain.entity_set_id,
         owner_cells=owners[rows],
-        neighbour_cells=neighbours[rows],
+        neighbor_cells=neighbors[rows],
         owner_local_entities=np.asarray(domain.owner_local_entities)[rows],
-        neighbour_local_entities=np.asarray(domain.neighbour_local_entities)[rows],
-        neighbour_trace_permutations=np.asarray(domain.neighbour_trace_permutations)[
-            rows
-        ],
+        neighbor_local_entities=np.asarray(domain.neighbor_local_entities)[rows],
+        neighbor_trace_permutations=np.asarray(domain.neighbor_trace_permutations)[rows],
         selection_id=canonical_fingerprint(
             {
                 "kind": "nodal-dg-same-block-interior",
                 "domain": domain.domain_id,
-                "entities": tuple(int(value) for value in entity_indices),
+                "entities": tuple(entity_indices),
             }
         ),
     )
@@ -296,11 +294,11 @@ def _same_block_interior_domain(
 def _trace_nodes(element, local_facet: int, /) -> tuple[np.ndarray, np.ndarray]:
     topology = reference_cell_topology(element.cell_kind)
     vertex_ids = topology.entities[1][int(local_facet)]
-    start = np.asarray(topology.vertices[vertex_ids[0]], dtype=float)
-    stop = np.asarray(topology.vertices[vertex_ids[1]], dtype=float)
+    start = np.asarray(topology.vertices[vertex_ids[0]], dtype=np.float64)
+    stop = np.asarray(topology.vertices[vertex_ids[1]], dtype=np.float64)
     tangent = stop - start
     length_squared = float(tangent @ tangent)
-    nodes = np.asarray(element.reference_nodes, dtype=float)
+    nodes = np.asarray(element.reference_nodes, dtype=np.float64)
     parameter = ((nodes - start) @ tangent) / length_squared
     projection = start + parameter[:, None] * tangent
     distance = np.max(np.abs(nodes - projection), axis=1)
@@ -321,9 +319,9 @@ def _edge_coordinate_trace(
 ) -> tuple[np.ndarray, np.ndarray]:
     topology = reference_cell_topology(discretization.mesh.blocks[block_index].cell_kind)
     start_vertex, stop_vertex = topology.entities[1][int(local_facet)]
-    start = np.asarray(topology.vertices[start_vertex], dtype=float)
-    stop = np.asarray(topology.vertices[stop_vertex], dtype=float)
-    values = np.asarray(parameters, dtype=float).reshape((-1,))
+    start = np.asarray(topology.vertices[start_vertex], dtype=np.float64)
+    stop = np.asarray(topology.vertices[stop_vertex], dtype=np.float64)
+    values = np.asarray(parameters, dtype=np.float64).reshape((-1,))
     reference_points = (1.0 - values)[:, None] * start[None, :] + values[:, None] * stop[
         None, :
     ]
@@ -368,29 +366,29 @@ def _mixed_mortar_routes(
     routes = []
     mortar_cache = {}
     dof_map = discretization.dof_maps[field_index]
-    for row, (facet, owner, neighbour, owner_local, neighbour_local) in enumerate(
+    for row, (facet, owner, neighbor, owner_local, neighbor_local) in enumerate(
         zip(
             np.asarray(domain.entity_indices, dtype=np.int32),
             np.asarray(domain.owner_cells, dtype=np.int32),
-            np.asarray(domain.neighbour_cells, dtype=np.int32),
+            np.asarray(domain.neighbor_cells, dtype=np.int32),
             np.asarray(domain.owner_local_entities, dtype=np.int32),
-            np.asarray(domain.neighbour_local_entities, dtype=np.int32),
+            np.asarray(domain.neighbor_local_entities, dtype=np.int32),
             strict=True,
         )
     ):
         owner_block = int(np.searchsorted(offsets[1:], owner, side="right"))
-        neighbour_block = int(np.searchsorted(offsets[1:], neighbour, side="right"))
+        neighbor_block = int(np.searchsorted(offsets[1:], neighbor, side="right"))
         owner_cell = int(owner - offsets[owner_block])
-        neighbour_cell = int(neighbour - offsets[neighbour_block])
+        neighbor_cell = int(neighbor - offsets[neighbor_block])
         owner_element = discretization.elements[field_index][owner_block]
-        neighbour_element = discretization.elements[field_index][neighbour_block]
+        neighbor_element = discretization.elements[field_index][neighbor_block]
         owner_trace, owner_nodes = _trace_nodes(owner_element, int(owner_local))
-        neighbour_trace, neighbour_nodes = _trace_nodes(
-            neighbour_element, int(neighbour_local)
+        neighbor_trace, neighbor_nodes = _trace_nodes(
+            neighbor_element, int(neighbor_local)
         )
         degree = max(
             facet_degrees[discretization.mesh.blocks[owner_block].name],
-            facet_degrees[discretization.mesh.blocks[neighbour_block].name],
+            facet_degrees[discretization.mesh.blocks[neighbor_block].name],
         )
         quadrature = ReferenceIntervalRule(
             GaussLegendreRule(_rule_count(degree))
@@ -400,17 +398,17 @@ def _mixed_mortar_routes(
         mortar_nodes = np.asarray(
             ReferenceIntervalRule(
                 GaussLobattoLegendreRule(
-                    max(owner_element.degree, neighbour_element.degree) + 1
+                    max(owner_element.degree, neighbor_element.degree) + 1
                 )
             )
             .materialize()
             .points
         )
         owner_sign = float(np.asarray(connectivity.cell_edge_signs)[owner, owner_local])
-        neighbour_sign = float(
-            np.asarray(connectivity.cell_edge_signs)[neighbour, neighbour_local]
+        neighbor_sign = float(
+            np.asarray(connectivity.cell_edge_signs)[neighbor, neighbor_local]
         )
-        reversed_orientation = owner_sign * neighbour_sign < 0.0
+        reversed_orientation = owner_sign * neighbor_sign < 0.0
         right_points = (
             1.0 - quadrature_points if reversed_orientation else quadrature_points
         )
@@ -421,30 +419,29 @@ def _mixed_mortar_routes(
             int(owner_local),
             quadrature_points,
         )
-        neighbour_physical, neighbour_tangent = _edge_coordinate_trace(
+        neighbor_physical, neighbor_tangent = _edge_coordinate_trace(
             discretization,
-            neighbour_block,
-            neighbour_cell,
-            int(neighbour_local),
+            neighbor_block,
+            neighbor_cell,
+            int(neighbor_local),
             right_points,
         )
         if reversed_orientation:
-            neighbour_tangent = -neighbour_tangent
+            neighbor_tangent = -neighbor_tangent
         coordinate_scale = max(
             1.0,
             float(np.max(np.abs(owner_physical))),
-            float(np.max(np.abs(neighbour_physical))),
+            float(np.max(np.abs(neighbor_physical))),
         )
         coordinate_tolerance = 1.0e-9 * coordinate_scale
-        coordinate_defect = float(np.max(np.abs(owner_physical - neighbour_physical)))
-        tangent_defect = float(np.max(np.abs(owner_tangent - neighbour_tangent)))
+        coordinate_defect = float(np.max(np.abs(owner_physical - neighbor_physical)))
+        tangent_defect = float(np.max(np.abs(owner_tangent - neighbor_tangent)))
         if max(coordinate_defect, tangent_defect) > coordinate_tolerance:
             raise ValueError(
-                "Mixed mortar coordinate traces are not watertight and tangent "
-                "compatible."
+                "Mixed mortar coordinate traces are not watertight and tangent compatible."
             )
-        physical_points = 0.5 * (owner_physical + neighbour_physical)
-        tangent = 0.5 * (owner_tangent + neighbour_tangent)
+        physical_points = 0.5 * (owner_physical + neighbor_physical)
+        tangent = 0.5 * (owner_tangent + neighbor_tangent)
         measure = np.sqrt(np.sum(tangent * tangent, axis=-1))
         if np.any(~np.isfinite(measure)) or np.any(measure <= 0.0):
             raise ValueError("Mixed mortar coordinate measure must be positive.")
@@ -467,7 +464,7 @@ def _mixed_mortar_routes(
             normal = -normal
         mortar_key = (
             owner_element.element_id,
-            neighbour_element.element_id,
+            neighbor_element.element_id,
             reversed_orientation,
             tuple(float(value) for value in np.round(quadrature_weights * measure, 14)),
         )
@@ -476,24 +473,24 @@ def _mixed_mortar_routes(
         else:
             mortar = serial_finite_element_mortar_plan(
                 owner_nodes[:, None],
-                neighbour_nodes[:, None],
+                neighbor_nodes[:, None],
                 mortar_nodes,
                 quadrature_points,
                 quadrature_weights,
                 left_evaluation_points=quadrature_points,
                 right_evaluation_points=right_points,
                 left_physical_coordinates=owner_physical,
-                right_physical_coordinates=neighbour_physical,
+                right_physical_coordinates=neighbor_physical,
                 coordinate_measure=measure,
                 coordinate_tolerance=coordinate_tolerance,
                 declared_reproduction_degree=min(
-                    owner_element.degree, neighbour_element.degree
+                    owner_element.degree, neighbor_element.degree
                 ),
                 left_polynomial_coordinates=owner_nodes[:, None],
                 right_polynomial_coordinates=(
-                    1.0 - neighbour_nodes[:, None]
+                    1.0 - neighbor_nodes[:, None]
                     if reversed_orientation
-                    else neighbour_nodes[:, None]
+                    else neighbor_nodes[:, None]
                 ),
                 mortar_polynomial_coordinates=mortar_nodes,
                 polynomial_evaluation_points=quadrature_points,
@@ -501,7 +498,7 @@ def _mixed_mortar_routes(
                     {
                         "kind": "mixed-nodal-dg-mortar-signature",
                         "owner_element": owner_element.element_id,
-                        "neighbour_element": neighbour_element.element_id,
+                        "neighbor_element": neighbor_element.element_id,
                         "reversed": reversed_orientation,
                         "weights": mortar_key[-1],
                     }
@@ -509,8 +506,8 @@ def _mixed_mortar_routes(
             )
             mortar_cache[mortar_key] = mortar
         owner_dofs = np.asarray(dof_map.cell_dofs[owner_block][owner_cell])[owner_trace]
-        neighbour_dofs = np.asarray(dof_map.cell_dofs[neighbour_block][neighbour_cell])[
-            neighbour_trace
+        neighbor_dofs = np.asarray(dof_map.cell_dofs[neighbor_block][neighbor_cell])[
+            neighbor_trace
         ]
         route_id = canonical_fingerprint(
             {
@@ -524,7 +521,7 @@ def _mixed_mortar_routes(
             PreparedDGTraceRoute(
                 "mortar",
                 jnp.asarray(owner_dofs, dtype=jnp.int32),
-                neighbour_dofs=jnp.asarray(neighbour_dofs, dtype=jnp.int32),
+                neighbor_dofs=jnp.asarray(neighbor_dofs, dtype=jnp.int32),
                 normal=jnp.asarray(normal),
                 mortar=mortar,
                 route_id=route_id,
@@ -567,28 +564,26 @@ def _periodic_trace_routes(
         if pair.transform.orientation.shape != "edge":
             raise ValueError("Two-dimensional periodic facets require edge orientation.")
         owner_position = facet_positions[pair.owner_facet]
-        neighbour_position = facet_positions[pair.neighbour_facet]
+        neighbor_position = facet_positions[pair.neighbor_facet]
         owner = int(np.asarray(exterior.owner_cells)[owner_position])
-        neighbour = int(np.asarray(exterior.owner_cells)[neighbour_position])
+        neighbor = int(np.asarray(exterior.owner_cells)[neighbor_position])
         owner_local = int(np.asarray(exterior.owner_local_entities)[owner_position])
-        neighbour_local = int(
-            np.asarray(exterior.owner_local_entities)[neighbour_position]
-        )
+        neighbor_local = int(np.asarray(exterior.owner_local_entities)[neighbor_position])
         owner_block = int(np.searchsorted(offsets[1:], owner, side="right"))
-        neighbour_block = int(np.searchsorted(offsets[1:], neighbour, side="right"))
+        neighbor_block = int(np.searchsorted(offsets[1:], neighbor, side="right"))
         owner_cell = int(owner - offsets[owner_block])
-        neighbour_cell = int(neighbour - offsets[neighbour_block])
+        neighbor_cell = int(neighbor - offsets[neighbor_block])
         owner_element = discretization.elements[field_index][owner_block]
-        neighbour_element = discretization.elements[field_index][neighbour_block]
+        neighbor_element = discretization.elements[field_index][neighbor_block]
         degree = max(
             facet_degrees[discretization.mesh.blocks[owner_block].name],
-            facet_degrees[discretization.mesh.blocks[neighbour_block].name],
+            facet_degrees[discretization.mesh.blocks[neighbor_block].name],
         )
         quadrature = ReferenceIntervalRule(
             GaussLegendreRule(_rule_count(degree))
         ).materialize()
         owner_parameter = np.asarray(quadrature.points)
-        neighbour_parameter = (
+        neighbor_parameter = (
             1.0 - owner_parameter
             if pair.transform.orientation.permutation == (1, 0)
             else owner_parameter
@@ -600,15 +595,15 @@ def _periodic_trace_routes(
             owner_local,
             owner_parameter,
         )
-        neighbour_physical, neighbour_tangent = _edge_coordinate_trace(
+        neighbor_physical, neighbor_tangent = _edge_coordinate_trace(
             discretization,
-            neighbour_block,
-            neighbour_cell,
-            neighbour_local,
-            neighbour_parameter,
+            neighbor_block,
+            neighbor_cell,
+            neighbor_local,
+            neighbor_parameter,
         )
         if pair.transform.orientation.permutation == (1, 0):
-            neighbour_tangent = -neighbour_tangent
+            neighbor_tangent = -neighbor_tangent
         mapped_owner = np.asarray(
             pair.transform.map_coordinates(jnp.asarray(owner_physical))
         )
@@ -618,32 +613,32 @@ def _periodic_trace_routes(
             owner_tangent,
         )
         defect = max(
-            float(np.max(np.abs(mapped_owner - neighbour_physical))),
-            float(np.max(np.abs(mapped_tangent - neighbour_tangent))),
+            float(np.max(np.abs(mapped_owner - neighbor_physical))),
+            float(np.max(np.abs(mapped_tangent - neighbor_tangent))),
         )
-        scale = max(1.0, float(np.max(np.abs(neighbour_physical))))
+        scale = max(1.0, float(np.max(np.abs(neighbor_physical))))
         if defect > pair.transform.tolerance * scale:
             raise ValueError("Periodic coordinate traces are incompatible.")
         owner_topology = reference_cell_topology(
             discretization.mesh.blocks[owner_block].cell_kind
         )
-        neighbour_topology = reference_cell_topology(
-            discretization.mesh.blocks[neighbour_block].cell_kind
+        neighbor_topology = reference_cell_topology(
+            discretization.mesh.blocks[neighbor_block].cell_kind
         )
         owner_vertices = owner_topology.entities[1][owner_local]
-        neighbour_vertices = neighbour_topology.entities[1][neighbour_local]
+        neighbor_vertices = neighbor_topology.entities[1][neighbor_local]
         owner_start = jnp.asarray(owner_topology.vertices[owner_vertices[0]])
         owner_stop = jnp.asarray(owner_topology.vertices[owner_vertices[1]])
-        neighbour_start = jnp.asarray(neighbour_topology.vertices[neighbour_vertices[0]])
-        neighbour_stop = jnp.asarray(neighbour_topology.vertices[neighbour_vertices[1]])
+        neighbor_start = jnp.asarray(neighbor_topology.vertices[neighbor_vertices[0]])
+        neighbor_stop = jnp.asarray(neighbor_topology.vertices[neighbor_vertices[1]])
         owner_points = (1.0 - jnp.asarray(owner_parameter)) * owner_start + jnp.asarray(
             owner_parameter
         ) * owner_stop
-        neighbour_points = (
-            1.0 - jnp.asarray(neighbour_parameter)
-        ) * neighbour_start + jnp.asarray(neighbour_parameter) * neighbour_stop
+        neighbor_points = (
+            1.0 - jnp.asarray(neighbor_parameter)
+        ) * neighbor_start + jnp.asarray(neighbor_parameter) * neighbor_stop
         owner_basis = owner_element.tabulate(owner_points)[0]
-        neighbour_basis = neighbour_element.tabulate(neighbour_points)[0]
+        neighbor_basis = neighbor_element.tabulate(neighbor_points)[0]
         measure = np.sqrt(np.sum(owner_tangent * owner_tangent, axis=-1))
         normal = np.stack((owner_tangent[:, 1], -owner_tangent[:, 0]), axis=-1)
         normal = normal / measure[:, None]
@@ -668,16 +663,16 @@ def _periodic_trace_routes(
                 "kind": "nodal-dg-periodic-route",
                 "pair": pair.pair_id,
                 "owner_element": owner_element.element_id,
-                "neighbour_element": neighbour_element.element_id,
+                "neighbor_element": neighbor_element.element_id,
             }
         )
         routes.append(
             PreparedDGTraceRoute(
                 "periodic",
                 dof_map.cell_dofs[owner_block][owner_cell],
-                neighbour_dofs=dof_map.cell_dofs[neighbour_block][neighbour_cell],
+                neighbor_dofs=dof_map.cell_dofs[neighbor_block][neighbor_cell],
                 owner_basis=owner_basis,
-                neighbour_basis=neighbour_basis,
+                neighbor_basis=neighbor_basis,
                 physical_points=jnp.asarray(owner_physical),
                 physical_weights=jnp.asarray(quadrature.weights * measure),
                 normal=jnp.asarray(normal),
@@ -853,26 +848,26 @@ def _three_dimensional_interface_routes(
     axis_rule = GaussLegendreRule(_rule_count(facet_degree))
     routes = []
     dof_map = discretization.dof_maps[field_index]
-    for facet, owner, neighbour, owner_local, neighbour_local in zip(
+    for facet, owner, neighbor, owner_local, neighbor_local in zip(
         np.asarray(domain.entity_indices, dtype=np.int32),
         np.asarray(domain.owner_cells, dtype=np.int32),
-        np.asarray(domain.neighbour_cells, dtype=np.int32),
+        np.asarray(domain.neighbor_cells, dtype=np.int32),
         np.asarray(domain.owner_local_entities, dtype=np.int32),
-        np.asarray(domain.neighbour_local_entities, dtype=np.int32),
+        np.asarray(domain.neighbor_local_entities, dtype=np.int32),
         strict=True,
     ):
         owner_block = int(np.searchsorted(offsets[1:], owner, side="right"))
-        neighbour_block = int(np.searchsorted(offsets[1:], neighbour, side="right"))
+        neighbor_block = int(np.searchsorted(offsets[1:], neighbor, side="right"))
         owner_cell = int(owner - offsets[owner_block])
-        neighbour_cell = int(neighbour - offsets[neighbour_block])
+        neighbor_cell = int(neighbor - offsets[neighbor_block])
         owner_block_data = discretization.mesh.blocks[owner_block]
-        neighbour_block_data = discretization.mesh.blocks[neighbour_block]
+        neighbor_block_data = discretization.mesh.blocks[neighbor_block]
         owner_topology = reference_cell_topology(owner_block_data.cell_kind)
-        neighbour_topology = reference_cell_topology(neighbour_block_data.cell_kind)
+        neighbor_topology = reference_cell_topology(neighbor_block_data.cell_kind)
         owner_face_vertices = owner_topology.entities[2][int(owner_local)]
-        neighbour_face_vertices = neighbour_topology.entities[2][int(neighbour_local)]
+        neighbor_face_vertices = neighbor_topology.entities[2][int(neighbor_local)]
         arity = len(owner_face_vertices)
-        if len(neighbour_face_vertices) != arity:
+        if len(neighbor_face_vertices) != arity:
             raise ValueError("Three-dimensional interface face arities disagree.")
         rule = (
             ReferenceTriangleRule(axis_rule)
@@ -902,23 +897,21 @@ def _three_dimensional_interface_routes(
         owner_global_vertices = np.asarray(owner_block_data.vertices)[owner_cell][
             np.asarray(owner_face_vertices)
         ]
-        neighbour_global_vertices = np.asarray(neighbour_block_data.vertices)[
-            neighbour_cell
-        ][np.asarray(neighbour_face_vertices)]
+        neighbor_global_vertices = np.asarray(neighbor_block_data.vertices)[
+            neighbor_cell
+        ][np.asarray(neighbor_face_vertices)]
         weights_by_vertex = {
             int(vertex): barycentric[:, index]
             for index, vertex in enumerate(owner_global_vertices)
         }
-        neighbour_barycentric = np.stack(
-            tuple(weights_by_vertex[int(vertex)] for vertex in neighbour_global_vertices),
+        neighbor_barycentric = np.stack(
+            tuple(weights_by_vertex[int(vertex)] for vertex in neighbor_global_vertices),
             axis=-1,
         )
-        neighbour_reference_vertices = np.asarray(
-            tuple(neighbour_topology.vertices[index] for index in neighbour_face_vertices)
+        neighbor_reference_vertices = np.asarray(
+            tuple(neighbor_topology.vertices[index] for index in neighbor_face_vertices)
         )
-        neighbour_points = jnp.asarray(
-            neighbour_barycentric @ neighbour_reference_vertices
-        )
+        neighbor_points = jnp.asarray(neighbor_barycentric @ neighbor_reference_vertices)
         owner_coordinate_element = discretization.coordinate_elements[owner_block]
         owner_coordinate_routes = discretization.coordinate_dofs[owner_block][owner_cell]
         coordinate_basis, coordinate_gradients = owner_coordinate_element.tabulate(
@@ -934,24 +927,24 @@ def _three_dimensional_interface_routes(
         )
         facet_metric = FiniteElementFacetMetricData(metric, owner_normals, weights)
         owner_element = discretization.elements[field_index][owner_block]
-        neighbour_element = discretization.elements[field_index][neighbour_block]
+        neighbor_element = discretization.elements[field_index][neighbor_block]
         owner_basis = owner_element.tabulate(owner_points)[0]
-        neighbour_basis = neighbour_element.tabulate(neighbour_points)[0]
+        neighbor_basis = neighbor_element.tabulate(neighbor_points)[0]
         route_id = canonical_fingerprint(
             {
                 "kind": "nodal-dg-three-dimensional-interface",
                 "facet": int(facet),
                 "owner_element": owner_element.element_id,
-                "neighbour_element": neighbour_element.element_id,
+                "neighbor_element": neighbor_element.element_id,
             }
         )
         routes.append(
             PreparedDGTraceRoute(
                 "conforming",
                 dof_map.cell_dofs[owner_block][owner_cell],
-                neighbour_dofs=dof_map.cell_dofs[neighbour_block][neighbour_cell],
+                neighbor_dofs=dof_map.cell_dofs[neighbor_block][neighbor_cell],
                 owner_basis=owner_basis,
-                neighbour_basis=neighbour_basis,
+                neighbor_basis=neighbor_basis,
                 physical_points=facet_metric.physical_points[0],
                 physical_weights=facet_metric.physical_weights[0],
                 normal=facet_metric.normal[0],
@@ -1490,8 +1483,8 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             )
             minus = ein.contract(
                 "qi,iv->qv",
-                route.neighbour_basis,
-                state[route.neighbour_dofs],
+                route.neighbor_basis,
+                state[route.neighbor_dofs],
                 backend="jax",
             )
             numerical = self.method.interface_flux.normal_face_flux(
@@ -1503,12 +1496,12 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             ).normal_flux
             if self.method.entropy_stability is None:
                 owner_flux = numerical
-                neighbour_flux = -numerical
+                neighbor_flux = -numerical
             else:
                 owner_flux = numerical - self.system.physical_normal_flux(
                     plus, route.normal, context.user_args
                 )
-                neighbour_flux = -numerical + self.system.physical_normal_flux(
+                neighbor_flux = -numerical + self.system.physical_normal_flux(
                     minus, route.normal, context.user_args
                 )
             owner = ein.contract(
@@ -1518,15 +1511,15 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                 owner_flux,
                 backend="jax",
             )
-            neighbour = ein.contract(
+            neighbor = ein.contract(
                 "q,qi,qv->iv",
                 route.physical_weights,
-                route.neighbour_basis,
-                neighbour_flux,
+                route.neighbor_basis,
+                neighbor_flux,
                 backend="jax",
             )
             residual = residual.at[route.owner_dofs].add(owner)
-            residual = residual.at[route.neighbour_dofs].add(neighbour)
+            residual = residual.at[route.neighbor_dofs].add(neighbor)
         return residual
 
     def _entropy_volume_residual(
@@ -1602,10 +1595,10 @@ class PreparedNodalDGConservationDynamics(StrictModule):
         beta = self.method.viscous.beta
         for route in self.mortar_routes:
             plus = route.mortar.interpolate_left(state[route.owner_dofs])
-            minus = route.mortar.interpolate_right(state[route.neighbour_dofs])
+            minus = route.mortar.interpolate_right(state[route.neighbor_dofs])
             common = 0.5 * (plus + minus) + beta * (plus - minus)
             owner_vector = (common - plus)[..., :, None] * route.normal[..., None, :]
-            neighbour_vector = (common - minus)[..., :, None] * (
+            neighbor_vector = (common - minus)[..., :, None] * (
                 -route.normal[..., None, :]
             )
             owner = ein.contract(
@@ -1615,15 +1608,15 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                 owner_vector,
                 backend="jax",
             )
-            neighbour = ein.contract(
+            neighbor = ein.contract(
                 "iq,q,qvd->ivd",
                 route.mortar.right_raw_dual_pullback,
                 route.mortar.physical_weights,
-                neighbour_vector,
+                neighbor_vector,
                 backend="jax",
             )
             correction_dual = correction_dual.at[route.owner_dofs].add(owner)
-            correction_dual = correction_dual.at[route.neighbour_dofs].add(neighbour)
+            correction_dual = correction_dual.at[route.neighbor_dofs].add(neighbor)
         for route in self.periodic_routes:
             plus = ein.contract(
                 "qi,iv->qv",
@@ -1631,27 +1624,27 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                 state[route.owner_dofs],
                 backend="jax",
             )
-            neighbour = ein.contract(
+            neighbor = ein.contract(
                 "qi,iv->qv",
-                route.neighbour_basis,
-                state[route.neighbour_dofs],
+                route.neighbor_basis,
+                state[route.neighbor_dofs],
                 backend="jax",
             )
             minus = ein.contract(
                 "ji,qj->qi",
                 route.component_transform,
-                neighbour,
+                neighbor,
                 backend="jax",
             )
             common = 0.5 * (plus + minus) + beta * (plus - minus)
             owner_vector = (common - plus)[..., :, None] * route.normal[..., None, :]
-            neighbour_owner = (common - minus)[..., :, None] * (
+            neighbor_owner = (common - minus)[..., :, None] * (
                 -route.normal[..., None, :]
             )
-            neighbour_vector = ein.contract(
+            neighbor_vector = ein.contract(
                 "ab,qbd,ed->qae",
                 route.component_transform,
-                neighbour_owner,
+                neighbor_owner,
                 route.coordinate_transform,
                 backend="jax",
             )
@@ -1662,16 +1655,16 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                 owner_vector,
                 backend="jax",
             )
-            neighbour_correction = ein.contract(
+            neighbor_correction = ein.contract(
                 "q,qi,qvd->ivd",
                 route.physical_weights,
-                route.neighbour_basis,
-                neighbour_vector,
+                route.neighbor_basis,
+                neighbor_vector,
                 backend="jax",
             )
             correction_dual = correction_dual.at[route.owner_dofs].add(owner)
-            correction_dual = correction_dual.at[route.neighbour_dofs].add(
-                neighbour_correction
+            correction_dual = correction_dual.at[route.neighbor_dofs].add(
+                neighbor_correction
             )
         for route in self.three_dimensional_interface_routes:
             plus = ein.contract(
@@ -1682,13 +1675,13 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             )
             minus = ein.contract(
                 "qi,iv->qv",
-                route.neighbour_basis,
-                state[route.neighbour_dofs],
+                route.neighbor_basis,
+                state[route.neighbor_dofs],
                 backend="jax",
             )
             common = 0.5 * (plus + minus) + beta * (plus - minus)
             owner_vector = (common - plus)[..., :, None] * route.normal[..., None, :]
-            neighbour_vector = (common - minus)[..., :, None] * (
+            neighbor_vector = (common - minus)[..., :, None] * (
                 -route.normal[..., None, :]
             )
             owner = ein.contract(
@@ -1698,15 +1691,15 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                 owner_vector,
                 backend="jax",
             )
-            neighbour = ein.contract(
+            neighbor = ein.contract(
                 "q,qi,qvd->ivd",
                 route.physical_weights,
-                route.neighbour_basis,
-                neighbour_vector,
+                route.neighbor_basis,
+                neighbor_vector,
                 backend="jax",
             )
             correction_dual = correction_dual.at[route.owner_dofs].add(owner)
-            correction_dual = correction_dual.at[route.neighbour_dofs].add(neighbour)
+            correction_dual = correction_dual.at[route.neighbor_dofs].add(neighbor)
         for route in self.hybrid_boundary_routes:
             if isinstance(route.boundary, PrescribedNormalFluxBoundary):
                 raise ValueError(
@@ -1828,11 +1821,9 @@ class PreparedNodalDGConservationDynamics(StrictModule):
 
         for route in self.mortar_routes:
             plus = route.mortar.interpolate_left(state[route.owner_dofs])
-            minus = route.mortar.interpolate_right(state[route.neighbour_dofs])
+            minus = route.mortar.interpolate_right(state[route.neighbor_dofs])
             plus_gradient = route.mortar.interpolate_left(gradient[route.owner_dofs])
-            minus_gradient = route.mortar.interpolate_right(
-                gradient[route.neighbour_dofs]
-            )
+            minus_gradient = route.mortar.interpolate_right(gradient[route.neighbor_dofs])
             common = viscous_common(
                 plus, minus, plus_gradient, minus_gradient, route.normal
             )
@@ -1843,7 +1834,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                 -common,
                 backend="jax",
             )
-            neighbour = ein.contract(
+            neighbor = ein.contract(
                 "iq,q,qv->iv",
                 route.mortar.right_raw_dual_pullback,
                 route.mortar.physical_weights,
@@ -1851,7 +1842,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                 backend="jax",
             )
             residual = residual.at[route.owner_dofs].add(owner)
-            residual = residual.at[route.neighbour_dofs].add(neighbour)
+            residual = residual.at[route.neighbor_dofs].add(neighbor)
         for route in self.three_dimensional_interface_routes:
             plus = ein.contract(
                 "qi,iv->qv",
@@ -1861,8 +1852,8 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             )
             minus = ein.contract(
                 "qi,iv->qv",
-                route.neighbour_basis,
-                state[route.neighbour_dofs],
+                route.neighbor_basis,
+                state[route.neighbor_dofs],
                 backend="jax",
             )
             plus_gradient = ein.contract(
@@ -1873,8 +1864,8 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             )
             minus_gradient = ein.contract(
                 "qi,ivd->qvd",
-                route.neighbour_basis,
-                gradient[route.neighbour_dofs],
+                route.neighbor_basis,
+                gradient[route.neighbor_dofs],
                 backend="jax",
             )
             common = viscous_common(
@@ -1887,15 +1878,15 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                 common,
                 backend="jax",
             )
-            neighbour = ein.contract(
+            neighbor = ein.contract(
                 "q,qi,qv->iv",
                 route.physical_weights,
-                route.neighbour_basis,
+                route.neighbor_basis,
                 common,
                 backend="jax",
             )
             residual = residual.at[route.owner_dofs].add(owner)
-            residual = residual.at[route.neighbour_dofs].add(neighbour)
+            residual = residual.at[route.neighbor_dofs].add(neighbor)
         for route in self.hybrid_boundary_routes:
             plus = ein.contract(
                 "qi,iv->qv",
@@ -1971,7 +1962,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             minus = ein.contract(
                 "rqi,riv->rqv",
                 batch.right_interpolation,
-                state[batch.neighbour_dofs],
+                state[batch.neighbor_dofs],
                 backend="jax",
             )
             flux = self.method.interface_flux.normal_face_flux(
@@ -1983,12 +1974,12 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             ).normal_flux
             if self.method.entropy_stability is None:
                 owner_flux = flux
-                neighbour_flux = -flux
+                neighbor_flux = -flux
             else:
                 owner_flux = flux - self.system.physical_normal_flux(
                     plus, batch.normal, context.user_args
                 )
-                neighbour_flux = -flux + self.system.physical_normal_flux(
+                neighbor_flux = -flux + self.system.physical_normal_flux(
                     minus, batch.normal, context.user_args
                 )
             owner = ein.contract(
@@ -1998,15 +1989,15 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                 owner_flux,
                 backend="jax",
             )
-            neighbour = ein.contract(
+            neighbor = ein.contract(
                 "riq,rq,rqv->riv",
                 batch.right_dual_pullback,
                 batch.physical_weights,
-                neighbour_flux,
+                neighbor_flux,
                 backend="jax",
             )
             residual = residual.at[batch.owner_dofs].add(owner)
-            residual = residual.at[batch.neighbour_dofs].add(neighbour)
+            residual = residual.at[batch.neighbor_dofs].add(neighbor)
         return residual
 
     def _periodic_residual(
@@ -2020,27 +2011,27 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                 state[route.owner_dofs],
                 backend="jax",
             )
-            neighbour_state = ein.contract(
+            neighbor_state = ein.contract(
                 "qi,iv->qv",
-                route.neighbour_basis,
-                state[route.neighbour_dofs],
+                route.neighbor_basis,
+                state[route.neighbor_dofs],
                 backend="jax",
             )
-            neighbour_in_owner_frame = ein.contract(
+            neighbor_in_owner_frame = ein.contract(
                 "ji,qj->qi",
                 route.component_transform,
-                neighbour_state,
+                neighbor_state,
                 backend="jax",
             )
             if self.method.entropy_stability is None:
                 owner_flux = self.method.interface_flux.normal_face_flux(
                     self.system,
                     owner_state,
-                    neighbour_in_owner_frame,
+                    neighbor_in_owner_frame,
                     route.normal,
                     context.user_args,
                 ).normal_flux
-                neighbour_flux = -ein.contract(
+                neighbor_flux = -ein.contract(
                     "ij,qj->qi",
                     route.component_transform,
                     owner_flux,
@@ -2050,22 +2041,22 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                 numerical = self.method.interface_flux.normal_face_flux(
                     self.system,
                     owner_state,
-                    neighbour_in_owner_frame,
+                    neighbor_in_owner_frame,
                     route.normal,
                     context.user_args,
                 ).normal_flux
                 owner_flux = numerical - self.system.physical_normal_flux(
                     owner_state, route.normal, context.user_args
                 )
-                neighbour_correction = -numerical + self.system.physical_normal_flux(
-                    neighbour_in_owner_frame,
+                neighbor_correction = -numerical + self.system.physical_normal_flux(
+                    neighbor_in_owner_frame,
                     route.normal,
                     context.user_args,
                 )
-                neighbour_flux = ein.contract(
+                neighbor_flux = ein.contract(
                     "ij,qj->qi",
                     route.component_transform,
-                    neighbour_correction,
+                    neighbor_correction,
                     backend="jax",
                 )
             owner = ein.contract(
@@ -2075,15 +2066,15 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                 owner_flux,
                 backend="jax",
             )
-            neighbour = ein.contract(
+            neighbor = ein.contract(
                 "q,qi,qv->iv",
                 route.physical_weights,
-                route.neighbour_basis,
-                neighbour_flux,
+                route.neighbor_basis,
+                neighbor_flux,
                 backend="jax",
             )
             residual = residual.at[route.owner_dofs].add(owner)
-            residual = residual.at[route.neighbour_dofs].add(neighbour)
+            residual = residual.at[route.neighbor_dofs].add(neighbor)
         return residual
 
     def _hybrid_boundary_residual(
@@ -2209,7 +2200,7 @@ class PreparedNodalDGConservationDynamics(StrictModule):
 
         for route in self.mortar_routes:
             plus = route.mortar.interpolate_left(value[route.owner_dofs])
-            minus = route.mortar.interpolate_right(value[route.neighbour_dofs])
+            minus = route.mortar.interpolate_right(value[route.neighbor_dofs])
             result = self.method.interface_flux.normal_face_flux(
                 self.system, plus, minus, route.normal, context.user_args
             )
@@ -2237,16 +2228,16 @@ class PreparedNodalDGConservationDynamics(StrictModule):
                 value[route.owner_dofs],
                 backend="jax",
             )
-            neighbour = ein.contract(
+            neighbor = ein.contract(
                 "qi,iv->qv",
-                route.neighbour_basis,
-                value[route.neighbour_dofs],
+                route.neighbor_basis,
+                value[route.neighbor_dofs],
                 backend="jax",
             )
             minus = ein.contract(
                 "ji,qj->qi",
                 route.component_transform,
-                neighbour,
+                neighbor,
                 backend="jax",
             )
             result = self.method.interface_flux.normal_face_flux(
@@ -2277,8 +2268,8 @@ class PreparedNodalDGConservationDynamics(StrictModule):
             )
             minus = ein.contract(
                 "qi,iv->qv",
-                route.neighbour_basis,
-                value[route.neighbour_dofs],
+                route.neighbor_basis,
+                value[route.neighbor_dofs],
                 backend="jax",
             )
             result = self.method.interface_flux.normal_face_flux(

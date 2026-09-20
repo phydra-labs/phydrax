@@ -274,7 +274,7 @@ def test_s3_metadata_guard_serializes_lease_and_garbage_collection() -> None:
         eligible_at=20,
     )
 
-    guard = repository._acquire_artifact_guard("checkpoint-guarded")
+    repository._acquire_artifact_guard("checkpoint-guarded")
     with pytest.raises(RepositoryConflictError, match="metadata is being modified"):
         repository.collect_garbage(now=30)
     assert (

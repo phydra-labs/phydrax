@@ -58,8 +58,7 @@ def coherent_mode_intensity(
         raise TypeError("active must be a boolean array.")
     if weights_.shape != (count,) or active_.shape != (count,):
         raise ValueError(
-            f"weights and active must both have shape ({count},); got "
-            f"{weights_.shape} and {active_.shape}."
+            f"weights and active must both have shape ({count},); got {weights_.shape} and {active_.shape}."
         )
     invalid_active_weight = active_ & ((~jnp.isfinite(weights_)) | (weights_ < 0.0))
     safe_weights = jnp.where(active_, weights_, 0.0)

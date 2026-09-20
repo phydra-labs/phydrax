@@ -270,7 +270,7 @@ def _causal_block(
     /,
 ):
     integrator = integrators.velocity_verlet(logdensity_fn, metric.kinetic_energy)
-    dimension = int(jnp.asarray(inverse_mass_matrix).shape[0])
+    dimension = jnp.asarray(inverse_mass_matrix).shape[0]
     if config.linearization == "pair-hutchinson":
         probes = jr.rademacher(
             probe_key,
@@ -395,7 +395,7 @@ def build_causal_hmc_kernel(
             raise ValueError(
                 "Causal HMC inverse mass must be diagonal or a square dense matrix."
             )
-        dimension = int(inverse_mass.shape[0])
+        dimension = inverse_mass.shape[0]
         if inverse_mass.ndim == 2:
             if inverse_mass.shape != (dimension, dimension):
                 raise ValueError("Dense inverse mass must be square.")

@@ -65,7 +65,7 @@ class BinnedResponsePlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, matrix: ArrayLike, /, *, response_id: str):
-        host = np.asarray(matrix, dtype=float)
+        host = np.asarray(matrix, dtype=np.float64)
         if host.ndim != 2 or np.any(~np.isfinite(host)) or np.any(host < 0.0):
             raise ValueError("Binned response must be a finite non-negative matrix.")
         identifier = str(response_id)
@@ -125,7 +125,7 @@ class ImageResponsePlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, point_spread_function: ArrayLike, /, *, response_id: str):
-        host = np.asarray(point_spread_function, dtype=float)
+        host = np.asarray(point_spread_function, dtype=np.float64)
         if host.ndim != 2 or np.any(~np.isfinite(host)) or np.any(host < 0.0):
             raise ValueError("Point-spread function must be a finite non-negative image.")
         total = float(np.sum(host))

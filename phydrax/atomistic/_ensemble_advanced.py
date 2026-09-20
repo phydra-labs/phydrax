@@ -16,7 +16,7 @@ from jaxtyping import Array, ArrayLike
 from phydrax.ein import contract
 
 from .._fingerprint import canonical_fingerprint
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import (
     PreparedRigidBodySet,
@@ -104,7 +104,7 @@ class ThermostatResult(StrictModule):
 
 
 class AbstractThermostatPlan(StrictModule, NonTrainableState):
-    plan_id: AbstractAttribute[str]
+    plan_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def apply(
@@ -251,8 +251,8 @@ class GeneralizedLangevinPlan(AbstractThermostatPlan):
     def __init__(
         self, drift_matrix: ArrayLike, diffusion_factor: ArrayLike, temperature: float, /
     ):
-        drift_host = np.asarray(drift_matrix, dtype=float)
-        diffusion_host = np.asarray(diffusion_factor, dtype=float)
+        drift_host = np.asarray(drift_matrix, dtype=np.float64)
+        diffusion_host = np.asarray(diffusion_factor, dtype=np.float64)
         if (
             drift_host.ndim != 2
             or drift_host.shape[0] != drift_host.shape[1]
@@ -376,8 +376,8 @@ class AnisotropicPressurePlan(StrictModule, NonTrainableState):
         *,
         semi_isotropic: bool = False,
     ):
-        pressure_host = np.asarray(target_pressure, dtype=float)
-        compress_host = np.asarray(compressibility, dtype=float)
+        pressure_host = np.asarray(target_pressure, dtype=np.float64)
+        compress_host = np.asarray(compressibility, dtype=np.float64)
         if (
             pressure_host.shape not in ((), (3,), (3, 3))
             or compress_host.shape not in ((), (3,), (3, 3))
@@ -482,7 +482,7 @@ class RigidAtomisticCoordinateMap(StrictModule, NonTrainableState):
             {
                 "kind": "rigid-atomistic-map",
                 "bodies": bodies.prepared_id,
-                "count": int(index.size),
+                "count": index.size,
             }
         )
 
@@ -495,7 +495,7 @@ class RigidAtomisticCoordinateMap(StrictModule, NonTrainableState):
         rotated = local + 2.0 * jnp.cross(vector, jnp.cross(vector, local) + w * local)
         positions = kinematics.position[self.body_indices] + rotated
         valid = jnp.all(jnp.isfinite(positions))
-        mask = jnp.ones((positions.shape[0],), dtype=bool)
+        mask = jnp.ones((positions.shape[0],), dtype=jnp.bool_)
         return AtomisticInteractionSiteState(
             positions, mask, mask, mask, jnp.asarray(jnp.inf), valid, self.map_id
         )

@@ -30,7 +30,7 @@ from ..stochastic._wiener import WienerRealization
 
 
 def _shape(value: Sequence[int], /, *, owner: str) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if any(size <= 0 for size in shape):
         raise ValueError(f"{owner} dimensions must be positive.")
     return shape
@@ -85,7 +85,7 @@ class CoupledFBSDEProblem(StrictModule):
         ):
             if not callable(value):
                 raise TypeError(f"{owner} must be callable.")
-        time_values = jnp.asarray(times, dtype=float)
+        time_values = jnp.asarray(times, dtype=jnp.float64)
         if time_values.ndim != 1 or time_values.shape[0] < 2:
             raise ValueError("times must contain at least two one-dimensional nodes.")
         if bool(jnp.any(~jnp.isfinite(time_values))) or bool(
@@ -195,7 +195,7 @@ def solve_coupled_fbsde_explicit(
         problem.initial_state,
         (problem.num_paths, 1) + problem.state_shape,
     )
-    valid = jnp.ones((problem.num_paths,), dtype=bool)
+    valid = jnp.ones((problem.num_paths,), dtype=jnp.bool_)
     predictor_problem = BSDEProblem(
         lambda sample_key: None,
         lambda time, state, args: jnp.zeros(problem.state_shape),

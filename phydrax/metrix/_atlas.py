@@ -128,8 +128,8 @@ class AtlasValidationReport(StrictModule):
         maximum_inverse_residual: ArrayLike,
         maximum_jacobian_inverse_residual: ArrayLike,
     ):
-        self.valid = jnp.asarray(valid, dtype=bool)
-        self.finite = jnp.asarray(finite, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
         self.maximum_inverse_residual = jnp.asarray(maximum_inverse_residual)
         self.maximum_jacobian_inverse_residual = jnp.asarray(
             maximum_jacobian_inverse_residual

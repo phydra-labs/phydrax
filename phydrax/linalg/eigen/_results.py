@@ -62,8 +62,8 @@ class EigenSolveDiagnostics(StrictModule):
     ):
         residuals = jnp.asarray(residual_norms)
         relative = jnp.asarray(relative_residuals)
-        converged_ = jnp.asarray(converged, dtype=bool)
-        mask = jnp.asarray(mode_mask, dtype=bool)
+        converged_ = jnp.asarray(converged, dtype=jnp.bool_)
+        mask = jnp.asarray(mode_mask, dtype=jnp.bool_)
         gaps = jnp.asarray(isolation_gaps)
         if residuals.ndim < 1:
             raise ValueError("residual_norms must have a trailing mode axis.")
@@ -182,13 +182,13 @@ class EigenSolveResult(StrictModule):
         /,
     ):
         values = jnp.asarray(eigenvalues)
-        mask = jnp.asarray(mode_mask, dtype=bool)
+        mask = jnp.asarray(mode_mask, dtype=jnp.bool_)
         if values.ndim < 1 or mask.shape != values.shape:
             raise ValueError(
                 "eigenvalues and mode_mask must share one trailing mode axis."
             )
         effective = jnp.asarray(effective_count, dtype=jnp.int32)
-        converged_ = jnp.asarray(converged, dtype=bool)
+        converged_ = jnp.asarray(converged, dtype=jnp.bool_)
         status_ = jnp.asarray(status, dtype=jnp.int32)
         batch_shape = values.shape[:-1]
         if effective.shape != batch_shape or status_.shape != batch_shape:

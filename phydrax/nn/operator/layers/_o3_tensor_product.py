@@ -211,8 +211,7 @@ class O3TensorProductPlan(StrictModule, NonTrainableState):
         for observed, allowed, label in zip(evidence, limits, labels, strict=True):
             if observed > allowed:
                 raise ValueError(
-                    f"O(3) tensor-product plan requires {observed} {label}, "
-                    f"exceeding the declared limit {allowed}."
+                    f"O(3) tensor-product plan requires {observed} {label}, exceeding the declared limit {allowed}."
                 )
 
         instruction_data = [instruction._asdict() for instruction in instructions]
@@ -292,8 +291,8 @@ def _clebsch_gordan(
     /,
 ) -> Array:
     dimensions = (1, 3, 5)
-    left_dimension = dimensions[left_degree]
-    right_dimension = dimensions[right_degree]
+    dimensions[left_degree]
+    dimensions[right_degree]
     output_dimension = dimensions[output_degree]
     if left_degree == 0 and output_degree == right_degree:
         return jnp.eye(output_dimension, dtype=dtype)[:, None, :]
@@ -333,8 +332,7 @@ def _clebsch_gordan(
         )
         return _component_normalize(coefficients)
     raise ValueError(
-        "Illegal low-degree Clebsch--Gordan path "
-        f"({left_degree}, {right_degree}) -> {output_degree}."
+        f"Illegal low-degree Clebsch--Gordan path ({left_degree}, {right_degree}) -> {output_degree}."
     )
 
 
@@ -413,9 +411,9 @@ class O3TensorProduct(StrictModule):
     ) -> Array:
         left_ = jnp.asarray(left)
         right_ = jnp.asarray(right)
-        if int(left_.shape[-1]) != self.plan.left_representation.packed_size:
+        if left_.shape[-1] != self.plan.left_representation.packed_size:
             raise ValueError("Left values do not match the planned O(3) layout.")
-        if int(right_.shape[-1]) != self.plan.right_representation.packed_size:
+        if right_.shape[-1] != self.plan.right_representation.packed_size:
             raise ValueError("Right values do not match the planned O(3) layout.")
         if left_.shape[:-1] != right_.shape[:-1]:
             raise ValueError(
@@ -438,8 +436,7 @@ class O3TensorProduct(StrictModule):
             weights = jnp.broadcast_to(weights, leading + weights.shape)
         elif weights.shape != leading + (self.plan.parameter_count,):
             raise ValueError(
-                "O(3) path weights must have the input leading axes and planned "
-                "parameter count."
+                "O(3) path weights must have the input leading axes and planned parameter count."
             )
         left_blocks = self._blocks(self.plan.left_representation, left_)
         right_blocks = self._blocks(self.plan.right_representation, right_)

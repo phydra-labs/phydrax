@@ -17,7 +17,7 @@ from phydrax.discretization._lattice_boundary import LatticeBoundaryPhasePlan
 def _theory_point(size, spacing):
     boundary = LatticeBoundaryPhasePlan(
         TensorTopology(("x",), (size,), periodic=(True,)),
-        jnp.ones((1,), dtype=complex),
+        jnp.ones((1,), dtype="complex128"),
     )
     regulator = LatticeRegulator(
         boundary,

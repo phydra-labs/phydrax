@@ -67,7 +67,7 @@ def test_lmc_heterotopic_likelihood_supports_observation_noise_and_gradients():
         ),
         axis=1,
     )
-    mask = jnp.ones_like(observations, dtype=bool)
+    mask = jnp.ones_like(observations, dtype="bool")
     mask = mask.at[1, 1].set(False).at[6, 0].set(False)
     model = phx.uq.MultiOutputGaussianProcessDiscrepancy.from_dense(
         points,

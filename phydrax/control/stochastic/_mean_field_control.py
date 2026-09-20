@@ -159,7 +159,7 @@ class MeanFieldExternality(StrictModule):
                 raise ValueError(
                     "finite-particle-adjoint mode requires a finite bias_bound."
                 )
-            bias_value = jnp.asarray(bias_bound, dtype=float)
+            bias_value = jnp.asarray(bias_bound, dtype=jnp.float64)
             if bias_value.shape != ():
                 raise ValueError("bias_bound must be scalar.")
             resolved_bias_bound = float(bias_value)
@@ -231,8 +231,7 @@ class MeanFieldControlProblem(StrictModule):
             raise TypeError("base_problem must be a MeanFieldBSDEProblem.")
         if base_problem.control_adapter is None:
             raise ValueError(
-                "base_problem must carry a MeanFieldBSDEControlAdapter so physical "
-                "planner controls are explicit."
+                "base_problem must carry a MeanFieldBSDEControlAdapter so physical planner controls are explicit."
             )
         if not isinstance(externality, MeanFieldExternality):
             raise TypeError(
@@ -619,7 +618,7 @@ def evaluate_mean_field_control_planner(
     )
     finite_particle_bias_bound = jnp.asarray(
         jnp.nan if externality.bias_bound is None else externality.bias_bound,
-        dtype=float,
+        dtype=jnp.float64,
     )
 
     flat_snapshot_weights = snapshots.weights

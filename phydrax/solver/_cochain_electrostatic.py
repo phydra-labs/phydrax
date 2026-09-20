@@ -76,19 +76,19 @@ class CochainElectrostaticBoundaryPlan(StrictModule, NonTrainableState):
         relative_active = bridge.cochain.active_mask(0, "relative")
         default_mask = ~relative_active
         if kind is ElectrostaticBoundaryKind.PERIODIC:
-            mask = jnp.zeros((count,), dtype=bool)
+            mask = jnp.zeros((count,), dtype=jnp.bool_)
         elif kind is ElectrostaticBoundaryKind.DIRICHLET:
             mask = (
                 default_mask
                 if dirichlet_mask is None
-                else jnp.asarray(dirichlet_mask, dtype=bool)
+                else jnp.asarray(dirichlet_mask, dtype=jnp.bool_)
             )
         elif kind is ElectrostaticBoundaryKind.NEUMANN:
-            mask = jnp.zeros((count,), dtype=bool)
+            mask = jnp.zeros((count,), dtype=jnp.bool_)
         else:
             if dirichlet_mask is None:
                 raise ValueError("Mixed boundaries require dirichlet_mask.")
-            mask = jnp.asarray(dirichlet_mask, dtype=bool)
+            mask = jnp.asarray(dirichlet_mask, dtype=jnp.bool_)
         if mask.shape != (count,):
             raise ValueError("dirichlet_mask must be a degree-zero cochain.")
         values = jnp.broadcast_to(jnp.asarray(dirichlet_values), (count,))

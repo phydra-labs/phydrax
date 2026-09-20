@@ -30,7 +30,7 @@ class FixedSDFLinkGeometry(StrictModule, NonTrainableState):
     """Frozen SDF-reconstructed intersections for fluid-to-solid lattice links.
 
     Fractions linearly reconstruct the signed-distance zero from the fluid cell
-    centre toward the solid source. They never regenerate at run time.
+    center toward the solid source. They never regenerate at run time.
     """
 
     fluid_mask: Array
@@ -60,7 +60,7 @@ class FixedSDFLinkGeometry(StrictModule, NonTrainableState):
             raise ValueError("signed_distance must be finite and match the LBM grid.")
         if np.any(phi == 0.0):
             raise ValueError(
-                "Cell centres may not lie exactly on the frozen SDF interface."
+                "Cell centers may not lie exactly on the frozen SDF interface."
             )
         fluid = phi > 0.0
         if not np.any(fluid):
@@ -92,7 +92,7 @@ class FixedSDFLinkGeometry(StrictModule, NonTrainableState):
         velocities = discretization.velocity_set.velocity_tuples
         q_count = len(velocities)
         population_shape = (*shape, q_count)
-        blocked = np.zeros(population_shape, dtype=bool)
+        blocked = np.zeros(population_shape, dtype=np.bool_)
         link_body = np.full(population_shape, -1, dtype=np.int32)
         inferred = np.full(population_shape, np.nan, dtype=np.float64)
         for cell in np.ndindex(shape):
@@ -142,7 +142,7 @@ class FixedSDFLinkGeometry(StrictModule, NonTrainableState):
                     "Link fractions may only be supplied on fluid-to-solid links."
                 )
 
-        self.fluid_mask = jnp.asarray(fluid, dtype=bool)
+        self.fluid_mask = jnp.asarray(fluid, dtype=jnp.bool_)
         self.signed_distance = jnp.asarray(phi)
         self.body_labels = jnp.asarray(labels, dtype=jnp.int32)
         self.body_index = jnp.asarray(link_body, dtype=jnp.int32)

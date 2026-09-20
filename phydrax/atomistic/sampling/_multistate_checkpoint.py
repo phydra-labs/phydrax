@@ -122,13 +122,13 @@ def _segment_template(
     states = runtime.plan.state_count
     pair_count = max(replicas - 1, 0)
     dtype = state.dynamics.kinematics.positions.dtype
-    boolean = jnp.zeros((capacity,), dtype=bool)
-    replica_boolean = jnp.zeros((capacity, replicas), dtype=bool)
-    pair_boolean = jnp.zeros((capacity, pair_count), dtype=bool)
+    boolean = jnp.zeros((capacity,), dtype=jnp.bool_)
+    replica_boolean = jnp.zeros((capacity, replicas), dtype=jnp.bool_)
+    pair_boolean = jnp.zeros((capacity, pair_count), dtype=jnp.bool_)
     return AtomisticMultistateSegmentResult(
         successor_state=_state_with_continuation(state, segment_id),
         reduced_potentials=jnp.zeros((capacity, states, replicas), dtype=dtype),
-        coverage=jnp.zeros((capacity, states, replicas), dtype=bool),
+        coverage=jnp.zeros((capacity, states, replicas), dtype=jnp.bool_),
         sample_active=replica_boolean,
         origin_state=jnp.full((capacity, replicas), -1, dtype=jnp.int32),
         state_at_replica=jnp.full((capacity, replicas), -1, dtype=jnp.int32),
@@ -205,10 +205,10 @@ def _validate_segment(
     )
     if any(value.shape != shape for value, shape in shaped_arrays):
         raise ValueError("Multistate segment arrays do not match checkpoint capacities.")
-    valid = np.asarray(result.iteration_valid, dtype=bool)
+    valid = np.asarray(result.iteration_valid, dtype=np.bool_)
     prefix = np.arange(capacity) < int(result.count)
-    sample = np.asarray(result.sample_active, dtype=bool)
-    coverage = np.asarray(result.coverage, dtype=bool)
+    sample = np.asarray(result.sample_active, dtype=np.bool_)
+    coverage = np.asarray(result.coverage, dtype=np.bool_)
     inactive_sample = ~sample
     inactive_iteration = ~valid
     inactive_pair = inactive_iteration[:, None]
@@ -247,7 +247,7 @@ def _validate_segment(
         or np.any(sample & np.asarray(result.sams_adapting))
         or not np.array_equal(
             coverage,
-            sample[:, None, :] * np.ones((1, states, 1), dtype=bool),
+            sample[:, None, :] * np.ones((1, states, 1), dtype=np.bool_),
         )
         or np.any(~np.isfinite(np.asarray(result.reduced_potentials)[coverage]))
         or np.any(np.asarray(result.reduced_potentials)[~coverage] != 0.0)

@@ -174,7 +174,7 @@ def build_particle_flow_candidates(
     energies = jnp.zeros((event_count, output_capacity), dtype=charged.energies.dtype)
     source_tracks = jnp.full((event_count, output_capacity), -1, dtype=jnp.int32)
     source_clusters = jnp.full((event_count, output_capacity), -1, dtype=jnp.int32)
-    active = jnp.zeros((event_count, output_capacity), dtype=bool)
+    active = jnp.zeros((event_count, output_capacity), dtype=jnp.bool_)
     pdg = pdg.at[:, :track_capacity].set(charged.pdg_hypotheses)
     charges = charges.at[:, :track_capacity].set(charged.charges)
     momenta = momenta.at[:, :track_capacity].set(charged.momenta)

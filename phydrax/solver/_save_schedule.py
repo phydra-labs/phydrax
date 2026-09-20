@@ -16,15 +16,15 @@ def validate_save_times(
     /,
 ) -> Array:
     """Validate one ordered, finite save schedule inside a time interval."""
-    times = jnp.asarray(values, dtype=float)
-    if times.ndim != 1 or int(times.shape[0]) <= 0:
+    times = jnp.asarray(values, dtype=jnp.float64)
+    if times.ndim != 1 or times.shape[0] <= 0:
         raise ValueError("save_times must be a non-empty rank-1 array.")
     times = eqx.error_if(
         times,
         ~jnp.all(jnp.isfinite(times)),
         "save_times must be finite.",
     )
-    if int(times.shape[0]) > 1:
+    if times.shape[0] > 1:
         times = eqx.error_if(
             times,
             ~jnp.all(jnp.diff(times) > 0.0),

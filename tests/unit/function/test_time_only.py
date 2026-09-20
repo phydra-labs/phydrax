@@ -31,8 +31,8 @@ def test_time_only_function_broadcasts_over_space_and_time_axes():
     assert axis_x is not None and axis_t is not None
     assert set(out.named_dims) == {axis_x, axis_t}
 
-    t_vals = jnp.asarray(batch["t"].data, dtype=float).reshape((-1,))
-    n_x = int(batch["x"].data.shape[0])
+    t_vals = jnp.asarray(batch["t"].data, dtype="float64").reshape((-1,))
+    n_x = batch["x"].data.shape[0]
     if out.dims == (axis_t, axis_x):
         expected = jnp.broadcast_to(3.0 * t_vals[:, None], (t_vals.shape[0], n_x))
     elif out.dims == (axis_x, axis_t):

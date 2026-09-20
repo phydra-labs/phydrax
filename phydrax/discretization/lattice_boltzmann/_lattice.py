@@ -63,7 +63,7 @@ class LatticeBoltzmannCapabilityEvidence(StrictModule, NonTrainableState):
 
 
 class LatticeBoltzmannVelocitySet(StrictModule, NonTrainableState):
-    """Certified on-lattice nearest-neighbour quadrature.
+    """Certified on-lattice nearest-neighbor quadrature.
 
     Construction is certification: malformed, non-isotropic, or non-local custom
     sets are rejected rather than being admitted with inferred capabilities.
@@ -108,7 +108,7 @@ class LatticeBoltzmannVelocitySet(StrictModule, NonTrainableState):
         q, dimension = velocity_host.shape
         if np.max(np.abs(velocity_host)) > 1:
             raise ValueError(
-                "Certified nearest-neighbour velocities may move at most one cell per axis."
+                "Certified nearest-neighbor velocities may move at most one cell per axis."
             )
         if np.unique(velocity_host, axis=0).shape[0] != q:
             raise ValueError("Lattice velocities must be unique.")
@@ -173,7 +173,7 @@ class LatticeBoltzmannVelocitySet(StrictModule, NonTrainableState):
             raise ValueError("Lattice fourth moments are not isotropic.")
 
         complete_tensor_product = q == 3**dimension and {
-            tuple(int(value) for value in row) for row in velocity_host
+            tuple(row) for row in velocity_host
         } == {
             index
             for index in np.ndindex(*(3,) * dimension)
@@ -217,10 +217,8 @@ class LatticeBoltzmannVelocitySet(StrictModule, NonTrainableState):
         self.opposite = jnp.asarray(opposite_host, dtype=jnp.int32)
         self.sound_speed_squared = jnp.asarray(cs2, dtype=jnp.float64)
         self.capability_evidence = evidence
-        self.velocity_tuples = tuple(
-            tuple(int(value) for value in row) for row in velocity_host
-        )
-        self.opposite_indices = tuple(int(value) for value in opposite_host)
+        self.velocity_tuples = tuple(tuple(row) for row in velocity_host)
+        self.opposite_indices = tuple(opposite_host)
         self.name = name_
         self.dimension = dimension
         self.population_count = q

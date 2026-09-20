@@ -93,8 +93,8 @@ class ChemicalExplosiveModePlan(StrictModule, NonTrainableState):
             raise ValueError("CEMA separation, conditioning, or tolerance is invalid.")
         conservation = np.concatenate(
             (
-                np.asarray(mechanism.schema.element_composition, dtype=float),
-                np.asarray(mechanism.schema.charges, dtype=float)[None, :],
+                np.asarray(mechanism.schema.element_composition, dtype=np.float64),
+                np.asarray(mechanism.schema.charges, dtype=np.float64)[None, :],
             ),
             axis=0,
         )
@@ -125,7 +125,7 @@ class ChemicalExplosiveModePlan(StrictModule, NonTrainableState):
 
     @property
     def reactive_dimension(self) -> int:
-        return int(self.reactive_basis.shape[1])
+        return self.reactive_basis.shape[1]
 
     def initial_tracking_state(self, dtype=jnp.complex128) -> ChemicalModeTrackingState:
         return ChemicalModeTrackingState(
@@ -315,7 +315,7 @@ class ChemicalExplosiveModePlan(StrictModule, NonTrainableState):
     ) -> ChemicalModeTrackingState:
         if accepted.plan_id != self.plan_id or evaluation.plan_id != self.plan_id:
             raise ValueError("CEMA tracking values belong to another plan.")
-        decision = jnp.asarray(commit, dtype=bool)
+        decision = jnp.asarray(commit, dtype=jnp.bool_)
         if decision.shape != ():
             raise ValueError("CEMA tracking commit decision must be scalar.")
         return jax.tree.map(

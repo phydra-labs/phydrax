@@ -50,7 +50,7 @@ def main():
         "device": str(jax.devices()[0]),
         "ias15_compile_seconds": ias_compile,
         "ias15_warm_seconds": ias_warm,
-        "wcs_points": int(sky.shape[0]),
+        "wcs_points": sky.shape[0],
         "wcs_compile_seconds": wcs_compile,
         "wcs_warm_seconds": wcs_warm,
         "wcs_finite_fraction": float(jnp.mean(jnp.isfinite(pixels))),

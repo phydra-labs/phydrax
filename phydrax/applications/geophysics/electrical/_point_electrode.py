@@ -57,12 +57,12 @@ class PointElectrodeSurvey(StrictModule, NonTrainableState):
         current_unit: UnitDefinition = AMPERE,
     ):
         positions_ = np.asarray(
-            convert_value(positions, source=length_unit, target=METER), dtype=float
+            convert_value(positions, source=length_unit, target=METER), dtype=np.float64
         )
         currents_ = np.asarray(
-            convert_value(currents, source=current_unit, target=AMPERE), dtype=float
+            convert_value(currents, source=current_unit, target=AMPERE), dtype=np.float64
         )
-        receivers = np.asarray(receiver_weights, dtype=float)
+        receivers = np.asarray(receiver_weights, dtype=np.float64)
         indices = np.asarray(source_indices)
         if positions_.ndim != 2 or positions_.shape[1] != 3 or positions_.shape[0] < 4:
             raise ValueError(
@@ -98,7 +98,7 @@ class PointElectrodeSurvey(StrictModule, NonTrainableState):
             raise ValueError(
                 "Point-electrode survey arrays must be finite and indices valid."
             )
-        tolerance = 64 * np.finfo(float).eps
+        tolerance = 64 * np.finfo(np.float64).eps
         if np.any(
             np.abs(np.sum(currents_, axis=1))
             > tolerance * np.sum(np.abs(currents_), axis=1)
@@ -205,7 +205,7 @@ class PreparedPointElectrodeDC(StrictModule, NonTrainableState):
         cells = np.concatenate(
             [np.asarray(block.vertices, dtype=np.int32) for block in plan.mesh.blocks]
         )
-        coordinates = np.asarray(plan.mesh.coordinates, dtype=float)
+        coordinates = np.asarray(plan.mesh.coordinates, dtype=np.float64)
         simplex = AffineSimplexMap(jnp.asarray(coordinates[cells]))
         if not bool(jnp.all(simplex.evidence.successful)):
             raise ValueError("Point-electrode mesh contains degenerate tetrahedra.")

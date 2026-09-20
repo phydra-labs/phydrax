@@ -205,7 +205,7 @@ class ExactSparsePolynomialSystem(StrictModule):
         raw = tuple(coefficients)
         if len(raw) != support.term_count:
             raise ValueError("Exact coefficient count must equal support term count.")
-        permutation = tuple(int(index) for index in support.canonical_term_permutation)
+        permutation = tuple(support.canonical_term_permutation)
         return cls(support, tuple(raw[index] for index in permutation), domain)
 
     @property

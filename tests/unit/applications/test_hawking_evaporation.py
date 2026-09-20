@@ -30,17 +30,17 @@ def _tail(*, frequency=(0.0, 0.0, 0.0), modes=(0.0, 0.0, 0.0)):
     )
 
 
-def _scattering(plan, greybody, slopes, tail=None):
+def _scattering(plan, graybody, slopes, tail=None):
     sources = tuple(
         tuple(
             f"radial:{mode}:{frequency}" for frequency in range(plan.frequency_capacity)
         )
         for mode in range(plan.mode_capacity)
     )
-    flags = jnp.ones((plan.mode_capacity,), dtype=bool)
+    flags = jnp.ones((plan.mode_capacity,), dtype="bool")
     return HawkingScatteringData(
         plan,
-        greybody,
+        graybody,
         slopes,
         finite=flags,
         converged=flags,
@@ -139,8 +139,8 @@ def test_schwarzschild_mode_pair_cancels_angular_flux_and_tail_gates_convergence
         (-1, 1),
         mode_ids=("photon:1:-1", "photon:1:1"),
     )
-    greybody = ((0.0, 0.04, 0.08), (0.0, 0.04, 0.08))
-    scattering = _scattering(plan, greybody, (0.2, 0.2))
+    graybody = ((0.0, 0.04, 0.08), (0.0, 0.04, 0.08))
+    scattering = _scattering(plan, graybody, (0.2, 0.2))
     source_state = KerrEvaporationState(1.0, 0.0, state_id="schwarzschild:M=1")
     result = _evaluate(
         plan,
@@ -158,7 +158,7 @@ def test_schwarzschild_mode_pair_cancels_angular_flux_and_tail_gates_convergence
 
     uncovered = _scattering(
         plan,
-        greybody,
+        graybody,
         (0.2, 0.2),
         tail=_tail(frequency=(1.0e-3, 0.0, 0.0)),
     )

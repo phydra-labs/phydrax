@@ -32,7 +32,7 @@ def _cohesion_benchmark():
     normal = jnp.broadcast_to(jnp.asarray([1.0, 0.0]), (pair_count, 2))
     vector = jnp.zeros((pair_count, 2), dtype=dtype)
     gap = jnp.linspace(0.0, 0.08, pair_count, dtype=dtype)
-    valid = jnp.ones((pair_count,), dtype=bool)
+    valid = jnp.ones((pair_count,), dtype="bool")
     batch_template = phx.discretization.DEMContactBatch(
         normal,
         gap,
@@ -154,11 +154,11 @@ def _coarse_graining_benchmark():
             velocity,
             jnp.ones((count,)),
             jnp.full((count,), 1.0e-4),
-            jnp.ones((count,), dtype=bool),
+            jnp.ones((count,), dtype="bool"),
             pairs,
             displacement,
             force,
-            jnp.ones((count - 1,), dtype=bool),
+            jnp.ones((count - 1,), dtype="bool"),
         )
 
     fields, compile_seconds, steady_seconds = _timing(evaluate, position, repeats=10)

@@ -213,7 +213,7 @@ def _linear_combinations(
     /,
 ) -> tuple[DomainFunction, ...]:
     combinations: list[DomainFunction] = []
-    for column in range(int(coefficients.shape[1])):
+    for column in range(coefficients.shape[1]):
         combined = coefficients[0, column] * fields[0]
         for row in range(1, len(fields)):
             combined = combined + coefficients[row, column] * fields[row]
@@ -451,7 +451,7 @@ class VariationalEigenspace(AbstractSamplingTerm):
     ) -> Array:
         """Return the basis-invariant sum of generalized Ritz values."""
         if self.weight == 0.0:
-            return jnp.zeros((), dtype=float)
+            return jnp.zeros((), dtype=jnp.float64)
         evaluation = self.assemble(
             functions,
             key=key,
@@ -688,7 +688,7 @@ class InvariantSubspaceResidual(AbstractSamplingTerm):
     ) -> Array:
         """Return the nonnegative basis-invariant strong residual."""
         if self.weight == 0.0:
-            return jnp.zeros((), dtype=float)
+            return jnp.zeros((), dtype=jnp.float64)
         evaluation = self.assemble(
             functions,
             key=key,

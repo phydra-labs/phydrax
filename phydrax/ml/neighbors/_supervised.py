@@ -38,7 +38,7 @@ from ._utils import (
 
 
 def _positive_scalar(value: ArrayLike, /, *, name: str) -> Array:
-    scalar = jnp.asarray(value, dtype=float)
+    scalar = jnp.asarray(value, dtype=jnp.float64)
     if scalar.ndim != 0:
         raise ValueError(f"{name} must be scalar.")
     return eqx.error_if(
@@ -57,9 +57,9 @@ def _model_support(
 ) -> tuple[Array, Array, Array, int, tuple[int, ...]]:
     values = jnp.asarray(support)
     weight = jnp.asarray(support_weight)
-    mask = jnp.asarray(support_mask, dtype=bool)
+    mask = jnp.asarray(support_mask, dtype=jnp.bool_)
     features = int(feature_count)
-    cases = tuple(int(value) for value in case_shape)
+    cases = tuple(case_shape)
     if (
         values.ndim != len(cases) + 2
         or values.shape[: len(cases)] != cases
@@ -110,7 +110,7 @@ class ExactNeighborRegressorModel(AbstractArrayModel):
             support, support_weight, support_mask, feature_count, case_shape
         )
         targets_ = jnp.asarray(targets)
-        outputs = tuple(int(value) for value in output_shape)
+        outputs = tuple(output_shape)
         if targets_.shape != cases + (support_.shape[-2], _target_width(outputs)):
             raise ValueError("Flattened targets must align with case and support axes.")
         neighbors = int(neighbor_count)
@@ -285,7 +285,7 @@ class KernelNeighborRegressorModel(AbstractArrayModel):
             support, support_weight, support_mask, feature_count, case_shape
         )
         targets_ = jnp.asarray(targets)
-        outputs = tuple(int(value) for value in output_shape)
+        outputs = tuple(output_shape)
         if targets_.shape != cases + (support_.shape[-2], _target_width(outputs)):
             raise ValueError("Flattened targets must align with case and support axes.")
         neighbors = int(neighbor_count)
@@ -316,7 +316,7 @@ class KernelNeighborRegressorModel(AbstractArrayModel):
         )
         active = mask & (support_weight > 0)
         logits = -distances / self.temperature + jnp.log(
-            jnp.maximum(support_weight, jnp.finfo(float).tiny)
+            jnp.maximum(support_weight, jnp.finfo(jnp.float64).tiny)
         )
         return masked_softmax(logits, active)
 
@@ -402,7 +402,7 @@ class KernelNeighborClassifierModel(AbstractArrayModel):
         )
         active = mask & (support_weight > 0)
         logits = -distances / self.temperature + jnp.log(
-            jnp.maximum(support_weight, jnp.finfo(float).tiny)
+            jnp.maximum(support_weight, jnp.finfo(jnp.float64).tiny)
         )
         weight = masked_softmax(logits, active)
         labels = broadcast_support(self.labels, len(query_shape), self.case_shape)
@@ -456,7 +456,7 @@ class RadiusNeighborRegressorModel(AbstractArrayModel):
             support, support_weight, support_mask, feature_count, case_shape
         )
         targets_ = jnp.asarray(targets)
-        outputs = tuple(int(value) for value in output_shape)
+        outputs = tuple(output_shape)
         if targets_.shape != cases + (support_.shape[-2], _target_width(outputs)):
             raise ValueError("Flattened targets must align with case and support axes.")
         neighbors = int(neighbor_count)
@@ -615,10 +615,10 @@ class NearestCentroidModel(AbstractArrayModel):
         temperature: ArrayLike,
     ):
         centroids_ = jnp.asarray(centroids)
-        mask_ = jnp.asarray(class_mask, dtype=bool)
+        mask_ = jnp.asarray(class_mask, dtype=jnp.bool_)
         features = int(feature_count)
         classes = int(class_count)
-        cases = tuple(int(value) for value in case_shape)
+        cases = tuple(case_shape)
         if centroids_.shape != cases + (classes, features):
             raise ValueError(
                 "Centroids must have shape case_shape + (class_count, feature_count)."
@@ -730,7 +730,7 @@ class KNeighborsRegressorRecipe(AbstractRecipe):
         if self.neighbor_count > capacity:
             raise ValueError("neighbor_count cannot exceed fixed support capacity.")
         sample_shape = batch.case_shape + (batch.sample_count,)
-        output_shape = tuple(int(s) for s in target.shape[len(sample_shape) :])
+        output_shape = tuple(target.shape[len(sample_shape) :])
         target_flat = target.reshape(sample_shape + (-1,))
         target_flat = pad_support(target_flat, capacity, len(batch.case_shape), 0.0)
         target_finite = jnp.all(

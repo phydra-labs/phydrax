@@ -68,8 +68,8 @@ class SINGSupportPlan(StrictModule):
         support_id: str,
         tolerance: float = 1.0e-8,
     ):
-        matrix = np.asarray(constraints, dtype=float)
-        basis = np.asarray(tangent_basis, dtype=float)
+        matrix = np.asarray(constraints, dtype=np.float64)
+        basis = np.asarray(tangent_basis, dtype=np.float64)
         fixed_rank = int(rank)
         threshold = float(tolerance)
         if (
@@ -79,15 +79,14 @@ class SINGSupportPlan(StrictModule):
             or matrix.shape[1] != basis.shape[0]
         ):
             raise ValueError(
-                "constraints must be nonempty and share the ambient dimension "
-                "with tangent_basis."
+                "constraints must be nonempty and share the ambient dimension with tangent_basis."
             )
         if basis.shape[1] != fixed_rank or fixed_rank <= 0:
             raise ValueError("tangent_basis trailing dimension must equal positive rank.")
         shift = (
-            np.zeros((matrix.shape[0],), dtype=float)
+            np.zeros((matrix.shape[0],), dtype=np.float64)
             if offset is None
-            else np.asarray(offset, dtype=float)
+            else np.asarray(offset, dtype=np.float64)
         )
         if shift.shape != (matrix.shape[0],):
             raise ValueError("offset must contain one value per affine constraint.")
@@ -205,7 +204,7 @@ class SINGTransitionPlan(StrictModule):
         self.approximation_tolerance = approximation_threshold
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "sing-transition-plan-v1",
+                "kind": "sing-transition-plan",
                 "method": method,
                 "support": None if support is None else support.support_id,
                 "ensemble": None
@@ -298,7 +297,7 @@ def evaluate_sing_transition(
         approximation_error = jnp.asarray(approximation_error)
         approximation_kind = plan.method
     flat_target = target.reshape((-1,))
-    dimension = int(flat_target.size)
+    dimension = flat_target.size
     if covariance.shape != (dimension, dimension):
         raise ValueError("transition covariance must be ambient state_size square.")
     support = plan.support
@@ -345,7 +344,7 @@ def evaluate_sing_transition(
     ).astype(jnp.int32)
     transition_id = canonical_fingerprint(
         {
-            "kind": "sing-transition-evaluation-v1",
+            "kind": "sing-transition-evaluation",
             "transition": transition.process_id,
             "plan": plan.plan_id,
             "reference": reference,

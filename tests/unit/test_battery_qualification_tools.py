@@ -577,7 +577,7 @@ def test_native_observations_encode_absent_samples_without_nonfinite_json():
     assert decoded["valid"] == [True, True, False]
 
 
-def test_registry_rejects_raw_unavailable_without_reason_and_relabelled_units(tmp_path):
+def test_registry_rejects_raw_unavailable_without_reason_and_relabeled_units(tmp_path):
     campaign, criteria = _documents(tmp_path)
     entry = get_campaign_entry("ecm-analytic")
     selected = criteria["criteria"][0]

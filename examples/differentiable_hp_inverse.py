@@ -14,13 +14,13 @@ def run():
 
     def objective(scale):
         indicators = scale * jnp.asarray((1.0, 3.0, 2.0))
-        weights = marker.weights(indicators, jnp.ones((3,), dtype=bool))
+        weights = marker.weights(indicators, jnp.ones((3,), dtype="bool"))
         return jnp.sum(weights * indicators)
 
     value, gradient = jax.value_and_grad(objective)(jnp.asarray(0.5))
     selected = marker.safe_project(
         jnp.asarray((1.0, 3.0, 2.0)),
-        jnp.ones((3,), dtype=bool),
+        jnp.ones((3,), dtype="bool"),
         stable_ids,
     )
     return {

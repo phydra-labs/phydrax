@@ -103,7 +103,7 @@ class SurfaceRichardsPlan(StrictModule):
             else termination
         )
         self.boundary_faces = jnp.asarray(
-            np.flatnonzero(np.asarray(water.discretization.neighbour_cells) < 0),
+            np.flatnonzero(np.asarray(water.discretization.neighbor_cells) < 0),
             dtype=jnp.int32,
         )
 
@@ -176,7 +176,7 @@ class SurfaceRichardsPlan(StrictModule):
                 jnp.full(2 * ns, self.head_scale),
             )
         )
-        anchored_cells = jnp.zeros(nc, dtype=bool).at[trace.parent_cells].set(True)
+        anchored_cells = jnp.zeros(nc, dtype=jnp.bool_).at[trace.parent_cells].set(True)
 
         def residual(scaled_unknown, args):
             old, old_surface, time_step, rainfall_rate, mass_source = args

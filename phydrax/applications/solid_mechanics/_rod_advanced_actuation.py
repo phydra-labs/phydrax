@@ -1232,7 +1232,7 @@ class IntrinsicStrainActuationPlan(StrictModule, NonTrainableState):
             swelling_transport=swelling_transport,
         )
         modes = _real_array("mode_shapes", mode_shapes, 3)
-        channels = int(modes.shape[2])
+        channels = modes.shape[2]
         if channels < 1:
             raise ValueError("Intrinsic strain requires at least one control channel.")
         dtype = modes.dtype
@@ -1884,7 +1884,7 @@ class AffineMagneticActuationPlan(StrictModule, NonTrainableState):
         )
         origin = _real_array("field_origin", field_origin, 1)
         dipoles = _real_array("segment_dipoles_material", segment_dipoles_material, 2)
-        channels = int(uniform.shape[0])
+        channels = uniform.shape[0]
         if (
             channels < 1
             or uniform.shape != (channels, 3)

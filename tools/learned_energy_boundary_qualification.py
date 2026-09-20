@@ -336,8 +336,7 @@ def _long_link_routes(
                     and int(source_direction[index]) == expected_direction
                     and tuple(bool(value) for value in physical_axis_mask[index])
                     == expected_axis_mask
-                    and tuple(int(value) for value in physical_side_sign[index])
-                    == expected_side_sign
+                    and tuple(physical_side_sign[index]) == expected_side_sign
                     and int(primary_face[index]) == expected_faces[0]
                     and int(secondary_face[index])
                     == (expected_faces[1] if len(expected_faces) == 2 else -1)
@@ -1363,8 +1362,7 @@ def _validate_output_path(path: Path, /) -> Path:
     output = Path(path)
     if output.name in _PROTECTED_ARTIFACT_NAMES:
         raise ValueError(
-            "Boundary qualification cannot overwrite a stage-one, spatial, or "
-            "stage-two artifact."
+            "Boundary qualification cannot overwrite a stage-one, spatial, or stage-two artifact."
         )
     if output.suffix != ".json":
         raise ValueError("Boundary qualification output must be a JSON artifact.")

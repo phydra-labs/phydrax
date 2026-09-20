@@ -172,8 +172,7 @@ class AtomisticUnitSystem(StrictModule, NonTrainableState):
                 )
             ):
                 raise ValueError(
-                    "The canonical reduced constant set requires canonical unscaled "
-                    "reduced units."
+                    "The canonical reduced constant set requires canonical unscaled reduced units."
                 )
             boltzmann = coulomb = hbar = 1.0
         else:

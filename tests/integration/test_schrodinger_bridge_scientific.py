@@ -23,7 +23,7 @@ def _kernel(matrix):
 
     def sample(key, state, _t0, _t1, _context):
         probabilities = matrix[jnp.asarray(state, dtype=jnp.int32)]
-        return jax.random.categorical(key, jnp.log(probabilities)).astype(float)
+        return jax.random.categorical(key, jnp.log(probabilities)).astype("float64")
 
     def log_prob(next_state, state, _t0, _t1, _context):
         probability = matrix[

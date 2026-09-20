@@ -120,7 +120,6 @@ class FixedWorkThermochemicalSourcePlan(StrictModule, NonTrainableState):
         /,
     ) -> tuple[Array, Array]:
         species_count = system.species_count
-        mode_count = system.mode_count
         molar_masses = system.thermodynamics.schema.molar_masses.astype(incoming.dtype)
 
         def assemble(base, unknown):

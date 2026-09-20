@@ -27,7 +27,7 @@ def coerce_hbar(hbar: ArrayLike, /) -> Array:
 
 def validate_matrix_value(value: Any, /, *, role: str) -> Array:
     array = jnp.asarray(value)
-    if array.ndim != 2 or int(array.shape[0]) != int(array.shape[1]):
+    if array.ndim != 2 or array.shape[0] != array.shape[1]:
         raise ValueError(
             f"{role} must be a square matrix with shape (n, n), got {array.shape}."
         )

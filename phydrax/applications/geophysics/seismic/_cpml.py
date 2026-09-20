@@ -75,7 +75,7 @@ class CartesianCPML(StrictModule, NonTrainableState):
                 (True, face_a, face_b, face_kappa),
             ):
                 size = grid.shape[axis] + int(face)
-                coordinate = np.arange(size, dtype=float) + (0.0 if face else 0.5)
+                coordinate = np.arange(size, dtype=np.float64) + (0.0 if face else 0.5)
                 depth = np.zeros(size)
                 if lower:
                     depth = np.maximum(depth, (lower - coordinate) / lower)

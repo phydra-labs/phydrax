@@ -107,8 +107,7 @@ def _brep_model(source: _BRepMeshingSource, /) -> BRepModel:
     if isinstance(source, BRepModel):
         return source
     raise TypeError(
-        "source must be a BRepModel, BRepSource, BRepPartitionResult, or "
-        "PlanarBandResult."
+        "source must be a BRepModel, BRepSource, BRepPartitionResult, or PlanarBandResult."
     )
 
 
@@ -1149,12 +1148,14 @@ def _geometry_permutation(gmsh, rows: _ElementRows, element, /) -> np.ndarray:
     _, dimension, _, count, coordinates, _ = gmsh.model.mesh.getElementProperties(
         rows.element_type
     )
-    source = np.asarray(coordinates, dtype=float).reshape((int(count), int(dimension)))
+    source = np.asarray(coordinates, dtype=np.float64).reshape(
+        (int(count), int(dimension))
+    )
     if rows.cell_kind in ("quadrilateral", "hexahedron"):
         source = 0.5 * (source + 1.0)
     elif rows.cell_kind == "prism":
         source[:, 2] = 0.5 * (source[:, 2] + 1.0)
-    target = np.asarray(element.reference_nodes, dtype=float)
+    target = np.asarray(element.reference_nodes, dtype=np.float64)
     matches = np.max(np.abs(target[:, None] - source[None]), axis=-1) <= 2.0e-12
     if source.shape != target.shape or not np.all(np.sum(matches, axis=1) == 1):
         raise MeshingFailure(
@@ -1170,7 +1171,7 @@ def _audit_jacobians(gmsh, rows: tuple[_ElementRows, ...], /) -> float:
     minimum = np.inf
     for block in rows:
         determinants = np.asarray(
-            gmsh.model.mesh.getElementQualities(block.tags, "minDetJac"), dtype=float
+            gmsh.model.mesh.getElementQualities(block.tags, "minDetJac"), dtype=np.float64
         )
         invalid = ~np.isfinite(determinants) | (determinants <= 0.0)
         if determinants.shape != block.tags.shape or np.any(invalid):
@@ -1178,7 +1179,7 @@ def _audit_jacobians(gmsh, rows: tuple[_ElementRows, ...], /) -> float:
                 MeshingFailureCategory.AUDIT_FAILED,
                 "Gmsh curved-element minimum Jacobian determinant is nonpositive or unavailable.",
                 stage=MeshingStageKind.GEOMETRY_AUDIT.value,
-                entity_ids=tuple(int(tag) for tag in block.tags[invalid])
+                entity_ids=tuple(block.tags[invalid])
                 if determinants.shape == block.tags.shape
                 else (),
             )
@@ -1225,7 +1226,7 @@ def _scope_samples(
                     "Source face has no interior samples for entity resolution.",
                 )
             selected = triangles[
-                np.linspace(0, len(triangles) - 1, min(3, len(triangles)), dtype=int)
+                np.linspace(0, len(triangles) - 1, min(3, len(triangles)), dtype=np.int64)
             ]
             uv = np.mean(parameters[selected], axis=1)
             result.append(np.asarray(source.patches[int(face)].evaluate(jnp.asarray(uv))))
@@ -1602,7 +1603,7 @@ def _straight_surface_curves(
             )
         coordinates = np.asarray(
             [gmsh.model.getValue(0, abs(int(tag)), []) for _, tag in vertices],
-            dtype=float,
+            dtype=np.float64,
         )
         planar = embedding.to_planar(coordinates)
         direction = planar[1] - planar[0]
@@ -1656,23 +1657,23 @@ def _configure_full_quad_band_closure(
             remaining.remove(second)
             pairs.append((first, second))
         parallel_pairs[surface] = tuple(pairs)
-    neighbours: dict[int, set[int]] = {
+    neighbors: dict[int, set[int]] = {
         curve: set() for curves, _ in boundaries.values() for curve in curves
     }
     for pairs in parallel_pairs.values():
         for first, second in pairs:
-            neighbours[first].add(second)
-            neighbours[second].add(first)
-    unresolved = set(neighbours)
+            neighbors[first].add(second)
+            neighbors[second].add(first)
+    unresolved = set(neighbors)
     while unresolved:
         root = min(unresolved)
         component = {root}
         frontier = [root]
         while frontier:
             current = frontier.pop()
-            for neighbour in neighbours[current] - component:
-                component.add(neighbour)
-                frontier.append(neighbour)
+            for neighbor in neighbors[current] - component:
+                component.add(neighbor)
+                frontier.append(neighbor)
         unresolved -= component
         prescribed = {
             constrained_curves[curve]
@@ -1697,7 +1698,7 @@ def _configure_full_quad_band_closure(
                 )
                 coordinates = np.asarray(
                     [gmsh.model.getValue(0, abs(int(tag)), []) for _, tag in vertices],
-                    dtype=float,
+                    dtype=np.float64,
                 )
                 planar = embedding.to_planar(coordinates)
                 lengths.append(float(np.linalg.norm(planar[1] - planar[0])))
@@ -1750,7 +1751,7 @@ def _apply_planar_band_constraints(
         tangential_nodes = max(
             2, int(np.ceil(layer.source_length / layer.tangential_target)) + 1
         )
-        tangent = np.asarray(layer.tangent, dtype=float)
+        tangent = np.asarray(layer.tangent, dtype=np.float64)
         tangential_count = 0
         normal_count = 0
         for curve in curves:
@@ -1765,7 +1766,7 @@ def _apply_planar_band_constraints(
                 )
             coordinates = np.asarray(
                 [gmsh.model.getValue(0, abs(int(tag)), []) for _, tag in points],
-                dtype=float,
+                dtype=np.float64,
             )
             planar = bands.embedding.to_planar(coordinates)
             direction = planar[1] - planar[0]
@@ -1824,7 +1825,7 @@ def _audit_planar_band_fronts(
         coordinates = []
         for curve in record.curves:
             _, values, _ = gmsh.model.mesh.getNodes(1, curve, includeBoundary=True)
-            coordinates.append(np.asarray(values, dtype=float).reshape((-1, 3)))
+            coordinates.append(np.asarray(values, dtype=np.float64).reshape((-1, 3)))
         points = np.concatenate(coordinates)
         if not points.size:
             raise MeshingFailure(
@@ -1833,13 +1834,13 @@ def _audit_planar_band_fronts(
                 stage=MeshingStageKind.SPECIFICATION_COMPLIANCE.value,
             )
         planar = generation.embedding.to_planar(points)
-        origin = np.asarray(layer.source_origin, dtype=float)
-        inward = np.asarray(layer.inward_normal, dtype=float)
+        origin = np.asarray(layer.source_origin, dtype=np.float64)
+        inward = np.asarray(layer.inward_normal, dtype=np.float64)
         distances = (planar - origin) @ inward
         residual = float(
             np.max(np.abs(distances - layer.cumulative_distance), initial=0.0)
         )
-        tangent = np.asarray(layer.tangent, dtype=float)
+        tangent = np.asarray(layer.tangent, dtype=np.float64)
         tangential_positions = np.unique((planar - origin) @ tangent)
         if tangential_positions.size < 2:
             raise MeshingFailure(
@@ -1854,7 +1855,7 @@ def _audit_planar_band_fronts(
             layer.cumulative_distance,
             float(np.max(np.abs(planar), initial=0.0)),
         )
-        tolerance = 8192.0 * np.finfo(float).eps * scale
+        tolerance = 8192.0 * np.finfo(np.float64).eps * scale
         if residual > tolerance:
             raise MeshingFailure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
@@ -1867,10 +1868,7 @@ def _audit_planar_band_fronts(
                 "Generated planar band tangential spacing exceeds its target.",
                 stage=MeshingStageKind.SPECIFICATION_COMPLIANCE.value,
             )
-        key = (
-            f"planar_band:{layer.control_id}:{layer.region_name}:"
-            f"front:{layer.layer_index + 1}"
-        )
+        key = f"planar_band:{layer.control_id}:{layer.region_name}:front:{layer.layer_index + 1}"
         requested.extend(
             (
                 (f"{key}:distance", layer.cumulative_distance),
@@ -2111,7 +2109,7 @@ def _prepare_swept_geometry(gmsh, plan, shape, cad_entities, /):
         target_faces = {
             int(value) for value in np.asarray(control.target_scope.entity_ids)
         }
-        thicknesses = np.asarray(control.schedule.thicknesses, dtype=float)
+        thicknesses = np.asarray(control.schedule.thicknesses, dtype=np.float64)
         levels = np.concatenate(([0.0], np.cumsum(thicknesses)))
         for solid_value in solid_ids:
             solid = int(solid_value)
@@ -2138,10 +2136,10 @@ def _prepare_swept_geometry(gmsh, plan, shape, cad_entities, /):
                     stage=MeshingStageKind.CONTROL_RESOLUTION.value,
                 )
             origin = np.asarray(
-                gmsh.model.occ.getCenterOfMass(2, source_surface), dtype=float
+                gmsh.model.occ.getCenterOfMass(2, source_surface), dtype=np.float64
             )
             target_center = np.asarray(
-                gmsh.model.occ.getCenterOfMass(2, target_surface), dtype=float
+                gmsh.model.occ.getCenterOfMass(2, target_surface), dtype=np.float64
             )
             direction = target_center - origin
             length = float(np.linalg.norm(direction))
@@ -2159,7 +2157,7 @@ def _prepare_swept_geometry(gmsh, plan, shape, cad_entities, /):
             unit = direction / length
             _, parameters = gmsh.model.getClosestPoint(2, source_surface, origin.tolist())
             normal = np.asarray(
-                gmsh.model.getNormal(source_surface, parameters), dtype=float
+                gmsh.model.getNormal(source_surface, parameters), dtype=np.float64
             ).reshape(3)
             normal /= np.linalg.norm(normal)
             if abs(float(np.dot(normal, unit))) < 1.0 - 1.0e-10:
@@ -2207,7 +2205,7 @@ def _prepare_swept_geometry(gmsh, plan, shape, cad_entities, /):
                     direction,
                     unit,
                     levels,
-                    volume_difference / max(volume_measure, np.finfo(float).tiny),
+                    volume_difference / max(volume_measure, np.finfo(np.float64).tiny),
                 )
             )
     by_solid = {value.solid_index: value for value in prepared}
@@ -2271,7 +2269,7 @@ def _matching_lateral_surface(
     matches = []
     for surface in candidates:
         closest, _ = gmsh.model.getClosestPoint(2, surface, point.tolist())
-        closest_point = np.asarray(closest, dtype=float).reshape((-1, 3))
+        closest_point = np.asarray(closest, dtype=np.float64).reshape((-1, 3))
         if (
             closest_point.shape == (1, 3)
             and np.linalg.norm(closest_point[0] - point) <= tolerance
@@ -2296,7 +2294,7 @@ def _install_swept_cells(gmsh, sweep: _SweepGeneration, /) -> None:
         gmsh.model.mesh.removeElements(2, surface)
     node_tags, node_coordinates, _ = gmsh.model.mesh.getNodes()
     node_tags = np.asarray(node_tags, dtype=np.int64)
-    node_coordinates = np.asarray(node_coordinates, dtype=float).reshape((-1, 3))
+    node_coordinates = np.asarray(node_coordinates, dtype=np.float64).reshape((-1, 3))
     order = np.argsort(node_tags, kind="stable")
     node_tags = node_tags[order]
     node_coordinates = node_coordinates[order]
@@ -2323,7 +2321,7 @@ def _install_swept_cells(gmsh, sweep: _SweepGeneration, /) -> None:
         transform = np.eye(4)
         transform[:3, 3] = value.direction
         if int(actual_master) != value.source_surface or not np.allclose(
-            np.asarray(affine, dtype=float).reshape((4, 4)),
+            np.asarray(affine, dtype=np.float64).reshape((4, 4)),
             transform,
             rtol=0.0,
             atol=tolerance,
@@ -2418,7 +2416,7 @@ def _install_swept_cells(gmsh, sweep: _SweepGeneration, /) -> None:
                 quad_blocks[surface][key] = quad
     for volume_tag, entries in new_nodes.items():
         tags = np.asarray([tag for tag, _ in entries], dtype=np.int64)
-        values = np.asarray([point for _, point in entries], dtype=float)
+        values = np.asarray([point for _, point in entries], dtype=np.float64)
         gmsh.model.mesh.addNodes(3, volume_tag, tags, values.reshape(-1))
     prism_type = gmsh.model.mesh.getElementType("Prism", 1)
     for volume_tag, prisms in prism_blocks.items():
@@ -2448,7 +2446,7 @@ def _audit_layers(sweep, rows, node_tags, points, /) -> _LayerAudit:
     evaluations: dict[int, list] = {}
     for block in rows:
         controlled = np.asarray(
-            [int(tag) in volume_map for tag in block.entity_tags], dtype=bool
+            [int(tag) in volume_map for tag in block.entity_tags], dtype=np.bool_
         )
         if np.any(controlled) and block.cell_kind != "prism":
             raise MeshingFailure(
@@ -2526,14 +2524,14 @@ def _audit_layers(sweep, rows, node_tags, points, /) -> _LayerAudit:
         measured = np.mean(
             np.asarray(
                 [np.asarray(value.measured_thicknesses) for value in local],
-                dtype=float,
+                dtype=np.float64,
             ),
             axis=0,
         )
         growth = (
             measured[1:] / measured[:-1]
             if measured.size > 1
-            else np.empty((0,), dtype=float)
+            else np.empty((0,), dtype=np.float64)
         )
         achieved.extend(
             (
@@ -2571,7 +2569,7 @@ def _audit_layers(sweep, rows, node_tags, points, /) -> _LayerAudit:
         )
     if len(controls) == 1:
         control = controls[0]
-        measured = np.asarray(evaluations[0][0].measured_thicknesses, dtype=float)
+        measured = np.asarray(evaluations[0][0].measured_thicknesses, dtype=np.float64)
         achieved.extend(
             (
                 ("layer_count", float(measured.size)),
@@ -2732,12 +2730,12 @@ def _apply_uniform_size_fields(
         solid_ids = np.arange(source.topology.num_solids, dtype=np.int64)
         resolved, _ = resolve_size_controls(
             controls,
-            np.zeros((solid_ids.size, 1), dtype=float),
+            np.zeros((solid_ids.size, 1), dtype=np.float64),
             solid_ids,
             SizeFieldDomain.EUCLIDEAN_VOLUME,
             combination=specification.size_combination,
         )
-        values = np.asarray(resolved.values, dtype=float)
+        values = np.asarray(resolved.values, dtype=np.float64)
         groups = tuple(
             (
                 float(value),
@@ -2808,7 +2806,7 @@ def _boundary_association(
     tolerance_factor: float,
     /,
 ) -> tuple[GeometryAssociation, tuple[MeshZone, ...], MeshAttribute]:
-    points = np.asarray(boundary.coordinates, dtype=float)
+    points = np.asarray(boundary.coordinates, dtype=np.float64)
     centroids = np.concatenate(
         [
             np.mean(points[np.asarray(block.vertices, dtype=np.int32)], axis=1)
@@ -2823,10 +2821,10 @@ def _boundary_association(
     query = query_mesh.query_index().query(jnp.asarray(centroids))
     triangle_ids = np.asarray(query.face_index, dtype=np.int32)
     source_faces = np.asarray(source.triangle_face_ids, dtype=np.int32)[triangle_ids]
-    residuals = np.asarray(query.distance, dtype=float)
+    residuals = np.asarray(query.distance, dtype=np.float64)
     tolerance = max(
         source.report.linear_deflection * float(tolerance_factor),
-        256.0 * np.finfo(float).eps,
+        256.0 * np.finfo(np.float64).eps,
     )
     resolved = residuals <= tolerance
     target_set = boundary.entity_set(2)
@@ -2845,9 +2843,7 @@ def _boundary_association(
         exact=False,
     )
     if not association.complete:
-        failed = tuple(
-            int(value) for value in np.asarray(target_set.entity_ids)[~resolved]
-        )
+        failed = tuple(np.asarray(target_set.entity_ids)[~resolved])
         raise MeshingFailure(
             MeshingFailureCategory.ASSOCIATION_FAILED,
             "Generated boundary faces could not be uniquely matched within tolerance.",
@@ -2933,7 +2929,7 @@ def _polygon_edge_incidents(
 ) -> tuple[tuple[int, ...], ...]:
     incidents = [[] for _ in np.asarray(connectivity.edges)]
     cell_edges = np.asarray(connectivity.cell_edges, dtype=np.int32)
-    valid = np.asarray(connectivity.cell_edge_valid, dtype=bool)
+    valid = np.asarray(connectivity.cell_edge_valid, dtype=np.bool_)
     for cell_index, row in enumerate(cell_edges):
         for edge_index in row[valid[cell_index]]:
             incidents[int(edge_index)].append(cell_index)
@@ -3064,7 +3060,7 @@ def _planar_surface_evidence(
                 "Canonical planar edge adjacency differs from source BRep incidence.",
                 stage=MeshingStageKind.CANONICALIZATION.value,
             )
-    expected_boundary = np.zeros((edge_rows.shape[0],), dtype=bool)
+    expected_boundary = np.zeros((edge_rows.shape[0],), dtype=np.bool_)
     expected_boundary[mapped] = np.asarray(
         [
             len(source.topology.edge_faces[int(mesh_edge_source[index])]) == 1
@@ -3072,7 +3068,7 @@ def _planar_surface_evidence(
         ]
     )
     if not np.array_equal(
-        np.asarray(connectivity.boundary_edges, dtype=bool), expected_boundary
+        np.asarray(connectivity.boundary_edges, dtype=np.bool_), expected_boundary
     ):
         raise MeshingFailure(
             MeshingFailureCategory.CONVERSION_FAILED,
@@ -3089,7 +3085,7 @@ def _planar_surface_evidence(
         tuple(
             f"{source.report.source_revision}:face:{int(face)}" for face in cell_face_ids
         ),
-        np.zeros(cell_ids.shape, dtype=float),
+        np.zeros(cell_ids.shape, dtype=np.float64),
         exact=True,
     )
     edge_entity_set = mesh.entity_set(1)
@@ -3104,7 +3100,7 @@ def _planar_surface_evidence(
             f"{source.report.source_revision}:edge:{int(mesh_edge_source[index])}"
             for index in mapped
         ),
-        np.zeros(mapped.shape, dtype=float),
+        np.zeros(mapped.shape, dtype=np.float64),
         exact=True,
     )
 
@@ -3311,9 +3307,7 @@ def _connectivity_face_rows(
         return tuple(np.asarray(connectivity.faces, dtype=np.int32))
     offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int32)
     values = np.asarray(connectivity.face_vertex_values, dtype=np.int32)
-    return tuple(
-        values[int(start) : int(stop)] for start, stop in pairwise(offsets)
-    )
+    return tuple(values[int(start) : int(stop)] for start, stop in pairwise(offsets))
 
 
 def _connectivity_face_incidents(
@@ -3321,10 +3315,10 @@ def _connectivity_face_incidents(
 ) -> tuple[tuple[int, ...], ...]:
     if isinstance(connectivity, PolyhedralConnectivity):
         owner = np.asarray(connectivity.face_owner, dtype=np.int32)
-        neighbour = np.asarray(connectivity.face_neighbour, dtype=np.int32)
+        neighbor = np.asarray(connectivity.face_neighbor, dtype=np.int32)
         return tuple(
             (int(first),) if int(second) < 0 else (int(first), int(second))
-            for first, second in zip(owner, neighbour, strict=True)
+            for first, second in zip(owner, neighbor, strict=True)
         )
     incidents = [[] for _ in np.asarray(connectivity.faces)]
     for cell_index, face_row in enumerate(
@@ -3342,9 +3336,7 @@ def _connectivity_face_edge_rows(
         return tuple(np.asarray(connectivity.face_edges, dtype=np.int32))
     offsets = np.asarray(connectivity.face_edge_offsets, dtype=np.int32)
     values = np.asarray(connectivity.face_edge_values, dtype=np.int32)
-    return tuple(
-        values[int(start) : int(stop)] for start, stop in pairwise(offsets)
-    )
+    return tuple(values[int(start) : int(stop)] for start, stop in pairwise(offsets))
 
 
 def _semantic_surface_evidence(
@@ -3404,7 +3396,7 @@ def _semantic_surface_evidence(
             face_source[face_index] = source_face
 
     incidents = _connectivity_face_incidents(connectivity)
-    boundary_mask = np.asarray(connectivity.boundary_faces, dtype=bool)
+    boundary_mask = np.asarray(connectivity.boundary_faces, dtype=np.bool_)
     mapped = np.flatnonzero(face_source >= 0)
     face_ids = np.asarray(mesh.entity_set(2).entity_ids, dtype=np.int64)
     for face_index in mapped:
@@ -3484,7 +3476,7 @@ def _semantic_surface_evidence(
             f"{source.report.source_revision}:face:{int(face_source[index])}"
             for index in mapped
         ),
-        np.zeros((mapped.size,), dtype=float),
+        np.zeros((mapped.size,), dtype=np.float64),
         exact=True,
     )
     zones = []
@@ -3688,9 +3680,7 @@ def _region_evidence(
         requested_source_faces = {
             int(value) for value in np.asarray(control.scope.entity_ids)
         }
-        mapped_source_faces = {
-            int(value) for value in face_source[selected]
-        }
+        mapped_source_faces = {int(value) for value in face_source[selected]}
         if selected.size and mapped_source_faces != requested_source_faces:
             raise MeshingFailure(
                 MeshingFailureCategory.COMPLIANCE_FAILED,
@@ -3776,7 +3766,7 @@ def _edge_size_evidence(
             stage=MeshingStageKind.SPECIFICATION_COMPLIANCE.value,
         )
     vertex_minimum = np.full((points.shape[0],), np.inf)
-    vertex_maximum = np.zeros((points.shape[0],), dtype=float)
+    vertex_maximum = np.zeros((points.shape[0],), dtype=np.float64)
     np.minimum.at(vertex_minimum, unique_edges[:, 0], lengths)
     np.minimum.at(vertex_minimum, unique_edges[:, 1], lengths)
     np.maximum.at(vertex_maximum, unique_edges[:, 0], lengths)
@@ -3835,7 +3825,7 @@ def _semantic_size_compliance(
     cell_solid_ids: np.ndarray,
     /,
 ) -> tuple[list[str], tuple[tuple[str, float], ...], tuple[tuple[str, float], ...]]:
-    points = np.asarray(mesh.coordinates, dtype=float)
+    points = np.asarray(mesh.coordinates, dtype=np.float64)
     issues = []
     requested = []
     achieved = []
@@ -4001,7 +3991,7 @@ def _execute_gmsh(gmsh, plan: GmshMeshingPlan, version: str, /) -> CellMeshingRe
     node_tags = np.asarray(node_tags, dtype=np.int64)
     order = np.argsort(node_tags, kind="stable")
     node_tags = node_tags[order]
-    points = np.asarray(node_coordinates, dtype=float).reshape((-1, 3))[order]
+    points = np.asarray(node_coordinates, dtype=np.float64).reshape((-1, 3))[order]
     if points.shape[0] > limits.maximum_vertices:
         raise MeshingFailure(
             MeshingFailureCategory.RESOURCE_EXHAUSTED,
@@ -4049,7 +4039,7 @@ def _execute_gmsh(gmsh, plan: GmshMeshingPlan, version: str, /) -> CellMeshingRe
             float(np.max(np.abs(points), initial=0.0)),
             float(np.max(np.abs(np.asarray(embedding.origin)), initial=0.0)),
         )
-        plane_tolerance = 8192.0 * np.finfo(float).eps * plane_scale
+        plane_tolerance = 8192.0 * np.finfo(np.float64).eps * plane_scale
         if np.max(residuals, initial=0.0) > plane_tolerance:
             raise MeshingFailure(
                 MeshingFailureCategory.ASSOCIATION_FAILED,
@@ -4194,7 +4184,7 @@ def _execute_gmsh(gmsh, plan: GmshMeshingPlan, version: str, /) -> CellMeshingRe
             tuple(
                 f"{report.source_revision}:solid:{int(owner)}" for owner in cell_solid_ids
             ),
-            np.zeros((cell_solid_ids.size,), dtype=float),
+            np.zeros((cell_solid_ids.size,), dtype=np.float64),
             exact=True,
         )
         zones = (*surface_evidence.zones, *region_zones)
@@ -4318,7 +4308,7 @@ def _execute_gmsh(gmsh, plan: GmshMeshingPlan, version: str, /) -> CellMeshingRe
     minimum_edge = float(np.min(edge_lengths))
     maximum_edge = float(np.max(edge_lengths))
     vertex_minimum = np.full((mesh.coordinates.shape[0],), np.inf)
-    vertex_maximum = np.zeros((mesh.coordinates.shape[0],), dtype=float)
+    vertex_maximum = np.zeros((mesh.coordinates.shape[0],), dtype=np.float64)
     np.minimum.at(vertex_minimum, connectivity_edges[:, 0], edge_lengths)
     np.minimum.at(vertex_minimum, connectivity_edges[:, 1], edge_lengths)
     np.maximum.at(vertex_maximum, connectivity_edges[:, 0], edge_lengths)
@@ -4404,7 +4394,7 @@ def _execute_gmsh(gmsh, plan: GmshMeshingPlan, version: str, /) -> CellMeshingRe
                 size_issues, local_requested, local_achieved = _edge_size_evidence(
                     control,
                     connectivity_edges,
-                    np.asarray(mesh.coordinates, dtype=float),
+                    np.asarray(mesh.coordinates, dtype=np.float64),
                     specification,
                 )
                 compliance_issues.extend(size_issues)

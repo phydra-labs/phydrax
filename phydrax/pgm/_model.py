@@ -38,7 +38,7 @@ def _real_array(name: str, value: Any, /) -> Array:
     if jnp.iscomplexobj(array):
         raise TypeError(f"{name} must be real-valued.")
     if not jnp.issubdtype(array.dtype, jnp.inexact):
-        array = array.astype(float)
+        array = array.astype("float64")
     host = np.asarray(array)
     if np.any(np.isnan(host)) or np.any(np.isposinf(host)):
         raise ValueError(f"{name} may contain finite values and -inf only.")
@@ -99,9 +99,9 @@ class DiscreteVariableGroup(StrictModule, NonTrainableState):
             raise ValueError("Variable group name must be a non-empty string.")
         raw = jnp.asarray(num_states)
         if shape is None:
-            resolved_shape = tuple(int(size) for size in raw.shape) if raw.ndim else ()
+            resolved_shape = tuple(raw.shape) if raw.ndim else ()
         else:
-            resolved_shape = tuple(int(size) for size in shape)
+            resolved_shape = tuple(shape)
             if any(size < 0 for size in resolved_shape):
                 raise ValueError("Variable group shape entries must be non-negative.")
         if raw.ndim == 0:
@@ -166,7 +166,7 @@ class VariableSelection(StrictModule, NonTrainableState):
 
     @property
     def size(self) -> int:
-        return int(self.indices.shape[0])
+        return self.indices.shape[0]
 
 
 class DenseTableFactorGroup(StrictModule):
@@ -186,10 +186,9 @@ class DenseTableFactorGroup(StrictModule):
         values = _real_array("log_potentials", log_potentials)
         if values.ndim != len(scope) + 1:
             raise ValueError(
-                "Dense log potentials need one factor axis followed by one state axis "
-                "per scope position."
+                "Dense log potentials need one factor axis followed by one state axis per scope position."
             )
-        if int(values.shape[0]) != scope[0].size:
+        if values.shape[0] != scope[0].size:
             raise ValueError(
                 "Dense log-potential factor axis must match the scope batch."
             )
@@ -219,13 +218,13 @@ class EnumeratedFactorGroup(StrictModule):
     ):
         scope = _selection_tuple(selections)
         configs = _integer_array("configurations", configurations)
-        if configs.ndim != 2 or int(configs.shape[1]) != len(scope):
+        if configs.ndim != 2 or configs.shape[1] != len(scope):
             raise ValueError("configurations must have shape (configuration, arity).")
         host_configs = np.asarray(configs)
-        if len({tuple(row) for row in host_configs.tolist()}) != int(configs.shape[0]):
+        if len({tuple(row) for row in host_configs.tolist()}) != configs.shape[0]:
             raise ValueError("Enumerated configurations must be unique.")
         values = _real_array("log_potentials", log_potentials)
-        expected = (scope[0].size, int(configs.shape[0]))
+        expected = (scope[0].size, configs.shape[0])
         if values.shape != expected:
             raise ValueError(
                 f"log_potentials must have shape {expected}; got {values.shape}."
@@ -282,7 +281,7 @@ class PottsFactorGroup(StrictModule):
         if len(scope) not in (1, 2):
             raise ValueError("Potts factors must be unary or pairwise.")
         values = _real_array("log_potentials", log_potentials)
-        if values.ndim != len(scope) + 1 or int(values.shape[0]) != scope[0].size:
+        if values.ndim != len(scope) + 1 or values.shape[0] != scope[0].size:
             raise ValueError(
                 "Potts tables need one factor axis and one state axis per variable."
             )
@@ -498,12 +497,12 @@ def _factor_parameter_signature(group: FactorGroup, /) -> tuple[tuple[int, ...],
             jnp.asarray(leaf) for leaf in jax.tree_util.tree_leaves(group.parameters)
         )
         return (
-            tuple(int(leaf.size) for leaf in leaves),
+            tuple(leaf.size for leaf in leaves),
             "pytree:" + ",".join(str(leaf.dtype) for leaf in leaves),
         )
     else:
         raise TypeError("Unsupported factor group.")
-    return tuple(int(size) for size in value.shape), str(value.dtype)
+    return tuple(value.shape), str(value.dtype)
 
 
 class VariableStateValues(StrictModule):
@@ -517,7 +516,7 @@ class VariableStateValues(StrictModule):
         if jnp.iscomplexobj(array):
             raise TypeError("variable-state values must be real-valued.")
         if not jnp.issubdtype(array.dtype, jnp.inexact):
-            array = array.astype(float)
+            array = array.astype("float64")
         if not isinstance(structure_id, str) or not structure_id:
             raise ValueError("structure_id must be non-empty.")
         self.values = array
@@ -693,7 +692,7 @@ class DiscreteFactorGraph(StrictModule):
 
     @property
     def num_variables(self) -> int:
-        return int(self.cardinalities.shape[0])
+        return self.cardinalities.shape[0]
 
     @property
     def num_factors(self) -> int:
@@ -716,7 +715,7 @@ class DiscreteFactorGraph(StrictModule):
 
 def _empty_scope_cardinality(group: FactorGroup, position: int, /) -> int:
     if isinstance(group, (DenseTableFactorGroup, PottsFactorGroup)):
-        return int(group.log_potentials.shape[position + 1])
+        return group.log_potentials.shape[position + 1]
     if isinstance(group, EnumeratedFactorGroup):
         configs = np.asarray(group.configurations)
         return int(configs[:, position].max()) + 1 if configs.shape[0] else 1
@@ -731,7 +730,7 @@ def _empty_scope_cardinality(group: FactorGroup, position: int, /) -> int:
 
 def _validate_factor_signature(group: FactorGroup, signature: tuple[int, ...], /) -> None:
     if isinstance(group, (DenseTableFactorGroup, PottsFactorGroup)):
-        table_shape = tuple(int(size) for size in group.log_potentials.shape[1:])
+        table_shape = tuple(group.log_potentials.shape[1:])
         if table_shape != signature:
             raise ValueError(
                 f"Factor table state shape must be {signature}; got {table_shape}."
@@ -791,11 +790,11 @@ def factor_group_dense_tables(
     if isinstance(group, EnumeratedFactorGroup):
         table = jnp.full((count,) + signature, -jnp.inf, dtype=group.log_potentials.dtype)
         configurations = group.configurations
-        if int(configurations.shape[0]) == 0:
+        if configurations.shape[0] == 0:
             return table
         factor_indices = jnp.broadcast_to(
             jnp.arange(count, dtype=jnp.int32)[:, None],
-            (count, int(configurations.shape[0])),
+            (count, configurations.shape[0]),
         )
         config_indices = tuple(
             jnp.broadcast_to(configurations[:, position][None, :], factor_indices.shape)
@@ -808,13 +807,13 @@ def factor_group_dense_tables(
         spins = 2 * configurations.astype(group.weights.dtype) - 1
         values = group.weights[:, None] * jnp.prod(spins, axis=-1)[None, :]
     elif isinstance(group, LogicalFactorGroup):
-        parents = configurations[:, :-1].astype(bool)
-        child = configurations[:, -1].astype(bool)
+        parents = configurations[:, :-1].astype("bool")
+        child = configurations[:, -1].astype("bool")
         expected = (
             jnp.any(parents, axis=-1) if group.kind == "or" else jnp.all(parents, axis=-1)
         )
         values = jnp.where(expected == child, 0.0, -jnp.inf)
-        values = jnp.broadcast_to(values[None, :], (count, int(values.shape[0])))
+        values = jnp.broadcast_to(values[None, :], (count, values.shape[0]))
     elif isinstance(group, BinaryCardinalityFactorGroup):
         counts = jnp.sum(configurations, axis=-1).astype(jnp.int32)
         values = group.log_count_potentials[:, counts]
@@ -844,8 +843,8 @@ def _all_configurations(signature: tuple[int, ...], /) -> Array:
 
 def _dense_scores(tables: Array, states: Array, /) -> Array:
     leading_shape = states.shape[:-2]
-    factor_count_ = int(states.shape[-2])
-    arity = int(states.shape[-1])
+    factor_count_ = states.shape[-2]
+    arity = states.shape[-1]
     flat_states = states.reshape((-1, factor_count_, arity))
 
     def one_batch(batch_states):
@@ -880,15 +879,15 @@ def factor_group_scores(
         spins = 2 * scope_states.astype(group.weights.dtype) - 1
         return jnp.prod(spins, axis=-1) * group.weights
     if isinstance(group, LogicalFactorGroup):
-        parents = scope_states[..., :-1].astype(bool)
-        child = scope_states[..., -1].astype(bool)
+        parents = scope_states[..., :-1].astype("bool")
+        child = scope_states[..., -1].astype("bool")
         expected = (
             jnp.any(parents, axis=-1) if group.kind == "or" else jnp.all(parents, axis=-1)
         )
         return jnp.where(expected == child, 0.0, -jnp.inf)
     if isinstance(group, BinaryCardinalityFactorGroup):
         counts = jnp.sum(scope_states, axis=-1).astype(jnp.int32)
-        factor_count_ = int(counts.shape[-1])
+        factor_count_ = counts.shape[-1]
         flat_counts = counts.reshape((-1, factor_count_))
 
         def one_batch(batch_counts):
@@ -912,12 +911,12 @@ def factor_graph_contains(
     if not isinstance(graph, DiscreteFactorGraph):
         raise TypeError("graph must be a DiscreteFactorGraph.")
     states = jnp.asarray(assignments)
-    if states.ndim < 1 or int(states.shape[-1]) != graph.num_variables:
+    if states.ndim < 1 or states.shape[-1] != graph.num_variables:
         raise ValueError(
             f"assignments must end with variable axis {graph.num_variables}."
         )
     if not jnp.issubdtype(states.dtype, jnp.integer):
-        return jnp.zeros(states.shape[:-1], dtype=bool)
+        return jnp.zeros(states.shape[:-1], dtype=jnp.bool_)
     return jnp.all((states >= 0) & (states < graph.cardinalities), axis=-1)
 
 
@@ -930,7 +929,7 @@ def factor_graph_log_score(
     if not isinstance(graph, DiscreteFactorGraph):
         raise TypeError("graph must be a DiscreteFactorGraph.")
     states = jnp.asarray(assignments)
-    if states.ndim < 1 or int(states.shape[-1]) != graph.num_variables:
+    if states.ndim < 1 or states.shape[-1] != graph.num_variables:
         raise ValueError(
             f"assignments must end with variable axis {graph.num_variables}."
         )
@@ -961,7 +960,7 @@ def _graph_score_dtype(graph: DiscreteFactorGraph, /):
                 jnp.asarray(leaf).dtype
                 for leaf in jax.tree_util.tree_leaves(group.parameters)
             )
-    return jnp.result_type(*dtypes) if dtypes else jnp.dtype(float)
+    return jnp.result_type(*dtypes) if dtypes else jnp.dtype(jnp.float64)
 
 
 def pack_assignments(
@@ -974,7 +973,7 @@ def pack_assignments(
         raise TypeError("graph must be a DiscreteFactorGraph.")
     if not isinstance(values, Mapping):
         array = _integer_array("assignments", values)
-        if array.ndim < 1 or int(array.shape[-1]) != graph.num_variables:
+        if array.ndim < 1 or array.shape[-1] != graph.num_variables:
             raise ValueError("Packed assignments have the wrong final variable axis.")
         return array
     parts: list[Array] = []
@@ -1027,7 +1026,7 @@ def pack_evidence(
         return VariableStateValues(packed, structure_id=graph.structure_id)
     if not isinstance(values, Mapping):
         packed = _real_array("evidence", values)
-        if packed.ndim < 1 or int(packed.shape[-1]) != graph.num_variable_states:
+        if packed.ndim < 1 or packed.shape[-1] != graph.num_variable_states:
             raise ValueError("Packed evidence has the wrong final variable-state axis.")
         return VariableStateValues(packed, structure_id=graph.structure_id)
 
@@ -1049,10 +1048,9 @@ def pack_evidence(
             flat = array.reshape(current_leading + (int(cards.sum()),))
         else:
             state_count = int(cards.sum())
-            if array.ndim < 1 or int(array.shape[-1]) != state_count:
+            if array.ndim < 1 or array.shape[-1] != state_count:
                 raise ValueError(
-                    f"Heterogeneous evidence group {group.name!r} must end with "
-                    f"flat state axis {state_count}."
+                    f"Heterogeneous evidence group {group.name!r} must end with flat state axis {state_count}."
                 )
             current_leading = tuple(array.shape[:-1])
             flat = array
@@ -1061,7 +1059,9 @@ def pack_evidence(
         elif leading_shape != current_leading:
             raise ValueError("All evidence groups must share leading batch axes.")
         parts.append(flat)
-    packed = jnp.concatenate(parts, axis=-1) if parts else jnp.zeros((0,), dtype=float)
+    packed = (
+        jnp.concatenate(parts, axis=-1) if parts else jnp.zeros((0,), dtype=jnp.float64)
+    )
     return VariableStateValues(packed, structure_id=graph.structure_id)
 
 

@@ -56,7 +56,7 @@ class ScalarTraceConvention3D(StrictModule, NonTrainableState):
         self.hypersingular_definition = "W=-gamma1(D)"
         self.convention_id = canonical_fingerprint(
             {
-                "kind": "closed-scalar-trace-convention-3d-v1",
+                "kind": "closed-scalar-trace-convention-3d",
                 "normal": self.normal_orientation,
                 "gamma0_D": {"interior": -0.5, "exterior": 0.5},
                 "gamma1_S": {"interior": 0.5, "exterior": -0.5},

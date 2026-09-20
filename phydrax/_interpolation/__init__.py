@@ -26,11 +26,7 @@ from ._bspline_projection import (
     project_bspline_coefficients,
     ProjectionMethod,
 )
-from ._fourier import (
-    FOURIER_CAPABILITIES,
-    fourier_interpolate,
-    FourierEvaluationMethod,
-)
+from ._fourier import FOURIER_CAPABILITIES, fourier_interpolate
 from ._inverse_distance import (
     INVERSE_DISTANCE_CAPABILITIES,
     inverse_distance_stencil,
@@ -76,7 +72,6 @@ __all__ = [
     "NEAREST_CAPABILITIES",
     "INVERSE_DISTANCE_CAPABILITIES",
     "FOURIER_CAPABILITIES",
-    "FourierEvaluationMethod",
     "RECTILINEAR_CAPABILITIES",
     "BSplineGrid",
     "BSplineJetStencil",

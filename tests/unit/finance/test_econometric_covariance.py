@@ -22,7 +22,7 @@ def _factor_returns() -> ReturnResult:
     intervals = np.arange(600, dtype=np.int64)
     return ReturnResult(
         values=jnp.asarray(values.T),
-        valid_mask=jnp.ones((4, 600), dtype=bool),
+        valid_mask=jnp.ones((4, 600), dtype="bool"),
         status=jnp.zeros((4, 600), dtype=jnp.int32),
         interval_start_ns=jnp.broadcast_to(jnp.asarray(intervals), (4, 600)),
         interval_end_ns=jnp.broadcast_to(jnp.asarray(intervals + 1), (4, 600)),

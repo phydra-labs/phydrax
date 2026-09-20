@@ -1,5 +1,5 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
-"""Apply conservative grey and polarized radiation feedback to GRMHD matter."""
+"""Apply conservative gray and polarized radiation feedback to GRMHD matter."""
 
 from __future__ import annotations
 
@@ -26,8 +26,8 @@ def main() -> None:
         identity,
         jnp.ones(shape),
         jnp.zeros(shape + (3, 3)),
-        jnp.ones(shape, dtype=bool),
-        jnp.ones(shape, dtype=bool),
+        jnp.ones(shape, dtype="bool"),
+        jnp.ones(shape, dtype="bool"),
         snapshot_token=jnp.asarray(0, dtype=jnp.int32),
         chart_id="cartesian",
         convention_id=convention.convention_id,
@@ -44,10 +44,10 @@ def main() -> None:
         recovery_iterations=32,
         enthalpy_iterations=32,
     )
-    radiation = phx.equations.GRGreyM1RadiationSystem(scale, convention)
-    interaction = phx.equations.GRGreyRadiationInteractionPlan(
+    radiation = phx.equations.GRGrayM1RadiationSystem(scale, convention)
+    interaction = phx.equations.GRGrayRadiationInteractionPlan(
         radiation,
-        phx.equations.ConstantGRGreyOpacityPlan(
+        phx.equations.ConstantGRGrayOpacityPlan(
             planck_absorption=0.5,
             planck_emission=0.0,
             scattering=0.1,
@@ -69,7 +69,7 @@ def main() -> None:
         )
     )(material_state, radiation_state)
     if not bool(coupled.accepted):
-        raise RuntimeError("The conservative grey source solve was not accepted.")
+        raise RuntimeError("The conservative gray source solve was not accepted.")
 
     polarized = phx.solver.GRPolarizedRadiationFeedbackPlan(scale, convention)
     stokes = jnp.broadcast_to(jnp.asarray(((1.0, 0.2, 0.0, 0.0),)), shape + (1, 4))
@@ -95,10 +95,10 @@ def main() -> None:
         raise RuntimeError("The polarized feedback step was not accepted.")
 
     print(
-        "grey_source_energy_defect", float(jnp.max(jnp.abs(coupled.ledger.energy_defect)))
+        "gray_source_energy_defect", float(jnp.max(jnp.abs(coupled.ledger.energy_defect)))
     )
     print(
-        "grey_source_momentum_defect",
+        "gray_source_momentum_defect",
         float(jnp.max(jnp.abs(coupled.ledger.momentum_defect))),
     )
     print(

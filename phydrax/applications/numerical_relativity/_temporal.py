@@ -68,12 +68,10 @@ def _stage_snapshot_token(
         if runtime.integrator == "ssprk33"
         else _SSPRK54_RHS_TIME_FRACTIONS
     )
-    normalized = (
-        stage_time - state.time
-    ) / jnp.asarray(runtime.time_step, dtype=state.time.dtype)
-    distances = jnp.abs(
-        normalized - jnp.asarray(fractions, dtype=state.time.dtype)
+    normalized = (stage_time - state.time) / jnp.asarray(
+        runtime.time_step, dtype=state.time.dtype
     )
+    distances = jnp.abs(normalized - jnp.asarray(fractions, dtype=state.time.dtype))
     stage_slot = jnp.argmin(distances).astype(jnp.int32) + 1
     return z4c_snapshot_token(state.step_index, stage_slot)
 
@@ -181,9 +179,7 @@ class FixedGridZ4cRuntime(StrictModule, NonTrainableState):
             raise ValueError("Periodic grids require PeriodicBoundary and conversely.")
         courant = step / min(grid.spacing)
         if courant > maximum_courant:
-            raise ValueError(
-                "time_step exceeds the declared fixed-grid Courant limit."
-            )
+            raise ValueError("time_step exceeds the declared fixed-grid Courant limit.")
         self.system = system
         self.grid = grid
         self.derivatives = derivatives
@@ -218,9 +214,7 @@ class FixedGridZ4cRuntime(StrictModule, NonTrainableState):
         time: float | None = None,
         step_index: int = 0,
     ) -> Z4cRuntimeState:
-        return initialize_z4c_runtime_state(
-            self, state, time=time, step_index=step_index
-        )
+        return initialize_z4c_runtime_state(self, state, time=time, step_index=step_index)
 
     def evaluate(
         self,
@@ -261,9 +255,7 @@ def initialize_z4c_runtime_state(
         raise ValueError("step_index must be non-negative.")
     expected_time = runtime.start_time + index * runtime.time_step
     time_ = expected_time if time is None else float(time)
-    tolerance = 64.0 * jnp.finfo(state.values.dtype).eps * max(
-        abs(expected_time), 1.0
-    )
+    tolerance = 64.0 * jnp.finfo(state.values.dtype).eps * max(abs(expected_time), 1.0)
     if not isfinite(time_) or abs(time_ - expected_time) > tolerance:
         raise ValueError("time must match start_time + step_index*time_step.")
     bounded = runtime.boundary.apply_state(
@@ -282,14 +274,12 @@ def initialize_z4c_runtime_state(
     )
 
 
-def _time_consistent(
-    runtime: FixedGridZ4cRuntime, state: Z4cRuntimeState, /
-) -> Array:
-    expected = runtime.start_time + state.step_index.astype(state.time.dtype) * runtime.time_step
+def _time_consistent(runtime: FixedGridZ4cRuntime, state: Z4cRuntimeState, /) -> Array:
+    expected = (
+        runtime.start_time + state.step_index.astype(state.time.dtype) * runtime.time_step
+    )
     tolerance = (
-        64.0
-        * jnp.finfo(state.time.dtype).eps
-        * jnp.maximum(jnp.abs(expected), 1.0)
+        64.0 * jnp.finfo(state.time.dtype).eps * jnp.maximum(jnp.abs(expected), 1.0)
     )
     return jnp.isfinite(state.time) & (jnp.abs(state.time - expected) <= tolerance)
 
@@ -311,9 +301,7 @@ def evaluate_z4c_step(
         raise ValueError("state does not belong to this runtime.")
     if state.state.grid_id != runtime.grid.grid_id:
         raise ValueError("runtime state has an incompatible grid identity.")
-    if stress_energy_provider is not None and not callable(
-        stress_energy_provider
-    ):
+    if stress_energy_provider is not None and not callable(stress_energy_provider):
         raise TypeError("stress_energy_provider must be callable or None.")
     time_consistent = _time_consistent(runtime, state)
     stage_finite: list[Array] = []
@@ -331,9 +319,7 @@ def evaluate_z4c_step(
             bounded.state,
             snapshot_token=snapshot_token,
         )
-        stress_energy = _stage_stress_energy(
-            stress_energy_provider, time, geometry
-        )
+        stress_energy = _stage_stress_energy(stress_energy_provider, time, geometry)
         evaluation = evaluate_z4c_rhs(
             runtime.system,
             runtime.grid,
@@ -406,9 +392,7 @@ def evaluate_z4c_step(
     )
     all_stage_finite = jnp.all(jnp.stack(tuple(stage_finite)))
     all_stage_source_valid = jnp.all(jnp.stack(tuple(stage_source_valid)))
-    all_stage_boundary_valid = jnp.all(
-        jnp.stack(tuple(stage_boundary_valid))
-    )
+    all_stage_boundary_valid = jnp.all(jnp.stack(tuple(stage_boundary_valid)))
     finite = (
         jnp.all(jnp.isfinite(step.state))
         & all_stage_finite
@@ -450,9 +434,7 @@ def evaluate_z4c_step(
     status = jnp.where(
         physically_valid,
         status,
-        jnp.bitwise_or(
-            status, int(NumericalRelativityStatus.SINGULAR_CONFORMAL_METRIC)
-        ),
+        jnp.bitwise_or(status, int(NumericalRelativityStatus.SINGULAR_CONFORMAL_METRIC)),
     )
     status = jnp.where(
         final_evaluation.constraints.within_tolerance,
@@ -492,9 +474,7 @@ def evaluate_z4c_step(
         jnp.bitwise_or(status, int(NumericalRelativityStatus.SOURCE_INVALID)),
     )
     successful = (
-        (status == int(NumericalRelativityStatus.SUCCESS))
-        & converged
-        & qualified
+        (status == int(NumericalRelativityStatus.SUCCESS)) & converged & qualified
     )
     status = jnp.where(
         successful,
@@ -539,7 +519,7 @@ def accept_z4c_step(
         raise TypeError("runtime must be a FixedGridZ4cRuntime.")
     if not isinstance(result, Z4cStepResult) or result.runtime_id != runtime.runtime_id:
         raise ValueError("result does not belong to this runtime.")
-    mask = jnp.asarray(accept, dtype=bool)
+    mask = jnp.asarray(accept, dtype=jnp.bool_)
     if mask.shape != ():
         raise ValueError("accept must be scalar.")
     commit = mask & result.successful

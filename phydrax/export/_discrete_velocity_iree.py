@@ -206,7 +206,7 @@ def _accepted_outputs(
     /,
 ) -> tuple[Array, ...]:
     dtype = accepted.particle_populations.dtype
-    success = jnp.asarray(successful, dtype=bool)
+    success = jnp.asarray(successful, dtype=jnp.bool_)
     return (
         accepted.particle_populations,
         accepted.total_energy_populations,
@@ -445,15 +445,15 @@ def prepare_discrete_velocity_iree_contract(
     if len(set(input_names)) != len(input_names):
         raise ValueError("D2V IREE input names must be unique.")
 
-    input_shapes = tuple(tuple(int(size) for size in value.shape) for value in inputs)
+    input_shapes = tuple(tuple(value.shape) for value in inputs)
     input_dtypes = tuple(np.dtype(value.dtype).str for value in inputs)
     scalar = ()
     output_shapes = (population_shape, population_shape, *(scalar for _ in range(9)))
     output_dtypes = (
         population_dtype,
         population_dtype,
-        np.dtype(bool).str,
-        np.dtype(bool).str,
+        np.dtype(np.bool_).str,
+        np.dtype(np.bool_).str,
         np.dtype(np.int32).str,
         np.dtype(np.int32).str,
         *(population_dtype for _ in range(5)),

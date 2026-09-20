@@ -154,12 +154,12 @@ class MechanicsCaseFunctional(StrictModule, NonTrainableState):
         if jnp.iscomplexobj(value):
             raise TypeError("Mechanics case functionals must return real scalars.")
         if not jnp.issubdtype(value.dtype, jnp.inexact):
-            value = value.astype(float)
+            value = value.astype("float64")
         valid = jnp.asarray(True)
         if self.validity is not None:
             valid = jnp.asarray(
                 self.validity(fields, prediction, batch, case),
-                dtype=bool,
+                dtype=jnp.bool_,
             )
             if valid.shape != ():
                 raise ValueError(
@@ -362,7 +362,7 @@ class _MechanicsOperatorProblem:
             {name: jnp.stack(values) for name, values in term_values.items()}
         )
         totals = jnp.sum(jnp.stack(tuple(stacked.values()), axis=0), axis=0)
-        valid = jnp.ones(totals.shape, dtype=bool)
+        valid = jnp.ones(totals.shape, dtype=jnp.bool_)
         return MechanicsPerCaseResult(
             values=totals,
             term_values=stacked,
@@ -750,8 +750,7 @@ def _validate_parameter_batch(
     expected_shape = (case_count,)
     if batch.case_axes != expected_axes or batch.case_shape != expected_shape:
         raise ValueError(
-            "Mechanics losses require the complete declared support on one "
-            "'parameter' case axis."
+            "Mechanics losses require the complete declared support on one 'parameter' case axis."
         )
     if prediction.case_axes != expected_axes or prediction.case_shape != expected_shape:
         raise ValueError(

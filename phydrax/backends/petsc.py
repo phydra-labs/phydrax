@@ -384,7 +384,7 @@ class PETScLinearDiagnostics(StrictModule):
             jnp.asarray(iterations, dtype=jnp.int32),
             jnp.asarray(convergence_reason, dtype=jnp.int32),
         )
-        self.converged = jnp.asarray(converged, dtype=bool)
+        self.converged = jnp.asarray(converged, dtype=jnp.bool_)
 
 
 class PETScNonlinearDiagnostics(StrictModule):
@@ -417,7 +417,7 @@ class PETScNonlinearDiagnostics(StrictModule):
         )
         self.convergence_reason, self.converged = (
             jnp.asarray(convergence_reason, dtype=jnp.int32),
-            jnp.asarray(converged, dtype=bool),
+            jnp.asarray(converged, dtype=jnp.bool_),
         )
 
 
@@ -652,7 +652,7 @@ class PETScBackend(AbstractExternalBackend):
                 ),
             ),
         )
-        coordinate_bytes = int(coordinates.size * coordinates.dtype.itemsize)
+        coordinate_bytes = coordinates.size * coordinates.dtype.itemsize
         solve_transfer = BackendTransferEvidence(
             host_to_device_bytes=coordinate_bytes,
             device_to_host_bytes=coordinate_bytes,
@@ -835,7 +835,7 @@ class PETScBackend(AbstractExternalBackend):
                 int(NonlinearStatus.NONFINITE_EVALUATION),
             ),
         )
-        coordinate_bytes = int(coordinates.size * coordinates.dtype.itemsize)
+        coordinate_bytes = coordinates.size * coordinates.dtype.itemsize
         callback_bytes = function_evaluations * coordinate_bytes
         transfer = BackendTransferEvidence(
             host_to_device_bytes=coordinate_bytes + callback_bytes,
@@ -939,13 +939,13 @@ def _canonical_storage(
 
 
 def _pattern(storage: SparseStorage, /) -> tuple[tuple[int, ...], tuple[int, ...]]:
-    return tuple(
-        int(value) for value in np.asarray(jax.device_get(storage.indptr))
-    ), tuple(int(value) for value in np.asarray(jax.device_get(storage.indices)))
+    return tuple(np.asarray(jax.device_get(storage.indptr))), tuple(
+        np.asarray(jax.device_get(storage.indices))
+    )
 
 
 def _storage_bytes(storage: SparseStorage, /) -> int:
-    return int(storage.values.nbytes + storage.indices.nbytes + storage.indptr.nbytes)
+    return storage.values.nbytes + storage.indices.nbytes + storage.indptr.nbytes
 
 
 def _host_csr(storage: SparseStorage, petsc: Any, /):
@@ -1146,7 +1146,7 @@ def _pack_vectors(
             raise TypeError(
                 "RHS leaf event shapes and dtypes must match the target space."
             )
-        trailing = tuple(int(size) for size in array.shape[event_rank:])
+        trailing = tuple(array.shape[event_rank:])
         if rhs_shape is None:
             rhs_shape = trailing
         elif trailing != rhs_shape:

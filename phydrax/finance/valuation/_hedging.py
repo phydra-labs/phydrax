@@ -67,7 +67,7 @@ def evaluate_hedge_replay(
     """Replay a predictable hedge; row ``i`` units are installed at row ``i`` price."""
 
     times_, spots, derivatives, units = tuple(
-        jnp.asarray(value, dtype=float)
+        jnp.asarray(value, dtype=jnp.float64)
         for value in (times, underlying_values, derivative_values, hedge_units)
     )
     if (
@@ -80,8 +80,8 @@ def evaluate_hedge_replay(
         raise ValueError(
             "hedge replay arrays must be aligned vectors with at least two nodes."
         )
-    rate = jnp.asarray(financing_rate, dtype=float)
-    costs_rate = jnp.asarray(transaction_cost_rate, dtype=float)
+    rate = jnp.asarray(financing_rate, dtype=jnp.float64)
+    costs_rate = jnp.asarray(transaction_cost_rate, dtype=jnp.float64)
     if rate.shape not in ((), (times_.size - 1,)) or costs_rate.shape not in (
         (),
         times_.shape,
@@ -113,7 +113,7 @@ def evaluate_hedge_replay(
         raise TypeError("evidence_binding must be FinanceEvidenceBinding or None.")
     if pricing_law is not None and not isinstance(pricing_law, PricingLaw):
         raise TypeError("pricing_law must be PricingLaw or None.")
-    tolerance_ = jnp.asarray(tolerance, dtype=float)
+    tolerance_ = jnp.asarray(tolerance, dtype=jnp.float64)
     tolerance_ = eqx.error_if(
         tolerance_,
         ~jnp.isfinite(tolerance_) | (tolerance_ < 0.0),
@@ -123,7 +123,7 @@ def evaluate_hedge_replay(
     cash0 = (
         derivatives[0] - units[0] * spots[0] - initial_trade_cost
         if initial_cash is None
-        else jnp.asarray(initial_cash, dtype=float)
+        else jnp.asarray(initial_cash, dtype=jnp.float64)
     )
     cash0 = eqx.error_if(cash0, ~jnp.isfinite(cash0), "initial cash must be finite.")
 

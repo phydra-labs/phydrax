@@ -154,14 +154,14 @@ class DiffraxCollocationQuadraturePlan(StrictModule, NonTrainableState):
         if not jnp.issubdtype(nodes_.dtype, jnp.floating):
             raise TypeError("Diffrax collocation nodes must be real floating values.")
         active_ = (
-            jnp.ones(nodes_.shape, dtype=bool)
+            jnp.ones(nodes_.shape, dtype=jnp.bool_)
             if active is None
-            else jnp.asarray(active, dtype=bool)
+            else jnp.asarray(active, dtype=jnp.bool_)
         )
         if active_.shape != nodes_.shape:
             raise ValueError("active must match collocation capacity.")
-        capacity = int(nodes_.size) if max_collocation is None else int(max_collocation)
-        if capacity != int(nodes_.size):
+        capacity = nodes_.size if max_collocation is None else int(max_collocation)
+        if capacity != nodes_.size:
             raise ValueError("nodes must realize max_collocation capacity.")
         active_host = np.asarray(active_)
         if not np.any(active_host):
@@ -173,9 +173,11 @@ class DiffraxCollocationQuadraturePlan(StrictModule, NonTrainableState):
         if not solver_id:
             raise ValueError("solver_id must be nonempty.")
         self.nodes = nodes_
-        self.weights = weights_.astype(jnp.result_type(weights_, float))
+        self.weights = weights_.astype(jnp.result_type(weights_, jnp.float64))
         self.active = active_
-        self.solver_successful = jnp.asarray(solver_successful, dtype=bool).reshape(())
+        self.solver_successful = jnp.asarray(solver_successful, dtype=jnp.bool_).reshape(
+            ()
+        )
         self.solver_id = str(solver_id)
         self.max_collocation = capacity
         self.throw = bool(throw)
@@ -217,8 +219,7 @@ class BreakpointDiscoveryPlan(StrictModule):
         rounds = int(refinement_rounds)
         if pilots < 5 or candidates < 1 or rounds < 0:
             raise ValueError(
-                "Breakpoint discovery requires at least five pilots, one candidate, "
-                "and nonnegative refinement rounds."
+                "Breakpoint discovery requires at least five pilots, one candidate, and nonnegative refinement rounds."
             )
         values = (
             float(defect_threshold),
@@ -232,8 +233,7 @@ class BreakpointDiscoveryPlan(StrictModule):
             or values[2] < 0.0
         ):
             raise ValueError(
-                "Discovery thresholds must be finite and positive, with "
-                "nonnegative minimum_separation."
+                "Discovery thresholds must be finite and positive, with nonnegative minimum_separation."
             )
         self.pilot_count = pilots
         self.max_candidates = candidates
@@ -391,8 +391,7 @@ def _normalize_cubature_breakpoints(
             points.append(point)
         if any(right <= left for left, right in zip(points, points[1:])):
             raise ValueError(
-                f"Adaptive cubature breakpoints on axis {axis} must be strictly "
-                "increasing and unique."
+                f"Adaptive cubature breakpoints on axis {axis} must be strictly increasing and unique."
             )
         normalized.append(tuple(points))
     return tuple(normalized)
@@ -429,8 +428,7 @@ class AdaptiveCubaturePlan(StrictModule):
     ):
         if not isinstance(rule, (GenzMalikRule, TensorProductCubatureRule)):
             raise TypeError(
-                "Adaptive cubature rule must be GenzMalikRule or "
-                "TensorProductCubatureRule."
+                "Adaptive cubature rule must be GenzMalikRule or TensorProductCubatureRule."
             )
         normalized_breakpoints = _normalize_cubature_breakpoints(
             rule.dimension, breakpoints
@@ -445,8 +443,7 @@ class AdaptiveCubaturePlan(StrictModule):
         )
         if initial_cells > cells:
             raise ValueError(
-                f"Adaptive cubature breakpoints require {initial_cells} initial cells, "
-                f"exceeding max_cells={cells}."
+                f"Adaptive cubature breakpoints require {initial_cells} initial cells, exceeding max_cells={cells}."
             )
         if max_evaluations is None:
             evaluations = None
@@ -642,18 +639,14 @@ class MultilevelMonteCarloPlan(StrictModule):
                 resolved: int | tuple[int, ...] = int(value)
                 values = (resolved,)
             else:
-                resolved = tuple(int(item) for item in value)
+                resolved = tuple(value)
                 values = resolved
             if not values or any(item < minimum for item in values):
                 raise ValueError(f"{name} values must be at least {minimum}.")
             return resolved
 
         initial = counts(initial_samples, "initial_samples", 2)
-        fixed = (
-            None
-            if samples_per_level is None
-            else tuple(int(value) for value in samples_per_level)
-        )
+        fixed = None if samples_per_level is None else tuple(samples_per_level)
         if fixed is not None and (not fixed or any(value < 2 for value in fixed)):
             raise ValueError("samples_per_level values must be at least two.")
         rmse = None if target_rmse is None else float(target_rmse)

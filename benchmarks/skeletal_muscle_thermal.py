@@ -45,14 +45,12 @@ def _case(resolution):
     projection_ms = 1000 * (time.perf_counter() - start)
     return {
         "resolution": resolution,
-        "cell_count": int(prepared.geometry.cell_volume_m3.size),
-        "temperature_dofs": int(state.temperature_K.size),
-        "source_map_edges": int(retained.coefficients.size),
-        "finite_element_source_edges": int(
-            prepared.geometry.source_load.coefficients.size
-        ),
+        "cell_count": prepared.geometry.cell_volume_m3.size,
+        "temperature_dofs": state.temperature_K.size,
+        "source_map_edges": retained.coefficients.size,
+        "finite_element_source_edges": prepared.geometry.source_load.coefficients.size,
         "prepared_array_leaf_bytes_including_shared_references": sum(
-            int(x.size * x.dtype.itemsize)
+            x.size * x.dtype.itemsize
             for x in jax.tree.leaves(prepared)
             if eqx.is_array(x)
         ),

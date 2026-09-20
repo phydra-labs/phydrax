@@ -362,11 +362,11 @@ def paper_reference(
         raise ValueError(
             "Reference mesh is bounded to 3..128 shells and 2..128 cells/region."
         )
-    matrices, capacities, centres, initial, sources = [], [], [], [], []
+    matrices, capacities, centers, initial, sources = [], [], [], [], []
     for k in range(2):
         radius, length = data.radii[k], data.lengths[2 * k]
         faces = np.linspace(0, radius, radial_cells + 1)
-        centre = 0.75 * np.diff(faces**4) / np.diff(faces**3)
+        center = 0.75 * np.diff(faces**4) / np.diff(faces**3)
         volume = (
             data.active_fractions[k] * data.area * length * np.diff((faces / radius) ** 3)
         )
@@ -379,14 +379,14 @@ def paper_reference(
             * np.pi
             * faces[1:-1] ** 2
             * data.solid_diffusivities[k]
-            / np.diff(centre)
+            / np.diff(center)
         )
         matrices.append(_diffusion_matrix(volume, conductance))
         forcing = np.zeros(radial_cells)
         forcing[-1] = (1 if k == 0 else -1) / FARADAY / volume[-1]
         sources.append(forcing)
         capacities.append(volume)
-        centres.append(centre)
+        centers.append(center)
         initial.append(
             np.full(radial_cells, data.cmax[k] * data.initial_stoichiometries[k])
         )
@@ -458,7 +458,7 @@ def paper_reference(
         surface.append(
             concentration[:, -1]
             - outward_flux
-            * (data.radii[k] - centres[k][-1])
+            * (data.radii[k] - centers[k][-1])
             / data.solid_diffusivities[k]
         )
     if np.any(ce <= 0) or any(
@@ -488,7 +488,7 @@ def paper_reference(
 
 def eq48_voltage(data, current, surfaces, electrolyte_regions):
     """Paper's electrode-averaged Eq. 48 voltage (not a fitted terminal curve)."""
-    reaction = np.zeros_like(current, dtype=float)
+    reaction = np.zeros_like(current, dtype="float64")
     for k in range(2):
         theta = surfaces[k] / data.cmax[k]
         j0 = (

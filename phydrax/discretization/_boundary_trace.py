@@ -58,8 +58,8 @@ class BoundarySurfaceTrace(StrictModule):
             raise ValueError(
                 "Boundary face selection must be nonempty, unique and in range."
             )
-        neighbours = np.asarray(discretization.neighbour_cells)
-        if np.any(neighbours[selected] >= 0):
+        neighbors = np.asarray(discretization.neighbor_cells)
+        if np.any(neighbors[selected] >= 0):
             raise ValueError("A surface trace cannot include interior volume faces.")
         connectivity = discretization.connectivity
         if isinstance(connectivity, PolyhedralConnectivity):

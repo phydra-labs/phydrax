@@ -206,7 +206,7 @@ class BRepBoundaryMap(AbstractBoundaryMap):
         patches: tuple[AbstractSurfacePatch, ...],
         parameter_bounds: Array,
     ):
-        bounds = jnp.asarray(parameter_bounds, dtype=float)
+        bounds = jnp.asarray(parameter_bounds, dtype=jnp.float64)
         if not patches:
             raise ValueError("A BRepBoundaryMap requires at least one patch.")
         if bounds.shape != (len(patches), 2, 2):
@@ -309,12 +309,12 @@ class BRepModel(StrictModule):
                 "The model and import report coordinate contracts must match."
             )
         face_count = len(patches)
-        bounds = jnp.asarray(parameter_bounds, dtype=float)
-        orientation_ = jnp.asarray(orientation, dtype=float).reshape((-1,))
-        vertices = jnp.asarray(mesh_vertices, dtype=float)
+        bounds = jnp.asarray(parameter_bounds, dtype=jnp.float64)
+        orientation_ = jnp.asarray(orientation, dtype=jnp.float64).reshape((-1,))
+        vertices = jnp.asarray(mesh_vertices, dtype=jnp.float64)
         faces = jnp.asarray(mesh_faces, dtype=jnp.int32)
         face_ids = jnp.asarray(triangle_face_ids, dtype=jnp.int32).reshape((-1,))
-        parameters = jnp.asarray(triangle_parameters, dtype=float)
+        parameters = jnp.asarray(triangle_parameters, dtype=jnp.float64)
         bounds_host = np.asarray(bounds)
         orientation_host = np.asarray(orientation_)
         vertices_host = np.asarray(vertices)

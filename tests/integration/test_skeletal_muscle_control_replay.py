@@ -59,9 +59,9 @@ def test_surrogate_decision_requires_causal_exact_control_replay():
 
     def exact_force(trajectory):
         return jax.vmap(
-            lambda state, control: runtime.evaluate(
-                runtime.unpack_state(state), control[0]
-            ).total_force
+            lambda state, control: (
+                runtime.evaluate(runtime.unpack_state(state), control[0]).total_force
+            )
         )(trajectory.states[:-1], trajectory.controls)
 
     replay = SkeletalSurrogateReplayPlan(
@@ -70,7 +70,7 @@ def test_surrogate_decision_requires_causal_exact_control_replay():
         SkeletalReplayObservationOperator(
             exact_force, "potvin-fuglevand-relative-force-observation"
         ),
-        jnp.ones((2,), dtype=bool),
+        jnp.ones((2,), dtype="bool"),
         "learned-force-surrogate",
         "relative_muscle_force",
         absolute_tolerance=0.05,
@@ -98,7 +98,7 @@ def test_pure_relative_replay_handles_zero_exact_values_without_nan():
             lambda trajectory: jnp.zeros(trajectory.controls.shape[:-1]),
             "zero-exact-relative-observation",
         ),
-        jnp.ones((2,), dtype=bool),
+        jnp.ones((2,), dtype="bool"),
         "zero-reference-surrogate",
         "zero_reference_quantity",
         absolute_tolerance=0.0,
@@ -132,12 +132,10 @@ def test_replay_promotes_integer_exact_values_before_comparison():
         problem,
         parameterization,
         SkeletalReplayObservationOperator(
-            lambda trajectory: jnp.ones(
-                trajectory.controls.shape[:-1], dtype=jnp.int32
-            ),
+            lambda trajectory: jnp.ones(trajectory.controls.shape[:-1], dtype=jnp.int32),
             "integer-exact-observation",
         ),
-        jnp.ones((2,), dtype=bool),
+        jnp.ones((2,), dtype="bool"),
         "floating-surrogate",
         "shared_real_comparison",
         absolute_tolerance=0.0,
@@ -155,14 +153,15 @@ def test_replay_promotes_integer_exact_values_before_comparison():
     assert jnp.isclose(evidence.maximum_relative_error, 0.9)
     assert not bool(evidence.accepted)
 
+
 def test_surrogate_replay_rejects_exact_but_physically_infeasible_control():
     runtime, problem, parameterization, target_force = _motor_control_problem()
 
     def exact_force(trajectory):
         return jax.vmap(
-            lambda state, control: runtime.evaluate(
-                runtime.unpack_state(state), control[0]
-            ).total_force
+            lambda state, control: (
+                runtime.evaluate(runtime.unpack_state(state), control[0]).total_force
+            )
         )(trajectory.states[:-1], trajectory.controls)
 
     constrained = ControlProblem(
@@ -170,9 +169,7 @@ def test_surrogate_replay_rejects_exact_but_physically_infeasible_control():
         problem.time_grid,
         problem.initial_state,
         running_cost=problem.running_cost,
-        path_constraints=(
-            lambda time, state, control, args: control[0] - 10.0,
-        ),
+        path_constraints=(lambda time, state, control, args: control[0] - 10.0,),
         args=problem.args,
         problem_id="infeasible-surrogate-replay-control",
     )
@@ -182,7 +179,7 @@ def test_surrogate_replay_rejects_exact_but_physically_infeasible_control():
         SkeletalReplayObservationOperator(
             exact_force, "potvin-fuglevand-relative-force-observation"
         ),
-        jnp.ones((2,), dtype=bool),
+        jnp.ones((2,), dtype="bool"),
         "infeasible-force-surrogate",
         "relative_muscle_force",
         absolute_tolerance=0.05,
@@ -212,7 +209,7 @@ def test_exact_observation_operator_identity_prevents_replay_provenance_collisio
         problem,
         parameterization,
         first_state_coordinate,
-        jnp.ones((2,), dtype=bool),
+        jnp.ones((2,), dtype="bool"),
         "same-surrogate",
         "same-quantity",
         absolute_tolerance=0.05,
@@ -222,7 +219,7 @@ def test_exact_observation_operator_identity_prevents_replay_provenance_collisio
         problem,
         parameterization,
         second_state_coordinate,
-        jnp.ones((2,), dtype=bool),
+        jnp.ones((2,), dtype="bool"),
         "same-surrogate",
         "same-quantity",
         absolute_tolerance=0.05,
@@ -233,9 +230,7 @@ def test_exact_observation_operator_identity_prevents_replay_provenance_collisio
     second_state_evidence = second_state_replay.evaluate(controls, jnp.zeros((2,)))
 
     assert state_replay.plan_id != second_state_replay.plan_id
-    assert (
-        state_evidence.observation_operator_id == first_state_coordinate.operator_id
-    )
+    assert state_evidence.observation_operator_id == first_state_coordinate.operator_id
     assert (
         second_state_evidence.observation_operator_id
         == second_state_coordinate.operator_id

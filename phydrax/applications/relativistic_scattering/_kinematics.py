@@ -93,7 +93,7 @@ class LorentzFrame(StrictModule, NonTrainableState):
     frame_id: str = eqx.field(static=True)
 
     def __init__(self, matrix: ArrayLike, /):
-        matrix_ = np.asarray(matrix, dtype=float)
+        matrix_ = np.asarray(matrix, dtype=np.float64)
         if matrix_.shape != (4, 4) or np.any(~np.isfinite(matrix_)):
             raise ValueError("Lorentz frames require one finite 4x4 matrix.")
         metric = np.diag([1.0, -1.0, -1.0, -1.0])
@@ -121,7 +121,7 @@ class LorentzFrame(StrictModule, NonTrainableState):
     @classmethod
     def boost(cls, velocity: ArrayLike, /) -> "LorentzFrame":
         """Return the active boost carrying rest momentum toward ``velocity``."""
-        beta = np.asarray(velocity, dtype=float)
+        beta = np.asarray(velocity, dtype=np.float64)
         if beta.shape != (3,) or np.any(~np.isfinite(beta)):
             raise ValueError("Boost velocity must be one finite three-vector.")
         speed_squared = float(beta @ beta)
@@ -131,7 +131,7 @@ class LorentzFrame(StrictModule, NonTrainableState):
             return cls.identity()
         gamma = 1.0 / math.sqrt(1.0 - speed_squared)
         spatial = np.eye(3) + (gamma - 1.0) * np.outer(beta, beta) / speed_squared
-        matrix = np.empty((4, 4), dtype=float)
+        matrix = np.empty((4, 4), dtype=np.float64)
         matrix[0, 0] = gamma
         matrix[0, 1:] = gamma * beta
         matrix[1:, 0] = gamma * beta
@@ -261,9 +261,11 @@ class MassShell(StrictModule, NonTrainableState):
 def center_of_momentum_frame(total: FourMomentum | ArrayLike, /) -> LorentzFrame:
     """Return the boost mapping a timelike total momentum to its rest frame."""
     value = (
-        total.value if isinstance(total, FourMomentum) else np.asarray(total, dtype=float)
+        total.value
+        if isinstance(total, FourMomentum)
+        else np.asarray(total, dtype=np.float64)
     )
-    value_ = np.asarray(value, dtype=float)
+    value_ = np.asarray(value, dtype=np.float64)
     if value_.shape != (4,) or value_[0] <= 0.0:
         raise ValueError("A center-of-momentum frame requires one future four-momentum.")
     if float(value_[0] ** 2 - value_[1:] @ value_[1:]) <= 0.0:

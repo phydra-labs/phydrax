@@ -127,7 +127,7 @@ def test_hyperrectangle_finite_observation_with_stacked_points():
     def u(x):
         return x[0] + 2.0 * x[1]
 
-    points = jnp.array([[0.1, 0.2], [0.4, 0.5], [0.8, 0.3]], dtype=float)
+    points = jnp.array([[0.1, 0.2], [0.4, 0.5], [0.8, 0.3]], dtype="float64")
     component = geom.component()
     batch = component.points(points)
     condition = phx.conditions.Observation("u", component, exact)

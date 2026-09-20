@@ -207,9 +207,9 @@ def run_case(case: str, nodes: int, warmup: int, repeats: int) -> dict:
         physics["contact_neutrality_builtin_voltage_V"] = neutrality_voltage
     return {
         "case": case,
-        "nodes": int(plan.support.positions.shape[0]),
-        "edges": int(plan.support.tail.shape[0]),
-        "unknowns": int(point.coordinates.size),
+        "nodes": plan.support.positions.shape[0],
+        "edges": plan.support.tail.shape[0],
+        "unknowns": point.coordinates.size,
         "preparation_seconds": preparation,
         "equilibrium_seconds": equilibrium_seconds,
         "biased_solve": solve_timing.to_seconds_dict(),

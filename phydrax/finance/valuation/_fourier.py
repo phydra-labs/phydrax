@@ -89,11 +89,11 @@ def heston_log_price_characteristic_function(
 
     if not isinstance(model, HestonModel):
         raise TypeError("model must be a HestonModel.")
-    u = jnp.asarray(frequency, dtype=complex)
-    spot_ = jnp.asarray(spot, dtype=float)
-    maturity_ = jnp.asarray(maturity, dtype=float)
-    rate_ = jnp.asarray(rate, dtype=float)
-    dividend = jnp.asarray(dividend_yield, dtype=float)
+    u = jnp.asarray(frequency, dtype=jnp.complex128)
+    spot_ = jnp.asarray(spot, dtype=jnp.float64)
+    maturity_ = jnp.asarray(maturity, dtype=jnp.float64)
+    rate_ = jnp.asarray(rate, dtype=jnp.float64)
+    dividend = jnp.asarray(dividend_yield, dtype=jnp.float64)
     spot_ = eqx.error_if(
         spot_,
         jnp.any(~jnp.isfinite(spot_))
@@ -128,7 +128,7 @@ def heston_log_price_characteristic_function(
 
 def _market_inputs(spot, strike, maturity, rate, dividend_yield):
     spot_, strike_, maturity_, rate_, dividend = tuple(
-        jnp.asarray(value, dtype=float)
+        jnp.asarray(value, dtype=jnp.float64)
         for value in (spot, strike, maturity, rate, dividend_yield)
     )
     if any(value.shape != () for value in (spot_, strike_, maturity_, rate_, dividend)):
@@ -180,7 +180,7 @@ def evaluate_heston_fourier(
     spot_, strike_, maturity_, rate_, dividend = _market_inputs(
         spot, strike, maturity, rate, dividend_yield
     )
-    notional_ = jnp.asarray(notional, dtype=float)
+    notional_ = jnp.asarray(notional, dtype=jnp.float64)
     if notional_.shape != ():
         raise ValueError("notional must be scalar.")
     notional_ = eqx.error_if(
@@ -273,7 +273,7 @@ def evaluate_heston_cos(
     spot_, strike_, maturity_, rate_, dividend = _market_inputs(
         spot, strike, maturity, rate, dividend_yield
     )
-    notional_ = jnp.asarray(notional, dtype=float)
+    notional_ = jnp.asarray(notional, dtype=jnp.float64)
     if notional_.shape != ():
         raise ValueError("notional must be scalar.")
     notional_ = eqx.error_if(

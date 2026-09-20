@@ -66,8 +66,8 @@ class PMJExchangePlan(StrictModule, NonTrainableState):
         identifiers = np.asarray(junction_ids, dtype=np.int64)
         purkinje = np.asarray(purkinje_node_indices, dtype=np.int32)
         tissue = np.asarray(tissue_node_indices, dtype=np.int32)
-        delays = np.asarray(delay_ms, dtype=float)
-        conductance = np.asarray(coupling_conductance_mS, dtype=float)
+        delays = np.asarray(delay_ms, dtype=np.float64)
+        conductance = np.asarray(coupling_conductance_mS, dtype=np.float64)
         shape = identifiers.shape
         if identifiers.ndim != 1 or identifiers.size == 0:
             raise ValueError("junction_ids must be a non-empty fixed-capacity vector.")
@@ -82,7 +82,7 @@ class PMJExchangePlan(StrictModule, NonTrainableState):
             )
         if not isinstance(purkinje_plan, PurkinjeNetworkPlan):
             raise TypeError("purkinje_plan must be a PurkinjeNetworkPlan.")
-        purkinje_count = int(purkinje_plan.node_ids.shape[0])
+        purkinje_count = purkinje_plan.node_ids.shape[0]
         tissue_count = int(tissue_node_count)
         capacity = int(event_capacity)
         if purkinje_count <= 0 or tissue_count <= 0 or capacity <= 0:
@@ -283,7 +283,7 @@ def schedule_pmj_activations(
         or propagation.state.plan_id != plan.purkinje_plan_id
     ):
         raise ValueError("Purkinje propagation belongs to another PMJ-bound plan.")
-    refractory = np.asarray(tissue_refractory_until_ms, dtype=float)
+    refractory = np.asarray(tissue_refractory_until_ms, dtype=np.float64)
     if refractory.shape != (plan.tissue_node_count,):
         raise ValueError("tissue_refractory_until_ms changed the tissue layout.")
     if not np.all(np.isfinite(refractory) | np.isneginf(refractory)):
@@ -292,7 +292,7 @@ def schedule_pmj_activations(
     junction_purkinje = np.asarray(plan.purkinje_node_indices)
     junction_tissue = np.asarray(plan.tissue_node_indices)
     delays = np.asarray(plan.delay_ms)
-    event_active = np.asarray(purkinje_events.active, dtype=bool)
+    event_active = np.asarray(purkinje_events.active, dtype=np.bool_)
     event_kind = np.asarray(purkinje_events.kind)
     event_node = np.asarray(purkinje_events.node_index)
     event_time = np.asarray(purkinje_events.time_ms)
@@ -336,10 +336,10 @@ def schedule_pmj_activations(
     identifiers = np.full((plan.event_capacity,), -1, dtype=np.int64)
     junction_index_out = np.full((plan.event_capacity,), -1, dtype=np.int32)
     tissue_out = np.full((plan.event_capacity,), -1, dtype=np.int32)
-    time_out = np.zeros((plan.event_capacity,), dtype=float)
+    time_out = np.zeros((plan.event_capacity,), dtype=np.float64)
     parent_out = np.full((plan.event_capacity,), -1, dtype=np.int64)
-    accepted = np.zeros((plan.event_capacity,), dtype=bool)
-    active = np.zeros((plan.event_capacity,), dtype=bool)
+    accepted = np.zeros((plan.event_capacity,), dtype=np.bool_)
+    active = np.zeros((plan.event_capacity,), dtype=np.bool_)
     for output_index, (time, tissue_node, _, parent_id, junction_index) in enumerate(
         selected
     ):
@@ -468,9 +468,9 @@ class PacingProtocol(StrictModule, NonTrainableState):
         if not isinstance(target, (TissuePacingTarget, PurkinjePacingTarget)):
             raise TypeError("target must be a tissue or Purkinje pacing target.")
         identifiers = np.asarray(pulse_ids, dtype=np.int64)
-        starts = np.asarray(start_time_ms, dtype=float)
-        durations = np.asarray(duration_ms, dtype=float)
-        amplitudes = np.asarray(amplitude_uA_per_mm3, dtype=float)
+        starts = np.asarray(start_time_ms, dtype=np.float64)
+        durations = np.asarray(duration_ms, dtype=np.float64)
+        amplitudes = np.asarray(amplitude_uA_per_mm3, dtype=np.float64)
         shape = identifiers.shape
         if identifiers.ndim != 1 or identifiers.size == 0:
             raise ValueError("pulse_ids must be a non-empty fixed-capacity vector.")

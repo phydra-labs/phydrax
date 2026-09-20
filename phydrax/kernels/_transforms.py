@@ -116,8 +116,8 @@ class AffineInputTransform(StrictModule):
     scale: Array
 
     def __init__(self, offset: ArrayLike, scale: ArrayLike, /):
-        offset_value = jnp.asarray(offset, dtype=float)
-        scale_value = jnp.asarray(scale, dtype=float)
+        offset_value = jnp.asarray(offset, dtype=jnp.float64)
+        scale_value = jnp.asarray(scale, dtype=jnp.float64)
         if offset_value.ndim > 1 or scale_value.ndim > 1:
             raise ValueError("Affine offset and scale must be scalar or vectors.")
         if (
@@ -156,7 +156,7 @@ class AffineInputTransform(StrictModule):
         minimum_scale: ArrayLike = 1e-12,
     ) -> AffineInputTransform:
         design = _as_points(points, name="points")
-        floor = jnp.asarray(minimum_scale, dtype=float)
+        floor = jnp.asarray(minimum_scale, dtype=jnp.float64)
         if floor.ndim != 0:
             raise ValueError("minimum_scale must be scalar.")
         floor = eqx.error_if(

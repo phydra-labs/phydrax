@@ -25,7 +25,7 @@ def radial_closest_point(
     physical_geometry_id: str | None = None,
 ) -> ClosestPointResult:
     """Return the exact closest-point map for a circle or sphere boundary."""
-    points_ = jnp.asarray(points, dtype=float)
+    points_ = jnp.asarray(points, dtype=jnp.float64)
     center_ = jnp.asarray(center, dtype=points_.dtype)
     radius_ = jnp.asarray(radius, dtype=points_.dtype).reshape(())
     if points_.ndim == 0 or center_.shape != points_.shape[-1:]:
@@ -77,7 +77,7 @@ def box_closest_point(
     Edges, corners, and interior medial-axis ties remain valid closest points but
     are deliberately excluded from classical normal-collar certificates.
     """
-    points_ = jnp.asarray(points, dtype=float)
+    points_ = jnp.asarray(points, dtype=jnp.float64)
     center_ = jnp.asarray(center, dtype=points_.dtype)
     size_ = jnp.asarray(size, dtype=points_.dtype)
     if points_.ndim == 0 or center_.shape != points_.shape[-1:]:
@@ -274,12 +274,14 @@ def represented_mesh_closest_point(
     exact_to_physical: bool = False,
 ) -> ClosestPointResult:
     """Package a mesh query without promoting proximity to topology evidence."""
-    points_ = jnp.asarray(points, dtype=float)
+    points_ = jnp.asarray(points, dtype=jnp.float64)
     closest = jnp.asarray(closest_point, dtype=points_.dtype)
     distance_ = jnp.asarray(distance, dtype=points_.dtype)
     difference = points_ - closest
     on_boundary = distance_ <= _point_tolerance(points_)
-    signed_distance = jnp.where(jnp.asarray(inside, dtype=bool), -distance_, distance_)
+    signed_distance = jnp.where(
+        jnp.asarray(inside, dtype=jnp.bool_), -distance_, distance_
+    )
     boundary_coordinate = jnp.sum(difference * jnp.asarray(normal), axis=-1)
     coordinate = jnp.where(on_boundary, boundary_coordinate, signed_distance)
     return ClosestPointResult(
@@ -290,7 +292,7 @@ def represented_mesh_closest_point(
         unique=unique,
         regular=regular,
         margin=margin,
-        normal_coordinate_valid=jnp.asarray(regular, dtype=bool),
+        normal_coordinate_valid=jnp.asarray(regular, dtype=jnp.bool_),
         represented_geometry_id=represented_geometry_id,
         physical_geometry_id=physical_geometry_id,
         exact_to_physical=exact_to_physical,

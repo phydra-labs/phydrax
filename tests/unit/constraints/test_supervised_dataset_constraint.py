@@ -59,7 +59,7 @@ def test_supervised_dataset_constraint_supervises_vector_targets_exactly():
 
 
 def test_supervised_dataset_constraint_aligns_sampled_indices_with_targets():
-    data = jnp.arange(10.0, dtype=float).reshape((5, 2))
+    data = jnp.arange(10.0, dtype="float64").reshape((5, 2))
     domain = DatasetDomain(data)
     targets = jnp.asarray([10.0, 20.0, 30.0, 40.0, 50.0])
     constraint = SupervisedDatasetTerm(
@@ -76,7 +76,7 @@ def test_supervised_dataset_constraint_aligns_sampled_indices_with_targets():
 
 
 def test_supervised_dataset_constraint_samples_only_index_subset():
-    data = jnp.arange(12.0, dtype=float).reshape((6, 2))
+    data = jnp.arange(12.0, dtype="float64").reshape((6, 2))
     domain = DatasetDomain(data)
     targets = data[:, 0]
     allowed = jnp.asarray([1, 3, 5], dtype=jnp.int32)
@@ -119,13 +119,13 @@ def test_supervised_dataset_constraint_supports_pytree_rows():
 
 
 def test_supervised_dataset_constraint_validates_targets_and_sampling():
-    domain = DatasetDomain(jnp.zeros((3, 2), dtype=float))
+    domain = DatasetDomain(jnp.zeros((3, 2), dtype="float64"))
 
     with pytest.raises(ValueError, match="leading axis"):
         SupervisedDatasetTerm(
             "u",
             domain.component(),
-            jnp.zeros((4,), dtype=float),
+            jnp.zeros((4,), dtype="float64"),
             sampling=phx.domain.PointSampling(2, design="uniform"),
         )
 
@@ -133,7 +133,7 @@ def test_supervised_dataset_constraint_validates_targets_and_sampling():
         SupervisedDatasetTerm(
             "u",
             domain.component(),
-            jnp.zeros((3,), dtype=float),
+            jnp.zeros((3,), dtype="float64"),
             sampling=phx.domain.PointSampling(0, design="uniform"),
         )
 
@@ -141,7 +141,7 @@ def test_supervised_dataset_constraint_validates_targets_and_sampling():
         SupervisedDatasetTerm(
             "u",
             domain.component(),
-            jnp.zeros((3,), dtype=float),
+            jnp.zeros((3,), dtype="float64"),
             sampling=phx.domain.PointSampling(2, design="uniform"),
             indices=jnp.asarray([3], dtype=jnp.int32),
         )

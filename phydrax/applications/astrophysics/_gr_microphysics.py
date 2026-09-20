@@ -221,10 +221,7 @@ class ThermalSynchrotronReferenceEvidence(StrictModule, NonTrainableState):
 
     def __init__(self):
         authors = ("Rohan Mahadevan", "Ramesh Narayan", "Insu Yi")
-        title = (
-            "Harmony in Electrons: Cyclotron and Synchrotron Emission by "
-            "Thermal Electrons in a Magnetic Field"
-        )
+        title = "Harmony in Electrons: Cyclotron and Synchrotron Emission by Thermal Electrons in a Magnetic Field"
         self.authors = authors
         self.title = title
         self.year = 1996
@@ -242,8 +239,7 @@ class ThermalSynchrotronReferenceEvidence(StrictModule, NonTrainableState):
         self.source_ledger = (
             (
                 "thermal-shape",
-                "Mahadevan-Narayan-Yi-1996 DOI:10.1086/177422 Eq.31; "
-                "T>=3.2e10 K; maximum relative shape error 0.027",
+                "Mahadevan-Narayan-Yi-1996 DOI:10.1086/177422 Eq.31; T>=3.2e10 K; maximum relative shape error 0.027",
             ),
             (
                 "bessel-k2",
@@ -316,8 +312,7 @@ class ThermalSynchrotronDomain(StrictModule, NonTrainableState):
             or values[0] < _MNY96_MINIMUM_TEMPERATURE_K
         ):
             raise ValueError(
-                "Thermal synchrotron domain must remain inside published and "
-                "numerically validated support."
+                "Thermal synchrotron domain must remain inside published and numerically validated support."
             )
         (
             self.minimum_temperature_k,
@@ -520,7 +515,9 @@ class ThermalSynchrotronModel(StrictModule, NonTrainableState):
             jnp.asarray(frequency_hz),
             jnp.asarray(pitch_cosine),
         )
-        dtype = jnp.result_type(density, temperature, magnetic_field, frequency, float)
+        dtype = jnp.result_type(
+            density, temperature, magnetic_field, frequency, jnp.float64
+        )
         density = density.astype(dtype)
         temperature = temperature.astype(dtype)
         magnetic_field = magnetic_field.astype(dtype)

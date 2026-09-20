@@ -120,7 +120,7 @@ class InSARObservationPlan(StrictModule, NonTrainableState):
         )
         nuisance = None
         if ramp_degree is not None:
-            coordinates = np.asarray(coordinates_xy_m, dtype=float)
+            coordinates = np.asarray(coordinates_xy_m, dtype=np.float64)
             if coordinates.shape != (count, 2):
                 raise ValueError(
                     "InSAR ramp coordinates must have shape (observations,2)."

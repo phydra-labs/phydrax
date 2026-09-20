@@ -45,7 +45,7 @@ def _modal_geometry(
         raise TypeError("The beta-plane requires full complex Fourier coefficients.")
     real_dtype = jnp.empty((), dtype=coefficient_dtype).real.dtype
     waves: list[Array] = []
-    admissible = jnp.ones(discretization.modal_shape, dtype=bool)
+    admissible = jnp.ones(discretization.modal_shape, dtype=jnp.bool_)
     for axis_index, axis in enumerate(discretization.axes):
         values = (
             2.0

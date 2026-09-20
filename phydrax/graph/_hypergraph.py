@@ -7,6 +7,8 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 
+from phydrax._strict import StrictModule
+
 from ._graph import ensure_graph
 from ._ir import GraphIR
 from ._kernels import segment_sum
@@ -27,11 +29,11 @@ def _infer_count(name: str, indices: jnp.ndarray, value: int | None, /) -> int:
         n = int(value)
         if n < 0:
             raise ValueError(f"{name} must be non-negative.")
-    elif int(indices.shape[0]) == 0:
+    elif indices.shape[0] == 0:
         raise ValueError(f"{name} must be provided when there are no incidences.")
     else:
         n = int(jnp.max(indices)) + 1
-    if int(indices.shape[0]) > 0:
+    if indices.shape[0] > 0:
         idx_np = np.asarray(indices)
         if np.any(idx_np < 0) or np.any(idx_np >= n):
             raise ValueError(f"{name} incidence indices must be in [0, {n}).")
@@ -49,7 +51,7 @@ def _hyperedges_to_incidence(
         if np.any(arr < 0):
             raise ValueError("Hypergraph node indices must be non-negative.")
         node_parts.extend(int(i) for i in arr.tolist())
-        hyperedge_parts.extend([hyperedge_index] * int(arr.shape[0]))
+        hyperedge_parts.extend([hyperedge_index] * arr.shape[0])
     return (
         jnp.asarray(node_parts, dtype=jnp.int32),
         jnp.asarray(hyperedge_parts, dtype=jnp.int32),
@@ -68,21 +70,21 @@ def _combine_features(
     if first is None and second is None:
         return None
     if first is None:
-        second_arr = jnp.asarray(second, dtype=float)
-        if int(second_arr.shape[0]) != n_second:
+        second_arr = jnp.asarray(second, dtype=jnp.float64)
+        if second_arr.shape[0] != n_second:
             raise ValueError(f"{name} hyperedge feature leading axis must be {n_second}.")
         first_arr = jnp.zeros((n_first,) + second_arr.shape[1:], dtype=second_arr.dtype)
     elif second is None:
-        first_arr = jnp.asarray(first, dtype=float)
-        if int(first_arr.shape[0]) != n_first:
+        first_arr = jnp.asarray(first, dtype=jnp.float64)
+        if first_arr.shape[0] != n_first:
             raise ValueError(f"{name} node feature leading axis must be {n_first}.")
         second_arr = jnp.zeros((n_second,) + first_arr.shape[1:], dtype=first_arr.dtype)
     else:
-        first_arr = jnp.asarray(first, dtype=float)
-        second_arr = jnp.asarray(second, dtype=float)
-        if int(first_arr.shape[0]) != n_first:
+        first_arr = jnp.asarray(first, dtype=jnp.float64)
+        second_arr = jnp.asarray(second, dtype=jnp.float64)
+        if first_arr.shape[0] != n_first:
             raise ValueError(f"{name} node feature leading axis must be {n_first}.")
-        if int(second_arr.shape[0]) != n_second:
+        if second_arr.shape[0] != n_second:
             raise ValueError(f"{name} hyperedge feature leading axis must be {n_second}.")
         if first_arr.shape[1:] != second_arr.shape[1:]:
             raise ValueError(
@@ -91,7 +93,7 @@ def _combine_features(
     return jnp.concatenate([first_arr, second_arr], axis=0)
 
 
-class HypergraphBipartiteGraph(eqx.Module):
+class HypergraphBipartiteGraph(StrictModule):
     """A hypergraph represented as a typed bipartite `GraphIR`."""
 
     graph: GraphIR
@@ -172,7 +174,7 @@ def incidence_to_bipartite_graph(
     """Represent hypergraph incidence as a typed bipartite `GraphIR`."""
     node_idx = _as_int_vector("node_indices", node_indices)
     hyper_idx = _as_int_vector("hyperedge_indices", hyperedge_indices)
-    if int(node_idx.shape[0]) != int(hyper_idx.shape[0]):
+    if node_idx.shape[0] != hyper_idx.shape[0]:
         raise ValueError("node_indices and hyperedge_indices must have the same length.")
     n_node = _infer_count("num_nodes", node_idx, num_nodes)
     n_hyperedge = _infer_count("num_hyperedges", hyper_idx, num_hyperedges)
@@ -181,9 +183,7 @@ def incidence_to_bipartite_graph(
 
     senders = node_idx
     receivers = hyper_nodes
-    edge_type = jnp.full(
-        (int(node_idx.shape[0]),), int(incidence_edge_type), dtype=jnp.int32
-    )
+    edge_type = jnp.full((node_idx.shape[0],), int(incidence_edge_type), dtype=jnp.int32)
     edge_node_index = node_idx
     edge_hyperedge_index = hyper_idx
     if add_reverse_edges:
@@ -193,7 +193,7 @@ def incidence_to_bipartite_graph(
             [
                 edge_type,
                 jnp.full(
-                    (int(node_idx.shape[0]),),
+                    (node_idx.shape[0],),
                     int(reverse_incidence_edge_type),
                     dtype=jnp.int32,
                 ),
@@ -219,11 +219,17 @@ def incidence_to_bipartite_graph(
             axis=0,
         ),
         "is_original_node": jnp.concatenate(
-            [jnp.ones((n_node,), dtype=bool), jnp.zeros((n_hyperedge,), dtype=bool)],
+            [
+                jnp.ones((n_node,), dtype=jnp.bool_),
+                jnp.zeros((n_hyperedge,), dtype=jnp.bool_),
+            ],
             axis=0,
         ),
         "is_hyperedge": jnp.concatenate(
-            [jnp.zeros((n_node,), dtype=bool), jnp.ones((n_hyperedge,), dtype=bool)],
+            [
+                jnp.zeros((n_node,), dtype=jnp.bool_),
+                jnp.ones((n_hyperedge,), dtype=jnp.bool_),
+            ],
             axis=0,
         ),
         "node_index": jnp.concatenate(
@@ -245,10 +251,10 @@ def incidence_to_bipartite_graph(
         nodes["features"] = feature
 
     if incidence_weight is None:
-        weight = jnp.ones((int(node_idx.shape[0]),), dtype=float)
+        weight = jnp.ones((node_idx.shape[0],), dtype=jnp.float64)
     else:
-        weight = jnp.asarray(incidence_weight, dtype=float).reshape((-1,))
-        if int(weight.shape[0]) != int(node_idx.shape[0]):
+        weight = jnp.asarray(incidence_weight, dtype=jnp.float64).reshape((-1,))
+        if weight.shape[0] != node_idx.shape[0]:
             raise ValueError("incidence_weight must match the number of incidences.")
     if add_reverse_edges:
         weight = jnp.concatenate([weight, weight], axis=0)
@@ -258,7 +264,7 @@ def incidence_to_bipartite_graph(
         "node_index": edge_node_index,
         "hyperedge_index": edge_hyperedge_index,
     }
-    n_edge = int(senders.shape[0])
+    n_edge = senders.shape[0]
     graph = GraphIR(
         nodes=nodes,
         edges=edges,
@@ -269,7 +275,7 @@ def incidence_to_bipartite_graph(
         n_edge=jnp.asarray([n_edge], dtype=jnp.int32),
         validate=validate,
     )
-    n_incidence = int(node_idx.shape[0])
+    n_incidence = node_idx.shape[0]
     return HypergraphBipartiteGraph(
         graph,
         original_nodes=jnp.arange(n_node, dtype=jnp.int32),
@@ -325,13 +331,13 @@ def _node_features(graph: GraphIR, input_key: str | None, /) -> jnp.ndarray:
     if input_key is None:
         if isinstance(graph.nodes, Mapping):
             raise TypeError("mapping-valued hypergraph nodes require input_key.")
-        arr = jnp.asarray(graph.nodes, dtype=float)
+        arr = jnp.asarray(graph.nodes, dtype=jnp.float64)
     else:
         if not isinstance(graph.nodes, Mapping):
             raise TypeError("input_key requires mapping-valued hypergraph nodes.")
         if input_key not in graph.nodes:
             raise KeyError(f"Graph nodes do not contain input_key {input_key!r}.")
-        arr = jnp.asarray(graph.nodes[input_key], dtype=float)
+        arr = jnp.asarray(graph.nodes[input_key], dtype=jnp.float64)
     if arr.ndim == 1:
         return arr[:, None]
     if arr.ndim != 2:
@@ -343,7 +349,7 @@ def _edge_weight(graph: GraphIR, edge_weight_key: str | None, /) -> jnp.ndarray:
     if graph.senders is None:
         raise ValueError("HypergraphConvolution requires explicit graph edges.")
     if edge_weight_key is None:
-        out = jnp.ones((graph.senders.shape[0],), dtype=float)
+        out = jnp.ones((graph.senders.shape[0],), dtype=jnp.float64)
     else:
         if not isinstance(graph.edges, Mapping):
             raise TypeError("edge_weight_key requires mapping-valued graph edges.")
@@ -351,7 +357,7 @@ def _edge_weight(graph: GraphIR, edge_weight_key: str | None, /) -> jnp.ndarray:
             raise KeyError(
                 f"Graph edges do not contain edge_weight_key {edge_weight_key!r}."
             )
-        out = jnp.asarray(graph.edges[edge_weight_key], dtype=float).reshape((-1,))
+        out = jnp.asarray(graph.edges[edge_weight_key], dtype=jnp.float64).reshape((-1,))
     if graph.edge_mask is not None:
         out = out * graph.edge_mask.astype(out.dtype)
     return out
@@ -373,7 +379,7 @@ def _mask_nodes(nodes: jnp.ndarray, graph: GraphIR, /) -> jnp.ndarray:
     return nodes * graph.node_mask.astype(nodes.dtype)[:, None]
 
 
-class HypergraphConvolution(eqx.Module):
+class HypergraphConvolution(StrictModule):
     """Two-stage hypergraph convolution over a bipartite hypergraph graph."""
 
     input_key: str | None = eqx.field(static=True)
@@ -421,7 +427,7 @@ class HypergraphConvolution(eqx.Module):
         if graph.senders is None or graph.receivers is None:
             raise ValueError("HypergraphConvolution requires explicit senders/receivers.")
         x = _node_features(graph, self.input_key)
-        n = int(x.shape[0])
+        n = x.shape[0]
         weights = _edge_weight(graph, self.edge_weight_key)
         edge_types = edge_type_ids(graph, type_key=self.edge_type_key)
         original = node_type_indices(
@@ -448,8 +454,8 @@ class HypergraphConvolution(eqx.Module):
             node_degree = segment_sum(reverse_weight, graph.receivers, n)
             node_scale = jnp.where(node_degree > 0, 1.0 / node_degree, 0.0)
             out = out * node_scale[:, None]
-        original_mask = jnp.zeros((n,), dtype=bool).at[original].set(True)
-        hyper_mask = jnp.zeros((n,), dtype=bool).at[hyper].set(True)
+        original_mask = jnp.zeros((n,), dtype=jnp.bool_).at[original].set(True)
+        hyper_mask = jnp.zeros((n,), dtype=jnp.bool_).at[hyper].set(True)
         combined = jnp.where(original_mask[:, None], out, jnp.zeros_like(out))
         combined = jnp.where(hyper_mask[:, None], hyper_state, combined)
         combined = _mask_nodes(combined, graph)

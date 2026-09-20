@@ -46,7 +46,7 @@ class QuantumJumpEventTable(StrictModule):
         self.channels = jnp.asarray(channels, dtype=jnp.int32)
         self.root_residuals = jnp.asarray(root_residuals)
         self.thresholds = jnp.asarray(thresholds)
-        self.active = jnp.asarray(active, dtype=bool)
+        self.active = jnp.asarray(active, dtype=jnp.bool_)
 
 
 class EventDrivenQuantumJumpResult(StrictModule):
@@ -73,8 +73,8 @@ class EventDrivenQuantumJumpResult(StrictModule):
         self.states = jnp.asarray(states)
         self.times = jnp.asarray(times)
         self.events = events
-        self.saturated = jnp.asarray(saturated, dtype=bool)
-        self.successful = jnp.asarray(successful, dtype=bool)
+        self.saturated = jnp.asarray(saturated, dtype=jnp.bool_)
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_)
         self.norm_residual = jnp.max(jnp.abs(jnp.linalg.norm(self.states, axis=-1) - 1.0))
         self.valid = (
             jnp.all(jnp.isfinite(self.states))
@@ -115,7 +115,7 @@ def solve_event_driven_quantum_jump(
     """Bracket survival events and refine with the shared scalar-root substrate."""
     if not isinstance(problem, QuantumJumpProblem):
         raise TypeError("problem must be a QuantumJumpProblem.")
-    step = jnp.asarray(step_size, dtype=float).reshape(())
+    step = jnp.asarray(step_size, dtype=jnp.float64).reshape(())
     count = int(steps)
     if count < 0 or not bool(jnp.isfinite(step) & (step > 0.0)):
         raise ValueError("steps and step_size must be nonnegative/positive and finite.")
@@ -149,7 +149,7 @@ def solve_event_driven_quantum_jump(
     event_channels = -jnp.ones((event_capacity,), dtype=jnp.int32)
     root_residuals = jnp.zeros((event_capacity,), dtype=step.dtype)
     thresholds = jnp.zeros((event_capacity,), dtype=step.dtype)
-    active = jnp.zeros((event_capacity,), dtype=bool)
+    active = jnp.zeros((event_capacity,), dtype=jnp.bool_)
     event_count = 0
     saturated = False
     successful = True

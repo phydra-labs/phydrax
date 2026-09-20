@@ -92,7 +92,7 @@ class FiniteGroupIrrepPlan(StrictModule):
                 for name, matrix in generator_matrices.items()
             )
         )
-        dimension = int(values[0][1].shape[0])
+        dimension = values[0][1].shape[0]
         if dimension < 1 or any(
             matrix.shape != (dimension, dimension) for _, matrix in values
         ):

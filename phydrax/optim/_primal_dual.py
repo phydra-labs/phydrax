@@ -15,6 +15,9 @@ from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, PyTree
 
 from .._linear_refresh import prepare_refresh_state
+from .._tree_math import (
+    tree_allfinite as _tree_allfinite,
+)
 from ..linalg import (
     ArraySpace,
     DifferentiationPolicy,
@@ -29,7 +32,6 @@ from ..linalg import (
 )
 from ._iterative._base import AbstractMinimizationMethod
 from ._iterative._types import (
-    _tree_allfinite,
     ConstrainedOptimalityCertificate,
     MinimizationProblem,
     MinimizationResult,
@@ -524,8 +526,7 @@ def _solve_primal_dual_newton_krylov(
 ) -> MinimizationResult:
     if not problem.constraints and problem.bounds is None:
         raise ValueError(
-            "Primal-dual interior methods require nonlinear constraints or "
-            "parameter bounds."
+            "Primal-dual interior methods require nonlinear constraints or parameter bounds."
         )
     if not isinstance(termination, OptimizationTermination):
         raise TypeError("termination must be an OptimizationTermination.")

@@ -118,7 +118,7 @@ def _response(flow: EmpiricalMeanField):
     )
 
 
-def _normalised_weights(flow: EmpiricalMeanField):
+def _normalized_weights(flow: EmpiricalMeanField):
     weights = flow.weights.reshape((flow.num_particles, flow.times.size))
     return weights / jnp.sum(weights, axis=0, keepdims=True)
 
@@ -138,8 +138,8 @@ def _exact_law_mixture(current, induced, damping, iteration, args):
     )
     weights = jnp.concatenate(
         (
-            (1.0 - damping) * _normalised_weights(current),
-            damping * _normalised_weights(induced),
+            (1.0 - damping) * _normalized_weights(current),
+            damping * _normalized_weights(induced),
         )
     )
     valid = jnp.concatenate(
@@ -154,8 +154,7 @@ def _exact_law_mixture(current, induced, damping, iteration, args):
         sample_shape=(current.num_particles + induced.num_particles,),
         state_shape=current.state_shape,
         mean_field_id=(
-            f"constraint-union-mixture:{iteration}:"
-            f"{current.mean_field_id}+{induced.mean_field_id}"
+            f"constraint-union-mixture:{iteration}:{current.mean_field_id}+{induced.mean_field_id}"
         ),
         weights=weights,
         valid=valid,

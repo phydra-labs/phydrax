@@ -321,7 +321,7 @@ def _poly_product(
         first_degree + second_degree
         for first_degree, second_degree in zip(first_degrees, second_degrees, strict=True)
     )
-    result = np.zeros(tuple(degree + 1 for degree in result_degrees), dtype=float)
+    result = np.zeros(tuple(degree + 1 for degree in result_degrees), dtype=np.float64)
     first_weights = tuple(
         tuple(comb(degree, index) for index in range(degree + 1))
         for degree in first_degrees
@@ -397,7 +397,7 @@ def _insert_knot_axis(
 ) -> tuple[np.ndarray, np.ndarray]:
     values = np.moveaxis(controls, axis, 0)
     control_count = values.shape[0]
-    n = control_count - 1
+    control_count - 1
     multiplicity = int(np.count_nonzero(knots == knot))
     if multiplicity >= degree:
         return controls, knots
@@ -405,7 +405,7 @@ def _insert_knot_axis(
     if span_candidates.size != 1:
         raise ValueError("Interior knot insertion requires one active containing span.")
     span = int(span_candidates[0])
-    inserted = np.empty((control_count + 1, *values.shape[1:]), dtype=float)
+    inserted = np.empty((control_count + 1, *values.shape[1:]), dtype=np.float64)
     inserted[: span - degree + 1] = values[: span - degree + 1]
     inserted[span - multiplicity + 1 :] = values[span - multiplicity :]
     for index in range(span - degree + 1, span - multiplicity + 1):
@@ -421,8 +421,8 @@ def _insert_knot_axis(
 def _bezier_homogeneous_cells(
     volume: TensorNURBSVolume, /
 ) -> tuple[tuple[np.ndarray, tuple[tuple[float, float], ...], tuple[int, ...]], ...]:
-    points = np.asarray(volume.geometry.control_points, dtype=float)
-    weights = np.asarray(volume.geometry.weights, dtype=float)
+    points = np.asarray(volume.geometry.control_points, dtype=np.float64)
+    weights = np.asarray(volume.geometry.weights, dtype=np.float64)
     if not np.all(np.isfinite(points)) or not np.all(np.isfinite(weights)):
         raise ValueError("Certification requires concrete finite NURBS data.")
     homogeneous = np.concatenate(
@@ -431,7 +431,7 @@ def _bezier_homogeneous_cells(
     refined = homogeneous
     refined_knots: list[np.ndarray] = []
     for axis_index, axis in enumerate(volume.basis.axes):
-        knots = np.asarray(axis.knots, dtype=float).copy()
+        knots = np.asarray(axis.knots, dtype=np.float64).copy()
         lower, upper = axis.parameter_interval
         interiors = np.unique(knots[(knots > lower) & (knots < upper)])
         for knot in interiors:
@@ -456,7 +456,7 @@ def _bezier_homogeneous_cells(
             tuple(float(value) for value in np.asarray(axis.span_bounds[index]))
             for index, axis in zip(span_index, volume.basis.axes, strict=True)
         )
-        cells.append((controls, bounds, tuple(int(value) for value in span_index)))
+        cells.append((controls, bounds, tuple(span_index)))
     return tuple(cells)
 
 
@@ -483,7 +483,7 @@ def _outward_coefficients_bound(
     minimum = float(np.min(coefficients))
     maximum = float(np.max(coefficients))
     scale = max(1.0, float(np.max(np.abs(coefficients))))
-    epsilon = np.finfo(float).eps
+    epsilon = np.finfo(np.float64).eps
     operations = policy.roundoff_operation_budget
     gamma = operations * epsilon / (1.0 - operations * epsilon)
     padding = gamma * scale
@@ -600,7 +600,7 @@ def _cell_evidence(
         measure_polynomial.coefficients, policy
     )
     if weight.lower <= 0.0:
-        measure = IntervalBound(-np.finfo(float).max, np.finfo(float).max)
+        measure = IntervalBound(-np.finfo(np.float64).max, np.finfo(np.float64).max)
     else:
         measure = _divide_intervals(
             measure_numerator, _positive_power_interval(weight, exponent)
@@ -828,8 +828,8 @@ def certify_deformed_tensor_nurbs(
     factor = float(load_factor)
     if not isfinite(factor):
         raise ValueError("load_factor must be finite.")
-    displacement = np.asarray(displacement_control_points, dtype=float)
-    reference_points = np.asarray(reference.geometry.control_points, dtype=float)
+    displacement = np.asarray(displacement_control_points, dtype=np.float64)
+    reference_points = np.asarray(reference.geometry.control_points, dtype=np.float64)
     if displacement.shape != reference_points.shape:
         raise ValueError(
             "Displacement control points must match the geometry control net."

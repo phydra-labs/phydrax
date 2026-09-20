@@ -47,7 +47,7 @@ def benchmark_case(
         maximum_frames=frames,
         maximum_particles=particles,
     )
-    lag_steps = np.unique(np.linspace(0, frames - 1, lags, dtype=int))
+    lag_steps = np.unique(np.linspace(0, frames - 1, lags, dtype="int64"))
     correlation_plan = LaggedCorrelationPlan(
         lag_steps,
         maximum_frames=frames,
@@ -76,7 +76,7 @@ def benchmark_case(
         )
         for index in range(paths)
     )
-    probabilities = jnp.arange(1, paths + 1, dtype=float)
+    probabilities = jnp.arange(1, paths + 1, dtype="float64")
     probabilities = probabilities / jnp.sum(probabilities)
     entropy = jnp.log(probabilities) - jnp.log(probabilities[::-1])
     heat = -entropy
@@ -105,7 +105,7 @@ def benchmark_case(
             "particles": particles,
             "frames": frames,
             "wave_vectors": wave_vectors,
-            "lags": int(lag_steps.size),
+            "lags": lag_steps.size,
             "paths": paths,
         },
         "timing": {

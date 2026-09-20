@@ -105,8 +105,8 @@ class GeneralizedLangevinRuntimePlan(StrictModule, NonTrainableState):
         covariance_tolerance: float = 1.0e-10,
         realization_id: int = 0,
     ):
-        transition = np.asarray(transition_matrix, dtype=float)
-        noise = np.asarray(noise_factor, dtype=float)
+        transition = np.asarray(transition_matrix, dtype=np.float64)
+        noise = np.asarray(noise_factor, dtype=np.float64)
         thermal = float(temperature)
         tolerance = float(covariance_tolerance)
         realization = int(realization_id)
@@ -148,7 +148,7 @@ class GeneralizedLangevinRuntimePlan(StrictModule, NonTrainableState):
 
     @property
     def auxiliary_count(self) -> int:
-        return int(self.transition_matrix.shape[0]) - 1
+        return self.transition_matrix.shape[0] - 1
 
     def prepare(
         self, dynamics: PreparedAtomisticDynamics, /

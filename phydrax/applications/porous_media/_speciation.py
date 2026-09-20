@@ -125,9 +125,9 @@ class MassActionSystem(StrictModule):
                 "Chemical species require nonempty unique names and a primary basis."
             )
         b, s = len(primary), len(secondary)
-        nu = jnp.asarray(stoichiometry, dtype=float)
-        constants = jnp.asarray(log_k, dtype=float)
-        z = jnp.asarray(charges, dtype=float)
+        nu = jnp.asarray(stoichiometry, dtype=jnp.float64)
+        constants = jnp.asarray(log_k, dtype=jnp.float64)
+        z = jnp.asarray(charges, dtype=jnp.float64)
         if nu.shape != (s, b) or constants.shape != (s,) or z.shape != (b + s,):
             raise ValueError(
                 "Stoichiometry, log_k and charges must match the declared primary/secondary basis."

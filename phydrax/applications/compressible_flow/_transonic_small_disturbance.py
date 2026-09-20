@@ -48,8 +48,8 @@ class TransonicSmallDisturbancePlan(StrictModule, NonTrainableState):
         maximum_steps: int = 40,
         residual_tolerance: float = 1.0e-9,
     ):
-        x = np.asarray(x_coordinates, dtype=float)
-        y = np.asarray(y_coordinates, dtype=float)
+        x = np.asarray(x_coordinates, dtype=np.float64)
+        y = np.asarray(y_coordinates, dtype=np.float64)
         mach = float(free_stream_mach)
         gamma_ = float(gamma)
         steps = int(maximum_steps)

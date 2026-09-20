@@ -88,7 +88,7 @@ class BasisStateSubspace(StrictModule):
             jnp.asarray(True),
         )
         self.physical_dimension = physical
-        self.logical_dimension = int(indices.size)
+        self.logical_dimension = indices.size
         self.subspace_id = identifier
 
     def embed(self, logical_state: ArrayLike, /) -> Array:
@@ -156,8 +156,8 @@ class DenseQuantumSubspace(StrictModule):
             raise ValueError("subspace_id must be nonempty.")
         self.isometry = value
         self.evidence = QuantumSubspaceEvidence(residual, finite, valid)
-        self.physical_dimension = int(value.shape[0])
-        self.logical_dimension = int(value.shape[1])
+        self.physical_dimension = value.shape[0]
+        self.logical_dimension = value.shape[1]
         self.tolerance = tolerance_
         self.subspace_id = identifier
 
@@ -188,7 +188,7 @@ def basis_state_subspace(
 
     if not isinstance(layout, HilbertRegisterLayout):
         raise TypeError("layout must be a HilbertRegisterLayout.")
-    labels = tuple(tuple(int(level) for level in levels) for levels in level_tuples)
+    labels = tuple(tuple(levels) for levels in level_tuples)
     if not labels:
         raise ValueError("level_tuples must be nonempty.")
     flat: list[int] = []

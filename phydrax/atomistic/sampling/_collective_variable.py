@@ -17,7 +17,7 @@ from phydrax.ein import contract
 
 from ... import linalg as la
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._sites import AtomisticSiteDomain
 from .._system import PreparedAtomisticSystem
@@ -67,8 +67,8 @@ class CollectiveVariableEvaluation(StrictModule):
 
 
 class AbstractCollectiveVariablePlan(StrictModule, NonTrainableState):
-    cv_id: AbstractAttribute[str]
-    metric: AbstractAttribute[CollectiveVariableMetric]
+    cv_id: eqx.AbstractVar[str]
+    metric: eqx.AbstractVar[CollectiveVariableMetric]
 
     @abc.abstractmethod
     def prepare(self, system: PreparedAtomisticSystem, /) -> "PreparedCollectiveVariable":
@@ -76,10 +76,10 @@ class AbstractCollectiveVariablePlan(StrictModule, NonTrainableState):
 
 
 class AbstractCollectiveVariableProgram(StrictModule, NonTrainableState):
-    output_size: AbstractAttribute[int]
-    names: AbstractAttribute[tuple[str, ...]]
-    metrics: AbstractAttribute[tuple[CollectiveVariableMetric, ...]]
-    program_id: AbstractAttribute[str]
+    output_size: eqx.AbstractVar[int]
+    names: eqx.AbstractVar[tuple[str, ...]]
+    metrics: eqx.AbstractVar[tuple[CollectiveVariableMetric, ...]]
+    program_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def evaluate(self, positions: ArrayLike, /, **kwargs):
@@ -111,8 +111,8 @@ class CollectiveVariablePlan(AbstractCollectiveVariablePlan):
         index = np.asarray(indices)
         if index.ndim not in (1, 2) or not np.issubdtype(index.dtype, np.integer):
             raise TypeError("CV indices must be rank-one or rank-two integers.")
-        params = np.asarray(parameters, dtype=float)
-        ref = np.asarray(reference, dtype=float)
+        params = np.asarray(parameters, dtype=np.float64)
+        ref = np.asarray(reference, dtype=np.float64)
         if (
             not isinstance(domain, AtomisticSiteDomain)
             or np.any(~np.isfinite(params))
@@ -390,7 +390,7 @@ class PreparedCollectiveVariable(StrictModule, NonTrainableState):
             pair_difference = jnp.abs(distances[:, None] - distances[None, :])
             margin = jnp.min(
                 jnp.where(
-                    jnp.eye(distances.size, dtype=bool),
+                    jnp.eye(distances.size, dtype=jnp.bool_),
                     jnp.inf,
                     pair_difference,
                 )

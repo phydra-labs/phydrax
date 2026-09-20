@@ -65,7 +65,7 @@ class ElasticityBoundaryContract3D(StrictModule, NonTrainableState):
     non_goals: tuple[str, ...] = eqx.field(static=True)
 
 
-class ElasticityLayerKernel3D(eqx.Module):
+class ElasticityLayerKernel3D(StrictModule):
     """Kelvin displacement and outward-source-traction kernels in 3D."""
 
     shear_modulus: Array
@@ -74,8 +74,8 @@ class ElasticityLayerKernel3D(eqx.Module):
     _kernel_id: str = eqx.field(static=True)
 
     def __init__(self, shear_modulus: ArrayLike, poisson_ratio: ArrayLike, /):
-        mu = jnp.asarray(shear_modulus, dtype=float)
-        nu = jnp.asarray(poisson_ratio, dtype=float)
+        mu = jnp.asarray(shear_modulus, dtype=jnp.float64)
+        nu = jnp.asarray(poisson_ratio, dtype=jnp.float64)
         if mu.shape != () or not bool(jnp.isfinite(mu) & (mu > 0.0)):
             raise ValueError("shear_modulus must be one finite positive scalar.")
         if nu.shape != () or not bool(jnp.isfinite(nu) & (nu > -1.0) & (nu < 0.5)):
@@ -102,7 +102,7 @@ class ElasticityLayerKernel3D(eqx.Module):
         self.contract = contract
         self._kernel_id = canonical_fingerprint(
             {
-                "kind": "static-isotropic-elasticity-kelvin-3d-v1",
+                "kind": "static-isotropic-elasticity-kelvin-3d",
                 "mu": float(mu),
                 "nu": float(nu),
                 "r": "target-source",
@@ -219,7 +219,7 @@ class ElasticityLayerPotential3D(AbstractArrayModel):
         kernel = ElasticityLayerKernel3D(shear_modulus, poisson_ratio)
         representation_id = canonical_fingerprint(
             {
-                "kind": "discrete-static-elasticity-layer-potential-3d-v1",
+                "kind": "discrete-static-elasticity-layer-potential-3d",
                 "kernel": kernel.kernel_id,
                 "panelization": panelization.panelization_id,
                 "layer": kind,
@@ -409,7 +409,7 @@ class ElasticitySingleLayerDP0Policy3D(StrictModule, NonTrainableState):
         self.precision = precision_
         self.policy_id = canonical_fingerprint(
             {
-                "kind": "elasticity-single-layer-dp0-policy-3d-v1",
+                "kind": "elasticity-single-layer-dp0-policy-3d",
                 "orders": (regular, singular),
                 "tolerances": (absolute, relative),
                 "minimum_disjoint_centroid_ratio": separation,
@@ -572,8 +572,8 @@ def _rigid_and_equilibrium_metadata(
     origin = np.sum(areas[:, None] * centroids, axis=0) / np.sum(areas)
     relative = centroids - origin
     face_count = centroids.shape[0]
-    rigid = np.zeros((3 * face_count, 6), dtype=float)
-    functionals = np.zeros((6, 3 * face_count), dtype=float)
+    rigid = np.zeros((3 * face_count, 6), dtype=np.float64)
+    functionals = np.zeros((6, 3 * face_count), dtype=np.float64)
     for face in range(face_count):
         block = slice(3 * face, 3 * face + 3)
         rigid[block, :3] = np.eye(3)
@@ -623,7 +623,7 @@ def prepare_elasticity_single_layer_dp0_3d(
         raise ValueError(
             "Elasticity DP0 rigid/force/torque metadata requires one connected surface."
         )
-    face_count = int(binding.face_areas.shape[0])
+    face_count = binding.face_areas.shape[0]
     if face_count > selected.max_face_count:
         raise ValueError("Elasticity DP0 face count exceeds policy max_face_count.")
     matrix_bytes = 2 * (3 * face_count) ** 2 * np.dtype(np.float64).itemsize
@@ -639,7 +639,7 @@ def prepare_elasticity_single_layer_dp0_3d(
             "Elasticity DP0 quadrature exceeds policy max_preparation_workspace_bytes."
         )
 
-    vertices = np.asarray(region.triangle_mesh.vertices, dtype=float)
+    vertices = np.asarray(region.triangle_mesh.vertices, dtype=np.float64)
     faces = np.asarray(region.triangle_mesh.faces, dtype=np.int32)
     triangles = vertices[faces]
     centroids = np.mean(triangles, axis=1)
@@ -654,7 +654,7 @@ def prepare_elasticity_single_layer_dp0_3d(
         ),
         axis=1,
     )
-    weak = np.zeros((3 * face_count, 3 * face_count), dtype=float)
+    weak = np.zeros((3 * face_count, 3 * face_count), dtype=np.float64)
     counts = [0, 0, 0, 0]
     maximum_error = 0.0
     maximum_scale = 0.0
@@ -717,7 +717,7 @@ def prepare_elasticity_single_layer_dp0_3d(
         weak_array,
         operator_id=canonical_fingerprint(
             {
-                "kind": "elasticity-single-layer-dp0-weak-3d-v1",
+                "kind": "elasticity-single-layer-dp0-weak-3d",
                 "binding": binding.binding_id,
                 "policy": selected.policy_id,
                 "kernel": kernel.kernel_id,
@@ -729,7 +729,7 @@ def prepare_elasticity_single_layer_dp0_3d(
         strong_array,
         operator_id=canonical_fingerprint(
             {
-                "kind": "elasticity-single-layer-dp0-strong-3d-v1",
+                "kind": "elasticity-single-layer-dp0-strong-3d",
                 "weak": weak_operator.operator_id,
                 "areas": array_tree_fingerprint(binding.face_areas),
             }
@@ -755,7 +755,7 @@ def prepare_elasticity_single_layer_dp0_3d(
         traction_convention=kernel.contract.traction_convention,
         resource_evidence=(
             f"faces={face_count}; "
-            f"resident_matrix_bytes={int(weak_array.nbytes + strong_array.nbytes)}; "
+            f"resident_matrix_bytes={weak_array.nbytes + strong_array.nbytes}; "
             f"numeric_workspace_estimate_bytes={workspace_bytes}"
         ),
         error_evidence=(
@@ -782,13 +782,13 @@ def prepare_elasticity_single_layer_dp0_3d(
         quadrature_evaluations=evaluations,
         maximum_quadrature_error=selected.precision.decision(jnp.asarray(maximum_error)),
         preparation_workspace_bytes=workspace_bytes,
-        resident_bytes=int(weak_array.nbytes + strong_array.nbytes),
+        resident_bytes=weak_array.nbytes + strong_array.nbytes,
         continuum_discretization_error_estimated=False,
         finite=finite,
         accuracy_supported=accuracy,
         report_id=canonical_fingerprint(
             {
-                "kind": "elasticity-single-layer-dp0-report-3d-v1",
+                "kind": "elasticity-single-layer-dp0-report-3d",
                 "binding": binding.binding_id,
                 "policy": selected.policy_id,
                 "kernel": kernel.kernel_id,

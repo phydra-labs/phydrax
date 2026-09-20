@@ -33,8 +33,7 @@ def _as_point_time_callable(
         unknown = tuple(dep for dep in function.deps if dep not in allowed)
         if unknown:
             raise ValueError(
-                f"{role} dependencies must be position/time labels only; "
-                f"got unsupported dependencies {unknown!r}."
+                f"{role} dependencies must be position/time labels only; got unsupported dependencies {unknown!r}."
             )
 
         positions = tuple(

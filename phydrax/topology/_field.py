@@ -160,9 +160,7 @@ class FieldTopologyPlan(StrictModule, NonTrainableState):
         births = np.asarray(diagram.birth_values)
         deaths = np.asarray(diagram.death_values)
         finite = np.asarray(diagram.has_finite_death)
-        counts = np.zeros(
-            (int(self.thresholds.shape[0]), self.max_degree + 1), dtype=np.int32
-        )
+        counts = np.zeros((self.thresholds.shape[0], self.max_degree + 1), dtype=np.int32)
         for threshold_index, threshold in enumerate(np.asarray(self.thresholds)):
             alive = (
                 (births <= threshold) & (~finite | (deaths > threshold))

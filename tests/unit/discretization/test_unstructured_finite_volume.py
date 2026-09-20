@@ -61,7 +61,7 @@ def test_mixed_triangle_quadrilateral_geometry_has_one_exact_cell_complex():
         - discretization.cell_centers[discretization.owner_cells]
     )
     assert jnp.all(jnp.sum(owner_vector * discretization.area_vectors, axis=-1) > 0.0)
-    shared = discretization.neighbour_cells >= 0
+    shared = discretization.neighbor_cells >= 0
     assert jnp.sum(shared) == 2
 
 
@@ -141,7 +141,7 @@ def test_tetrahedral_geometry_has_exact_chain_orientation_and_face_closure():
         - discretization.cell_centers[discretization.owner_cells]
     )
     assert jnp.all(jnp.sum(owner_vector * discretization.area_vectors, axis=-1) > 0.0)
-    shared = discretization.neighbour_cells >= 0
+    shared = discretization.neighbor_cells >= 0
     assert jnp.sum(shared) == 1
 
 

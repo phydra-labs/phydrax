@@ -712,7 +712,7 @@ def initialize_neural_network(
                 )
         cells.append(value)
     groups = tuple(_stack([cells[i] for i in group.indices]) for group in runtime.groups)
-    dtype = jnp.result_type(*[jax.tree.leaves(value)[0] for value in cells], float)
+    dtype = jnp.result_type(*[jax.tree.leaves(value)[0] for value in cells], jnp.float64)
     channels = tuple(
         initialize_stochastic_channels(
             binding.runtime, counts, jax.random.fold_in(key, index)
@@ -740,7 +740,7 @@ def initialize_neural_network(
             [time_ms + binding.runtime.dt_ms for binding in plan.channel_couplings],
             dtype=dtype,
         ),
-        jnp.zeros((plan.synapses.endpoint_count,), dtype=bool),
+        jnp.zeros((plan.synapses.endpoint_count,), dtype=jnp.bool_),
         jnp.asarray(time_ms, dtype=dtype),
         jnp.asarray(0, dtype=jnp.int32),
         jnp.asarray(sum(t < time_ms for t, _ in plan.external_spikes), dtype=jnp.int32),
@@ -778,7 +778,7 @@ def zero_neural_inputs(
     )
     return NeuralNetworkInputs(
         zeros,
-        jnp.zeros(zeros.shape, dtype=bool),
+        jnp.zeros(zeros.shape, dtype=jnp.bool_),
         zeros,
         jnp.zeros(shape, dtype=zeros.dtype),
     )

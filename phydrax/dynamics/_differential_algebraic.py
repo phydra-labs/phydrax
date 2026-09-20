@@ -137,7 +137,7 @@ def _identifier(value: str, owner: str, /) -> str:
 
 
 def _shape(value: Sequence[int], owner: str, /) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if not shape or any(size <= 0 for size in shape):
         raise ValueError(f"{owner} dimensions must be positive.")
     return shape
@@ -154,7 +154,7 @@ def _roles(value: Sequence[DAERole], owner: str, /) -> tuple[DAERole, ...]:
 
 def _inexact(value: ArrayLike, /) -> Array:
     array = jnp.asarray(value)
-    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype(float)
+    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype("float64")
 
 
 def _positive_scale(
@@ -203,7 +203,7 @@ class DAEStructure(StrictModule):
         self.component_axis = None if component_axis is None else int(component_axis)
 
     def resolved_axis(self, state_shape: Sequence[int], /) -> int | None:
-        shape = tuple(int(size) for size in state_shape)
+        shape = tuple(state_shape)
         if self.component_axis is None:
             if len(self.variable_roles) != 1:
                 raise ValueError(
@@ -232,13 +232,13 @@ class DAEStructure(StrictModule):
         selected: DAERole,
         /,
     ) -> Array:
-        shape = tuple(int(size) for size in state_shape)
+        shape = tuple(state_shape)
         axis = self.resolved_axis(shape)
         if axis is None:
-            return jnp.full(shape, roles[0] == selected, dtype=bool)
+            return jnp.full(shape, roles[0] == selected, dtype=jnp.bool_)
         component_mask = jnp.asarray(
             tuple(role == selected for role in roles),
-            dtype=bool,
+            dtype=jnp.bool_,
         )
         broadcast_shape = [1] * len(shape)
         broadcast_shape[axis] = len(roles)
@@ -467,8 +467,7 @@ class DifferentialAlgebraicSystem(StrictModule):
             input_array = _inexact(inputs)
             if input_array.shape != self.input_layout.shape:
                 raise ValueError(
-                    f"inputs must have shape {self.input_layout.shape}; "
-                    f"got {input_array.shape}."
+                    f"inputs must have shape {self.input_layout.shape}; got {input_array.shape}."
                 )
             residual = cast(InputDifferentialAlgebraicResidual, self.residual)
             value = _inexact(
@@ -476,8 +475,7 @@ class DifferentialAlgebraicSystem(StrictModule):
             )
         if value.shape != self.state_shape:
             raise ValueError(
-                "DifferentialAlgebraicSystem residual returned shape "
-                f"{value.shape}; expected {self.state_shape}."
+                f"DifferentialAlgebraicSystem residual returned shape {value.shape}; expected {self.state_shape}."
             )
         return value
 
@@ -553,8 +551,7 @@ class DifferentialAlgebraicSystem(StrictModule):
             constant_array = _inexact(mass_matrix)
             if constant_array.shape != (size, size):
                 raise ValueError(
-                    f"mass_matrix must have shape {(size, size)}; "
-                    f"got {constant_array.shape}."
+                    f"mass_matrix must have shape {(size, size)}; got {constant_array.shape}."
                 )
 
         def apply_mass(time, state, state_rate, args):
@@ -568,8 +565,7 @@ class DifferentialAlgebraicSystem(StrictModule):
             )
             if matrix.shape != (size, size):
                 raise ValueError(
-                    f"Dynamic mass matrix must have shape {(size, size)}; "
-                    f"got {matrix.shape}."
+                    f"Dynamic mass matrix must have shape {(size, size)}; got {matrix.shape}."
                 )
             return (matrix @ state_rate.reshape((size,))).reshape(shape)
 

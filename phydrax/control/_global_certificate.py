@@ -87,7 +87,7 @@ class ConvexTranscriptionRelaxation(AbstractControlRelaxation, NonTrainableState
                 & jnp.all(candidate_ <= upper)
             )
         valid_ = (
-            jnp.asarray(valid, dtype=bool).reshape(())
+            jnp.asarray(valid, dtype=jnp.bool_).reshape(())
             & jnp.all(jnp.isfinite(lower))
             & jnp.all(jnp.isfinite(upper))
             & candidate_valid
@@ -215,7 +215,7 @@ class BoundedControlCertificatePlan(StrictModule, NonTrainableState):
             {
                 "kind": "bounded-control-certificate-plan",
                 "problem": problem_id,
-                "dimension": int(lower_.size),
+                "dimension": lower_.size,
                 "relaxation": relaxation.relaxation_id,
                 "minimum_box_width": width,
             }
@@ -285,7 +285,9 @@ class _BoundedControlBranchProblem(AbstractBranchAndBoundProblem):
         if isinstance(feasible, ContinuousPathConstraintCertificate):
             candidate_valid = bool(np.asarray(jnp.all(feasible.certified)))
         else:
-            candidate_valid = bool(np.asarray(jnp.all(jnp.asarray(feasible, dtype=bool))))
+            candidate_valid = bool(
+                np.asarray(jnp.all(jnp.asarray(feasible, dtype=jnp.bool_)))
+            )
         candidate = None
         if candidate_valid:
             objective = float(np.asarray(self.plan.objective(center)))
@@ -354,7 +356,7 @@ def _continuous_feasible(
     return (
         jnp.all(feasibility.certified)
         if isinstance(feasibility, ContinuousPathConstraintCertificate)
-        else jnp.all(jnp.asarray(feasibility, dtype=bool))
+        else jnp.all(jnp.asarray(feasibility, dtype=jnp.bool_))
     )
 
 

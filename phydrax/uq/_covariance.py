@@ -16,8 +16,8 @@ from jaxtyping import Array, ArrayLike, PyTree
 
 from .._strict import StrictModule
 from ..linalg import (
+    DenseCholesky,
     DenseLinearOperator,
-    DenseLU,
     LinearSolvePolicy,
     LinearSystem,
     OperatorProperties,
@@ -45,9 +45,9 @@ def _factor_and_solve_covariance_system(
     )
     prepared = prepare(
         LinearSystem(operator),
-        LinearSolvePolicy(DenseLU()),
+        LinearSolvePolicy(DenseCholesky()),
     )
-    return solve(prepared, right_hand_side), jnp.linalg.cholesky(matrix)
+    return solve(prepared, right_hand_side), prepared.state.factor
 
 
 def _solve_covariance_system(matrix: Array, right_hand_side: Array, /):
@@ -143,8 +143,8 @@ class FactorCovariance(AbstractCovariance):
             raise TypeError("Covariance factors must contain inexact array leaves.")
         if any(leaf.ndim == 0 for leaf in leaves):
             raise ValueError("Every covariance-factor leaf needs a leading rank axis.")
-        rank = int(leaves[0].shape[0])
-        if rank <= 0 or any(int(leaf.shape[0]) != rank for leaf in leaves):
+        rank = leaves[0].shape[0]
+        if rank <= 0 or any(leaf.shape[0] != rank for leaf in leaves):
             raise ValueError(
                 "Covariance-factor leaves must share one positive leading rank axis."
             )
@@ -199,7 +199,7 @@ def _validate_covariance_template(
     /,
 ) -> tuple[int, Any]:
     flat_template, unravel = ravel_pytree(template)
-    dimension = int(flat_template.size)
+    dimension = flat_template.size
     if dimension <= 0:
         raise ValueError("Covariance templates must contain at least one scalar.")
     template_structure = jax.tree_util.tree_structure(template)
@@ -325,7 +325,7 @@ def _validate_tree_shapes(
     if jax.tree_util.tree_structure(value) != expected_structure:
         raise ValueError(f"{owner} must match the uncertain value PyTree structure.")
     leaves = jax.tree_util.tree_leaves(value)
-    observed_shapes = tuple(tuple(int(size) for size in leaf.shape) for leaf in leaves)
+    observed_shapes = tuple(tuple(leaf.shape) for leaf in leaves)
     if observed_shapes != expected_shapes:
         raise ValueError(
             f"{owner} leaf shapes must be {expected_shapes}; got {observed_shapes}."
@@ -336,7 +336,7 @@ def _matrix_tolerance(matrix: Array, /) -> Array:
     real_dtype = jnp.asarray(jnp.real(matrix)).dtype
     epsilon = jnp.finfo(real_dtype).eps
     scale = jnp.maximum(jnp.max(jnp.abs(matrix)), jnp.ones((), dtype=real_dtype))
-    return 100.0 * int(matrix.shape[0]) * epsilon * scale
+    return 100.0 * matrix.shape[0] * epsilon * scale
 
 
 __all__ = [

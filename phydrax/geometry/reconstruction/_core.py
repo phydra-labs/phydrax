@@ -142,7 +142,7 @@ def _point_digest(points: np.ndarray) -> str:
 
 
 def _validated_points(points: ArrayLike, dimension: int) -> np.ndarray:
-    values = np.asarray(points, dtype=float)
+    values = np.asarray(points, dtype=np.float64)
     if values.ndim != 2 or values.shape[1] < dimension:
         raise ValueError(f"points must have shape (num_points, >= {dimension}).")
     values = values[:, :dimension]
@@ -157,14 +157,14 @@ def _recenter(points: np.ndarray, enabled: bool) -> tuple[np.ndarray, np.ndarray
     offset = (
         0.5 * (np.min(points, axis=0) + np.max(points, axis=0))
         if enabled
-        else np.zeros((points.shape[1],), dtype=float)
+        else np.zeros((points.shape[1],), dtype=np.float64)
     )
     return points - offset, offset
 
 
 def _polydata_triangles(polydata: pv.PolyData) -> tuple[np.ndarray, np.ndarray]:
     surface = polydata.triangulate()
-    vertices = np.asarray(surface.points, dtype=float)
+    vertices = np.asarray(surface.points, dtype=np.float64)
     packed = np.asarray(surface.faces, dtype=np.int64)
     if packed.size == 0 or packed.size % 4 != 0:
         raise ValueError("Reconstruction produced no triangular cells.")
@@ -210,7 +210,7 @@ def reconstruct_planar_region(
     points_ = _validated_points(points, 2)
     if alpha < 0.0 or tolerance < 0.0 or offset <= 0.0:
         raise ValueError("alpha/tolerance must be non-negative and offset positive.")
-    embedded = np.column_stack((points_, np.zeros((points_.shape[0],), dtype=float)))
+    embedded = np.column_stack((points_, np.zeros((points_.shape[0],), dtype=np.float64)))
     surface = pv.PolyData(embedded).delaunay_2d(
         tol=float(tolerance),
         alpha=float(alpha),
@@ -253,9 +253,10 @@ def reconstruct_planar_region(
             "Planar reconstruction must produce one connected polygon.", report
         )
     region = orient(region, sign=1.0)
-    loops_host = [np.asarray(region.exterior.coords[:-1], dtype=float)]
+    loops_host = [np.asarray(region.exterior.coords[:-1], dtype=np.float64)]
     loops_host.extend(
-        np.asarray(interior.coords[:-1], dtype=float) for interior in region.interiors
+        np.asarray(interior.coords[:-1], dtype=np.float64)
+        for interior in region.interiors
     )
     vertices = np.concatenate(loops_host, axis=0)
     vertices, center = _recenter(vertices, recenter)
@@ -299,7 +300,7 @@ def _surface_source(
     vertices, faces = _polydata_triangles(surface)
     mesh = _clean_surface_mesh(vertices, faces)
     components = len(mesh.split(only_watertight=False))
-    vertices_clean = np.asarray(mesh.vertices, dtype=float)
+    vertices_clean = np.asarray(mesh.vertices, dtype=np.float64)
     faces_clean = np.asarray(mesh.faces, dtype=np.int32)
     vertices_clean, center = _recenter(vertices_clean, recenter)
     report = ReconstructionReport(
@@ -369,14 +370,18 @@ def _terrain_points(
     x: ArrayLike | None,
     y: ArrayLike | None,
 ) -> np.ndarray:
-    values = np.asarray(points_or_grid, dtype=float)
+    values = np.asarray(points_or_grid, dtype=np.float64)
     if values.ndim == 2 and values.shape[1] != 3:
         rows, columns = values.shape
         x_values = (
-            np.arange(columns, dtype=float) if x is None else np.asarray(x, dtype=float)
+            np.arange(columns, dtype=np.float64)
+            if x is None
+            else np.asarray(x, dtype=np.float64)
         )
         y_values = (
-            np.arange(rows, dtype=float) if y is None else np.asarray(y, dtype=float)
+            np.arange(rows, dtype=np.float64)
+            if y is None
+            else np.asarray(y, dtype=np.float64)
         )
         if x_values.shape != (columns,) or y_values.shape != (rows,):
             raise ValueError("x and y coordinate vectors must match the height grid.")
@@ -519,7 +524,7 @@ def reconstruct_lidar_region(
     """Reconstruct valid derived LiDAR points while retaining acquisition lineage."""
     if not isinstance(product, LidarPointProduct):
         raise TypeError("product must be LidarPointProduct.")
-    active = np.asarray(product.support.active_mask, dtype=bool)
+    active = np.asarray(product.support.active_mask, dtype=np.bool_)
     return reconstruct_point_region(
         np.asarray(product.support.points)[active],
         recenter=recenter,

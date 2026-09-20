@@ -80,7 +80,7 @@ class RaoBlackwellizedSmootherResult(StrictModule):
 
 
 def _sample_shape(value: tuple[int, ...], /) -> tuple[tuple[int, ...], int]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if any(size <= 0 for size in shape):
         raise ValueError("sample_shape dimensions must be positive.")
     return shape, prod(shape) if shape else 1
@@ -99,8 +99,7 @@ def rao_blackwellized_backward_simulation(
     transition = result.problem.model.nonlinear_transition
     if not transition.has_log_density:
         raise ValueError(
-            "Rao-Blackwellized backward simulation requires a normalized "
-            "nonlinear transition density."
+            "Rao-Blackwellized backward simulation requires a normalized nonlinear transition density."
         )
     samples, sample_count = _sample_shape(sample_shape)
     case_shape = result.case_shape
@@ -124,7 +123,7 @@ def rao_blackwellized_backward_simulation(
     paths = np.full((sample_count, case_count, num_steps, nonlinear_size), np.nan)
     initial_states = np.full((sample_count, case_count, nonlinear_size), np.nan)
     indices = np.full((sample_count, case_count, num_steps + 1), -1, dtype=np.int32)
-    valid = np.zeros((sample_count, case_count), dtype=bool)
+    valid = np.zeros((sample_count, case_count), dtype=np.bool_)
     members = jnp.arange(sample_count, dtype=jnp.uint32)
     steps = jnp.arange(num_steps, dtype=jnp.uint32)
     for case_index, case_id in enumerate(result.case_ids):
@@ -179,7 +178,7 @@ def rao_blackwellized_backward_simulation(
             particle_index = jr.categorical(terminal_key, terminal_weights).astype(
                 jnp.int32
             )
-            path = jnp.full((num_steps, nonlinear_size), jnp.nan, dtype=float)
+            path = jnp.full((num_steps, nonlinear_size), jnp.nan, dtype=jnp.float64)
             path = path.at[terminal].set(case_particles[terminal, particle_index])
             path_indices = jnp.full((num_steps + 1,), -1, dtype=jnp.int32)
             path_indices = path_indices.at[terminal + 1].set(particle_index)
@@ -332,7 +331,7 @@ def rao_blackwellized_particle_smoother(
         (sample_count, case_count, max(num_steps - 1, 0), linear_size, linear_size)
     )
     lag_one = np.zeros_like(gains)
-    output_valid = np.zeros((sample_count, case_count, num_steps), dtype=bool)
+    output_valid = np.zeros((sample_count, case_count, num_steps), dtype=np.bool_)
     status = np.full(
         (sample_count, case_count, num_steps),
         RAO_BLACKWELLIZED_SMOOTHER_NONFINITE,

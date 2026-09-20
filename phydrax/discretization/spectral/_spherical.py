@@ -133,16 +133,14 @@ class SphericalSpectralPlan(AbstractDiscretizationPlan):
             or precision_.coefficient_dtype != "complex128"
         ):
             raise ValueError(
-                "Spherical S2FFT execution currently requires complex128 transform "
-                "and coefficient precision."
+                "Spherical S2FFT execution currently requires complex128 transform and coefficient precision."
             )
         if precision_.physical_dtype not in (
             "float64",
             "complex128",
         ) or precision_.output_dtype not in ("float64", "complex128"):
             raise ValueError(
-                "Spherical S2FFT execution currently requires float64 or complex128 "
-                "physical/output precision."
+                "Spherical S2FFT execution currently requires float64 or complex128 physical/output precision."
             )
         key_ = (
             DiscretizationKey(
@@ -167,7 +165,7 @@ class SphericalSpectralPlan(AbstractDiscretizationPlan):
         identifier = (
             canonical_fingerprint(
                 {
-                    "kind": "spherical-spectral-plan-v1",
+                    "kind": "spherical-spectral-plan",
                     "layout": layout.layout_id,
                     "sampling": sampling_,
                     "execution": execution_,
@@ -294,7 +292,7 @@ class SphericalSpectralDiscretization(AbstractStrongFormDiscretization):
         topology = PointTopology(entities)
         embedding_id = canonical_fingerprint(
             {
-                "kind": "round-sphere-sampling-v1",
+                "kind": "round-sphere-sampling",
                 "radius": radius_,
                 "transform": transform.transform_id,
                 "points": array_tree_fingerprint(np.asarray(points)),
@@ -316,14 +314,14 @@ class SphericalSpectralDiscretization(AbstractStrongFormDiscretization):
         )
         projection_id = canonical_fingerprint(
             {
-                "kind": "spherical-spectral-projection-v1",
+                "kind": "spherical-spectral-projection",
                 "transform": transform.transform_id,
                 "radius": radius_,
             }
         )
         reconstruction_id = canonical_fingerprint(
             {
-                "kind": "spherical-spectral-reconstruction-v1",
+                "kind": "spherical-spectral-reconstruction",
                 "transform": transform.transform_id,
                 "radius": radius_,
             }
@@ -391,7 +389,7 @@ class SphericalSpectralDiscretization(AbstractStrongFormDiscretization):
             raise ValueError("numeric_version must be non-empty.")
         prepared_id = canonical_fingerprint(
             {
-                "kind": "spherical-spectral-discretization-v1",
+                "kind": "spherical-spectral-discretization",
                 "plan": plan.plan_id,
                 "transform": transform.transform_id,
                 "execution": transform.execution_id,
@@ -528,8 +526,7 @@ class SphericalSpectralDiscretization(AbstractStrongFormDiscretization):
         modal = self.plan.precision.coefficients(coefficients)
         if modal.ndim < 2 or tuple(modal.shape[:2]) != self.coefficient_shape:
             raise ValueError(
-                "Spherical pointwise coefficients must begin with shape "
-                f"{self.coefficient_shape}; got {modal.shape}."
+                f"Spherical pointwise coefficients must begin with shape {self.coefficient_shape}; got {modal.shape}."
             )
         payload_ndim = modal.ndim - 2
         active = self.layout.valid_mask.reshape(
@@ -556,7 +553,7 @@ class SphericalSpectralDiscretization(AbstractStrongFormDiscretization):
         *,
         frame_angle: ArrayLike = 0.0,
     ) -> Array:
-        """Evaluate modes in the longitude-labelled spin frame at polar angles."""
+        """Evaluate modes in the longitude-labeled spin frame at polar angles."""
         modal = self._pointwise_coefficients(coefficients)
         result = _spherical_synthesis_angles(
             modal,
@@ -741,7 +738,7 @@ class SphericalSpectralDiscretization(AbstractStrongFormDiscretization):
     def unflatten(self, state: ArrayLike, /) -> Array:
         values = jnp.asarray(state)
         count = math.prod(self.sample_shape)
-        if values.ndim < 1 or int(values.shape[0]) != count:
+        if values.ndim < 1 or values.shape[0] != count:
             raise ValueError(f"Flattened spherical state must begin with ({count},).")
         return values.reshape(self.sample_shape + values.shape[1:])
 
@@ -784,8 +781,7 @@ class SphericalSpectralDiscretization(AbstractStrongFormDiscretization):
         degree_count = math.isqrt(retained)
         if retained <= 0 or retained > maximum or degree_count**2 != retained:
             raise ValueError(
-                "Spherical eigenpair rank must be a positive complete-degree square "
-                f"not exceeding {maximum}."
+                f"Spherical eigenpair rank must be a positive complete-degree square not exceeding {maximum}."
             )
         point_count = math.prod(self.sample_shape)
         estimate = retained * (
@@ -795,8 +791,7 @@ class SphericalSpectralDiscretization(AbstractStrongFormDiscretization):
         )
         if estimate > self.plan.max_explicit_eigenbasis_bytes:
             raise ValueError(
-                "Spherical eigenbasis construction exceeds "
-                f"max_explicit_eigenbasis_bytes; estimated {estimate} bytes."
+                f"Spherical eigenbasis construction exceeds max_explicit_eigenbasis_bytes; estimated {estimate} bytes."
             )
         coefficients, _ = self._real_mode_specification(retained)
         modes = self.transform.synthesis(coefficients)
@@ -826,8 +821,7 @@ class SphericalSpectralDiscretization(AbstractStrongFormDiscretization):
         estimate = count * count * itemsize
         if estimate > self.plan.max_dense_operator_bytes:
             raise ValueError(
-                "Spherical dense Laplacian exceeds max_dense_operator_bytes; "
-                f"estimated {estimate} bytes."
+                f"Spherical dense Laplacian exceeds max_dense_operator_bytes; estimated {estimate} bytes."
             )
         identity = jnp.eye(count, dtype=jnp.dtype(self.plan.precision.physical_dtype))
         columns = jax.vmap(
@@ -858,7 +852,7 @@ def spherical_laplacian_operator(
         ),
         operator_id=canonical_fingerprint(
             {
-                "kind": "spherical-laplace-beltrami-operator-v1",
+                "kind": "spherical-laplace-beltrami-operator",
                 "discretization": discretization.prepared_id,
                 "sign": "negative-semidefinite",
             }

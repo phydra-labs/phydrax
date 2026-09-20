@@ -43,7 +43,7 @@ class TemporalHarmonicPlan(StrictModule):
     def __init__(
         self, angular_frequency: ArrayLike, sample_count: int, state_size: int, /
     ):
-        frequency = jnp.asarray(angular_frequency, dtype=float)
+        frequency = jnp.asarray(angular_frequency, dtype=jnp.float64)
         samples, size = int(sample_count), int(state_size)
         if frequency.shape != () or samples < 3 or size <= 0:
             raise ValueError("Temporal harmonic plan values are invalid.")
@@ -239,7 +239,9 @@ def plan_harmonic_balance(
     dtype = jnp.dtype(prepared_dae.plan.state_scale.dtype)
     unknowns = temporal.sample_count * temporal.state_size
     waveform_bytes = unknowns * dtype.itemsize
-    coefficient_bytes = unknowns * jnp.dtype(jnp.result_type(dtype, complex)).itemsize
+    coefficient_bytes = (
+        unknowns * jnp.dtype(jnp.result_type(dtype, jnp.complex128)).itemsize
+    )
     workspace_bytes = 3 * waveform_bytes + 2 * coefficient_bytes
     if temporal.sample_count > selected.maximum_samples:
         raise MemoryError("Harmonic balance exceeds maximum_samples.")
@@ -508,7 +510,7 @@ def shoot_periodic_circuit(
         raise TypeError("prepared_dae must be PreparedCircuitDAE.")
     from ..solver import solve_dae
 
-    initial = jnp.asarray(initial_state, dtype=float)
+    initial = jnp.asarray(initial_state, dtype=jnp.float64)
     problem = circuit_dae_problem(
         prepared_dae,
         initial,
@@ -539,7 +541,7 @@ def floquet_multipliers(
 ) -> FloquetResult:
     if not callable(period_map):
         raise TypeError("period_map must be callable.")
-    value = jnp.asarray(state, dtype=float)
+    value = jnp.asarray(state, dtype=jnp.float64)
     if value.ndim != 1 or value.size == 0:
         raise ValueError("Floquet state must be one nonempty vector.")
     monodromy = jax.jacfwd(lambda current: jnp.asarray(period_map(current)))(value)

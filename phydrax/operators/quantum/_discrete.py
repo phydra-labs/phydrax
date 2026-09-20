@@ -40,13 +40,13 @@ class ConnectedConfigurations(StrictModule):
         *,
         configuration_shape: Sequence[int],
     ):
-        shape = tuple(int(size) for size in configuration_shape)
+        shape = tuple(configuration_shape)
         if not shape or any(size <= 0 for size in shape):
             raise ValueError("configuration_shape must contain positive dimensions.")
         configs = jnp.asarray(configurations)
         elements = jnp.asarray(matrix_elements)
-        mask = jnp.asarray(valid, dtype=bool)
-        if elements.ndim < 1 or int(elements.shape[-1]) < 1:
+        mask = jnp.asarray(valid, dtype=jnp.bool_)
+        if elements.ndim < 1 or elements.shape[-1] < 1:
             raise ValueError(
                 "Connected configurations require a nonempty connection axis."
             )
@@ -62,11 +62,11 @@ class ConnectedConfigurations(StrictModule):
         self.matrix_elements = elements
         self.valid = mask
         self.configuration_shape = shape
-        self.max_connections = int(elements.shape[-1])
+        self.max_connections = elements.shape[-1]
 
     @property
     def batch_shape(self) -> tuple[int, ...]:
-        return tuple(int(size) for size in self.matrix_elements.shape[:-1])
+        return tuple(self.matrix_elements.shape[:-1])
 
 
 class AbstractDiscreteQuantumOperator(AbstractLocalQuantumOperator):
@@ -103,7 +103,7 @@ class CallableDiscreteQuantumOperator(AbstractDiscreteQuantumOperator):
     ):
         if not callable(diagonal) or not callable(connections):
             raise TypeError("diagonal and connections must be callable.")
-        shape = tuple(int(size) for size in configuration_shape)
+        shape = tuple(configuration_shape)
         if not shape or any(size <= 0 for size in shape):
             raise ValueError("configuration_shape must contain positive dimensions.")
         if not isinstance(operator_id, str) or not operator_id:
@@ -118,10 +118,9 @@ class CallableDiscreteQuantumOperator(AbstractDiscreteQuantumOperator):
         rank = len(self.configuration_shape)
         if values.ndim < rank or tuple(values.shape[-rank:]) != self.configuration_shape:
             raise ValueError(
-                "configurations must end in shape "
-                f"{self.configuration_shape}; got {values.shape}."
+                f"configurations must end in shape {self.configuration_shape}; got {values.shape}."
             )
-        return tuple(int(size) for size in values.shape[:-rank])
+        return tuple(values.shape[:-rank])
 
     def diagonal(self, configurations: Array, /) -> Array:
         batch_shape = self._batch_shape(configurations)
@@ -167,10 +166,9 @@ def _discrete_operator_estimate(
         or tuple(configs.shape[-rank:]) != operator.configuration_shape
     ):
         raise ValueError(
-            "configurations must end in shape "
-            f"{operator.configuration_shape}; got {configs.shape}."
+            f"configurations must end in shape {operator.configuration_shape}; got {configs.shape}."
         )
-    batch_shape = tuple(int(size) for size in configs.shape[:-rank])
+    batch_shape = tuple(configs.shape[:-rank])
     batch_count = prod(batch_shape) if batch_shape else 1
     flat_configs = configs.reshape((batch_count,) + operator.configuration_shape)
     current = _evaluate_amplitudes(model, flat_configs)

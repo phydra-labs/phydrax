@@ -41,8 +41,8 @@ class EOSGridPlan(StrictModule, NonTrainableState):
         constraint_id: str = "muQ=muS=0",
         maximum_cells: int = 1_000_000,
     ):
-        temperatures_ = np.asarray(temperatures, dtype=float)
-        baryon = np.asarray(baryon_chemical_potentials, dtype=float)
+        temperatures_ = np.asarray(temperatures, dtype=np.float64)
+        baryon = np.asarray(baryon_chemical_potentials, dtype=np.float64)
         if (
             temperatures_.ndim != 1
             or baryon.ndim != 1

@@ -134,7 +134,7 @@ class QuantumInitialState(StrictModule):
         value = (
             None
             if device_correlation is None
-            else jnp.asarray(device_correlation, dtype=complex)
+            else jnp.asarray(device_correlation, dtype=jnp.complex128)
         )
         if value is not None and (
             value.ndim != 3
@@ -248,7 +248,7 @@ def _initial_correlation(device, initial, sites):
             )
         valid = valid & ok
     result = (
-        jnp.zeros((nm, dim, dim), dtype=complex)
+        jnp.zeros((nm, dim, dim), dtype=jnp.complex128)
         .at[:, sites : sites + n, sites : sites + n]
         .set(rho)
     )

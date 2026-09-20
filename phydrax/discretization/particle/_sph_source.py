@@ -121,13 +121,13 @@ class SPHParticleSourcePlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(population, ParticlePopulationPlan):
             raise TypeError("population must be ParticlePopulationPlan.")
-        sites = np.asarray(source_sites, dtype=float)
-        normal = np.asarray(normals, dtype=float)
-        area = np.asarray(quadrature_area, dtype=float)
-        offsets = np.asarray(candidate_offsets, dtype=float)
-        mass = np.asarray(particle_mass, dtype=float)
-        lower = np.asarray(domain_lower, dtype=float)
-        upper = np.asarray(domain_upper, dtype=float)
+        sites = np.asarray(source_sites, dtype=np.float64)
+        normal = np.asarray(normals, dtype=np.float64)
+        area = np.asarray(quadrature_area, dtype=np.float64)
+        offsets = np.asarray(candidate_offsets, dtype=np.float64)
+        mass = np.asarray(particle_mass, dtype=np.float64)
+        lower = np.asarray(domain_lower, dtype=np.float64)
+        upper = np.asarray(domain_upper, dtype=np.float64)
         maximum = int(maximum_emissions_per_site)
         dimension = population.particles.ambient_dimension
         if sites.ndim != 2 or sites.shape[1] != dimension or sites.shape[0] == 0:
@@ -217,13 +217,13 @@ class SPHParticleSourcePlan(StrictModule, NonTrainableState):
 
     @property
     def site_count(self) -> int:
-        return int(self.source_sites.shape[0])
+        return self.source_sites.shape[0]
 
     @property
     def emission_capacity(self) -> int:
         return self.site_count * self.maximum_emissions_per_site
 
-    def initialize_source_state(self, dtype=float, /) -> SPHParticleSourceState:
+    def initialize_source_state(self, dtype=jnp.float64, /) -> SPHParticleSourceState:
         return SPHParticleSourceState(
             jnp.zeros((self.site_count,), dtype=dtype),
             jnp.zeros((), dtype=dtype),
@@ -292,7 +292,7 @@ def emit_sph_particles(
     specific_energy = jnp.asarray(
         request.barotropic_specific_energy, dtype=state.position.dtype
     )
-    valid_site = jnp.asarray(request.valid, dtype=bool)
+    valid_site = jnp.asarray(request.valid, dtype=jnp.bool_)
     dt = jnp.asarray(step_size, dtype=state.position.dtype)
     site_count = plan.site_count
     dimension = plan.population.particles.ambient_dimension
@@ -373,7 +373,7 @@ def emit_sph_particles(
     candidate_delta = flat_position[:, None, :] - flat_position[None, :, :]
     candidate_distance = jnp.sqrt(jnp.sum(candidate_delta * candidate_delta, axis=-1))
     candidate_pair = flat_valid[:, None] & flat_valid[None, :]
-    candidate_pair = candidate_pair & ~jnp.eye(plan.emission_capacity, dtype=bool)
+    candidate_pair = candidate_pair & ~jnp.eye(plan.emission_capacity, dtype=jnp.bool_)
     candidate_clearance = jnp.min(
         jnp.where(candidate_pair, candidate_distance, jnp.inf), axis=-1
     )
@@ -532,7 +532,7 @@ def emit_sph_particles(
     )
     event_active = successful & (allocation.allocated_count > 0)
     tape_capacity = plan.replay_policy.maximum_events
-    tape_active = jnp.zeros((tape_capacity,), dtype=bool).at[0].set(event_active)
+    tape_active = jnp.zeros((tape_capacity,), dtype=jnp.bool_).at[0].set(event_active)
     from ...solver._hybrid_event import HybridEventTape
 
     tape = HybridEventTape(
@@ -558,12 +558,12 @@ def emit_sph_particles(
         transversality=jnp.zeros((tape_capacity,), dtype=state.position.dtype)
         .at[0]
         .set(threshold_distance),
-        saltation_valid=jnp.zeros((tape_capacity,), dtype=bool)
+        saltation_valid=jnp.zeros((tape_capacity,), dtype=jnp.bool_)
         .at[0]
         .set(derivative_valid & event_active),
         determinant_signs=jnp.ones((tape_capacity,), dtype=state.position.dtype),
         log_abs_determinants=jnp.zeros((tape_capacity,), dtype=state.position.dtype),
-        log_jacobian_valid=jnp.zeros((tape_capacity,), dtype=bool),
+        log_jacobian_valid=jnp.zeros((tape_capacity,), dtype=jnp.bool_),
         active=tape_active,
         event_count=jnp.where(event_active, 1, 0).astype(jnp.int32),
         terminal=jnp.asarray(False),

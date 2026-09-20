@@ -27,7 +27,7 @@ def _measure(function, *args):
 
 def main() -> None:
     count = 64
-    coordinate = (jnp.arange(count, dtype=float) + 0.5) / count
+    coordinate = (jnp.arange(count, dtype="float64") + 0.5) / count
     positions = jnp.stack(
         (
             coordinate,

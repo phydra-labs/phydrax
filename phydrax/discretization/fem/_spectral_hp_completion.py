@@ -338,20 +338,20 @@ def compact_hp_forest(
     old_to_new[np.asarray(order)] = np.arange(len(order), dtype=np.int32)
     capacity = topology.capacity
     identifiers = np.full((capacity,), -1, dtype=np.int64)
-    allocated_new = np.zeros((capacity,), dtype=bool)
-    active = np.zeros((capacity,), dtype=bool)
+    allocated_new = np.zeros((capacity,), dtype=np.bool_)
+    active = np.zeros((capacity,), dtype=np.bool_)
     degrees = np.zeros((capacity, topology.dimension), dtype=np.int32)
     roots = np.full((capacity,), -1, dtype=np.int64)
     paths = np.full((capacity,), -1, dtype=np.int64)
     levels = np.full((capacity,), -1, dtype=np.int32)
     parents = np.full((capacity,), -1, dtype=np.int32)
     children = np.full((capacity, topology.child_capacity), -1, dtype=np.int32)
-    child_valid = np.zeros_like(children, dtype=bool)
+    child_valid = np.zeros_like(children, dtype=np.bool_)
     vertices = np.zeros(
         (capacity,) + tuple(np.asarray(geometry.cell_vertices).shape[1:]),
         dtype=np.asarray(geometry.cell_vertices).dtype,
     )
-    lower = np.zeros((capacity, topology.dimension), dtype=float)
+    lower = np.zeros((capacity, topology.dimension), dtype=np.float64)
     upper = np.zeros_like(lower)
     for new, old in enumerate(order):
         identifiers[new] = np.asarray(topology.cell_global_ids)[old]
@@ -414,8 +414,8 @@ class GeometryOrderAdaptation(StrictModule, NonTrainableState):
         source = np.asarray(source_nodes)
         target = np.asarray(target_nodes)
         values = np.asarray(coordinate_values)
-        source_order_ = tuple(int(value) for value in source_order)
-        target_order_ = tuple(int(value) for value in target_order)
+        source_order_ = tuple(source_order)
+        target_order_ = tuple(target_order)
         interpolation = np.asarray(tensor_trace_interpolation(source, target))
         if values.shape[-2] != source.shape[0]:
             raise ValueError("Geometry coordinate values do not match source nodes.")
@@ -671,7 +671,7 @@ class TensorPiolaMap(StrictModule, NonTrainableState):
     def apply(self, jacobian: ArrayLike, values: ArrayLike, /) -> Array:
         matrix = jnp.asarray(jacobian)
         value = jnp.asarray(values)
-        dimension = int(matrix.shape[-1])
+        dimension = matrix.shape[-1]
         small_plan = SmallLinearSolvePlan(dimension)
         if self.mapping == "covariant":
             result = solve_small_linear(
@@ -706,7 +706,7 @@ def _pyramid_modal_tabulation(
     indices: tuple[tuple[int, int, int], ...],
     /,
 ) -> tuple[np.ndarray, np.ndarray]:
-    values = np.asarray(points, dtype=float)
+    values = np.asarray(points, dtype=np.float64)
     height = values[:, 2]
     scale = 1.0 - height
     safe = np.where(scale > 1.0e-12, scale, 1.0)
@@ -1313,21 +1313,21 @@ class UnfittedAggregationPlan(StrictModule, NonTrainableState):
     def __init__(
         self,
         volume_fractions: ArrayLike,
-        neighbours: ArrayLike,
+        neighbors: ArrayLike,
         /,
         *,
         minimum_fraction: float = 0.1,
     ):
         fractions = np.asarray(volume_fractions)
-        neighbours_ = np.asarray(neighbours, dtype=np.int32)
-        if fractions.ndim != 1 or neighbours_.shape[0] != fractions.size:
-            raise ValueError("Unfitted fractions and neighbours disagree.")
+        neighbors_ = np.asarray(neighbors, dtype=np.int32)
+        if fractions.ndim != 1 or neighbors_.shape[0] != fractions.size:
+            raise ValueError("Unfitted fractions and neighbors disagree.")
         target = np.arange(fractions.size, dtype=np.int32)
         valid = fractions < minimum_fraction
         for cell in np.flatnonzero(valid):
-            candidates = neighbours_[cell][neighbours_[cell] >= 0]
+            candidates = neighbors_[cell][neighbors_[cell] >= 0]
             if candidates.size == 0:
-                raise ValueError("Small cut cells require one aggregation neighbour.")
+                raise ValueError("Small cut cells require one aggregation neighbor.")
             target[cell] = int(candidates[np.argmax(fractions[candidates])])
         for cell in np.flatnonzero(valid):
             root = int(target[cell])

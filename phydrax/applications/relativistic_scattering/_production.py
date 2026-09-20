@@ -36,7 +36,7 @@ MatrixElementSquared = Callable[[Array, Array], Array]
 
 
 class BeamPlan(StrictModule, NonTrainableState):
-    """Two-particle centre-of-momentum beam state with explicit identities."""
+    """Two-particle center-of-momentum beam state with explicit identities."""
 
     pdg_ids: tuple[int, int] = eqx.field(static=True)
     center_of_mass_energy: Array
@@ -53,7 +53,7 @@ class BeamPlan(StrictModule, NonTrainableState):
         spectrum_id: str = "monoenergetic",
         crossing_id: str = "head-on",
     ):
-        identities = tuple(int(value) for value in pdg_ids)
+        identities = tuple(pdg_ids)
         energy = float(center_of_mass_energy)
         spectrum = str(spectrum_id).strip()
         crossing = str(crossing_id).strip()
@@ -154,7 +154,7 @@ class HardProcessPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Native hard production currently supports two-to-two processes."
             )
-        outgoing = tuple(int(value) for value in outgoing_pdg_ids)
+        outgoing = tuple(outgoing_pdg_ids)
         if len(outgoing) != 2:
             raise ValueError("outgoing_pdg_ids must contain two identities.")
         matrix_element = str(matrix_element_id).strip()
@@ -349,7 +349,7 @@ def produce_hard_events(
     )
     if not isinstance(prepared_events, PreparedParticleEvents):
         raise TypeError("event_plan must be ParticleEventPlan or PreparedParticleEvents.")
-    capacity = int(points.shape[0])
+    capacity = points.shape[0]
     if prepared_events.plan.event_capacity != capacity:
         raise ValueError("Event plan capacity must equal the unit-point count.")
     if (
@@ -399,7 +399,7 @@ def produce_hard_events(
     status = jnp.zeros_like(pdg_ids)
     status = status.at[:, :2].set(-1)
     status = status.at[:, 2:4].set(1)
-    particle_active = jnp.zeros((capacity, particle_capacity), dtype=bool)
+    particle_active = jnp.zeros((capacity, particle_capacity), dtype=jnp.bool_)
     particle_active = particle_active.at[:, :4].set(generated[:, None])
     mothers = jnp.full((capacity, particle_capacity, 2), -1, dtype=jnp.int32)
     mothers = mothers.at[:, 2:4].set(jnp.asarray([0, 1], dtype=jnp.int32))
@@ -407,12 +407,10 @@ def produce_hard_events(
         (capacity, particle_capacity), -1, dtype=jnp.int32
     )
     production_vertex_indices = production_vertex_indices.at[:, 2:4].set(0)
-    end_vertex_indices = jnp.full(
-        (capacity, particle_capacity), -1, dtype=jnp.int32
-    )
+    end_vertex_indices = jnp.full((capacity, particle_capacity), -1, dtype=jnp.int32)
     end_vertex_indices = end_vertex_indices.at[:, :2].set(0)
     vertices = jnp.zeros((capacity, vertex_capacity, 4), dtype=outgoing.dtype)
-    vertex_active = jnp.zeros((capacity, vertex_capacity), dtype=bool)
+    vertex_active = jnp.zeros((capacity, vertex_capacity), dtype=jnp.bool_)
     vertex_active = vertex_active.at[:, 0].set(generated)
     resolved_source = (
         prepared.prepared_id if source_id is None else str(source_id).strip()

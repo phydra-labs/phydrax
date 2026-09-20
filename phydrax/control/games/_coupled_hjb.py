@@ -16,6 +16,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from ..._interpolation import linear_interpolate
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...dynamics import TimeGrid
@@ -116,26 +117,23 @@ class DiscreteCoupledHJBProblem(StrictModule, NonTrainableState):
         expected_terminal = (players, spatial_grid.num_points)
         if terminal.shape != expected_terminal:
             raise ValueError(
-                "terminal_values must have shape "
-                f"{expected_terminal}; got {terminal.shape}."
+                f"terminal_values must have shape {expected_terminal}; got {terminal.shape}."
             )
         boundary = _finite_real_array(boundary_values, "boundary_values")
         expected_boundary = (players, time_grid.num_times, 2)
         if boundary.shape != expected_boundary:
             raise ValueError(
-                "boundary_values must have shape "
-                f"{expected_boundary}; got {boundary.shape}."
+                f"boundary_values must have shape {expected_boundary}; got {boundary.shape}."
             )
         corner_residual = float(
             np.max(np.abs(boundary[:, -1] - terminal[:, (0, terminal.shape[1] - 1)]))
         )
         if corner_residual > tolerance:
             raise ValueError(
-                "Terminal values and final-time boundary data are incompatible at "
-                "the interval corners."
+                "Terminal values and final-time boundary data are incompatible at the interval corners."
             )
 
-        dtype = jnp.result_type(*actions, terminal, boundary, float)
+        dtype = jnp.result_type(*actions, terminal, boundary, jnp.float64)
         self.spatial_grid = spatial_grid
         self.time_grid = time_grid
         self.player_actions = tuple(
@@ -376,7 +374,9 @@ def _callback_scalar(
 
 
 def _coefficient_table(problem: DiscreteCoupledHJBProblem, /) -> _CoefficientTable:
-    actions = tuple(np.asarray(action, dtype=float) for action in problem.player_actions)
+    actions = tuple(
+        np.asarray(action, dtype=np.float64) for action in problem.player_actions
+    )
     action_counts = tuple(action.size for action in actions)
     profile_indices = (
         np.indices(action_counts, dtype=np.int32).reshape(problem.num_players, -1).T
@@ -387,17 +387,17 @@ def _coefficient_table(problem: DiscreteCoupledHJBProblem, /) -> _CoefficientTab
             for player in range(problem.num_players)
         )
     )
-    times = np.asarray(problem.time_grid.times, dtype=float)
-    points = np.asarray(problem.spatial_grid.points, dtype=float)
+    times = np.asarray(problem.time_grid.times, dtype=np.float64)
+    points = np.asarray(problem.spatial_grid.points, dtype=np.float64)
     shape = (
         problem.num_players,
         times.size - 1,
         points.size - 2,
         profile_indices.shape[0],
     )
-    drift = np.empty(shape, dtype=float)
-    variance = np.empty(shape, dtype=float)
-    cost = np.empty(shape, dtype=float)
+    drift = np.empty(shape, dtype=np.float64)
+    variance = np.empty(shape, dtype=np.float64)
+    cost = np.empty(shape, dtype=np.float64)
     maximum_courant = 0.0
     minimum_margin = 1.0
     spacing = problem.spatial_grid.spacing
@@ -428,8 +428,7 @@ def _coefficient_table(problem: DiscreteCoupledHJBProblem, /) -> _CoefficientTab
                     variance_value = diffusion_value * diffusion_value
                     if not np.isfinite(variance_value):
                         raise ValueError(
-                            "Squared diffusion must be finite on the declared grids "
-                            "and profiles."
+                            "Squared diffusion must be finite on the declared grids and profiles."
                         )
                     drift[player, step, point_index, profile_index] = drift_value
                     variance[player, step, point_index, profile_index] = variance_value
@@ -447,7 +446,7 @@ def _coefficient_table(problem: DiscreteCoupledHJBProblem, /) -> _CoefficientTab
                     )
                     maximum_courant = max(maximum_courant, courant)
                     minimum_margin = min(minimum_margin, 1.0 - courant)
-    if minimum_margin < -32.0 * np.finfo(float).eps:
+    if minimum_margin < -32.0 * np.finfo(np.float64).eps:
         raise ValueError(
             "The declared time and spatial grids violate the explicit monotone "
             "upwind-diffusion step condition for at least one player and joint "
@@ -471,7 +470,7 @@ def _joint_profile_weights(
     /,
 ) -> np.ndarray:
     points = probabilities[0].shape[1]
-    weights = np.ones((points, profile_indices.shape[0]), dtype=float)
+    weights = np.ones((points, profile_indices.shape[0]), dtype=np.float64)
     for player, probability in enumerate(probabilities):
         weights *= probability[step][:, profile_indices[:, player]]
     return weights
@@ -505,10 +504,10 @@ def _evaluate_player(
     player: int,
     /,
 ) -> np.ndarray:
-    times = np.asarray(problem.time_grid.times, dtype=float)
-    boundary = np.asarray(problem.boundary_values[player], dtype=float)
-    values = np.empty((times.size, problem.spatial_grid.num_points), dtype=float)
-    values[-1] = np.asarray(problem.terminal_values[player], dtype=float)
+    times = np.asarray(problem.time_grid.times, dtype=np.float64)
+    boundary = np.asarray(problem.boundary_values[player], dtype=np.float64)
+    values = np.empty((times.size, problem.spatial_grid.num_points), dtype=np.float64)
+    values[-1] = np.asarray(problem.terminal_values[player], dtype=np.float64)
     for step in range(times.size - 2, -1, -1):
         profile_hamiltonian = _profile_hamiltonian(
             values[step + 1],
@@ -554,8 +553,8 @@ def _own_hamiltonians(
 ) -> np.ndarray:
     steps = problem.time_grid.num_times - 1
     interior = problem.spatial_grid.num_points - 2
-    action_count = int(problem.player_actions[player].shape[0])
-    own = np.empty((steps, interior, action_count), dtype=float)
+    action_count = problem.player_actions[player].shape[0]
+    own = np.empty((steps, interior, action_count), dtype=np.float64)
     for step in range(steps):
         profile_hamiltonian = _profile_hamiltonian(
             values[step + 1],
@@ -590,7 +589,7 @@ def _best_response(
 
 
 def _one_hot(selectors: np.ndarray, action_count: int, /) -> np.ndarray:
-    return np.eye(action_count, dtype=float)[selectors]
+    return np.eye(action_count, dtype=np.float64)[selectors]
 
 
 def _modal_selectors(probabilities: tuple[np.ndarray, ...], /) -> np.ndarray:
@@ -632,9 +631,7 @@ def _initial_selectors(
         raise ValueError("initial_policy_selectors must contain at least one branch.")
     for player, actions in enumerate(problem.player_actions):
         player_selectors = selectors[:, player]
-        if np.any(player_selectors < 0) or np.any(
-            player_selectors >= int(actions.shape[0])
-        ):
+        if np.any(player_selectors < 0) or np.any(player_selectors >= actions.shape[0]):
             raise ValueError(
                 f"Initial selectors for player {player} are outside its action grid."
             )
@@ -669,47 +666,49 @@ def _run_branches(
     values = np.full(
         (branches, players, problem.time_grid.num_times, problem.spatial_grid.num_points),
         np.nan,
-        dtype=float,
+        dtype=np.float64,
     )
     final_probabilities = tuple(
-        np.full((branches, steps, interior, int(actions.shape[0])), np.nan, dtype=float)
+        np.full((branches, steps, interior, actions.shape[0]), np.nan, dtype=np.float64)
         for actions in problem.player_actions
     )
     selectors = np.full((branches, players, steps, interior), -1, dtype=np.int32)
     best_response_selectors = np.full_like(selectors, -1)
     tie_counts = np.zeros_like(selectors)
-    fixed_point_residuals = np.full((branches,), np.inf, dtype=float)
-    boundary_residuals = np.full((branches,), np.inf, dtype=float)
-    terminal_residuals = np.full((branches,), np.inf, dtype=float)
-    policy_evaluation_residuals = np.full((branches,), np.inf, dtype=float)
-    player_policy_evaluation_residuals = np.full((branches, players), np.inf, dtype=float)
-    own_action_gaps = np.full((branches,), np.inf, dtype=float)
-    own_action_gap_tables = np.full(
-        (branches, players, steps, interior), np.inf, dtype=float
+    fixed_point_residuals = np.full((branches,), np.inf, dtype=np.float64)
+    boundary_residuals = np.full((branches,), np.inf, dtype=np.float64)
+    terminal_residuals = np.full((branches,), np.inf, dtype=np.float64)
+    policy_evaluation_residuals = np.full((branches,), np.inf, dtype=np.float64)
+    player_policy_evaluation_residuals = np.full(
+        (branches, players), np.inf, dtype=np.float64
     )
-    finite = np.zeros((branches,), dtype=bool)
-    converged = np.zeros((branches,), dtype=bool)
+    own_action_gaps = np.full((branches,), np.inf, dtype=np.float64)
+    own_action_gap_tables = np.full(
+        (branches, players, steps, interior), np.inf, dtype=np.float64
+    )
+    finite = np.zeros((branches,), dtype=np.bool_)
+    converged = np.zeros((branches,), dtype=np.bool_)
     iterations = np.zeros((branches,), dtype=np.int32)
     selector_history = np.full(
         (branches, capacity, players, steps, interior), -1, dtype=np.int32
     )
     probability_history = tuple(
         np.full(
-            (branches, capacity, steps, interior, int(actions.shape[0])),
+            (branches, capacity, steps, interior, actions.shape[0]),
             np.nan,
-            dtype=float,
+            dtype=np.float64,
         )
         for actions in problem.player_actions
     )
-    fixed_point_history = np.full((branches, capacity), np.nan, dtype=float)
-    update_history = np.full((branches, capacity), np.nan, dtype=float)
-    gap_history = np.full((branches, capacity), np.nan, dtype=float)
+    fixed_point_history = np.full((branches, capacity), np.nan, dtype=np.float64)
+    update_history = np.full((branches, capacity), np.nan, dtype=np.float64)
+    gap_history = np.full((branches, capacity), np.nan, dtype=np.float64)
     selector_change_history = np.full((branches, capacity), -1, dtype=np.int32)
-    iteration_validity = np.zeros((branches, capacity), dtype=bool)
+    iteration_validity = np.zeros((branches, capacity), dtype=np.bool_)
 
     for branch in range(branches):
         probabilities = tuple(
-            _one_hot(initial_selectors[branch, player], int(actions.shape[0]))
+            _one_hot(initial_selectors[branch, player], actions.shape[0])
             for player, actions in enumerate(problem.player_actions)
         )
         for iteration in range(capacity):
@@ -740,7 +739,7 @@ def _run_branches(
                         iteration_gap,
                         float(np.max(np.maximum(current - minimum, 0.0))),
                     )
-                    pure = _one_hot(proposal, int(actions.shape[0]))
+                    pure = _one_hot(proposal, actions.shape[0])
                     proposals.append(
                         (1.0 - plan.damping) * probabilities[player] + plan.damping * pure
                     )
@@ -767,7 +766,7 @@ def _run_branches(
                         iteration_gap,
                         float(np.max(np.maximum(current - minimum, 0.0))),
                     )
-                    pure = _one_hot(proposal, int(actions.shape[0]))
+                    pure = _one_hot(proposal, actions.shape[0])
                     working[player] = (1.0 - plan.damping) * working[
                         player
                     ] + plan.damping * pure
@@ -780,7 +779,7 @@ def _run_branches(
                             old_probabilities[player]
                             - _one_hot(
                                 proposal_selectors[player],
-                                int(problem.player_actions[player].shape[0]),
+                                problem.player_actions[player].shape[0],
                             )
                         )
                     )
@@ -813,7 +812,7 @@ def _run_branches(
         final_best_responses = np.empty((players, steps, interior), dtype=np.int32)
         final_ties = np.empty_like(final_best_responses)
         final_gap = 0.0
-        final_gap_table = np.empty((players, steps, interior), dtype=float)
+        final_gap_table = np.empty((players, steps, interior), dtype=np.float64)
         final_fixed_point = 0.0
         for player, actions in enumerate(problem.player_actions):
             own = _own_hamiltonians(
@@ -836,16 +835,15 @@ def _run_branches(
                 float(
                     np.max(
                         np.abs(
-                            probabilities[player]
-                            - _one_hot(response, int(actions.shape[0]))
+                            probabilities[player] - _one_hot(response, actions.shape[0])
                         )
                     )
                 ),
             )
 
-        times = np.asarray(problem.time_grid.times, dtype=float)
+        times = np.asarray(problem.time_grid.times, dtype=np.float64)
         policy_residual = 0.0
-        player_policy_residual = np.zeros((players,), dtype=float)
+        player_policy_residual = np.zeros((players,), dtype=np.float64)
         for player in range(players):
             for step, duration in enumerate(np.diff(times)):
                 profile_hamiltonian = _profile_hamiltonian(
@@ -875,8 +873,8 @@ def _run_branches(
                     player_policy_residual[player], step_residual
                 )
                 policy_residual = max(policy_residual, step_residual)
-        boundary = np.asarray(problem.boundary_values, dtype=float)
-        terminal = np.asarray(problem.terminal_values, dtype=float)
+        boundary = np.asarray(problem.boundary_values, dtype=np.float64)
+        terminal = np.asarray(problem.terminal_values, dtype=np.float64)
         boundary_residual = float(
             np.max(np.abs(final_values[:, :, (0, final_values.shape[-1] - 1)] - boundary))
         )
@@ -937,8 +935,8 @@ def _refined_problem(
     problem: DiscreteCoupledHJBProblem,
     /,
 ) -> DiscreteCoupledHJBProblem:
-    coarse_times = np.asarray(problem.time_grid.times, dtype=float)
-    fractions = np.arange(4, dtype=float) / 4.0
+    coarse_times = np.asarray(problem.time_grid.times, dtype=np.float64)
+    fractions = np.arange(4, dtype=np.float64) / 4.0
     refined_times = np.concatenate(
         tuple(
             coarse_times[index]
@@ -952,24 +950,32 @@ def _refined_problem(
         problem.spatial_grid.upper_bound,
         2 * (problem.spatial_grid.num_points - 1) + 1,
     )
-    coarse_points = np.asarray(problem.spatial_grid.points, dtype=float)
-    refined_points = np.asarray(refined_grid.points, dtype=float)
+    coarse_points = np.asarray(problem.spatial_grid.points, dtype=np.float64)
+    refined_points = np.asarray(refined_grid.points, dtype=np.float64)
     terminal = np.stack(
         tuple(
-            np.interp(
-                refined_points,
-                coarse_points,
-                np.asarray(problem.terminal_values[player], dtype=float),
+            np.asarray(
+                linear_interpolate(
+                    coarse_points,
+                    np.asarray(problem.terminal_values[player], dtype=np.float64),
+                    refined_points,
+                    bounds="clip",
+                ).values
             )
             for player in range(problem.num_players)
         )
     )
-    boundary = np.empty((problem.num_players, refined_times.size, 2), dtype=float)
-    coarse_boundary = np.asarray(problem.boundary_values, dtype=float)
+    boundary = np.empty((problem.num_players, refined_times.size, 2), dtype=np.float64)
+    coarse_boundary = np.asarray(problem.boundary_values, dtype=np.float64)
     for player in range(problem.num_players):
         for side in range(2):
-            boundary[player, :, side] = np.interp(
-                refined_times, coarse_times, coarse_boundary[player, :, side]
+            boundary[player, :, side] = np.asarray(
+                linear_interpolate(
+                    coarse_times,
+                    coarse_boundary[player, :, side],
+                    refined_times,
+                    bounds="clip",
+                ).values
             )
     time_grid = TimeGrid(
         refined_times,
@@ -1043,7 +1049,7 @@ def _selected_actions(
     player_actions: tuple[Array, ...], selectors: np.ndarray, /
 ) -> np.ndarray:
     dtype = np.result_type(
-        *(np.asarray(action).dtype for action in player_actions), float
+        *(np.asarray(action).dtype for action in player_actions), np.float64
     )
     selected = np.empty(selectors.shape, dtype=dtype)
     for player, actions in enumerate(player_actions):

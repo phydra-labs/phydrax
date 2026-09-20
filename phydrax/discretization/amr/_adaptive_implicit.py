@@ -158,7 +158,7 @@ class AdaptiveImplicitSamplingPlan(StrictModule, NonTrainableState):
         cells = []
         for level in self.hierarchy.levels:
             for bucket in level.buckets:
-                active = np.asarray(bucket.leaf_active, dtype=bool)
+                active = np.asarray(bucket.leaf_active, dtype=np.bool_)
                 for lane, box in enumerate(bucket.boxes):
                     if box is None:
                         continue
@@ -192,7 +192,7 @@ class AdaptiveImplicitSamplingPlan(StrictModule, NonTrainableState):
                 axis.bounds[0]
                 for axis in self.hierarchy.topology.plan.grid.structured_axes
             ],
-            dtype=float,
+            dtype=np.float64,
         )
         uniform_count = 0
         cut_count = 0
@@ -221,7 +221,7 @@ class AdaptiveImplicitSamplingPlan(StrictModule, NonTrainableState):
                 else self.coordinate_map
             )
             points = jnp.asarray(mapped(jnp.asarray(corners), time_, args))
-            physical = np.asarray(points, dtype=float)
+            physical = np.asarray(points, dtype=np.float64)
             if physical.shape != corners.shape or np.any(~np.isfinite(physical)):
                 raise ValueError("Adaptive coordinate map returned invalid points.")
             physical_lower = jnp.asarray(np.min(physical, axis=0))
@@ -288,7 +288,9 @@ class AdaptiveImplicitSamplingPlan(StrictModule, NonTrainableState):
 
         cells = self._leaf_cells()
         for level_index, coordinate, patch_id in cells:
-            spacing = np.asarray(self.hierarchy.levels[level_index].spacing, dtype=float)
+            spacing = np.asarray(
+                self.hierarchy.levels[level_index].spacing, dtype=np.float64
+            )
             reference_lower = lower_bounds + spacing * np.asarray(coordinate)
             certify_box(
                 patch_id,

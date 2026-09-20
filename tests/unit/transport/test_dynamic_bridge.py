@@ -12,7 +12,7 @@ CONTEXT = phx.stochastic.StateSpaceStepContext.empty()
 
 
 def _target(probabilities, *, provenance="endpoint"):
-    states = jnp.arange(jnp.asarray(probabilities).shape[-1], dtype=float)
+    states = jnp.arange(jnp.asarray(probabilities).shape[-1], dtype="float64")
     return phx.integration.discrete(
         states,
         cx.AxisArray(jnp.asarray(probabilities), dims=("state",)),
@@ -23,11 +23,11 @@ def _target(probabilities, *, provenance="endpoint"):
 
 
 def _matrix_kernel(matrix, *, process_id="finite-reference"):
-    probabilities = jnp.asarray(matrix, dtype=float)
+    probabilities = jnp.asarray(matrix, dtype="float64")
 
     def sample(key, state, _t0, _t1, _context):
         index = jnp.asarray(state, dtype=jnp.int32)
-        return jr.categorical(key, jnp.log(probabilities[index])).astype(float)
+        return jr.categorical(key, jnp.log(probabilities[index])).astype("float64")
 
     def log_prob(next_state, state, _t0, _t1, _context):
         source = jnp.asarray(state, dtype=jnp.int32)

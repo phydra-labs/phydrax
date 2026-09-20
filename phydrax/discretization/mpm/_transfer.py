@@ -62,7 +62,7 @@ def apic_particle_angular_momentum(
     active: Array,
     /,
 ) -> Array:
-    dimension = int(position.shape[-1])
+    dimension = position.shape[-1]
     orbital = _cross(position, mass[:, None] * velocity, dimension)
     affine_route_velocity = ein.contract(
         "pij,prj->pri", affine_velocity, state.route_offsets
@@ -95,7 +95,7 @@ def grid_angular_momentum(
     active: Array,
     /,
 ) -> Array:
-    dimension = int(coordinates.shape[-1])
+    dimension = coordinates.shape[-1]
     values = _cross(coordinates, momentum, dimension)
     mask = active[..., None] if dimension == 3 else active
     return compensated_sum(jnp.where(mask, values, 0.0), axis=0)
@@ -144,7 +144,7 @@ def gather_apic(
     maximum_condition: float,
     /,
 ) -> APICGatherResult:
-    dimension = int(grid_velocity.shape[-1])
+    dimension = grid_velocity.shape[-1]
     gathered, route_valid = gather_patches(grid_velocity, state.stencil)
     mask = route_valid[..., None]
     route_velocity = jnp.where(mask, gathered, 0.0)

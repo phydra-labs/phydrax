@@ -40,7 +40,7 @@ class SCIPMixedInteger(AbstractMixedIntegerMethod):
 
     @property
     def method_id(self) -> str:
-        return "scip-mixed-integer-linear-v1"
+        return "scip-mixed-integer-linear"
 
     @property
     def backend(self) -> str:

@@ -173,7 +173,7 @@ class GaugeCovariantWignerPlan(StrictModule, NonTrainableState):
                 )
             owner = _identifier(nonabelian_link_owner_id, "nonabelian_link_owner_id")
         maximum = int(maximum_work_bytes)
-        momentum_count = int(quantum_support.occupancy.shape[2])
+        momentum_count = quantum_support.occupancy.shape[2]
         dimension = int(representation.dimension)
         complex_bytes = np.dtype(np.complex128).itemsize
         required = (

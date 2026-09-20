@@ -10,7 +10,7 @@ import phydrax as phx
 
 
 def _orthonormal(rows, columns):
-    matrix = jnp.arange(1, rows * columns + 1, dtype=float).reshape(rows, columns)
+    matrix = jnp.arange(1, rows * columns + 1, dtype="float64").reshape(rows, columns)
     orthogonal, _ = jnp.linalg.qr(matrix)
     return orthogonal
 

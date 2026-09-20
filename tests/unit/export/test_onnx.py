@@ -22,7 +22,7 @@ class _FakeJax2Onnx:
 
     def to_onnx(self, fn, **kwargs):
         width = int(kwargs["inputs"][0][-1])
-        sample = jnp.arange(1, 1 + 2 * width, dtype=float).reshape((2, width))
+        sample = jnp.arange(1, 1 + 2 * width, dtype="float64").reshape((2, width))
         self.to_onnx_calls.append(
             {
                 "kwargs": kwargs,

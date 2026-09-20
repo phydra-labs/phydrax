@@ -52,13 +52,15 @@ class MCDropoutCalibrationEvidence(StrictModule):
         split_identity: str,
         draw_count: int,
     ):
-        self.nominal_coverage = jnp.asarray(nominal_coverage, dtype=float).reshape(())
+        self.nominal_coverage = jnp.asarray(nominal_coverage, dtype=jnp.float64).reshape(
+            ()
+        )
         self.empirical_heldout_coverage = jnp.asarray(
-            empirical_heldout_coverage, dtype=float
+            empirical_heldout_coverage, dtype=jnp.float64
         ).reshape(())
-        self.mean_width = jnp.asarray(mean_width, dtype=float).reshape(())
+        self.mean_width = jnp.asarray(mean_width, dtype=jnp.float64).reshape(())
         self.calibration_count = jnp.asarray(calibration_count, dtype=jnp.int32)
-        self.valid = jnp.asarray(valid, dtype=bool).reshape(())
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_).reshape(())
         self.approximation = "mc_dropout_heldout_calibrated"
         self.method = method
         self.split_identity = split_identity
@@ -86,7 +88,7 @@ class MCDropoutCalibration(StrictModule):
         case_dim: str | None,
         evidence: MCDropoutCalibrationEvidence,
     ):
-        coefficient_ = jnp.asarray(coefficient, dtype=float).reshape(())
+        coefficient_ = jnp.asarray(coefficient, dtype=jnp.float64).reshape(())
         if not bool(jnp.isfinite(coefficient_)) or not bool(coefficient_ > 0.0):
             raise ValueError("Calibration coefficient must be finite and positive.")
         coverage = float(nominal_coverage)
@@ -139,7 +141,7 @@ class MCDropoutCalibration(StrictModule):
                 else operator_mask
                 & jnp.asarray(
                     mask.data if isinstance(mask, cx.AxisArray) else mask,
-                    dtype=bool,
+                    dtype=jnp.bool_,
                 )
             )
             predictive = predictive.predictive
@@ -159,9 +161,9 @@ class MCDropoutCalibration(StrictModule):
         scale = jnp.asarray(scale_field.data)
         target_array = _aligned_array(target, center_field, "target")
         active = (
-            jnp.ones(center.shape, dtype=bool)
+            jnp.ones(center.shape, dtype=jnp.bool_)
             if mask is None
-            else _aligned_array(mask, center_field, "mask").astype(bool)
+            else _aligned_array(mask, center_field, "mask").astype("bool")
         )
         active = active & jnp.isfinite(center) & jnp.isfinite(target_array)
         count = int(jnp.sum(active))
@@ -173,9 +175,9 @@ class MCDropoutCalibration(StrictModule):
             )
         normalized = jnp.where(active, jnp.abs(target_array - center) / scale, 0.0)
         weight_array = (
-            jnp.ones(center.shape, dtype=float)
+            jnp.ones(center.shape, dtype=jnp.float64)
             if weights is None
-            else _aligned_array(weights, center_field, "weights").astype(float)
+            else _aligned_array(weights, center_field, "weights").astype("float64")
         )
         if bool(jnp.any((~jnp.isfinite(weight_array) | (weight_array <= 0.0)) & active)):
             raise ValueError("Active calibration weights must be finite and positive.")
@@ -214,7 +216,7 @@ class MCDropoutCalibration(StrictModule):
             case_scores = jnp.max(jnp.where(flat_active, flat, -jnp.inf), axis=1)
             coefficient = _finite_sample_quantile(case_scores, coverage)
             width_coefficient = coefficient
-            count = int(case_scores.shape[0])
+            count = case_scores.shape[0]
         else:
             raise ValueError("Unknown MC-dropout calibration method.")
         lower = center - width_coefficient * scale
@@ -392,7 +394,7 @@ def _aligned_array(
 
 
 def _finite_sample_quantile(scores: Array, coverage: float, /) -> Array:
-    count = int(scores.shape[0])
+    count = scores.shape[0]
     if count <= 0:
         raise ValueError("Conformal calibration requires at least one score.")
     rank = min(count, int(math.ceil((count + 1) * coverage)))

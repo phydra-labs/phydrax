@@ -23,7 +23,7 @@ class SplitConformal(StrictModule):
     alpha: float
 
     def __init__(self, radius: ArrayLike, alpha: float):
-        radius_array = jnp.asarray(radius, dtype=float).reshape(())
+        radius_array = jnp.asarray(radius, dtype=jnp.float64).reshape(())
         _validate_radius(radius_array)
         self.radius = radius_array
         self.alpha = _validate_alpha(alpha)
@@ -47,8 +47,7 @@ class SplitConformal(StrictModule):
         scores = jnp.moveaxis(jnp.abs(target_array - center_array), axis, 0)
         if scores.ndim != 1:
             raise ValueError(
-                "SplitConformal requires one scalar score per case; use "
-                "FunctionalConformal for field-valued cases."
+                "SplitConformal requires one scalar score per case; use FunctionalConformal for field-valued cases."
             )
         scores = _masked_case_scores(scores, mask, original_axis=axis)
         return cls(_finite_sample_quantile(scores, alpha), alpha)
@@ -73,7 +72,7 @@ class NormalizedConformal(StrictModule):
     min_scale: float
 
     def __init__(self, radius: ArrayLike, alpha: float, *, min_scale: float = 1e-8):
-        radius_array = jnp.asarray(radius, dtype=float).reshape(())
+        radius_array = jnp.asarray(radius, dtype=jnp.float64).reshape(())
         _validate_radius(radius_array)
         minimum = float(min_scale)
         if not math.isfinite(minimum) or minimum <= 0.0:
@@ -137,7 +136,7 @@ class NormalizedConformal(StrictModule):
             or center_field.data.shape != scale_field.data.shape
         ):
             raise ValueError("center and scale fields must have matching structure.")
-        _validate_scale(jnp.asarray(scale_field.data, dtype=float))
+        _validate_scale(jnp.asarray(scale_field.data, dtype=jnp.float64))
         center_data = jnp.asarray(center_field.data)
         width = self.radius * jnp.maximum(jnp.asarray(scale_field.data), self.min_scale)
         return PredictionInterval(
@@ -167,7 +166,7 @@ class FunctionalConformal(StrictModule):
         normalized: bool,
         score: Literal["max", "l2"] = "max",
     ):
-        radius_array = jnp.asarray(radius, dtype=float).reshape(())
+        radius_array = jnp.asarray(radius, dtype=jnp.float64).reshape(())
         _validate_radius(radius_array)
         minimum = float(min_scale)
         if not math.isfinite(minimum) or minimum <= 0.0:
@@ -215,10 +214,10 @@ class FunctionalConformal(StrictModule):
             raise ValueError(
                 "FunctionalConformal requires at least one physical dimension per case."
             )
-        flat = residual.reshape((int(residual.shape[0]), -1))
-        mask_flat = jnp.ones_like(flat, dtype=bool)
+        flat = residual.reshape((residual.shape[0], -1))
+        mask_flat = jnp.ones_like(flat, dtype=jnp.bool_)
         if mask is not None:
-            mask_array = jnp.asarray(mask, dtype=bool)
+            mask_array = jnp.asarray(mask, dtype=jnp.bool_)
             if mask_array.shape != center_array.shape:
                 mask_array = jnp.broadcast_to(mask_array, center_array.shape)
             mask_flat = jnp.moveaxis(mask_array, axis, 0).reshape(flat.shape)
@@ -228,7 +227,7 @@ class FunctionalConformal(StrictModule):
         elif score == "l2":
             weight_flat = jnp.ones_like(flat)
             if weights is not None:
-                weight_array = jnp.asarray(weights, dtype=float)
+                weight_array = jnp.asarray(weights, dtype=jnp.float64)
                 if bool(jnp.any(~jnp.isfinite(weight_array))) or bool(
                     jnp.any(weight_array < 0.0)
                 ):
@@ -270,7 +269,7 @@ class FunctionalConformal(StrictModule):
                 or center_field.data.shape != scale_field.data.shape
             ):
                 raise ValueError("center and scale fields must have matching structure.")
-            _validate_scale(jnp.asarray(scale_field.data, dtype=float))
+            _validate_scale(jnp.asarray(scale_field.data, dtype=jnp.float64))
             width = self.radius * jnp.maximum(
                 jnp.asarray(scale_field.data), self.min_scale
             )
@@ -290,8 +289,8 @@ class FunctionalConformal(StrictModule):
 
 def _finite_sample_quantile(scores: ArrayLike, alpha: float) -> Array:
     level = _validate_alpha(alpha)
-    score_array = jnp.asarray(scores, dtype=float).reshape((-1,))
-    count = int(score_array.shape[0])
+    score_array = jnp.asarray(scores, dtype=jnp.float64).reshape((-1,))
+    count = score_array.shape[0]
     if count <= 0:
         raise ValueError("Calibration scores must be non-empty.")
     if bool(jnp.any(~jnp.isfinite(score_array))):
@@ -299,8 +298,7 @@ def _finite_sample_quantile(scores: ArrayLike, alpha: float) -> Array:
     rank = int(math.ceil((count + 1) * (1.0 - level)))
     if rank > count:
         raise ValueError(
-            "Requested miscoverage is too small for the calibration sample size: "
-            f"rank={rank}, num_scores={count}."
+            f"Requested miscoverage is too small for the calibration sample size: rank={rank}, num_scores={count}."
         )
     return jnp.sort(score_array)[rank - 1]
 
@@ -322,7 +320,7 @@ def _array_and_case_axis(
     case_dim: int | str,
 ) -> tuple[Array, int]:
     if isinstance(value, cx.AxisArray):
-        array = jnp.asarray(value.data, dtype=float)
+        array = jnp.asarray(value.data, dtype=jnp.float64)
         if isinstance(case_dim, str):
             matches = [index for index, dim in enumerate(value.dims) if dim == case_dim]
             if len(matches) != 1:
@@ -333,7 +331,7 @@ def _array_and_case_axis(
         else:
             axis = int(case_dim)
     else:
-        array = jnp.asarray(value, dtype=float)
+        array = jnp.asarray(value, dtype=jnp.float64)
         if isinstance(case_dim, str):
             raise TypeError("String case_dim requires a phydrax.axes.AxisArray input.")
         axis = int(case_dim)
@@ -352,7 +350,7 @@ def _masked_case_scores(
 ) -> Array:
     if mask is None:
         return scores
-    mask_array = jnp.asarray(mask, dtype=bool)
+    mask_array = jnp.asarray(mask, dtype=jnp.bool_)
     if mask_array.ndim != 1:
         mask_array = jnp.moveaxis(mask_array, original_axis, 0).reshape(scores.shape)
     if mask_array.shape != scores.shape:
@@ -382,12 +380,12 @@ def _validate_scale(scale: Array) -> None:
 def _as_field(value: cx.AxisArray | ArrayLike) -> cx.AxisArray:
     if isinstance(value, cx.AxisArray):
         return value
-    array = jnp.asarray(value, dtype=float)
+    array = jnp.asarray(value, dtype=jnp.float64)
     return cx.AxisArray(array, dims=(None,) * array.ndim)
 
 
 def _field_like(template: cx.AxisArray, data: ArrayLike) -> cx.AxisArray:
-    return cx.AxisArray(jnp.asarray(data, dtype=float), dims=template.dims)
+    return cx.AxisArray(jnp.asarray(data, dtype=jnp.float64), dims=template.dims)
 
 
 __all__ = ["FunctionalConformal", "NormalizedConformal", "SplitConformal"]

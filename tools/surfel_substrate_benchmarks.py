@@ -25,7 +25,7 @@ def _measure(function, *arguments, **keyword_arguments):
 
 
 def _sphere_surfels(count: int):
-    index = jnp.arange(count, dtype=float)
+    index = jnp.arange(count, dtype="float64")
     golden_angle = jnp.pi * (3.0 - jnp.sqrt(5.0))
     vertical = 1.0 - 2.0 * (index + 0.5) / count
     radial = jnp.sqrt(jnp.maximum(1.0 - vertical**2, 0.0))
@@ -40,7 +40,7 @@ def _sphere_surfels(count: int):
     first = jnp.cross(reference, normal)
     first = first / jnp.sqrt(jnp.sum(first**2, axis=-1, keepdims=True))
     second = jnp.cross(normal, first)
-    radius = 2.0 / jnp.sqrt(jnp.asarray(count, dtype=float))
+    radius = 2.0 / jnp.sqrt(jnp.asarray(count, dtype="float64"))
     axes = jnp.stack((radius * first, radius * second), axis=-1)
     weight = jnp.full((count,), 4.0 * jnp.pi / count)
     return position, normal, axes, weight
@@ -89,7 +89,7 @@ def _case(count: int):
     hits, query_first = _measure(query, ray_origins, ray_directions)
     _, query_steady = _measure(query, ray_origins, ray_directions)
     topology_bytes = sum(
-        int(leaf.size * leaf.dtype.itemsize)
+        leaf.size * leaf.dtype.itemsize
         for leaf in jax.tree.leaves((hierarchy, bounds))
         if isinstance(leaf, jax.Array)
     )

@@ -29,10 +29,9 @@ class _VectorFieldCallable(StrictModule):
 
     def __call__(self, *args, key=None, **kwargs):
         value = jnp.asarray(self.source.func(*args, key=key, **kwargs))
-        if value.ndim != 1 or int(value.shape[0]) != self.dimension:
+        if value.ndim != 1 or value.shape[0] != self.dimension:
             raise ValueError(
-                f"lie_bracket {self.role} must be a vector of shape "
-                f"({self.dimension},), got {value.shape}."
+                f"lie_bracket {self.role} must be a vector of shape ({self.dimension},), got {value.shape}."
             )
         return value
 
@@ -79,8 +78,7 @@ def lie_bracket(
     y_dimension = y.domain.coordinate(var).event_size
     if x_dimension != y_dimension:
         raise ValueError(
-            "lie_bracket vector-field dimensions must match; "
-            f"got {x_dimension} and {y_dimension}."
+            f"lie_bracket vector-field dimensions must match; got {x_dimension} and {y_dimension}."
         )
 
     x_ = _validated_vector_field(x, dimension=x_dimension, role="left operand")

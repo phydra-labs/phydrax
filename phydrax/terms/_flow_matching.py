@@ -80,11 +80,11 @@ class FlowMatchingBatch(StrictModule):
             raise ValueError(
                 "Flow-matching state and target velocity require matching pair-first shapes."
             )
-        count = int(state_array.shape[0])
+        count = state_array.shape[0]
         expected = (count,)
         time_array = jnp.asarray(time, dtype=state_array.real.dtype)
-        validity = jnp.asarray(valid, dtype=bool)
-        weights = jnp.asarray(log_weights, dtype=float)
+        validity = jnp.asarray(valid, dtype=jnp.bool_)
+        weights = jnp.asarray(log_weights, dtype=jnp.float64)
         source_index = jnp.asarray(source_indices, dtype=jnp.int32)
         target_index = jnp.asarray(target_indices, dtype=jnp.int32)
         if not (
@@ -104,10 +104,9 @@ class FlowMatchingBatch(StrictModule):
         for name, value in resolved_context.items():
             if not name or name in ("x", "t", "source", "target"):
                 raise ValueError(f"Flow-matching context label {name!r} is invalid.")
-            if value.ndim < 1 or int(value.shape[0]) != count:
+            if value.ndim < 1 or value.shape[0] != count:
                 raise ValueError(
-                    f"Flow-matching context {name!r} must begin with {count}; "
-                    f"got {value.shape}."
+                    f"Flow-matching context {name!r} must begin with {count}; got {value.shape}."
                 )
         for name, identifier in (
             ("interpolant_id", interpolant_id),
@@ -230,7 +229,7 @@ class FlowMatchingTerm(AbstractSamplingTerm):
             provider = cast(FlowEndpointProvider, endpoints)
         if fixed is not None and fixed.event_shape != interpolant.event_shape:
             raise ValueError("Endpoint and interpolant event shapes must match.")
-        weight = jnp.asarray(scalar_weight, dtype=float).reshape(())
+        weight = jnp.asarray(scalar_weight, dtype=jnp.float64).reshape(())
         if not bool(jnp.isfinite(weight)) or float(weight) < 0.0:
             raise ValueError("scalar_weight must be finite and nonnegative.")
         self.fixed_endpoints = fixed

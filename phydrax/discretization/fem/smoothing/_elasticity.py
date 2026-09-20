@@ -79,7 +79,7 @@ class SmoothedElasticityOperator(StrictModule, NonTrainableState):
     ):
         local = jnp.asarray(local_stiffness)
         count = int(global_node_count)
-        local_width = 2 * int(layout.dof_routes.shape[1])
+        local_width = 2 * layout.dof_routes.shape[1]
         if local.shape != (
             layout.dof_routes.shape[0],
             local_width,
@@ -95,7 +95,7 @@ class SmoothedElasticityOperator(StrictModule, NonTrainableState):
             {
                 "kind": "smoothed-elasticity-operator",
                 "layout": layout.layout_id,
-                "patches": int(local.shape[0]),
+                "patches": local.shape[0],
                 "local_width": local_width,
                 "global_nodes": count,
             }

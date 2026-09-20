@@ -419,9 +419,7 @@ def test_constrained_cpfem_auxiliary_uses_expanded_equilibrium_field():
 def test_route_supports_exact_texture_fields_with_two_orientations():
     discretization = _one_block_two_cell_discretization()
     model = _model()
-    quadrature_count = int(
-        discretization.block_geometries[0][0].physical_weights.shape[1]
-    )
+    quadrature_count = discretization.block_geometries[0][0].physical_weights.shape[1]
     orientations = (
         jnp.broadcast_to(jnp.eye(3), (2, quadrature_count, 3, 3)).at[1].set(_rotation_z())
     )

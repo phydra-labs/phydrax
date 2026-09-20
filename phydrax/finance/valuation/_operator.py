@@ -122,7 +122,7 @@ class OperatorDomainEvidence(StrictModule):
         evidence_id: str,
         tolerance: float,
     ):
-        violation = jnp.asarray(maximum_support_violation, dtype=float)
+        violation = jnp.asarray(maximum_support_violation, dtype=jnp.float64)
         identifiers = tuple(
             str(value) for value in (domain_id, support_id, factor_layout_id, evidence_id)
         )
@@ -159,7 +159,7 @@ class OperatorCausalityEvidence(StrictModule):
         checked_rollout_steps: int,
         tolerance: float,
     ):
-        dependency = jnp.asarray(maximum_future_dependency, dtype=float)
+        dependency = jnp.asarray(maximum_future_dependency, dtype=jnp.float64)
         filtration = str(filtration_id)
         identifier = str(evidence_id)
         steps = int(checked_rollout_steps)
@@ -252,8 +252,8 @@ def operator_independent_validation(
     reference = jnp.asarray(reference_values)
     if reference.shape != field.values.shape:
         raise ValueError("Independent target shape must equal the selected output shape.")
-    constraint = jnp.asarray(constraint_residual, dtype=float)
-    baseline = jnp.asarray(baseline_error, dtype=float)
+    constraint = jnp.asarray(constraint_residual, dtype=jnp.float64)
+    baseline = jnp.asarray(baseline_error, dtype=jnp.float64)
     if constraint.shape != () or baseline.shape != ():
         raise ValueError("Constraint and baseline errors must be scalars.")
     query = batch.query(field.query_name)

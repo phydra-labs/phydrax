@@ -150,7 +150,7 @@ class AMREntityTransferPlan(StrictModule, NonTrainableState):
         return cls(entities, refinement_ratio)
 
     def fine_shape(self, coarse_shape: Sequence[int], /) -> tuple[int, ...]:
-        shape = tuple(int(value) for value in coarse_shape)
+        shape = tuple(coarse_shape)
         if len(shape) != len(self.axis_entities):
             raise ValueError("Coarse shape rank must match AMR entity axes.")
         return tuple(

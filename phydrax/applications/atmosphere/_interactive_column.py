@@ -5,7 +5,7 @@
 """Finite-rate, fixed-volume moist physics over one interactive wet slab.
 
 Cells have unit horizontal area and run TOP TO BOTTOM. Layer volumes therefore
-also give thicknesses in metres. This is a forced column, not a hydrostatic or
+also give thicknesses in meters. This is a forced column, not a hydrostatic or
 momentum solver: imposed ventilation and shear supply unresolved stirring.
 Internal-energy budgets exclude kinetic and gravitational energy; the omitted
 terminal-fall gravitational power and turbulent temperature-variance destruction

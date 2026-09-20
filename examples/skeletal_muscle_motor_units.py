@@ -46,12 +46,8 @@ def main() -> None:
         "common_excitation": 40.0,
         "initial_total_force": float(initial_output.total_force),
         "final_total_force": float(final_output.total_force),
-        "final_capacity_fraction": float(
-            final_output.total_force_capacity_fraction
-        ),
-        "recruited_unit_count": int(
-            jnp.sum(runtime.evaluate(initial, 40.0).recruited)
-        ),
+        "final_capacity_fraction": float(final_output.total_force_capacity_fraction),
+        "recruited_unit_count": int(jnp.sum(runtime.evaluate(initial, 40.0).recruited)),
         "all_steps_successful": bool(jnp.all(history[:, 2] == 1.0)),
     }
     print(json.dumps(payload, indent=2, sort_keys=True))

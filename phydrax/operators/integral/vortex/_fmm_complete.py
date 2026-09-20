@@ -114,16 +114,16 @@ class VortexFMMPlan(AbstractVortexVelocityPlan):
         maximum_near_interactions: int | None = None,
         precision: VortexPrecisionPolicy | None = None,
     ):
-        reference = np.asarray(reference_position, dtype=float)
-        lower_array = np.asarray(lower, dtype=float)
-        upper_array = np.asarray(upper, dtype=float)
-        dimension = int(reference.shape[1]) if reference.ndim == 2 else -1
+        reference = np.asarray(reference_position, dtype=np.float64)
+        lower_array = np.asarray(lower, dtype=np.float64)
+        upper_array = np.asarray(upper, dtype=np.float64)
+        dimension = reference.shape[1] if reference.ndim == 2 else -1
         targets = (
             reference
             if reference_targets is None
             else np.asarray(
                 reference_targets,
-                dtype=float,
+                dtype=np.float64,
             )
         )
         target_topology = (
@@ -196,8 +196,8 @@ class VortexFMMPlan(AbstractVortexVelocityPlan):
         self.leaf_capacity = source_leaf
         self.target_leaf_capacity = target_leaf
         self.maximum_reference_displacement = displacement
-        self.source_capacity = int(reference.shape[0])
-        self.target_reference_capacity = int(targets.shape[0])
+        self.source_capacity = reference.shape[0]
+        self.target_reference_capacity = targets.shape[0]
         self.reference_target_topology = target_topology
         self.dimension = dimension
         self.execution = execution
@@ -269,8 +269,7 @@ class VortexFMMPlan(AbstractVortexVelocityPlan):
             or target_topology != self.reference_target_topology
         ):
             raise ValueError(
-                "Plane vortex FMM target capacity/topology differs from its "
-                "reference envelope."
+                "Plane vortex FMM target capacity/topology differs from its reference envelope."
             )
         compatibility = VortexVelocityCompatibility(
             self.capabilities,
@@ -1061,7 +1060,7 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
         combined_active = jnp.concatenate(
             (
                 source.active_mask,
-                jnp.ones((target.capacity,), dtype=bool),
+                jnp.ones((target.capacity,), dtype=jnp.bool_),
             )
         )
         combined_capacity = self.source_capacity + self.target_capacity
@@ -1193,7 +1192,7 @@ class PreparedVortexFMM(AbstractPreparedVortexVelocity):
                     - source.safe_positions()[source_index][None, :, :]
                 )
                 self_mask = (
-                    jnp.zeros((target.capacity, self.plan.leaf_capacity), dtype=bool)
+                    jnp.zeros((target.capacity, self.plan.leaf_capacity), dtype=jnp.bool_)
                     if target_identity is None
                     else target_identity[:, None] == source_index[None, :]
                 )

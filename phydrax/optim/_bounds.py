@@ -14,6 +14,16 @@ import numpy as np
 from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, PyTree
 
+from .._tree_math import (
+    tree_add_scaled as _tree_add_scaled,
+    tree_allfinite as _tree_allfinite,
+    tree_inner as _tree_inner,
+    tree_negative as _tree_negative,
+    tree_norm as _tree_norm,
+    tree_scale as _tree_scale,
+    tree_where as _tree_where,
+    validate_real_inexact_tree as _validate_real_inexact_tree,
+)
 from ..linalg import (
     FunctionLinearOperator,
     LinearSolvePolicy,
@@ -28,14 +38,6 @@ from ..linalg import (
 from ._iterative._base import AbstractMinimizationMethod
 from ._iterative._globalization import armijo_backtracking, ArmijoLineSearch
 from ._iterative._types import (
-    _tree_add_scaled,
-    _tree_allfinite,
-    _tree_inner,
-    _tree_negative,
-    _tree_norm,
-    _tree_scale,
-    _tree_where,
-    _validate_real_inexact_tree,
     Bounds,
     ConstrainedOptimalityCertificate,
     MinimizationProblem,
@@ -861,7 +863,7 @@ def _take_bound_step(
     )
     proposed_directional = _tree_inner(gradient, proposed_direction)
     usable_direction = (
-        jnp.asarray(usable, dtype=bool)
+        jnp.asarray(usable, dtype=jnp.bool_)
         & _tree_allfinite(proposed_direction)
         & jnp.isfinite(proposed_directional)
         & (proposed_directional < 0.0)
@@ -1347,7 +1349,7 @@ def _initial_lbfgs_state(
 ) -> _LBFGSState:
     zero_gradient = jax.tree.map(jnp.zeros_like, parameters)
     inactive = jax.tree.map(
-        lambda value: jnp.zeros(value.shape, dtype=bool),
+        lambda value: jnp.zeros(value.shape, dtype=jnp.bool_),
         parameters,
     )
     steps = jax.tree.map(
@@ -1568,7 +1570,7 @@ def _solve_bound_constrained(
     scalar_dtype = jnp.result_type(
         abstract_value.dtype,
         *(leaf.dtype for leaf in jax.tree.leaves(parameters)),
-        float,
+        jnp.float64,
     )
     initial_state = _initial_bound_state(
         parameters,

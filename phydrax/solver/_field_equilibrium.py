@@ -191,8 +191,7 @@ class _FunctionalTermsResidual(StrictModule):
     ) -> _FunctionalTermsResidual:
         if not isinstance(realization, _PreparedObjective):
             raise TypeError(
-                "A terms-based field equilibrium requires its prepared objective "
-                "realization."
+                "A terms-based field equilibrium requires its prepared objective realization."
             )
         return type(self)(
             realization,

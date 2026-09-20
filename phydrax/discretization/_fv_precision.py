@@ -80,13 +80,11 @@ class FiniteVolumePrecisionPolicy(StrictModule, NonTrainableState):
             precision_itemsize(flux),
         ):
             raise ValueError(
-                "Finite-volume reduction precision cannot be narrower than "
-                "reconstruction or flux precision."
+                "Finite-volume reduction precision cannot be narrower than reconstruction or flux precision."
             )
         if precision_itemsize(storage) < 4 and resolution is None:
             raise ValueError(
-                "Sub-float32 finite-volume storage requires provider precision "
-                "resolution evidence."
+                "Sub-float32 finite-volume storage requires provider precision resolution evidence."
             )
         request = PrecisionRequest(
             "finite-volume",
@@ -114,8 +112,7 @@ class FiniteVolumePrecisionPolicy(StrictModule, NonTrainableState):
                 or effective != expected
             ):
                 raise ValueError(
-                    "Finite-volume precision resolution does not exactly match "
-                    "the requested roles."
+                    "Finite-volume precision resolution does not exactly match the requested roles."
                 )
         self.storage_dtype = storage
         self.reconstruction_dtype = reconstruction
@@ -162,8 +159,7 @@ class FiniteVolumePrecisionPolicy(StrictModule, NonTrainableState):
         observed = precision_dtype_name(jnp.asarray(value).dtype)
         if observed != self.storage_dtype:
             raise TypeError(
-                f"Finite-volume state dtype {observed} does not match "
-                f"{self.storage_dtype}."
+                f"Finite-volume state dtype {observed} does not match {self.storage_dtype}."
             )
 
     def storage(self, value: Any, /):

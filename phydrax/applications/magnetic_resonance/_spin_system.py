@@ -44,14 +44,14 @@ def _identifier(value: str, name: str, /) -> str:
 
 
 def _finite_vector(value: ArrayLike, name: str, /) -> Array:
-    host = np.asarray(value, dtype=float)
+    host = np.asarray(value, dtype=np.float64)
     if host.shape != (3,) or np.any(~np.isfinite(host)):
         raise ValueError(f"{name} must be finite with shape (3,).")
     return jnp.asarray(host)
 
 
 def _finite_tensor(value: ArrayLike, name: str, /) -> Array:
-    host = np.asarray(value, dtype=float)
+    host = np.asarray(value, dtype=np.float64)
     if host.shape != (3, 3) or np.any(~np.isfinite(host)):
         raise ValueError(f"{name} must be finite with shape (3, 3).")
     return jnp.asarray(host)
@@ -116,7 +116,7 @@ def spin_operators(spin: float, /) -> SpinOperators:
     """Return dimensionless Cartesian spin matrices in ascending-m order."""
 
     value, dimension = _validate_spin(spin)
-    magnetic = np.arange(-value, value + 1.0, 1.0, dtype=float)
+    magnetic = np.arange(-value, value + 1.0, 1.0, dtype=np.float64)
     raising = np.zeros((dimension, dimension), dtype=np.complex128)
     for column, m_value in enumerate(magnetic[:-1]):
         raising[column + 1, column] = math.sqrt(
@@ -224,7 +224,7 @@ class QuadrupolarInteraction(StrictModule):
     site_id: str = eqx.field(static=True)
 
     def __init__(self, site_id: str, tensor_hz: ArrayLike, /):
-        tensor = np.asarray(tensor_hz, dtype=float)
+        tensor = np.asarray(tensor_hz, dtype=np.float64)
         if tensor.shape != (3, 3) or np.any(~np.isfinite(tensor)):
             raise ValueError("tensor_hz must be finite with shape (3, 3).")
         if not np.allclose(tensor, tensor.T, rtol=0.0, atol=1.0e-12):

@@ -52,6 +52,5 @@ def test_controlled_jump_capacity_exhaustion_invalidates_truncated_path():
     assert result.events.pre_states[0, 0] == 0.0
     assert result.events.post_states[0, 0] == 1.0
     assert result.same_time_order == (
-        "event-time-then-channel-then-channel-event-index;"
-        "boundary-events-before-next-control"
+        "event-time-then-channel-then-channel-event-index;boundary-events-before-next-control"
     )

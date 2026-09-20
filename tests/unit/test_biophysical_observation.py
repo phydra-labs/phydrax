@@ -277,7 +277,7 @@ def test_censored_dwell_likelihood_counts_only_observed_exits():
     assert bool(result.successful)
 
     all_censored = runtime.evaluate(
-        jnp.asarray([1.0, 2.0, 3.0]), jnp.zeros(3, dtype=bool), 0.5
+        jnp.asarray([1.0, 2.0, 3.0]), jnp.zeros(3, dtype="bool"), 0.5
     )
     assert bool(all_censored.finite)
     assert not bool(all_censored.identifiable)

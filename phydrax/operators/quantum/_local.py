@@ -12,7 +12,7 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ._amplitude import LogAmplitude
 
 
@@ -62,7 +62,7 @@ class LocalOperatorEstimate(StrictModule):
         estimator_method: str = "deterministic",
     ):
         values = jnp.asarray(value)
-        validity = jnp.asarray(valid, dtype=bool)
+        validity = jnp.asarray(valid, dtype=jnp.bool_)
         statuses = jnp.asarray(status, dtype=jnp.int32)
         work = jnp.asarray(work_count, dtype=jnp.int32)
         variance = (
@@ -87,7 +87,7 @@ class LocalOperatorEstimate(StrictModule):
             )
         if jnp.iscomplexobj(variance):
             raise TypeError("estimator_variance must be real-valued.")
-        shape = tuple(int(size) for size in configuration_shape)
+        shape = tuple(configuration_shape)
         if not shape or any(size <= 0 for size in shape):
             raise ValueError("configuration_shape must contain positive dimensions.")
         identifiers = (
@@ -98,8 +98,7 @@ class LocalOperatorEstimate(StrictModule):
         )
         if any(not value for value in identifiers):
             raise ValueError(
-                "operator_id, method_id, compute_dtype, and estimator_method "
-                "must be non-empty."
+                "operator_id, method_id, compute_dtype, and estimator_method must be non-empty."
             )
         self.value = values
         self.valid = validity
@@ -123,8 +122,8 @@ class LocalOperatorEstimate(StrictModule):
 class AbstractLocalQuantumOperator(StrictModule):
     """Matrix-free quantum operator capable of evaluating ``(H psi) / psi``."""
 
-    configuration_shape: AbstractAttribute[tuple[int, ...]]
-    operator_id: AbstractAttribute[str]
+    configuration_shape: eqx.AbstractVar[tuple[int, ...]]
+    operator_id: eqx.AbstractVar[str]
 
     @abstractmethod
     def estimate(
@@ -151,17 +150,15 @@ def evaluate_local_operator(
     rank = len(operator.configuration_shape)
     if values.ndim < rank or tuple(values.shape[-rank:]) != operator.configuration_shape:
         raise ValueError(
-            "configurations must end in shape "
-            f"{operator.configuration_shape}; got {values.shape}."
+            f"configurations must end in shape {operator.configuration_shape}; got {values.shape}."
         )
     result = operator.estimate(model, values)
     if not isinstance(result, LocalOperatorEstimate):
         raise TypeError("A local quantum operator must return LocalOperatorEstimate.")
-    batch_shape = tuple(int(size) for size in values.shape[:-rank])
+    batch_shape = tuple(values.shape[:-rank])
     if result.value.shape != batch_shape:
         raise ValueError(
-            f"Local estimate must have batch shape {batch_shape}; "
-            f"got {result.value.shape}."
+            f"Local estimate must have batch shape {batch_shape}; got {result.value.shape}."
         )
     if result.configuration_shape != operator.configuration_shape:
         raise ValueError(

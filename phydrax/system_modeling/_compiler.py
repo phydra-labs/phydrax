@@ -114,12 +114,12 @@ def compile_linear_acausal_system(
         for variable in reference.connector_type.variables:
             if variable.kind == "across":
                 for member in members[1:]:
-                    row = np.zeros((len(variable_keys),), dtype=float)
+                    row = np.zeros((len(variable_keys),), dtype=np.float64)
                     row[variable_index[(member.connector_id, variable.name)]] = 1.0
                     row[variable_index[(reference.connector_id, variable.name)]] = -1.0
                     connection_rows.append(row)
             else:
-                row = np.zeros((len(variable_keys),), dtype=float)
+                row = np.zeros((len(variable_keys),), dtype=np.float64)
                 for member in members:
                     row[variable_index[(member.connector_id, variable.name)]] = (
                         member.orientation

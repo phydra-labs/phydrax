@@ -28,7 +28,7 @@ def _crossing_closed_green():
         labels,
         labels,
         labels,
-        values[..., None, None, None, None].astype(complex),
+        values[..., None, None, None, None].astype("complex128"),
         fermion_label_minimum=-2,
         fermion_label_count=5,
     )

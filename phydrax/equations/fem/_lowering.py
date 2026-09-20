@@ -288,8 +288,7 @@ def _select_local_kernel(
     if action_kind == "functional":
         if requested not in ("auto", "dense"):
             raise ValueError(
-                "Local functional actions currently require local_kernel='auto' "
-                "or 'dense'."
+                "Local functional actions currently require local_kernel='auto' or 'dense'."
             )
         return "dense"
     if action_kind == "pairwise-volume-flux":
@@ -368,41 +367,41 @@ def lower_finite_element_form(
     return LocalActionIR(slots, actions)
 
 
-def _facet_permutations(mesh, owner_cells, neighbour_cells, owner_local, neighbour_local):
+def _facet_permutations(mesh, owner_cells, neighbor_cells, owner_local, neighbor_local):
     connectivity = mesh.connectivity
     count = owner_cells.size
     if isinstance(connectivity, PolygonalConnectivity):
         signs = np.asarray(connectivity.cell_edge_signs)
         owner = signs[owner_cells, owner_local].astype(np.int32)
-        safe_neighbours = np.maximum(neighbour_cells, 0)
-        safe_local = np.maximum(neighbour_local, 0)
-        neighbour = np.where(
-            neighbour_cells >= 0,
-            signs[safe_neighbours, safe_local],
+        safe_neighbors = np.maximum(neighbor_cells, 0)
+        safe_local = np.maximum(neighbor_local, 0)
+        neighbor = np.where(
+            neighbor_cells >= 0,
+            signs[safe_neighbors, safe_local],
             1,
         ).astype(np.int32)
-        return owner, neighbour
+        return owner, neighbor
     if isinstance(connectivity, HexahedralConnectivity):
         permutations = np.asarray(
             connectivity.cell_face_vertex_permutations, dtype=np.int32
         )
         owner = permutations[owner_cells, owner_local]
-        safe_neighbours = np.maximum(neighbour_cells, 0)
-        safe_local = np.maximum(neighbour_local, 0)
-        neighbour = permutations[safe_neighbours, safe_local]
-        neighbour = np.where((neighbour_cells >= 0)[:, None], neighbour, np.arange(4))
-        return owner, neighbour
+        safe_neighbors = np.maximum(neighbor_cells, 0)
+        safe_local = np.maximum(neighbor_local, 0)
+        neighbor = permutations[safe_neighbors, safe_local]
+        neighbor = np.where((neighbor_cells >= 0)[:, None], neighbor, np.arange(4))
+        return owner, neighbor
     if isinstance(connectivity, TetrahedralConnectivity):
         signs = np.asarray(connectivity.cell_face_signs)
         owner = signs[owner_cells, owner_local].astype(np.int32)
-        safe_neighbours = np.maximum(neighbour_cells, 0)
-        safe_local = np.maximum(neighbour_local, 0)
-        neighbour = np.where(
-            neighbour_cells >= 0,
-            signs[safe_neighbours, safe_local],
+        safe_neighbors = np.maximum(neighbor_cells, 0)
+        safe_local = np.maximum(neighbor_local, 0)
+        neighbor = np.where(
+            neighbor_cells >= 0,
+            signs[safe_neighbors, safe_local],
             1,
         ).astype(np.int32)
-        return owner, neighbour
+        return owner, neighbor
     return np.ones((count,), dtype=np.int32), np.ones((count,), dtype=np.int32)
 
 
@@ -511,10 +510,10 @@ def compile_workset_program(
                     "Local provider region does not satisfy compiled kernel capabilities."
                 )
             gathers = dict(zip(fields, region.field_gathers, strict=True))
-            neighbour_gathers = (
+            neighbor_gathers = (
                 None
-                if not region.neighbour_gathers
-                else dict(zip(fields, region.neighbour_gathers, strict=True))
+                if not region.neighbor_gathers
+                else dict(zip(fields, region.neighbor_gathers, strict=True))
             )
             references = tuple(
                 reference.action_id for reference in region.reference_actions
@@ -559,13 +558,13 @@ def compile_workset_program(
                     jnp.asarray([action_index], dtype=jnp.int32),
                     region.entity_indices,
                     region.owner_cells,
-                    region.neighbour_cells,
+                    region.neighbor_cells,
                     gathers,
                     local_region=region,
-                    neighbour_gathers=neighbour_gathers,
+                    neighbor_gathers=neighbor_gathers,
                     owner_local_entities=region.owner_local_entities,
-                    neighbour_local_entities=region.neighbour_local_entities,
-                    neighbour_trace_permutations=region.trace_permutations,
+                    neighbor_local_entities=region.neighbor_local_entities,
+                    neighbor_trace_permutations=region.trace_permutations,
                     valid=region.valid,
                 )
             )
@@ -606,12 +605,12 @@ def compile_workset_program(
                     continue
                 entity_indices = block_cells[selected]
                 owner_cells = entity_indices
-                neighbour_cells = np.full_like(entity_indices, -1)
+                neighbor_cells = np.full_like(entity_indices, -1)
                 owner_local_entities = np.full_like(entity_indices, -1)
-                neighbour_local_entities = np.full_like(entity_indices, -1)
+                neighbor_local_entities = np.full_like(entity_indices, -1)
                 owner_permutations = np.ones_like(entity_indices, dtype=np.int32)
-                neighbour_permutations = np.ones_like(entity_indices, dtype=np.int32)
-                neighbour_trace_permutations = None
+                neighbor_permutations = np.ones_like(entity_indices, dtype=np.int32)
+                neighbor_trace_permutations = None
             else:
                 domain_owners = np.asarray(domain.owner_cells, dtype=np.int32)
                 selected = np.flatnonzero(
@@ -621,22 +620,22 @@ def compile_workset_program(
                     continue
                 entity_indices = np.asarray(domain.entity_indices)[selected]
                 owner_cells = domain_owners[selected]
-                neighbour_cells = np.asarray(domain.neighbour_cells)[selected]
+                neighbor_cells = np.asarray(domain.neighbor_cells)[selected]
                 owner_local_entities = np.asarray(
                     domain.owner_local_entities, dtype=np.int32
                 )[selected]
-                neighbour_local_entities = np.asarray(
-                    domain.neighbour_local_entities, dtype=np.int32
+                neighbor_local_entities = np.asarray(
+                    domain.neighbor_local_entities, dtype=np.int32
                 )[selected]
-                neighbour_trace_permutations = np.asarray(
-                    domain.neighbour_trace_permutations, dtype=np.int32
+                neighbor_trace_permutations = np.asarray(
+                    domain.neighbor_trace_permutations, dtype=np.int32
                 )[selected]
-                owner_permutations, neighbour_permutations = _facet_permutations(
+                owner_permutations, neighbor_permutations = _facet_permutations(
                     mesh,
                     owner_cells,
-                    neighbour_cells,
+                    neighbor_cells,
                     owner_local_entities,
-                    neighbour_local_entities,
+                    neighbor_local_entities,
                 )
             fields = tuple(
                 dict.fromkeys(
@@ -646,38 +645,38 @@ def compile_workset_program(
                 )
             )
             gathers = {}
-            neighbour_gathers = {}
+            neighbor_gathers = {}
             widths = {}
             for field in fields:
                 field_index = discretization._field_index(field)
                 dof_map = discretization.dof_maps[field_index]
                 if domain.kind == "cell":
                     route = np.asarray(dof_map.cell_dofs[block_index])[selected]
-                    neighbour_route = np.full_like(route, -1)
+                    neighbor_route = np.full_like(route, -1)
                 else:
                     local_owners = owner_cells - block_cells[0]
                     route = np.asarray(dof_map.cell_dofs[block_index])[local_owners]
-                    neighbour_rows = []
-                    for neighbour in neighbour_cells:
-                        if neighbour < 0:
-                            neighbour_rows.append(
+                    neighbor_rows = []
+                    for neighbor in neighbor_cells:
+                        if neighbor < 0:
+                            neighbor_rows.append(
                                 np.full((route.shape[1],), -1, dtype=np.int32)
                             )
                             continue
-                        neighbour_block = int(cell_blocks[neighbour])
-                        neighbour_local = int(cell_locals[neighbour])
-                        neighbour_dofs = np.asarray(
-                            dof_map.cell_dofs[neighbour_block][neighbour_local],
+                        neighbor_block = int(cell_blocks[neighbor])
+                        neighbor_local = int(cell_locals[neighbor])
+                        neighbor_dofs = np.asarray(
+                            dof_map.cell_dofs[neighbor_block][neighbor_local],
                             dtype=np.int32,
                         )
-                        if neighbour_dofs.shape != (route.shape[1],):
+                        if neighbor_dofs.shape != (route.shape[1],):
                             raise ValueError(
-                                "Facet neighbours require compatible local widths."
+                                "Facet neighbors require compatible local widths."
                             )
-                        neighbour_rows.append(neighbour_dofs)
-                    neighbour_route = np.asarray(neighbour_rows, dtype=np.int32)
+                        neighbor_rows.append(neighbor_dofs)
+                    neighbor_route = np.asarray(neighbor_rows, dtype=np.int32)
                 gathers[field] = route
-                neighbour_gathers[field] = neighbour_route
+                neighbor_gathers[field] = neighbor_route
                 widths[field] = route.shape[1]
             representative_output = _output_fields(action)[0]
             output_field_index = discretization._field_index(representative_output)
@@ -724,15 +723,15 @@ def compile_workset_program(
                     jnp.asarray([action_index], dtype=jnp.int32),
                     entity_indices,
                     owner_cells,
-                    neighbour_cells,
+                    neighbor_cells,
                     gathers,
                     reference=reference,
-                    neighbour_gathers=neighbour_gathers,
+                    neighbor_gathers=neighbor_gathers,
                     owner_local_entities=owner_local_entities,
-                    neighbour_local_entities=neighbour_local_entities,
+                    neighbor_local_entities=neighbor_local_entities,
                     owner_permutations=owner_permutations,
-                    neighbour_permutations=neighbour_permutations,
-                    neighbour_trace_permutations=neighbour_trace_permutations,
+                    neighbor_permutations=neighbor_permutations,
+                    neighbor_trace_permutations=neighbor_trace_permutations,
                 )
             )
     return WorksetProgram(ir, worksets)
@@ -744,13 +743,13 @@ def compile_finite_element_hp_mortar_workset(
     action_ir: FiniteElementActionIR,
     field_name: str,
     owner_block_index: int,
-    neighbour_block_index: int,
+    neighbor_block_index: int,
     owner_cell: int,
-    neighbour_cell: int,
+    neighbor_cell: int,
     owner_local_facet: int,
-    neighbour_local_facet: int,
+    neighbor_local_facet: int,
     owner_reference: PreparedFiniteElementReference,
-    neighbour_reference: PreparedFiniteElementReference,
+    neighbor_reference: PreparedFiniteElementReference,
     mortar: FiniteElementMortarPlan,
     metric: FiniteElementMortarMetricData,
     /,
@@ -762,7 +761,7 @@ def compile_finite_element_hp_mortar_workset(
 
     field_index = discretization._field_index(field_name)
     owner_element = discretization.elements[field_index][owner_block_index]
-    neighbour_element = discretization.elements[field_index][neighbour_block_index]
+    neighbor_element = discretization.elements[field_index][neighbor_block_index]
 
     def trace_indices(element, local_facet):
         nodes = np.asarray(element.reference_nodes)
@@ -776,20 +775,20 @@ def compile_finite_element_hp_mortar_workset(
         return np.flatnonzero(np.isclose(nodes[:, axis], float(side))).astype(np.int32)
 
     owner_trace = trace_indices(owner_element, owner_local_facet)
-    neighbour_trace = trace_indices(neighbour_element, neighbour_local_facet)
+    neighbor_trace = trace_indices(neighbor_element, neighbor_local_facet)
     if (
         owner_trace.size != mortar.left_interpolation.shape[1]
-        or neighbour_trace.size != mortar.right_interpolation.shape[1]
+        or neighbor_trace.size != mortar.right_interpolation.shape[1]
     ):
         raise ValueError("Mortar trace widths and finite-element traces disagree.")
     owner_routes = np.asarray(
         discretization.dof_maps[field_index].cell_dofs[owner_block_index][owner_cell]
     )[owner_trace]
-    neighbour_routes = np.asarray(
-        discretization.dof_maps[field_index].cell_dofs[neighbour_block_index][
-            neighbour_cell
+    neighbor_routes = np.asarray(
+        discretization.dof_maps[field_index].cell_dofs[neighbor_block_index][
+            neighbor_cell
         ]
-    )[neighbour_trace]
+    )[neighbor_trace]
     cell_offsets = np.cumsum(
         np.asarray(
             (0,) + tuple(block.cell_count for block in discretization.mesh.blocks),
@@ -797,7 +796,7 @@ def compile_finite_element_hp_mortar_workset(
         )
     )
     owner_global = int(cell_offsets[owner_block_index]) + int(owner_cell)
-    neighbour_global = int(cell_offsets[neighbour_block_index]) + int(neighbour_cell)
+    neighbor_global = int(cell_offsets[neighbor_block_index]) + int(neighbor_cell)
     coordinate_element = discretization.coordinate_elements[owner_block_index]
     signature = WorksetSignature(
         "interior_facet",
@@ -809,7 +808,7 @@ def compile_finite_element_hp_mortar_workset(
         entity_set_id=entity_set_id,
         reference_action_ids=(
             owner_reference.prepared_id,
-            neighbour_reference.prepared_id,
+            neighbor_reference.prepared_id,
         ),
         field_layout_ids=(discretization.local_field_binding(field_name).layout_id,),
         geometry_action_id=canonical_fingerprint(
@@ -822,22 +821,22 @@ def compile_finite_element_hp_mortar_workset(
         precision_id=discretization.precision_policy.policy_id,
         ir_semantics_id=action_ir.action_id,
         local_kernel="mortar",
-        neighbour_local_widths={field_name: neighbour_trace.size},
+        neighbor_local_widths={field_name: neighbor_trace.size},
     )
     return CompiledWorkset(
         signature,
         np.asarray((int(action_index),), dtype=np.int32),
         np.asarray((int(entity_index),), dtype=np.int32),
         np.asarray((owner_global,), dtype=np.int32),
-        np.asarray((neighbour_global,), dtype=np.int32),
+        np.asarray((neighbor_global,), dtype=np.int32),
         {field_name: owner_routes[None, :]},
         reference=owner_reference,
-        neighbour_reference=neighbour_reference,
+        neighbor_reference=neighbor_reference,
         mortar=mortar,
         mortar_metric=metric,
-        neighbour_gathers={field_name: neighbour_routes[None, :]},
+        neighbor_gathers={field_name: neighbor_routes[None, :]},
         owner_local_entities=np.asarray((owner_local_facet,), dtype=np.int32),
-        neighbour_local_entities=np.asarray((neighbour_local_facet,), dtype=np.int32),
+        neighbor_local_entities=np.asarray((neighbor_local_facet,), dtype=np.int32),
     )
 
 

@@ -12,14 +12,14 @@ import pytest
 import phydrax as phx
 
 
-SIGMA_Z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype=complex)
-LOWERING = jnp.asarray([[0.0, 1.0], [0.0, 0.0]], dtype=complex)
+SIGMA_Z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype="complex128")
+LOWERING = jnp.asarray([[0.0, 1.0], [0.0, 0.0]], dtype="complex128")
 
 
 def test_amplitude_damping_lindblad_residual_is_zero():
     time = phx.domain.TimeInterval(0.0, 2.0)
     rate = 0.8
-    hamiltonian = time.Function()(jnp.zeros((2, 2), dtype=complex))
+    hamiltonian = time.Function()(jnp.zeros((2, 2), dtype="complex128"))
     collapse = time.Function()(jnp.sqrt(rate) * LOWERING)
 
     @time.Function("t")
@@ -27,7 +27,7 @@ def test_amplitude_damping_lindblad_residual_is_zero():
         excited = jnp.exp(-rate * t)
         return jnp.asarray(
             [[1.0 - excited, 0.0], [0.0, excited]],
-            dtype=complex,
+            dtype="complex128",
         )
 
     residual = phx.operators.lindblad_residual(density, hamiltonian, collapse)
@@ -38,7 +38,7 @@ def test_amplitude_damping_lindblad_residual_is_zero():
 def test_pure_dephasing_lindblad_residual_is_zero():
     time = phx.domain.TimeInterval(0.0, 2.0)
     rate = 0.6
-    hamiltonian = time.Function()(jnp.zeros((2, 2), dtype=complex))
+    hamiltonian = time.Function()(jnp.zeros((2, 2), dtype="complex128"))
     collapse = time.Function()(jnp.sqrt(rate / 2.0) * SIGMA_Z)
 
     @time.Function("t")
@@ -46,7 +46,7 @@ def test_pure_dephasing_lindblad_residual_is_zero():
         coherence = jnp.exp(-rate * t)
         return 0.5 * jnp.asarray(
             [[1.0, coherence], [coherence, 1.0]],
-            dtype=complex,
+            dtype="complex128",
         )
 
     residual = phx.operators.lindblad_residual(density, hamiltonian, (collapse,))
@@ -56,7 +56,7 @@ def test_pure_dephasing_lindblad_residual_is_zero():
 def test_lindblad_dissipator_preserves_trace_and_hermiticity():
     time = phx.domain.TimeInterval(0.0, 1.0)
     factor = time.Function()(
-        jnp.asarray([[1.0 + 0.2j, 0.3], [0.4j, 0.8 - 0.1j]], dtype=complex)
+        jnp.asarray([[1.0 + 0.2j, 0.3], [0.4j, 0.8 - 0.1j]], dtype="complex128")
     )
     density = phx.operators.density_from_factor(factor)
     lowering = time.Function()(0.7 * LOWERING)
@@ -101,7 +101,7 @@ def test_empty_lindblad_collection_reduces_to_von_neumann_dynamics():
 def test_lindblad_dissipator_is_parameter_differentiable():
     time = phx.domain.TimeInterval(0.0, 1.0)
     excited_density = time.Function()(
-        jnp.asarray([[0.0, 0.0], [0.0, 1.0]], dtype=complex)
+        jnp.asarray([[0.0, 0.0], [0.0, 1.0]], dtype="complex128")
     )
 
     def ground_population_rate(rate):

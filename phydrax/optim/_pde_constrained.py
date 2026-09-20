@@ -14,7 +14,15 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, PyTree
 
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
+from .._tree_math import (
+    tree_add_scaled as _tree_add_scaled,
+    tree_allfinite as _tree_allfinite,
+    tree_inner as _tree_inner,
+    tree_negative as _tree_negative,
+    tree_norm as _tree_norm,
+    validate_real_inexact_tree as _validate_real_inexact_tree,
+)
 from ..linalg import (
     GMRES,
     LinearSolvePolicy,
@@ -25,12 +33,6 @@ from ._bounds import _projected_displacement
 from ._iterative._base import AbstractLeastSquaresMethod
 from ._iterative._globalization import ArmijoLineSearch
 from ._iterative._types import (
-    _tree_add_scaled,
-    _tree_allfinite,
-    _tree_inner,
-    _tree_negative,
-    _tree_norm,
-    _validate_real_inexact_tree,
     Bounds,
     ConstrainedOptimalityCertificate,
     NonlinearConstraint,
@@ -116,10 +118,10 @@ class StateAcceptanceEvidence(StrictModule):
         self.block_ids, self.blocks = _validate_acceptance_blocks(
             block_ids, blocks, StateAcceptanceEvidence
         )
-        self.finite = jnp.asarray(scalars[3], dtype=bool)
-        self.admissible = jnp.asarray(scalars[4], dtype=bool)
-        self.realization_matches = jnp.asarray(scalars[5], dtype=bool)
-        self.status_accepted = jnp.asarray(scalars[6], dtype=bool)
+        self.finite = jnp.asarray(scalars[3], dtype=jnp.bool_)
+        self.admissible = jnp.asarray(scalars[4], dtype=jnp.bool_)
+        self.realization_matches = jnp.asarray(scalars[5], dtype=jnp.bool_)
+        self.status_accepted = jnp.asarray(scalars[6], dtype=jnp.bool_)
         self.accepted = (
             self.status_accepted
             & self.finite
@@ -206,10 +208,10 @@ class AdjointAcceptanceEvidence(StrictModule):
         self.block_ids, self.blocks = _validate_acceptance_blocks(
             block_ids, blocks, AdjointAcceptanceEvidence
         )
-        self.finite = jnp.asarray(scalars[3], dtype=bool)
-        self.admissible = jnp.asarray(scalars[4], dtype=bool)
-        self.realization_matches = jnp.asarray(scalars[5], dtype=bool)
-        self.status_accepted = jnp.asarray(scalars[6], dtype=bool)
+        self.finite = jnp.asarray(scalars[3], dtype=jnp.bool_)
+        self.admissible = jnp.asarray(scalars[4], dtype=jnp.bool_)
+        self.realization_matches = jnp.asarray(scalars[5], dtype=jnp.bool_)
+        self.status_accepted = jnp.asarray(scalars[6], dtype=jnp.bool_)
         self.accepted = (
             self.status_accepted
             & self.finite
@@ -280,8 +282,8 @@ class StateAcceptancePolicy(StrictModule):
         )
         if any(not isfinite(value) or value < 0.0 for value in tolerances):
             raise ValueError("Acceptance tolerances must be finite and non-negative.")
-        state_statuses = tuple(int(value) for value in accepted_state_statuses)
-        adjoint_statuses = tuple(int(value) for value in accepted_adjoint_statuses)
+        state_statuses = tuple(accepted_state_statuses)
+        adjoint_statuses = tuple(accepted_adjoint_statuses)
         if not state_statuses or len(set(state_statuses)) != len(state_statuses):
             raise ValueError("accepted_state_statuses must be non-empty and unique.")
         if not adjoint_statuses or len(set(adjoint_statuses)) != len(adjoint_statuses):
@@ -329,8 +331,8 @@ class StateAcceptancePolicy(StrictModule):
             & jnp.isfinite(reference)
             & (reference >= 0.0)
         )
-        admissible_ = jnp.all(jnp.asarray(admissible, dtype=bool))
-        realization_ = jnp.all(jnp.asarray(realization_matches, dtype=bool))
+        admissible_ = jnp.all(jnp.asarray(admissible, dtype=jnp.bool_))
+        realization_ = jnp.all(jnp.asarray(realization_matches, dtype=jnp.bool_))
         return StateAcceptanceEvidence(
             residual_norm,
             reference,
@@ -379,9 +381,9 @@ class StateAcceptancePolicy(StrictModule):
                 & _tree_allfinite(adjoint)
                 & _tree_allfinite(transpose_image)
                 & _tree_allfinite(right_hand_side),
-                evidence.admissible & jnp.all(jnp.asarray(admissible, dtype=bool)),
+                evidence.admissible & jnp.all(jnp.asarray(admissible, dtype=jnp.bool_)),
                 evidence.realization_matches
-                & jnp.all(jnp.asarray(realization_matches, dtype=bool)),
+                & jnp.all(jnp.asarray(realization_matches, dtype=jnp.bool_)),
                 evidence.status_accepted & status_accepted,
                 blocks=evidence.blocks,
                 block_ids=evidence.block_ids,
@@ -411,8 +413,8 @@ class StateAcceptancePolicy(StrictModule):
             & jnp.isfinite(defect_norm)
             & jnp.isfinite(right_norm)
         )
-        admissible_ = jnp.all(jnp.asarray(admissible, dtype=bool))
-        realization_ = jnp.all(jnp.asarray(realization_matches, dtype=bool))
+        admissible_ = jnp.all(jnp.asarray(admissible, dtype=jnp.bool_))
+        realization_ = jnp.all(jnp.asarray(realization_matches, dtype=jnp.bool_))
         return AdjointAcceptanceEvidence(
             defect_norm,
             right_norm,
@@ -465,7 +467,7 @@ class StateEquationResult(StrictModule):
 class AbstractStateSolver(StrictModule):
     """Solver for one frozen state equation at a declared design."""
 
-    method_id: AbstractAttribute[str]
+    method_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def solve(
@@ -704,8 +706,7 @@ class StateDesignProblem(StrictModule):
         if self.has_aux:
             if not isinstance(output, tuple) or len(output) != 2:
                 raise TypeError(
-                    "A state-design objective with has_aux=True must return "
-                    "(value, auxiliary)."
+                    "A state-design objective with has_aux=True must return (value, auxiliary)."
                 )
             raw_value, auxiliary = output
         else:
@@ -780,9 +781,9 @@ class StateDesignProblem(StrictModule):
                 evidence.reference_norm,
                 evidence.threshold,
                 evidence.finite & _tree_allfinite(state) & _tree_allfinite(residual),
-                evidence.admissible & jnp.all(jnp.asarray(admissible, dtype=bool)),
+                evidence.admissible & jnp.all(jnp.asarray(admissible, dtype=jnp.bool_)),
                 evidence.realization_matches
-                & jnp.all(jnp.asarray(realization_matches, dtype=bool)),
+                & jnp.all(jnp.asarray(realization_matches, dtype=jnp.bool_)),
                 evidence.status_accepted & status_accepted,
                 blocks=evidence.blocks,
                 block_ids=evidence.block_ids,
@@ -922,7 +923,7 @@ class StateDesignResult(StrictModule):
 class AbstractStateDesignMethod(StrictModule):
     """Complete method for a state/design optimization problem."""
 
-    method_id: AbstractAttribute[str]
+    method_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def solve(
@@ -958,7 +959,7 @@ def _state_design_line_search(
 ):
     """Backtrack over fully solved states without exposing rejected trials."""
 
-    scalar_dtype = jnp.result_type(value, directional_derivative, float)
+    scalar_dtype = jnp.result_type(value, directional_derivative, jnp.float64)
     initial_rate = jnp.asarray(policy.initial_rate, dtype=scalar_dtype)
     minimum_rate = jnp.asarray(policy.minimum_rate, dtype=scalar_dtype)
     contraction = jnp.asarray(policy.contraction, dtype=scalar_dtype)
@@ -1212,8 +1213,7 @@ def _solve_reduced_adjoint(
         raise TypeError("problem must be a StateDesignProblem.")
     if problem.constraints:
         raise ValueError(
-            "ReducedAdjoint does not support StateDesignProblem constraints; "
-            "use ReducedMMA."
+            "ReducedAdjoint does not support StateDesignProblem constraints; use ReducedMMA."
         )
     state = _validate_real_inexact_tree(initial_state, name="initial_state")
     design = _validate_real_inexact_tree(initial_design, name="initial_design")

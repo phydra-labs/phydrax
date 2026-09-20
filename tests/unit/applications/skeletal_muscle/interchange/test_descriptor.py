@@ -77,7 +77,10 @@ def _descriptor(*, force_owner: str = "provider-native") -> ExternalModelDescrip
             ),
         ),
         dimensions=dimensions,
-        provider_versions=(("qualified-compiler", "3.1.0"), ("qualified-provider", "1.4.2")),
+        provider_versions=(
+            ("qualified-compiler", "3.1.0"),
+            ("qualified-provider", "1.4.2"),
+        ),
         compiled_sha256=_COMPILED,
         coordinate_map=(
             ExternalModelChannelBinding(
@@ -116,7 +119,10 @@ def _inventory(
         source_package="qualified-provider",
         source_revision="1.4.2+model.7",
         asset_hashes=(("model.xml", _ASSET),),
-        provider_versions=(("qualified-provider", "1.4.2"), ("qualified-compiler", "3.1.0")),
+        provider_versions=(
+            ("qualified-provider", "1.4.2"),
+            ("qualified-compiler", "3.1.0"),
+        ),
         compiled_sha256=compiled_sha256,
         coordinate_channels=coordinate_channels,
         actuator_channels=("ctrl_excitation",),
@@ -146,7 +152,9 @@ def test_host_preparation_verifies_identity_and_lowers_maps() -> None:
 
 def test_host_preparation_rejects_compiled_identity_with_evidence() -> None:
     with pytest.raises(ExternalModelPreparationError) as raised:
-        prepare_external_model_descriptor(_descriptor(), _inventory(compiled_sha256="e" * 64))
+        prepare_external_model_descriptor(
+            _descriptor(), _inventory(compiled_sha256="e" * 64)
+        )
     assert not raised.value.evidence.successful
     assert raised.value.evidence.descriptor_id == _descriptor().descriptor_id
     assert raised.value.evidence.failure_reasons == (
@@ -187,5 +195,7 @@ def test_descriptor_rejects_a_broken_compile_chain() -> None:
 
 def test_prepared_affine_maps_are_jittable() -> None:
     prepared = prepare_external_model_descriptor(_descriptor(), _inventory())
-    mapped = eqx.filter_jit(prepared.coordinate_to_phydrax)(jnp.asarray([[100.0], [150.0]]))
+    mapped = eqx.filter_jit(prepared.coordinate_to_phydrax)(
+        jnp.asarray([[100.0], [150.0]])
+    )
     assert jnp.allclose(mapped[:, 0], jnp.asarray([1.0, 1.5]))

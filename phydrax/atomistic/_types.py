@@ -215,9 +215,9 @@ class AtomicStructure(StrictModule, NonTrainableState):
             raise ValueError("masses must have the atomic_numbers shape.")
         mass_host = mass_host.astype(dtype, copy=False)
         active = (
-            np.ones(numbers.shape, dtype=bool)
+            np.ones(numbers.shape, dtype=np.bool_)
             if active_mask is None
-            else np.asarray(active_mask, dtype=bool)
+            else np.asarray(active_mask, dtype=np.bool_)
         )
         if active.shape != numbers.shape:
             raise ValueError("active_mask must have the atomic_numbers shape.")
@@ -256,7 +256,7 @@ class AtomicStructure(StrictModule, NonTrainableState):
         if periodic_axes is None:
             periodic_host = None
         else:
-            periodic_host = np.asarray(periodic_axes, dtype=bool)
+            periodic_host = np.asarray(periodic_axes, dtype=np.bool_)
             if periodic_host.shape != (3,):
                 raise ValueError("periodic_axes must have shape (3,) when provided.")
         if periodic_host is not None and np.any(periodic_host) and cell_host is None:
@@ -281,7 +281,7 @@ class AtomicStructure(StrictModule, NonTrainableState):
         self.scale = scale
         self.cell = None if cell_host is None else jnp.asarray(cell_host, dtype=dtype)
         self.periodic_axes = (
-            None if periodic_host is None else jnp.asarray(periodic_host, dtype=bool)
+            None if periodic_host is None else jnp.asarray(periodic_host, dtype=jnp.bool_)
         )
         self.name = molecule_name
         self.axis_names = ("atom", "cartesian")
@@ -304,7 +304,7 @@ class AtomicStructure(StrictModule, NonTrainableState):
 
     @property
     def atom_capacity(self) -> int:
-        return int(self.atomic_numbers.shape[0])
+        return self.atomic_numbers.shape[0]
 
     @property
     def atom_count(self) -> int:
@@ -409,11 +409,13 @@ class AtomisticBatch(StrictModule, NonTrainableState):
         mass_host = np.asarray(masses, dtype=dtype)
         if mass_host.shape != numbers.shape:
             raise ValueError("masses must have shape (case, atom).")
-        mask = numbers > 0 if atom_mask is None else np.asarray(atom_mask, dtype=bool)
+        mask = numbers > 0 if atom_mask is None else np.asarray(atom_mask, dtype=np.bool_)
         if mask.shape != numbers.shape:
             raise ValueError("atom_mask must have shape (case, atom).")
         elements = (
-            mask.copy() if element_mask is None else np.asarray(element_mask, dtype=bool)
+            mask.copy()
+            if element_mask is None
+            else np.asarray(element_mask, dtype=np.bool_)
         )
         if elements.shape != numbers.shape or np.any(elements & ~mask):
             raise ValueError("element_mask must be a subset of atom_mask.")
@@ -465,7 +467,7 @@ class AtomisticBatch(StrictModule, NonTrainableState):
         if periodic_axes is None:
             periodic_host = None
         else:
-            periodic_host = np.asarray(periodic_axes, dtype=bool)
+            periodic_host = np.asarray(periodic_axes, dtype=np.bool_)
             if periodic_host.shape != (case_count, 3):
                 raise ValueError("periodic_axes must have shape (case, 3).")
         if periodic_host is not None and np.any(periodic_host) and cell_host is None:
@@ -494,16 +496,16 @@ class AtomisticBatch(StrictModule, NonTrainableState):
         )
         self.atomic_numbers = jnp.asarray(numbers, dtype=jnp.int32)
         self.atom_type_ids = jnp.asarray(atom_types, dtype=jnp.int32)
-        self.element_mask = jnp.asarray(elements, dtype=bool)
+        self.element_mask = jnp.asarray(elements, dtype=jnp.bool_)
         self.positions = jnp.asarray(position_host, dtype=dtype)
         self.particle_ids = jnp.asarray(ids, dtype=jnp.int64)
         self.masses = jnp.asarray(mass_host, dtype=dtype)
-        self.atom_mask = jnp.asarray(mask, dtype=bool)
+        self.atom_mask = jnp.asarray(mask, dtype=jnp.bool_)
         self.particles = particles
         self.scale = scale
         self.cells = None if cell_host is None else jnp.asarray(cell_host, dtype=dtype)
         self.periodic_axes = (
-            None if periodic_host is None else jnp.asarray(periodic_host, dtype=bool)
+            None if periodic_host is None else jnp.asarray(periodic_host, dtype=jnp.bool_)
         )
         self.atom_cases = jnp.asarray(atom_cases, dtype=jnp.int32)
         self.structure_ids = ids_host
@@ -552,10 +554,10 @@ class AtomisticBatch(StrictModule, NonTrainableState):
         positions = np.zeros((count, capacity, 3), dtype=np.dtype(dtype))
         masses = np.ones((count, capacity), dtype=np.dtype(dtype))
         ids = np.zeros((count, capacity), dtype=np.int64)
-        mask = np.zeros((count, capacity), dtype=bool)
+        mask = np.zeros((count, capacity), dtype=np.bool_)
         any_metadata = any(value.has_periodic_metadata for value in values)
         cells = np.zeros((count, 3, 3), dtype=np.dtype(dtype)) if any_metadata else None
-        periodic = np.zeros((count, 3), dtype=bool) if any_metadata else None
+        periodic = np.zeros((count, 3), dtype=np.bool_) if any_metadata else None
         for index, structure in enumerate(values):
             size = structure.atom_capacity
             numbers[index, :size] = np.asarray(structure.atomic_numbers)
@@ -588,11 +590,11 @@ class AtomisticBatch(StrictModule, NonTrainableState):
 
     @property
     def case_count(self) -> int:
-        return int(self.atomic_numbers.shape[0])
+        return self.atomic_numbers.shape[0]
 
     @property
     def atom_capacity(self) -> int:
-        return int(self.atomic_numbers.shape[1])
+        return self.atomic_numbers.shape[1]
 
     @property
     def atom_counts(self) -> Array:
@@ -603,7 +605,7 @@ class AtomisticBatch(StrictModule, NonTrainableState):
         if value.shape != self.positions.shape:
             raise ValueError("Replacement positions must have the batch position shape.")
         host = np.asarray(value)
-        active = np.asarray(self.atom_mask, dtype=bool)
+        active = np.asarray(self.atom_mask, dtype=np.bool_)
         if np.any(~np.isfinite(host[active])):
             raise ValueError("Replacement active atom positions must be finite.")
         updated = eqx.tree_at(lambda batch: batch.positions, self, value)

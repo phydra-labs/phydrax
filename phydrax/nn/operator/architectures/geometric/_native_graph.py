@@ -77,8 +77,7 @@ class NativeGraphOperator(AbstractOperatorModel):
         )
         if len(candidates) != 1:
             raise ValueError(
-                "NativeGraphOperator requires source_name when the batch does not "
-                "contain exactly one valued input."
+                "NativeGraphOperator requires source_name when the batch does not contain exactly one valued input."
             )
         return candidates[0][1]
 
@@ -98,8 +97,7 @@ class NativeGraphOperator(AbstractOperatorModel):
             )
         if source.topology.graph_fingerprint != query.topology.graph_fingerprint:
             raise ValueError(
-                "NativeGraphOperator source and query topology must reference the "
-                "same canonical graph."
+                "NativeGraphOperator source and query topology must reference the same canonical graph."
             )
         if source.topology.entity != "node" or query.topology.entity != "node":
             raise ValueError(
@@ -131,8 +129,7 @@ class NativeGraphOperator(AbstractOperatorModel):
         elif isinstance(output_nodes, Mapping):
             if self.input_key not in output_nodes:
                 raise ValueError(
-                    "Mapping-valued processor output requires output_key or a field "
-                    f"named {self.input_key!r}."
+                    f"Mapping-valued processor output requires output_key or a field named {self.input_key!r}."
                 )
             output_nodes = output_nodes[self.input_key]
 
@@ -146,10 +143,9 @@ class NativeGraphOperator(AbstractOperatorModel):
         if self.out_size == "scalar" and gathered.ndim == (
             len(batch.case_shape) + len(query.sample_shape) + 1
         ):
-            if int(gathered.shape[-1]) != 1:
+            if gathered.shape[-1] != 1:
                 raise ValueError(
-                    "Scalar NativeGraphOperator output must have no channel axis or "
-                    "one trailing channel."
+                    "Scalar NativeGraphOperator output must have no channel axis or one trailing channel."
                 )
             gathered = gathered[..., 0]
         return gathered

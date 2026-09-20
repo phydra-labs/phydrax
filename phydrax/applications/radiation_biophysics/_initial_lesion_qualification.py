@@ -57,8 +57,7 @@ def _require_exact_claim_scope(claim: ScientificClaimProfile, /) -> None:
         or claim.support.attributes != _SUPPORT_ATTRIBUTES
     ):
         raise ValueError(
-            "Radiation gel claim capability, observables, conditions, and support "
-            "must equal the exact assessed scope."
+            "Radiation gel claim capability, observables, conditions, and support must equal the exact assessed scope."
         )
 
 

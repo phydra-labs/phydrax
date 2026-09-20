@@ -93,7 +93,7 @@ class _SparseFirstModel(AbstractArrayModel):
         values = jnp.asarray(x)
         if values.ndim < 2:
             raise ValueError("Sparse block transforms require a sample axis.")
-        case_shape = tuple(int(size) for size in values.shape[:-2])
+        case_shape = tuple(values.shape[:-2])
         sparse_values = self.factor * values[..., :1]
         return phx.ml.SparseFeatures(
             sparse_values,

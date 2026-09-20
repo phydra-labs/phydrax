@@ -143,7 +143,7 @@ def test_discrete_measure_masks_nonfinite_padding_before_multiplication():
             "points", 0, [0, 1, -1], active_mask=[True, True, False]
         )
     )
-    support = phx.discretization.DiscreteSupport(topology, 1, "points-v1")
+    support = phx.discretization.DiscreteSupport(topology, 1, "points")
     measure = phx.discretization.DiscreteMeasure(
         "physical",
         support.support_id,

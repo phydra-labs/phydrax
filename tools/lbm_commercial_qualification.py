@@ -219,8 +219,7 @@ def build_lbm_candidate(
     }
     if categorized_ids != {value.evidence_id for value in evidence_}:
         raise ValueError(
-            "LBM candidate evidence must use scientific/reference, performance, "
-            "operational, or security kinds."
+            "LBM candidate evidence must use scientific/reference, performance, operational, or security kinds."
         )
     subject_failures = {
         name: tuple(

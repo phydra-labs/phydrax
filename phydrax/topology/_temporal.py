@@ -50,7 +50,7 @@ class VineyardResult(StrictModule, NonTrainableState):
             {
                 "kind": "vineyard-result",
                 "snapshots": [value.result_id for value in values],
-                "time_count": int(times_.shape[0]),
+                "time_count": times_.shape[0],
             }
         )
 
@@ -201,9 +201,9 @@ def compute_monotone_zigzag_intervals(
             "Monotone interval decomposition requires an all-insertion stream; "
             "mixed insert/remove streams use compute_zigzag_topology."
         )
-    masks = [np.asarray(value, dtype=bool).copy() for value in initial_masks]
+    masks = [np.asarray(value, dtype=np.bool_).copy() for value in initial_masks]
     filtration_values = [
-        np.zeros_like(np.asarray(mask), dtype=float) for mask in initial_masks
+        np.zeros_like(np.asarray(mask), dtype=np.float64) for mask in initial_masks
     ]
     CellSubcomplex(ambient.topology, masks)
     for step, operation in enumerate(values, start=1):
@@ -236,7 +236,7 @@ def compute_zigzag_topology(
     resources: TopologyResourcePolicy | None = None,
 ) -> ZigzagTopologyResult:
     """Validate an operation stream and compute exact field homology after each step."""
-    masks = [np.asarray(value, dtype=bool).copy() for value in initial_masks]
+    masks = [np.asarray(value, dtype=np.bool_).copy() for value in initial_masks]
     state = CellSubcomplex(ambient.topology, masks)
     states = [state]
     for operation in operations:

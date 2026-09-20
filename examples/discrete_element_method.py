@@ -74,10 +74,8 @@ print(f"successful={bool(solution.successful)}")
 print(f"active_contacts={int(diagnostics.active_contacts)}")
 print(f"maximum_overlap_fraction={float(diagnostics.maximum_overlap_fraction):.6f}")
 print(
-    "contact_balance_loss="
-    f"{float(diagnostics.energy.cumulative_contact_balance_loss):.6e}"
+    f"contact_balance_loss={float(diagnostics.energy.cumulative_contact_balance_loss):.6e}"
 )
 print(
-    "relative_energy_residual="
-    f"{float(diagnostics.energy.last_relative_energy_residual):.6e}"
+    f"relative_energy_residual={float(diagnostics.energy.last_relative_energy_residual):.6e}"
 )

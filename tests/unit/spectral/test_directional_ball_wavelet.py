@@ -244,9 +244,9 @@ def test_wavelet_handles_batch_channels_jit_gradients_and_resource_admission():
             )
         )
     )(jnp.real(first))
-    actual_bytes = int(coefficients.scaling.size * coefficients.scaling.dtype.itemsize)
+    actual_bytes = coefficients.scaling.size * coefficients.scaling.dtype.itemsize
     actual_bytes += sum(
-        int(detail.size * detail.dtype.itemsize) for detail in coefficients.details
+        detail.size * detail.dtype.itemsize for detail in coefficients.details
     )
 
     assert reconstructed.shape == values.shape

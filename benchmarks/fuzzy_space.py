@@ -42,7 +42,7 @@ def benchmark_case(twice_flux: int, statistics: str):
             "orbital_count": plan.orbital_count,
             "statistics": statistics,
             "allowed_pair_spins": list(allowed),
-            "physical_dimension": int(prepared.physical_hamiltonian.shape[0]),
+            "physical_dimension": prepared.physical_hamiltonian.shape[0],
         },
         "ids": {"plan": plan.plan_id, "prepared": prepared.prepared_id},
         "host_seconds": {

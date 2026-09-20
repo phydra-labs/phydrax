@@ -123,7 +123,7 @@ def initialize_particle_internal_amr(
     area = jnp.asarray(internal_surface_area, dtype=energy.dtype)
     progress = jnp.asarray(reaction_progress, dtype=energy.dtype)
     scale = jnp.asarray(outer_scale, dtype=energy.dtype)
-    active = jnp.asarray(particle_active, dtype=bool)
+    active = jnp.asarray(particle_active, dtype=jnp.bool_)
     particle_count = energy.shape[0]
     coarse_count = hierarchy.coarse.cell_count
     if energy.shape != (particle_count, coarse_count):
@@ -155,8 +155,8 @@ def initialize_particle_internal_amr(
         fine_area,
         progress,
         fine_progress,
-        jnp.zeros((particle_count, coarse_count), dtype=bool),
-        jnp.zeros(fine_shape, dtype=bool),
+        jnp.zeros((particle_count, coarse_count), dtype=jnp.bool_),
+        jnp.zeros(fine_shape, dtype=jnp.bool_),
         jnp.zeros((particle_count, coarse_count), dtype=jnp.int32),
         scale,
         active,

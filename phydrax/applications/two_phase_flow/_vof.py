@@ -204,8 +204,7 @@ class IncompressibleTwoPhaseVOFPlan(StrictModule, NonTrainableState):
         )
         if sharp_projection is not None and sharp_projection.component_count != 1:
             raise ValueError(
-                "Static VOF sharp composition currently requires one connected "
-                "fluid component."
+                "Static VOF sharp composition currently requires one connected fluid component."
             )
         return PreparedIncompressibleTwoPhaseVOF(
             self, operators, boundaries, projection, sharp_projection
@@ -293,7 +292,7 @@ class PreparedIncompressibleTwoPhaseVOF(StrictModule):
         if bool(jnp.any((~fluid_active) & (alpha_ != 0.0))):
             raise ValueError("Initial VOF alpha must be zero in solid cells.")
         solid_cut = (
-            jnp.zeros_like(alpha_, dtype=bool)
+            jnp.zeros_like(alpha_, dtype=jnp.bool_)
             if self.geometry is None
             else self.geometry.cell_fluid_measure < self.geometry.cell_full_measure
         )
@@ -567,7 +566,7 @@ def _plic_fraction(normal: Array, offset: Array) -> Array:
                 [(mask >> axis) & 1 for axis in range(dimension)]
                 for mask in range(1 << dimension)
             ],
-            dtype=float,
+            dtype=np.float64,
         ),
         dtype=normal.dtype,
     )

@@ -83,7 +83,7 @@ def _type_identity(value: object, /) -> str:
 def _boundary_support_id(atlas: BoundaryAtlas, /) -> str:
     return canonical_fingerprint(
         {
-            "kind": "boundary-singular-support-v2",
+            "kind": "boundary-singular-support",
             "source_id": atlas.source_id,
             "atlas_type": _type_identity(atlas),
             "mapping_type": _type_identity(atlas.mapping),
@@ -131,7 +131,7 @@ class BoundaryCornerTopology2D(StrictModule, NonTrainableState):
         angles = (
             jnp.full((len(corners),), jnp.nan)
             if interior_angles is None
-            else jnp.asarray(interior_angles, dtype=float).reshape((-1,))
+            else jnp.asarray(interior_angles, dtype=jnp.float64).reshape((-1,))
         )
         if angles.shape != (len(corners),):
             raise ValueError("interior_angles must match corner_chart_ends.")
@@ -141,7 +141,7 @@ class BoundaryCornerTopology2D(StrictModule, NonTrainableState):
         self.interior_angles = angles
         self.topology_id = canonical_fingerprint(
             {
-                "kind": "boundary-corner-topology-2d-v1",
+                "kind": "boundary-corner-topology-2d",
                 "chart_count": count,
                 "corner_chart_ends": corners,
                 "interior_angles": array_tree_fingerprint(angles),
@@ -215,7 +215,10 @@ class BoundaryPanelPartition2D(StrictModule, NonTrainableState):
                 grade(index / panels, chart in starts, chart in ends)
                 for index in range(panels + 1)
             )
-            if any(right <= left for left, right in zip(coordinates[:-1], coordinates[1:], strict=True)):
+            if any(
+                right <= left
+                for left, right in zip(coordinates[:-1], coordinates[1:], strict=True)
+            ):
                 raise ValueError("Grading produced non-increasing panel breakpoints.")
             breaks.append(coordinates)
         self.breakpoints = tuple(breaks)
@@ -225,7 +228,7 @@ class BoundaryPanelPartition2D(StrictModule, NonTrainableState):
         self.topology_id = topology.topology_id
         self.partition_id = canonical_fingerprint(
             {
-                "kind": "boundary-panel-partition-2d-v1",
+                "kind": "boundary-panel-partition-2d",
                 "source_support_id": _boundary_support_id(atlas),
                 "breakpoints": breaks,
                 "grading": grading,
@@ -276,9 +279,7 @@ class BoundaryPanelization2D(StrictModule, NonTrainableState):
             partition_ = BoundaryPanelPartition2D(atlas, panels_per_chart)
         else:
             if not isinstance(partition, BoundaryPanelPartition2D):
-                raise TypeError(
-                    "partition must be a BoundaryPanelPartition2D."
-                )
+                raise TypeError("partition must be a BoundaryPanelPartition2D.")
             if len(partition.breakpoints) != atlas.num_charts:
                 raise ValueError("Panel partition chart count does not match the atlas.")
             if (
@@ -304,8 +305,7 @@ class BoundaryPanelization2D(StrictModule, NonTrainableState):
                 atlas
             ):
                 raise ValueError(
-                    "Panelization geometry and boundary atlas must describe "
-                    "the same support."
+                    "Panelization geometry and boundary atlas must describe the same support."
                 )
         nodes, weights = np.polynomial.legendre.leggauss(order)
         references = []
@@ -333,7 +333,7 @@ class BoundaryPanelization2D(StrictModule, NonTrainableState):
         if not references:
             raise ValueError("Boundary panelization has no owned charts.")
         chart_array = jnp.asarray(chart_indices, dtype=jnp.int32)
-        reference_array = jnp.asarray(np.asarray(references), dtype=float)
+        reference_array = jnp.asarray(np.asarray(references), dtype=jnp.float64)
         frame = atlas.frame(chart_array, reference_array)
         physical_weights = jnp.asarray(reference_weights) * frame.jacobian
         if not bool(jnp.all(jnp.isfinite(frame.origin))) or not bool(
@@ -352,18 +352,16 @@ class BoundaryPanelization2D(StrictModule, NonTrainableState):
         self.normals = frame.normal
         self.weights = physical_weights
         self.panel_ids = jnp.asarray(panel_ids, dtype=jnp.int32)
-        self.panel_chart_indices = jnp.asarray(
-            panel_chart_indices, dtype=jnp.int32
-        )
+        self.panel_chart_indices = jnp.asarray(panel_chart_indices, dtype=jnp.int32)
         self.panel_reference_bounds = jnp.asarray(
-            panel_reference_bounds, dtype=float
+            panel_reference_bounds, dtype=jnp.float64
         )
         self.panels_per_chart = panels
         self.quadrature_order = order
         self.source_support_id = source_support_id
         self.panelization_id = canonical_fingerprint(
             {
-                "kind": "boundary-panelization-2d-v2",
+                "kind": "boundary-panelization-2d",
                 "source_support_id": source_support_id,
                 "partition_id": partition_.partition_id,
                 "quadrature_order": order,
@@ -374,10 +372,11 @@ class BoundaryPanelization2D(StrictModule, NonTrainableState):
 
     @property
     def node_count(self) -> int:
-        return int(self.points.shape[0])
+        return self.points.shape[0]
+
     @property
     def panel_count(self) -> int:
-        return int(self.panel_chart_indices.shape[0])
+        return self.panel_chart_indices.shape[0]
 
     @property
     def boundary_measure(self) -> Array:
@@ -408,7 +407,7 @@ class LayerPotentialTargetReport(AbstractTrialSpaceAdmissibility):
         target_side: Literal["interior", "exterior", "boundary"],
         accuracy_clearance: float = 0.0,
     ):
-        values = jnp.asarray(targets, dtype=float)
+        values = jnp.asarray(targets, dtype=jnp.float64)
         if values.ndim == 1:
             values = values[None, :]
         if values.ndim != 2 or values.shape[1] != 2 or values.shape[0] == 0:
@@ -418,8 +417,7 @@ class LayerPotentialTargetReport(AbstractTrialSpaceAdmissibility):
         geometry = panelization.geometry
         if geometry is None:
             raise TypeError(
-                "Target admissibility requires the certified geometry used "
-                "to build the panelization."
+                "Target admissibility requires the certified geometry used to build the panelization."
             )
         required_capabilities = (
             GeometryCapability.REGION_QUERY,
@@ -439,15 +437,14 @@ class LayerPotentialTargetReport(AbstractTrialSpaceAdmissibility):
             or not field_certificate.is_signed_distance
         ):
             raise TypeError(
-                "Target admissibility requires an exact, sign-reliable "
-                "signed-distance certificate."
+                "Target admissibility requires an exact, sign-reliable signed-distance certificate."
             )
         clearance = float(accuracy_clearance)
         if not math.isfinite(clearance) or clearance < 0.0:
             raise ValueError("Accuracy clearance must be finite and nonnegative.")
 
         signed_distance = jnp.asarray(geometry.signed_distance(values))
-        inside = jnp.asarray(geometry.contains(values), dtype=bool)
+        inside = jnp.asarray(geometry.contains(values), dtype=jnp.bool_)
         scale = jnp.maximum(jnp.max(jnp.abs(values)), 1.0)
         classification_tolerance = 64.0 * jnp.finfo(values.dtype).eps * scale
         on_boundary = jnp.abs(signed_distance) <= classification_tolerance
@@ -469,13 +466,13 @@ class LayerPotentialTargetReport(AbstractTrialSpaceAdmissibility):
         self.pde_membership_valid = membership
         self.requested_accuracy_clearance = jnp.asarray(clearance)
         self.accuracy_supported = minimum >= clearance
-        self.target_count = int(values.shape[0])
+        self.target_count = values.shape[0]
         self.singular_support_id = panelization.source_support_id
         self.target_side = target_side
         self.target_fingerprint = trial_target_fingerprint(values, 2)
         self.report_id = canonical_fingerprint(
             {
-                "kind": "layer-potential-target-report-v2",
+                "kind": "layer-potential-target-report",
                 "singular_support_id": panelization.source_support_id,
                 "target_fingerprint": self.target_fingerprint,
                 "target_side": target_side,
@@ -527,7 +524,7 @@ class BoundaryOperatorAssemblyReport(StrictModule, NonTrainableState):
         self.kernel_id = str(kernel_id)
         self.policy_id = str(policy_id)
         self.trace_policy = str(trace_policy)
-        self.corrected_block_count = int(statuses.size)
+        self.corrected_block_count = statuses.size
         self.block_status = statuses
         self.block_errors = errors
         self.block_evaluations = evaluations
@@ -536,7 +533,7 @@ class BoundaryOperatorAssemblyReport(StrictModule, NonTrainableState):
         self.accuracy_supported = supported
         self.assembly_id = canonical_fingerprint(
             {
-                "kind": "boundary-operator-assembly-v1",
+                "kind": "boundary-operator-assembly",
                 "panelization_id": self.panelization_id,
                 "kernel_id": self.kernel_id,
                 "policy_id": self.policy_id,
@@ -578,7 +575,7 @@ class LayerDiscretizationReport(StrictModule, NonTrainableState):
         self.node_count = panelization.node_count
         self.discretization_id = canonical_fingerprint(
             {
-                "kind": "layer-discretization-v1",
+                "kind": "layer-discretization",
                 "panelization_id": self.panelization_id,
                 "kernel_id": self.kernel_id,
                 "density_space": self.density_space,

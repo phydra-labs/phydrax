@@ -618,14 +618,14 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
         if iterations < 16:
             raise ValueError("bisection_iterations must be at least 16.")
         connectivity = discretization.connectivity
-        face_count = int(discretization.face_measures.size)
+        face_count = discretization.face_measures.size
         if (
             connectivity.cell_vertices.shape != (discretization.cell_count, 4)
             or connectivity.cell_vertex_valid.shape != (discretization.cell_count, 4)
             or connectivity.cell_kinds.shape != (discretization.cell_count,)
             or connectivity.edges.shape != (face_count, 2)
             or discretization.owner_cells.shape != (face_count,)
-            or discretization.neighbour_cells.shape != (face_count,)
+            or discretization.neighbor_cells.shape != (face_count,)
         ):
             raise ValueError("PLIC polygon or physical face layout is invalid.")
         physical_layout_id = canonical_fingerprint(
@@ -634,7 +634,7 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
                 "topology": discretization.topology_id,
                 "face_ids": array_tree_fingerprint(np.arange(face_count, dtype=np.int32)),
                 "owner_cells": array_tree_fingerprint(discretization.owner_cells),
-                "receptor_cells": array_tree_fingerprint(discretization.neighbour_cells),
+                "receptor_cells": array_tree_fingerprint(discretization.neighbor_cells),
                 "edges": array_tree_fingerprint(connectivity.edges),
             }
         )
@@ -816,7 +816,7 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
         safe_face_edges = jnp.clip(face_edges, 0, max(vertex_count - 1, 0))
         base_edge_points = vertices[safe_face_edges]
         owners = geometry.owner_cells.astype(jnp.int32)
-        receptors = geometry.neighbour_cells.astype(jnp.int32)
+        receptors = geometry.neighbor_cells.astype(jnp.int32)
 
         if effective_geometry is None:
             polygons = base_polygons
@@ -1213,12 +1213,12 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
         endpoints = np.zeros((geometry.cell_count, 2, 2))
         centers = np.zeros((geometry.cell_count, 2))
         measures = np.zeros((geometry.cell_count,))
-        active = np.zeros((geometry.cell_count,), dtype=bool)
+        active = np.zeros((geometry.cell_count,), dtype=np.bool_)
         status = np.full(
             (geometry.cell_count,), int(PLICInterfaceStatus.EMPTY), dtype=np.int32
         )
-        evidence = np.zeros((geometry.cell_count,), dtype=bool)
-        tolerance = 256.0 * np.finfo(float).eps
+        evidence = np.zeros((geometry.cell_count,), dtype=np.bool_)
+        tolerance = 256.0 * np.finfo(np.float64).eps
         for cell in range(geometry.cell_count):
             arity = int(cell_kinds[cell])
             polygon = vertices[cell_vertices[cell, :arity]]
@@ -1275,7 +1275,7 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
         edge_points = vertices[face_edges]
         edge_centers = 0.5 * (edge_points[:, 0] + edge_points[:, 1])
         owner = np.asarray(geometry.owner_cells, dtype=np.int32)
-        receptor = np.asarray(geometry.neighbour_cells, dtype=np.int32)
+        receptor = np.asarray(geometry.neighbor_cells, dtype=np.int32)
         for face in range(edge_points.shape[0]):
             first, second = edge_points[face]
             edge_center = edge_centers[face]
@@ -1408,7 +1408,7 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
         if np.any(np.abs(normal_lengths - 1.0) > normal_tolerance):
             raise ValueError("PLIC normals are not unit vectors.")
         statuses = np.asarray(plic.interface_status)
-        evidence = np.asarray(plic.interface_evidence, dtype=bool)
+        evidence = np.asarray(plic.interface_evidence, dtype=np.bool_)
         if statuses.shape != (geometry.cell_count,) or evidence.shape != statuses.shape:
             raise ValueError("PLIC interface status/evidence shape is invalid.")
         valid_statuses = {
@@ -1428,8 +1428,8 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
         vertices = np.asarray(geometry.vertices)
         face_edges = np.asarray(geometry.connectivity.edges, dtype=np.int32)
         base_owner = np.asarray(geometry.owner_cells, dtype=np.int32)
-        base_receptor = np.asarray(geometry.neighbour_cells, dtype=np.int32)
-        physical_face_count = int(face_edges.shape[0])
+        base_receptor = np.asarray(geometry.neighbor_cells, dtype=np.int32)
+        physical_face_count = face_edges.shape[0]
         face_ids: list[np.ndarray] = []
         owners: list[np.ndarray] = []
         receptors: list[np.ndarray] = []
@@ -1442,8 +1442,8 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
             layout = block.layout
             ids = np.asarray(layout.face_ids, dtype=np.int32)
             block_owners = np.asarray(layout.owner_cells, dtype=np.int32)
-            block_receptors = np.asarray(layout.neighbour_cells, dtype=np.int32)
-            active_mask = np.asarray(layout.active_mask, dtype=bool)
+            block_receptors = np.asarray(layout.neighbor_cells, dtype=np.int32)
+            active_mask = np.asarray(layout.active_mask, dtype=np.bool_)
             if not np.all(active_mask):
                 raise ValueError("PLIC phase apertures reject inactive stage routes.")
             if layout.block_kind == "physical":
@@ -1466,9 +1466,9 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
             else:
                 raise ValueError("Unsupported stage face block kind.")
 
-            local_owner_aperture = np.zeros((ids.size, 2), dtype=float)
+            local_owner_aperture = np.zeros((ids.size, 2), dtype=np.float64)
             local_receptor_aperture = np.zeros_like(local_owner_aperture)
-            local_owner_centroid = np.zeros((ids.size, 2, 2), dtype=float)
+            local_owner_centroid = np.zeros((ids.size, 2, 2), dtype=np.float64)
             local_receptor_centroid = np.zeros_like(local_owner_centroid)
             for route, face_id in enumerate(ids):
                 first, second = _stage_segment(block, route)
@@ -1659,9 +1659,7 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
                 reconstruction.face_ids == jnp.arange(route_shape[0], dtype=jnp.int32)
             )
             & jnp.all(reconstruction.owner_cells == self.discretization.owner_cells)
-            & jnp.all(
-                reconstruction.receptor_cells == self.discretization.neighbour_cells
-            )
+            & jnp.all(reconstruction.receptor_cells == self.discretization.neighbor_cells)
             & jnp.all(reconstruction.interface_evidence)
             & jnp.all(reconstruction.aperture_ids == reconstruction.volume_fraction)
             & (reconstruction.geometry_version >= 0)
@@ -1788,12 +1786,12 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
         if volume_flux.shape != (self.discretization.face_measures.size,):
             raise ValueError("Face volume flux must contain one value per face.")
         owner = self.discretization.owner_cells
-        neighbour = self.discretization.neighbour_cells
-        safe_neighbour = jnp.maximum(neighbour, 0)
+        neighbor = self.discretization.neighbor_cells
+        safe_neighbor = jnp.maximum(neighbor, 0)
         donor = jnp.where(
             volume_flux >= 0.0,
             alpha[owner],
-            jnp.where(neighbour >= 0, alpha[safe_neighbour], alpha[owner]),
+            jnp.where(neighbor >= 0, alpha[safe_neighbor], alpha[owner]),
         )
         return donor * volume_flux
 
@@ -1804,11 +1802,11 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
         phase_flux = self.advective_face_flux(alpha, face_normal_volume_flux)
         integrated = phase_flux * self.discretization.face_measures.astype(alpha.dtype)
         owner = self.discretization.owner_cells
-        neighbour = self.discretization.neighbour_cells
-        safe_neighbour = jnp.maximum(neighbour, 0)
+        neighbor = self.discretization.neighbor_cells
+        safe_neighbor = jnp.maximum(neighbor, 0)
         residual = jnp.zeros_like(alpha).at[owner].add(-integrated)
-        residual = residual.at[safe_neighbour].add(
-            jnp.where(neighbour >= 0, integrated, 0.0)
+        residual = residual.at[safe_neighbor].add(
+            jnp.where(neighbor >= 0, integrated, 0.0)
         )
         return residual / self.discretization.cell_volumes.astype(alpha.dtype)
 
@@ -1824,19 +1822,19 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
         phase_flux = self.advective_face_flux(alpha, face_normal_volume_flux)
         integrated = phase_flux * self.discretization.face_measures.astype(alpha.dtype)
         owner = self.discretization.owner_cells
-        neighbour = self.discretization.neighbour_cells
-        safe_neighbour = jnp.maximum(neighbour, 0)
+        neighbor = self.discretization.neighbor_cells
+        safe_neighbor = jnp.maximum(neighbor, 0)
         owner_outflow = jnp.maximum(integrated, 0.0)
         owner_inflow = jnp.maximum(-integrated, 0.0)
-        neighbour_outflow = jnp.maximum(-integrated, 0.0)
-        neighbour_inflow = jnp.maximum(integrated, 0.0)
+        neighbor_outflow = jnp.maximum(-integrated, 0.0)
+        neighbor_inflow = jnp.maximum(integrated, 0.0)
         outflow = jnp.zeros_like(alpha).at[owner].add(owner_outflow)
         inflow = jnp.zeros_like(alpha).at[owner].add(owner_inflow)
-        outflow = outflow.at[safe_neighbour].add(
-            jnp.where(neighbour >= 0, neighbour_outflow, 0.0)
+        outflow = outflow.at[safe_neighbor].add(
+            jnp.where(neighbor >= 0, neighbor_outflow, 0.0)
         )
-        inflow = inflow.at[safe_neighbour].add(
-            jnp.where(neighbour >= 0, neighbour_inflow, 0.0)
+        inflow = inflow.at[safe_neighbor].add(
+            jnp.where(neighbor >= 0, neighbor_inflow, 0.0)
         )
         volume = self.discretization.cell_volumes.astype(alpha.dtype)
         liquid_step = jnp.where(outflow > 0.0, alpha * volume / outflow, jnp.inf)

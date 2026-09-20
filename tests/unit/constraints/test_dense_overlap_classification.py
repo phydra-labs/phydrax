@@ -165,7 +165,7 @@ def test_dense_overlap_case_weights_follow_ratio_not_support_pooling():
 
 
 def test_dense_overlap_masking_and_refinement_are_geometry_owned():
-    mask = jnp.ones((2, 4), dtype=bool).at[:, 0].set(False)
+    mask = jnp.ones((2, 4), dtype="bool").at[:, 0].set(False)
     term, logits, _ = _multiclass_overlap_problem(target_mask=mask)
     score = term.per_case_score({"u": logits}, term.observed_batch())
 

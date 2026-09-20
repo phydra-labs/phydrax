@@ -53,7 +53,7 @@ class SensitiveHitPlan(StrictModule, NonTrainableState):
             raise ValueError("conditions_id must be non-empty.")
         self.element_to_channel = jnp.asarray(mapping, dtype=jnp.int32)
         self.conditions_id = conditions
-        self.element_count = int(mapping.size)
+        self.element_count = mapping.size
         self.channel_count = channels
         self.plan_id = canonical_fingerprint(
             {
@@ -118,16 +118,16 @@ class DigitizationPlan(StrictModule, NonTrainableState):
         maximum_adc: int,
         conditions_id: str,
     ):
-        calibration_ = np.asarray(calibration, dtype=float)
-        noise = np.asarray(noise_standard_deviation, dtype=float)
-        crosstalk_ = np.asarray(crosstalk, dtype=float)
+        calibration_ = np.asarray(calibration, dtype=np.float64)
+        noise = np.asarray(noise_standard_deviation, dtype=np.float64)
+        crosstalk_ = np.asarray(crosstalk, dtype=np.float64)
         if (
             calibration_.ndim != 1
             or calibration_.size < 1
             or noise.shape != calibration_.shape
         ):
             raise ValueError("Calibration and noise require one value per channel.")
-        count = int(calibration_.size)
+        count = calibration_.size
         if crosstalk_.shape != (count, count):
             raise ValueError("crosstalk must have shape (channel_count, channel_count).")
         if (

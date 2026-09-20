@@ -51,7 +51,7 @@ class ParticlePairKeySpace(StrictModule, NonTrainableState):
         ids = np.asarray(particles.particle_ids, dtype=np.int64)
         if np.any(ids < 0) or np.unique(ids).size != ids.size:
             raise ValueError("Particle pair identities require unique nonnegative IDs.")
-        capacity = int(ids.size)
+        capacity = ids.size
         pair_count = capacity * (capacity - 1) // 2
         self.sorted_particle_ids = jnp.asarray(np.sort(ids), dtype=jnp.int64)
         self.particle_discretization_id = particles.prepared_id
@@ -126,7 +126,7 @@ def particle_wall_interaction_keys(
     object_ = jnp.asarray(object_ids, dtype=jnp.int64)
     feature_kind = jnp.asarray(feature_kinds, dtype=jnp.int64)
     feature = jnp.asarray(feature_ids, dtype=jnp.int64)
-    mask = jnp.asarray(valid, dtype=bool)
+    mask = jnp.asarray(valid, dtype=jnp.bool_)
     if (
         particle.ndim != 1
         or object_.shape != particle.shape
@@ -170,7 +170,7 @@ def _validated_keys(
     name: str, keys: ArrayLike, valid: ArrayLike, /
 ) -> tuple[Array, Array, Array]:
     keys_ = jnp.asarray(keys)
-    valid_ = jnp.asarray(valid, dtype=bool)
+    valid_ = jnp.asarray(valid, dtype=jnp.bool_)
     if (
         keys_.ndim != 2
         or keys_.shape[1] != INTERACTION_KEY_WIDTH
@@ -200,7 +200,7 @@ def _lexicographic_less(left: Array, right: Array, /) -> Array:
 
 
 def _lexicographic_search(sorted_keys: Array, queries: Array, /) -> Array:
-    capacity = int(sorted_keys.shape[0])
+    capacity = sorted_keys.shape[0]
     if capacity == 0:
         return jnp.zeros((queries.shape[0],), dtype=jnp.int32)
     iterations = max(1, capacity.bit_length())
@@ -238,13 +238,13 @@ def match_particle_pair_keys(
 
     old, old_mask, old_in_range = _validated_keys("Old interaction", old_keys, old_valid)
     new, new_mask, new_in_range = _validated_keys("New interaction", new_keys, new_valid)
-    old_capacity = int(old.shape[0])
-    new_capacity = int(new.shape[0])
+    old_capacity = old.shape[0]
+    new_capacity = new.shape[0]
     if new_capacity == 0:
         return ParticlePairRemap(
             jnp.zeros((0,), dtype=jnp.int32),
-            jnp.zeros((0,), dtype=bool),
-            jnp.zeros((0,), dtype=bool),
+            jnp.zeros((0,), dtype=jnp.bool_),
+            jnp.zeros((0,), dtype=jnp.bool_),
             jnp.sum(old_mask, dtype=jnp.int32),
             old_in_range & new_in_range,
             old_capacity,
@@ -253,7 +253,7 @@ def match_particle_pair_keys(
     if old_capacity == 0:
         return ParticlePairRemap(
             jnp.zeros((new_capacity,), dtype=jnp.int32),
-            jnp.zeros((new_capacity,), dtype=bool),
+            jnp.zeros((new_capacity,), dtype=jnp.bool_),
             new_mask,
             jnp.zeros((), dtype=jnp.int32),
             old_in_range & new_in_range,

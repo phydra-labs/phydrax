@@ -56,7 +56,7 @@ class MomentumSubtractionScheme(StrictModule, NonTrainableState):
     ):
         name_ = str(name).strip()
         scale_ = float(scale)
-        point = np.asarray(subtraction_point, dtype=float)
+        point = np.asarray(subtraction_point, dtype=np.float64)
         degree = int(subtraction_degree)
         if not name_:
             raise ValueError("Renormalization scheme name must be non-empty.")
@@ -101,7 +101,7 @@ class PolynomialCounterterm(StrictModule, NonTrainableState):
         maximum_terms: int = 4_096,
     ):
         powers = np.asarray(exponents)
-        values = np.asarray(coefficients, dtype=complex)
+        values = np.asarray(coefficients, dtype=np.complex128)
         order, maximum = int(perturbative_order), int(maximum_terms)
         if powers.ndim != 2 or powers.shape[0] == 0:
             raise ValueError("exponents must be a non-empty rank-two array.")
@@ -117,8 +117,8 @@ class PolynomialCounterterm(StrictModule, NonTrainableState):
             )
         self.exponents = jnp.asarray(powers, dtype=jnp.int32)
         self.coefficients = jnp.asarray(values)
-        self.variable_count = int(powers.shape[1])
-        self.term_count = int(powers.shape[0])
+        self.variable_count = powers.shape[1]
+        self.term_count = powers.shape[0]
         self.perturbative_order = order
         self.counterterm_id = canonical_fingerprint(
             {
@@ -188,10 +188,10 @@ class BPHZSubtractionPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(scheme, MomentumSubtractionScheme):
             raise TypeError("scheme must be a MomentumSubtractionScheme.")
-        shape = tuple(int(value) for value in polynomial_shape)
+        shape = tuple(polynomial_shape)
         maximum = int(maximum_terms)
         maximum_matrix = int(maximum_matrix_elements)
-        if len(shape) != int(scheme.subtraction_point.size) or any(
+        if len(shape) != scheme.subtraction_point.size or any(
             value <= 0 for value in shape
         ):
             raise ValueError("Polynomial shape must have one positive axis per variable.")
@@ -221,11 +221,11 @@ class BPHZSubtractionPlan(StrictModule, NonTrainableState):
         indices = tuple(np.ndindex(shape))
         lookup = {index: position for position, index in enumerate(indices)}
         point = np.asarray(self.scheme.subtraction_point)
-        taylor = np.zeros((len(indices), len(indices)), dtype=float)
+        taylor = np.zeros((len(indices), len(indices)), dtype=np.float64)
         condition_indices = tuple(
             index for index in indices if sum(index) <= self.scheme.subtraction_degree
         )
-        conditions = np.zeros((len(condition_indices), len(indices)), dtype=float)
+        conditions = np.zeros((len(condition_indices), len(indices)), dtype=np.float64)
 
         for column, alpha in enumerate(indices):
             beta_ranges = tuple(range(power + 1) for power in alpha)
@@ -297,7 +297,7 @@ class PreparedBPHZSubtraction(StrictModule, NonTrainableState):
         if original.shape != self.plan.polynomial_shape:
             raise ValueError("coefficients do not match the prepared polynomial shape.")
         if not jnp.issubdtype(original.dtype, jnp.inexact):
-            original = original.astype(float)
+            original = original.astype("float64")
         flattened = original.reshape((-1,)).astype(jnp.complex128)
         subtracted = self.subtraction_operator(flattened)
         removed = flattened - subtracted

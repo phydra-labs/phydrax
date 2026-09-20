@@ -50,9 +50,9 @@ $$
 import jax.numpy as jnp
 import phydrax as phx
 
-sigma_x = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype=complex)
-sigma_y = jnp.asarray([[0.0, -1.0j], [1.0j, 0.0]], dtype=complex)
-sigma_z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype=complex)
+sigma_x = jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype="complex128")
+sigma_y = jnp.asarray([[0.0, -1.0j], [1.0j, 0.0]], dtype="complex128")
+sigma_z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype="complex128")
 
 time = phx.domain.TimeInterval(0.0, 1.0)
 Sx = time.Function()(sigma_x)
@@ -245,7 +245,7 @@ import jax.numpy as jnp
 import jax.random as jr
 import phydrax as phx
 
-sigma_z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype=complex)
+sigma_z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype="complex128")
 time = phx.domain.TimeInterval(0.0, 1.0)
 omega = 1.4
 H = time.Function()(0.5 * omega * sigma_z)

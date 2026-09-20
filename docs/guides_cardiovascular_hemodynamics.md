@@ -69,7 +69,7 @@ scaling = hemodynamics.HemodynamicsScaling(
 Terminals bind to the actual pressure/flow ports of circulation-owned components. The binding stores identity only: all 0D pressure, flow, resistance, compliance, inertance, and volume state remains in the circulation DAE.
 
 ```python
-lumen_mask = np.ones(shape, dtype=bool)
+lumen_mask = np.ones(shape, dtype="bool")
 lumen = hemodynamics.FixedWallLumenRegion(lumen_mask, lumen_name="example_lumen")
 
 terminal_load = circulation.Resistance("terminal_load", 0.8)

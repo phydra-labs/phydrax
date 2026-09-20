@@ -263,10 +263,7 @@ def plan_polynomial_relaxation(
         message = infeasibility
     elif relaxation_order < required_order:
         status = PolynomialRelaxationStatus.INSUFFICIENT_ORDER
-        message = (
-            f"relaxation order {relaxation_order} is below the support-required "
-            f"order {required_order}"
-        )
+        message = f"relaxation order {relaxation_order} is below the support-required order {required_order}"
     else:
         violations = (
             (
@@ -279,8 +276,7 @@ def plan_polynomial_relaxation(
             ),
             (
                 estimate.largest_psd_matrix > limits.max_psd_matrix_size,
-                "largest PSD matrix size "
-                f"{estimate.largest_psd_matrix} exceeds {limits.max_psd_matrix_size}",
+                f"largest PSD matrix size {estimate.largest_psd_matrix} exceeds {limits.max_psd_matrix_size}",
             ),
             (
                 estimate.conic_rows > limits.max_conic_rows,
@@ -288,8 +284,7 @@ def plan_polynomial_relaxation(
             ),
             (
                 estimate.dense_constraint_entries > limits.max_dense_entries,
-                "dense constraint entries "
-                f"{estimate.dense_constraint_entries} exceed {limits.max_dense_entries}",
+                f"dense constraint entries {estimate.dense_constraint_entries} exceed {limits.max_dense_entries}",
             ),
         )
         rejected = next((text for condition, text in violations if condition), None)
@@ -333,8 +328,7 @@ def prepare_polynomial_relaxation_template(
         raise TypeError("plan must be a PolynomialRelaxationPlan.")
     if not plan.ready:
         raise ValueError(
-            f"Cannot prepare polynomial relaxation with status {plan.status.name}: "
-            f"{plan.message}."
+            f"Cannot prepare polynomial relaxation with status {plan.status.name}: {plan.message}."
         )
     problem = plan.problem
     moments = DenseMomentBasis(problem.variable_count, plan.order)
@@ -405,7 +399,7 @@ def _moment_indices(basis: DenseMomentBasis, exponents: np.ndarray, /) -> tuple[
         exponent: position
         for position, exponent in enumerate(basis.moments.exponent_tuples)
     }
-    return tuple(lookup[tuple(int(value) for value in row)] for row in exponents)
+    return tuple(lookup[tuple(row)] for row in exponents)
 
 
 def _polynomial_vector(
@@ -428,7 +422,7 @@ def _symmetric_pack_map(
     dtype: Any,
     /,
 ) -> Array:
-    matrix_size = int(entry_indices.shape[0])
+    matrix_size = entry_indices.shape[0]
     packed = jnp.zeros((_pack_slice_size(matrix_size), moment_count), dtype=dtype)
     cursor = 0
     for column in range(matrix_size):
@@ -577,8 +571,7 @@ def bind_polynomial_relaxation_numeric(
     )
     if not rebound_plan.ready:
         raise ValueError(
-            f"Numeric binding is not admissible ({rebound_plan.status.name}): "
-            f"{rebound_plan.message}."
+            f"Numeric binding is not admissible ({rebound_plan.status.name}): {rebound_plan.message}."
         )
     program = _compile_numeric(template, problem)
     binding_id = canonical_fingerprint(
@@ -614,8 +607,7 @@ def prepare_polynomial_relaxation(
     else:
         if not isinstance(problem_or_plan, PolynomialOptimizationProblem):
             raise TypeError(
-                "problem_or_plan must be PolynomialOptimizationProblem or "
-                "PolynomialRelaxationPlan."
+                "problem_or_plan must be PolynomialOptimizationProblem or PolynomialRelaxationPlan."
             )
         if order is None:
             raise ValueError("order is required when preparing from a problem.")

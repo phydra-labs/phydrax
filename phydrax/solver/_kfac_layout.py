@@ -39,7 +39,7 @@ class KFACPlan:
 
     def initialize(self, parameters: PyTree[Any], /) -> KFACState:
         flat, _ = ravel_pytree(parameters)
-        if int(flat.size) != self.layout.parameter_count:
+        if flat.size != self.layout.parameter_count:
             raise ValueError("KFAC parameter structure changed after plan construction.")
         return KFACState(
             step=jnp.asarray(0, dtype=jnp.int32),
@@ -177,7 +177,7 @@ def _flat_leaf_slices(params: PyTree[Any], /) -> tuple[dict[int, tuple[int, ...]
     slices: dict[int, tuple[int, ...]] = {}
     for leaf in leaves:
         array = jnp.asarray(leaf)
-        size = int(array.size)
+        size = array.size
         slices[id(leaf)] = tuple(range(offset, offset + size))
         offset += size
     return slices, offset
@@ -207,7 +207,7 @@ def discover_parameter_layout(
             block_name = f"{field_name}/{block.name}"
             weight_indices = leaf_slices[id(block.weight)]
             bias_indices = () if block.bias is None else leaf_slices[id(block.bias)]
-            weight_shape = tuple(int(value) for value in block.weight.shape)
+            weight_shape = tuple(block.weight.shape)
             output_axes = block.output_axes or (0,)
             input_axes = block.input_axes or tuple(
                 axis for axis in range(len(weight_shape)) if axis not in output_axes

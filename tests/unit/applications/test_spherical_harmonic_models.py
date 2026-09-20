@@ -38,7 +38,7 @@ def _astrodynamics_provenance(context):
 
 
 def _degree_two_order_one_value_gradient(position, prefactor, cosine, sine):
-    position = np.asarray(position, dtype=float)
+    position = np.asarray(position, dtype="float64")
     radius = np.linalg.norm(position)
     x, y, z = position
     linear = cosine * x + sine * y

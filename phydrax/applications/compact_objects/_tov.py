@@ -42,8 +42,8 @@ class EquationOfStateTable(StrictModule, NonTrainableState):
             raise ValueError("eos_id must be non-empty.")
         if units != "geometric":
             raise ValueError("TOV EOS tables require geometric units with G = c = 1.")
-        pressure_host = np.asarray(pressure, dtype=float)
-        energy_host = np.asarray(energy_density, dtype=float)
+        pressure_host = np.asarray(pressure, dtype=np.float64)
+        energy_host = np.asarray(energy_density, dtype=np.float64)
         if (
             pressure_host.ndim != 1
             or pressure_host.size < 2
@@ -66,8 +66,7 @@ class EquationOfStateTable(StrictModule, NonTrainableState):
             or np.any(segment_sound_speed_squared > 1.0 + 1.0e-10)
         ):
             raise ValueError(
-                "Every piecewise-linear EOS segment must be stable and causal "
-                "in geometric units."
+                "Every piecewise-linear EOS segment must be stable and causal in geometric units."
             )
         self.pressure = jnp.asarray(pressure_host)
         self.energy_density = jnp.asarray(energy_host)
@@ -115,7 +114,7 @@ class TovPlan(StrictModule, NonTrainableState):
     def __init__(self, eos, radial_nodes, /):
         if not isinstance(eos, EquationOfStateTable):
             raise TypeError("eos must be an EquationOfStateTable.")
-        radii = np.asarray(radial_nodes, dtype=float)
+        radii = np.asarray(radial_nodes, dtype=np.float64)
         if (
             radii.ndim != 1
             or radii.size < 2
@@ -184,7 +183,7 @@ class TovPlan(StrictModule, NonTrainableState):
         )
         active = jnp.concatenate((jnp.asarray(True)[None], outputs[1]))
         surface_index = jnp.clip(
-            jnp.sum(active.astype(jnp.int32)) - 1, 0, int(self.radial_nodes.size) - 1
+            jnp.sum(active.astype(jnp.int32)) - 1, 0, self.radial_nodes.size - 1
         )
         radius = self.radial_nodes[surface_index]
         mass = profiles[surface_index, 0]

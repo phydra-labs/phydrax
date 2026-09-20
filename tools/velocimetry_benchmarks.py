@@ -152,7 +152,7 @@ def _raster_case(*, smoke: bool, repetitions: int):
     positions = jr.uniform(jr.key(2), (capacity, 2)) * (size - 1)
     amplitudes = jnp.ones((capacity,))
     sigma = jnp.ones((capacity,))
-    active = jnp.ones((capacity,), dtype=bool)
+    active = jnp.ones((capacity,), dtype="bool")
     execute = jax.jit(
         lambda current_positions: (
             rasterizer.render(

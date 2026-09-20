@@ -18,7 +18,7 @@ def resize_fourier_axis(
     /,
 ) -> Array:
     """Resize one unshifted DFT axis with exact even-Nyquist handling."""
-    source_size = int(coefficients.shape[axis])
+    source_size = coefficients.shape[axis]
     target = int(target_size)
     if target <= 0:
         raise ValueError("Fourier target sizes must be positive.")
@@ -127,7 +127,7 @@ def phase_shift_fourier_coefficients(
             ~jnp.isfinite(offset_value),
             "Fourier phase offsets must be finite.",
         )
-        size = int(result.shape[axis])
+        size = result.shape[axis]
         modes = jnp.fft.fftfreq(size).astype(result.real.dtype) * size
         angle = 2.0 * jnp.asarray(jnp.pi, dtype=result.real.dtype) * modes * offset_value
         phase = jnp.exp(1j * angle).astype(result.dtype)
@@ -147,11 +147,11 @@ def fourier_resample(
 ) -> Array:
     """Band-limited periodic resampling with parity-correct Nyquist transfer."""
     array = jnp.asarray(values)
-    shape = tuple(int(size) for size in output_shape)
+    shape = tuple(output_shape)
     if not shape or any(size <= 0 for size in shape):
         raise ValueError("output_shape must contain positive spatial sizes.")
     resolved_axes = _resolve_fourier_axes(array, shape, axes)
-    source_shape = tuple(int(array.shape[axis]) for axis in resolved_axes)
+    source_shape = tuple(array.shape[axis] for axis in resolved_axes)
     if source_shape == shape and phase_offsets is None:
         return array
     coefficients = jnp.fft.fftn(array, axes=resolved_axes, norm="forward")

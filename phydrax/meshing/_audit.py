@@ -10,6 +10,8 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 
+import phydrax.ein as ein
+
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -125,7 +127,7 @@ def _connectivity_entries(mesh: CellMesh, /) -> int:
             + connectivity.cell_vertex_values.size
         )
     if isinstance(connectivity, IntervalConnectivity):
-        return int(connectivity.cell_vertices.size)
+        return connectivity.cell_vertices.size
     if isinstance(connectivity, PolygonalConnectivity):
         return int(
             connectivity.edges.size
@@ -185,7 +187,7 @@ def _geometry_binding(
             basis, _ = element.tabulate(
                 jnp.asarray(reference_cell_topology(block.cell_kind).vertices)
             )
-            corners = np.einsum(
+            corners = ein.contract(
                 "vi,cia->cva", np.asarray(basis), points[np.asarray(route)]
             )
         elif isinstance(element, CellVertexGeometryElement):
@@ -193,9 +195,11 @@ def _geometry_binding(
         else:
             return "unsupported", ("unsupported_geometry_element",)
         expected = np.asarray(mesh.coordinates)[np.asarray(block.vertices)]
-        scale = max(float(np.max(np.abs(expected), initial=0.0)), np.finfo(float).tiny)
+        scale = max(
+            float(np.max(np.abs(expected), initial=0.0)), np.finfo(np.float64).tiny
+        )
         if corners.shape != expected.shape or not np.allclose(
-            corners, expected, rtol=0.0, atol=64.0 * np.finfo(float).eps * scale
+            corners, expected, rtol=0.0, atol=64.0 * np.finfo(np.float64).eps * scale
         ):
             return scope, ("geometry_corner_binding",)
     return scope, ()
@@ -225,7 +229,7 @@ def _boundary_issues(mesh: CellMesh, boundary: SurfaceModel | None, /) -> tuple[
         if not isinstance(mesh.connectivity, PolygonalConnectivity):
             raise TypeError("Surface boundary audit requires polygonal connectivity.")
         loops = tuple(
-            tuple(int(value) for value in mesh_ids[row])
+            tuple(mesh_ids[row])
             for block in mesh.blocks
             for row in np.asarray(block.vertices)
         )
@@ -236,7 +240,7 @@ def _boundary_issues(mesh: CellMesh, boundary: SurfaceModel | None, /) -> tuple[
             (TetrahedralConnectivity, HexahedralConnectivity, PolyhedralConnectivity),
         ):
             raise TypeError("Volume boundary audit requires volume connectivity.")
-        boundary_mask = np.asarray(connectivity.boundary_faces, dtype=bool)
+        boundary_mask = np.asarray(connectivity.boundary_faces, dtype=np.bool_)
         if isinstance(connectivity, PolyhedralConnectivity):
             offsets = np.asarray(connectivity.face_vertex_offsets, dtype=np.int64)
             values = np.asarray(connectivity.face_vertex_values, dtype=np.int64)
@@ -247,7 +251,7 @@ def _boundary_issues(mesh: CellMesh, boundary: SurfaceModel | None, /) -> tuple[
             )
         else:
             rows = np.asarray(connectivity.faces)[boundary_mask]
-        loops = tuple(tuple(int(value) for value in mesh_ids[row]) for row in rows)
+        loops = tuple(tuple(mesh_ids[row]) for row in rows)
     vertex_faces: dict[int, set[int]] = {}
     for index, loop in enumerate(loops):
         for vertex in loop:
@@ -255,7 +259,7 @@ def _boundary_issues(mesh: CellMesh, boundary: SurfaceModel | None, /) -> tuple[
     triangles = [[] for _ in loops]
     for block in surface.blocks:
         for row in np.asarray(block.vertices):
-            triangle = tuple(int(value) for value in surface_ids[row])
+            triangle = tuple(surface_ids[row])
             owners = set.intersection(
                 *(vertex_faces.get(vertex, set()) for vertex in triangle)
             )
@@ -312,7 +316,7 @@ def _patch_zone_adjacency_issues(
         for row, identifier in enumerate(np.asarray(patch_entities.entity_ids))
     }
     incidence = mesh.topology.incidences[-1]
-    valid = np.asarray(incidence.relation.valid, dtype=bool)
+    valid = np.asarray(incidence.relation.valid, dtype=np.bool_)
     source_rows = np.asarray(incidence.relation.source_indices)[valid]
     target_rows = np.asarray(incidence.relation.target_indices)[valid]
     patch_cells = [set() for _ in range(patch_entities.count)]
@@ -522,13 +526,13 @@ def audit_cell_mesh(
             associations,
         )
     )
-    coordinates = np.asarray(geometry.coordinates, dtype=float)
+    coordinates = np.asarray(geometry.coordinates, dtype=np.float64)
     if not np.all(np.isfinite(coordinates)):
         issues.append("nonfinite_geometry")
-    used = np.zeros((mesh.coordinates.shape[0],), dtype=bool)
+    used = np.zeros((mesh.coordinates.shape[0],), dtype=np.bool_)
     for block in mesh.blocks:
         vertices = np.asarray(block.vertices, dtype=np.int32)
-        valid = np.asarray(block.vertex_valid, dtype=bool)
+        valid = np.asarray(block.vertex_valid, dtype=np.bool_)
         used[np.unique(vertices[valid])] = True
     unused = int(np.count_nonzero(~used))
     if audit_policy.require_all_vertices_used and unused:
@@ -594,7 +598,7 @@ def audit_cell_mesh(
         quality_scope=quality_scope,
         passed=not normalized_issues,
         issues=normalized_issues,
-        vertex_count=int(mesh.coordinates.shape[0]),
+        vertex_count=mesh.coordinates.shape[0],
         entity_counts=entity_counts,
         boundary_counts=boundary_counts,
         connectivity_entries=entries,

@@ -195,9 +195,9 @@ class AlchemicalControlSchedulePlan(StrictModule, NonTrainableState):
         if count < 2:
             raise ValueError("A linear control schedule requires at least two states.")
         source = (
-            np.ones((len(names),), dtype=float)
+            np.ones((len(names),), dtype=np.float64)
             if source_controls is None
-            else np.asarray(source_controls, dtype=float)
+            else np.asarray(source_controls, dtype=np.float64)
         )
         if source.shape != (len(names),) or np.any((source != 0.0) & (source != 1.0)):
             raise ValueError("source_controls must contain one binary value per control.")
@@ -370,9 +370,9 @@ class PreparedAlchemicalInteractionPartition(StrictModule, NonTrainableState):
             )
         system = force_field.system
         particle_ids = np.asarray(system.plan.particle_ids, dtype=np.int64)
-        active = np.asarray(system.active_mask, dtype=bool)
+        active = np.asarray(system.active_mask, dtype=np.bool_)
         slot_by_id = {int(value): index for index, value in enumerate(particle_ids)}
-        masks = np.zeros((schedule.control_count, system.capacity), dtype=bool)
+        masks = np.zeros((schedule.control_count, system.capacity), dtype=np.bool_)
         for control_index, region in enumerate(plan.region_particle_ids):
             for identifier in np.asarray(region, dtype=np.int64):
                 stable_id = int(identifier)
@@ -633,7 +633,7 @@ class PreparedAlchemicalInteractionPartition(StrictModule, NonTrainableState):
 
     @staticmethod
     def _route_scale(indices: Array, controls: Array, /) -> Array:
-        if int(indices.shape[0]) == 0:
+        if indices.shape[0] == 0:
             return jnp.ones(indices.shape, dtype=controls.dtype)
         safe = jnp.clip(indices, 0, controls.shape[0] - 1)
         return jnp.where(indices >= 0, controls[safe], 1.0)

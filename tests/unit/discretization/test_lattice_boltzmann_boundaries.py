@@ -25,7 +25,7 @@ def test_periodic_pull_routes_every_population_direction():
     discretization = _discretization()
     boundary = phx.discretization.LatticeBoltzmannBoundaryPlan().prepare(discretization)
     populations = jnp.arange(
-        np.prod(discretization.population_shape), dtype=float
+        np.prod(discretization.population_shape), dtype="float64"
     ).reshape(discretization.population_shape)
     density = jnp.ones(discretization.grid.shape)
     routed = boundary.route(populations, density, jnp.empty((0, 2)))
@@ -34,7 +34,7 @@ def test_periodic_pull_routes_every_population_direction():
         tuple(
             jnp.roll(
                 populations[..., direction],
-                shift=tuple(int(value) for value in velocity),
+                shift=tuple(velocity),
                 axis=(0, 1),
             )
             for direction, velocity in enumerate(
@@ -48,14 +48,14 @@ def test_periodic_pull_routes_every_population_direction():
 
 def test_nonperiodic_and_interior_solid_links_reflect_local_opposites():
     discretization = _discretization(periodic=(False, False))
-    fluid = np.ones(discretization.grid.shape, dtype=bool)
+    fluid = np.ones(discretization.grid.shape, dtype="bool")
     fluid[2, 2] = False
     snapshot = phx.discretization.LatticeBoltzmannGeometrySnapshot(discretization, fluid)
     boundary = phx.discretization.LatticeBoltzmannBoundaryPlan(geometry=snapshot).prepare(
         discretization
     )
     populations = jnp.arange(
-        np.prod(discretization.population_shape), dtype=float
+        np.prod(discretization.population_shape), dtype="float64"
     ).reshape(discretization.population_shape)
     density = jnp.ones(discretization.grid.shape)
     routed = boundary.route(populations, density, jnp.empty((0, 2)))
@@ -92,7 +92,7 @@ def test_tangential_moving_wall_adds_documented_link_momentum():
 
 def test_geometry_snapshot_is_detached_from_source_mask():
     discretization = _discretization()
-    source = np.ones(discretization.grid.shape, dtype=bool)
+    source = np.ones(discretization.grid.shape, dtype="bool")
     snapshot = phx.discretization.LatticeBoltzmannGeometrySnapshot(discretization, source)
     source[0, 0] = False
 

@@ -45,9 +45,9 @@ class FiniteElementAuxiliaryEvaluation(StrictModule):
         suggested_step: ArrayLike = 0.0,
         diagnostics: object = None,
     ):
-        successful_ = jnp.asarray(successful, dtype=bool)
-        admissible_ = jnp.asarray(admissible, dtype=bool)
-        retry_ = jnp.asarray(retry_requested, dtype=bool)
+        successful_ = jnp.asarray(successful, dtype=jnp.bool_)
+        admissible_ = jnp.asarray(admissible, dtype=jnp.bool_)
+        retry_ = jnp.asarray(retry_requested, dtype=jnp.bool_)
         suggested = jnp.asarray(suggested_step)
         if any(
             value.shape != () for value in (successful_, admissible_, retry_, suggested)
@@ -88,7 +88,7 @@ class LocalImplicitMaterial(StrictModule, NonTrainableState):
     ):
         if not callable(residual) or not callable(response):
             raise TypeError("Local material residual and response must be callable.")
-        shape = tuple(int(size) for size in state_shape)
+        shape = tuple(state_shape)
         steps = int(max_steps)
         tolerance_ = float(tolerance)
         identifier = str(model_id)

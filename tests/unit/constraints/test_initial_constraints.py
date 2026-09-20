@@ -54,7 +54,7 @@ def test_continuous_initial_constraint_requires_fixed_start():
     dom = geom @ time
 
     component = dom.component()
-    u = dom.Function()(0.0)
+    dom.Function()(0.0)
 
     with pytest.raises(ValueError):
         Initial("u", component, target=0.0)

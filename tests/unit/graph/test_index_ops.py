@@ -42,4 +42,4 @@ def test_dense_edge_roundtrip():
 
     assert back_index.shape[0] == 2
     assert back_attr is not None
-    assert int(back_index.shape[1]) == 3
+    assert back_index.shape[1] == 3

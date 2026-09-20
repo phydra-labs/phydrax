@@ -78,10 +78,10 @@ def _piv_result() -> PIVResult:
         "curvature",
     )
     validation = ValidationEvidence2D(
-        jnp.ones(shape, dtype=bool),
-        jnp.ones(shape, dtype=bool),
-        jnp.ones(shape, dtype=bool),
-        jnp.ones(shape, dtype=bool),
+        jnp.ones(shape, dtype="bool"),
+        jnp.ones(shape, dtype="bool"),
+        jnp.ones(shape, dtype="bool"),
+        jnp.ones(shape, dtype="bool"),
         jnp.asarray(valid),
         jnp.ones(shape, dtype=jnp.int32),
         jnp.zeros(shape + (2,)),
@@ -94,12 +94,12 @@ def _piv_result() -> PIVResult:
         jnp.asarray(~valid),
         jnp.where(jnp.asarray(valid), 0, 1),
         jnp.ones(shape, dtype=jnp.int32),
-        jnp.zeros(shape, dtype=bool),
+        jnp.zeros(shape, dtype="bool"),
     )
     status = PIVStatus2D(
         jnp.zeros(shape, dtype=jnp.int32),
-        jnp.ones(shape, dtype=bool),
-        jnp.ones(shape, dtype=bool),
+        jnp.ones(shape, dtype="bool"),
+        jnp.ones(shape, dtype="bool"),
         jnp.asarray(valid),
         jnp.asarray(~valid),
     )

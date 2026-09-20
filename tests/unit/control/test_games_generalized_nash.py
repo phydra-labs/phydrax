@@ -66,7 +66,7 @@ def _separable_problem(
     problem_id: str = "test:open-loop-gne",
 ) -> FiniteHorizonLQOpenLoopGNEProblem:
     targets = jnp.asarray(targets)
-    players = int(targets.shape[-1])
+    players = targets.shape[-1]
     partition = (
         PlayerControlPartition(
             tuple(f"player-{player}" for player in range(players)),

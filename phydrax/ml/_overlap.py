@@ -270,7 +270,9 @@ def reduce_overlap_score(
     per_class = overlap_score(intersection_, prediction_, target_, config)
     both_empty = (prediction_ == 0.0) & (target_ == 0.0)
     finite_class = (
-        ~both_empty if config.empty == "ignore" else jnp.ones_like(both_empty, dtype=bool)
+        ~both_empty
+        if config.empty == "ignore"
+        else jnp.ones_like(both_empty, dtype=jnp.bool_)
     )
     if config.class_reduction == "macro":
         class_weight = finite_class.astype(per_class.dtype)

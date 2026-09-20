@@ -395,7 +395,7 @@ class CompressiblePlaneStatisticsPlan(StrictModule, NonTrainableState):
         axes = (
             tuple(axis for axis in range(dimension_) if axis != wall_axis)
             if plane_axes is None
-            else tuple(int(axis) for axis in plane_axes)
+            else tuple(plane_axes)
         )
         expected_axes = tuple(axis for axis in range(dimension_) if axis != wall_axis)
         lengths = (
@@ -494,7 +494,9 @@ class CompressiblePlaneStatisticsPlan(StrictModule, NonTrainableState):
         solenoidal = transformed - dilatational
         normalization = (
             float(
-                np.prod(tuple(spatial_shape[axis] for axis in self.plane_axes), dtype=int)
+                np.prod(
+                    tuple(spatial_shape[axis] for axis in self.plane_axes), dtype=np.int64
+                )
             )
             ** 2
         )
@@ -643,7 +645,7 @@ class CompressiblePlaneStatisticsPlan(StrictModule, NonTrainableState):
             friction_velocity = jnp.zeros((0,), dtype=state.dtype)
             viscous_length = jnp.zeros((0,), dtype=state.dtype)
             wall_y_plus = jnp.zeros((0, 0), dtype=state.dtype)
-            wall_units_available = jnp.zeros((0,), dtype=bool)
+            wall_units_available = jnp.zeros((0,), dtype=jnp.bool_)
         else:
             if (
                 velocity_gradient is None

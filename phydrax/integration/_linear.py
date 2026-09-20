@@ -87,7 +87,7 @@ class LinearReductionSchema(StrictModule):
         target_id_ = str(target_id)
         reduced = tuple(reduced_axes)
         retained = tuple(retained_axes)
-        shape = tuple(int(size) for size in retained_shape)
+        shape = tuple(retained_shape)
         if not target_id_:
             raise ValueError("target_id must be non-empty.")
         if not reduced or any(not axis for axis in reduced):
@@ -278,8 +278,7 @@ def _fixed_batches(realization: IntegrationRealization, /) -> tuple[_FixedBatch,
     ):
         return tuple(batch)
     raise TypeError(
-        "Linear reduction requires fixed point, separable, mapped, product, or "
-        "frozen sparse-grid coefficients."
+        "Linear reduction requires fixed point, separable, mapped, product, or frozen sparse-grid coefficients."
     )
 
 
@@ -374,8 +373,7 @@ def _base_coefficients(
         )
     if not isinstance(_base_target(target), (ComponentTarget, ProbabilityTarget)):
         raise TypeError(
-            "Prepared linear reductions support component, probability, density, "
-            "mapped, and declared discrete targets."
+            "Prepared linear reductions support component, probability, density, mapped, and declared discrete targets."
         )
     if any(isinstance(batch, MappedIntegrationBatch) for batch in batches):
         raise TypeError("Component and probability targets require named fixed batches.")
@@ -393,8 +391,7 @@ def _base_coefficients(
 def _coerce_extra_weight(value: Any, reference: cx.AxisArray, /) -> cx.AxisArray:
     if callable(value):
         raise TypeError(
-            "weight must be fixed data; callable or integrand-dependent weights are "
-            "not valid linear reductions."
+            "weight must be fixed data; callable or integrand-dependent weights are not valid linear reductions."
         )
     if isinstance(value, cx.AxisArray):
         field = value
@@ -734,9 +731,7 @@ def _prepare_linear_reduction(
         reduced_axes=reduced_axes,
         retained_axes=retained,
         coefficient_dtype=coefficient_dtype,
-        coefficient_shape=tuple(
-            tuple(int(size) for size in field.shape) for field in coefficients
-        ),
+        coefficient_shape=tuple(tuple(field.shape) for field in coefficients),
         coefficient_layout=coefficient_layout,
         normalized=_normalized(realization.target),
         source_provenance=source_provenance,
@@ -907,8 +902,7 @@ def _canonical_output(
     )
     if unexpected_named:
         raise ValueError(
-            "Integrand event outputs must be a positional suffix; unexpected named "
-            f"axes are {unexpected_named!r}."
+            f"Integrand event outputs must be a positional suffix; unexpected named axes are {unexpected_named!r}."
         )
     retained_positions = tuple(field.dims.index(axis) for axis in retained_axes)
     suffix_positions = tuple(
@@ -918,11 +912,10 @@ def _canonical_output(
     data = jnp.asarray(field.data)
     if permutation != tuple(range(data.ndim)):
         data = jnp.transpose(data, permutation)
-    observed_shape = tuple(int(data.shape[index]) for index in range(len(retained_axes)))
+    observed_shape = tuple(data.shape[index] for index in range(len(retained_axes)))
     if observed_shape != retained_shape:
         raise ValueError(
-            f"Reduction retained shape {observed_shape!r} does not match "
-            f"prepared shape {retained_shape!r}."
+            f"Reduction retained shape {observed_shape!r} does not match prepared shape {retained_shape!r}."
         )
     return cx.AxisArray(
         data,

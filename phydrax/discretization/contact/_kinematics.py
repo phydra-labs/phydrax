@@ -60,7 +60,7 @@ class ContactKinematicsBatch(StrictModule):
 
     @property
     def capacity(self) -> int:
-        return int(self.valid.size)
+        return self.valid.size
 
 
 class ContactKinematicsEvidence(StrictModule):

@@ -64,7 +64,7 @@ class KineticFieldSpec(StrictModule, NonTrainableState):
         differentiable: bool = True,
     ):
         identifier = str(name)
-        shape = tuple(int(value) for value in component_shape)
+        shape = tuple(component_shape)
         precision = str(precision_role)
         units_ = str(units)
         channels = tuple(str(value) for value in conserved_channels)

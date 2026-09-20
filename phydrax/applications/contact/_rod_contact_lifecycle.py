@@ -15,6 +15,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike, PyTree
 
+import phydrax.ein as ein
 from phydrax.ein import contract
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -169,7 +170,7 @@ class RodContactWitnessBatch(StrictModule, NonTrainableState):
         activation = np.asarray(activation_gap)
         left_radius_ = np.asarray(left_radius)
         right_radius_ = np.asarray(right_radius)
-        active = np.asarray(valid, dtype=bool)
+        active = np.asarray(valid, dtype=np.bool_)
         if indices.shape != (count, 4) or not np.issubdtype(indices.dtype, np.integer):
             raise TypeError("vertex_indices must be an integer (capacity, 4) array.")
         vector_fields = (left, right, keys, kinds, left_segments, right_segments)
@@ -214,9 +215,9 @@ class RodContactWitnessBatch(StrictModule, NonTrainableState):
         if active.shape != (count,):
             raise ValueError("Rod contact validity must have capacity shape.")
         finite_ = (
-            np.ones((count,), dtype=bool)
+            np.ones((count,), dtype=np.bool_)
             if finite is None
-            else np.asarray(finite, dtype=bool)
+            else np.asarray(finite, dtype=np.bool_)
         )
         if finite_.shape != (count,):
             raise ValueError("Rod contact finite evidence must have capacity shape.")
@@ -322,7 +323,7 @@ class RodContactWitnessBatch(StrictModule, NonTrainableState):
             zeros,
             zeros,
             zeros,
-            np.zeros((count,), dtype=bool),
+            np.zeros((count,), dtype=np.bool_),
             capacity=count,
         )
 
@@ -486,8 +487,8 @@ class PreparedRodContactSearch(StrictModule, NonTrainableState):
         edge_ids = np.asarray(features.feature_ids[edge_slice], dtype=np.int64)
         if np.unique(edge_ids).size != edge_ids.size:
             raise ValueError("Rod capsule edge feature IDs must be unique.")
-        radius = np.asarray(features.physical_radius[edge_slice], dtype=float)
-        extent = np.asarray(features.contact_extent[edge_slice], dtype=float)
+        radius = np.asarray(features.physical_radius[edge_slice], dtype=np.float64)
+        extent = np.asarray(features.contact_extent[edge_slice], dtype=np.float64)
         if np.any(~np.isfinite(radius)) or np.any(radius <= 0.0):
             raise ValueError("Circular rod capsules require positive finite edge radii.")
         if np.any(~np.isfinite(extent)) or np.any(extent < radius):
@@ -520,7 +521,9 @@ class PreparedRodContactSearch(StrictModule, NonTrainableState):
             features.participant_ids[edge_slice], dtype=jnp.int64
         )
         self.edge_body_ids = jnp.asarray(features.body_ids[edge_slice], dtype=jnp.int64)
-        self.edge_static_mask = jnp.asarray(features.static_mask[edge_slice], dtype=bool)
+        self.edge_static_mask = jnp.asarray(
+            features.static_mask[edge_slice], dtype=jnp.bool_
+        )
         self.edge_physical_radius = jnp.asarray(radius)
         self.edge_contact_extent = jnp.asarray(extent)
         self.excluded_vertex_pairs = jnp.asarray(
@@ -696,8 +699,8 @@ def _edge_pair_allowed(
     unrestricted: bool,
     /,
 ) -> tuple[bool, bool]:
-    first_vertices = tuple(int(value) for value in edges[first])
-    second_vertices = tuple(int(value) for value in edges[second])
+    first_vertices = tuple(edges[first])
+    second_vertices = tuple(edges[second])
     if set(first_vertices) & set(second_vertices):
         return False, True
     if any(
@@ -775,7 +778,7 @@ def _pack_witnesses(
     left_segments = np.full((capacity,), -1, dtype=np.int32)
     right_segments = np.full((capacity,), -1, dtype=np.int32)
     separation = np.zeros((capacity,), dtype=positions.dtype)
-    active = np.zeros((capacity,), dtype=bool)
+    active = np.zeros((capacity,), dtype=np.bool_)
     parameters = np.zeros((capacity, 2), dtype=positions.dtype)
     coefficients = np.zeros((capacity, 4), dtype=positions.dtype)
     left_center = np.zeros((capacity, 3), dtype=positions.dtype)
@@ -791,7 +794,7 @@ def _pack_witnesses(
     activation_gap = np.zeros((capacity,), dtype=positions.dtype)
     left_radius = np.zeros((capacity,), dtype=positions.dtype)
     right_radius = np.zeros((capacity,), dtype=positions.dtype)
-    finite = np.zeros((capacity,), dtype=bool)
+    finite = np.zeros((capacity,), dtype=np.bool_)
     witness_failure = False
     for slot, (first, second, key) in enumerate(ordered_records):
         if feature_ids[first] > feature_ids[second]:
@@ -968,8 +971,8 @@ def _pack_plane_witnesses(
     left_radius = np.zeros((capacity,), dtype=positions.dtype)
     right_radius = np.zeros((capacity,), dtype=positions.dtype)
     separation = np.zeros((capacity,), dtype=positions.dtype)
-    finite = np.zeros((capacity,), dtype=bool)
-    active = np.zeros((capacity,), dtype=bool)
+    finite = np.zeros((capacity,), dtype=np.bool_)
+    active = np.zeros((capacity,), dtype=np.bool_)
     witness_failure = False
     for slot, (edge_index, plane_index, key) in enumerate(ordered):
         edge = edges[edge_index]
@@ -1075,7 +1078,7 @@ def _invalidate_batch(batch: ContactStencilBatch, /) -> ContactStencilBatch:
         capacity=batch.capacity,
         weights=batch.weights,
         minimum_separation=batch.minimum_separation,
-        valid=np.zeros((batch.capacity,), dtype=bool),
+        valid=np.zeros((batch.capacity,), dtype=np.bool_),
         actual_count=batch.actual_count,
         overflow_count=batch.overflow_count,
         route_keys=batch.route_keys,
@@ -1117,7 +1120,7 @@ def _merge_witnesses(
             pair.activation_gap,
             pair.left_radius,
             pair.right_radius,
-            np.zeros((pair.capacity,), dtype=bool),
+            np.zeros((pair.capacity,), dtype=np.bool_),
             capacity=pair.capacity,
             finite=pair.finite,
             batch_id=pair.batch_id,
@@ -1170,7 +1173,7 @@ def _merge_witnesses(
     activation_gap = combined(pair.activation_gap, plane.activation_gap, ())
     left_radius = combined(pair.left_radius, plane.left_radius, ())
     right_radius = combined(pair.right_radius, plane.right_radius, ())
-    finite = np.zeros((capacity,), dtype=bool)
+    finite = np.zeros((capacity,), dtype=np.bool_)
     finite[: keys.size] = True
     valid = finite & complete
     return RodContactWitnessBatch(
@@ -1222,7 +1225,7 @@ def _search_rod_capsules(
     edges = np.asarray(prepared.edges, dtype=np.int32)
     feature_ids = np.asarray(prepared.edge_feature_ids, dtype=np.int64)
     participants = np.asarray(prepared.edge_participant_ids, dtype=np.int64)
-    static = np.asarray(prepared.edge_static_mask, dtype=bool)
+    static = np.asarray(prepared.edge_static_mask, dtype=np.bool_)
     extents = np.asarray(prepared.edge_contact_extent, dtype=start.dtype)
     start_segments = start[edges]
     end_segments = end[edges]
@@ -1463,14 +1466,14 @@ class RodContactManifoldState(StrictModule, NonTrainableState):
         if count <= 0 or tangent != 2:
             raise ValueError("Rod manifold requires positive capacity and two tangents.")
         keys = np.asarray(route_keys)
-        occupied_ = np.asarray(occupied, dtype=bool)
-        active_ = np.asarray(active, dtype=bool)
+        occupied_ = np.asarray(occupied, dtype=np.bool_)
+        active_ = np.asarray(active, dtype=np.bool_)
         left = np.asarray(left_witness)
         right = np.asarray(right_witness)
         normal_ = np.asarray(normal)
         basis = np.asarray(tangent_basis)
         impulse_ = np.asarray(impulse)
-        sticking_ = np.asarray(sticking, dtype=bool)
+        sticking_ = np.asarray(sticking, dtype=np.bool_)
         slip_ = np.asarray(slip)
         age_ = np.asarray(age)
         retention_ = np.asarray(retention)
@@ -1532,14 +1535,14 @@ class RodContactManifoldState(StrictModule, NonTrainableState):
         vectors = np.zeros((count, 3), dtype=dtype)
         return cls(
             np.zeros((count,), dtype=np.int64),
-            np.zeros((count,), dtype=bool),
-            np.zeros((count,), dtype=bool),
+            np.zeros((count,), dtype=np.bool_),
+            np.zeros((count,), dtype=np.bool_),
             vectors,
             vectors,
             vectors,
             np.zeros((count, 3, tangent), dtype=dtype),
             np.zeros((count, 1 + tangent), dtype=dtype),
-            np.zeros((count,), dtype=bool),
+            np.zeros((count,), dtype=np.bool_),
             np.zeros((count, tangent), dtype=dtype),
             np.zeros((count,), dtype=np.int32),
             np.zeros((count,), dtype=np.int32),
@@ -1575,7 +1578,7 @@ class RodContactManifoldState(StrictModule, NonTrainableState):
     ) -> RodContactManifoldState:
         keys = np.asarray(route_keys)
         impulse_ = np.asarray(impulses)
-        sticking_ = np.asarray(sticking, dtype=bool)
+        sticking_ = np.asarray(sticking, dtype=np.bool_)
         slip_rate = np.asarray(slip_velocity)
         step = float(np.asarray(step_size))
         if not isfinite(step) or step < 0.0:
@@ -1866,15 +1869,15 @@ def _update_manifold(
     )
     capacity = state.capacity
     keys = np.zeros((capacity,), dtype=np.int64)
-    occupied = np.zeros((capacity,), dtype=bool)
-    active = np.zeros((capacity,), dtype=bool)
+    occupied = np.zeros((capacity,), dtype=np.bool_)
+    active = np.zeros((capacity,), dtype=np.bool_)
     dtype = np.asarray(state.impulse).dtype
     left = np.zeros((capacity, 3), dtype=dtype)
     right = np.zeros((capacity, 3), dtype=dtype)
     normal = np.zeros((capacity, 3), dtype=dtype)
     basis = np.zeros((capacity, 3, 2), dtype=dtype)
     impulse = np.zeros((capacity, 3), dtype=dtype)
-    sticking = np.zeros((capacity,), dtype=bool)
+    sticking = np.zeros((capacity,), dtype=np.bool_)
     slip = np.zeros((capacity, 2), dtype=dtype)
     age = np.zeros((capacity,), dtype=np.int32)
     retention = np.zeros((capacity,), dtype=np.int32)
@@ -1920,9 +1923,9 @@ def _update_manifold(
     active_normals = np.asarray(witnesses.normal)[witness_active]
     if active_frames.size:
         normal_residual = np.max(
-            np.abs(np.einsum("nij,ni->nj", active_frames, active_normals))
+            np.abs(ein.contract("nij,ni->nj", active_frames, active_normals))
         )
-        gram = np.einsum("nij,nik->njk", active_frames, active_frames)
+        gram = ein.contract("nij,nik->njk", active_frames, active_frames)
         orthogonal_residual = np.max(np.abs(gram - np.eye(2)))
         frame_residual = max(float(normal_residual), float(orthogonal_residual))
     else:
@@ -2201,7 +2204,6 @@ def _rod_contact_ccd(
         evaluations += 1
         minimum_gap = min(minimum_gap, gap)
         pair_impact = False
-        pair_full_safe = False
         supported_initial_plane = (
             int(route_keys[slot]) in supported_plane_route_keys
             and stencil_kinds[slot] == int(ContactStencilKind.EDGE_VERTEX)
@@ -2212,14 +2214,12 @@ def _rod_contact_ccd(
             evaluations += 1
             minimum_gap = min(minimum_gap, end_gap)
             if end_gap >= -plan.distance_tolerance:
-                pair_full_safe = True
                 safe_time = 1.0
             else:
                 pair_impact = True
         elif gap <= plan.distance_tolerance:
             pair_impact = True
         elif speed <= np.finfo(start.dtype).eps:
-            pair_full_safe = True
             safe_time = 1.0
         else:
             for _ in range(plan.maximum_iterations):
@@ -2227,7 +2227,6 @@ def _rod_contact_ccd(
                 certified_increment = max((gap - plan.distance_tolerance) / speed, 0.0)
                 if certified_increment >= 1.0 - time:
                     safe_time = 1.0
-                    pair_full_safe = True
                     break
                 increment = plan.safety_fraction * certified_increment
                 next_time = time + increment

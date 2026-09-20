@@ -176,7 +176,7 @@ def parameter_identifiability(
 ) -> IdentifiabilityReport:
     if not callable(prediction):
         raise TypeError("prediction must be callable.")
-    value = jnp.asarray(parameters, dtype=float)
+    value = jnp.asarray(parameters, dtype=jnp.float64)
     threshold = float(relative_threshold)
     if value.ndim != 1 or value.size == 0 or threshold < 0.0:
         raise ValueError("Identifiability parameters or threshold are invalid.")

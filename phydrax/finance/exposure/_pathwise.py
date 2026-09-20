@@ -47,7 +47,7 @@ def _identifier(value: str, name: str, /) -> str:
 
 
 def _time_grid(value: ArrayLike, /) -> Array:
-    result = jnp.asarray(value, dtype=float)
+    result = jnp.asarray(value, dtype=jnp.float64)
     host = np.asarray(jax.device_get(result))
     if result.ndim != 1 or result.shape[0] < 2:
         raise ValueError("times must be a vector with at least two nodes.")
@@ -86,7 +86,7 @@ class PathwiseTradeValues(StrictModule):
         value_state_id: str,
     ):
         nodes = _time_grid(times)
-        marks = jnp.asarray(values, dtype=float)
+        marks = jnp.asarray(values, dtype=jnp.float64)
         if marks.ndim != 3 or marks.shape[1] != nodes.shape[0]:
             raise ValueError("values must have shape (path, time, trade).")
         ids = tuple(_identifier(value, "trade_id") for value in trade_ids)
@@ -95,7 +95,7 @@ class PathwiseTradeValues(StrictModule):
         if not isinstance(base_currency, Currency):
             raise TypeError("base_currency must be a Currency.")
         path_valid = jnp.asarray(valid)
-        if path_valid.dtype != jnp.dtype(bool):
+        if path_valid.dtype != jnp.dtype(jnp.bool_):
             raise TypeError("valid must have a boolean dtype.")
         if path_valid.shape != (marks.shape[0],):
             raise ValueError("valid must have shape (path,).")
@@ -132,9 +132,9 @@ class PathWeighting(StrictModule):
         iid: bool,
         weighting_id: str,
     ):
-        values = jnp.asarray(weights, dtype=float)
+        values = jnp.asarray(weights, dtype=jnp.float64)
         mask = jnp.asarray(valid)
-        if mask.dtype != jnp.dtype(bool):
+        if mask.dtype != jnp.dtype(jnp.bool_):
             raise TypeError("Path weighting valid must have a boolean dtype.")
         host = np.asarray(jax.device_get(values))
         host_mask = np.asarray(jax.device_get(mask))
@@ -363,7 +363,7 @@ def link_wrong_way_risk(
     if link.mode == "shared_factor":
         if shared_factor_likelihood is None or measure_change is not None:
             raise ValueError("Shared-factor WWR requires only shared_factor_likelihood.")
-        likelihood = jnp.asarray(shared_factor_likelihood, dtype=float)
+        likelihood = jnp.asarray(shared_factor_likelihood, dtype=jnp.float64)
         support_valid = weighting.valid
     else:
         if shared_factor_likelihood is not None or not isinstance(
@@ -382,7 +382,7 @@ def link_wrong_way_risk(
             independent=weighting.iid,
         )
         likelihood = jnp.exp(target.log_weights)
-        support_valid = weighting.valid & jnp.asarray(target.mask, dtype=bool)
+        support_valid = weighting.valid & jnp.asarray(target.mask, dtype=jnp.bool_)
     if likelihood.shape != weighting.weights.shape:
         raise ValueError("WWR likelihood must have one value per path.")
     likelihood = eqx.error_if(
@@ -494,7 +494,7 @@ def simulate_exposure(
         raise ValueError(
             "Independent exposure requires distinct market/default couplings."
         )
-    discounts = jnp.asarray(discount_factors, dtype=float)
+    discounts = jnp.asarray(discount_factors, dtype=jnp.float64)
     if discounts.shape == (time_count,):
         discounts = jnp.broadcast_to(discounts, (path_count, time_count))
     if discounts.shape != (path_count, time_count):

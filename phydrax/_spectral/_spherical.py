@@ -49,7 +49,7 @@ def _spherical_mode_layout_id(
     independent = valid & (orders >= 0) if reality else valid
     return canonical_fingerprint(
         {
-            "kind": "spherical-mode-layout-v1",
+            "kind": "spherical-mode-layout",
             "bandlimit": bandlimit,
             "spin": spin,
             "reality": reality,
@@ -62,7 +62,7 @@ def _spherical_mode_layout_id(
 
 def _array_bytes(tree: object, /) -> int:
     return sum(
-        int(leaf.size) * int(leaf.dtype.itemsize)
+        leaf.size * leaf.dtype.itemsize
         for leaf in jax.tree_util.tree_leaves(tree)
         if isinstance(leaf, (np.ndarray, jax.Array))
     )
@@ -80,8 +80,7 @@ def _validate_precompute_limit(
         raise ValueError("max_precompute_bytes must be positive.")
     if estimate > value:
         raise ValueError(
-            f"Spherical {execution} preparation exceeds max_precompute_bytes; "
-            f"estimated {estimate} bytes."
+            f"Spherical {execution} preparation exceeds max_precompute_bytes; estimated {estimate} bytes."
         )
     return value
 
@@ -230,8 +229,7 @@ class _RecursiveSphericalExecution(StrictModule, NonTrainableState):
         actual = _array_bytes((forward, inverse))
         if actual > limit:
             raise ValueError(
-                "Spherical recursive preparation exceeds max_precompute_bytes; "
-                f"actual size is {actual} bytes."
+                f"Spherical recursive preparation exceeds max_precompute_bytes; actual size is {actual} bytes."
             )
         self.forward_precomputes = forward
         self.inverse_precomputes = inverse
@@ -301,7 +299,7 @@ class _PrecomputedSphericalExecution(StrictModule, NonTrainableState):
             (forward_theta + inverse_theta)
             * bandlimit
             * order_count
-            * np.dtype(float).itemsize
+            * np.dtype(np.float64).itemsize
         )
         limit = _validate_precompute_limit(
             max_precompute_bytes,
@@ -329,8 +327,7 @@ class _PrecomputedSphericalExecution(StrictModule, NonTrainableState):
         actual = _array_bytes((forward, inverse))
         if actual > limit:
             raise ValueError(
-                "Spherical precomputed preparation exceeds max_precompute_bytes; "
-                f"actual size is {actual} bytes."
+                f"Spherical precomputed preparation exceeds max_precompute_bytes; actual size is {actual} bytes."
             )
         self.forward_kernel = forward
         self.inverse_kernel = inverse
@@ -421,10 +418,10 @@ class SphericalHarmonicPlan(StrictModule, NonTrainableState):
         sampling_value = selected_sampling
         execution_value = selected_execution
         theta = np.asarray(
-            s2_samples.thetas(selected_bandlimit, sampling_value), dtype=float
+            s2_samples.thetas(selected_bandlimit, sampling_value), dtype=np.float64
         )
         phi = np.asarray(
-            s2_samples.phis_equiang(selected_bandlimit, sampling_value), dtype=float
+            s2_samples.phis_equiang(selected_bandlimit, sampling_value), dtype=np.float64
         )
         pixel_weights = np.asarray(
             s2fft_quadrature.quad_weights(
@@ -432,7 +429,7 @@ class SphericalHarmonicPlan(StrictModule, NonTrainableState):
                 sampling_value,
                 spin=0,
             ),
-            dtype=float,
+            dtype=np.float64,
         )
         phi_weight = 2.0 * np.pi / phi.size
         theta_weights = pixel_weights / phi_weight
@@ -466,12 +463,8 @@ class SphericalHarmonicPlan(StrictModule, NonTrainableState):
         self.spin = selected_spin
         self.reality = selected_reality
         self.execution = execution_value
-        sample_shape = tuple(
-            int(size) for size in s2_samples.f_shape(selected_bandlimit, sampling_value)
-        )
-        coefficient_shape = tuple(
-            int(size) for size in s2_samples.flm_shape(selected_bandlimit)
-        )
+        sample_shape = tuple(s2_samples.f_shape(selected_bandlimit, sampling_value))
+        coefficient_shape = tuple(s2_samples.flm_shape(selected_bandlimit))
         if len(sample_shape) != 2 or len(coefficient_shape) != 2:
             raise RuntimeError("S2FFT returned an invalid rank-two transform shape.")
         self.sample_shape = (sample_shape[0], sample_shape[1])
@@ -483,7 +476,7 @@ class SphericalHarmonicPlan(StrictModule, NonTrainableState):
         )
         self.fingerprint = canonical_fingerprint(
             {
-                "kind": "spherical-harmonic-plan-v1",
+                "kind": "spherical-harmonic-plan",
                 "s2fft": version("s2fft"),
                 "bandlimit": selected_bandlimit,
                 "sampling": sampling_value,
@@ -507,7 +500,7 @@ class SphericalHarmonicPlan(StrictModule, NonTrainableState):
         """Identity of one concrete transform execution realization."""
         return canonical_fingerprint(
             {
-                "kind": "spherical-harmonic-execution-v1",
+                "kind": "spherical-harmonic-execution",
                 "transform": self.transform_id,
                 "execution": self.execution,
                 "precompute_bytes": self.precompute_bytes,
@@ -535,23 +528,19 @@ class SphericalHarmonicPlan(StrictModule, NonTrainableState):
     def analysis(self, values: ArrayLike, /) -> Array:
         """Transform scalar or channel-last sampled fields to ``(ell, m)`` arrays."""
         array = jnp.asarray(values)
-        scalar = tuple(int(size) for size in array.shape[-2:]) == self.sample_shape
+        scalar = tuple(array.shape[-2:]) == self.sample_shape
         if scalar:
-            leading_shape = tuple(int(size) for size in array.shape[:-2])
+            leading_shape = tuple(array.shape[:-2])
             fields = array.reshape((prod(leading_shape), *self.sample_shape))
-        elif (
-            array.ndim >= 3
-            and tuple(int(size) for size in array.shape[-3:-1]) == self.sample_shape
-        ):
-            leading_shape = tuple(int(size) for size in array.shape[:-3])
-            channels = int(array.shape[-1])
+        elif array.ndim >= 3 and tuple(array.shape[-3:-1]) == self.sample_shape:
+            leading_shape = tuple(array.shape[:-3])
+            channels = array.shape[-1]
             fields = jnp.moveaxis(array, -1, -3).reshape(
                 (prod(leading_shape) * channels, *self.sample_shape)
             )
         else:
             raise ValueError(
-                "Spherical analysis expects (..., n_theta, n_phi) or "
-                "(..., n_theta, n_phi, channels)."
+                "Spherical analysis expects (..., n_theta, n_phi) or (..., n_theta, n_phi, channels)."
             )
         if self.reality and jnp.issubdtype(array.dtype, jnp.complexfloating):
             raise TypeError("A reality-accelerated spherical plan requires real values.")
@@ -564,16 +553,13 @@ class SphericalHarmonicPlan(StrictModule, NonTrainableState):
     def synthesis(self, coefficients: ArrayLike, /) -> Array:
         """Transform scalar or channel-last ``(ell, m)`` arrays to sampled fields."""
         array = jnp.asarray(coefficients)
-        scalar = tuple(int(size) for size in array.shape[-2:]) == self.coefficient_shape
+        scalar = tuple(array.shape[-2:]) == self.coefficient_shape
         if scalar:
-            leading_shape = tuple(int(size) for size in array.shape[:-2])
+            leading_shape = tuple(array.shape[:-2])
             fields = array.reshape((prod(leading_shape), *self.coefficient_shape))
-        elif (
-            array.ndim >= 3
-            and tuple(int(size) for size in array.shape[-3:-1]) == self.coefficient_shape
-        ):
-            leading_shape = tuple(int(size) for size in array.shape[:-3])
-            channels = int(array.shape[-1])
+        elif array.ndim >= 3 and tuple(array.shape[-3:-1]) == self.coefficient_shape:
+            leading_shape = tuple(array.shape[:-3])
+            channels = array.shape[-1]
             fields = jnp.moveaxis(array, -1, -3).reshape(
                 (prod(leading_shape) * channels, *self.coefficient_shape)
             )

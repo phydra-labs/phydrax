@@ -87,7 +87,7 @@ class CubatureRule(StrictModule):
 
     @property
     def num_points(self) -> int:
-        return int(self.prepared.weights.shape[0])
+        return self.prepared.weights.shape[0]
 
     @property
     def measure_mass(self) -> float:
@@ -141,7 +141,7 @@ class GaussianCubatureRule(StrictModule):
 
     @property
     def dimension(self) -> int:
-        return int(self.prepared.points.shape[1])
+        return self.prepared.points.shape[1]
 
     @property
     def family(self) -> str:
@@ -153,7 +153,7 @@ class GaussianCubatureRule(StrictModule):
 
     @property
     def num_points(self) -> int:
-        return int(self.prepared.weights.shape[0])
+        return self.prepared.weights.shape[0]
 
     @property
     def storage_bytes(self) -> int:
@@ -285,7 +285,7 @@ class GaussHermiteRule(StrictModule):
 
     def __init__(self, order: int = 16):
         data = standard_normal_hermite_rule_data(order)
-        self.order = int(data.nodes.shape[0])
+        self.order = data.nodes.shape[0]
 
     def data(self) -> OrthogonalRuleData:
         return standard_normal_hermite_rule_data(self.order)

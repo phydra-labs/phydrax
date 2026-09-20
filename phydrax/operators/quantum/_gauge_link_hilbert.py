@@ -73,7 +73,7 @@ class FiniteGroupLinkHilbertSpace(StrictModule):
             raise TypeError(
                 "multiplication_table must be one nonempty square integer array."
             )
-        order = int(table.shape[0])
+        order = table.shape[0]
         table = np.asarray(table, dtype=np.int32)
         if np.any(table < 0) or np.any(table >= order):
             raise ValueError("Finite-group products must be valid element indices.")
@@ -120,8 +120,7 @@ class FiniteGroupLinkHilbertSpace(StrictModule):
         maximum = int(maximum_operator_elements)
         if maximum <= 0 or required > maximum:
             raise ValueError(
-                f"Finite-group translations require {required} elements; "
-                f"capacity is {maximum}."
+                f"Finite-group translations require {required} elements; capacity is {maximum}."
             )
         left = np.zeros((order, order, order), dtype=np.complex128)
         right = np.zeros_like(left)
@@ -282,8 +281,7 @@ class TruncatedU1LinkHilbertSpace(StrictModule):
         maximum = int(maximum_operator_elements)
         if maximum <= 0 or required > maximum:
             raise ValueError(
-                f"Truncated U(1) link operators require {required} elements; "
-                f"capacity is {maximum}."
+                f"Truncated U(1) link operators require {required} elements; capacity is {maximum}."
             )
         levels = jnp.arange(center - cutoff, center + cutoff + 1, dtype=jnp.float64)
         electric = jnp.diag(levels).astype(jnp.complex128)
@@ -293,7 +291,7 @@ class TruncatedU1LinkHilbertSpace(StrictModule):
         boundary = jnp.zeros((dimension, dimension), dtype=jnp.complex128)
         boundary = boundary.at[0, 0].set(1.0).at[-1, -1].set(1.0)
         commutator = jnp.max(jnp.abs(electric @ link - link @ electric - link))
-        unitarity_defect = jnp.max(jnp.abs(jnp.conj(link.T) @ link - jnp.eye(dimension)))
+        jnp.max(jnp.abs(jnp.conj(link.T) @ link - jnp.eye(dimension)))
         space_id = canonical_fingerprint(
             {
                 "kind": "truncated-u1-link-hilbert-space",
@@ -379,7 +377,7 @@ class TruncatedU1LinkHilbertSpace(StrictModule):
 def _spin_matrices(twice_spin: int, /) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     dimension = twice_spin + 1
     spin = 0.5 * twice_spin
-    magnetic = np.arange(-twice_spin, twice_spin + 1, 2, dtype=float) / 2.0
+    magnetic = np.arange(-twice_spin, twice_spin + 1, 2, dtype=np.float64) / 2.0
     raising = np.zeros((dimension, dimension), dtype=np.complex128)
     for column, value in enumerate(magnetic[:-1]):
         raising[column + 1, column] = np.sqrt(spin * (spin + 1.0) - value * (value + 1.0))
@@ -447,16 +445,14 @@ class SU2IrrepTruncatedLinkHilbertSpace(StrictModule):
         dimension = sum(value * value for value in dimensions)
         if int(maximum_dimension) <= 0 or dimension > int(maximum_dimension):
             raise ValueError(
-                f"SU(2) link dimension {dimension} exceeds maximum_dimension "
-                f"{int(maximum_dimension)}."
+                f"SU(2) link dimension {dimension} exceeds maximum_dimension {int(maximum_dimension)}."
             )
         required = (6 + 4) * dimension * dimension
         if int(maximum_operator_elements) <= 0 or required > int(
             maximum_operator_elements
         ):
             raise ValueError(
-                f"SU(2) link operators require {required} elements; capacity is "
-                f"{int(maximum_operator_elements)}."
+                f"SU(2) link operators require {required} elements; capacity is {int(maximum_operator_elements)}."
             )
         offsets = [0]
         twice_spins: list[int] = []
@@ -524,7 +520,7 @@ class SU2IrrepTruncatedLinkHilbertSpace(StrictModule):
         boundary = jnp.diag(
             jnp.asarray(np.asarray(twice_spins) == maximum_spin, dtype=jnp.complex128)
         )
-        epsilon = np.zeros((3, 3, 3), dtype=float)
+        epsilon = np.zeros((3, 3, 3), dtype=np.float64)
         epsilon[0, 1, 2] = epsilon[1, 2, 0] = epsilon[2, 0, 1] = 1.0
         epsilon[1, 0, 2] = epsilon[2, 1, 0] = epsilon[0, 2, 1] = -1.0
         generator_residuals = []

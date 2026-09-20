@@ -95,7 +95,7 @@ class PreparedMACElectrochemicalFlux(StrictModule, NonTrainableState):
         diffusivities: ArrayLike,
         /,
     ) -> None:
-        values = np.asarray(diffusivities, dtype=float)
+        values = np.asarray(diffusivities, dtype=np.float64)
         if (
             not isinstance(operators, PreparedMACOperators)
             or values.ndim != 1

@@ -87,8 +87,7 @@ class OperatorCheckpointManifest(NonTrainableState):
             or not self.dataset_provenance
         ):
             raise ValueError(
-                "Operator manifests require schemas, preprocessing, normalization, "
-                "and dataset provenance."
+                "Operator manifests require schemas, preprocessing, normalization, and dataset provenance."
             )
         if len(self.checkpoint_sha256) != 64 or any(
             character not in "0123456789abcdef" for character in self.checkpoint_sha256

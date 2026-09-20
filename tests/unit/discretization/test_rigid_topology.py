@@ -82,7 +82,7 @@ def _two_joint_topology(*, event_capacity=8, initial_active=(True, True), plan_i
 
 def _no_transactions(prepared, state):
     return prepared.proposal(
-        jnp.zeros((prepared.plan.transaction_capacity,), dtype=bool),
+        jnp.zeros((prepared.plan.transaction_capacity,), dtype="bool"),
         state.replay_digest,
     )
 
@@ -312,7 +312,7 @@ def test_prepared_identity_and_replay_digest_are_enforced():
             jnp.asarray(0),
         )
     mismatch = prepared.proposal(
-        jnp.zeros((prepared.plan.transaction_capacity,), dtype=bool),
+        jnp.zeros((prepared.plan.transaction_capacity,), dtype="bool"),
         state.replay_digest + 1,
     )
     rejected = apply_rigid_topology_transactions(

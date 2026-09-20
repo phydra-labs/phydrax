@@ -37,8 +37,8 @@ def test_native_multi_population_cells_match_dense_bipartite_pairs():
     prepared = phx.discretization.MultiPopulationCellPlan(box, 0.25, (4, 4)).prepare(
         (target, source)
     )
-    target_position = (jnp.arange(6, dtype=float) + 0.25)[:, None] / 6.0
-    source_position = (jnp.arange(6, dtype=float) + 0.75)[:, None] / 6.0
+    target_position = (jnp.arange(6, dtype="float64") + 0.25)[:, None] / 6.0
+    source_position = (jnp.arange(6, dtype="float64") + 0.75)[:, None] / 6.0
     state = prepared.build((target_position, source_position))
     key = phx.discretization.ParticleSearchKey(
         target.population_id, source.population_id, 0.3
@@ -149,7 +149,7 @@ def test_iisph_operator_oracle_and_projection_qualification_are_separate():
         count * (count - 1) // 2,
         box=phx.discretization.ParticleBox([0.0], [1.0]),
     ).prepare(particles)
-    position = (jnp.arange(count, dtype=float) + 0.5)[:, None] * spacing
+    position = (jnp.arange(count, dtype="float64") + 0.5)[:, None] * spacing
     iisph = phx.discretization.PreparedIISPH(
         particles,
         neighborhood,

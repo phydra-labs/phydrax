@@ -353,8 +353,7 @@ def _verify_jwk(
         )
     except ImportError as error:
         raise RuntimeError(
-            "OIDC asymmetric JWT verification requires the optional "
-            "'cryptography' package."
+            "OIDC asymmetric JWT verification requires the optional 'cryptography' package."
         ) from error
     try:
         if algorithm == "RS256":
@@ -516,8 +515,7 @@ class X509WorkloadCertificateValidator:
             )
         except ImportError as error:
             raise RuntimeError(
-                "X.509 workload identity validation requires the optional "
-                "'cryptography' package."
+                "X.509 workload identity validation requires the optional 'cryptography' package."
             ) from error
         try:
             leaf = (

@@ -97,8 +97,7 @@ class ALEBoundaryContext(StrictModule, NonTrainableState):
             or wall_velocity_.shape != point.shape
         ):
             raise ValueError(
-                "ALE boundary point, normal, grid velocity, and wall velocity must "
-                "have the same non-scalar shape."
+                "ALE boundary point, normal, grid velocity, and wall velocity must have the same non-scalar shape."
             )
         absolute = float(absolute_tolerance)
         relative = float(relative_tolerance)

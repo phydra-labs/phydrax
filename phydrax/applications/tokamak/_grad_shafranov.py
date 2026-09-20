@@ -72,7 +72,7 @@ class FixedBoundaryGradShafranovPlan:
         dz = np.diff(z)
         if np.any(dr <= 0.0) or np.any(dz <= 0.0):
             raise ValueError("Grad-Shafranov coordinates must increase strictly.")
-        tolerance = 512.0 * np.finfo(float).eps
+        tolerance = 512.0 * np.finfo(np.float64).eps
         if not np.allclose(
             dr, dr[0], rtol=tolerance, atol=tolerance * max(1.0, abs(dr[0]))
         ):
@@ -232,7 +232,7 @@ class PreparedFixedBoundaryGradShafranov(StrictModule, NonTrainableState):
             raise ValueError(
                 f"Current density and boundary flux must have shape {shape}."
             )
-        boundary_mask = jnp.ones(shape, dtype=bool).at[1:-1, 1:-1].set(False)
+        boundary_mask = jnp.ones(shape, dtype=jnp.bool_).at[1:-1, 1:-1].set(False)
         domain_valid = (
             jnp.all(jnp.isfinite(current))
             & jnp.all(jnp.isfinite(boundary))

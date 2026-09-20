@@ -90,7 +90,7 @@ def _edi_blocks(
         if len(header) > limits.max_attributes or decoded_nodes > limits.max_nodes:
             raise ValueError("EDI metadata or numeric values exceed resource limits.")
     arrays = {
-        name: np.asarray([float(value) for value in values], dtype=float)
+        name: np.asarray([float(value) for value in values], dtype=np.float64)
         for name, values in blocks.items()
         if values
     }
@@ -109,11 +109,11 @@ def _mt_result(
     profile,
     assumptions=(),
 ):
-    frequencies = np.asarray(frequencies, dtype=float)
+    frequencies = np.asarray(frequencies, dtype=np.float64)
     impedance = np.asarray(impedance, dtype=np.complex128)
-    deviation = np.asarray(deviation, dtype=float)
+    deviation = np.asarray(deviation, dtype=np.float64)
     position = tuple(float(value) for value in position)
-    rotation = np.asarray(rotation, dtype=float)
+    rotation = np.asarray(rotation, dtype=np.float64)
     if (
         frequencies.ndim != 1
         or frequencies.size == 0
@@ -229,7 +229,7 @@ def read_edi_impedance(
     frequency = blocks["FREQ"]
     count = frequency.size
     impedance = np.empty((count, 2, 2), dtype=np.complex128)
-    deviation = np.empty((count, 2, 2), dtype=float)
+    deviation = np.empty((count, 2, 2), dtype=np.float64)
     for component, (row, column) in _COMPONENTS.items():
         required = (component + "R", component + "I", component + ".VAR")
         if any(name not in blocks for name in required):

@@ -41,11 +41,11 @@ def _entity_indices(batch: GraphBatch, /) -> jnp.ndarray:
 
 def _num_nodes(graph: GraphIR, /) -> int:
     if graph.node_mask is not None:
-        return int(graph.node_mask.shape[0])
+        return graph.node_mask.shape[0]
     if graph.nodes is not None:
         leaves = jax.tree.leaves(graph.nodes)
         if leaves:
-            return int(jnp.asarray(leaves[0]).shape[0])
+            return jnp.asarray(leaves[0]).shape[0]
     raise RuntimeError(
         "A featureless dynamic GraphIR does not expose a static total node count."
     )
@@ -56,15 +56,15 @@ def _num_entities(graph: GraphIR, kind: GraphComponentKind, /) -> int:
         return _num_nodes(graph)
     if kind == "edges":
         if graph.edge_mask is not None:
-            return int(graph.edge_mask.shape[0])
-        return 0 if graph.senders is None else int(graph.senders.shape[0])
+            return graph.edge_mask.shape[0]
+        return 0 if graph.senders is None else graph.senders.shape[0]
     if graph.graph_mask is not None:
-        return int(graph.graph_mask.shape[0])
-    return int(graph.n_node.shape[0])
+        return graph.graph_mask.shape[0]
+    return graph.n_node.shape[0]
 
 
 def _pad_ids_to_length(ids: jnp.ndarray, size: int, /) -> jnp.ndarray:
-    pad = int(size) - int(ids.shape[0])
+    pad = int(size) - ids.shape[0]
     if pad <= 0:
         return ids
     return jnp.concatenate([ids, jnp.full((pad,), -1, dtype=jnp.int32)], axis=0)
@@ -183,7 +183,7 @@ def _remap_graph_axis_field(
         return field
     axis_pos = field.dims.index(axis)
     data = jnp.moveaxis(jnp.asarray(field.data), axis_pos, 0)
-    if int(data.shape[0]) != int(old_graph_ids.shape[0]):
+    if data.shape[0] != old_graph_ids.shape[0]:
         return field
 
     valid = old_graph_ids >= 0
@@ -192,7 +192,7 @@ def _remap_graph_axis_field(
     while mask.ndim < data.ndim:
         mask = jnp.expand_dims(mask, axis=-1)
     totals = segment_sum(data * mask, segment_ids, num_graphs)
-    counts = segment_sum(valid.astype(float), segment_ids, num_graphs)
+    counts = segment_sum(valid.astype("float64"), segment_ids, num_graphs)
     scale = jnp.where(counts > 0, 1.0 / counts, 0.0)
     while scale.ndim < totals.ndim:
         scale = jnp.expand_dims(scale, axis=-1)
@@ -250,7 +250,7 @@ def _full_entity_batch(batch: GraphBatch, kind: GraphComponentKind, /) -> GraphB
             axis=axis,
             old_graph_ids=old_graph_ids,
             new_graph_ids=new_graph_ids,
-            num_graphs=int(batch.graph.n_node.shape[0]),
+            num_graphs=batch.graph.n_node.shape[0],
         )
     points[batch.graph_label] = _to_axis_fields(
         _payload_for_kind(batch.graph, kind), axis
@@ -580,8 +580,7 @@ class GraphRolloutModel(StrictModule, BatchEvaluator):
         arr = jnp.asarray(payload)
         if arr.ndim < 2:
             raise ValueError(
-                "GraphRolloutModel feature payloads must have a leading rollout axis "
-                "and a graph entity axis."
+                "GraphRolloutModel feature payloads must have a leading rollout axis and a graph entity axis."
             )
         arr = arr[:, _entity_indices(batch), ...]
         arr = jnp.moveaxis(arr, 0, 1)

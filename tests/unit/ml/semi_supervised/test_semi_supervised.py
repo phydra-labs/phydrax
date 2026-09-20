@@ -34,7 +34,7 @@ from phydrax.ml.semi_supervised import (
 
 
 def _result(model, batch, method):
-    valid = jnp.ones(batch.case_shape or (), dtype=bool)
+    valid = jnp.ones(batch.case_shape or (), dtype="bool")
     status = jnp.zeros(batch.case_shape or (), dtype=jnp.int32)
     return FitResult(
         model,
@@ -61,7 +61,7 @@ class _PriorModel(AbstractArrayModel):
         self.prior = jnp.asarray(prior)
         self.case_shape = tuple(case_shape)
         self.in_size = int(in_size)
-        self.out_size = int(self.prior.shape[-1])
+        self.out_size = self.prior.shape[-1]
 
     def __call__(self, x, /, *, key=None):
         del key
@@ -174,7 +174,7 @@ def test_label_propagation_spreading_schema_masks_weights_cases_jit_and_grad():
     assert spreading_model(batch.dense_features()).shape == (2, 6, 2)
     assert model.distributions.shape == (2, 6, 2)
     assert spreading_model.distributions.shape == (2, 6, 2)
-    assert propagation.diagnostics.labelled_samples.shape == (2,)
+    assert propagation.diagnostics.labeled_samples.shape == (2,)
     assert jnp.allclose(jax.jit(model)(batch.dense_features()), probabilities)
     gradient = jax.grad(lambda point: jnp.sum(model(point)[..., 0]))(
         batch.dense_features()

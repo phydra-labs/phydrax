@@ -39,9 +39,9 @@ class SurfaceSpeciesSchema(StrictModule, NonTrainableState):
         site_capacity: float,
     ):
         names_ = tuple(str(value) for value in names)
-        elements = np.asarray(element_composition, dtype=float)
-        charges_ = np.asarray(charges, dtype=float)
-        occupancy = np.asarray(site_occupancy, dtype=float)
+        elements = np.asarray(element_composition, dtype=np.float64)
+        charges_ = np.asarray(charges, dtype=np.float64)
+        occupancy = np.asarray(site_occupancy, dtype=np.float64)
         capacity = float(site_capacity)
         if (
             not names_
@@ -111,17 +111,17 @@ class GasSurfaceReactionSpec(StrictModule, NonTrainableState):
         reaction_heat: float = 0.0,
     ):
         name_ = str(name)
-        gas = np.asarray(gas_stoichiometry, dtype=float)
-        surface = np.asarray(surface_stoichiometry, dtype=float)
+        gas = np.asarray(gas_stoichiometry, dtype=np.float64)
+        surface = np.asarray(surface_stoichiometry, dtype=np.float64)
         gas_order = (
             np.maximum(-gas, 0.0)
             if gas_orders is None
-            else np.asarray(gas_orders, dtype=float)
+            else np.asarray(gas_orders, dtype=np.float64)
         )
         surface_order = (
             np.maximum(-surface, 0.0)
             if surface_orders is None
-            else np.asarray(surface_orders, dtype=float)
+            else np.asarray(surface_orders, dtype=np.float64)
         )
         heat = float(reaction_heat)
         if (

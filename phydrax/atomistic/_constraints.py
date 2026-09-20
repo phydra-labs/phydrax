@@ -92,7 +92,7 @@ class PreparedDistanceConstraints(StrictModule, NonTrainableState):
         momentum = jnp.asarray(momenta, dtype=previous.dtype)
         indices = self.system.topology.constraint_indices
         targets = self.system.topology.constraint_distances.astype(previous.dtype)
-        count = int(indices.shape[0])
+        count = indices.shape[0]
         if count == 0:
             zero = jnp.zeros((), dtype=previous.dtype)
             return ConstraintProjection(
@@ -155,7 +155,7 @@ class PreparedDistanceConstraints(StrictModule, NonTrainableState):
         position = jnp.asarray(positions)
         momentum = jnp.asarray(momenta, dtype=position.dtype)
         indices = self.system.topology.constraint_indices
-        count = int(indices.shape[0])
+        count = indices.shape[0]
         if count == 0:
             return momentum, jnp.zeros((), dtype=position.dtype)
         inverse_mass = self.system.inverse_masses.astype(position.dtype)

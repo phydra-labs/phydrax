@@ -54,7 +54,7 @@ class RegionalTrendPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, x: ArrayLike, y: ArrayLike, /, *, total_degree: int):
-        x_, y_ = np.asarray(x, dtype=float), np.asarray(y, dtype=float)
+        x_, y_ = np.asarray(x, dtype=np.float64), np.asarray(y, dtype=np.float64)
         degree = int(total_degree)
         if (
             x_.shape != y_.shape
@@ -112,7 +112,7 @@ class FourierContinuationPlan(StrictModule, NonTrainableState):
         *,
         maximum_amplification: float = 100.0,
     ):
-        shape_ = tuple(int(value) for value in shape)
+        shape_ = tuple(shape)
         spacing = tuple(float(value) for value in spacing_m)
         height = float(height_change_m)
         amplification = float(maximum_amplification)

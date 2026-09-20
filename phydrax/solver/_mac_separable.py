@@ -28,7 +28,7 @@ _ESSENTIAL_NORMAL_KINDS = (
 
 def uniform_axis_spacing(axis, /) -> float | None:
     """Return the certified uniform spacing of one structured axis, if any."""
-    widths = np.asarray(axis.interval_widths, dtype=float)
+    widths = np.asarray(axis.interval_widths, dtype=np.float64)
     if widths.size == 0:
         return None
     spacing = float(widths[0])
@@ -45,7 +45,7 @@ def _periodic_axis_transform(axis, dtype, /):
     spacing = uniform_axis_spacing(axis)
     if spacing is None or not axis.periodic:
         return None
-    count = int(axis.interval_widths.size)
+    count = axis.interval_widths.size
     transform: AbstractLinearTransform = FFTLinearTransform(
         count, dtype=np.result_type(dtype, np.complex64)
     )
@@ -63,7 +63,7 @@ def pressure_cell_axis_transform(axis, dtype, /):
     spacing = uniform_axis_spacing(axis)
     if spacing is None or axis.periodic:
         return None
-    count = int(axis.interval_widths.size)
+    count = axis.interval_widths.size
     transform: AbstractLinearTransform = RealTrigonometricTransform(
         "dct", 2, count, dtype=dtype
     )
@@ -101,7 +101,7 @@ def velocity_face_axis_transform(
     if derivative_axis == component:
         if not normal_velocity_is_essential(momentum, component):
             return None
-        count = int(axis.interval_widths.size) - 1
+        count = axis.interval_widths.size - 1
         if count < 1:
             return None
         transform: AbstractLinearTransform = RealTrigonometricTransform(
@@ -110,7 +110,7 @@ def velocity_face_axis_transform(
         angles = (np.arange(count) + 1.0) * np.pi / (count + 1.0)
         trace = 2.0 * count / spacing**2
     else:
-        count = int(axis.interval_widths.size)
+        count = axis.interval_widths.size
         lower_d = momentum.boundaries.tangential_dirichlet(derivative_axis, "lower")
         upper_d = momentum.boundaries.tangential_dirichlet(derivative_axis, "upper")
         if lower_d and upper_d:
@@ -140,11 +140,11 @@ def modal_sum(spectra: Sequence[Array], /, *, dtype=None) -> Array:
         if dtype is None:
             raise ValueError("An empty modal sum requires an explicit dtype.")
         return jnp.asarray(0.0, dtype=dtype)
-    shape = tuple(int(value.size) for value in spectra_)
+    shape = tuple(value.size for value in spectra_)
     result = jnp.zeros(shape, dtype=jnp.result_type(*[value.dtype for value in spectra_]))
     for axis, spectrum in enumerate(spectra_):
         reshape = [1] * len(shape)
-        reshape[axis] = int(spectrum.size)
+        reshape[axis] = spectrum.size
         result = result + spectrum.reshape(tuple(reshape))
     return result
 
@@ -155,7 +155,7 @@ def pressure_cell_line_coefficients(axis, dtype, /):
         raise ValueError("A pressure hybrid line must be explicitly nonperiodic.")
     widths = jnp.asarray(axis.interval_widths, dtype=dtype)
     centers = jnp.asarray(axis.interval_centers, dtype=dtype)
-    count = int(widths.size)
+    count = widths.size
     if count < 1:
         raise ValueError("A pressure hybrid line must contain at least one cell.")
     if count == 1:
@@ -210,7 +210,7 @@ def velocity_face_line_coefficients(
             -1.0 / (dual[:-1] * widths[1:-1]),
             None,
         )
-    count = int(widths.size)
+    count = widths.size
     distances = centers[1:] - centers[:-1]
     lower = -1.0 / (widths[1:] * distances)
     upper = -1.0 / (widths[:-1] * distances)

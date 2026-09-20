@@ -217,8 +217,8 @@ class _AffineCoordinate(StrictModule, NonTrainableState):
         *,
         vector_coordinate: bool,
     ):
-        lower_ = np.asarray(lower, dtype=float)
-        upper_ = np.asarray(upper, dtype=float)
+        lower_ = np.asarray(lower, dtype=np.float64)
+        upper_ = np.asarray(upper, dtype=np.float64)
         self.center = tuple(float(value) for value in 0.5 * (lower_ + upper_))
         self.half_width = tuple(float(value) for value in 0.5 * (upper_ - lower_))
         self.vector_coordinate = bool(vector_coordinate)
@@ -328,25 +328,24 @@ def _factor_bounds(
 ) -> tuple[np.ndarray, np.ndarray, bool]:
     if isinstance(factor, ScalarInterval):
         return (
-            np.asarray([factor.start], dtype=float),
-            np.asarray([factor.end], dtype=float),
+            np.asarray([factor.start], dtype=np.float64),
+            np.asarray([factor.end], dtype=np.float64),
             False,
         )
     if isinstance(factor, Interval1d):
         return (
-            np.asarray([factor.start], dtype=float),
-            np.asarray([factor.end], dtype=float),
+            np.asarray([factor.start], dtype=np.float64),
+            np.asarray([factor.end], dtype=np.float64),
             True,
         )
     if isinstance(factor, HyperRectangle):
         return (
-            np.asarray(factor.lower, dtype=float),
-            np.asarray(factor.upper, dtype=float),
+            np.asarray(factor.lower, dtype=np.float64),
+            np.asarray(factor.upper, dtype=np.float64),
             True,
         )
     raise TypeError(
-        "CartesianCoverPlan supports ScalarInterval, Interval1d, and HyperRectangle "
-        "factors."
+        "CartesianCoverPlan supports ScalarInterval, Interval1d, and HyperRectangle factors."
     )
 
 
@@ -357,8 +356,8 @@ def _factor_like(
     /,
 ) -> JointFactor:
     label = prototype.labels[0]
-    lower_ = np.asarray(lower, dtype=float)
-    upper_ = np.asarray(upper, dtype=float)
+    lower_ = np.asarray(lower, dtype=np.float64)
+    upper_ = np.asarray(upper, dtype=np.float64)
     if isinstance(prototype, ScalarInterval):
         return ScalarInterval(float(lower_[0]), float(upper_[0]), label=label)
     if isinstance(prototype, Interval1d):
@@ -387,7 +386,9 @@ def _identity_coordinates(domain: Domain, /) -> dict[str, DomainFunction]:
 
 
 def _constant_coordinate(domain: Domain, value, /) -> DomainFunction:
-    return DomainFunction(domain=domain, deps=(), func=jnp.asarray(value, dtype=float))
+    return DomainFunction(
+        domain=domain, deps=(), func=jnp.asarray(value, dtype=jnp.float64)
+    )
 
 
 def _sequence_or_scalar(value, dimension: int, name: str, cast):
@@ -423,7 +424,7 @@ def _interface_factor(
     *,
     label: str,
 ) -> JointFactor:
-    dimension = int(lower.shape[0])
+    dimension = lower.shape[0]
     if dimension == 1:
         return ScalarInterval(0.0, 1.0, label=label)
     tangent_lower = np.delete(lower, axis)
@@ -505,7 +506,7 @@ class CartesianCoverPlan(StrictModule, NonTrainableState):
                 raise ValueError("num_subdomains must be positive.")
             counts = (int(num_subdomains),)
         else:
-            counts = tuple(int(value) for value in num_subdomains)
+            counts = tuple(num_subdomains)
             if not counts or any(value <= 0 for value in counts):
                 raise ValueError("num_subdomains entries must be positive.")
         boundaries_ = None if boundaries is None else tuple(boundaries)
@@ -540,7 +541,7 @@ class CartesianCoverPlan(StrictModule, NonTrainableState):
         lower: np.ndarray,
         upper: np.ndarray,
     ) -> tuple[AxisPartition, ...]:
-        dimension = int(lower.shape[0])
+        dimension = lower.shape[0]
         if self.axis_partitions is not None:
             if len(self.axis_partitions) != dimension:
                 raise ValueError(
@@ -629,7 +630,7 @@ class CartesianCoverPlan(StrictModule, NonTrainableState):
         if factor.labels != (self.label,):
             raise ValueError("Cartesian cover cannot split part of a coupled factor.")
         lower, upper, vector_coordinate = _factor_bounds(factor)
-        dimension = int(lower.shape[0])
+        dimension = lower.shape[0]
         partitions = self._partitions(lower, upper)
         shape = tuple(partition.count for partition in partitions)
         index_space = tuple(product(*(range(count) for count in shape)))
@@ -653,7 +654,7 @@ class CartesianCoverPlan(StrictModule, NonTrainableState):
             )
             periodic_axes = np.asarray(
                 [partition.periodic for partition in partitions],
-                dtype=bool,
+                dtype=np.bool_,
             )
             raw_support_lower = core_lower - overlaps * widths
             raw_support_upper = core_upper + overlaps * widths
@@ -810,7 +811,7 @@ class CartesianCoverPlan(StrictModule, NonTrainableState):
                     dimension=dimension,
                     vector_coordinate=vector_coordinate,
                 )
-                normal_array = np.zeros((dimension,), dtype=float)
+                normal_array = np.zeros((dimension,), dtype=np.float64)
                 normal_array[axis] = 1.0
                 normal_value = (
                     jnp.asarray(normal_array)
@@ -823,9 +824,7 @@ class CartesianCoverPlan(StrictModule, NonTrainableState):
                         left_coordinates,
                         right_coordinates,
                         pairing_id=(
-                            f"interface-axis-{axis}-"
-                            f"{by_index[index].patch_id}-"
-                            f"{by_index[neighbor].patch_id}"
+                            f"interface-axis-{axis}-{by_index[index].patch_id}-{by_index[neighbor].patch_id}"
                         ),
                         left_patch_id=by_index[index].patch_id,
                         right_patch_id=by_index[neighbor].patch_id,

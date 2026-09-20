@@ -167,7 +167,7 @@ class QuantumTrajectoryEnsemble(StrictModule):
         )
         self.states = temporal_precision.output(states_)
         self.jump_channels = jnp.asarray(jump_channels, dtype=jnp.int32)
-        self.jump_mask = jnp.asarray(jump_mask, dtype=bool)
+        self.jump_mask = jnp.asarray(jump_mask, dtype=jnp.bool_)
         self.times = times_
         self.valid = jnp.all(jnp.isfinite(self.states)) & (norm_residual <= 1e-6)
         statistical_error = 1.0 / jnp.sqrt(float(self.states.shape[0]))
@@ -392,10 +392,10 @@ def amplitude_damping_trajectory_problem(
     initial_state: ArrayLike,
     /,
 ) -> QuantumJumpProblem:
-    lowering = jnp.asarray([[0.0, 1.0], [0.0, 0.0]], dtype=complex)
+    lowering = jnp.asarray([[0.0, 1.0], [0.0, 0.0]], dtype=jnp.complex128)
     return QuantumJumpProblem(
         StateVectorOperator.from_matrix(
-            jnp.zeros((2, 2), dtype=complex), operator_id="zero-hamiltonian"
+            jnp.zeros((2, 2), dtype=jnp.complex128), operator_id="zero-hamiltonian"
         ),
         (
             StateVectorOperator.from_matrix(

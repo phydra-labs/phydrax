@@ -160,7 +160,7 @@ class ElasticityFEMBEMInterfaceQualification3D(StrictModule, NonTrainableState):
         self.continuum_certified = bool(continuum_certified)
         self.qualification_id = canonical_fingerprint(
             {
-                "kind": "elasticity-fem-bem-interface-qualification-3d-v1",
+                "kind": "elasticity-fem-bem-interface-qualification-3d",
                 "interface": identifiers[0],
                 "spaces": identifiers[1:3],
                 "operators": identifiers[3:],
@@ -272,8 +272,7 @@ def vector_fem_bem_support_report() -> VectorFEMBEMSupportReport:
         _MAXWELL_REJECTION,
         "Automatic vector-H1 matching-interface trace preparation is unavailable; "
         "exact caller-prepared elasticity maps are required.",
-        "Stokes, dynamic elasticity, anisotropic elasticity, and nonmatching vector "
-        "couplings are not implemented.",
+        "Stokes, dynamic elasticity, anisotropic elasticity, and nonmatching vector couplings are not implemented.",
     )
     return VectorFEMBEMSupportReport(
         implemented=implemented,
@@ -281,7 +280,7 @@ def vector_fem_bem_support_report() -> VectorFEMBEMSupportReport:
         continuum_certified=False,
         report_id=canonical_fingerprint(
             {
-                "kind": "vector-fem-bem-support-report-v1",
+                "kind": "vector-fem-bem-support-report",
                 "implemented": implemented,
                 "rejected": rejected,
                 "continuum_certified": False,
@@ -464,7 +463,7 @@ def prepare_elasticity_fem_bem_3d(
         ),
         operator_id=canonical_fingerprint(
             {
-                "kind": "elasticity-fem-bem-costabel-symmetric-3d-v1",
+                "kind": "elasticity-fem-bem-costabel-symmetric-3d",
                 "interior": interior_operator.operator_id,
                 "trace": trace_operator.operator_id,
                 "conormal": conormal_operator.operator_id,
@@ -476,7 +475,7 @@ def prepare_elasticity_fem_bem_3d(
     )
     problem_id = canonical_fingerprint(
         {
-            "kind": "elasticity-fem-bem-linear-system-3d-v1",
+            "kind": "elasticity-fem-bem-linear-system-3d",
             "operator": operator.operator_id,
         }
     )
@@ -486,7 +485,7 @@ def prepare_elasticity_fem_bem_3d(
     cost = estimate_operator_action_cost(operator)
     prepared_id = canonical_fingerprint(
         {
-            "kind": "prepared-elasticity-fem-bem-3d-v1",
+            "kind": "prepared-elasticity-fem-bem-3d",
             "operator": operator.operator_id,
             "linear_plan": prepared_linear.plan.plan_id,
             "interface": interface.qualification_id,

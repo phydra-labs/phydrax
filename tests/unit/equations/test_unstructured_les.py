@@ -308,11 +308,11 @@ def test_static_ksgs_reuses_mass_flux_and_keeps_transport_conservative():
     result = prepared.semidiscrete_rate(state, *arguments)
     fluxes = result.fluxes
     interior = prepared.operators.interior_faces
-    neighbour = prepared.operators.discretization.neighbour_cells
+    neighbor = prepared.operators.discretization.neighbor_cells
     owner = prepared.operators.discretization.owner_cells
     upwind = jnp.where(
         interior & (fluxes.face_normal_velocity < 0.0),
-        jnp.maximum(neighbour, 0),
+        jnp.maximum(neighbor, 0),
         owner,
     )
 

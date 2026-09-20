@@ -214,7 +214,7 @@ class ZhangSinoatrialParameters(StrictModule, NonTrainableState):
             object.__setattr__(self, name, value)
         self.parameter_id = canonical_fingerprint(
             {
-                "kind": "cardiovascular-san-zhang2000-reduced-parameters-v1",
+                "kind": "cardiovascular-san-zhang2000-reduced-parameters",
                 "phenotype": self.phenotype.value,
                 "coefficients": values,
             }
@@ -273,7 +273,7 @@ class SinoatrialStateLayout(StrictModule, NonTrainableState):
         self.names = names
         self.state_size = len(names)
         self.layout_id = canonical_fingerprint(
-            {"kind": "cardiovascular-san-state-layout-v1", "names": list(names)}
+            {"kind": "cardiovascular-san-state-layout", "names": list(names)}
         )
 
     def index(self, name: str, /) -> int:
@@ -366,7 +366,7 @@ class ZhangSinoatrialModel(StrictModule, NonTrainableState):
         self.layout = layout
         self.model_id = canonical_fingerprint(
             {
-                "kind": "prepared-cardiovascular-san-zhang2000-reduced-v1",
+                "kind": "prepared-cardiovascular-san-zhang2000-reduced",
                 "parameters": parameters.parameter_id,
                 "layout": layout.layout_id,
             }
@@ -563,7 +563,7 @@ class InadaAtrioventricularParameters(StrictModule, NonTrainableState):
             object.__setattr__(self, name, value)
         self.parameter_id = canonical_fingerprint(
             {
-                "kind": "cardiovascular-av-node-inada2009-reduced-parameters-v1",
+                "kind": "cardiovascular-av-node-inada2009-reduced-parameters",
                 "phenotype": self.phenotype.value,
                 "coefficients": values,
             }
@@ -622,7 +622,7 @@ class AtrioventricularStateLayout(StrictModule, NonTrainableState):
         self.names = names
         self.state_size = len(names)
         self.layout_id = canonical_fingerprint(
-            {"kind": "cardiovascular-av-node-state-layout-v1", "names": list(names)}
+            {"kind": "cardiovascular-av-node-state-layout", "names": list(names)}
         )
 
     def index(self, name: str, /) -> int:
@@ -713,7 +713,7 @@ class InadaAtrioventricularModel(StrictModule, NonTrainableState):
         self.layout = layout
         self.model_id = canonical_fingerprint(
             {
-                "kind": "prepared-cardiovascular-av-node-inada2009-reduced-v1",
+                "kind": "prepared-cardiovascular-av-node-inada2009-reduced",
                 "parameters": parameters.parameter_id,
                 "layout": layout.layout_id,
             }
@@ -998,7 +998,7 @@ class ZhangSinoatrialReactionAdapter:
             "model_id",
             canonical_fingerprint(
                 {
-                    "kind": "cardiovascular-san-reaction-adapter-v1",
+                    "kind": "cardiovascular-san-reaction-adapter",
                     "cell_model": self.cell_model.model_id,
                     "membrane_surface_to_volume_per_mm": (
                         self.scaling.membrane_surface_to_volume_per_mm
@@ -1139,8 +1139,7 @@ class ZhangSinoatrialReactionAdapter:
         array = np.asarray(state)
         if array.ndim == 0 or array.shape[-1] != self.state_layout.state_count:
             raise ValueError(
-                "SAN reaction state must have final axis size "
-                f"{self.state_layout.state_count}, received {array.shape}."
+                f"SAN reaction state must have final axis size {self.state_layout.state_count}, received {array.shape}."
             )
         parameter_array = None if parameters is None else jnp.asarray(parameters)
         if not np.all(np.isfinite(array)) or not np.all(
@@ -1320,7 +1319,7 @@ class InadaAtrioventricularReactionAdapter:
             "model_id",
             canonical_fingerprint(
                 {
-                    "kind": "cardiovascular-av-node-reaction-adapter-v1",
+                    "kind": "cardiovascular-av-node-reaction-adapter",
                     "cell_model": self.cell_model.model_id,
                     "membrane_surface_to_volume_per_mm": (
                         self.scaling.membrane_surface_to_volume_per_mm

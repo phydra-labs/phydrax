@@ -162,7 +162,7 @@ class CommonNoiseMeanFieldProblem(StrictModule):
                 "Flows, histories, probabilities, labels, and scenario IDs must "
                 "have one entry per common-noise scenario."
             )
-        probabilities = jnp.asarray(scenario_probabilities, dtype=float)
+        probabilities = jnp.asarray(scenario_probabilities, dtype=jnp.float64)
         if probabilities.shape != (count,):
             raise ValueError("scenario_probabilities must have shape (num_scenarios,).")
         if not bool(jnp.all(jnp.isfinite(probabilities))) or bool(
@@ -207,8 +207,7 @@ class CommonNoiseMeanFieldProblem(StrictModule):
             particle_count = prod(flow.sample_shape)
             if len(grouping) != particle_count:
                 raise ValueError(
-                    "independent_cluster_labels must label every flattened "
-                    f"particle in scenario {scenarios[index]!r}."
+                    f"independent_cluster_labels must label every flattened particle in scenario {scenarios[index]!r}."
                 )
             unique_count = len(set(grouping))
             if unique_count == 0:
@@ -433,7 +432,7 @@ def _induced_identity_is_new(
     )
 
 
-def _normalised_weights(flow: EmpiricalMeanField) -> Array:
+def _normalized_weights(flow: EmpiricalMeanField) -> Array:
     weights = flow.weights.reshape((flow.num_particles, flow.times.size))
     valid = flow.valid.reshape((flow.num_particles, flow.times.size))
     valid_weights = jnp.where(valid, weights, 0.0)
@@ -496,8 +495,8 @@ def _law_mixture_evidence(
     )
     expected_weights = jnp.concatenate(
         (
-            (1.0 - damping) * _normalised_weights(current),
-            damping * _normalised_weights(induced),
+            (1.0 - damping) * _normalized_weights(current),
+            damping * _normalized_weights(induced),
         ),
         axis=0,
     )
@@ -505,7 +504,7 @@ def _law_mixture_evidence(
         (mixture.num_particles, time_count) + mixture.state_shape
     )
     mixture_valid = mixture.valid.reshape((mixture.num_particles, time_count))
-    mixture_weights = _normalised_weights(mixture)
+    mixture_weights = _normalized_weights(mixture)
     expected_order = _canonical_particle_order(
         expected_particles, expected_valid, expected_weights
     )
@@ -596,7 +595,7 @@ def solve_common_noise_mean_field_fixed_point(
     capacity = plan.maximum_iterations
     scenario_count = len(problem.scenario_ids)
     dtype = jnp.result_type(
-        *(flow.particles for flow in problem.initial_conditional_flows), float
+        *(flow.particles for flow in problem.initial_conditional_flows), jnp.float64
     )
     shape = (capacity, scenario_count)
     distance_history = jnp.full(shape, jnp.nan, dtype=dtype)
@@ -605,11 +604,11 @@ def solve_common_noise_mean_field_fixed_point(
     current_ess_history = jnp.full(shape, jnp.nan, dtype=dtype)
     induced_ess_history = jnp.full(shape, jnp.nan, dtype=dtype)
     cluster_count_history = jnp.zeros(shape, dtype=jnp.int32)
-    best_response_validity = jnp.zeros(shape, dtype=bool)
-    induced_flow_validity = jnp.zeros(shape, dtype=bool)
-    consistency_validity = jnp.zeros(shape, dtype=bool)
-    scenario_iteration_validity = jnp.zeros(shape, dtype=bool)
-    iteration_validity = jnp.zeros((capacity,), dtype=bool)
+    best_response_validity = jnp.zeros(shape, dtype=jnp.bool_)
+    induced_flow_validity = jnp.zeros(shape, dtype=jnp.bool_)
+    consistency_validity = jnp.zeros(shape, dtype=jnp.bool_)
+    scenario_iteration_validity = jnp.zeros(shape, dtype=jnp.bool_)
+    iteration_validity = jnp.zeros((capacity,), dtype=jnp.bool_)
     scenario_status_history = jnp.full(
         shape, int(CommonNoiseMeanFieldStatus.ZERO_PROBABILITY_SCENARIO), dtype=jnp.int32
     )

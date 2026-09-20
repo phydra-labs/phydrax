@@ -635,8 +635,7 @@ def _validate_dirac_interval(
         raise TypeError("spectral_interval must be a SpectralInterval.")
     if interval.scope != "structural":
         raise ValueError(
-            "Production pseudofermions require a structural spectral interval "
-            "that remains valid as gauge links evolve."
+            "Production pseudofermions require a structural spectral interval that remains valid as gauge links evolve."
         )
     normal = _DiracNormalOperator(dirac)
     if not interval.matches(normal):

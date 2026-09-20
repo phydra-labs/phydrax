@@ -171,14 +171,14 @@ class DAEInitializationResult(StrictModule):
         self.state_rate = jnp.asarray(state_rate)
         self.state_correction = jnp.asarray(state_correction)
         self.rate_correction = jnp.asarray(rate_correction)
-        self.fixed_state_mask = jnp.asarray(fixed_state_mask, dtype=bool)
-        self.fixed_rate_mask = jnp.asarray(fixed_rate_mask, dtype=bool)
-        self.rate_valid = jnp.asarray(rate_valid, dtype=bool)
+        self.fixed_state_mask = jnp.asarray(fixed_state_mask, dtype=jnp.bool_)
+        self.fixed_rate_mask = jnp.asarray(fixed_rate_mask, dtype=jnp.bool_)
+        self.rate_valid = jnp.asarray(rate_valid, dtype=jnp.bool_)
         self.residual_norm = jnp.asarray(residual_norm)
         self.residual_threshold = jnp.asarray(residual_threshold)
         self.differential_residual_norm = jnp.asarray(differential_residual_norm)
         self.constraint_norm = jnp.asarray(constraint_norm)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.nonlinear_result = nonlinear_result
         self.initialization_id = str(initialization_id)
@@ -279,8 +279,8 @@ def _role_mask(
 ) -> np.ndarray:
     axis = system.structure.resolved_axis(system.state_shape)
     if axis is None:
-        return np.full(system.state_shape, roles[0] == selected, dtype=bool)
-    component = np.asarray(tuple(role == selected for role in roles), dtype=bool)
+        return np.full(system.state_shape, roles[0] == selected, dtype=np.bool_)
+    component = np.asarray(tuple(role == selected for role in roles), dtype=np.bool_)
     reshape = [1] * len(system.state_shape)
     reshape[axis] = component.size
     return np.broadcast_to(component.reshape(tuple(reshape)), system.state_shape)
@@ -303,20 +303,23 @@ def _fixed_masks(
             "algebraic",
         )
     elif spec.mode == "fixed-rate":
-        fixed_state = np.zeros(system.state_shape, dtype=bool)
-        fixed_rate = np.ones(system.state_shape, dtype=bool)
+        fixed_state = np.zeros(system.state_shape, dtype=np.bool_)
+        fixed_rate = np.ones(system.state_shape, dtype=np.bool_)
     elif spec.mode == "check":
-        fixed_state = np.ones(system.state_shape, dtype=bool)
-        fixed_rate = np.ones(system.state_shape, dtype=bool)
+        fixed_state = np.ones(system.state_shape, dtype=np.bool_)
+        fixed_rate = np.ones(system.state_shape, dtype=np.bool_)
     else:
         assert spec.fixed_state is not None and spec.fixed_rate is not None
         if len(spec.fixed_state) != system.state_size:
             raise ValueError(
-                "Custom DAE initialization masks must contain exactly "
-                f"{system.state_size} entries."
+                f"Custom DAE initialization masks must contain exactly {system.state_size} entries."
             )
-        fixed_state = np.asarray(spec.fixed_state, dtype=bool).reshape(system.state_shape)
-        fixed_rate = np.asarray(spec.fixed_rate, dtype=bool).reshape(system.state_shape)
+        fixed_state = np.asarray(spec.fixed_state, dtype=np.bool_).reshape(
+            system.state_shape
+        )
+        fixed_rate = np.asarray(spec.fixed_rate, dtype=np.bool_).reshape(
+            system.state_shape
+        )
     if spec.mode != "check":
         free_count = int(np.count_nonzero(~fixed_state) + np.count_nonzero(~fixed_rate))
         if free_count != system.state_size:
@@ -330,7 +333,7 @@ def _fixed_masks(
 
 def _inexact(value: ArrayLike, /) -> Array:
     array = jnp.asarray(value)
-    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype(float)
+    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype("float64")
 
 
 def _validated_guesses(
@@ -357,7 +360,7 @@ def _validated_guesses(
         )
         state_array = eqx.error_if(
             state_array,
-            ~jnp.asarray(system.state_geometry.contains(state_array), dtype=bool),
+            ~jnp.asarray(system.state_geometry.contains(state_array), dtype=jnp.bool_),
             "DAE initial state is outside its state geometry.",
         )
     return state_array, rate_array
@@ -423,11 +426,11 @@ def _prepare_dae_initialization(
         raise TypeError("spec must be a DAEInitializationSpec.")
     state, state_rate = _validated_guesses(system, initial_state, initial_state_rate)
     fixed_state_host, fixed_rate_host = _fixed_masks(system, spec)
-    fixed_state = jnp.asarray(fixed_state_host, dtype=bool)
-    fixed_rate = jnp.asarray(fixed_rate_host, dtype=bool)
+    fixed_state = jnp.asarray(fixed_state_host, dtype=jnp.bool_)
+    fixed_rate = jnp.asarray(fixed_rate_host, dtype=jnp.bool_)
     state_indices = jnp.asarray(np.flatnonzero(~fixed_state_host), dtype=jnp.int32)
     rate_indices = jnp.asarray(np.flatnonzero(~fixed_rate_host), dtype=jnp.int32)
-    state_unknown_count = int(state_indices.size)
+    state_unknown_count = state_indices.size
 
     if spec.mode == "check":
         nonlinear_problem = None
@@ -589,7 +592,7 @@ def _initialize_dae(
                 args,
                 inputs=inputs,
             ),
-            jnp.ones(prepared.system.state_shape, dtype=bool),
+            jnp.ones(prepared.system.state_shape, dtype=jnp.bool_),
         )
     else:
         assert prepared.nonlinear_problem is not None
@@ -639,7 +642,7 @@ def _initialize_dae(
     )
     residual_norm = _masked_rms(
         scaled_residual,
-        jnp.ones(prepared.system.state_shape, dtype=bool),
+        jnp.ones(prepared.system.state_shape, dtype=jnp.bool_),
     )
     residual_threshold = termination.residual_threshold(initial_residual_norm)
     differential_norm = _masked_rms(scaled_residual, differential_equations)
@@ -671,7 +674,7 @@ def _initialize_dae(
     rate_valid = (
         prepared.system.structure.differential_variable_mask(prepared.system.state_shape)
         if prepared.spec.mode == "index-one"
-        else jnp.ones(prepared.system.state_shape, dtype=bool)
+        else jnp.ones(prepared.system.state_shape, dtype=jnp.bool_)
     )
     return DAEInitializationResult(
         state=state,

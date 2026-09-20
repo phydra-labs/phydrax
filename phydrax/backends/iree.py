@@ -57,8 +57,7 @@ def iree_availability() -> BackendAvailability:
             available=False,
             requirement="install matched iree-base-compiler and iree-base-runtime",
             reason=(
-                f"compiler version {compiler_version!r} differs from runtime "
-                f"version {runtime_version!r}"
+                f"compiler version {compiler_version!r} differs from runtime version {runtime_version!r}"
             ),
             versions=runtime.versions,
         )

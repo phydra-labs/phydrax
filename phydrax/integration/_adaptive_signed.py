@@ -42,15 +42,15 @@ class AdaptiveSignedPopulation(StrictModule):
 def _population_active(realization: IntegrationRealization, /) -> Array:
     batch = realization.batch
     if isinstance(batch, PointIntegrationBatch):
-        active = jnp.ones(batch.weights.data.shape, dtype=bool)
+        active = jnp.ones(batch.weights.data.shape, dtype=jnp.bool_)
         if batch.mask is not None:
-            active &= jnp.asarray(batch.mask.data, dtype=bool)
+            active &= jnp.asarray(batch.mask.data, dtype=jnp.bool_)
         return active.reshape((-1,))
     if isinstance(batch, WeightedSampleBatch):
         if batch.mask is None:
-            return jnp.ones((batch.num_samples,), dtype=bool)
+            return jnp.ones((batch.num_samples,), dtype=jnp.bool_)
         mask = batch.mask.data if isinstance(batch.mask, cx.AxisArray) else batch.mask
-        return jnp.asarray(mask, dtype=bool).reshape((-1,))
+        return jnp.asarray(mask, dtype=jnp.bool_).reshape((-1,))
     raise TypeError(
         "Adaptive signed estimators require point or weighted-sample batches."
     )
@@ -172,7 +172,7 @@ class AdaptiveSignedEstimator(StrictModule):
             raise ValueError(
                 "Signed estimator values and weights must share sample axis."
             )
-        mask = jnp.ones(weights_.shape, dtype=bool) if active is None else active
+        mask = jnp.ones(weights_.shape, dtype=jnp.bool_) if active is None else active
         safe = jnp.where(
             mask.reshape((mask.shape[0],) + (1,) * (values_.ndim - 1)),
             values_,
@@ -198,7 +198,7 @@ class AdaptiveStratifiedEstimator(AdaptiveSignedEstimator):
         refresh_interval: int = 1,
     ):
         super().__init__(refresh_interval=refresh_interval)
-        masses = jnp.asarray(stratum_masses, dtype=float).reshape((-1,))
+        masses = jnp.asarray(stratum_masses, dtype=jnp.float64).reshape((-1,))
         floor = float(variance_floor)
         minimum = int(minimum_per_stratum)
         if (
@@ -230,7 +230,7 @@ class AdaptiveStratifiedEstimator(AdaptiveSignedEstimator):
         if bool(jnp.any(~jnp.isfinite(variance))) or bool(jnp.any(variance < 0.0)):
             raise ValueError("Stratum variances must be finite and nonnegative.")
         budget_ = int(budget)
-        base = self.minimum_per_stratum * int(variance.size)
+        base = self.minimum_per_stratum * variance.size
         if budget_ < base:
             raise ValueError("Budget cannot leave a positive-mass stratum unsampled.")
         score = self.stratum_masses * jnp.sqrt(jnp.maximum(variance, self.variance_floor))
@@ -270,7 +270,7 @@ class AdaptiveImportanceEstimator(AdaptiveSignedEstimator):
 
     def validate_log_ratios(self, log_ratios: Array, active: Array | None = None) -> None:
         ratios = jnp.asarray(log_ratios)
-        mask = jnp.ones(ratios.shape, dtype=bool) if active is None else active
+        mask = jnp.ones(ratios.shape, dtype=jnp.bool_) if active is None else active
         if not bool(jnp.all(jnp.isfinite(jnp.where(mask, ratios, 0.0)))):
             raise ValueError("Active target/proposal log ratios must be finite.")
 

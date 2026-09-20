@@ -143,7 +143,7 @@ def state_space_path_log_density(
     prior = prior_terms.reshape(case_shape)
     finite_states = _event_all(jnp.isfinite(values), state_shape)
     active_with_initial = jnp.concatenate(
-        (jnp.ones(case_shape + (1,), dtype=bool), problem.observations.step_valid),
+        (jnp.ones(case_shape + (1,), dtype=jnp.bool_), problem.observations.step_valid),
         axis=-1,
     )
     path_finite = jnp.all(finite_states | ~active_with_initial, axis=-1)

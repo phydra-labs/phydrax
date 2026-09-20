@@ -74,7 +74,7 @@ def prepare_diffusion_bridge(
         raise TypeError("problem must be a DiffusionBridgeProblem.")
     if not isinstance(plan, DiffusionBridgePlan):
         raise TypeError("plan must be a DiffusionBridgePlan.")
-    time_count = int(problem.time_grid.times.size)
+    time_count = problem.time_grid.times.size
     if len(plan.proposal_realizations) != time_count:
         raise ValueError("proposal_realizations must contain one support per time node.")
     support_rows = []
@@ -153,7 +153,7 @@ def prepare_diffusion_bridge(
         raise ValueError("Diffusion bridge proposal/transition preparation failed.")
     prepared_id = canonical_fingerprint(
         {
-            "kind": "prepared-finite-diffusion-bridge-v1",
+            "kind": "prepared-finite-diffusion-bridge",
             "problem": problem.problem_id,
             "supports": plan.support_capacity,
             "time_grid": problem.time_grid.time_id,
@@ -263,7 +263,7 @@ def sample_diffusion_bridge(
         raise TypeError("result must be a DiffusionBridgeResult.")
     if not bool(result.valid):
         raise ValueError("Cannot sample an invalid diffusion bridge.")
-    shape = tuple(int(size) for size in sample_shape)
+    shape = tuple(sample_shape)
     if any(size <= 0 for size in shape):
         raise ValueError("sample_shape dimensions must be positive.")
     count = prod(shape) if shape else 1

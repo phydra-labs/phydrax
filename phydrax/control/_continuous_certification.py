@@ -49,9 +49,9 @@ class ControlSegmentInterpolant(StrictModule, NonTrainableState):
         times_ = jnp.asarray(times)
         state_ = jnp.asarray(state_coefficients)
         control_ = jnp.asarray(control_coefficients)
-        cases = tuple(int(value) for value in case_shape)
-        states = tuple(int(value) for value in state_shape)
-        controls = tuple(int(value) for value in control_shape)
+        cases = tuple(case_shape)
+        states = tuple(state_shape)
+        controls = tuple(control_shape)
         if times_.ndim != 1 or times_.size < 2:
             raise ValueError(
                 "segment interpolant times must be rank-one with at least two entries."
@@ -229,7 +229,7 @@ class AffineBernsteinPathEnvelope(AbstractPathConstraintEnvelope, NonTrainableSt
             "...di,i->...d", flat_control, self.control_weights.reshape((-1,))
         )
         power = power.at[..., 0].add(self.bias)
-        transform = np.zeros((degree + 1, degree + 1), dtype=float)
+        transform = np.zeros((degree + 1, degree + 1), dtype=np.float64)
         for k in range(degree + 1):
             for j in range(k + 1):
                 transform[k, j] = comb(k, j) / comb(degree, j)
@@ -411,7 +411,7 @@ def certify_continuous_path_constraints(
     lower = jnp.stack(tuple(lower_rows), axis=constraint_axis)
     upper = jnp.stack(tuple(upper_rows), axis=constraint_axis)
     finite = jnp.stack(tuple(finite_rows), axis=constraint_axis)
-    active = jnp.ones_like(finite, dtype=bool)
+    active = jnp.ones_like(finite, dtype=jnp.bool_)
     interval_certified = active & finite & (upper <= tolerance_)
     certified = jnp.all(interval_certified, axis=(-2, -1))
     return ContinuousPathConstraintCertificate(

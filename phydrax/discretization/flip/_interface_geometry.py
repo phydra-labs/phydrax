@@ -103,7 +103,7 @@ class ParticleLevelSetPlan(StrictModule, NonTrainableState):
         self, position: ArrayLike, active_mask: ArrayLike, /
     ) -> MACFreeSurfaceGeometryState:
         particles = jnp.asarray(position, dtype=self.points.dtype)
-        active = jnp.asarray(active_mask, dtype=bool)
+        active = jnp.asarray(active_mask, dtype=jnp.bool_)
         if particles.ndim != 2 or particles.shape[1] != len(self.grid.shape):
             raise ValueError("Particle level-set positions have incompatible dimension.")
         if active.shape != (particles.shape[0],):

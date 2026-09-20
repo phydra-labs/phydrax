@@ -26,9 +26,7 @@ def test_empirical_ntk_matches_linear_analytic_kernel_and_actions():
     assert jnp.allclose(prepared.jvp(tangent), design @ tangent)
     assert jnp.allclose(prepared.vjp(cotangent), design.T @ cotangent)
     assert jnp.allclose(prepared.kernel.mv(cotangent), expected @ cotangent)
-    assert jnp.allclose(
-        prepared.parameter_gram.mv(tangent), design.T @ design @ tangent
-    )
+    assert jnp.allclose(prepared.parameter_gram.mv(tangent), design.T @ design @ tangent)
 
 
 def test_dense_ntk_diagnostics_report_rank_and_spectrum():
@@ -82,15 +80,15 @@ def test_cross_ntk_matches_rectangular_jacobian_product():
     first = jnp.asarray([[1.0, 2.0], [0.5, -1.0]])
     second = jnp.asarray([[3.0, 0.25]])
     point = jnp.asarray([0.2, -0.4])
-    left = phx.nn.neural_tangent.prepare_empirical_ntk(
-        lambda value: first @ value, point
-    )
+    left = phx.nn.neural_tangent.prepare_empirical_ntk(lambda value: first @ value, point)
     right = phx.nn.neural_tangent.prepare_empirical_ntk(
         lambda value: second @ value, point
     )
     cross = left.cross_kernel(right)
 
-    assert jnp.allclose(cross.mv(jnp.asarray([2.0])), first @ second.T @ jnp.asarray([2.0]))
+    assert jnp.allclose(
+        cross.mv(jnp.asarray([2.0])), first @ second.T @ jnp.asarray([2.0])
+    )
     assert jnp.allclose(
         cross.adjoint_mv(jnp.asarray([1.0, -0.5])),
         second @ first.T @ jnp.asarray([1.0, -0.5]),
@@ -101,13 +99,9 @@ def _functional_solver():
     domain = phx.domain.Interval1d(0.0, 1.0)
     field = domain.Parameter(jnp.asarray([1.0, -1.0]))
     component = domain.component()
-    condition = phx.conditions.Residual(
-        "u", component, lambda value: value
-    )
+    condition = phx.conditions.Residual("u", component, lambda value: value)
     batch = component.sample(
-        phx.domain.PointSampling(
-            4, layout=phx.domain.SampleLayout((("x",),))
-        ),
+        phx.domain.PointSampling(4, layout=phx.domain.SampleLayout((("x",),))),
         key=jr.key(0),
     )
     source = phx.integration.fixed(

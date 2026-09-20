@@ -32,7 +32,7 @@ def test_coord_separable_fourier_axis_spec_interval_discretization_attached():
     assert bool(disc.periodic) is True
     assert disc.quad_weights is not None
     assert disc.nodes.shape == x_field.data.shape
-    assert jnp.allclose(disc.nodes, jnp.asarray(x_field.data, dtype=float))
+    assert jnp.allclose(disc.nodes, jnp.asarray(x_field.data, dtype="float64"))
 
 
 def test_coord_separable_legendre_axis_spec_integral_matches_closed_form():
@@ -76,7 +76,7 @@ def test_sdf_domain_function_evaluates_on_coord_separable_batch():
     phi = component.sdf(var="x")
     out = phi(batch)
     assert out.dims == (axis,)
-    values = jnp.asarray(out.data, dtype=float)
+    values = jnp.asarray(out.data, dtype="float64")
     assert jnp.all(values <= 0.0 + 1e-8)
     assert jnp.any(values < 0.0)
 

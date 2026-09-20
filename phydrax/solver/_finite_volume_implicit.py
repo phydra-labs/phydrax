@@ -318,8 +318,7 @@ class PreparedFiniteVolumeBackwardEulerStep(StrictModule, NonTrainableState):
         self.plan.dynamics.precision.validate_state(previous)
         if previous.shape != self.plan.dynamics.discretization.state_shape:
             raise ValueError(
-                "Implicit FV previous state must have shape "
-                f"{self.plan.dynamics.discretization.state_shape}."
+                f"Implicit FV previous state must have shape {self.plan.dynamics.discretization.state_shape}."
             )
         time_ = self.plan.dynamics.precision.decision(time)
         step = self.plan.dynamics.precision.decision(step_size)

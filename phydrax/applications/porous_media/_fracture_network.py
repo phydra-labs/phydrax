@@ -62,18 +62,20 @@ class MixedDimensionalFractureNetworkPlan(StrictModule, NonTrainableState):
         component_count: int,
         /,
     ):
-        fracture_storage = np.asarray(fracture_storage_m3, dtype=float)
-        intersection_storage = np.asarray(intersection_storage_m3, dtype=float)
+        fracture_storage = np.asarray(fracture_storage_m3, dtype=np.float64)
+        intersection_storage = np.asarray(intersection_storage_m3, dtype=np.float64)
         edges, connections = (
             np.asarray(fracture_edges),
             np.asarray(intersection_connections),
         )
-        fracture_conductance = np.asarray(fracture_conductance_m3_Pa_s, dtype=float)
+        fracture_conductance = np.asarray(fracture_conductance_m3_Pa_s, dtype=np.float64)
         intersection_conductance = np.asarray(
-            intersection_conductance_m3_Pa_s, dtype=float
+            intersection_conductance_m3_Pa_s, dtype=np.float64
         )
         parents = np.asarray(matrix_parent_cells)
-        matrix_conductance = np.asarray(matrix_exchange_conductance_m3_Pa_s, dtype=float)
+        matrix_conductance = np.asarray(
+            matrix_exchange_conductance_m3_Pa_s, dtype=np.float64
+        )
         matrix_count, components = int(matrix_cell_count), int(component_count)
         fractures, intersections = fracture_storage.size, intersection_storage.size
         if (

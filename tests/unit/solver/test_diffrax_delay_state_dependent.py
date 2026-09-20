@@ -76,7 +76,7 @@ def test_state_dependent_tracker_finds_manufactured_known_root_and_restarts():
     interpolation = solution.interpolation
     assert interpolation is not None
     history = interpolation.computed_history
-    accepted_ends = history.ends[: int(history.size)]
+    accepted_ends = history.ends[: history.size]
 
     assert bool(solution.successful)
     assert solution.stats["state_dependent_tracking"] == "high-order-dynamic-roots"

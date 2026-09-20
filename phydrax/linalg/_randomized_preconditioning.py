@@ -43,8 +43,7 @@ def _euclidean_space(operator: AbstractLinearOperator, /) -> ArraySpace | PyTree
         space.pairing, EuclideanPairing
     ):
         raise TypeError(
-            "Randomized Nyström preconditioning currently requires an ArraySpace or "
-            "PyTreeSpace with EuclideanPairing."
+            "Randomized Nyström preconditioning currently requires an ArraySpace or PyTreeSpace with EuclideanPairing."
         )
     if not operator.properties.certifies("self_adjoint"):
         raise ValueError("Randomized Nyström setup requires certified self-adjointness.")
@@ -124,7 +123,7 @@ class RandomizedNystromDiagnostics(StrictModule):
             captured_sketch_energy_fraction
         )
         self.stabilization = jnp.asarray(stabilization)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.requested_rank = int(requested_rank)
         self.sketch_size = int(sketch_size)
         self.setup_matvec_count = int(sketch_size)

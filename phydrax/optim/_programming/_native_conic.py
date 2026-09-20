@@ -8,6 +8,8 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from phydrax._strict import StrictModule
+
 from ..._bounds import Bounds
 from ._barrier import cone_barrier_oracle, ConeBarrierOracle
 from ._clarabel import _audit_result
@@ -23,7 +25,7 @@ from ._problem import (
 from ._types import ConvexWarmStart
 
 
-class _NativeConicState(eqx.Module):
+class _NativeConicState(StrictModule):
     primal: Array
     dual: Array
     active: Array
@@ -89,11 +91,11 @@ def _augment_dense_bounds(program):
         program.cone.cones if isinstance(program.cone, ProductCone) else (program.cone,)
     )
     if fixed.size:
-        blocks = (*blocks, ZeroCone(int(fixed.size)))
+        blocks = (*blocks, ZeroCone(fixed.size))
     if lower.size:
-        blocks = (*blocks, NonnegativeCone(int(lower.size)))
+        blocks = (*blocks, NonnegativeCone(lower.size))
     if upper.size:
-        blocks = (*blocks, NonnegativeCone(int(upper.size)))
+        blocks = (*blocks, NonnegativeCone(upper.size))
     augmented = ConicProgram(
         program.quadratic,
         program.linear,
@@ -193,7 +195,7 @@ def solve_native_conic_program(
     state = _NativeConicState(
         primal,
         dual,
-        jnp.ones(program.batch_shape, dtype=bool),
+        jnp.ones(program.batch_shape, dtype=jnp.bool_),
         jnp.zeros(program.batch_shape, dtype=jnp.int32),
     )
     tolerance = policy.termination.absolute

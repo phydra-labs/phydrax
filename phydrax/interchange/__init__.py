@@ -4,6 +4,8 @@
 
 """Generic external-representation interchange contracts."""
 
+from importlib import import_module
+
 from .. import _external_runtime as external_runtime
 from .._external_resource import (
     account_bounded_resource,
@@ -14,7 +16,6 @@ from .._external_resource import (
     ResourceManifest,
     ResourceReadError,
 )
-from .._external_runtime import *  # noqa: F403
 from .._external_runtime import __all__ as _external_runtime_all
 from . import (
     dafoam,
@@ -161,10 +162,25 @@ from ._waveform_formats import (
 from ._well_formats import QualifiedWellLog, read_las_curve, WellFormatDependencyError
 
 
+def __getattr__(name: str):
+    if name == "hep":
+        value = import_module(".hep", __name__)
+    elif name in _external_runtime_all:
+        value = external_runtime.__dict__[name]
+    else:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | {"hep"} | set(_external_runtime_all))
+
+
 __all__ = [
     "dafoam",
     "geant4_detector_design",
-    "hep",  # noqa: F405
+    "hep",
     "hfss_design",
     "xfoil",
     "external_runtime",

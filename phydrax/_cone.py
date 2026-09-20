@@ -35,7 +35,7 @@ class AbstractConvexCone(StrictModule):
 
     def _validate(self, value: Any, /) -> Array:
         array = jnp.asarray(value)
-        if array.ndim < 1 or int(array.shape[-1]) != self.dimension:
+        if array.ndim < 1 or array.shape[-1] != self.dimension:
             raise ValueError(
                 f"Cone value must end in shape ({self.dimension},); got {array.shape}."
             )

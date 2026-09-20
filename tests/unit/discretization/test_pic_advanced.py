@@ -144,7 +144,7 @@ def test_reduced_cic_nonperiodic_boundaries_conserve_macrocharge():
         ).prepare(jnp.stack((jnp.zeros((dimension,)), jnp.ones((dimension,)))))
         transfer = phx.discretization.pic.ReducedPICTransferPlan(grid)
         deposited = transfer.deposit(
-            positions, macrocharge, jnp.ones_like(macrocharge, dtype=bool)
+            positions, macrocharge, jnp.ones_like(macrocharge, dtype="bool")
         )
 
         np.testing.assert_allclose(
@@ -243,7 +243,7 @@ def test_simplicial_locator_and_dependent_ids_track_deformed_coordinates():
         maximum_charge_number=1,
         initial_charge_number=1,
     )
-    boundary = jnp.ones((3,), dtype=bool)
+    boundary = jnp.ones((3,), dtype="bool")
     electrostatic_plan = phx.discretization.pic.UnstructuredElectrostaticPICPlan(
         locator, charge_model, boundary
     )

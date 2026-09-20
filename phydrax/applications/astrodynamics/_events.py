@@ -316,8 +316,8 @@ class PlaneGuard(StrictModule):
         offset: ArrayLike | tuple[float, float, float] = (0.0, 0.0, 0.0),
         /,
     ):
-        normal_host = np.asarray(normal, dtype=float)
-        offset_host = np.asarray(offset, dtype=float)
+        normal_host = np.asarray(normal, dtype=np.float64)
+        offset_host = np.asarray(offset, dtype=np.float64)
         if normal_host.shape != (3,) or offset_host.shape != (3,):
             raise ValueError("Plane normal and offset must have shape (3,).")
         norm = float(np.sqrt(np.sum(normal_host * normal_host)))

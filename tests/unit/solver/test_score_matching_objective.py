@@ -31,7 +31,7 @@ class _MatrixScore(eqx.Module):
 def _trajectory(*, dimension=3, paths=512, times=2, seed=0, valid=None):
     states = jr.normal(jr.key(seed), (paths, times, dimension))
     if valid is None:
-        valid = jnp.ones((paths, times), dtype=bool)
+        valid = jnp.ones((paths, times), dtype="bool")
     return phx.stochastic.StochasticTrajectory(
         jnp.linspace(0.0, 1.0, times),
         states,

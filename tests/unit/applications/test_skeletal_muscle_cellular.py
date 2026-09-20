@@ -180,12 +180,16 @@ def test_source_initial_rhs_and_current_reference_values():
 def test_opencor_source_trajectory_current_calcium_and_tension_agreement():
     model = ShortenFastTwitchModel()
     grid = np.linspace(0.0, 1.0, 11)
-    trajectory = ShortenIntegrationPlan(
-        model,
-        grid,
-        relative_tolerance=2.0e-8,
-        absolute_tolerance=2.0e-10,
-    ).prepare().integrate()
+    trajectory = (
+        ShortenIntegrationPlan(
+            model,
+            grid,
+            relative_tolerance=2.0e-8,
+            absolute_tolerance=2.0e-10,
+        )
+        .prepare()
+        .integrate()
+    )
 
     assert bool(jnp.all(trajectory.successful))
     for name, reference in _OPEN_COR_FAST_TRACE.items():
@@ -193,9 +197,9 @@ def test_opencor_source_trajectory_current_calcium_and_tension_agreement():
         np.testing.assert_allclose(observed, reference, rtol=2e-4, atol=2e-5)
 
     final = model.evaluate(grid[-1], trajectory.states[-1])
-    assert final.tension_driver_uM == trajectory.states[
-        -1, model.state_layout.index("A_2")
-    ]
+    assert (
+        final.tension_driver_uM == trajectory.states[-1, model.state_layout.index("A_2")]
+    )
     assert final.force_bearing_crossbridge_uM == final.tension_driver_uM
     assert final.cytosolic_calcium_uM.shape == (2,)
 
@@ -226,19 +230,13 @@ def test_exact_gates_semigroup_and_stiffness_evidence():
     np.testing.assert_array_equal(full[18:], state[18:])
 
     kinetics = model.evaluate(0.75, state, stimulus_current_uA_per_cm2=0.0)
-    fastest_source_time_ms = 1.0 / model.parameters[
-        model.parameter_layout.index("k_Lm")
-    ]
-    stiffness_ratio = (
-        jnp.max(kinetics.gate_time_constant_ms) / fastest_source_time_ms
-    )
+    fastest_source_time_ms = 1.0 / model.parameters[model.parameter_layout.index("k_Lm")]
+    stiffness_ratio = jnp.max(kinetics.gate_time_constant_ms) / fastest_source_time_ms
     assert float(stiffness_ratio) > 1.0e6
 
 
 def test_failed_step_trajectory_pairs_rolled_back_time_and_values():
-    prepared = ShortenIntegrationPlan(
-        ShortenFastTwitchModel(), [0.0, 0.5]
-    ).prepare()
+    prepared = ShortenIntegrationPlan(ShortenFastTwitchModel(), [0.0, 0.5]).prepare()
     initial = prepared.initialize()
     misaligned = ShortenCellState(0.1, initial.values)
     trajectory = prepared.integrate(misaligned)
@@ -303,7 +301,8 @@ def test_rhs_is_jittable_vectorized_and_forward_differentiable():
     assert primal.shape == tangent.shape == (56,)
     assert bool(jnp.all(jnp.isfinite(tangent)))
     removable_gate_singularities = (
-        state.at[model.state_layout.index("vS")].set(-46.0)
+        state.at[model.state_layout.index("vS")]
+        .set(-46.0)
         .at[model.state_layout.index("vT")]
         .set(-40.0)
     )
@@ -313,14 +312,14 @@ def test_rhs_is_jittable_vectorized_and_forward_differentiable():
         (direction,),
     )
     zero_voltage = (
-        state.at[model.state_layout.index("vS")].set(0.0)
+        state.at[model.state_layout.index("vS")]
+        .set(0.0)
         .at[model.state_layout.index("vT")]
         .set(0.0)
     )
     zero_voltage_rhs = model.rhs(0.75, zero_voltage)
     assert bool(jnp.all(jnp.isfinite(singular_tangent)))
     assert bool(jnp.all(jnp.isfinite(zero_voltage_rhs)))
-
 
     parameter_direction = jnp.zeros_like(model.parameters).at[39].set(1.0e-4)
     tangent_model = eqx.tree_at(

@@ -29,7 +29,7 @@ def _finite_array(value: ArrayLike, name: str, /) -> np.ndarray:
     if np.issubdtype(array.dtype, np.complexfloating):
         raise TypeError(f"{name} must be real-valued.")
     if not np.issubdtype(array.dtype, np.floating):
-        array = array.astype(float)
+        array = array.astype("float64")
     if not np.all(np.isfinite(array)):
         raise ValueError(f"{name} must contain only finite values.")
     return array
@@ -250,8 +250,7 @@ class RigidInertialParameters(StrictModule, NonTrainableState):
         central_eigenvalues = _symmetric_eigenvalues(central_second_moment)
         if np.any(inertia_eigenvalues <= 0.0) or np.any(central_eigenvalues <= 0.0):
             raise ValueError(
-                "inertia_com must be SPD and obey strict principal-moment "
-                "triangle inequalities."
+                "inertia_com must be SPD and obey strict principal-moment triangle inequalities."
             )
         outer_offsets = offsets[:, :, None] * offsets[:, None, :]
         squared_offsets = np.sum(offsets * offsets, axis=-1)
@@ -356,7 +355,7 @@ class RigidInertialEvaluation(StrictModule, NonTrainableState):
         inertia_body = np.asarray(parameters.inertia_body_origin)
         pseudo = np.asarray(parameters.pseudo_inertia_body_origin)
         count = masses.size
-        saturation = np.asarray(coordinate_saturation_mask, dtype=bool)
+        saturation = np.asarray(coordinate_saturation_mask, dtype=np.bool_)
         if saturation.shape != (count,):
             raise ValueError("coordinate_saturation_mask must have body shape.")
         identity = np.eye(_SPATIAL_DIMENSION, dtype=inertia_com.dtype)

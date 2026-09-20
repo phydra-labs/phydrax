@@ -62,7 +62,7 @@ class ContactRouteState(StrictModule, NonTrainableState):
 
     @property
     def capacity(self) -> int:
-        return int(self.valid.size)
+        return self.valid.size
 
     @classmethod
     def empty(
@@ -87,7 +87,7 @@ class ContactRouteState(StrictModule, NonTrainableState):
             raise ValueError("closure_id must be nonempty.")
         return cls(
             jnp.zeros((count,), dtype=jnp.int64),
-            jnp.zeros((count,), dtype=bool),
+            jnp.zeros((count,), dtype=jnp.bool_),
             jnp.full((count,), int(defaults_.mode), dtype=jnp.int32),
             jnp.zeros((count, tangent), dtype=dtype),
             jnp.zeros((count,), dtype=dtype),
@@ -124,7 +124,7 @@ def flatten_contact_routes(epoch: ContactKinematicsEpoch, /) -> tuple[Array, Arr
     if not epoch.batches:
         return (
             jnp.empty((0,), dtype=jnp.int64),
-            jnp.empty((0,), dtype=bool),
+            jnp.empty((0,), dtype=jnp.bool_),
         )
     return (
         jnp.concatenate(tuple(batch.route_keys for batch in epoch.batches)),
@@ -145,7 +145,7 @@ def remap_contact_route_state(
     if not isinstance(defaults_, ContactRouteStateDefaults):
         raise TypeError("defaults must be ContactRouteStateDefaults or None.")
     keys, valid = flatten_contact_routes(epoch)
-    capacity = int(keys.size)
+    capacity = keys.size
     dtype = previous.accumulated_slip.dtype
     if previous.capacity == 0:
         candidate = ContactRouteState(
@@ -192,7 +192,7 @@ def remap_contact_route_state(
         (keys[:, None] == keys[None, :])
         & valid[:, None]
         & valid[None, :]
-        & ~jnp.eye(capacity, dtype=bool),
+        & ~jnp.eye(capacity, dtype=jnp.bool_),
         axis=1,
     )
     duplicate_old_match = jnp.sum(equality, axis=1) > 1

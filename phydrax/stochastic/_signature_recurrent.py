@@ -84,7 +84,7 @@ class SignatureRecurrentCell(AbstractRecurrentOutputCell):
                 state_dtype,
             ),
             previous_point=jnp.zeros(case_shape + (self.dimension,), dtype=state_dtype),
-            has_previous=jnp.zeros(case_shape, dtype=bool),
+            has_previous=jnp.zeros(case_shape, dtype=jnp.bool_),
         )
 
     def step(

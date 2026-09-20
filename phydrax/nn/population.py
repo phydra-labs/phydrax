@@ -61,7 +61,7 @@ def lif_rate_response(
     safe_excess = jnp.where(firing, excess, 1.0)
     span = neuron.threshold_mV - neuron.reset_mV
     ratio = neuron.leak_conductance_uS * span / safe_excess
-    small = ratio < jnp.sqrt(jnp.finfo(jnp.result_type(ratio, float)).eps)
+    small = ratio < jnp.sqrt(jnp.finfo(jnp.result_type(ratio, jnp.float64)).eps)
     safe_g = jnp.where(neuron.leak_conductance_uS > 0.0, neuron.leak_conductance_uS, 1.0)
     regular = neuron.capacitance_nF / safe_g * jnp.log1p(ratio)
     small_ratio = jnp.where(small, ratio, 0.0)
@@ -76,7 +76,7 @@ def _host_vector(value: ArrayLike, size: int, name: str, /) -> np.ndarray:
     raw = np.asarray(value)
     if np.iscomplexobj(raw):
         raise TypeError(f"{name} must be real-valued.")
-    result = np.broadcast_to(raw, (size,)).astype(float)
+    result = np.broadcast_to(raw, (size,)).astype("float64")
     if not np.all(np.isfinite(result)):
         raise ValueError(f"{name} must be finite.")
     return result
@@ -136,10 +136,10 @@ class LIFPopulation(StrictModule, NonTrainableState):
         raw = np.asarray(encoders)
         if np.iscomplexobj(raw):
             raise TypeError("encoders must be real-valued.")
-        vectors = np.asarray(raw, dtype=float)
+        vectors = np.asarray(raw, dtype=np.float64)
         if vectors.ndim != 2 or vectors.shape[1] != domain.spatial_dim:
             raise ValueError("encoders must have shape (neurons, domain.spatial_dim).")
-        count = int(vectors.shape[0])
+        count = vectors.shape[0]
         if count < 1 or not np.all(np.isfinite(vectors)):
             raise ValueError("encoders must contain at least one finite neuron.")
         lengths = np.sqrt(np.sum(vectors * vectors, axis=-1))
@@ -158,7 +158,7 @@ class LIFPopulation(StrictModule, NonTrainableState):
 
     @property
     def neuron_count(self) -> int:
-        return int(self.encoders.shape[0])
+        return self.encoders.shape[0]
 
     def currents(self, points: ArrayLike, /) -> Array:
         """Return inward injected current, preserving arbitrary leading axes."""
@@ -297,14 +297,16 @@ def _sample_measure(
     *values: Array,
 ) -> tuple[Array, Array, Array]:
     requested = (
-        jnp.ones((count,), dtype=bool) if mask is None else jnp.asarray(mask, dtype=bool)
+        jnp.ones((count,), dtype=jnp.bool_)
+        if mask is None
+        else jnp.asarray(mask, dtype=jnp.bool_)
     )
     raw = jnp.ones((count,)) if weights is None else jnp.asarray(weights)
     if requested.shape != (count,) or raw.shape != (count,):
         raise ValueError("mask and weights must have one entry per sample.")
     if jnp.iscomplexobj(raw):
         raise TypeError("Sample weights must be real-valued.")
-    raw = raw.astype(jnp.result_type(raw, float))
+    raw = raw.astype(jnp.result_type(raw, jnp.float64))
     valid = requested & jnp.isfinite(raw) & (raw > 0.0)
     for value in values:
         valid = valid & jnp.all(jnp.isfinite(value.reshape((count, -1))), axis=-1)
@@ -339,7 +341,7 @@ def _assess(
 ) -> PopulationAssessment:
     if prediction.shape != target.shape:
         raise ValueError("Prediction and target shapes must agree.")
-    count = int(prediction.shape[0])
+    count = prediction.shape[0]
     valid_rows, normalized, weight_sum = _sample_measure(
         count, mask, weights, prediction, target
     )
@@ -442,9 +444,9 @@ def fit_population_decoder(
     target_values = _targets(points, target)
     rates = population.rates(points)
     active = (
-        jnp.ones((population.neuron_count,), dtype=bool)
+        jnp.ones((population.neuron_count,), dtype=jnp.bool_)
         if neuron_mask is None
-        else jnp.asarray(neuron_mask, dtype=bool)
+        else jnp.asarray(neuron_mask, dtype=jnp.bool_)
     )
     if active.shape != (population.neuron_count,):
         raise ValueError("neuron_mask must have one entry per neuron.")
@@ -540,7 +542,7 @@ def filter_population_spikes(
     counts = jnp.asarray(spike_counts)
     if jnp.iscomplexobj(counts):
         raise TypeError("spike_counts must be real-valued.")
-    counts = counts.astype(jnp.result_type(counts, float))
+    counts = counts.astype(jnp.result_type(counts, jnp.float64))
     if counts.ndim < 2 or counts.shape[-1] < 1:
         raise ValueError("spike_counts must have shape (time, ..., neurons).")
     counts = eqx.error_if(

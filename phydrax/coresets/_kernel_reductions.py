@@ -21,10 +21,10 @@ def _weighted_kernel_sum(
     *,
     block_size: int,
 ) -> Array:
-    left_count = int(left.shape[0])
-    right_count = int(right.shape[0])
-    left_input_shape = tuple(int(size) for size in left.shape[1:])
-    right_input_shape = tuple(int(size) for size in right.shape[1:])
+    left_count = left.shape[0]
+    right_count = right.shape[0]
+    left_input_shape = tuple(left.shape[1:])
+    right_input_shape = tuple(right.shape[1:])
     block = int(block_size)
     left_blocks = (left_count + block - 1) // block
     right_blocks = (right_count + block - 1) // block
@@ -88,8 +88,8 @@ def _weighted_kernel_mean(
     *,
     block_size: int,
 ) -> Array:
-    count = int(points.shape[0])
-    input_shape = tuple(int(size) for size in points.shape[1:])
+    count = points.shape[0]
+    input_shape = tuple(points.shape[1:])
     block = int(block_size)
     blocks = (count + block - 1) // block
     padding = blocks * block - count

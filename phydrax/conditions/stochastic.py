@@ -111,8 +111,7 @@ def _validate_coefficients(
         raise ValueError("interpretation must be 'ito' or 'stratonovich'.")
     if interpretation == "stratonovich" and diffusion is None:
         raise ValueError(
-            "Stratonovich conditions require diffusion; covariance alone cannot "
-            "determine the drift correction."
+            "Stratonovich conditions require diffusion; covariance alone cannot determine the drift correction."
         )
 
 

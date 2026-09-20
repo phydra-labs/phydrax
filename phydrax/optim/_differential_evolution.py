@@ -58,7 +58,7 @@ class DifferentialEvolutionContinuous(StrictModule):
         if np.any(lower_ >= upper_):
             raise ValueError("Every continuous lower bound must be smaller than upper.")
         self.lower, self.upper = jnp.asarray(lower_), jnp.asarray(upper_)
-        self.shape, self.size = lower_.shape, int(lower_.size)
+        self.shape, self.size = lower_.shape, lower_.size
 
 
 class DifferentialEvolutionInteger(StrictModule):
@@ -76,7 +76,7 @@ class DifferentialEvolutionInteger(StrictModule):
         if np.any(lower_ > upper_):
             raise ValueError("Every integer lower bound must not exceed its upper bound.")
         self.lower, self.upper = jnp.asarray(lower_), jnp.asarray(upper_)
-        self.shape, self.size = lower_.shape, int(lower_.size)
+        self.shape, self.size = lower_.shape, lower_.size
 
 
 class DifferentialEvolutionCategorical(StrictModule):
@@ -358,7 +358,7 @@ def _select_union(vectors, objectives, valid, capacity):
 def _evaluate_population(objective, validity, space, vectors, search):
     decoded = space.decode(vectors)
     if validity is None:
-        valid = jnp.ones((vectors.shape[0],), dtype=bool)
+        valid = jnp.ones((vectors.shape[0],), dtype=jnp.bool_)
     else:
         valid = jax.vmap(validity)(decoded)
     if search.validity_mode == "guarded":
@@ -586,7 +586,7 @@ def search_differential_evolution(
             dimension=space.dimension,
             key=design_key,
         ),
-        dtype=float,
+        dtype=jnp.float64,
     )
     if initial is not None:
         initial_ = jnp.asarray(initial, dtype=population.dtype)

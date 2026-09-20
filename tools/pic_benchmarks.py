@@ -36,7 +36,9 @@ class PICBenchmarkReport:
 
 def _case(count, particle_count):
     grid = phx.discretization.TensorGridPlan(
-        tuple(phx.discretization.UniformCellAxisSpec(count, periodic=True) for _ in range(3)),
+        tuple(
+            phx.discretization.UniformCellAxisSpec(count, periodic=True) for _ in range(3)
+        ),
         axis_names=("x", "y", "z"),
     ).prepare(jnp.asarray([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]]))
     bridge = phx.discretization.StructuredCochainBridge(grid)
@@ -46,7 +48,9 @@ def _case(count, particle_count):
     charged = phx.discretization.ChargedParticlePlan(
         -jnp.ones((particle_count,)), "benchmark"
     ).prepare(support)
-    transfer = phx.discretization.pic.PICParticleCochainTransferPlan(bridge).prepare(charged)
+    transfer = phx.discretization.pic.PICParticleCochainTransferPlan(bridge).prepare(
+        charged
+    )
     current = phx.discretization.pic.ChargeConservingCurrentPlan(transfer)
     key = jax.random.key(17)
     position = jax.random.uniform(key, (particle_count, 3), minval=0.1, maxval=0.9)

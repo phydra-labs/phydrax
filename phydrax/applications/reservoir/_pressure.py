@@ -47,8 +47,8 @@ class ReservoirPressureSystem:
         *,
         tolerance: float = 1e-10,
     ) -> ReservoirPressureSystem:
-        storage = np.asarray(storage_m3_pa, dtype=float)
-        transmissibility = np.asarray(transmissibility_m3_pa_s, dtype=float)
+        storage = np.asarray(storage_m3_pa, dtype=np.float64)
+        transmissibility = np.asarray(transmissibility_m3_pa_s, dtype=np.float64)
         if storage.ndim != 1 or storage.size == 0 or np.any(storage <= 0):
             raise ValueError("Reservoir storage coefficients must be a positive vector.")
         if transmissibility.shape != (storage.size, storage.size):

@@ -283,8 +283,7 @@ class PreparedUnstructuredAMRRuntime(StrictModule, NonTrainableState):
             fine_event_policy == "accepted_step"
         ):
             raise ValueError(
-                "AMR levels must both use accepted-step topology events or both "
-                "disable them."
+                "AMR levels must both use accepted-step topology events or both disable them."
             )
         policy_ = coarse_runtime.policy if policy is None else policy
         if not isinstance(policy_, FiniteVolumeStepPolicy):
@@ -302,7 +301,7 @@ class PreparedUnstructuredAMRRuntime(StrictModule, NonTrainableState):
                 "fine_runtime": fine_runtime.runtime_id,
                 "refinement_ratio": ratio,
                 "policy": policy_.policy_id,
-                "fine_stage_state_provider": "coarse-linear-accepted-trace-v1",
+                "fine_stage_state_provider": "coarse-linear-accepted-trace",
             }
         )
 
@@ -329,8 +328,7 @@ class PreparedUnstructuredAMRRuntime(StrictModule, NonTrainableState):
     def _require_accepted_step_regrids(self, source: str, /) -> None:
         if not self._accepted_step_regrids_enabled():
             raise ValueError(
-                f"{source} requires topology_event_policy='accepted_step' on "
-                "both AMR levels."
+                f"{source} requires topology_event_policy='accepted_step' on both AMR levels."
             )
 
     @staticmethod
@@ -424,8 +422,7 @@ class PreparedUnstructuredAMRRuntime(StrictModule, NonTrainableState):
             step_size = keyword_step_size
         else:
             raise TypeError(
-                "initialize_state expects coarse,time,step_size or "
-                "coarse,fine,time,step_size."
+                "initialize_state expects coarse,time,step_size or coarse,fine,time,step_size."
             )
         if keyword_time is not None and len(values) > 0:
             raise TypeError("time was supplied both positionally and by keyword.")
@@ -780,7 +777,7 @@ class PreparedUnstructuredAMRRuntime(StrictModule, NonTrainableState):
                 AcceptedConservationFluxIntegralBlock(
                     integral,
                     reference.owner_cells,
-                    reference.neighbour_cells,
+                    reference.neighbor_cells,
                     reference.active_mask,
                     reference.block_id,
                     reference.block_kind,
@@ -857,12 +854,12 @@ class PreparedUnstructuredAMRRuntime(StrictModule, NonTrainableState):
             if route_ids is not None and block.route_id not in route_ids:
                 continue
             owner = block.owner_cells
-            neighbour = block.neighbour_cells
-            safe_neighbour = jnp.maximum(neighbour, 0)
+            neighbor = block.neighbor_cells
+            safe_neighbor = jnp.maximum(neighbor, 0)
             crosses = (
                 block.active_mask
-                & (neighbour >= 0)
-                & (endpoint_mask[owner] != endpoint_mask[safe_neighbour])
+                & (neighbor >= 0)
+                & (endpoint_mask[owner] != endpoint_mask[safe_neighbor])
             )
             values = jnp.where(
                 crosses.reshape(crosses.shape + (1,) * (block.flux_integral.ndim - 1)),
@@ -870,9 +867,9 @@ class PreparedUnstructuredAMRRuntime(StrictModule, NonTrainableState):
                 jnp.zeros_like(block.flux_integral),
             )
             scattered = scattered.at[owner].add(-values)
-            scattered = scattered.at[safe_neighbour].add(
+            scattered = scattered.at[safe_neighbor].add(
                 jnp.where(
-                    (neighbour >= 0).reshape(neighbour.shape + (1,) * (values.ndim - 1)),
+                    (neighbor >= 0).reshape(neighbor.shape + (1,) * (values.ndim - 1)),
                     values,
                     jnp.zeros_like(values),
                 )

@@ -276,8 +276,8 @@ def _determinant(device, energy):
 def _continuum_bands(device):
     bands = sorted(
         (
-            tuple(np.asarray(device.left.band(), dtype=float)),
-            tuple(np.asarray(device.right.band(), dtype=float)),
+            tuple(np.asarray(device.left.band(), dtype=np.float64)),
+            tuple(np.asarray(device.right.band(), dtype=np.float64)),
         )
     )
     if bands[0][1] >= bands[1][0]:

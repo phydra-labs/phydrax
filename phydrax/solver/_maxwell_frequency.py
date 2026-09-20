@@ -346,7 +346,7 @@ class FrequencyMaxwellOperator(StrictModule):
     def materialize(self, /, *, maximum_dofs: int = 4096) -> Array:
         if self.size > int(maximum_dofs):
             raise ValueError("Frequency Maxwell materialization exceeds maximum_dofs.")
-        basis = jnp.eye(self.size, dtype=complex)
+        basis = jnp.eye(self.size, dtype=jnp.complex128)
         return jax.vmap(self.mv, in_axes=1, out_axes=1)(basis)
 
     def eigensystem(

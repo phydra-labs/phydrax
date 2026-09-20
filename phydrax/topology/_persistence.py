@@ -171,13 +171,13 @@ class PersistencePairing(StrictModule, NonTrainableState):
         self.death_global_indices = jnp.asarray(pair_arrays[4], dtype=jnp.int32)
         self.birth_entity_ids = jnp.asarray(pair_arrays[5], dtype=jnp.int64)
         self.death_entity_ids = jnp.asarray(pair_arrays[6], dtype=jnp.int64)
-        self.has_finite_death = jnp.asarray(pair_arrays[7], dtype=bool)
+        self.has_finite_death = jnp.asarray(pair_arrays[7], dtype=jnp.bool_)
         self.order_degrees = jnp.asarray(order_arrays[0], dtype=jnp.int32)
         self.order_ambient_indices = jnp.asarray(order_arrays[1], dtype=jnp.int32)
         self.order_global_indices = jnp.asarray(order_arrays[2], dtype=jnp.int32)
         self.reference_canonical_order_values = jnp.asarray(order_arrays[3])
         self.representatives = representatives
-        self.pair_count = int(pair_arrays[0].size)
+        self.pair_count = pair_arrays[0].size
         self.source_id = str(source_id)
         self.topology_id = str(topology_id)
         self.layout_id = str(layout_id)
@@ -245,7 +245,7 @@ class PersistenceResult(StrictModule, NonTrainableState):
         pairing = self.pairing
         birth_global = np.asarray(pairing.birth_global_indices, dtype=np.int32)
         death_global = np.asarray(pairing.death_global_indices, dtype=np.int32)
-        finite = np.asarray(pairing.has_finite_death, dtype=bool)
+        finite = np.asarray(pairing.has_finite_death, dtype=np.bool_)
         compact = np.asarray(self.compact_values)
         canonical = np.asarray(self.canonical_compact_values)
         births = compact[birth_global]
@@ -359,7 +359,7 @@ class FrozenPersistencePairing(StrictModule, NonTrainableState):
             if (
                 value.ndim == 0
                 or value.shape[:-1] != batch_shape
-                or int(value.shape[-1]) != int(self.layout.masks[degree].shape[0])
+                or value.shape[-1] != self.layout.masks[degree].shape[0]
             ):
                 raise ValueError("Dynamic filtration values do not match the topology.")
             compact_parts.append(value[..., compact])
@@ -635,7 +635,7 @@ def compute_persistence(
         death_global_indices=np.asarray([value[4] for value in records], dtype=np.int32),
         birth_entity_ids=np.asarray([value[5] for value in records], dtype=np.int64),
         death_entity_ids=np.asarray([value[6] for value in records], dtype=np.int64),
-        has_finite_death=np.asarray([value[7] for value in records], dtype=bool),
+        has_finite_death=np.asarray([value[7] for value in records], dtype=np.bool_),
         order_degrees=order_degrees,
         order_ambient_indices=order_ambient,
         order_global_indices=order_global,

@@ -47,7 +47,7 @@ def _table(value: Mapping[str, float], name: str) -> tuple[tuple[str, float], ..
 
 @dataclass(frozen=True, slots=True, init=False)
 class AssociationConvention:
-    """Dimensionless standard-volume factor for labelled strand copies.
+    """Dimensionless standard-volume factor for labeled strand copies.
 
     Each independent association adds log(c_standard N_A V) to G/(RT).
     Standard-state mode sets that factor to one and makes no finite-volume or
@@ -102,7 +102,7 @@ class AssociationConvention:
         )
 
 
-@dataclass(frozen=True, slots=True, init=False)
+@dataclass(frozen=True, slots=True)
 class SecondaryEnergyModel:
     """Source-pinned additive G/(RT) at one explicitly declared temperature.
 
@@ -224,26 +224,26 @@ class SecondaryEnergyModel:
             raise ValueError(
                 "Multibranch initiation/branch/unpaired and association terms must be finite."
             )
-        instance = object.__new__(cls)
-        for name in ("profile", "chemistry", "pairing_rule", "minimum_hairpin_unpaired"):
-            object.__setattr__(instance, name, data[name])
-        for name, table in tables.items():
-            object.__setattr__(instance, name, table)
-        object.__setattr__(instance, "temperature_kelvin", temperature)
-        object.__setattr__(instance, "multibranch", multibranch)
-        object.__setattr__(instance, "association_initiation", initiation)
-        object.__setattr__(instance, "manifest", manifest)
-        object.__setattr__(
-            instance, "requested_use", tuple(sorted(requested_use.items()))
-        )
-        object.__setattr__(
-            instance,
-            "model_id",
-            canonical_fingerprint(
-                (manifest.manifest_id, temperature, tuple(sorted(requested_use.items())))
+        requested = tuple(sorted(requested_use.items()))
+        return cls(
+            profile=data["profile"],
+            chemistry=data["chemistry"],
+            pairing_rule=data["pairing_rule"],
+            temperature_kelvin=temperature,
+            minimum_hairpin_unpaired=minimum,
+            pair_energies=tables["pair_energies"],
+            stack_energies=tables["stack_energies"],
+            hairpin_energies=tables["hairpin_energies"],
+            bulge_energies=tables["bulge_energies"],
+            internal_energies=tables["internal_energies"],
+            multibranch=multibranch,
+            association_initiation=initiation,
+            manifest=manifest,
+            requested_use=requested,
+            model_id=canonical_fingerprint(
+                (manifest.manifest_id, temperature, requested)
             ),
         )
-        return instance
 
     def require_calibrated_reference(self) -> tuple[tuple[str, float], ...]:
         """Require quantified source uncertainty before a calibration claim."""

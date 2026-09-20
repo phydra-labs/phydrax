@@ -164,7 +164,7 @@ class PreparedElectronicModel:
 
     def jump_problem(self, initial_state: ArrayLike) -> QuantumJumpProblem:
         """Host-prepare actual native quantum jumps, retaining channel identity."""
-        state = np.asarray(initial_state, dtype=complex)
+        state = np.asarray(initial_state, dtype=np.complex128)
         if (
             state.shape != (self.dimension,)
             or not np.all(np.isfinite(state))
@@ -192,7 +192,9 @@ class PreparedElectronicModel:
         """Create a normalized state by stable site key; () selects declared vacuum."""
         if key not in self.basis_keys:
             raise ValueError("Initial electronic basis key is outside prepared support.")
-        return jax.nn.one_hot(self.basis_keys.index(key), self.dimension, dtype=complex)
+        return jax.nn.one_hot(
+            self.basis_keys.index(key), self.dimension, dtype=jnp.complex128
+        )
 
 
 def _parameter_arrays(
@@ -211,14 +213,14 @@ def _parameter_arrays(
         float(conversion_factor(parameters.energy_unit, units.scale.energy_unit))
         / units.reduced_planck_constant
     )
-    hamiltonian = np.zeros((size, size), dtype=complex)
+    hamiltonian = np.zeros((size, size), dtype=np.complex128)
     for key, value in zip(parameters.basis_keys, parameters.site_energies, strict=True):
         hamiltonian[indices[key], indices[key]] = value * energy_factor
     for row, column, value in parameters.couplings:
         value = complex(value) * energy_factor
         hamiltonian[indices[row], indices[column]] = value
         hamiltonian[indices[column], indices[row]] = value.conjugate()
-    jumps = np.zeros((len(parameters.channels), size, size), dtype=complex)
+    jumps = np.zeros((len(parameters.channels), size, size), dtype=np.complex128)
     rates = np.zeros(len(parameters.channels))
     for index, channel in enumerate(parameters.channels):
         source = indices[channel.source]
@@ -253,13 +255,13 @@ def _prepared(
     include_vacuum,
     parents=(),
 ) -> PreparedElectronicModel:
-    active = np.ones(len(rates), dtype=bool)
+    active = np.ones(len(rates), dtype=np.bool_)
     if not len(rates):
         # The native finite-channel and trajectory ABIs have positive capacity.
         # This explicitly inactive slot contributes no physical channel.
-        jumps = np.zeros((1, len(keys), len(keys)), dtype=complex)
+        jumps = np.zeros((1, len(keys), len(keys)), dtype=np.complex128)
         rates = np.zeros(1)
-        active = np.zeros(1, dtype=bool)
+        active = np.zeros(1, dtype=np.bool_)
         channel_ids = ("inactive-capacity",)
     if any(
         not np.all(np.isfinite(value)) for value in (hamiltonian, jumps, rates)
@@ -422,7 +424,8 @@ def prepare_electron_hole(
         np.asarray(electron.hamiltonian), np.eye(nh)
     ) + np.kron(np.eye(ne), np.asarray(hole.hamiltonian) * hole_factor)
     lifted = np.zeros(
-        (len(e_active) + len(h_active), len(hamiltonian), len(hamiltonian)), dtype=complex
+        (len(e_active) + len(h_active), len(hamiltonian), len(hamiltonian)),
+        dtype=np.complex128,
     )
     lifted_rates = []
     channel_ids = []

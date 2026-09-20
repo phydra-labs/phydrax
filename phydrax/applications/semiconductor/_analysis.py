@@ -243,7 +243,7 @@ def semiconductor_small_signal(
     _require_dynamic_charge_storage(prepared)
     if not np.isfinite(conservation_tolerance) or conservation_tolerance < 0:
         raise ValueError("conservation_tolerance must be finite and nonnegative.")
-    frequencies = jnp.asarray(angular_frequencies, dtype=float)
+    frequencies = jnp.asarray(angular_frequencies, dtype=jnp.float64)
     host = np.asarray(frequencies)
     if host.ndim != 1 or not host.size or np.any(~np.isfinite(host)) or np.any(host < 0):
         raise ValueError(
@@ -375,7 +375,11 @@ def semiconductor_sensitivity(
     """
     if (parameters is None) != (parameterize is None):
         raise ValueError("parameters and parameterize must be supplied together.")
-    theta = point.voltages if parameters is None else jnp.asarray(parameters, dtype=float)
+    theta = (
+        point.voltages
+        if parameters is None
+        else jnp.asarray(parameters, dtype=jnp.float64)
+    )
     if theta.ndim != 1 or theta.size == 0 or bool(jnp.any(~jnp.isfinite(theta))):
         raise ValueError("parameters must be a nonempty finite vector.")
     builder = (lambda value: (prepared, value)) if parameterize is None else parameterize
@@ -630,7 +634,7 @@ def _consistent_rate(prepared, u, volts, voltage_rate, policy):
         potential=plan.potential_mask,
         electron=~(plan.semiconductor_mask & ~plan.ohmic_mask),
         hole=~(plan.semiconductor_mask & ~plan.ohmic_mask),
-    ).astype(bool)
+    ).astype("bool")
     if plan.electrothermal:
         fixed = prepared.layout.set(fixed, "lattice_energy", plan.ohmic_mask)
     if plan.carrier_energy:

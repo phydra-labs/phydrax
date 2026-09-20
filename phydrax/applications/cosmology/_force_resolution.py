@@ -76,7 +76,7 @@ class PeriodicImageForcePlan(StrictModule, NonTrainableState):
             raise ValueError("Periodic force qualification configuration is invalid.")
         integer_offsets = np.asarray(
             tuple(product(range(-shells, shells + 1), repeat=len(lengths))),
-            dtype=float,
+            dtype=np.float64,
         )
         self.box_size = lengths
         self.gravitational_constant = gravity
@@ -119,7 +119,7 @@ class PeriodicImageForcePlan(StrictModule, NonTrainableState):
         squared = jnp.sum(displacement**2, axis=-1) + self.softening**2
         zero_offset = jnp.all(self.image_offsets == 0.0, axis=-1)
         self_pair = (
-            jnp.eye(position.shape[0], dtype=bool)[:, :, None]
+            jnp.eye(position.shape[0], dtype=jnp.bool_)[:, :, None]
             & zero_offset[None, None, :]
         )
         inverse_cube = jnp.where(self_pair, 0.0, squared ** (-1.5))

@@ -43,9 +43,9 @@ class DiffuseGrayEnclosure:
         *,
         tolerance: float = 1e-10,
     ) -> DiffuseGrayEnclosure:
-        areas = np.asarray(surface_areas_m2, dtype=float)
-        emissivity_ = np.asarray(emissivity, dtype=float)
-        factors = np.asarray(view_factors, dtype=float)
+        areas = np.asarray(surface_areas_m2, dtype=np.float64)
+        emissivity_ = np.asarray(emissivity, dtype=np.float64)
+        factors = np.asarray(view_factors, dtype=np.float64)
         if areas.ndim != 1 or areas.size < 2 or np.any(areas <= 0):
             raise ValueError("Radiation enclosure areas must be a positive vector.")
         if emissivity_.shape != areas.shape or np.any(

@@ -369,8 +369,7 @@ class NeoHookeanParameters(StrictModule, NonTrainableState):
             or bool(bulk <= 0.0)
         ):
             raise ValueError(
-                "Neo-Hookean shear modulus and implied bulk modulus must be "
-                "positive finite scalars."
+                "Neo-Hookean shear modulus and implied bulk modulus must be positive finite scalars."
             )
         self.shear_modulus = shear
         self.lame_lambda = lambda_

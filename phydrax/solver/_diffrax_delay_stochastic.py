@@ -17,6 +17,8 @@ import jax.random as jr
 from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
+from phydrax._strict import StrictModule
+
 from ..stochastic._wiener import WienerRealization
 from ._delay import (
     _invalid_geometry_tangent,
@@ -73,7 +75,7 @@ from ._memory import MemoryEquationSolution
 from ._save_schedule import validate_save_times
 
 
-class _OrdinaryStochasticContract(eqx.Module):
+class _OrdinaryStochasticContract(StrictModule):
     """The ordinary-backend attributes used by its stochastic validators."""
 
     t0: Array
@@ -84,7 +86,7 @@ class _OrdinaryStochasticContract(eqx.Module):
     additive_noise: bool = eqx.field(static=True)
 
 
-class _FrozenDelayDiffusion(eqx.Module):
+class _FrozenDelayDiffusion(StrictModule):
     """Diffusion with one step's delayed observations frozen at its left endpoint."""
 
     dynamic_terms: Any
@@ -133,8 +135,7 @@ class _FrozenDelayDiffusion(eqx.Module):
             coefficient = eqx.error_if(
                 coefficient,
                 jnp.any(invalid),
-                "Geometric delay diffusion must be tangent-compatible with "
-                "state_geometry.",
+                "Geometric delay diffusion must be tangent-compatible with state_geometry.",
             )
         return self.state_adapter.pack_diffusion(
             coefficient,
@@ -143,7 +144,7 @@ class _FrozenDelayDiffusion(eqx.Module):
         )
 
 
-class _DelayDiffusionVectorField(eqx.Module):
+class _DelayDiffusionVectorField(StrictModule):
     """Combined delayed diffusion driven by the realization's single Wiener path."""
 
     context: _DelayVectorField
@@ -285,7 +286,7 @@ class _SRKMKPathConsistentDelayInterpolation(_PathConsistentDelayInterpolation):
         )
 
 
-class _PathConsistentInterpolationFactory(eqx.Module):
+class _PathConsistentInterpolationFactory(StrictModule):
     """Rebuild a Wiener path from float-encoded key bits for dense evaluation."""
 
     path_shape: Any = eqx.field(static=True)
@@ -346,7 +347,7 @@ class _PathConsistentInterpolationFactory(eqx.Module):
         )
 
 
-class _VectorizedDelayDenseInterpolation(eqx.Module):
+class _VectorizedDelayDenseInterpolation(StrictModule):
     """One accepted-history interpolation for every realization sample."""
 
     solver_states: _RetardedSolverState
@@ -372,7 +373,7 @@ class _VectorizedDelayDenseInterpolation(eqx.Module):
         state_adapter: _PreparedDiffraxStateAdapter,
         /,
     ):
-        samples = tuple(int(size) for size in sample_shape)
+        samples = tuple(sample_shape)
         sample_ndim = len(samples)
         sample_count = prod(samples)
 
@@ -407,7 +408,7 @@ class _VectorizedDelayDenseInterpolation(eqx.Module):
             jnp.zeros(problem.tangent_shape, dtype=problem.initial_state.dtype),
             problem.tangent_shape,
         )
-        self.backend_tangent_shape = tuple(int(size) for size in packed_zero.shape)
+        self.backend_tangent_shape = tuple(packed_zero.shape)
         self.state_adapter = state_adapter
 
     @eqx.filter_jit
@@ -425,7 +426,7 @@ class _VectorizedDelayDenseInterpolation(eqx.Module):
             raise TypeError("Dense delay query times must be real-valued.")
         if query.size == 0:
             raise ValueError("Dense delay query times must be non-empty.")
-        query = query.astype(float)
+        query = query.astype("float64")
         query = eqx.error_if(
             query,
             ~jnp.all(jnp.isfinite(query)),
@@ -646,8 +647,7 @@ def _validated_solver(
         and solver.interpolation_cls is not dfx.LocalLinearInterpolation
     ):
         raise ValueError(
-            "The stochastic delay solver interpolation does not satisfy the "
-            "certified Euler local-history contract."
+            "The stochastic delay solver interpolation does not satisfy the certified Euler local-history contract."
         )
     geometric = isinstance(solver, SRKMK)
     if problem.interpretation == "ito":
@@ -659,8 +659,7 @@ def _validated_solver(
     else:
         if type(solver) is not dfx.EulerHeun and not geometric:
             raise ValueError(
-                "Certified Stratonovich stochastic delay execution requires "
-                "diffrax.EulerHeun or phydrax.solver.SRKMK."
+                "Certified Stratonovich stochastic delay execution requires diffrax.EulerHeun or phydrax.solver.SRKMK."
             )
         heun = True
     contract = _validation_contract(problem)
@@ -769,7 +768,7 @@ def _native_stochastic_delay_solution(
         geometry=problem.state_geometry,
         state_adapter=state_adapter,
         backend_shape=state_adapter.backend_shape,
-        backend_tangent_shape=tuple(int(size) for size in packed_derivative.shape),
+        backend_tangent_shape=tuple(packed_derivative.shape),
         computed_history=empty_history,
     )
     diffusion_field = _DelayDiffusionVectorField(
@@ -863,8 +862,7 @@ def _solve_diffrax_delay_stochastic(
         raise ValueError("Stochastic neutral delay terms are not supported.")
     if discontinuity_depth not in (None, 1):
         raise ValueError(
-            "Fixed-step stochastic delay execution requires discontinuity_depth=1 "
-            "or None."
+            "Fixed-step stochastic delay execution requires discontinuity_depth=1 or None."
         )
 
     selected_solver = resolve_delay_solver(problem, solver)
@@ -902,8 +900,7 @@ def _solve_diffrax_delay_stochastic(
     step = eqx.error_if(
         step,
         jnp.abs(step) <= realization.tolerance,
-        "WienerRealization tolerance must be strictly smaller than the fixed "
-        "integration step.",
+        "WienerRealization tolerance must be strictly smaller than the fixed integration step.",
     )
     discontinuities = _discontinuities(
         problem,
@@ -1008,8 +1005,7 @@ def _solve_diffrax_delay_stochastic(
         native_states = eqx.error_if(
             native_states,
             jnp.any(rolling_history.overflowed),
-            "Rolling delay history exhausted history_capacity before its lag "
-            "window could be pruned.",
+            "Rolling delay history exhausted history_capacity before its lag window could be pruned.",
         )
     interpolation = None
     if dense:
@@ -1045,7 +1041,7 @@ def _solve_diffrax_delay_stochastic(
                 initial_time=problem.t0,
                 computed_history=solver_state.history,
                 state_shape=state_adapter.backend_shape,
-                derivative_shape=tuple(int(size) for size in packed_derivative.shape),
+                derivative_shape=tuple(packed_derivative.shape),
                 geometry=None,
             )
             interpolation = DelayDenseInterpolation(
@@ -1071,7 +1067,7 @@ def _solve_diffrax_delay_stochastic(
         resolved_method = selected_solver.resolved_method
     else:
         extension = "euler-heun-wiener-path" if heun else "euler-maruyama-wiener-path"
-        solver_id = f"solver:diffrax-delay-stochastic:{solver_name}:retarded-v1"
+        solver_id = f"solver:diffrax-delay-stochastic:{solver_name}:retarded"
         resolved_method = f"{solver_name}:causal-{extension}"
     stats = {
         **native.stats,
@@ -1094,7 +1090,7 @@ def _solve_diffrax_delay_stochastic(
             else None
         ),
         "discontinuity_depth": 1,
-        "num_tracked_discontinuities": int(discontinuities.size),
+        "num_tracked_discontinuities": discontinuities.size,
         "state_dependent_tracking": (
             "first-order-pathwise-untracked"
             if problem.has_state_dependent_delays

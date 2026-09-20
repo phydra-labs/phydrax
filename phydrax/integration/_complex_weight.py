@@ -58,7 +58,7 @@ class ComplexWeightMeasure(StrictModule, NonTrainableState):
         phases_host = np.asarray(phases)
         if samples_host.ndim < 1 or samples_host.shape[0] < 1:
             raise ValueError("Complex measures require a nonempty leading support axis.")
-        count = int(samples_host.shape[0])
+        count = samples_host.shape[0]
         if logs_host.shape != (count,) or phases_host.shape != (count,):
             raise ValueError(
                 "log_magnitudes and phases must match the leading sample axis."
@@ -68,9 +68,9 @@ class ComplexWeightMeasure(StrictModule, NonTrainableState):
                 "Complex weights require real log magnitudes and complex phases."
             )
         active_host = (
-            np.ones((count,), dtype=bool)
+            np.ones((count,), dtype=np.bool_)
             if mask is None
-            else np.asarray(mask, dtype=bool)
+            else np.asarray(mask, dtype=np.bool_)
         )
         if active_host.shape != (count,):
             raise ValueError("mask must match the leading sample axis.")
@@ -108,7 +108,7 @@ class ComplexWeightMeasure(StrictModule, NonTrainableState):
 
     @property
     def count(self) -> int:
-        return int(self.log_magnitudes.shape[0])
+        return self.log_magnitudes.shape[0]
 
 
 def complex_weight_measure(

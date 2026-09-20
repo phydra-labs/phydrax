@@ -22,7 +22,7 @@ class PreparedSphericalVectorOperators(StrictModule, NonTrainableState):
 
     East is ``e_phi``, north is ``-e_theta``, and positive curl points radially
     outward. The spin-one field is ``north - 1j * east``; thus ethbar gives
-    ``divergence + 1j * curl``. Components at a pole use the longitude-labelled
+    ``divergence + 1j * curl``. Components at a pole use the longitude-labeled
     limiting tangent frame, not a globally continuous east/north chart.
 
     Modal and sampled arrays use the underlying transform's trailing spatial
@@ -107,8 +107,7 @@ class PreparedSphericalVectorOperators(StrictModule, NonTrainableState):
         modal = eqx.error_if(
             modal,
             ~jnp.all(jnp.isfinite(modal)) | (defect > self._tolerance(modal)),
-            "Scalar coefficients must be finite and satisfy real-field conjugacy, "
-            "including real m=0 coefficients.",
+            "Scalar coefficients must be finite and satisfy real-field conjugacy, including real m=0 coefficients.",
         )
         return modal
 

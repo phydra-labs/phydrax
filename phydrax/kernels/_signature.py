@@ -67,8 +67,8 @@ class SignaturePDEKernel(AbstractPositiveDefiniteKernel):
         left_paths = _as_inputs(left, input_ndim=2, name="left")
         right_paths = _as_inputs(right, input_ndim=2, name="right")
         _validate_path_channels(left_paths, right_paths)
-        left_count = int(left_paths.shape[0])
-        right_count = int(right_paths.shape[0])
+        left_count = left_paths.shape[0]
+        right_count = right_paths.shape[0]
         if left_count == 0 or right_count == 0:
             return jnp.empty(
                 (left_count, right_count),
@@ -100,8 +100,8 @@ class SignaturePDEKernel(AbstractPositiveDefiniteKernel):
         return jax.vmap(self._pairwise_paths)(paths, paths)
 
     def _pairwise_paths(self, left_path: Array, right_path: Array, /) -> Array:
-        left_segment_count = int(left_path.shape[0]) - 1
-        right_segment_count = int(right_path.shape[0]) - 1
+        left_segment_count = left_path.shape[0] - 1
+        right_segment_count = right_path.shape[0] - 1
         if left_segment_count == 0 or right_segment_count == 0:
             return jnp.asarray(1.0, dtype=jnp.result_type(left_path, right_path))
 
@@ -197,10 +197,7 @@ class SignaturePDEKernel(AbstractPositiveDefiniteKernel):
 
     @property
     def kernel_id(self) -> str:
-        return (
-            f"SignaturePDEKernel[order={self.polynomial_order},"
-            f"static={self.static_kernel.kernel_id}]"
-        )
+        return f"SignaturePDEKernel[order={self.polynomial_order},static={self.static_kernel.kernel_id}]"
 
 
 def _propagation_coefficients(order: int, /, *, dtype: jnp.dtype) -> tuple[Array, Array]:

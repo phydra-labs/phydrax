@@ -89,11 +89,11 @@ class DirectTensorRealization(StrictModule, NonTrainableState):
 
     @property
     def cell_count(self) -> int:
-        return int(self.cell_gathers.shape[0])
+        return self.cell_gathers.shape[0]
 
     @property
     def local_width(self) -> int:
-        return int(self.cell_gathers.shape[1])
+        return self.cell_gathers.shape[1]
 
     def gather(self, coefficients: ArrayLike, /) -> Array:
         values = jnp.asarray(coefficients)

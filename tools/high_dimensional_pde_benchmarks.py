@@ -228,7 +228,7 @@ def linear_hjb_value(
     terminal_time: float = 1.0,
 ) -> Array:
     value = jnp.asarray(state)
-    dimension = int(value.shape[-1])
+    dimension = value.shape[-1]
     gradient_norm_squared = 1.0 / float(dimension)
     return jnp.mean(value, axis=-1) + 0.5 * gradient_norm_squared * (
         float(terminal_time) - jnp.asarray(time)
@@ -537,7 +537,7 @@ def _query_feynman_kac_record(
         control_error=control_error,
         control_standard_error=control_standard_error,
         valid_fraction=float(jnp.mean(valid)),
-        working_set_bytes=int(path_states.nbytes + path_increments.nbytes),
+        working_set_bytes=path_states.nbytes + path_increments.nbytes,
         total_wall_ms=total_ms,
         success=control_error <= 5.0 * control_standard_error + 1e-10,
     )
@@ -1244,7 +1244,7 @@ def run_high_dimensional_method_benchmarks(
     deep_splitting_iterations: int = 80,
 ) -> dict[str, Any]:
     """Exercise probabilistic, randomized, density, and optional training methods."""
-    dims = tuple(int(value) for value in dimensions)
+    dims = tuple(dimensions)
     if not dims or any(value < 2 for value in dims):
         raise ValueError("method benchmark dimensions must be at least two.")
     if int(num_samples) < 2 or int(num_probes) < 2 or int(score_samples) < 2:
@@ -1360,7 +1360,6 @@ def run_high_dimensional_method_benchmarks(
                 )
             )
     return {
-        "schema_version": 2,
         "seed": int(seed),
         "dimensions": list(dims),
         "configuration": {
@@ -1395,7 +1394,7 @@ def run_high_dimensional_reference_benchmarks(
     seed: int = 0,
 ) -> dict[str, Any]:
     """Run analytic and direct-Monte-Carlo high-dimensional reference cases."""
-    dims = tuple(int(value) for value in dimensions)
+    dims = tuple(dimensions)
     if not dims or any(value < 1 for value in dims):
         raise ValueError("dimensions must contain positive integers.")
     if int(num_samples) < 2:
@@ -1431,7 +1430,6 @@ def run_high_dimensional_reference_benchmarks(
                 )
             )
     return {
-        "schema_version": 1,
         "seed": int(seed),
         "dimensions": list(dims),
         "configuration": {

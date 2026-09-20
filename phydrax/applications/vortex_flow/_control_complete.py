@@ -92,7 +92,7 @@ class VortexTrajectoryControlPlan(StrictModule, NonTrainableState):
     ) -> VortexControlRollout:
         states, outputs, events = [initial_state], [], []
         state = initial_state
-        for step in range(int(controls.shape[0])):
+        for step in range(controls.shape[0]):
             state, output, event = self.transition(
                 time[step], state, controls[step], args
             )
@@ -114,7 +114,7 @@ class VortexTrajectoryControlPlan(StrictModule, NonTrainableState):
                 {
                     "kind": "vortex-control-rollout",
                     "control": self.control_id,
-                    "step_count": int(controls.shape[0]),
+                    "step_count": controls.shape[0],
                 }
             ),
         )
@@ -144,7 +144,7 @@ class VortexTrajectoryControlPlan(StrictModule, NonTrainableState):
             del objective_args
             rollout = self._rollout(state0, controls, time_, args)
             value = jnp.asarray(0.0, dtype=state0.dtype)
-            for step in range(int(controls.shape[0])):
+            for step in range(controls.shape[0]):
                 value = value + self.running_cost(
                     time_[step], rollout.states[step], controls[step], args
                 )

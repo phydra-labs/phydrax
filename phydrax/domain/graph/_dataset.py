@@ -126,7 +126,7 @@ def _feature_tree_size(tree: Any, /) -> int | None:
     leaves = jax.tree_util.tree_leaves(tree)
     if not leaves:
         return None
-    return int(jnp.asarray(leaves[0]).shape[0])
+    return jnp.asarray(leaves[0]).shape[0]
 
 
 class GraphDatasetDomain(JointFactor):
@@ -321,14 +321,14 @@ class GraphDatasetDomain(JointFactor):
         kind = graph_component_kind(component)
         total = 0
         for graph in self.graphs:
-            total += int(_component_indices_for_graph(graph, component, kind).shape[0])
+            total += _component_indices_for_graph(graph, component, kind).shape[0]
         return total
 
     def component_measure(self, component: Selection, /) -> Array:
         """Return the total measure assigned to a graph component."""
         if self._measure_mode == "probability":
-            return jnp.asarray(1.0, dtype=float)
-        return jnp.asarray(float(self.component_size(component)), dtype=float)
+            return jnp.asarray(1.0, dtype=jnp.float64)
+        return jnp.asarray(float(self.component_size(component)), dtype=jnp.float64)
 
     def sample_component(
         self,
@@ -398,7 +398,7 @@ class GraphDatasetDomain(JointFactor):
             local = _component_indices_for_graph(graph, component, kind)
             global_indices = local + jnp.asarray(offset, dtype=jnp.int32)
             entity_parts.append(global_indices)
-            n_local = int(local.shape[0])
+            n_local = local.shape[0]
             dataset_parts.append(
                 jnp.full(
                     (n_local,),

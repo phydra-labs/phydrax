@@ -19,7 +19,7 @@ from ...dynamics._evolution import AbstractEvolution, EVOLUTION_SUCCESS
 
 
 def _sample_shape(value, /) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if any(size <= 0 for size in shape):
         raise ValueError("sample_shape dimensions must be positive.")
     return shape
@@ -58,16 +58,15 @@ class ContinuousTransportSample(StrictModule):
         transport_id: str,
     ):
         samples = _sample_shape(sample_shape)
-        events = tuple(int(size) for size in event_shape)
+        events = tuple(event_shape)
         source = jnp.asarray(source_states)
         final = jnp.asarray(final_states, dtype=source.dtype)
         expected = samples + events
         if source.shape != expected or final.shape != expected:
             raise ValueError(
-                f"Continuous transport states must have shape {expected}; "
-                f"got {source.shape} and {final.shape}."
+                f"Continuous transport states must have shape {expected}; got {source.shape} and {final.shape}."
             )
-        validity = jnp.asarray(valid, dtype=bool)
+        validity = jnp.asarray(valid, dtype=jnp.bool_)
         statuses = jnp.asarray(status, dtype=jnp.int32)
         backend = jnp.asarray(backend_status)
         if (
@@ -142,8 +141,8 @@ class ContinuousTransport(StrictModule):
             raise ValueError(
                 "Source-law event shape must match the evolution state layout exactly."
             )
-        source = jnp.asarray(source_coordinate, dtype=float).reshape(())
-        target = jnp.asarray(target_coordinate, dtype=float).reshape(())
+        source = jnp.asarray(source_coordinate, dtype=jnp.float64).reshape(())
+        target = jnp.asarray(target_coordinate, dtype=jnp.float64).reshape(())
         if not bool(jnp.isfinite(source) & jnp.isfinite(target)):
             raise ValueError("Continuous transport coordinates must be finite.")
         if not bool(target > source):
@@ -151,7 +150,7 @@ class ContinuousTransport(StrictModule):
         resolved_id = (
             canonical_fingerprint(
                 {
-                    "kind": "continuous-transport-v1",
+                    "kind": "continuous-transport",
                     "source_law": f"{type(source_law).__module__}.{type(source_law).__name__}",
                     "event_shape": list(source_law.event_shape),
                     "evolution_id": evolution.evolution_id,

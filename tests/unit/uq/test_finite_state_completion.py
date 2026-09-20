@@ -42,7 +42,7 @@ def _observation_model(emission=EMISSION):
         return jnp.where(mask[0], exact, 0.0)
 
     return phx.stochastic.CallableObservationModel(
-        lambda state, time, context: state.astype(float),
+        lambda state, time, context: state.astype("float64"),
         log_prob,
         lambda key, state, time, sample_shape, context: jnp.broadcast_to(
             jnp.zeros((1,), dtype=jnp.int32),
@@ -118,8 +118,8 @@ def _enumerate_single_case(problem, filter_result, case_index=None):
         values = values[case_index]
         masks = masks[case_index]
         active = active[case_index]
-    values = np.asarray(values[:, 0], dtype=int)
-    masks = np.asarray(masks[:, 0], dtype=bool)
+    values = np.asarray(values[:, 0], dtype="int64")
+    masks = np.asarray(masks[:, 0], dtype="bool")
     active_steps = int(np.sum(active))
     paths = list(product(range(2), repeat=active_steps + 1))
     masses = []
@@ -173,7 +173,7 @@ def test_viterbi_ties_and_zero_probability_transitions_are_exact():
     problem = _problem(
         generator=zero_generator,
         probabilities=jnp.asarray([0.5, 0.5]),
-        observation_mask=jnp.zeros((3, 1), dtype=bool),
+        observation_mask=jnp.zeros((3, 1), dtype="bool"),
     )
     filtered = phx.uq.exact_state_space_log_likelihood(problem).backend
     smoother = phx.uq.finite_state_backward_smoother(filtered)
@@ -202,7 +202,7 @@ def test_zero_mass_pairs_mask_nonfinite_sufficient_statistics():
         generator=_generator(forward=0.0, backward=0.0),
         probabilities=jnp.asarray([0.5, 0.5]),
         step_valid=jnp.asarray([True, True, False]),
-        observation_mask=jnp.zeros((3, 1), dtype=bool),
+        observation_mask=jnp.zeros((3, 1), dtype="bool"),
     )
     filtered = phx.uq.exact_state_space_log_likelihood(problem).backend
     smoother = phx.uq.finite_state_backward_smoother(filtered)
@@ -282,11 +282,11 @@ def test_cases_padding_ids_and_sufficient_statistic_context_are_preserved():
 
     def statistic(previous_state, state, t0, t1, context):
         return {
-            "changed": (previous_state[0] != state[0]).astype(float),
+            "changed": (previous_state[0] != state[0]).astype("float64"),
             "context": jnp.stack(
                 [
-                    context.case_index.astype(float),
-                    context.step_index.astype(float),
+                    context.case_index.astype("float64"),
+                    context.step_index.astype("float64"),
                     t0,
                     t1,
                     context.transition_start_input[0],
@@ -378,9 +378,9 @@ def test_generator_semigroup_and_exact_completion_are_jittable():
             candidate,
             lambda previous, state, t0, t1, context: jnp.stack(
                 [
-                    (previous[0] != state[0]).astype(float),
+                    (previous[0] != state[0]).astype("float64"),
                     t1 - t0,
-                    context.step_index.astype(float),
+                    context.step_index.astype("float64"),
                 ]
             ),
         )

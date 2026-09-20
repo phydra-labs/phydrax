@@ -41,15 +41,11 @@ def _harmonic_rank(dimension: int, degree: int) -> int:
 
 def _harmonic_counts(dimension: int, maximum_degree: int) -> tuple[int, int, int]:
     monomials = sum(
-        math.comb(dimension + degree - 1, degree)
-        for degree in range(maximum_degree + 1)
+        math.comb(dimension + degree - 1, degree) for degree in range(maximum_degree + 1)
     )
-    rank = sum(
-        _harmonic_rank(dimension, degree) for degree in range(maximum_degree + 1)
-    )
+    rank = sum(_harmonic_rank(dimension, degree) for degree in range(maximum_degree + 1))
     entries = sum(
-        math.comb(dimension + degree - 1, degree)
-        * _harmonic_rank(dimension, degree)
+        math.comb(dimension + degree - 1, degree) * _harmonic_rank(dimension, degree)
         for degree in range(maximum_degree + 1)
     )
     return monomials, rank, entries
@@ -65,10 +61,8 @@ def _critical_construction_audit(
 ) -> tuple[float, float]:
     residuals_ = tuple(float(value) for value in residuals)
     tolerances_ = tuple(float(value) for value in tolerances)
-    labels_ = tuple(int(value) for value in labels)
-    if not residuals_ or not (
-        len(residuals_) == len(tolerances_) == len(labels_)
-    ):
+    labels_ = tuple(labels)
+    if not residuals_ or not (len(residuals_) == len(tolerances_) == len(labels_)):
         raise ValueError("Construction audits must be nonempty and aligned.")
     ratios = []
     for residual, tolerance, label in zip(
@@ -93,9 +87,7 @@ def _critical_construction_audit(
                 f"ratio={ratio:.3e}."
             )
         ratios.append(
-            0.0
-            if residual == 0.0 and tolerance == 0.0
-            else residual / tolerance
+            0.0 if residual == 0.0 and tolerance == 0.0 else residual / tolerance
         )
     critical = max(range(len(ratios)), key=ratios.__getitem__)
     return residuals_[critical], tolerances_[critical]
@@ -229,7 +221,7 @@ class HarmonicPolynomialBasis(AbstractTrefftzBasis):
         if degree_ < 0:
             raise ValueError("maximum_degree must be nonnegative.")
         normalization_ = (
-            SimilarityNormalization(np.zeros((dimension_,), dtype=float), 1.0)
+            SimilarityNormalization(np.zeros((dimension_,), dtype=np.float64), 1.0)
             if normalization is None
             else normalization
         )
@@ -249,8 +241,7 @@ class HarmonicPolynomialBasis(AbstractTrefftzBasis):
         )
 
         blocks = tuple(
-            _canonical_harmonic_block(dimension_, degree)
-            for degree in range(degree_ + 1)
+            _canonical_harmonic_block(dimension_, degree) for degree in range(degree_ + 1)
         )
         residuals = tuple(block[2] for block in blocks)
         tolerances = tuple(block[3] for block in blocks)
@@ -265,7 +256,7 @@ class HarmonicPolynomialBasis(AbstractTrefftzBasis):
         singular_blocks = tuple(jnp.asarray(block[4]) for block in blocks)
         basis_id = canonical_fingerprint(
             {
-                "kind": "canonical-harmonic-polynomial-basis-v1",
+                "kind": "canonical-harmonic-polynomial-basis",
                 "dimension": dimension_,
                 "maximum_degree": degree_,
                 "normalization_id": normalization_.normalization_id,
@@ -295,9 +286,7 @@ class HarmonicPolynomialBasis(AbstractTrefftzBasis):
         self.coefficient_blocks = coefficient_blocks
         self.singular_value_blocks = singular_blocks
         self.construction_residuals = tuple(jnp.asarray(value) for value in residuals)
-        self.construction_tolerances = tuple(
-            jnp.asarray(value) for value in tolerances
-        )
+        self.construction_tolerances = tuple(jnp.asarray(value) for value in tolerances)
         self._basis_id = basis_id
         self._certificate = certificate
         self._resource_evidence = evidence
@@ -374,13 +363,13 @@ class PolyharmonicAlmansiBasis(AbstractTrefftzBasis):
         if isinstance(maximum_degree, int):
             degrees = (int(maximum_degree),) * order_
         else:
-            degrees = tuple(int(value) for value in maximum_degree)
+            degrees = tuple(maximum_degree)
         if len(degrees) != order_ or any(value < 0 for value in degrees):
             raise ValueError(
                 "maximum_degree must be nonnegative and provide one value per Almansi block."
             )
         normalization_ = (
-            SimilarityNormalization(np.zeros((dimension_,), dtype=float), 1.0)
+            SimilarityNormalization(np.zeros((dimension_,), dtype=np.float64), 1.0)
             if normalization is None
             else normalization
         )
@@ -412,7 +401,7 @@ class PolyharmonicAlmansiBasis(AbstractTrefftzBasis):
         )
         basis_id = canonical_fingerprint(
             {
-                "kind": "polyharmonic-almansi-basis-v1",
+                "kind": "polyharmonic-almansi-basis",
                 "dimension": dimension_,
                 "order": order_,
                 "maximum_degrees": list(degrees),

@@ -38,7 +38,7 @@ def _real_array(value: ArrayLike, name: str, /) -> Array:
     if jnp.iscomplexobj(array):
         raise TypeError(f"{name} must be real-valued.")
     if not jnp.issubdtype(array.dtype, jnp.floating):
-        array = array.astype(float)
+        array = array.astype("float64")
     return array
 
 
@@ -448,7 +448,7 @@ def _incidence(
     /,
 ) -> np.ndarray:
     lookup = {state: index for index, state in enumerate(plan.state_ids)}
-    incidence = np.zeros((len(observations), len(plan.state_ids)), dtype=float)
+    incidence = np.zeros((len(observations), len(plan.state_ids)), dtype=np.float64)
     for edge_index, observation in enumerate(observations):
         if (
             observation.source_state_id not in lookup
@@ -507,7 +507,7 @@ def _fundamental_cycle_matrix(incidence: np.ndarray, /) -> np.ndarray:
                     queue.append(neighbor)
         if target not in predecessor:
             continue
-        cycle = np.zeros((edge_count,), dtype=float)
+        cycle = np.zeros((edge_count,), dtype=np.float64)
         cycle[closing_edge] = 1.0
         node = target
         while node != start:
@@ -518,7 +518,7 @@ def _fundamental_cycle_matrix(incidence: np.ndarray, /) -> np.ndarray:
             cycle[edge] = sign
             node = previous
         cycles.append(cycle)
-    return np.stack(cycles) if cycles else np.zeros((0, edge_count), dtype=float)
+    return np.stack(cycles) if cycles else np.zeros((0, edge_count), dtype=np.float64)
 
 
 def _joint_covariance_from_influences(

@@ -542,7 +542,7 @@ def test_dynamic_inputs_refuse_shape_finite_scale_and_mask_mismatches():
     with pytest.raises(TypeError, match="boolean"):
         _inputs(field, field, provenance=provenance, accepted=jnp.ones(2))
     with pytest.raises(ValueError, match="scalar or match"):
-        _inputs(field, field, provenance=provenance, accepted=jnp.ones(3, dtype=bool))
+        _inputs(field, field, provenance=provenance, accepted=jnp.ones(3, dtype="bool"))
     widths = jnp.ones((3, 3))
     with pytest.raises(ValueError, match="does not broadcast"):
         _inputs(basis, basis, provenance=provenance, widths=widths)

@@ -163,26 +163,26 @@ _SOURCE_SPECS = (
 
 
 def _source_reference(spec) -> SourceReference:
-    source_id, _, licence, reuse, concepts = spec
+    source_id, _, license, reuse, concepts = spec
     (
         repository_url,
         revision,
         archive_digest,
-        licence_digest,
+        license_digest,
         readme_record,
-        licence_record,
+        license_record,
     ) = _SOURCE_AUDITS[source_id]
     reuse_class = SourceReuseClass(reuse)
     return SourceReference.create(
         source_id,
         repository_url,
         revision,
-        licence,
+        license,
         reuse_class,
         concepts=concepts,
         archive_digest=archive_digest,
-        licence_digest=licence_digest,
-        relevant_documents=(readme_record, licence_record),
+        license_digest=license_digest,
+        relevant_documents=(readme_record, license_record),
         code_inspected=False,
         behavior_inspected=False,
         copying_permitted=reuse_class
@@ -193,7 +193,7 @@ def _source_reference(spec) -> SourceReference:
             SourceReuseClass.SOURCE_AVAILABLE,
         ),
         technical_reviewer="phydrax-source-metadata-audit-2026-09-20",
-        legal_reviewer="automated-licence-classification-2026-09-20",
+        legal_reviewer="automated-license-classification-2026-09-20",
         review_status=SourceReview.TECHNICALLY_REVIEWED,
     )
 

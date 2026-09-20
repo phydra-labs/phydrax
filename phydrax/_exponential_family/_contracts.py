@@ -66,7 +66,7 @@ class ExponentialFamilySignature(StrictModule):
         coordinate_chart_id: str,
     ):
         dimensions = int(dimension)
-        events = tuple(int(size) for size in event_shape)
+        events = tuple(event_shape)
         if not family_id or not support_id or not coordinate_chart_id:
             raise ValueError("Exponential-family signature IDs must be non-empty.")
         if dimensions <= 0:
@@ -107,15 +107,14 @@ def _coordinate_array(values: ArrayLike, signature: ExponentialFamilySignature) 
     array = jnp.asarray(values)
     if not jnp.issubdtype(array.dtype, jnp.floating):
         if array.weak_type:
-            array = array.astype(float)
+            array = array.astype("float64")
         else:
             raise TypeError(
                 "Exponential-family coordinates must be real floating arrays."
             )
-    if array.ndim == 0 or int(array.shape[-1]) != signature.dimension:
+    if array.ndim == 0 or array.shape[-1] != signature.dimension:
         raise ValueError(
-            "Exponential-family coordinates must end in intrinsic dimension "
-            f"{signature.dimension}; got {array.shape}."
+            f"Exponential-family coordinates must end in intrinsic dimension {signature.dimension}; got {array.shape}."
         )
     return array
 
@@ -180,7 +179,9 @@ class StatisticBatch(StrictModule):
         if not isinstance(signature, ExponentialFamilySignature):
             raise TypeError("signature must be an ExponentialFamilySignature.")
         statistics = _coordinate_array(values, signature)
-        validity = jnp.broadcast_to(jnp.asarray(valid, dtype=bool), statistics.shape[:-1])
+        validity = jnp.broadcast_to(
+            jnp.asarray(valid, dtype=jnp.bool_), statistics.shape[:-1]
+        )
         self.values = statistics
         self.valid = validity
         self.signature = signature
@@ -206,13 +207,13 @@ class ExponentialFamilyDomainResult(StrictModule):
         signature: ExponentialFamilySignature,
         domain_id: str,
     ):
-        interior_array = jnp.asarray(interior, dtype=bool)
+        interior_array = jnp.asarray(interior, dtype=jnp.bool_)
         shape = interior_array.shape
         if not domain_id:
             raise ValueError("domain_id must be non-empty.")
         self.interior = interior_array
-        self.boundary = jnp.broadcast_to(jnp.asarray(boundary, dtype=bool), shape)
-        self.valid = jnp.broadcast_to(jnp.asarray(valid, dtype=bool), shape)
+        self.boundary = jnp.broadcast_to(jnp.asarray(boundary, dtype=jnp.bool_), shape)
+        self.valid = jnp.broadcast_to(jnp.asarray(valid, dtype=jnp.bool_), shape)
         self.status = jnp.broadcast_to(jnp.asarray(status, dtype=jnp.int32), shape)
         self.signature = signature
         self.domain_id = str(domain_id)
@@ -248,7 +249,7 @@ class ExponentialFamilyConversionResult(StrictModule):
         shape = mean.batch_shape
         self.mean = mean
         self.natural = natural
-        self.valid = jnp.broadcast_to(jnp.asarray(valid, dtype=bool), shape)
+        self.valid = jnp.broadcast_to(jnp.asarray(valid, dtype=jnp.bool_), shape)
         self.status = jnp.broadcast_to(jnp.asarray(status, dtype=jnp.int32), shape)
         self.residual = jnp.broadcast_to(jnp.asarray(residual), shape)
         self.iterations = jnp.broadcast_to(
@@ -266,8 +267,8 @@ def _natural_domain_result(
     boundary: ArrayLike,
 ) -> ExponentialFamilyDomainResult:
     finite = jnp.all(jnp.isfinite(values), axis=-1)
-    interior_array = finite & jnp.asarray(interior, dtype=bool)
-    boundary_array = finite & jnp.asarray(boundary, dtype=bool)
+    interior_array = finite & jnp.asarray(interior, dtype=jnp.bool_)
+    boundary_array = finite & jnp.asarray(boundary, dtype=jnp.bool_)
     status = jnp.where(
         ~finite,
         EXPONENTIAL_FAMILY_NONFINITE,
@@ -296,8 +297,8 @@ def _mean_domain_result(
     boundary: ArrayLike,
 ) -> ExponentialFamilyDomainResult:
     finite = jnp.all(jnp.isfinite(values), axis=-1)
-    interior_array = finite & jnp.asarray(interior, dtype=bool)
-    boundary_array = finite & jnp.asarray(boundary, dtype=bool)
+    interior_array = finite & jnp.asarray(interior, dtype=jnp.bool_)
+    boundary_array = finite & jnp.asarray(boundary, dtype=jnp.bool_)
     status = jnp.where(
         ~finite,
         EXPONENTIAL_FAMILY_NONFINITE,
@@ -406,30 +407,7 @@ class AbstractExponentialFamily(StrictModule):
         domain: ExponentialFamilyDomainResult,
         /,
     ) -> ExponentialFamilyConversionResult:
-        candidate_values = self._natural_from_mean_values(mean.values)
-        candidate_values = jnp.where(
-            domain.interior[..., None], candidate_values, jnp.nan
-        )
-        natural = NaturalCoordinates(candidate_values, self.signature)
-        reconstructed = self._mean_values(candidate_values)
-        residual = jnp.linalg.norm(reconstructed - mean.values, axis=-1)
-        candidate_finite = jnp.all(jnp.isfinite(candidate_values), axis=-1)
-        residual_finite = jnp.isfinite(residual)
-        valid = domain.valid & candidate_finite & residual_finite
-        status = jnp.where(
-            domain.valid & ~valid,
-            EXPONENTIAL_FAMILY_NONFINITE,
-            domain.status,
-        )
-        return ExponentialFamilyConversionResult(
-            mean=mean,
-            natural=natural,
-            valid=valid,
-            status=status,
-            residual=jnp.where(valid, residual, jnp.inf),
-            iterations=jnp.zeros(mean.batch_shape, dtype=jnp.int32),
-            method_id=f"{self.signature.family_id}-analytic",
-        )
+        raise NotImplementedError
 
     def natural_from_mean(
         self, mean: MeanCoordinates, /
@@ -528,6 +506,40 @@ class AbstractExponentialFamily(StrictModule):
         return self._sample(key, checked, tuple(sample_shape))
 
 
+def _analytic_natural_from_mean_result(
+    family: AbstractExponentialFamily,
+    mean: MeanCoordinates,
+    domain: ExponentialFamilyDomainResult,
+    /,
+) -> ExponentialFamilyConversionResult:
+    candidate_values = family._natural_from_mean_values(mean.values)
+    candidate_values = jnp.where(
+        domain.interior[..., None],
+        candidate_values,
+        jnp.nan,
+    )
+    natural = NaturalCoordinates(candidate_values, family.signature)
+    reconstructed = family._mean_values(candidate_values)
+    residual = jnp.linalg.norm(reconstructed - mean.values, axis=-1)
+    candidate_finite = jnp.all(jnp.isfinite(candidate_values), axis=-1)
+    residual_finite = jnp.isfinite(residual)
+    valid = domain.valid & candidate_finite & residual_finite
+    status = jnp.where(
+        domain.valid & ~valid,
+        EXPONENTIAL_FAMILY_NONFINITE,
+        domain.status,
+    )
+    return ExponentialFamilyConversionResult(
+        mean=mean,
+        natural=natural,
+        valid=valid,
+        status=status,
+        residual=jnp.where(valid, residual, jnp.inf),
+        iterations=jnp.zeros(mean.batch_shape, dtype=jnp.int32),
+        method_id=f"{family.signature.family_id}-analytic",
+    )
+
+
 class _AbstractAnalyticExponentialFamily(AbstractExponentialFamily):
     def _natural_from_mean_result(
         self,
@@ -535,7 +547,7 @@ class _AbstractAnalyticExponentialFamily(AbstractExponentialFamily):
         domain: ExponentialFamilyDomainResult,
         /,
     ) -> ExponentialFamilyConversionResult:
-        return super()._natural_from_mean_result(mean, domain)
+        return _analytic_natural_from_mean_result(self, mean, domain)
 
 
 class ExponentialFamilyLaw(AbstractProbabilityLaw):

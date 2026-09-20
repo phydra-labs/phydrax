@@ -53,7 +53,7 @@ class HartreeFockExcitedResponsePlan(StrictModule, NonTrainableState):
                 "Restricted HF response spin sector must be singlet or triplet."
             )
         occupied = int(jnp.count_nonzero(state.occupations > 1.0))
-        orbital_count = int(state.coefficients.shape[1])
+        orbital_count = state.coefficients.shape[1]
         virtual = orbital_count - occupied
         if occupied <= 0 or virtual <= 0:
             raise ValueError("HF response requires occupied and virtual orbitals.")

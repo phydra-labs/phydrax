@@ -113,8 +113,7 @@ class MACThermalBoundaryCondition(StrictModule, NonTrainableState):
                 output = jnp.broadcast_to(output, target_shape)
             elif output.shape != target_shape:
                 raise ValueError(
-                    "Dynamic MAC thermal data must be scalar or match boundary shape "
-                    f"{target_shape}."
+                    f"Dynamic MAC thermal data must be scalar or match boundary shape {target_shape}."
                 )
         return _finite(output, "MAC thermal boundary evaluation")
 
@@ -179,8 +178,7 @@ class MACThermalBoundarySet(StrictModule, NonTrainableState):
                 for condition in pair:
                     if condition.value.shape not in ((), expected):
                         raise ValueError(
-                            "MAC thermal wall data must be scalar or match tangential "
-                            f"shape {expected}."
+                            f"MAC thermal wall data must be scalar or match tangential shape {expected}."
                         )
             conditions.append(pair)
         self.operators = operators
@@ -378,8 +376,7 @@ class PreparedMACEnthalpyTransport(StrictModule, NonTrainableState):
             )
         if array.dtype != self.operators.pressure_space.dtype:
             raise TypeError(
-                f"{owner} must have dtype {self.operators.pressure_space.dtype}; "
-                f"got {array.dtype}."
+                f"{owner} must have dtype {self.operators.pressure_space.dtype}; got {array.dtype}."
             )
         return _finite(array, owner)
 

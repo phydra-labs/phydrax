@@ -90,7 +90,7 @@ def solve_cable_slackness(
     """Solve fixed-mask smooth roots until the exact unilateral active set closes."""
     policy_ = CableActiveSetPolicy() if policy is None else policy
     problem = prepared.plan.problem
-    unilateral = jnp.zeros((problem.definition.structure.member_count,), dtype=bool)
+    unilateral = jnp.zeros((problem.definition.structure.member_count,), dtype=jnp.bool_)
     for block in problem.assembly.blocks:
         if isinstance(block, AxialMemberBlock):
             law = block.law
@@ -103,7 +103,7 @@ def solve_cable_slackness(
     initial = (
         prepared.inputs.cable_active
         if initial_active is None
-        else jnp.asarray(initial_active, dtype=bool)
+        else jnp.asarray(initial_active, dtype=jnp.bool_)
     )
     if initial.shape != unilateral.shape:
         raise ValueError("initial_active must match the member axis.")

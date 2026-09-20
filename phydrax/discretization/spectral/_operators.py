@@ -55,7 +55,7 @@ class PreparedSpectralOperator(StrictModule, NonTrainableState):
             raise TypeError(
                 "source_space and target_space must be DiscreteFieldSpace values."
             )
-        axes_ = tuple(int(value) for value in axes)
+        axes_ = tuple(axes)
         actions = tuple(str(value) for value in axis_actions)
         if (
             len(axes_) != len(actions)
@@ -235,7 +235,7 @@ def spectral_laplacian_operator(
         if axes is None
         else (int(axes),)
         if isinstance(axes, int)
-        else tuple(int(axis) for axis in axes)
+        else tuple(axes)
     )
     if (
         not selected

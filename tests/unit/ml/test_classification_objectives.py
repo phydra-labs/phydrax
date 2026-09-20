@@ -81,6 +81,53 @@ def test_focal_gamma_zero_matches_nll_in_value_and_gradient():
     )
 
 
+def test_focal_weights_remain_traceable():
+    logits = jnp.asarray([[1.2, -0.4, 0.1], [-0.7, 0.3, 1.6]])
+    labels = jnp.asarray([0, 2])
+
+    weighted = jax.jit(
+        lambda alpha: categorical_focal_risk_from_logits(
+            logits,
+            labels,
+            alpha=alpha,
+        )
+    )(jnp.asarray((1.0, 2.0, 3.0)))
+    gradient = jax.jit(
+        jax.grad(
+            lambda alpha: jnp.sum(
+                categorical_focal_risk_from_logits(
+                    logits,
+                    labels,
+                    alpha=alpha,
+                )
+            )
+        )
+    )(jnp.asarray((1.0, 2.0, 3.0)))
+    binary = jax.jit(
+        lambda alpha: binary_focal_risk_from_logits(
+            logits[:, 0],
+            jnp.asarray((1, 0)),
+            alpha=alpha,
+        )
+    )(jnp.asarray(0.25))
+
+    assert jnp.all(jnp.isfinite(weighted))
+    assert jnp.all(jnp.isfinite(gradient))
+    assert jnp.all(jnp.isfinite(binary))
+
+
+def test_classification_dispatch_rejects_unknown_selectors():
+    with pytest.raises(ValueError, match="Unknown classification kind"):
+        classification_probabilities(jnp.ones((2,)), kind="other")
+    with pytest.raises(ValueError, match="Unknown binary classification objective"):
+        pointwise_classification_loss(
+            jnp.asarray((0.0,)),
+            jnp.asarray((1,)),
+            kind="binary",
+            objective="other",
+        )
+
+
 def test_target_masks_sanitize_invalid_inactive_values_before_scoring():
     logits = jnp.asarray([[2.0, -1.0], [jnp.nan, jnp.nan]])
     labels = jnp.asarray([0, -99])

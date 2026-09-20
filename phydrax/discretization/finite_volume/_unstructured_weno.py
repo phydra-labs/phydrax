@@ -259,15 +259,15 @@ class PreparedUnstructuredWENOZReconstruction(StrictModule, NonTrainableState):
         value = jnp.asarray(state)
         coefficients = self.coefficients(value)
         owner = self.discretization.owner_cells
-        neighbour = self.discretization.neighbour_cells
-        safe_neighbour = jnp.maximum(neighbour, 0)
+        neighbor = self.discretization.neighbor_cells
+        safe_neighbor = jnp.maximum(neighbor, 0)
         left = self.optimal.evaluate_coefficients(value, coefficients, owner, points)
         right = self.optimal.evaluate_coefficients(
-            value, coefficients, safe_neighbour, points
+            value, coefficients, safe_neighbor, points
         )
         return (
             self._limit(value, left, owner),
-            self._limit(value, right, safe_neighbour),
+            self._limit(value, right, safe_neighbor),
         )
 
     def reconstruct(self, state: Array, /) -> tuple[Array, Array]:

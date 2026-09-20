@@ -21,7 +21,7 @@ def _constant_paths(*, invalid=False):
             [[2.0], [2.0], [2.0]],
         ]
     )
-    valid = jnp.ones((2, 3), dtype=bool)
+    valid = jnp.ones((2, 3), dtype="bool")
     if invalid:
         valid = valid.at[1, 1].set(False)
     return BSDEPathBatch(

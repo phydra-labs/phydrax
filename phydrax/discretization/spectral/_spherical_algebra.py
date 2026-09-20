@@ -38,7 +38,7 @@ def _coupled_angular_momentum_block(
         if -degree_right <= total_order - order <= degree_right
     )
     count = len(left_orders)
-    matrix = np.zeros((count, count), dtype=float)
+    matrix = np.zeros((count, count), dtype=np.float64)
     for index_, left_order in enumerate(left_orders):
         right_order = total_order - left_order
         matrix[index_, index_] = (
@@ -63,11 +63,11 @@ def _coupled_angular_momentum_block(
             degree_left + degree_right + 1,
         )
     )
-    ordered = np.empty((count, len(degrees)), dtype=float)
+    ordered = np.empty((count, len(degrees)), dtype=np.float64)
     for column, degree in enumerate(degrees):
         eigen_index = int(np.argmin(np.abs(eigenvalues - degree * (degree + 1))))
         vector = eigenvectors[:, eigen_index]
-        anchor = int(np.flatnonzero(np.abs(vector) > 64 * np.finfo(float).eps)[-1])
+        anchor = int(np.flatnonzero(np.abs(vector) > 64 * np.finfo(np.float64).eps)[-1])
         ordered[:, column] = vector * (1.0 if vector[anchor] >= 0 else -1.0)
     residual = np.max(
         np.abs(
@@ -173,7 +173,7 @@ class PreparedSphericalRotation(StrictModule, NonTrainableState):
         if jnp.iscomplexobj(angles):
             raise TypeError("Euler angles must be real.")
         if not jnp.issubdtype(angles.dtype, jnp.inexact):
-            angles = angles.astype(float)
+            angles = angles.astype("float64")
         angles = angles.astype(jnp.result_type(angles.dtype, jnp.float64))
         angles = eqx.error_if(
             angles,

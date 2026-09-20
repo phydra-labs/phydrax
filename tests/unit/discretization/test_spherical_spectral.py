@@ -23,7 +23,7 @@ def _harmonic(space, degree=2, order=1):
 
 
 def _scipy_harmonic_on_vectors(degree, order, directions):
-    vectors = np.asarray(directions, dtype=float)
+    vectors = np.asarray(directions, dtype="float64")
     unit = vectors / np.linalg.norm(vectors, axis=-1)[..., None]
     theta = np.arccos(np.clip(unit[..., 2], -1.0, 1.0))
     phi = np.arctan2(unit[..., 1], unit[..., 0])
@@ -42,7 +42,7 @@ def test_spherical_mode_layout_tracks_valid_storage_and_real_conjugacy():
         jnp.arange(9),
     )
 
-    coefficients = jnp.zeros(layout.coefficient_shape, dtype=complex)
+    coefficients = jnp.zeros(layout.coefficient_shape, dtype="complex128")
     coefficients = coefficients.at[3, 5].set(0.4 - 0.7j)
     canonical = layout.canonicalize_reality(coefficients)
     assert jnp.allclose(canonical[3, 3], -(0.4 + 0.7j))

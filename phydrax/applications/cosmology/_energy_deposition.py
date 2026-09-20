@@ -57,7 +57,7 @@ def _identifiers(values: tuple[str, ...], name: str, /) -> tuple[str, ...]:
 def _source_axis(
     one_plus_redshift: ArrayLike, name: str, /
 ) -> tuple[np.ndarray, np.ndarray, str]:
-    source = np.asarray(one_plus_redshift, dtype=float)
+    source = np.asarray(one_plus_redshift, dtype=np.float64)
     if (
         source.ndim != 1
         or source.size < 2
@@ -163,9 +163,9 @@ class InjectionSpectrum(StrictModule, NonTrainableState):
         scale_factor, permutation, direction = _source_axis(
             one_plus_redshift, "Injection source 1+z"
         )
-        energies = np.asarray(energy_gev, dtype=float)
+        energies = np.asarray(energy_gev, dtype=np.float64)
         species_ = _identifiers(species, "injected species")
-        values = np.asarray(differential_number_per_gev, dtype=float)
+        values = np.asarray(differential_number_per_gev, dtype=np.float64)
         expected = (scale_factor.size, len(species_), energies.size)
         if (
             energies.ndim != 1
@@ -297,12 +297,12 @@ class CascadeKernelProduct(StrictModule, NonTrainableState):
         training_use: bool = False,
         export: bool = False,
     ):
-        scales = np.asarray(scale_factors, dtype=float)
-        energies = np.asarray(energy_gev, dtype=float)
-        states = np.asarray(state_values, dtype=float)
-        deposited = np.asarray(deposited_energy_per_particle_gev, dtype=float)
-        escaped = np.asarray(escaped_energy_per_particle_gev, dtype=float)
-        borrowed = np.asarray(borrowed_cmb_energy_per_particle_gev, dtype=float)
+        scales = np.asarray(scale_factors, dtype=np.float64)
+        energies = np.asarray(energy_gev, dtype=np.float64)
+        states = np.asarray(state_values, dtype=np.float64)
+        deposited = np.asarray(deposited_energy_per_particle_gev, dtype=np.float64)
+        escaped = np.asarray(escaped_energy_per_particle_gev, dtype=np.float64)
+        borrowed = np.asarray(borrowed_cmb_energy_per_particle_gev, dtype=np.float64)
         species_ = _identifiers(species, "cascade injected species")
         channels = _identifiers(deposition_channels, "deposition channels")
         state_names_ = _identifiers(state_names, "cascade state names")
@@ -586,7 +586,7 @@ class SpeciesResolvedThermodynamicsHistory(StrictModule, NonTrainableState):
             one_plus_redshift, "Thermodynamics source 1+z"
         )
         source_values = tuple(
-            np.asarray(value, dtype=float)
+            np.asarray(value, dtype=np.float64)
             for value in (
                 h_ii_fraction,
                 he_ii_fraction,
@@ -597,7 +597,7 @@ class SpeciesResolvedThermodynamicsHistory(StrictModule, NonTrainableState):
         )
         if any(value.shape != (scale_factor.size,) for value in source_values):
             raise ValueError("Thermodynamics fields must match the source redshift axis.")
-        helium_ratio = np.asarray(helium_to_hydrogen_number_ratio, dtype=float)
+        helium_ratio = np.asarray(helium_to_hydrogen_number_ratio, dtype=np.float64)
         if (
             helium_ratio.shape != ()
             or not np.isfinite(helium_ratio)
@@ -818,8 +818,8 @@ def project_to_thermodynamics_history(
 
     if not isinstance(history, SpeciesResolvedThermodynamicsHistory):
         raise TypeError("history must be SpeciesResolvedThermodynamicsHistory.")
-    opacity = np.asarray(opacity_derivative, dtype=float)
-    visibility_ = np.asarray(visibility, dtype=float)
+    opacity = np.asarray(opacity_derivative, dtype=np.float64)
+    visibility_ = np.asarray(visibility, dtype=np.float64)
     expected = (history.scale_factors.size,)
     if (
         opacity.shape != expected
@@ -846,8 +846,7 @@ def project_to_thermodynamics_history(
         "ionization.{h_ii_fraction,he_ii_fraction,he_iii_fraction}",
         "export",
         "transformed",
-        "Resolved hydrogen and helium ion stages are collapsed to the existing total "
-        "free-electron fraction field.",
+        "Resolved hydrogen and helium ion stages are collapsed to the existing total free-electron fraction field.",
         changes_interpretation=False,
         affected_capability_ids=("species-resolved-recombination-history",),
     )

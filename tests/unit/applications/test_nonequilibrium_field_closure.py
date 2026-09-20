@@ -63,7 +63,7 @@ def test_finite_kadanoff_baym_memory_is_causal_and_free_energy_is_conserved():
     outside = ~result.self_energy.support_mask
     np.testing.assert_allclose(result.self_energy.statistical[outside], 0.0, atol=0.0)
     np.testing.assert_allclose(result.self_energy.spectral[outside], 0.0, atol=0.0)
-    upper = jnp.triu(jnp.ones((11, 11), dtype=bool), 1)
+    upper = jnp.triu(jnp.ones((11, 11), dtype="bool"), 1)
     np.testing.assert_allclose(result.self_energy.retarded[upper], 0.0, atol=0.0)
 
 

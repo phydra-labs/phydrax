@@ -15,7 +15,7 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from .._fingerprint import canonical_fingerprint
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._trainable import NonTrainableState
 
 
@@ -123,8 +123,7 @@ class ResolvedLESFilter(StrictModule, NonTrainableState):
             or repeated_filter_semantics != "idempotent"
         ):
             raise ValueError(
-                "Sharp Fourier projection requires periodic tensor-product, "
-                "commuting, idempotent semantics."
+                "Sharp Fourier projection requires periodic tensor-product, commuting, idempotent semantics."
             )
         self.name = normalized
         self.family = family
@@ -168,7 +167,7 @@ class LESFilterScale(StrictModule):
     def __init__(self, directional_widths: ArrayLike, /):
         widths = jnp.asarray(directional_widths)
         if not jnp.issubdtype(widths.dtype, jnp.inexact):
-            widths = widths.astype(jnp.result_type(widths, float))
+            widths = widths.astype(jnp.result_type(widths, jnp.float64))
         if widths.ndim < 1 or widths.shape[-1] != 3:
             raise ValueError("LES directional widths must have trailing dimension 3.")
         if not isinstance(widths, jax.core.Tracer):
@@ -256,7 +255,7 @@ class AlgebraicLESInputs(StrictModule):
             raise TypeError("filter_scale must be a LESFilterScale.")
         gradient = jnp.asarray(velocity_gradient)
         if not jnp.issubdtype(gradient.dtype, jnp.inexact):
-            gradient = gradient.astype(jnp.result_type(gradient, float))
+            gradient = gradient.astype(jnp.result_type(gradient, jnp.float64))
         if gradient.ndim < 2 or gradient.shape[-2:] != (3, 3):
             raise ValueError("LES velocity gradient must have trailing shape (3, 3).")
         self.velocity_gradient = gradient
@@ -279,9 +278,9 @@ class AbstractAlgebraicLESModel(StrictModule):
     :class:`PreparedAlgebraicLESModel`.
     """
 
-    coefficient: AbstractAttribute[Array]
-    formula: AbstractAttribute[_LESFormula]
-    model_id: AbstractAttribute[str]
+    coefficient: eqx.AbstractVar[Array]
+    formula: eqx.AbstractVar[_LESFormula]
+    model_id: eqx.AbstractVar[str]
 
     def evaluate(self, inputs: AlgebraicLESInputs, /) -> AlgebraicLESResult:
         """Evaluate viscosity, specific deviatoric stress, and energy transfer."""
@@ -398,7 +397,7 @@ def _formula_id(formula: _LESFormula, /) -> str:
 def _validated_coefficient(value: ArrayLike, name: str, /) -> Array:
     coefficient = jnp.asarray(value)
     if not jnp.issubdtype(coefficient.dtype, jnp.inexact):
-        coefficient = coefficient.astype(jnp.result_type(coefficient, float))
+        coefficient = coefficient.astype(jnp.result_type(coefficient, jnp.float64))
     if coefficient.shape != ():
         raise ValueError(f"{name} LES coefficient must be scalar.")
     if not isinstance(coefficient, jax.core.Tracer):

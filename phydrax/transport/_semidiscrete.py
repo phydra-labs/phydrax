@@ -356,7 +356,7 @@ class SemidiscreteTransportResult(StrictModule):
             if self.problem.source_encoder is None
             else self.problem.source_encoder(source_points)
         )
-        points = jnp.asarray(encoded, dtype=float)
+        points = jnp.asarray(encoded, dtype=jnp.float64)
         if points.ndim == 0:
             points = points.reshape((1, 1))
         elif points.ndim == 1:
@@ -403,8 +403,8 @@ class SemidiscreteSinkhorn(StrictModule):
             raise ValueError("min_iterations must lie in [0, max_iterations].")
         if interval < 1:
             raise ValueError("check_every must be positive.")
-        epsilon_ = jnp.asarray(epsilon, dtype=float).reshape(())
-        tolerance_ = jnp.asarray(tolerance, dtype=float).reshape(())
+        epsilon_ = jnp.asarray(epsilon, dtype=jnp.float64).reshape(())
+        tolerance_ = jnp.asarray(tolerance, dtype=jnp.float64).reshape(())
         self.epsilon = eqx.error_if(
             epsilon_,
             ~jnp.isfinite(epsilon_) | (epsilon_ <= 0.0),
@@ -777,7 +777,7 @@ class SemidiscreteQuantizer(StrictModule):
 
     def physical_support(self, parameters: ArrayLike, /) -> Array:
         """Map outer optimizer coordinates to physical support coordinates."""
-        values = jnp.asarray(parameters, dtype=float)
+        values = jnp.asarray(parameters, dtype=jnp.float64)
         return (
             values if self.support_transform is None else self.support_transform(values)
         )
@@ -808,7 +808,7 @@ class SemidiscreteQuantizer(StrictModule):
             raise TypeError("problem must be a SemidiscreteTransportProblem.")
         parameters = jnp.asarray(
             problem.target_support if initial_parameters is None else initial_parameters,
-            dtype=float,
+            dtype=jnp.float64,
         )
         initial_support = problem.with_target_support(
             self.physical_support(parameters)
@@ -976,7 +976,7 @@ def _encode_points(
     /,
 ) -> tuple[Array, tuple[int, ...]]:
     if len(coordinates) == 1 and isinstance(coordinates[0], tuple):
-        axes = tuple(jnp.asarray(axis, dtype=float) for axis in coordinates[0])
+        axes = tuple(jnp.asarray(axis, dtype=jnp.float64) for axis in coordinates[0])
         if not axes or any(axis.ndim != 1 for axis in axes):
             raise ValueError(
                 "Separable source coordinates must be nonempty rank-one axes."
@@ -984,7 +984,7 @@ def _encode_points(
         raw = jnp.stack(jnp.meshgrid(*axes, indexing="ij"), axis=-1)
         batch_shape = raw.shape[:-1]
         encoded = raw if encoder is None else encoder(raw)
-        points = jnp.asarray(encoded, dtype=float)
+        points = jnp.asarray(encoded, dtype=jnp.float64)
         if points.shape[: len(batch_shape)] != batch_shape:
             raise ValueError("source_encoder must preserve the integration batch shape.")
         if points.ndim == len(batch_shape):
@@ -997,10 +997,10 @@ def _encode_points(
 
     raw: Any = coordinates[0] if len(coordinates) == 1 else coordinates
     if encoder is not None:
-        return jnp.asarray(encoder(raw), dtype=float).reshape((-1,)), ()
+        return jnp.asarray(encoder(raw), dtype=jnp.float64).reshape((-1,)), ()
     point = jnp.concatenate(
         tuple(
-            jnp.asarray(coordinate, dtype=float).reshape((-1,))
+            jnp.asarray(coordinate, dtype=jnp.float64).reshape((-1,))
             for coordinate in coordinates
         )
     )

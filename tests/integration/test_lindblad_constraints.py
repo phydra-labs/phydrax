@@ -9,13 +9,13 @@ import jax.random as jr
 import phydrax as phx
 
 
-LOWERING = jnp.asarray([[0.0, 1.0], [0.0, 0.0]], dtype=complex)
+LOWERING = jnp.asarray([[0.0, 1.0], [0.0, 0.0]], dtype="complex128")
 
 
 def test_lindblad_residual_runs_through_functional_solver():
     time = phx.domain.TimeInterval(0.0, 2.0)
     rate = 0.8
-    hamiltonian = time.Function()(jnp.zeros((2, 2), dtype=complex))
+    hamiltonian = time.Function()(jnp.zeros((2, 2), dtype="complex128"))
     collapse = time.Function()(jnp.sqrt(rate) * LOWERING)
 
     @time.Function("t")
@@ -23,7 +23,7 @@ def test_lindblad_residual_runs_through_functional_solver():
         excited = jnp.exp(-rate * t)
         return jnp.asarray(
             [[1.0 - excited, 0.0], [0.0, excited]],
-            dtype=complex,
+            dtype="complex128",
         )
 
     @time.Function("t")
@@ -31,7 +31,7 @@ def test_lindblad_residual_runs_through_functional_solver():
         excited = jnp.exp(-0.6 * rate * t)
         return jnp.asarray(
             [[1.0 - excited, 0.0], [0.0, excited]],
-            dtype=complex,
+            dtype="complex128",
         )
 
     condition = phx.conditions.Residual(

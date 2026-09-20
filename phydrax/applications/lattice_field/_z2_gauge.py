@@ -25,12 +25,12 @@ _PAULI_Z = jnp.asarray([[1.0, 0.0], [0.0, -1.0]], dtype=jnp.complex128)
 def _binary_support(topology: CellComplexTopology, degree: int, /) -> np.ndarray:
     incidence = topology.incidences[degree]
     relation = incidence.relation
-    valid = np.asarray(relation.valid, dtype=bool)
+    valid = np.asarray(relation.valid, dtype=np.bool_)
     lower = np.asarray(relation.source_indices, dtype=np.int64)[valid]
     upper = np.asarray(relation.target_indices, dtype=np.int64)[valid]
     support = np.zeros(
         (topology.entities(degree + 1).count, topology.entities(degree).count),
-        dtype=bool,
+        dtype=np.bool_,
     )
     support[upper, lower] = True
     return support
@@ -105,7 +105,7 @@ class Z2GaugeModel(StrictModule, NonTrainableState):
         face_edge = (
             _binary_support(topology, 1)
             if num_faces
-            else np.zeros((0, num_edges), dtype=bool)
+            else np.zeros((0, num_edges), dtype=np.bool_)
         )
         chain = (
             (vertex_edge.astype(np.uint8) @ face_edge.astype(np.uint8).T) % 2

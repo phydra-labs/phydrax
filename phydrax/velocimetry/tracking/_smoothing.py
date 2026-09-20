@@ -76,7 +76,7 @@ class TrackSmoothingPlan(StrictModule, NonTrainableState):
 def _transition_matrix(start, end, context, /):
     del context
     dt = end - start
-    identity = jnp.eye(3, dtype=jnp.result_type(start, end, float))
+    identity = jnp.eye(3, dtype=jnp.result_type(start, end, jnp.float64))
     return jnp.eye(6, dtype=identity.dtype).at[:3, 3:].set(dt * identity)
 
 
@@ -84,7 +84,7 @@ def _process_covariance(acceleration_variance: float):
     def covariance(start, end, context, /):
         del context
         dt = end - start
-        identity = jnp.eye(3, dtype=jnp.result_type(start, end, float))
+        identity = jnp.eye(3, dtype=jnp.result_type(start, end, jnp.float64))
         value = jnp.zeros((6, 6), dtype=identity.dtype)
         value = value.at[:3, :3].set(0.25 * dt**4 * identity)
         value = value.at[:3, 3:].set(0.5 * dt**3 * identity)
@@ -104,7 +104,7 @@ def _observation_covariance(values):
 
 
 def _segments(result: TrackResult, /) -> list[tuple[int, int, int]]:
-    active = np.asarray(jax.device_get(result.active), dtype=bool)
+    active = np.asarray(jax.device_get(result.active), dtype=np.bool_)
     identifiers = np.asarray(jax.device_get(result.track_ids), dtype=np.int64)
     segments: list[tuple[int, int, int]] = []
     for slot in range(result.track_capacity):

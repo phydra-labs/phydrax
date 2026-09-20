@@ -26,7 +26,7 @@ def smoluchowski_electrophoretic_velocity(
 
 
 def dielectrophoretic_force(
-    electric_intensity_gradient_v2_m3: ArrayLike,
+    electric_intensity_gradient_volts_squared_per_meter_cubed: ArrayLike,
     radius_m: float,
     medium_permittivity_f_m: float,
     clausius_mossotti_real: ArrayLike,
@@ -38,7 +38,7 @@ def dielectrophoretic_force(
     return (
         coefficient
         * jnp.asarray(clausius_mossotti_real)
-        * jnp.asarray(electric_intensity_gradient_v2_m3)
+        * jnp.asarray(electric_intensity_gradient_volts_squared_per_meter_cubed)
     )
 
 

@@ -6,8 +6,8 @@ import phydrax as phx
 
 def test_stochastic_transition_view_preserves_paths_masks_and_split_provenance():
     times = jnp.asarray([0.0, 0.1, 0.2, 0.4])
-    states = jnp.arange(4 * 4 * 3, dtype=float).reshape((4, 4, 3))
-    valid = jnp.ones((4, 4), dtype=bool).at[0, 2].set(False)
+    states = jnp.arange(4 * 4 * 3, dtype="float64").reshape((4, 4, 3))
+    valid = jnp.ones((4, 4), dtype="bool").at[0, 2].set(False)
     trajectory = phx.stochastic.StochasticTrajectory(
         times,
         states,

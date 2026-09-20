@@ -117,7 +117,7 @@ def _case_from_rollout(name, dimension, compiled, result, error):
         dimension,
         compiled.dynamics.particles.capacity,
         compiled.dynamics.splat.target_size,
-        int(result.accepted.shape[0]),
+        result.accepted.shape[0],
         float(error),
         mass,
         momentum,
@@ -264,7 +264,7 @@ def run_material_point_qualification(*, smoke: bool = False):
     resolutions = (8, 12) if smoke else (12, 24, 36)
     wave_cases = tuple(_wave_case(value) for value in resolutions)
     errors = np.asarray([case.relative_error for case in wave_cases])
-    widths = 1.0 / np.asarray(resolutions, dtype=float)
+    widths = 1.0 / np.asarray(resolutions, dtype="float64")
     if errors.size < 2 or np.any(errors <= 0.0):
         order = 0.0
     else:

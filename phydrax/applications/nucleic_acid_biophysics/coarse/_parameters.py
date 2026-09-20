@@ -31,7 +31,7 @@ SITE_NAMES = ("backbone", "base", "stack3", "stack5", "coax")
 
 
 def _vector(value, size, name):
-    array = np.asarray(value, dtype=float)
+    array = np.asarray(value, dtype=np.float64)
     if array.shape != (size,) or not np.isfinite(array).all():
         raise ValueError(f"{name} must contain {size} finite numeric values.")
     return array
@@ -157,7 +157,7 @@ def _validate_profile(profile, model, *, screening_required, hybrid):
             raise ValueError(
                 "Screening needs source-calibrated prefactor, condition scale and terminal charge factor."
             )
-        values = np.asarray(list(screen.values()), dtype=float)
+        values = np.asarray(list(screen.values()), dtype=np.float64)
         if (
             not np.isfinite(values).all()
             or np.any(values <= 0)
@@ -322,7 +322,7 @@ class NucleotideParameterArtifact:
                     "Sequence strengths must match the permitted bonded/nonbonded chemistry."
                 )
             for table in strength.values():
-                values = np.asarray(table, dtype=float)
+                values = np.asarray(table, dtype=np.float64)
                 if (
                     values.shape != (4, 4)
                     or not np.isfinite(values).all()
@@ -380,7 +380,7 @@ def nucleotide_reference_sites(construct, parameters):
         rows.extend(
             [sites + [[0.0, 0.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]]] * len(sequence)
         )
-    return np.asarray(rows, dtype=float)
+    return np.asarray(rows, dtype=np.float64)
 
 
 __all__ = ["NucleotideParameterArtifact", "nucleotide_reference_sites"]

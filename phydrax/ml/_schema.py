@@ -57,7 +57,7 @@ class FeatureSchema(StrictModule, NonTrainableState):
         return cls(tuple(f"feature_{index}" for index in range(count)))
 
     def select(self, indices: Sequence[int], /) -> "FeatureSchema":
-        selected = tuple(int(index) for index in indices)
+        selected = tuple(indices)
         if any(index < 0 or index >= len(self.names) for index in selected):
             raise IndexError("Feature selection contains an out-of-range index.")
         return FeatureSchema(

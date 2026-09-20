@@ -272,8 +272,7 @@ class ProbabilisticODESolution(StrictModule):
         dimension = prod(self.state_shape) if self.state_shape else 1
         if dimension > self.method.max_dense_dimension:
             raise ValueError(
-                "Dense covariance materialization exceeds max_dense_dimension; "
-                "use covariance_matvec instead."
+                "Dense covariance materialization exceeds max_dense_dimension; use covariance_matvec instead."
             )
         if source is not None and source not in _UNCERTAINTY_NAMES:
             raise ValueError(
@@ -317,8 +316,7 @@ def _covariance_matrix(
         matrix = array
     else:
         raise ValueError(
-            f"{name} must be scalar, length {size}, or shape {(size, size)}; "
-            f"got {array.shape}."
+            f"{name} must be scalar, length {size}, or shape {(size, size)}; got {array.shape}."
         )
     matrix = eqx.error_if(
         matrix,
@@ -1350,11 +1348,11 @@ def solve_probabilistic_ode(
     requested_times = validate_save_times(problem.t0, problem.t1, save_times)
     state = jnp.asarray(problem.initial_state)
     if not jnp.issubdtype(state.dtype, jnp.inexact):
-        state = state.astype(float)
+        state = state.astype("float64")
     if jnp.iscomplexobj(state):
         raise TypeError("Probabilistic ODE integration requires a real-valued state.")
     state_shape = tuple(state.shape)
-    state_size = int(state.size)
+    state_size = state.size
     derivative_count = selected.order + 1
     augmented_size = derivative_count * state_size
     if (
@@ -1420,7 +1418,7 @@ def solve_probabilistic_ode(
         parameter_matrix = (
             _covariance_matrix(
                 parameter_covariance,
-                int(flat_args.size),
+                flat_args.size,
                 state.dtype,
                 name="parameter_covariance",
             )

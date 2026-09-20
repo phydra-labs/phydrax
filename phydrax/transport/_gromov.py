@@ -68,8 +68,8 @@ def gromov_wasserstein_problem(
     target_measure = lower_transport_measure(
         target, encoder=target_encoder, name="target"
     )
-    left = jnp.asarray(source_relation, dtype=float)
-    right = jnp.asarray(target_relation, dtype=float)
+    left = jnp.asarray(source_relation, dtype=jnp.float64)
+    right = jnp.asarray(target_relation, dtype=jnp.float64)
     if left.shape != (source_measure.num_atoms, source_measure.num_atoms):
         raise ValueError("source_relation must be square on source atoms.")
     if right.shape != (target_measure.num_atoms, target_measure.num_atoms):
@@ -78,7 +78,9 @@ def gromov_wasserstein_problem(
         raise ValueError("relation costs must be finite.")
     if not bool(jnp.allclose(left, left.T)) or not bool(jnp.allclose(right, right.T)):
         raise ValueError("GW relational costs must be symmetric.")
-    feature = None if feature_cost is None else jnp.asarray(feature_cost, dtype=float)
+    feature = (
+        None if feature_cost is None else jnp.asarray(feature_cost, dtype=jnp.float64)
+    )
     if feature is not None and feature.shape != (
         source_measure.num_atoms,
         target_measure.num_atoms,
@@ -268,8 +270,7 @@ class GromovWasserstein(StrictModule):
             status=status,
             approximation_kind="finite-entropic-gw-local-solve",
             bounded_non_claim=(
-                "GW and fused GW are nonconvex finite local solves; convergence does "
-                "not certify a global minimizer."
+                "GW and fused GW are nonconvex finite local solves; convergence does not certify a global minimizer."
             ),
         )
 

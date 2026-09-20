@@ -213,7 +213,7 @@ def run(*, quick: bool) -> dict:
         "backend": jax.default_backend(),
         "quick": quick,
         "grid_count": count,
-        "coordinate_size": int(state.size),
+        "coordinate_size": state.size,
         "lowering_seconds": compilation.lowering_seconds,
         "compilation_seconds": compilation.compilation_seconds,
         "first_execution_seconds": first,

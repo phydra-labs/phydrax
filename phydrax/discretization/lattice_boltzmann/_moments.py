@@ -153,7 +153,7 @@ class MomentBasisPlan(StrictModule, NonTrainableState):
             )
         exponents_ = None
         if exponents is not None:
-            exponents_ = tuple(tuple(int(value) for value in row) for row in exponents)
+            exponents_ = tuple(tuple(row) for row in exponents)
             if not exponents_ or any(value < 0 for row in exponents_ for value in row):
                 raise ValueError(
                     "Moment exponents must be a non-empty nonnegative table."
@@ -339,11 +339,7 @@ class RelaxationSpectrumPlan(StrictModule, NonTrainableState):
             not np.isfinite(value) or value < 0.0 or value >= 2.0 for value in rates_
         ):
             raise ValueError("Every prepared relaxation rate must lie in [0, 2).")
-        shear = (
-            None
-            if shear_rate_indices is None
-            else tuple(int(i) for i in shear_rate_indices)
-        )
+        shear = None if shear_rate_indices is None else tuple(shear_rate_indices)
         if shear is not None and (
             len(set(shear)) != len(shear) or any(i < 0 for i in shear)
         ):
@@ -385,9 +381,9 @@ class RelaxationSpectrumPlan(StrictModule, NonTrainableState):
             rates = np.asarray(self.rates, dtype=np.float64)
             if np.any(rates[list(conserved)] != 0.0):
                 raise ValueError("Explicit conserved relaxation rates must be zero.")
-        conserved_mask = np.zeros((q,), dtype=bool)
+        conserved_mask = np.zeros((q,), dtype=np.bool_)
         conserved_mask[list(conserved)] = True
-        shear_mask = np.zeros((q,), dtype=bool)
+        shear_mask = np.zeros((q,), dtype=np.bool_)
         shear_mask[list(shear)] = True
         spectrum_id = canonical_fingerprint(
             {

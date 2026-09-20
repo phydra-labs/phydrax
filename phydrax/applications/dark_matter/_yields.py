@@ -42,7 +42,7 @@ def _identifier(value: str, name: str, /) -> str:
 
 
 def _positive_scalar(value: ArrayLike, name: str, /) -> Array:
-    host = np.asarray(value, dtype=float)
+    host = np.asarray(value, dtype=np.float64)
     if host.shape != () or not np.isfinite(host) or host <= 0.0:
         raise ValueError(f"{name} must be a finite positive scalar.")
     return jnp.asarray(value)
@@ -124,8 +124,8 @@ class ExactLineTable(StrictModule, NonTrainableState):
     table_id: str = eqx.field(static=True)
 
     def __init__(self, energy_gev: ArrayLike, multiplicity: ArrayLike, /):
-        energy_host = np.asarray(energy_gev, dtype=float)
-        multiplicity_host = np.asarray(multiplicity, dtype=float)
+        energy_host = np.asarray(energy_gev, dtype=np.float64)
+        multiplicity_host = np.asarray(multiplicity, dtype=np.float64)
         if energy_host.ndim != 1 or multiplicity_host.shape != energy_host.shape:
             raise ValueError("Line energies and multiplicities must be matching vectors.")
         if (
@@ -136,8 +136,7 @@ class ExactLineTable(StrictModule, NonTrainableState):
             or (energy_host.size > 1 and np.any(np.diff(energy_host) < 0.0))
         ):
             raise ValueError(
-                "Line energies must be positive, finite, and ordered; multiplicities "
-                "must be finite and non-negative."
+                "Line energies must be positive, finite, and ordered; multiplicities must be finite and non-negative."
             )
         self.energy_gev = jnp.asarray(energy_gev)
         self.multiplicity = jnp.asarray(multiplicity)
@@ -163,8 +162,8 @@ class YieldUncertainty(StrictModule, NonTrainableState):
         line_standard_deviation: ArrayLike,
         /,
     ):
-        continuum_host = np.asarray(continuum_standard_deviation, dtype=float)
-        line_host = np.asarray(line_standard_deviation, dtype=float)
+        continuum_host = np.asarray(continuum_standard_deviation, dtype=np.float64)
+        line_host = np.asarray(line_standard_deviation, dtype=np.float64)
         if continuum_host.ndim != 1 or line_host.ndim != 1:
             raise ValueError("Yield uncertainties must be vectors.")
         if (
@@ -221,8 +220,8 @@ class ParticleYieldSpectrum(StrictModule, NonTrainableState):
         ):
             raise TypeError("lines and uncertainty must use the yield product types.")
         species = _identifier(product_species, "product_species")
-        energy_host = np.asarray(continuum.coordinate, dtype=float)
-        values_host = np.asarray(continuum.values, dtype=float)
+        energy_host = np.asarray(continuum.coordinate, dtype=np.float64)
+        values_host = np.asarray(continuum.values, dtype=np.float64)
         if (
             energy_host.ndim != 1
             or energy_host.size < 2
@@ -348,7 +347,7 @@ def mix_particle_yields(
     identifier = _identifier(mixture_id, "mixture_id")
     if not isinstance(components, tuple) or not components:
         raise ValueError("Yield mixtures require a non-empty component tuple.")
-    fractions = np.asarray([item[0] for item in components], dtype=float)
+    fractions = np.asarray([item[0] for item in components], dtype=np.float64)
     spectra = tuple(item[1] for item in components)
     if any(not isinstance(item, ParticleYieldSpectrum) for item in spectra):
         raise TypeError("Every mixture component must be a ParticleYieldSpectrum.")

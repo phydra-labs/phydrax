@@ -81,13 +81,13 @@ class RecurrentBatch(StrictModule):
         time: ArrayLike | None = None,
         time_direction: RecurrentTimeDirection = "forward",
     ):
-        valid_array = jnp.asarray(valid, dtype=bool)
-        if valid_array.ndim < 1 or int(valid_array.shape[-1]) <= 0:
+        valid_array = jnp.asarray(valid, dtype=jnp.bool_)
+        if valid_array.ndim < 1 or valid_array.shape[-1] <= 0:
             raise ValueError("valid must contain a non-empty trailing sequence axis.")
         if time_direction not in ("forward", "backward"):
             raise ValueError("time_direction must be 'forward' or 'backward'.")
-        case_shape = tuple(int(size) for size in valid_array.shape[:-1])
-        sequence_length = int(valid_array.shape[-1])
+        case_shape = tuple(valid_array.shape[:-1])
+        sequence_length = valid_array.shape[-1]
         leaves = jax.tree.leaves(inputs)
         if not leaves:
             raise ValueError("inputs must contain at least one array leaf.")
@@ -107,7 +107,7 @@ class RecurrentBatch(StrictModule):
         if reset is None:
             reset_array = jnp.zeros_like(valid_array)
         else:
-            reset_array = jnp.asarray(reset, dtype=bool)
+            reset_array = jnp.asarray(reset, dtype=jnp.bool_)
             if reset_array.shape != valid_array.shape:
                 raise ValueError("reset must have the same shape as valid.")
         valid_array = eqx.error_if(
@@ -178,7 +178,7 @@ class RecurrentTimeContext(StrictModule):
         direction: RecurrentTimeDirection,
     ):
         time_array = jnp.asarray(time)
-        has_time_array = jnp.asarray(has_time, dtype=bool)
+        has_time_array = jnp.asarray(has_time, dtype=jnp.bool_)
         if not jnp.issubdtype(time_array.dtype, jnp.floating):
             raise TypeError("Recurrent context time must have a real floating dtype.")
         if time_array.shape != has_time_array.shape:
@@ -482,7 +482,7 @@ def _recurrent_time_context(
 
     if initial_context is None:
         previous_time = jnp.zeros(batch.case_shape, dtype=batch.time.dtype)
-        previous_has_time = jnp.zeros(batch.case_shape, dtype=bool)
+        previous_has_time = jnp.zeros(batch.case_shape, dtype=jnp.bool_)
     else:
         if not isinstance(initial_context, RecurrentTimeContext):
             raise TypeError("initial_context must be a RecurrentTimeContext or None.")
@@ -495,8 +495,7 @@ def _recurrent_time_context(
             or initial_context.has_time.shape != batch.case_shape
         ):
             raise ValueError(
-                "Recurrent context leaves must have the recurrent case shape "
-                f"{batch.case_shape}."
+                f"Recurrent context leaves must have the recurrent case shape {batch.case_shape}."
             )
         previous_time = initial_context.time.astype(batch.time.dtype)
         previous_has_time = initial_context.has_time
@@ -743,17 +742,15 @@ class AffineRecurrence(AbstractRecurrentCell):
                 or state.shape[-state_rank:] != self.initial.shape
             ):
                 raise ValueError(
-                    "Elementwise affine transitions and states must end with "
-                    f"state shape {self.initial.shape}."
+                    f"Elementwise affine transitions and states must end with state shape {self.initial.shape}."
                 )
             return transition * state
-        state_size = int(self.initial.shape[0])
+        state_size = self.initial.shape[0]
         if transition.shape[-2:] != (state_size, state_size) or state.shape[-1:] != (
             state_size,
         ):
             raise ValueError(
-                "Matrix affine transitions and states must end with "
-                f"({state_size}, {state_size}) and ({state_size},)."
+                f"Matrix affine transitions and states must end with ({state_size}, {state_size}) and ({state_size},)."
             )
         return ein.contract("...ij,...j->...i", transition, state)
 
@@ -780,7 +777,7 @@ class AffineRecurrence(AbstractRecurrentCell):
     def identity_transition(self, reference: Array, /) -> Array:
         if self.mode == "elementwise":
             return jnp.ones_like(reference)
-        size = int(reference.shape[-1])
+        size = reference.shape[-1]
         identity = jnp.eye(size, dtype=reference.dtype)
         return jnp.broadcast_to(identity, reference.shape)
 

@@ -106,8 +106,8 @@ class RaoBlackwellizedStateSpaceModel(StrictModule):
         ):
             if not callable(function):
                 raise TypeError(f"{name} must be callable.")
-        linear_shape = tuple(int(size) for size in linear_state_shape)
-        observed_shape = tuple(int(size) for size in observation_shape)
+        linear_shape = tuple(linear_state_shape)
+        observed_shape = tuple(observation_shape)
         if any(size <= 0 for size in linear_shape):
             raise ValueError("linear_state_shape dimensions must be positive.")
         if any(size <= 0 for size in observed_shape):
@@ -132,14 +132,13 @@ class RaoBlackwellizedStateSpaceModel(StrictModule):
             jnp.asarray(nonlinear_state), args
         )
         size = prod(self.linear_state_shape) if self.linear_state_shape else 1
-        mean_array = jnp.asarray(mean, dtype=float)
-        covariance_array = jnp.asarray(covariance, dtype=float)
+        mean_array = jnp.asarray(mean, dtype=jnp.float64)
+        covariance_array = jnp.asarray(covariance, dtype=jnp.float64)
         if mean_array.shape != self.linear_state_shape:
             raise ValueError("Initial linear mean must have shape linear_state_shape.")
         if covariance_array.shape != (size, size):
             raise ValueError(
-                "Initial linear covariance must have shape "
-                "(linear_state_size, linear_state_size)."
+                "Initial linear covariance must have shape (linear_state_size, linear_state_size)."
             )
         return mean_array, covariance_array
 
@@ -160,9 +159,9 @@ class RaoBlackwellizedStateSpaceModel(StrictModule):
             context,
         )
         size = prod(self.linear_state_shape) if self.linear_state_shape else 1
-        matrix_array = jnp.asarray(matrix, dtype=float)
-        covariance_array = jnp.asarray(covariance, dtype=float)
-        offset_array = jnp.broadcast_to(jnp.asarray(offset, dtype=float), (size,))
+        matrix_array = jnp.asarray(matrix, dtype=jnp.float64)
+        covariance_array = jnp.asarray(covariance, dtype=jnp.float64)
+        offset_array = jnp.broadcast_to(jnp.asarray(offset, dtype=jnp.float64), (size,))
         if matrix_array.shape != (size, size):
             raise ValueError("Conditional transition matrix has incompatible shape.")
         if covariance_array.shape != (size, size):
@@ -181,21 +180,21 @@ class RaoBlackwellizedStateSpaceModel(StrictModule):
         )
         linear_size = prod(self.linear_state_shape) if self.linear_state_shape else 1
         observation_size = prod(self.observation_shape) if self.observation_shape else 1
-        matrix_array = jnp.asarray(matrix, dtype=float)
+        matrix_array = jnp.asarray(matrix, dtype=jnp.float64)
         offset_array = jnp.broadcast_to(
-            jnp.asarray(offset, dtype=float), (observation_size,)
+            jnp.asarray(offset, dtype=jnp.float64), (observation_size,)
         )
         if matrix_array.shape != (observation_size, linear_size):
             raise ValueError("Conditional observation matrix has incompatible shape.")
         if isinstance(covariance, DiagonalCovariance):
-            variance = jnp.asarray(covariance.variance, dtype=float)
+            variance = jnp.asarray(covariance.variance, dtype=jnp.float64)
             if variance.shape != self.observation_shape:
                 raise ValueError(
                     "Conditional diagonal observation variance has incompatible shape."
                 )
             covariance_value = covariance
         else:
-            covariance_value = jnp.asarray(covariance, dtype=float)
+            covariance_value = jnp.asarray(covariance, dtype=jnp.float64)
             if covariance_value.shape != (observation_size, observation_size):
                 raise ValueError(
                     "Conditional observation covariance has incompatible shape."
@@ -243,7 +242,7 @@ class RaoBlackwellizedStateSpaceProblem(StrictModule):
                     "Input signal case_shape must equal the observation case_shape."
                 )
         initial = jnp.broadcast_to(
-            jnp.asarray(initial_time, dtype=float), observations.case_shape
+            jnp.asarray(initial_time, dtype=jnp.float64), observations.case_shape
         )
         if bool(jnp.any(~jnp.isfinite(initial))):
             raise ValueError("initial_time must be finite.")
@@ -579,7 +578,7 @@ def rao_blackwellized_particle_filter(
                 records[8].append(linear_covariances[case_index])
                 records[9].append(log_weights[case_index])
                 records[10].append(identity)
-                records[11].append(jnp.full((count,), alive[case_index], dtype=bool))
+                records[11].append(jnp.full((count,), alive[case_index], dtype=jnp.bool_))
                 records[12].append(effective_sample_size(log_weights[case_index]))
                 records[13].append(jnp.asarray(False))
                 records[14].append(jnp.asarray(0.0, dtype=linear_means.dtype))
@@ -861,7 +860,7 @@ class RaoBlackwellizedFilterLikelihood(StrictModule):
         key_data = np.asarray(jax.device_get(jax.random.key_data(key)))
         if key_data.ndim != 1:
             raise ValueError("key must be one unbatched JAX random key.")
-        self.key_data = tuple(int(value) for value in key_data)
+        self.key_data = tuple(key_data)
         self.key_implementation = str(jax.random.key_impl(key))
         self.num_particles = count
         self.resampling_method = method

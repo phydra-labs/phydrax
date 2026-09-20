@@ -42,15 +42,15 @@ class CelestialBodyCatalog(StrictModule, NonTrainableState):
             raise ValueError("body_ids must be unique.")
         if not isinstance(context, AstrodynamicsContext):
             raise TypeError("context must be an AstrodynamicsContext.")
-        coupling = np.asarray(gravitational_parameters, dtype=float)
-        radii = np.asarray(reference_radii, dtype=float)
+        coupling = np.asarray(gravitational_parameters, dtype=np.float64)
+        radii = np.asarray(reference_radii, dtype=np.float64)
         count = len(identifiers)
         if coupling.shape != (count,) or radii.shape != (count,):
             raise ValueError("Body constants must match body capacity.")
         active = (
-            np.ones((count,), dtype=bool)
+            np.ones((count,), dtype=np.bool_)
             if active_mask is None
-            else np.asarray(active_mask, dtype=bool)
+            else np.asarray(active_mask, dtype=np.bool_)
         )
         if active.shape != (count,):
             raise ValueError("active_mask must match body capacity.")

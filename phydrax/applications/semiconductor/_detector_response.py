@@ -54,7 +54,7 @@ class DetectorTrajectoryRoute(StrictModule, NonTrainableState):
     ):
         if not isinstance(state_layout, StateLayout):
             raise TypeError("state_layout must be StateLayout.")
-        indices = tuple(int(index) for index in position_components)
+        indices = tuple(position_components)
         if (
             not indices
             or len(set(indices)) != len(indices)

@@ -277,7 +277,7 @@ def propose_mixed_mode_growth(
         raise ValueError("Crack-growth tip, increment, or toughness is invalid.")
     mode_i = float(evidence.mode_i)
     mode_ii = float(evidence.mode_ii)
-    if abs(mode_ii) <= np.finfo(float).eps * max(1.0, abs(mode_i)):
+    if abs(mode_ii) <= np.finfo(np.float64).eps * max(1.0, abs(mode_i)):
         kink_angle = 0.0
     else:
         kink_angle = 2.0 * math.atan(

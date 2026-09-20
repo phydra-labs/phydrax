@@ -69,7 +69,7 @@ def test_channel_compiler_rejects_mismatched_problem_viscosity():
 
 def test_channel_sbdf2_rejects_constraint_invalid_initial_state_without_advancing():
     _, dynamics = _compiled_channel()
-    initial = jnp.zeros(dynamics.state_shape, dtype=complex)
+    initial = jnp.zeros(dynamics.state_shape, dtype="complex128")
     solution = phx.solver.solve_channel_sbdf2(
         dynamics,
         initial,

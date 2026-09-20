@@ -138,25 +138,25 @@ class VOFPhaseChangePlan(StrictModule, NonTrainableState):
         )
         distance = jnp.abs(projection)
         minimum_distance = 64.0 * jnp.finfo(temperature_.dtype).eps
-        neighbour_alpha = stage_plic.volume_fraction[safe_stencil]
-        phase0_mask = valid & (projection < -minimum_distance) & (neighbour_alpha >= 0.5)
-        phase1_mask = valid & (projection > minimum_distance) & (neighbour_alpha <= 0.5)
+        neighbor_alpha = stage_plic.volume_fraction[safe_stencil]
+        phase0_mask = valid & (projection < -minimum_distance) & (neighbor_alpha >= 0.5)
+        phase1_mask = valid & (projection > minimum_distance) & (neighbor_alpha <= 0.5)
         safe_distance = jnp.maximum(distance, minimum_distance)
         inverse_distance = 1.0 / safe_distance
         phase0_weight = jnp.where(phase0_mask, inverse_distance, 0.0)
         phase1_weight = jnp.where(phase1_mask, inverse_distance, 0.0)
         phase0_support = jnp.sum(phase0_weight, axis=1)
         phase1_support = jnp.sum(phase1_weight, axis=1)
-        neighbour_temperature = temperature_[safe_stencil]
+        neighbor_temperature = temperature_[safe_stencil]
         phase0_gradient = jnp.sum(
             phase0_weight
-            * (temperature_[:, None] - neighbour_temperature)
+            * (temperature_[:, None] - neighbor_temperature)
             / safe_distance,
             axis=1,
         ) / jnp.where(phase0_support > 0.0, phase0_support, 1.0)
         phase1_gradient = jnp.sum(
             phase1_weight
-            * (neighbour_temperature - temperature_[:, None])
+            * (neighbor_temperature - temperature_[:, None])
             / safe_distance,
             axis=1,
         ) / jnp.where(phase1_support > 0.0, phase1_support, 1.0)

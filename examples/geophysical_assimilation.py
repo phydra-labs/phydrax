@@ -5,7 +5,7 @@ Run from the repository: PYTHONPATH=. python examples/geophysical_assimilation.p
 The physical model is two equal-area heat reservoirs with Newtonian radiative
 relaxation and conservative inter-column exchange. Its exact linear propagator
 is used; the ensemble adds independent unresolved temperature forcing. This is
-an explicitly labelled linear twin, not a global atmospheric validation.
+an explicitly labeled linear twin, not a global atmospheric validation.
 """
 
 from __future__ import annotations
@@ -96,7 +96,7 @@ def make_twin_problem(*, steps=8):
     initial_truth = jnp.asarray([2.0, 0.5])
     truth = jax.vmap(lambda time: temperature_propagator(initial_truth, time))(times)
     noise = 0.05 * jax.random.normal(jax.random.key(81), truth.shape, dtype=truth.dtype)
-    available = np.ones(truth.shape, dtype=bool)
+    available = np.ones(truth.shape, dtype="bool")
     available[1::2, 1] = False
     observed = np.asarray(truth + noise).copy()
     observed[~available] = np.nan

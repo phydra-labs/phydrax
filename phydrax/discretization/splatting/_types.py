@@ -68,8 +68,7 @@ class ParticleGridSplatBudget(StrictModule, NonTrainableState):
         maximum_scalar_workspace_bytes: int = 1024**3,
     ):
         values = tuple(
-            int(value)
-            for value in (
+            (
                 maximum_sources,
                 maximum_routes,
                 maximum_relation_bytes,
@@ -175,7 +174,7 @@ class SplatBalanceEvidence(StrictModule):
         self.valid_route_count = jnp.asarray(valid_route_count, dtype=jnp.int32)
         self.tolerance = jnp.asarray(tolerance)
         self.closed_domain_conservation_valid = jnp.asarray(
-            closed_domain_conservation_valid, dtype=bool
+            closed_domain_conservation_valid, dtype=jnp.bool_
         )
         identifiers = (
             str(source_support_id),
@@ -226,7 +225,7 @@ class SplatDepositResult(StrictModule):
         self.content = content_
         self.density = density_
         self.balance = balance
-        self.successful = jnp.asarray(successful, dtype=bool)
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_)
 
     def require_success(self, value: ArrayLike, /) -> Array:
         """Return ``value`` or fail unless deposition completed successfully."""
@@ -262,7 +261,7 @@ class SplatRouteScatterResult(StrictModule):
             raise ValueError("Route-scatter policy IDs must be non-empty.")
         self.values = jnp.asarray(values)
         self.valid_route_count = jnp.asarray(valid_route_count, dtype=jnp.int32)
-        self.successful = jnp.asarray(successful, dtype=bool)
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_)
         self.execution_policy_id = execution
         self.precision_policy_id = precision
 
@@ -300,7 +299,7 @@ class SplatReconstructionResult(StrictModule):
         values_ = jnp.asarray(values)
         numerator_ = jnp.asarray(numerator)
         denominator_ = jnp.asarray(denominator)
-        support_ = jnp.asarray(support, dtype=bool)
+        support_ = jnp.asarray(support, dtype=jnp.bool_)
         if values_.shape != numerator_.shape:
             raise ValueError("Reconstruction values and numerator must match.")
         if values_.shape[: support_.ndim] != support_.shape:
@@ -313,7 +312,7 @@ class SplatReconstructionResult(StrictModule):
         self.denominator_tolerance = jnp.asarray(denominator_tolerance)
         self.support = support_
         self.zero_coverage_count = jnp.asarray(zero_coverage_count, dtype=jnp.int32)
-        self.successful = jnp.asarray(successful, dtype=bool)
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_)
 
     def require_success(self, value: ArrayLike, /) -> Array:
         """Return ``value`` or fail unless reconstruction completed successfully."""

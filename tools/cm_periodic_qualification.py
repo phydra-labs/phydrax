@@ -44,7 +44,7 @@ def _ssh(intercell: float, intracell: float, mesh_size: int):
         ANGSTROM,
         PeriodicBlochGauge("lattice"),
     )
-    blocks = np.zeros((3, 2, 1, 2, 1), dtype=complex)
+    blocks = np.zeros((3, 2, 1, 2, 1), dtype="complex128")
     blocks[1, 0, 0, 1, 0] = intracell
     blocks[1, 1, 0, 0, 0] = intracell
     blocks[0, 0, 0, 1, 0] = intercell

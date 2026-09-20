@@ -166,7 +166,7 @@ class FinancialScenarioSet(StrictModule):
         /,
     ):
         values_ = jnp.asarray(values)
-        if values_.ndim != 3 or any(int(size) <= 0 for size in values_.shape):
+        if values_.ndim != 3 or any(size <= 0 for size in values_.shape):
             raise ValueError(
                 "scenario values must have non-empty (scenario, time, factor) shape."
             )
@@ -185,7 +185,7 @@ class FinancialScenarioSet(StrictModule):
         ):
             raise TypeError("scenario times must be a floating time-axis array.")
         if mask.shape != (scenario_capacity, time_capacity) or mask.dtype != jnp.dtype(
-            bool
+            jnp.bool_
         ):
             raise TypeError("scenario valid must be a boolean scenario/time mask.")
 
@@ -218,8 +218,7 @@ class FinancialScenarioSet(StrictModule):
             jnp.any(scenario_active & (~jnp.isfinite(weights_) | (weights_ <= 0)))
             | jnp.any(~scenario_active & (weights_ != 0))
             | ~jnp.isclose(jnp.sum(weights_), 1.0, rtol=1e-6, atol=1e-7),
-            "active scenario weights must be finite, positive, and sum to one; "
-            "inactive weights must be zero.",
+            "active scenario weights must be finite, positive, and sum to one; inactive weights must be zero.",
         )
         active_times = jnp.where(time_active, times_, 0)
         times_ = eqx.error_if(
@@ -227,8 +226,7 @@ class FinancialScenarioSet(StrictModule):
             jnp.any(time_active & ~jnp.isfinite(times_))
             | jnp.any(~time_active & (times_ != 0))
             | jnp.any(time_active[1:] & (active_times[1:] <= active_times[:-1])),
-            "active scenario times must be finite and strictly increasing; inactive "
-            "times must be zero.",
+            "active scenario times must be finite and strictly increasing; inactive times must be zero.",
         )
         self.values = values_
         self.weights = weights_

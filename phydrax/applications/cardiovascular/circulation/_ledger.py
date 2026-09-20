@@ -111,7 +111,7 @@ def audit_total_volume(
         canonical_fingerprint(
             {
                 "kind": "circulation-total-volume-ledger",
-                "samples": int(time_.shape[0]),
+                "samples": time_.shape[0],
                 "tolerance": float(tolerance_).hex(),
             }
         ),
@@ -196,7 +196,7 @@ def audit_passivity(
         canonical_fingerprint(
             {
                 "kind": "circulation-passivity-ledger",
-                "samples": int(time_.shape[0]),
+                "samples": time_.shape[0],
                 "tolerance": float(tolerance_).hex(),
             }
         ),
@@ -405,7 +405,7 @@ def audit_pressure_volume_cycle(
         canonical_fingerprint(
             {
                 "kind": "circulation-pressure-volume-work-ledger",
-                "samples": int(pressure_.shape[0]),
+                "samples": pressure_.shape[0],
                 "closure_tolerance": float(tolerance).hex(),
             }
         ),

@@ -99,9 +99,9 @@ def _operator_case_measure(
         else jnp.asarray(context.case_log_weights, dtype=dtype).reshape((-1,))
     )
     mask = (
-        jnp.ones((case_count,), dtype=bool)
+        jnp.ones((case_count,), dtype=jnp.bool_)
         if context.case_mask is None
-        else jnp.asarray(context.case_mask, dtype=bool).reshape((-1,))
+        else jnp.asarray(context.case_mask, dtype=jnp.bool_).reshape((-1,))
     )
     probabilities = (
         jnp.ones((case_count,), dtype=dtype)
@@ -147,9 +147,9 @@ def _nonuniform_case_measure(
         else jnp.asarray(context.case_log_weights, dtype=dtype).reshape((-1,))
     )
     mask = (
-        jnp.ones((case_count,), dtype=bool)
+        jnp.ones((case_count,), dtype=jnp.bool_)
         if context.case_mask is None
-        else jnp.asarray(context.case_mask, dtype=bool).reshape((-1,))
+        else jnp.asarray(context.case_mask, dtype=jnp.bool_).reshape((-1,))
     )
     probabilities = (
         jnp.ones((case_count,), dtype=dtype)
@@ -313,8 +313,7 @@ class CochainResidualLoss(AbstractOperatorLossTerm):
             task_field = task.field_by_name[binding.field]
             if task_field.cochain != expected:
                 raise ValueError(
-                    f"Task field {binding.field!r} cochain semantics do not match "
-                    "the residual program."
+                    f"Task field {binding.field!r} cochain semantics do not match the residual program."
                 )
 
         if binding.kind == "prediction":
@@ -373,8 +372,7 @@ class CochainResidualLoss(AbstractOperatorLossTerm):
                 or topology.entity != "node"
             ):
                 raise ValueError(
-                    f"Cochain residual input {name!r} requires node-based "
-                    "cell-complex topology."
+                    f"Cochain residual input {name!r} requires node-based cell-complex topology."
                 )
             fingerprint = topology.graph_fingerprint
             if reference_fingerprint is None:
@@ -400,7 +398,7 @@ class CochainResidualLoss(AbstractOperatorLossTerm):
                 samples,
                 jnp.ones(
                     physical_batch.case_shape + samples.sample_shape,
-                    dtype=bool,
+                    dtype=jnp.bool_,
                 ),
                 case_shape=physical_batch.case_shape,
             )
@@ -417,17 +415,18 @@ class CochainResidualLoss(AbstractOperatorLossTerm):
             raise ValueError("Cochain residual topology requires named node metadata.")
         cell_degree = jnp.asarray(graph.nodes["cell_dim"], dtype=jnp.int32)
         valid_nodes = (
-            jnp.ones(cell_degree.shape, dtype=bool)
+            jnp.ones(cell_degree.shape, dtype=jnp.bool_)
             if graph.node_mask is None
-            else jnp.asarray(graph.node_mask, dtype=bool)
+            else jnp.asarray(graph.node_mask, dtype=jnp.bool_)
         )
         for name, expected in self.program.input_specs.items():
             required = valid_nodes & (cell_degree == expected.degree)
             full_fields[name] = eqx.error_if(
                 full_fields[name],
-                jnp.any(required & ~jnp.asarray(coverage_by_input[name], dtype=bool)),
-                f"Cochain residual input {name!r} does not cover every degree-"
-                f"{expected.degree} cell.",
+                jnp.any(
+                    required & ~jnp.asarray(coverage_by_input[name], dtype=jnp.bool_)
+                ),
+                f"Cochain residual input {name!r} does not cover every degree-{expected.degree} cell.",
             )
 
         residual = self.program(graph, full_fields, key=key)[self.output]
@@ -444,8 +443,8 @@ class CochainResidualLoss(AbstractOperatorLossTerm):
         graph_index = jnp.searchsorted(ends, positions, side="right").astype(jnp.int32)
         graph_index = jnp.where(positions < jnp.sum(graph.n_node), graph_index, -1)
         case_measure = _operator_case_measure(context, dtype=squared.real.dtype)
-        graph_count = int(graph.n_node.shape[0])
-        if graph_count != int(case_measure.normalized_weights.shape[0]):
+        graph_count = graph.n_node.shape[0]
+        if graph_count != case_measure.normalized_weights.shape[0]:
             raise ValueError(
                 "Cochain residual accumulation requires one graph per operator case."
             )
@@ -551,15 +550,13 @@ class OperatorLossTerm(AbstractOperatorLossTerm):
             expected = (selected_batch.case_shape[0],)
             if array.shape != expected:
                 raise ValueError(
-                    "Custom per-case operator losses must return shape "
-                    f"{expected}; got {array.shape}."
+                    f"Custom per-case operator losses must return shape {expected}; got {array.shape}."
                 )
             array = _weighted_case_reduction(array, context, "mean")
         else:
             if array.ndim != 0:
                 raise ValueError(
-                    "Custom scalar operator losses must return a scalar unless "
-                    "case_reduction='per_case'."
+                    "Custom scalar operator losses must return a scalar unless case_reduction='per_case'."
                 )
             array = eqx.error_if(
                 array,
@@ -661,8 +658,7 @@ class SupervisedOperatorLoss(AbstractOperatorLossTerm):
         truth = selected_targets.field(target_name)
         if predicted.query_name != truth.query_name:
             raise ValueError(
-                f"Prediction {prediction_name!r} and target {target_name!r} "
-                "must use the same query."
+                f"Prediction {prediction_name!r} and target {target_name!r} must use the same query."
             )
         query = selected_batch.query(predicted.query_name)
         mask = query.mask_array(case_shape=selected_batch.case_shape)
@@ -836,8 +832,7 @@ class ResidualOperatorRolloutLoss(AbstractOperatorLossTerm):
     ) -> Array:
         del model, prediction, batch, targets, key, step, training, context
         raise ValueError(
-            "ResidualOperatorRolloutLoss must be evaluated by task-bound "
-            "fit_operator with a rollout route and policy."
+            "ResidualOperatorRolloutLoss must be evaluated by task-bound fit_operator with a rollout route and policy."
         )
 
     @property

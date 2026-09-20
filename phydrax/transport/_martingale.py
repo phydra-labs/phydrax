@@ -166,7 +166,7 @@ class MartingaleTransportProblem(StrictModule):
 
     @property
     def coordinate_size(self) -> int:
-        return int(self.source_coordinates.shape[1])
+        return self.source_coordinates.shape[1]
 
 
 class MartingaleTransportResult(StrictModule):
@@ -205,7 +205,7 @@ class MartingaleTransportResult(StrictModule):
 
 
 def _martingale_coordinates(value: ArrayLike, atoms: int, /, *, name: str) -> Array:
-    coordinates = jnp.asarray(value, dtype=float)
+    coordinates = jnp.asarray(value, dtype=jnp.float64)
     if coordinates.ndim == 1:
         coordinates = coordinates[:, None]
     if coordinates.ndim != 2 or coordinates.shape[0] != atoms or coordinates.shape[1] < 1:
@@ -225,14 +225,14 @@ def convex_order_evidence(
     tolerance: float = 1e-7,
 ) -> ConvexOrderEvidence:
     """Check finite marginal mass/means and the complete scalar call criterion."""
-    source = jnp.asarray(source_coordinates, dtype=float)
-    target = jnp.asarray(target_coordinates, dtype=float)
+    source = jnp.asarray(source_coordinates, dtype=jnp.float64)
+    target = jnp.asarray(target_coordinates, dtype=jnp.float64)
     if source.ndim == 1:
         source = source[:, None]
     if target.ndim == 1:
         target = target[:, None]
-    source_w = jnp.asarray(source_weights, dtype=float)
-    target_w = jnp.asarray(target_weights, dtype=float)
+    source_w = jnp.asarray(source_weights, dtype=jnp.float64)
+    target_w = jnp.asarray(target_weights, dtype=jnp.float64)
     if source.ndim != 2 or target.ndim != 2 or source.shape[1] != target.shape[1]:
         raise ValueError("Convex-order coordinates must be two matrices of equal width.")
     if source_w.shape != (source.shape[0],) or target_w.shape != (target.shape[0],):
@@ -317,7 +317,7 @@ def _constraint_system(problem: MartingaleTransportProblem, /) -> tuple[Array, A
 
 
 def _independent_rows(matrix: Array, /) -> tuple[int, ...]:
-    host = np.asarray(matrix, dtype=float)
+    host = np.asarray(matrix, dtype=np.float64)
     selected: list[int] = []
     rank = 0
     for index in range(host.shape[0]):
@@ -340,7 +340,7 @@ def audit_martingale_coupling(
     """Independently recompute every defining finite martingale constraint."""
     if not isinstance(problem, MartingaleTransportProblem):
         raise TypeError("problem must be a MartingaleTransportProblem.")
-    plan = jnp.asarray(coupling, dtype=float)
+    plan = jnp.asarray(coupling, dtype=jnp.float64)
     if plan.shape != problem.shape:
         raise ValueError(f"coupling must have shape {problem.shape}.")
     source_marginal = jnp.sum(plan, axis=1)

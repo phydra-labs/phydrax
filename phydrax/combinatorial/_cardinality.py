@@ -64,9 +64,9 @@ class CardinalitySpace(AbstractBoundableCombinatorialSpace):
         if count_ < 0 or count_ > size_:
             raise ValueError("count must lie in [0, size].")
         if valid is None:
-            validity = jnp.ones((size_,), dtype=bool)
+            validity = jnp.ones((size_,), dtype=jnp.bool_)
         else:
-            validity = jnp.asarray(valid, dtype=bool)
+            validity = jnp.asarray(valid, dtype=jnp.bool_)
             if validity.shape != (size_,):
                 raise ValueError(
                     f"valid must have shape {(size_,)}; got {validity.shape}."
@@ -101,7 +101,7 @@ class CardinalitySpace(AbstractBoundableCombinatorialSpace):
         )
 
     def integral_feature_mask(self, /) -> Array:
-        return jnp.ones((self.size,), dtype=bool)
+        return jnp.ones((self.size,), dtype=jnp.bool_)
 
     def canonicalize(self, decision: CardinalityDecision, /) -> CardinalityDecision:
         if not isinstance(decision, CardinalityDecision):
@@ -109,8 +109,7 @@ class CardinalitySpace(AbstractBoundableCombinatorialSpace):
         indices = jnp.asarray(decision.indices, dtype=jnp.int32)
         if indices.shape[-1:] != (self.count,):
             raise ValueError(
-                f"cardinality indices must end with shape {(self.count,)}; "
-                f"got {indices.shape}."
+                f"cardinality indices must end with shape {(self.count,)}; got {indices.shape}."
             )
         in_range = (indices >= 0) & (indices < self.size)
         safe = jnp.clip(indices, 0, self.size - 1)
@@ -123,7 +122,7 @@ class CardinalitySpace(AbstractBoundableCombinatorialSpace):
         canonical = self.canonicalize(decision)
         indices = canonical.indices
         batch_shape = indices.shape[:-1]
-        features = jnp.zeros(batch_shape + (self.size,), dtype=float)
+        features = jnp.zeros(batch_shape + (self.size,), dtype=jnp.float64)
         if self.count == 0:
             return features
         safe = jnp.clip(indices, 0, self.size - 1)
@@ -149,7 +148,7 @@ class CardinalitySpace(AbstractBoundableCombinatorialSpace):
         residual = invalid_count + duplicate_count
         return CombinatorialFeasibility(
             residual == 0,
-            residual.astype(float),
+            residual.astype("float64"),
         )
 
 
@@ -332,7 +331,7 @@ class StableCardinalityOracle(AbstractBoundableLinearCombinatorialMethod):
             tie_available = jnp.full(
                 batch_shape,
                 structurally_feasible,
-                dtype=bool,
+                dtype=jnp.bool_,
             )
             tie_margin = unselected_min - selected_max
         else:
@@ -341,7 +340,7 @@ class StableCardinalityOracle(AbstractBoundableLinearCombinatorialMethod):
                 jnp.inf,
                 dtype=costs.dtype,
             )
-            tie_available = jnp.zeros(batch_shape, dtype=bool)
+            tie_available = jnp.zeros(batch_shape, dtype=jnp.bool_)
             tie_margin = jnp.full(
                 batch_shape,
                 jnp.nan,
@@ -396,7 +395,7 @@ class StableCardinalityOracle(AbstractBoundableLinearCombinatorialMethod):
             gap_available=jnp.full(
                 batch_shape,
                 structurally_feasible,
-                dtype=bool,
+                dtype=jnp.bool_,
             ),
             tie_available=tie_available,
         )

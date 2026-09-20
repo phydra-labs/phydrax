@@ -104,8 +104,7 @@ class ASPIN(AbstractNonlinearMethod):
             and termination.maximum_evaluations < 2
         ):
             raise ValueError(
-                "ASPIN requires at least two residual evaluations to solve and "
-                "certify the physical system."
+                "ASPIN requires at least two residual evaluations to solve and certify the physical system."
             )
         initial = problem.validate_state(initial_state)
         initial_residual, _ = problem.evaluate(initial, args)

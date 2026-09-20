@@ -18,6 +18,7 @@ from phydrax.ein import contract
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..linalg import DenseLinearOperator, LinearSystem, solve
 
 
 _TWO_PI = 2.0 * np.pi
@@ -115,8 +116,7 @@ class PeriodicCell(StrictModule, NonTrainableState):
             raise ValueError("maximum_image_count must be positive.")
         if shifts.shape[0] > limit:
             raise ValueError(
-                f"PeriodicCell requires {shifts.shape[0]} image candidates, "
-                f"exceeding maximum_image_count={limit}."
+                f"PeriodicCell requires {shifts.shape[0]} image candidates, exceeding maximum_image_count={limit}."
             )
 
         gram = matrix @ matrix.T
@@ -138,7 +138,7 @@ class PeriodicCell(StrictModule, NonTrainableState):
         self.vectors = jnp.asarray(matrix)
         self.inverse_vectors = jnp.asarray(inverse, dtype=dtype)
         self.reciprocal_vectors = jnp.asarray(reciprocal, dtype=dtype)
-        self.periodic_mask = jnp.asarray(axes, dtype=bool)
+        self.periodic_mask = jnp.asarray(axes, dtype=jnp.bool_)
         self.image_shifts = jnp.asarray(shifts, dtype=jnp.int32)
         self.periodic_axes = axes
         self.cell_measure = measure
@@ -165,11 +165,11 @@ class PeriodicCell(StrictModule, NonTrainableState):
 
     @property
     def rank(self) -> int:
-        return int(self.vectors.shape[0])
+        return self.vectors.shape[0]
 
     @property
     def ambient_dimension(self) -> int:
-        return int(self.vectors.shape[1])
+        return self.vectors.shape[1]
 
     @property
     def fully_periodic(self) -> bool:
@@ -182,8 +182,7 @@ class PeriodicCell(StrictModule, NonTrainableState):
     def _require_ambient(self, value: Array, noun: str, /) -> None:
         if not value.shape or value.shape[-1] != self.ambient_dimension:
             raise ValueError(
-                f"PeriodicCell {noun} must end in ambient dimension "
-                f"{self.ambient_dimension}."
+                f"PeriodicCell {noun} must end in ambient dimension {self.ambient_dimension}."
             )
 
     def _require_fractional(self, value: Array, /) -> None:
@@ -254,7 +253,13 @@ class PeriodicCell(StrictModule, NonTrainableState):
         if matrix.shape != self.vectors.shape:
             raise ValueError("Dynamic lattice vectors must match the prepared shape.")
         gram = contract("ik,jk->ij", matrix, matrix, backend="jax")
-        return contract("ij,ik->jk", matrix, jnp.linalg.inv(gram), backend="jax")
+        result = solve(LinearSystem(DenseLinearOperator(gram)), matrix)
+        inverse = jnp.swapaxes(result.value, -1, -2)
+        return eqx.error_if(
+            inverse,
+            ~jnp.all(result.successful),
+            "Dynamic lattice coordinate solve failed.",
+        )
 
     def fractional_with_vectors(
         self, position: ArrayLike, vectors: ArrayLike, /

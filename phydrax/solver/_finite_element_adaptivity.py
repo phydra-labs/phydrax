@@ -346,10 +346,7 @@ def write_finite_element_hp_epoch(
         field_name = epoch.discretization.field_spaces[0].name
         conformity = epoch.discretization.elements[0][0].conformity
         component_shape = tuple(
-            int(value)
-            for value in epoch.discretization.field_spaces[0]
-            .vector_space.structure()
-            .shape[1:]
+            epoch.discretization.field_spaces[0].vector_space.structure().shape[1:]
         )
     metadata = {
         "cell_kind": epoch.topology.cell_kind,

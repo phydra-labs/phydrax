@@ -71,8 +71,7 @@ class AbstractConservationSystem(StrictModule, NonTrainableState):
         normal_ = jnp.asarray(normal)
         if normal_.ndim == 0 or normal_.shape[-1] != self.dimension:
             raise ValueError(
-                "Normal vectors must have a trailing dimension matching "
-                f"system dimension {self.dimension}."
+                f"Normal vectors must have a trailing dimension matching system dimension {self.dimension}."
             )
         flux = jnp.zeros_like(state)
         for axis in range(self.dimension):
@@ -1385,8 +1384,7 @@ class ShallowWaterSystem(AbstractAdmissibleSystem):
         normal_ = jnp.asarray(normal)
         if normal_.ndim == 0 or normal_.shape[-1] != self.dimension:
             raise ValueError(
-                "Normal vectors must have a trailing dimension matching "
-                f"system dimension {self.dimension}."
+                f"Normal vectors must have a trailing dimension matching system dimension {self.dimension}."
             )
         left_velocity = jnp.sum(self.velocity(left_) * normal_, axis=-1)
         right_velocity = jnp.sum(self.velocity(right_) * normal_, axis=-1)

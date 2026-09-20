@@ -15,7 +15,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ...._strict import AbstractAttribute, StrictModule
+from ...._strict import StrictModule
 from ...._trainable import NonTrainableState
 from ._ci import CASCIPlan
 from ._orbital import MolecularOrbitalIntegralStore
@@ -79,7 +79,7 @@ class ActiveSpaceSolverResult(StrictModule, NonTrainableState):
         self.two_particle_density = two
         self.residuals = residual
         self.discarded_weights = discarded
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.solver_kind = kind
         self.provider_id = provider
         self.plan_id = str(plan_id)
@@ -106,8 +106,8 @@ class ActiveSpaceSolverResult(StrictModule, NonTrainableState):
 
 
 class AbstractActiveSpaceSolver(StrictModule, NonTrainableState):
-    provider_id: AbstractAttribute[str]
-    solver_kind: AbstractAttribute[str]
+    provider_id: eqx.AbstractVar[str]
+    solver_kind: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def evaluate(

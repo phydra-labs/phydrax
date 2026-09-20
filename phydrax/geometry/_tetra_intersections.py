@@ -63,18 +63,6 @@ class TetraIntersectionTolerance:
         object.__setattr__(self, "absolute", absolute)
         object.__setattr__(self, "relative", relative)
 
-    @property
-    def absolute_tolerance(self) -> float:
-        """Compatibility spelling used by geometry policies."""
-
-        return self.absolute
-
-    @property
-    def relative_tolerance(self) -> float:
-        """Compatibility spelling used by geometry policies."""
-
-        return self.relative
-
 
 @dataclass(frozen=True, slots=True)
 class TetraIntersectionLimits:
@@ -144,9 +132,7 @@ class TetraIntersectionResult:
         array.setflags(write=False)
         object.__setattr__(self, "vertices", array)
         object.__setattr__(self, "volume", float(self.volume))
-        object.__setattr__(
-            self, "faces", tuple(tuple(int(i) for i in face) for face in self.faces)
-        )
+        object.__setattr__(self, "faces", tuple(tuple(face) for face in self.faces))
         object.__setattr__(self, "pair_id", str(self.pair_id))
 
     @property

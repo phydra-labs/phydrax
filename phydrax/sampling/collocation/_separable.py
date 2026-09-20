@@ -70,8 +70,7 @@ class SeparableCollocationPopulation(StrictModule):
             expected = axis_fields[axis].data.shape
             if active.dims != (axis,) or active.data.shape != expected:
                 raise ValueError(
-                    f"Active mask for axis {axis!r} must have dims {(axis,)!r} "
-                    f"and shape {expected!r}."
+                    f"Active mask for axis {axis!r} must have dims {(axis,)!r} and shape {expected!r}."
                 )
         if frozenset(ages) != frozenset(axis_fields):
             raise ValueError(
@@ -81,8 +80,7 @@ class SeparableCollocationPopulation(StrictModule):
             expected = axis_fields[axis].data.shape
             if age.dims != (axis,) or age.data.shape != expected:
                 raise ValueError(
-                    f"Age for axis {axis!r} must have dims {(axis,)!r} and shape "
-                    f"{expected!r}."
+                    f"Age for axis {axis!r} must have dims {(axis,)!r} and shape {expected!r}."
                 )
         logical_count, active_count = _logical_counts(batch, active_by_axis)
         self.batch = batch
@@ -102,31 +100,31 @@ def _separable_population_metrics(
     /,
 ) -> dict[str, Array]:
     axis_node_count = sum(
-        int(field.data.shape[0]) for field in _axis_fields(population.batch).values()
+        field.data.shape[0] for field in _axis_fields(population.batch).values()
     )
     active_axis_node_count = sum(
-        jnp.sum(jnp.asarray(field.data, dtype=float))
+        jnp.sum(jnp.asarray(field.data, dtype=jnp.float64))
         for field in population.axis_active_by_axis.values()
     )
     return {
-        "refresh_count": jnp.asarray(population.refresh_count, dtype=float),
-        "last_refresh": jnp.asarray(population.last_refresh, dtype=float),
+        "refresh_count": jnp.asarray(population.refresh_count, dtype=jnp.float64),
+        "last_refresh": jnp.asarray(population.last_refresh, dtype=jnp.float64),
         "logical_point_count": jnp.asarray(
             population.logical_point_count,
-            dtype=float,
+            dtype=jnp.float64,
         ),
         "active_logical_point_count": jnp.asarray(
             population.active_logical_point_count,
-            dtype=float,
+            dtype=jnp.float64,
         ),
-        "axis_node_count": jnp.asarray(axis_node_count, dtype=float),
+        "axis_node_count": jnp.asarray(axis_node_count, dtype=jnp.float64),
         "active_axis_node_count": jnp.asarray(
             active_axis_node_count,
-            dtype=float,
+            dtype=jnp.float64,
         ),
         "effective_sample_size": jnp.asarray(
             population.active_logical_point_count,
-            dtype=float,
+            dtype=jnp.float64,
         ),
     }
 
@@ -228,8 +226,8 @@ class HierarchicalAxisPolicy(AbstractCollocationPolicy):
         if float(epsilon) <= 0.0:
             raise ValueError("epsilon must be positive.")
         self.refresh_every = int(refresh_every)
-        self.refinement_fraction = jnp.asarray(refinement_fraction, dtype=float)
-        self.epsilon = jnp.asarray(epsilon, dtype=float)
+        self.refinement_fraction = jnp.asarray(refinement_fraction, dtype=jnp.float64)
+        self.epsilon = jnp.asarray(epsilon, dtype=jnp.float64)
 
     def should_refresh(
         self,
@@ -309,7 +307,7 @@ class HierarchicalAxisPolicy(AbstractCollocationPolicy):
             discretization = discretizations[axis]
             old_active = jnp.asarray(
                 population.axis_active_by_axis[axis].data,
-                dtype=bool,
+                dtype=jnp.bool_,
             )
             inactive_count = int(jnp.sum(~old_active))
             if inactive_count == 0:
@@ -322,12 +320,12 @@ class HierarchicalAxisPolicy(AbstractCollocationPolicy):
                     ),
                     inactive_count,
                 )
-                score = jnp.asarray(marginals[axis].data, dtype=float)
+                score = jnp.asarray(marginals[axis].data, dtype=jnp.float64)
                 ranked = jnp.argsort(jnp.where(old_active, -jnp.inf, score))[::-1]
                 new_active = old_active.at[ranked[:add_n]].set(True)
             discretizations[axis] = discretization.with_active(new_active)
             active_by_axis[axis] = cx.AxisArray(
-                new_active.astype(float),
+                new_active.astype("float64"),
                 dims=(axis,),
             )
             old_age = jnp.asarray(
@@ -395,27 +393,25 @@ def _axis_active_fields(batch: GridBatch) -> dict[str, cx.AxisArray]:
     for axis, field in _axis_fields(batch).items():
         discretization = batch.axis_discretization_by_axis.get(axis)
         if discretization is None or discretization.active is None:
-            data = jnp.ones(field.data.shape, dtype=float)
+            data = jnp.ones(field.data.shape, dtype=jnp.float64)
         else:
-            data = jnp.asarray(discretization.active, dtype=float)
+            data = jnp.asarray(discretization.active, dtype=jnp.float64)
         active[axis] = cx.AxisArray(data, dims=(axis,))
     return active
 
 
 def _axis_active_weight(active_by_axis: Mapping[str, cx.AxisArray]) -> cx.AxisArray:
-    weight = cx.AxisArray(jnp.asarray(1.0, dtype=float), dims=())
+    weight = cx.AxisArray(jnp.asarray(1.0, dtype=jnp.float64), dims=())
     for active in active_by_axis.values():
         weight = weight * cx.AxisArray(
-            jnp.asarray(active.data, dtype=float),
+            jnp.asarray(active.data, dtype=jnp.float64),
             dims=active.dims,
         )
     return weight
 
 
 def _axis_sizes(batch: GridBatch) -> dict[str, int]:
-    sizes = {
-        axis: int(field.data.shape[0]) for axis, field in _axis_fields(batch).items()
-    }
+    sizes = {axis: field.data.shape[0] for axis, field in _axis_fields(batch).items()}
     dense_axes = batch.dense_structure.axis_names
     if dense_axes is None:
         raise ValueError("GridBatch dense structure must be canonicalized.")
@@ -454,10 +450,10 @@ def _logical_counts(
 
 
 def _logical_mask_field(batch: GridBatch) -> cx.AxisArray:
-    result = cx.AxisArray(jnp.asarray(1.0, dtype=float), dims=())
+    result = cx.AxisArray(jnp.asarray(1.0, dtype=jnp.float64), dims=())
     for mask in batch.coord_mask_by_label.values():
         result = result * cx.AxisArray(
-            jnp.asarray(mask.data, dtype=float), dims=mask.dims
+            jnp.asarray(mask.data, dtype=jnp.float64), dims=mask.dims
         )
     return result
 
@@ -473,7 +469,7 @@ def _axis_residual_marginals(
 ) -> frozendict[str, cx.AxisArray]:
     _single_component(constraint)
     score = constraint.pointwise_score(functions, batch, key=key)
-    data = jax.lax.stop_gradient(jnp.asarray(score.data, dtype=float))
+    data = jax.lax.stop_gradient(jnp.asarray(score.data, dtype=jnp.float64))
     data = jnp.nan_to_num(
         data,
         nan=0.0,

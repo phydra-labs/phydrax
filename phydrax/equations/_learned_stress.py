@@ -78,13 +78,11 @@ def _validate_binding_abi(binding: PreparedLearnedStressBinding, /) -> None:
         or schema.shape[-1:] != (9,)
     ):
         raise ValueError(
-            "Learned stress backends require the exact row-major nine-component "
-            "resolved-velocity-gradient feature ABI."
+            "Learned stress backends require the exact row-major nine-component resolved-velocity-gradient feature ABI."
         )
     if output.units != _SPECIFIC_STRESS_UNITS:
         raise ValueError(
-            "Learned stress backends require constant-density specific stress "
-            "units '(m/s)^2'."
+            "Learned stress backends require constant-density specific stress units '(m/s)^2'."
         )
 
 
@@ -187,8 +185,7 @@ class PeriodicLearnedStressPlan(StrictModule, NonTrainableState):
         provenance = binding.plan.parameter_provenance
         if provenance.regime != _PERIODIC_LES_REGIME:
             raise ValueError(
-                "Periodic learned stress requires the "
-                "'three-dimensional-periodic-unit-density' regime."
+                "Periodic learned stress requires the 'three-dimensional-periodic-unit-density' regime."
             )
         grid_filter = PeriodicFourierGridFilterPlan(binding.plan.resolved_filter)
         self.binding = binding
@@ -541,8 +538,7 @@ class PreparedMACLearnedStress(StrictModule, NonTrainableState):
             raise ValueError("MAC learned stress projection requires unit density.")
         if projection.transform_plan is None:
             raise ValueError(
-                "Periodic-uniform MAC learned stress requires a certified transform "
-                "pressure-projection route."
+                "Periodic-uniform MAC learned stress requires a certified transform pressure-projection route."
             )
         _validate_bound_layout(
             plan.binding,

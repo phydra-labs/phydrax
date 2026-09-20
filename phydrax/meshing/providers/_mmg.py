@@ -112,7 +112,7 @@ def _backend(mesh: CellMesh) -> str:
     if len(mesh.blocks) != 1:
         raise MeshingFailure(
             MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
-            "Mmg adaptation accepts one unlabelled simplex block; block/material transfer is unavailable.",
+            "Mmg adaptation accepts one unlabeled simplex block; block/material transfer is unavailable.",
         )
     kinds = {block.cell_kind for block in mesh.blocks}
     if kinds == {"triangle"} and mesh.ambient_dimension in (2, 3):
@@ -264,7 +264,7 @@ def _identity_report(source: CellMesh, mesh: CellMesh, provider: str) -> Adapter
         coordinate_mapping=("identity",),
         assumptions=(
             "No entity correspondence or field-transfer map is supplied by this backend.",
-            "Only unlabelled simplex geometry is converted; provider-generated feature flags are not imported.",
+            "Only unlabeled simplex geometry is converted; provider-generated feature flags are not imported.",
         ),
         losses=(
             AdapterLoss(
@@ -369,7 +369,7 @@ class MmgProvider:
                 root / "input.sol",
             )
             # Medit references describe regions, not global identities. One
-            # unlabelled material is sent; arbitrary IDs must never become refs.
+            # unlabeled material is sent; arbitrary IDs must never become refs.
             meshio.write(
                 input_path,
                 meshio.Mesh(points, [(meshio_kind, cells)]),

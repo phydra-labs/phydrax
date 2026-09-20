@@ -104,7 +104,7 @@ class HARDefinition(StrictModule):
         include_intercept: bool = True,
         ridge: float = 0.0,
     ):
-        windows_ = tuple(int(window) for window in windows)
+        windows_ = tuple(windows)
         ridge_ = float(ridge)
         if not windows_ or any(window < 1 for window in windows_):
             raise ValueError("windows must be nonempty and positive.")

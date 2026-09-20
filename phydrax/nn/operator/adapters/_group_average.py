@@ -55,7 +55,7 @@ class GroupAveragedOperator(StrictModule):
         if spatial_axes is None:
             resolved_axes = None
         else:
-            resolved_axes = tuple(int(axis) for axis in spatial_axes)
+            resolved_axes = tuple(spatial_axes)
             if len(resolved_axes) != group.dimension or len(set(resolved_axes)) != len(
                 resolved_axes
             ):

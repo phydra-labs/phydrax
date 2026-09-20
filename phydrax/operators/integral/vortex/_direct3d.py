@@ -263,7 +263,7 @@ class PreparedGaussianErfDirectVortex3D(AbstractPreparedVortexVelocity):
         self.backend_id = plan.plan_id
         self.prepared_id = canonical_fingerprint(
             {
-                "kind": "prepared-gaussian-erf-direct-vortex-3d-v1",
+                "kind": "prepared-gaussian-erf-direct-vortex-3d",
                 "plan": plan.plan_id,
                 "source_capacity": source_capacity,
                 "target_capacity": target_capacity,

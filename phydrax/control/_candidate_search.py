@@ -26,7 +26,7 @@ from ._problem import ControlProblem
 from ._trajectory import ControlResult, ControlTrajectory
 
 
-_CONTROL_CANDIDATE_METHOD_ID = "finite-exhaustive-control-candidate-search-v1"
+_CONTROL_CANDIDATE_METHOD_ID = "finite-exhaustive-control-candidate-search"
 _DEFAULT_FINITE_SEARCH = FiniteExhaustiveSearch()
 
 
@@ -140,7 +140,7 @@ class ControlCandidateSearchResult(StrictModule):
             if flat_index < 0 or any(index < 0 for index in product_index):
                 raise ValueError("Valid control candidate indices must be nonnegative.")
             coefficients_ = jnp.asarray(coefficients)
-            objective_ = jnp.asarray(objective, dtype=float).reshape(())
+            objective_ = jnp.asarray(objective, dtype=jnp.float64).reshape(())
             termination_reason = "finite_minimum"
             assert evaluation is not None
             control_id = evaluation.trajectory.control_id
@@ -150,7 +150,7 @@ class ControlCandidateSearchResult(StrictModule):
                     "Invalid control candidate indices must use -1 sentinels."
                 )
             coefficients_ = None
-            objective_ = jnp.asarray(jnp.nan, dtype=float)
+            objective_ = jnp.asarray(jnp.nan, dtype=jnp.float64)
             termination_reason = "no_finite_candidates"
             control_id = None
 
@@ -163,9 +163,9 @@ class ControlCandidateSearchResult(StrictModule):
         self.valid = valid_
         self.termination_reason = termination_reason
         self.flat_index = int(flat_index)
-        self.product_index = tuple(int(index) for index in product_index)
+        self.product_index = tuple(product_index)
         self.axis_paths = tuple(str(path) for path in axis_paths)
-        self.product_shape = tuple(int(size) for size in product_shape)
+        self.product_shape = tuple(product_shape)
         self.candidate_count = int(candidate_count)
         self.objective_evaluations = evaluations
         self.valid_evaluations = evaluations - invalid
@@ -231,14 +231,12 @@ def _validate_control_candidate_space(
     candidate_spec = candidates.point_spec()
     if not isinstance(candidate_spec, jax.ShapeDtypeStruct):
         raise ValueError(
-            "Control candidate points must be one coefficient array; use one "
-            "correlated FiniteAxis catalog."
+            "Control candidate points must be one coefficient array; use one correlated FiniteAxis catalog."
         )
     expected_shape = problem.case_shape + parameterization.parameter_shape
     if tuple(candidate_spec.shape) != expected_shape:
         raise ValueError(
-            f"Control candidate points must have coefficient shape {expected_shape}, "
-            f"got {candidate_spec.shape}."
+            f"Control candidate points must have coefficient shape {expected_shape}, got {candidate_spec.shape}."
         )
     if not np.issubdtype(np.dtype(candidate_spec.dtype), np.floating):
         raise TypeError("Control candidate coefficients must be real floating-point.")

@@ -45,7 +45,7 @@ class _RegionalDynamics(StrictModule):
 
 
 def _regional_history(time: Array, context: _RegionalDynamics, /) -> Array:
-    state = jnp.asarray(context.history(time, context.user_args), dtype=float)
+    state = jnp.asarray(context.history(time, context.user_args), dtype=jnp.float64)
     if state.shape != (context.connectivity.region_count, 2):
         raise ValueError(
             "Neural prehistory must return [region,2] in declared region order."
@@ -240,7 +240,7 @@ def regional_bold_problem(
     initial = (
         balloon_equilibrium(connectivity.region_count)
         if initial_balloon is None
-        else jnp.asarray(initial_balloon, dtype=float)
+        else jnp.asarray(initial_balloon, dtype=jnp.float64)
     )
     if initial.shape != (connectivity.region_count, 4):
         raise ValueError("initial_balloon must have shape [region,4].")
@@ -265,7 +265,7 @@ def regional_bold_problem(
 
 
 class RegionalSolution(StrictModule):
-    """Native solver evidence plus time-major labelled sampled neural/BOLD data."""
+    """Native solver evidence plus time-major labeled sampled neural/BOLD data."""
 
     native: DifferentialSolution | MemoryEquationSolution
     neural: SampledSeries

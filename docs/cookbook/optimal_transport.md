@@ -452,7 +452,7 @@ matrix = jnp.asarray([[0.85, 0.15], [0.25, 0.75]])
 
 def reference_sample(key, state, t0, t1, context):
     del t0, t1, context
-    return jr.categorical(key, jnp.log(matrix[state.astype(jnp.int32)])).astype(float)
+    return jr.categorical(key, jnp.log(matrix[state.astype(jnp.int32)])).astype("float64")
 
 
 def reference_log_prob(next_state, state, t0, t1, context):

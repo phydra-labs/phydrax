@@ -325,15 +325,15 @@ class ConnectedVMCNeuralTrajectoryResult(StrictModule):
         self.rate_standard_error_history = jnp.asarray(rate_standard_error_history)
         self.effective_sample_size_history = jnp.asarray(effective_sample_size_history)
         self.jump_probability_history = jnp.asarray(jump_probability_history)
-        self.jump_history = jnp.asarray(jump_history, dtype=bool)
+        self.jump_history = jnp.asarray(jump_history, dtype=jnp.bool_)
         self.channel_history = jnp.asarray(channel_history, dtype=jnp.int32)
         self.decision_uniform_history = jnp.asarray(decision_uniform_history)
         self.channel_uniform_history = jnp.asarray(channel_uniform_history)
         self.projection_residual_history = jnp.asarray(projection_residual_history)
         self.rate_evidence_valid_history = jnp.asarray(
-            rate_evidence_valid_history, dtype=bool
+            rate_evidence_valid_history, dtype=jnp.bool_
         )
-        self.status_history = jnp.asarray(status_history, dtype=bool)
+        self.status_history = jnp.asarray(status_history, dtype=jnp.bool_)
         self.linear_results = tuple(linear_results)
         self.completed_steps = int(completed_steps)
         self.problem_id = str(problem_id)
@@ -373,11 +373,11 @@ def _connected_rate_statistics(
     diagnostics = mcmc_diagnostics(
         {"jump-rates": values},
         acceptance_rate=samples.acceptance_rate,
-        divergent=jnp.zeros(samples.log_target.shape, dtype=bool),
+        divergent=jnp.zeros(samples.log_target.shape, dtype=jnp.bool_),
     )
     rates = jnp.mean(values, axis=(0, 1))
     variances = jnp.var(values, axis=(0, 1), ddof=1)
-    nominal = jnp.asarray(values.shape[0] * values.shape[1], dtype=float)
+    nominal = jnp.asarray(values.shape[0] * values.shape[1], dtype=jnp.float64)
     measured_ess = diagnostics.bulk_ess["jump-rates"]
     effective_sample_size = jnp.where(variances == 0.0, nominal, measured_ess)
     standard_errors = jnp.sqrt(
@@ -581,7 +581,7 @@ def solve_connected_vmc_neural_trajectory(
         jnp.stack(jump_probability_history)
         if jump_probability_history
         else jnp.empty((0,)),
-        jnp.stack(jump_history) if jump_history else jnp.empty((0,), dtype=bool),
+        jnp.stack(jump_history) if jump_history else jnp.empty((0,), dtype=jnp.bool_),
         jnp.stack(channel_history)
         if channel_history
         else jnp.empty((0,), dtype=jnp.int32),
@@ -592,8 +592,8 @@ def solve_connected_vmc_neural_trajectory(
         jnp.stack(projection_history) if projection_history else jnp.empty((0,)),
         jnp.stack(rate_valid_history)
         if rate_valid_history
-        else jnp.empty((0,), dtype=bool),
-        jnp.stack(status_history) if status_history else jnp.empty((0,), dtype=bool),
+        else jnp.empty((0,), dtype=jnp.bool_),
+        jnp.stack(status_history) if status_history else jnp.empty((0,), dtype=jnp.bool_),
         tuple(linear_results),
         completed_steps=completed,
         planned_steps=policy.steps,

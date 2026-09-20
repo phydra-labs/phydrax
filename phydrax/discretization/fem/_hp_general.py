@@ -36,9 +36,9 @@ class ReferenceRefinementTemplate(StrictModule, NonTrainableState):
     ):
         parent = str(parent_cell_kind)
         children = tuple(str(value) for value in child_cell_kinds)
-        matrices = np.asarray(affine_matrices, dtype=float)
-        offsets = np.asarray(affine_offsets, dtype=float)
-        axes = tuple(int(value) for value in anisotropic_axes)
+        matrices = np.asarray(affine_matrices, dtype=np.float64)
+        offsets = np.asarray(affine_offsets, dtype=np.float64)
+        axes = tuple(anisotropic_axes)
         if (
             not parent
             or not children
@@ -138,8 +138,8 @@ class GeneralHPForest(StrictModule, NonTrainableState):
         kinds = tuple(str(value) for value in cell_kinds)
         parents = np.asarray(parent_slots, dtype=np.int32)
         children = np.asarray(child_slots, dtype=np.int32)
-        valid = np.asarray(child_valid, dtype=bool)
-        active_ = np.asarray(active, dtype=bool)
+        valid = np.asarray(child_valid, dtype=np.bool_)
+        active_ = np.asarray(active, dtype=np.bool_)
         orders = np.asarray(polynomial_orders, dtype=np.int32)
         templates = tuple(None if value is None else str(value) for value in template_ids)
         capacity = len(kinds)
@@ -191,8 +191,8 @@ class GeneralHPForest(StrictModule, NonTrainableState):
             kinds,
             -np.ones((capacity,), dtype=np.int32),
             -np.ones((capacity, int(child_capacity)), dtype=np.int32),
-            np.zeros((capacity, int(child_capacity)), dtype=bool),
-            np.ones((capacity,), dtype=bool),
+            np.zeros((capacity, int(child_capacity)), dtype=np.bool_),
+            np.ones((capacity,), dtype=np.bool_),
             polynomial_orders,
             (None,) * capacity,
         )
@@ -200,61 +200,61 @@ class GeneralHPForest(StrictModule, NonTrainableState):
 
 class NonconformingFacetOverlay(StrictModule, NonTrainableState):
     owner_cells: Array
-    neighbour_cells: Array
+    neighbor_cells: Array
     owner_subface_maps: Array
-    neighbour_subface_maps: Array
+    neighbor_subface_maps: Array
     owner_levels: Array
-    neighbour_levels: Array
+    neighbor_levels: Array
     mortar_ids: tuple[str, ...] = eqx.field(static=True)
     overlay_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         owner_cells: ArrayLike,
-        neighbour_cells: ArrayLike,
+        neighbor_cells: ArrayLike,
         owner_subface_maps: ArrayLike,
-        neighbour_subface_maps: ArrayLike,
+        neighbor_subface_maps: ArrayLike,
         owner_levels: ArrayLike,
-        neighbour_levels: ArrayLike,
+        neighbor_levels: ArrayLike,
         mortar_ids: Sequence[str],
         /,
     ):
         owner = np.asarray(owner_cells, dtype=np.int32)
-        neighbour = np.asarray(neighbour_cells, dtype=np.int32)
-        owner_maps = np.asarray(owner_subface_maps, dtype=float)
-        neighbour_maps = np.asarray(neighbour_subface_maps, dtype=float)
+        neighbor = np.asarray(neighbor_cells, dtype=np.int32)
+        owner_maps = np.asarray(owner_subface_maps, dtype=np.float64)
+        neighbor_maps = np.asarray(neighbor_subface_maps, dtype=np.float64)
         owner_levels_ = np.asarray(owner_levels, dtype=np.int32)
-        neighbour_levels_ = np.asarray(neighbour_levels, dtype=np.int32)
+        neighbor_levels_ = np.asarray(neighbor_levels, dtype=np.int32)
         mortars = tuple(str(value) for value in mortar_ids)
         count = owner.shape[0]
         if (
             owner.ndim != 1
-            or neighbour.shape != owner.shape
-            or owner_maps.shape != neighbour_maps.shape
+            or neighbor.shape != owner.shape
+            or owner_maps.shape != neighbor_maps.shape
             or owner_maps.shape[0] != count
             or owner_levels_.shape != owner.shape
-            or neighbour_levels_.shape != owner.shape
+            or neighbor_levels_.shape != owner.shape
             or len(mortars) != count
             or any(not value for value in mortars)
         ):
             raise ValueError("Nonconforming overlay arrays are inconsistent.")
         self.owner_cells = jnp.asarray(owner)
-        self.neighbour_cells = jnp.asarray(neighbour)
+        self.neighbor_cells = jnp.asarray(neighbor)
         self.owner_subface_maps = jnp.asarray(owner_maps)
-        self.neighbour_subface_maps = jnp.asarray(neighbour_maps)
+        self.neighbor_subface_maps = jnp.asarray(neighbor_maps)
         self.owner_levels = jnp.asarray(owner_levels_)
-        self.neighbour_levels = jnp.asarray(neighbour_levels_)
+        self.neighbor_levels = jnp.asarray(neighbor_levels_)
         self.mortar_ids = mortars
         self.overlay_id = canonical_fingerprint(
             {
                 "kind": "nonconforming-facet-overlay",
                 "owner": array_tree_fingerprint(owner),
-                "neighbour": array_tree_fingerprint(neighbour),
+                "neighbor": array_tree_fingerprint(neighbor),
                 "owner_maps": array_tree_fingerprint(owner_maps),
-                "neighbour_maps": array_tree_fingerprint(neighbour_maps),
+                "neighbor_maps": array_tree_fingerprint(neighbor_maps),
                 "levels": (
                     array_tree_fingerprint(owner_levels_),
-                    array_tree_fingerprint(neighbour_levels_),
+                    array_tree_fingerprint(neighbor_levels_),
                 ),
                 "mortars": mortars,
             }

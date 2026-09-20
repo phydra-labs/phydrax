@@ -64,7 +64,7 @@ def _face_layout(**overrides):
     values = {
         "face_ids": np.asarray((10, 11), dtype=np.int32),
         "owner_cells": np.asarray((0, 1), dtype=np.int32),
-        "neighbour_cells": np.asarray((1, -1), dtype=np.int32),
+        "neighbor_cells": np.asarray((1, -1), dtype=np.int32),
         "active_mask": np.asarray((True, True)),
         "boundary_policy_count": 1,
         "spatial_shape": (2, 2),
@@ -74,7 +74,7 @@ def _face_layout(**overrides):
     values.update(overrides)
     if "boundary_policy_ids" not in overrides:
         values["boundary_policy_ids"] = np.where(
-            np.asarray(values["neighbour_cells"]) < 0,
+            np.asarray(values["neighbor_cells"]) < 0,
             0,
             -1,
         )
@@ -85,7 +85,7 @@ def _face_block(**overrides):
     layout_fields = {
         "face_ids",
         "owner_cells",
-        "neighbour_cells",
+        "neighbor_cells",
         "active_mask",
         "spatial_shape",
         "boundary_policy_ids",
@@ -183,7 +183,7 @@ def test_static_unstructured_lowering_has_stationary_success_evidence():
         metrics.effective_cell_volumes,
     )
     np.testing.assert_array_equal(
-        metrics.active_cell_mask, np.ones((discretization.cell_count,), dtype=bool)
+        metrics.active_cell_mask, np.ones((discretization.cell_count,), dtype="bool")
     )
     np.testing.assert_allclose(metrics.mesh_volume_rate, 0.0)
     np.testing.assert_allclose(metrics.cell_centers, discretization.cell_centers)
@@ -214,17 +214,17 @@ def test_static_unstructured_lowering_has_stationary_success_evidence():
     np.testing.assert_array_equal(block.layout.face_ids, source_block.face_ids)
     np.testing.assert_array_equal(block.layout.owner_cells, source_block.owner_cells)
     np.testing.assert_array_equal(
-        block.layout.neighbour_cells, source_block.neighbour_cells
+        block.layout.neighbor_cells, source_block.neighbor_cells
     )
     assert block.layout.boundary_policy_count == len(discretization.boundary_patch_names)
     policy_ids = np.asarray(block.layout.boundary_policy_ids)
-    neighbours = np.asarray(block.layout.neighbour_cells)
+    neighbors = np.asarray(block.layout.neighbor_cells)
     active = np.asarray(block.layout.active_mask)
-    assert np.all(policy_ids[active & (neighbours < 0)] >= 0)
+    assert np.all(policy_ids[active & (neighbors < 0)] >= 0)
     assert np.all(
-        policy_ids[active & (neighbours < 0)] < block.layout.boundary_policy_count
+        policy_ids[active & (neighbors < 0)] < block.layout.boundary_policy_count
     )
-    assert np.all(policy_ids[neighbours >= 0] == -1)
+    assert np.all(policy_ids[neighbors >= 0] == -1)
     np.testing.assert_array_equal(block.layout.active_mask, source_block.active_mask)
     np.testing.assert_allclose(block.face_centers, source_block.face_centers)
     np.testing.assert_allclose(block.area_vectors, source_block.area_vectors)
@@ -310,11 +310,11 @@ def test_embedded_lowering_binds_exact_physical_and_cut_policy_counts():
         assert layout.boundary_policy_count == expected_count
         layout.validate_boundary_policy_count(expected_count)
         policies = np.asarray(layout.boundary_policy_ids)
-        neighbours = np.asarray(layout.neighbour_cells)
+        neighbors = np.asarray(layout.neighbor_cells)
         active = np.asarray(layout.active_mask)
-        assert np.all(policies[active & (neighbours < 0)] >= 0)
-        assert np.all(policies[active & (neighbours < 0)] < expected_count)
-        assert np.all(policies[active & (neighbours >= 0)] == -1)
+        assert np.all(policies[active & (neighbors < 0)] >= 0)
+        assert np.all(policies[active & (neighbors < 0)] < expected_count)
+        assert np.all(policies[active & (neighbors >= 0)] == -1)
 
 
 def test_closed_inactive_face_has_safe_zero_grid_velocity_average():
@@ -363,7 +363,7 @@ def test_stage_face_block_rejects_zero_active_measure_and_invalid_quadrature():
         _face_block(active_mask=np.asarray((True, False)))
 
 
-@pytest.mark.parametrize("route", ("face_ids", "owner_cells", "neighbour_cells"))
+@pytest.mark.parametrize("route", ("face_ids", "owner_cells", "neighbor_cells"))
 def test_stage_face_routes_reject_int32_overflow(route):
     values = np.asarray((0, np.iinfo(np.int32).max + 1), dtype=np.int64)
     with pytest.raises(ValueError, match="representable as int32"):
@@ -374,12 +374,12 @@ def test_stage_face_routes_are_normalized_to_int32():
     block = _face_block(
         face_ids=np.asarray((10, 11), dtype=np.int64),
         owner_cells=np.asarray((0, 1), dtype=np.int64),
-        neighbour_cells=np.asarray((1, -1), dtype=np.int64),
+        neighbor_cells=np.asarray((1, -1), dtype=np.int64),
     )
 
     assert np.asarray(block.layout.face_ids).dtype == np.int32
     assert np.asarray(block.layout.owner_cells).dtype == np.int32
-    assert np.asarray(block.layout.neighbour_cells).dtype == np.int32
+    assert np.asarray(block.layout.neighbor_cells).dtype == np.int32
 
 
 @pytest.mark.parametrize(
@@ -441,8 +441,8 @@ def test_stage_face_layout_routes_are_array_leaves_with_bounded_static_metadata(
         return FiniteVolumeStageFaceLayout(
             face_ids=np.arange(face_count, dtype=np.int32),
             owner_cells=np.zeros((face_count,), dtype=np.int32),
-            neighbour_cells=np.full((face_count,), -1, dtype=np.int32),
-            active_mask=np.ones((face_count,), dtype=bool),
+            neighbor_cells=np.full((face_count,), -1, dtype=np.int32),
+            active_mask=np.ones((face_count,), dtype="bool"),
             boundary_policy_ids=np.zeros((face_count,), dtype=np.int32),
             boundary_policy_count=1,
             spatial_shape=(face_count, 2),
@@ -469,7 +469,7 @@ def test_stage_face_layout_routes_are_array_leaves_with_bounded_static_metadata(
             (
                 large.face_ids,
                 large.owner_cells,
-                large.neighbour_cells,
+                large.neighbor_cells,
                 large.active_mask,
                 large.boundary_policy_ids,
             ),
@@ -489,7 +489,7 @@ def test_stage_face_layout_routes_are_array_leaves_with_bounded_static_metadata(
 def test_inactive_solid_cell_may_have_zero_effective_and_coordinate_volume():
     block = _face_block(
         owner_cells=np.asarray((0, 1), dtype=np.int32),
-        neighbour_cells=np.asarray((-1, -1), dtype=np.int32),
+        neighbor_cells=np.asarray((-1, -1), dtype=np.int32),
         active_mask=np.asarray((True, False)),
         area_vectors=np.asarray(((1.0, 0.0), (0.0, 0.0))),
         face_measures=np.asarray((1.0, 0.0)),
@@ -940,7 +940,7 @@ def test_active_face_routes_must_own_only_active_cells():
         "area_vectors": np.asarray(((1.0, 0.0), (0.0, 0.0))),
         "face_measures": np.asarray((1.0, 0.0)),
         "quadrature_weights": np.asarray(((0.5, 0.5), (0.0, 0.0))),
-        "neighbour_cells": np.asarray((-1, -1), dtype=np.int32),
+        "neighbor_cells": np.asarray((-1, -1), dtype=np.int32),
     }
     inactive_cells = {
         "effective_cell_volumes": np.asarray((0.5, 0.0)),
@@ -958,7 +958,7 @@ def test_active_face_routes_must_own_only_active_cells():
             ),
         )
     with pytest.raises(
-        (ValueError, eqx.EquinoxRuntimeError), match="internal face neighbour"
+        (ValueError, eqx.EquinoxRuntimeError), match="internal face neighbor"
     ):
         _stage_metrics(
             **inactive_cells,
@@ -966,7 +966,7 @@ def test_active_face_routes_must_own_only_active_cells():
                 _face_block(
                     **{
                         **inactive_face,
-                        "neighbour_cells": np.asarray((1, -1), dtype=np.int32),
+                        "neighbor_cells": np.asarray((1, -1), dtype=np.int32),
                     },
                     owner_cells=np.asarray((0, 1), dtype=np.int32),
                 ),

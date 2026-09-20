@@ -76,9 +76,9 @@ class ReactiveElectrodePlan(StrictModule, NonTrainableState):
         if not isinstance(mechanism, PreparedChemicalMechanism):
             raise TypeError("mechanism must be PreparedChemicalMechanism.")
         indices = np.asarray(boundary_node_indices)
-        measures = np.asarray(face_measures, dtype=float)
+        measures = np.asarray(face_measures, dtype=np.float64)
         electrons = np.asarray(electron_transfer)
-        capacitance = np.asarray(capacitance_per_area, dtype=float)
+        capacitance = np.asarray(capacitance_per_area, dtype=np.float64)
         if (
             indices.ndim != 1
             or not np.issubdtype(indices.dtype, np.integer)
@@ -103,7 +103,7 @@ class ReactiveElectrodePlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("Reactive electrode mechanism has no Butler-Volmer rate.")
         mask = np.asarray(
-            mechanism.schema.phase_mask(ChemicalPhaseKind.SURFACE), dtype=bool
+            mechanism.schema.phase_mask(ChemicalPhaseKind.SURFACE), dtype=np.bool_
         )
         if not np.any(mask):
             raise ValueError("Reactive electrode mechanism requires surface species.")
@@ -317,7 +317,7 @@ class MACReactiveElectrodeBinding(StrictModule, NonTrainableState):
         /,
     ) -> None:
         indices = np.asarray(bulk_species_indices, dtype=np.int32)
-        fixed = np.asarray(fixed_mechanism_concentrations, dtype=float)
+        fixed = np.asarray(fixed_mechanism_concentrations, dtype=np.float64)
         cell_count = int(np.prod(operators.discretization.cell_shape))
         if (
             not isinstance(electrode, ReactiveElectrodePlan)
@@ -346,7 +346,7 @@ class MACReactiveElectrodeBinding(StrictModule, NonTrainableState):
                 "kind": "mac-reactive-electrode-binding",
                 "electrode": electrode.plan_id,
                 "operators": operators.prepared_id,
-                "bulk_species_indices": tuple(int(value) for value in indices),
+                "bulk_species_indices": tuple(indices),
                 "fixed_mechanism_concentrations": array_tree_fingerprint(fixed),
             }
         )

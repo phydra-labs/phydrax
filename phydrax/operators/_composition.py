@@ -146,8 +146,7 @@ def pullback(
     )
     if unresolved:
         raise ValueError(
-            "pullback cannot resolve source dependencies; provide substitutions for "
-            f"{unresolved!r}."
+            f"pullback cannot resolve source dependencies; provide substitutions for {unresolved!r}."
         )
 
     deps = tuple(

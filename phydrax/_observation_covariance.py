@@ -349,7 +349,7 @@ class CirculantCovarianceAction(StrictModule, NonTrainableState):
     action_id: str = eqx.field(static=True)
 
     def __init__(self, spectrum: ArrayLike, layout: CoordinateLayout, /):
-        values = np.asarray(spectrum, dtype=float)
+        values = np.asarray(spectrum, dtype=np.float64)
         expected = layout.size // 2 + 1
         if (
             values.shape != (expected,)

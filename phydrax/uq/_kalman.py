@@ -204,7 +204,7 @@ def initialize_kalman_filter(
     state_size, _, _, case_shape = _sizes(problem)
     mean = prior.mean
     covariance = jnp.broadcast_to(prior.covariance, case_shape + (state_size, state_size))
-    valid = jnp.ones(case_shape, dtype=bool)
+    valid = jnp.ones(case_shape, dtype=jnp.bool_)
     return KalmanFilterState(
         mean=mean,
         covariance=covariance,
@@ -872,7 +872,7 @@ def _sequential_rts_smoother(result: KalmanFilterResult, /) -> KalmanSmootherRes
         raise TypeError("result must be a KalmanFilterResult.")
     case_shape = result.case_shape
     case_count = prod(case_shape) if case_shape else 1
-    num_steps = int(result.filtered_means.shape[len(case_shape)])
+    num_steps = result.filtered_means.shape[len(case_shape)]
     state_size = prod(result.state_shape) if result.state_shape else 1
     filtered_mean = result.filtered_means.reshape((case_count, num_steps, state_size))
     filtered_covariance = result.filtered_covariances.reshape(
@@ -937,7 +937,7 @@ def _parallel_rts_smoother(result: KalmanFilterResult, /) -> KalmanSmootherResul
         raise TypeError("result must be a KalmanFilterResult.")
     case_shape = result.case_shape
     case_count = prod(case_shape) if case_shape else 1
-    num_steps = int(result.filtered_means.shape[len(case_shape)])
+    num_steps = result.filtered_means.shape[len(case_shape)]
     state_size = prod(result.state_shape) if result.state_shape else 1
     filtered_means = jnp.swapaxes(
         result.filtered_means.reshape((case_count, num_steps, state_size)), 0, 1
@@ -1045,7 +1045,7 @@ def _sequential_sample_kalman_smoother_paths(
     """Sample coherent backward conditional paths, never independent time marginals."""
     if not isinstance(smoother, KalmanSmootherResult):
         raise TypeError("smoother must be a KalmanSmootherResult.")
-    samples = tuple(int(size) for size in sample_shape)
+    samples = tuple(sample_shape)
     if any(size <= 0 for size in samples):
         raise ValueError("sample_shape dimensions must be positive.")
     sample_count = prod(samples) if samples else 1
@@ -1121,7 +1121,7 @@ def _parallel_sample_kalman_smoother_paths(
 ) -> Array:
     if not isinstance(smoother, KalmanSmootherResult):
         raise TypeError("smoother must be a KalmanSmootherResult.")
-    samples = tuple(int(size) for size in sample_shape)
+    samples = tuple(sample_shape)
     if any(size <= 0 for size in samples):
         raise ValueError("sample_shape dimensions must be positive.")
     sample_count = prod(samples) if samples else 1

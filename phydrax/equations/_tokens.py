@@ -118,11 +118,11 @@ class PDETokenBatch(StrictModule):
 
     @property
     def batch_shape(self) -> tuple[int, ...]:
-        return tuple(int(size) for size in self.mask.shape[:-1])
+        return tuple(self.mask.shape[:-1])
 
     @property
     def max_tokens(self) -> int:
-        return int(self.mask.shape[-1])
+        return self.mask.shape[-1]
 
 
 def _dimension(
@@ -484,7 +484,7 @@ def tokenize_pde_ir(
     padding = capacity - count
     dimensions = jnp.asarray(
         [row[5] for row in rows] + [(0.0,) * rank] * padding,
-        dtype=float,
+        dtype=jnp.float64,
     ).reshape((capacity, rank))
 
     def column(index: int, dtype: Any, padding_value: int | float = 0) -> Array:

@@ -12,7 +12,7 @@ from typing import Any, cast, TypeVar
 import equinox as eqx
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._trainable import NonTrainableState
 
 
@@ -117,9 +117,9 @@ class AtomisticPotentialRequirements(StrictModule, NonTrainableState):
 class AbstractPreparedAtomisticPotential(StrictModule):
     """System-bound scalar-energy execution form."""
 
-    prepared_id: AbstractAttribute[str]
-    capabilities: AbstractAttribute[AtomisticPotentialCapabilities]
-    requirements: AbstractAttribute[AtomisticPotentialRequirements]
+    prepared_id: eqx.AbstractVar[str]
+    capabilities: eqx.AbstractVar[AtomisticPotentialCapabilities]
+    requirements: eqx.AbstractVar[AtomisticPotentialRequirements]
 
     @abstractmethod
     def energy(self, context: Any, /) -> tuple[Any, Any]:
@@ -130,13 +130,13 @@ class AbstractPreparedAtomisticPotential(StrictModule):
 class AbstractAtomisticPotential(StrictModule):
     """Atomistic scalar-energy model with checkpointable parameter provenance."""
 
-    configuration: AbstractAttribute[Any]
-    scale: AbstractAttribute[Any]
-    precision: AbstractAttribute[Any]
-    architecture_id: AbstractAttribute[str]
-    parameter_state_id: AbstractAttribute[str]
-    potential_id: AbstractAttribute[str]
-    method_id: AbstractAttribute[str]
+    configuration: eqx.AbstractVar[Any]
+    scale: eqx.AbstractVar[Any]
+    precision: eqx.AbstractVar[Any]
+    architecture_id: eqx.AbstractVar[str]
+    parameter_state_id: eqx.AbstractVar[str]
+    potential_id: eqx.AbstractVar[str]
+    method_id: eqx.AbstractVar[str]
 
     @property
     def capabilities(self) -> AtomisticPotentialCapabilities:

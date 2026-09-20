@@ -39,9 +39,9 @@ class CorrectionMap(StrictModule, NonTrainableState):
         correlation_id: str,
         source_id: str,
     ):
-        coordinates_ = np.asarray(coordinates, dtype=float)
-        values_ = np.asarray(values, dtype=float)
-        uncertainties_ = np.asarray(uncertainties, dtype=float)
+        coordinates_ = np.asarray(coordinates, dtype=np.float64)
+        values_ = np.asarray(values, dtype=np.float64)
+        uncertainties_ = np.asarray(uncertainties, dtype=np.float64)
         if (
             coordinates_.ndim != 1
             or coordinates_.size < 2

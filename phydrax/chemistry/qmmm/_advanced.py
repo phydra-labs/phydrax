@@ -17,7 +17,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...atomistic import (
     AtomisticUnitSystem,
@@ -58,7 +58,7 @@ def multipole_embedding_for_region(
             "Region multipole embedding requires typed region and multipoles."
         )
     coordinate = jnp.asarray(positions)
-    capacity = int(region.plan.system.particle_ids.size)
+    capacity = region.plan.system.particle_ids.size
     if coordinate.shape != (capacity, 3) or multipoles.site_capacity != capacity:
         raise ValueError(
             "Full-system positions and multipoles must share fixed capacity."
@@ -103,7 +103,7 @@ class PolarizableEmbeddedRegionEvaluation(StrictModule, NonTrainableState):
         if field.shape != embedded.point_charge_forces.shape or not provider:
             raise ValueError("Polarizable embedded field must align with MM sites.")
         valid = (
-            jnp.asarray(successful, dtype=bool)
+            jnp.asarray(successful, dtype=jnp.bool_)
             & embedded.successful
             & jnp.all(jnp.isfinite(field))
         )
@@ -123,10 +123,10 @@ class PolarizableEmbeddedRegionEvaluation(StrictModule, NonTrainableState):
 
 
 class AbstractPolarizableEmbeddedRegionProvider(StrictModule, NonTrainableState):
-    provider_id: AbstractAttribute[str]
-    region_system_id: AbstractAttribute[str]
-    unit_system_id: AbstractAttribute[str]
-    conservative: AbstractAttribute[bool]
+    provider_id: eqx.AbstractVar[str]
+    region_system_id: eqx.AbstractVar[str]
+    unit_system_id: eqx.AbstractVar[str]
+    conservative: eqx.AbstractVar[bool]
 
     @abc.abstractmethod
     def evaluate(
@@ -229,7 +229,7 @@ class MutualPolarizationResult(StrictModule, NonTrainableState):
         self.polarizable_embedding = polarizable_embedding
         self.mutual_residual = residual
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32).reshape(())
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.result_id = canonical_fingerprint(
             {
                 "kind": "mutual-polarization-result",
@@ -286,7 +286,7 @@ class MutualPolarizableQMMMSurface(AbstractPreparedPotentialEnergySurface):
             classical_partition.system_id != system.system_id
             or quantum_provider.region_system_id != region.region_system.system_id
             or quantum_provider.unit_system_id != system.units.unit_system_id
-            or multipoles.site_capacity != int(system.particle_ids.size)
+            or multipoles.site_capacity != system.particle_ids.size
         ):
             raise ValueError("Mutual QM/MM components do not share system identities.")
         indices = jnp.asarray(region.mm_indices)
@@ -358,7 +358,7 @@ class MutualPolarizableQMMMSurface(AbstractPreparedPotentialEnergySurface):
             self.region, coordinate, self.multipoles
         )
         mm_positions = permanent.positions
-        site_count = int(mm_positions.shape[0])
+        site_count = mm_positions.shape[0]
         induced = jnp.zeros((site_count, 3), dtype=coordinate.dtype)
         residual = jnp.asarray(jnp.inf, dtype=coordinate.dtype)
         zero = jnp.zeros_like(induced)

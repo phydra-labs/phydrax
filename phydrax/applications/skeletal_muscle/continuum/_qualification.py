@@ -99,7 +99,9 @@ class GasamQualificationPlan(StrictModule, NonTrainableState):
         deformation = jnp.asarray(deformation_gradient)
         rate = jnp.asarray(deformation_rate_per_s)
         if deformation.shape != (3, 3) or rate.shape != (3, 3):
-            raise ValueError("deformation_gradient and deformation_rate_per_s must be 3x3.")
+            raise ValueError(
+                "deformation_gradient and deformation_rate_per_s must be 3x3."
+            )
         pressure = jnp.asarray(pressure_pa, dtype=deformation.dtype)
         if pressure.shape != ():
             raise ValueError("pressure_pa must be one scalar.")
@@ -131,12 +133,18 @@ class GasamQualificationPlan(StrictModule, NonTrainableState):
         axis = jnp.asarray([0.0, 0.0, 1.0], dtype=deformation.dtype)
         angle = jnp.asarray(0.37, dtype=deformation.dtype)
         cross = jnp.asarray(
-            [[0.0, -axis[2], axis[1]], [axis[2], 0.0, -axis[0]], [-axis[1], axis[0], 0.0]],
+            [
+                [0.0, -axis[2], axis[1]],
+                [axis[2], 0.0, -axis[0]],
+                [-axis[1], axis[0], 0.0],
+            ],
             dtype=deformation.dtype,
         )
-        rotation = jnp.eye(3, dtype=deformation.dtype) + jnp.sin(angle) * cross + (
-            1.0 - jnp.cos(angle)
-        ) * (cross @ cross)
+        rotation = (
+            jnp.eye(3, dtype=deformation.dtype)
+            + jnp.sin(angle) * cross
+            + (1.0 - jnp.cos(angle)) * (cross @ cross)
+        )
         rotated = material.evaluate(rotation @ deformation, pressure)
         objectivity_energy_error = jnp.abs(
             rotated.reference_energy_density - response.reference_energy_density
@@ -165,10 +173,8 @@ class GasamQualificationPlan(StrictModule, NonTrainableState):
                 jnp.asarray([1.0, 0.0, 0.0], dtype=deformation.dtype),
                 jnp.asarray([0.0, 1.0, 0.0], dtype=deformation.dtype),
                 jnp.asarray([0.0, 0.0, 1.0], dtype=deformation.dtype),
-                jnp.asarray([1.0, 1.0, 0.0], dtype=deformation.dtype)
-                / jnp.sqrt(2.0),
-                jnp.asarray([0.0, 1.0, 1.0], dtype=deformation.dtype)
-                / jnp.sqrt(2.0),
+                jnp.asarray([1.0, 1.0, 0.0], dtype=deformation.dtype) / jnp.sqrt(2.0),
+                jnp.asarray([0.0, 1.0, 1.0], dtype=deformation.dtype) / jnp.sqrt(2.0),
             )
         )
         normals = jnp.stack(
@@ -177,10 +183,8 @@ class GasamQualificationPlan(StrictModule, NonTrainableState):
                 jnp.asarray([0.0, 1.0, 0.0], dtype=deformation.dtype),
                 jnp.asarray([0.0, 0.0, 1.0], dtype=deformation.dtype),
                 jnp.asarray([1.0, 0.0, 0.0], dtype=deformation.dtype),
-                jnp.asarray([1.0, -1.0, 0.0], dtype=deformation.dtype)
-                / jnp.sqrt(2.0),
-                jnp.asarray([0.0, 1.0, -1.0], dtype=deformation.dtype)
-                / jnp.sqrt(2.0),
+                jnp.asarray([1.0, -1.0, 0.0], dtype=deformation.dtype) / jnp.sqrt(2.0),
+                jnp.asarray([0.0, 1.0, -1.0], dtype=deformation.dtype) / jnp.sqrt(2.0),
             )
         )
         acoustic = jax.vmap(
@@ -192,12 +196,8 @@ class GasamQualificationPlan(StrictModule, NonTrainableState):
             jnp.asarray(1.0, dtype=deformation.dtype),
             jnp.linalg.norm(source_stress),
         )
-        relative_bound = (
-            self.absolute_tolerance_pa + self.relative_tolerance * scale
-        )
-        passive_reference_stress_norm = jnp.linalg.norm(
-            passive_reference.first_piola
-        )
+        relative_bound = self.absolute_tolerance_pa + self.relative_tolerance * scale
+        passive_reference_stress_norm = jnp.linalg.norm(passive_reference.first_piola)
         finite = jnp.all(
             jnp.isfinite(
                 jnp.stack(
@@ -288,7 +288,7 @@ def affine_mesh_power_evidence(
     if not isinstance(material, PreparedEngelhardtGasam2025Material):
         raise TypeError("material must be PreparedEngelhardtGasam2025Material.")
     volumes = jnp.asarray(cell_reference_volumes_m3)
-    mask = jnp.asarray(active_cell_mask, dtype=bool)
+    mask = jnp.asarray(active_cell_mask, dtype=jnp.bool_)
     deformation = jnp.asarray(deformation_gradient)
     rate = jnp.asarray(deformation_rate_per_s)
     if volumes.ndim != 2 or volumes.shape != mask.shape:

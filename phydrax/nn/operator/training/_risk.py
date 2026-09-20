@@ -56,8 +56,7 @@ class MechanicsCaseReduction(StrictModule, NonTrainableState):
     ):
         if kind not in ("weighted_mean", "mean", "cvar", "max"):
             raise ValueError(
-                "Mechanics case reduction must be 'weighted_mean', 'mean', "
-                "'cvar', or 'max'."
+                "Mechanics case reduction must be 'weighted_mean', 'mean', 'cvar', or 'max'."
             )
         level = float(alpha)
         if not math.isfinite(level) or level < 0.0 or level >= 1.0:
@@ -88,19 +87,19 @@ class MechanicsCaseReduction(StrictModule, NonTrainableState):
     ) -> MechanicsCaseReductionResult:
         """Return risk value and support diagnostics for a fixed physical batch."""
         values = jnp.asarray(case_values)
-        if values.ndim != 1 or int(values.shape[0]) == 0:
+        if values.ndim != 1 or values.shape[0] == 0:
             raise ValueError("case_values must be a non-empty rank-one array.")
         if jnp.iscomplexobj(values):
             raise TypeError("case_values must be real.")
         if not jnp.issubdtype(values.dtype, jnp.inexact):
-            values = values.astype(float)
+            values = values.astype("float64")
         values = eqx.error_if(
             values,
             jnp.any(~jnp.isfinite(values)),
             "Every physical case must have a finite reduced scalar.",
         )
         if valid is not None:
-            support = jnp.asarray(valid, dtype=bool)
+            support = jnp.asarray(valid, dtype=jnp.bool_)
             if support.shape != values.shape:
                 raise ValueError("valid must have exactly the case_values shape.")
             values = eqx.error_if(
@@ -109,7 +108,7 @@ class MechanicsCaseReduction(StrictModule, NonTrainableState):
                 "Invalid physical cases cannot be dropped from outer risk reduction.",
             )
 
-        count = int(values.shape[0])
+        count = values.shape[0]
         if probability_weights is None:
             if self.kind in ("weighted_mean", "cvar"):
                 raise ValueError(

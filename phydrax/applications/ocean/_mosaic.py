@@ -1370,8 +1370,8 @@ class SphericalHydrostaticMosaicPlan(StrictModule, NonTrainableState):
     ):
         if kind not in ("polar-cap", "tripolar", "cubed-sphere"):
             raise ValueError("Unknown spherical hydrostatic mosaic kind.")
-        shape = tuple(int(value) for value in resolution)
-        z = jnp.asarray(vertical_faces, dtype=float)
+        shape = tuple(resolution)
+        z = jnp.asarray(vertical_faces, dtype=jnp.float64)
         depth = float(rest_depth)
         radius_ = float(radius)
         rotation_ = float(rotation_rate)
@@ -1473,8 +1473,8 @@ class SphericalHydrostaticMosaicPlan(StrictModule, NonTrainableState):
         collapse_second_lower = bool(collapse_second_lower)
         collapse_second_upper = bool(collapse_second_upper)
         nx, ny = self.resolution
-        xi = (jnp.arange(nx, dtype=float) + 0.5) / nx
-        eta = (jnp.arange(ny, dtype=float) + 0.5) / ny
+        xi = (jnp.arange(nx, dtype=jnp.float64) + 0.5) / nx
+        eta = (jnp.arange(ny, dtype=jnp.float64) + 0.5) / ny
         xi_grid, eta_grid = jnp.meshgrid(xi, eta, indexing="ij")
         points = jnp.stack((xi_grid, eta_grid), axis=-1)
         flat_points = points.reshape((-1, 2))
@@ -1513,11 +1513,11 @@ class SphericalHydrostaticMosaicPlan(StrictModule, NonTrainableState):
             return face_covariant[..., 0, 0], face_covariant[..., 1, 1]
 
         xi_faces = (
-            jnp.arange(nx, dtype=float) / nx
+            jnp.arange(nx, dtype=jnp.float64) / nx
             if periodic_first
-            else jnp.arange(nx + 1, dtype=float) / nx
+            else jnp.arange(nx + 1, dtype=jnp.float64) / nx
         )
-        eta_faces = jnp.arange(ny + 1, dtype=float) / ny
+        eta_faces = jnp.arange(ny + 1, dtype=jnp.float64) / ny
         x_g11, x_g22 = mapped_metric(xi_faces, eta)
         y_g11, y_g22 = mapped_metric(xi, eta_faces)
         x_center_distance = jnp.sqrt(x_g11) / nx
@@ -1533,8 +1533,8 @@ class SphericalHydrostaticMosaicPlan(StrictModule, NonTrainableState):
         first_edge_length = jnp.sqrt(covariant[..., 0, 0]) / nx
         second_edge_length = jnp.sqrt(covariant[..., 1, 1]) / ny
 
-        vertex_xi = jnp.arange(nx + 1, dtype=float) / nx
-        vertex_eta = jnp.arange(ny + 1, dtype=float) / ny
+        vertex_xi = jnp.arange(nx + 1, dtype=jnp.float64) / nx
+        vertex_eta = jnp.arange(ny + 1, dtype=jnp.float64) / ny
         vertex_points = jnp.stack(
             jnp.broadcast_arrays(vertex_xi[:, None], vertex_eta[None, :]), axis=-1
         )
@@ -1596,7 +1596,7 @@ class SphericalHydrostaticMosaicPlan(StrictModule, NonTrainableState):
                 "periodic_first": periodic_first,
             }
         )
-        nz = int(self.vertical_faces.size - 1)
+        nz = self.vertical_faces.size - 1
         geometry = PreparedHydrostaticGrid(
             horizontal_coordinate="latitude-longitude",
             vertical_coordinate="zstar",

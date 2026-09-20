@@ -104,7 +104,7 @@ class OrientedInterfaceSupport(StrictModule, NonTrainableState):
         self.stability_owner_ids = stability
         self.interface_id = canonical_fingerprint(
             {
-                "kind": "oriented-interface-support-v1",
+                "kind": "oriented-interface-support",
                 "cover": cover.cover_id,
                 "minus_region": minus_name,
                 "plus_region": plus_name,
@@ -188,7 +188,7 @@ class TwoSidedInterfaceCorrectionProvider(StrictModule, NonTrainableState):
         self.construction_certificate_id = construction
         self.provider_id = canonical_fingerprint(
             {
-                "kind": "two-sided-interface-correction-v1",
+                "kind": "two-sided-interface-correction",
                 "trace": trace_operator.operator_id,
                 "candidate": candidate_operator.operator_id,
                 "support": support.interface_id,
@@ -211,7 +211,7 @@ class TwoSidedInterfaceCorrectionProvider(StrictModule, NonTrainableState):
             if self.preservation_operator is None
             else canonical_fingerprint(
                 {
-                    "kind": "interface-preservation-v1",
+                    "kind": "interface-preservation",
                     "operator": self.preservation_operator.operator_id,
                     "interface": self.support.interface_id,
                     "orientation": self.support.orientation_certificate_id,
@@ -221,7 +221,7 @@ class TwoSidedInterfaceCorrectionProvider(StrictModule, NonTrainableState):
         )
         construction_id = canonical_fingerprint(
             {
-                "kind": "two-sided-interface-system-v1",
+                "kind": "two-sided-interface-system",
                 "provider": self.provider_id,
                 "construction": self.construction_certificate_id,
                 "interface": self.support.interface_id,

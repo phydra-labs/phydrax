@@ -333,7 +333,7 @@ def _causal_gate_fields(score, coefficient, time, schedule, /):
                     if index == schedule.slab_count - 1
                     else times < schedule.bounds(index)[1]
                 )
-            ).astype(float),
+            ).astype("float64"),
             dims=time.dims,
         )
         for index in range(schedule.slab_count)
@@ -434,8 +434,8 @@ class BalancedResidualTransform(StrictModule):
 
     def __init__(self, inner: Any, references: Sequence[Any], multipliers: Any, /):
         references_ = tuple(references)
-        values = jnp.asarray(multipliers, dtype=float).reshape((-1,))
-        if len(references_) != int(values.size):
+        values = jnp.asarray(multipliers, dtype=jnp.float64).reshape((-1,))
+        if len(references_) != values.size:
             raise ValueError("Balance references and multipliers must align.")
         self.inner = inner
         self.references = references_
@@ -605,8 +605,7 @@ def _updated_balance_multipliers(
                 params,
                 output_space=ArraySpace(output.shape, dtype=output.dtype),
                 ntk_id=(
-                    f"balance:term={reference.term_index}:"
-                    f"block={reference.block_name or '*'}"
+                    f"balance:term={reference.term_index}:block={reference.block_name or '*'}"
                 ),
             )
             estimate = stochastic_trace(
@@ -711,11 +710,13 @@ class PreparedFunctionalUpdate(StrictModule):
         self.pseudo_inverse_steps = tuple(
             jnp.asarray(value) for value in pseudo_inverse_steps
         )
-        self.term_multipliers = jnp.asarray(term_multipliers, dtype=float).reshape((-1,))
-        self.block_gradients = tuple(block_gradients)
-        self.balance_statistics = jnp.asarray(balance_statistics, dtype=float).reshape(
+        self.term_multipliers = jnp.asarray(term_multipliers, dtype=jnp.float64).reshape(
             (-1,)
         )
+        self.block_gradients = tuple(block_gradients)
+        self.balance_statistics = jnp.asarray(
+            balance_statistics, dtype=jnp.float64
+        ).reshape((-1,))
         self.intra_gradient_alignment = jnp.asarray(intra_gradient_alignment)
         self.inter_gradient_alignment = jnp.asarray(inter_gradient_alignment)
         self.diagnostic_gradient = diagnostic_gradient
@@ -739,7 +740,7 @@ class PreparedFunctionalUpdate(StrictModule):
     ) -> Array:
         functions = combine_trainable(params, non_trainable)
         residual_value = (
-            jnp.asarray(0.0, dtype=float)
+            jnp.asarray(0.0, dtype=jnp.float64)
             if self.residual is None
             else self.residual.loss(params)
         )
@@ -858,7 +859,7 @@ def _adapt_pseudo_inverse_steps(
                 "Pseudo-time relaxation and residual block layouts must match."
             )
         if old_.ndim == 1 and (
-            relaxation_blocks is None or int(old_.size) != relaxation_blocks.block_count
+            relaxation_blocks is None or old_.size != relaxation_blocks.block_count
         ):
             raise ValueError(
                 "Vector pseudo-time inverse steps require one value per relaxation block."
@@ -990,14 +991,16 @@ def prepare_functional_update(
             residual.iteration,
             transform,
         )
-    multipliers = jnp.asarray(term_multipliers, dtype=float).reshape((-1,))
+    multipliers = jnp.asarray(term_multipliers, dtype=jnp.float64).reshape((-1,))
     block_gradients: tuple[Any, ...] = ()
-    balance_statistics = jnp.zeros((0,), dtype=float)
+    balance_statistics = jnp.zeros((0,), dtype=jnp.float64)
     if training is not None and training.term_balance is not None:
         if residual is None:
             raise ValueError("Functional term balancing requires residual terms.")
         if multipliers.size == 0:
-            multipliers = jnp.ones((len(training.term_balance.blocks),), dtype=float)
+            multipliers = jnp.ones(
+                (len(training.term_balance.blocks),), dtype=jnp.float64
+            )
         step = int(jax.device_get(jnp.asarray(physical.iteration)).reshape(()))
         if training.term_balance.due(step):
             all_available = all(

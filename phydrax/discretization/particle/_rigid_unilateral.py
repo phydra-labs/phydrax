@@ -57,9 +57,9 @@ class FixedCapacityUnilateralPlan(StrictModule, NonTrainableState):
         if keys.ndim != 1 or keys.size == 0 or not np.issubdtype(keys.dtype, np.integer):
             raise TypeError("route_keys must be a nonempty rank-1 integer array.")
         valid_ = (
-            np.ones(keys.shape, dtype=bool)
+            np.ones(keys.shape, dtype=np.bool_)
             if valid is None
-            else np.asarray(valid, dtype=bool)
+            else np.asarray(valid, dtype=np.bool_)
         )
         if valid_.shape != keys.shape:
             raise ValueError("valid must have the unilateral row-capacity shape.")
@@ -116,7 +116,7 @@ class FixedCapacityUnilateralPlan(StrictModule, NonTrainableState):
 
     @property
     def capacity(self) -> int:
-        return int(self.route_keys.shape[0])
+        return self.route_keys.shape[0]
 
     def prepare(self, /, *, prepared_scope_id: str) -> PreparedUnilateralRows:
         return PreparedUnilateralRows(self, prepared_scope_id=prepared_scope_id)
@@ -199,7 +199,7 @@ class PreparedUnilateralRows(StrictModule, NonTrainableState):
             raise TypeError("reference must be an inexact scalar.")
         return UnilateralState(
             jnp.zeros((self.capacity,), dtype=value.dtype),
-            jnp.zeros((self.capacity,), dtype=bool),
+            jnp.zeros((self.capacity,), dtype=jnp.bool_),
             jnp.asarray(0, dtype=jnp.int32),
         )
 
@@ -215,7 +215,7 @@ class PreparedUnilateralRows(StrictModule, NonTrainableState):
             raise TypeError("state must be UnilateralState.")
         matrix = jnp.asarray(delassus)
         free = jnp.asarray(free_residual, dtype=matrix.dtype)
-        active_ = jnp.asarray(active, dtype=bool)
+        active_ = jnp.asarray(active, dtype=jnp.bool_)
         expected = (self.capacity,)
         if (
             matrix.shape != (self.capacity, self.capacity)
@@ -326,7 +326,7 @@ def unilateral_candidate(
     if not isinstance(state, UnilateralState):
         raise TypeError("state must be UnilateralState.")
     impulses_ = jnp.asarray(impulses, dtype=state.impulses.dtype)
-    active_ = jnp.asarray(active, dtype=bool)
+    active_ = jnp.asarray(active, dtype=jnp.bool_)
     if impulses_.shape != state.impulses.shape or active_.shape != state.active.shape:
         raise ValueError("Candidate unilateral arrays must preserve state capacity.")
     return UnilateralState(
@@ -348,7 +348,7 @@ def accept_unilateral_candidate(
         candidate, UnilateralState
     ):
         raise TypeError("current and candidate must be UnilateralState values.")
-    predicate = jnp.asarray(accepted, dtype=bool)
+    predicate = jnp.asarray(accepted, dtype=jnp.bool_)
     if predicate.ndim != 0:
         raise ValueError("accepted must be scalar.")
     return tree_where(predicate, candidate, current)
@@ -413,7 +413,7 @@ class JointLimitPlan(StrictModule, NonTrainableState):
         padded_ids = np.full((capacity_,), -1, dtype=np.int64)
         padded_lower = np.zeros((capacity_,), dtype=lower.dtype)
         padded_upper = np.ones((capacity_,), dtype=upper.dtype)
-        valid = np.zeros((capacity_,), dtype=bool)
+        valid = np.zeros((capacity_,), dtype=np.bool_)
         count = identifiers.size
         padded_ids[:count] = identifiers
         padded_lower[:count] = lower
@@ -470,7 +470,7 @@ class JointLimitPlan(StrictModule, NonTrainableState):
 
     @property
     def capacity(self) -> int:
-        return int(self.hinge_ids.shape[0])
+        return self.hinge_ids.shape[0]
 
     def prepare(
         self,
@@ -597,7 +597,7 @@ class PreparedJointLimits(StrictModule, NonTrainableState):
         if value.shape != (self.capacity,):
             raise ValueError("coordinate must have joint-limit capacity shape.")
         zero = jnp.zeros((self.capacity,), dtype=dtype)
-        inactive = jnp.zeros((self.capacity,), dtype=bool)
+        inactive = jnp.zeros((self.capacity,), dtype=jnp.bool_)
         return JointLimitState(
             jnp.where(self.plan.valid, value, 0.0),
             zero,
@@ -888,8 +888,8 @@ def joint_limit_candidate(
     coordinate_ = jnp.asarray(coordinate, dtype=state.coordinate.dtype)
     lower_impulse_ = jnp.asarray(lower_impulse, dtype=state.lower_impulse.dtype)
     upper_impulse_ = jnp.asarray(upper_impulse, dtype=state.upper_impulse.dtype)
-    lower_active_ = jnp.asarray(lower_active, dtype=bool)
-    upper_active_ = jnp.asarray(upper_active, dtype=bool)
+    lower_active_ = jnp.asarray(lower_active, dtype=jnp.bool_)
+    upper_active_ = jnp.asarray(upper_active, dtype=jnp.bool_)
     expected = state.coordinate.shape
     if (
         coordinate_.shape != expected
@@ -921,7 +921,7 @@ def accept_joint_limit_candidate(
         candidate, JointLimitState
     ):
         raise TypeError("current and candidate must be JointLimitState values.")
-    predicate = jnp.asarray(accepted, dtype=bool)
+    predicate = jnp.asarray(accepted, dtype=jnp.bool_)
     if predicate.ndim != 0:
         raise ValueError("accepted must be scalar.")
     return tree_where(predicate, candidate, current)

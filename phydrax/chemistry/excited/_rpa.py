@@ -152,7 +152,7 @@ class RandomPhaseApproximationPlan(StrictModule, NonTrainableState):
         values = jnp.real(solve.eigenvalues[selected])
         right = jnp.asarray(solve.right_eigenvector_coordinates)[:, selected]
         left = jnp.asarray(solve.left_eigenvector_coordinates)[:, selected]
-        dimension = int(a.shape[0])
+        dimension = a.shape[0]
         x = right[:dimension]
         y = right[dimension:]
         symplectic = jnp.real(jnp.sum(jnp.conj(x) * x - jnp.conj(y) * y, axis=0))

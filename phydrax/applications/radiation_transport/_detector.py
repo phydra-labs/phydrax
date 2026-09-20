@@ -54,11 +54,11 @@ class PlanarXRayDetectorPlan(StrictModule, NonTrainableState):
         pixel_shape: tuple[int, int],
         detector_id: str,
     ):
-        center_ = np.asarray(center, dtype=float)
-        normal_ = np.asarray(normal, dtype=float)
-        horizontal = np.asarray(horizontal_axis, dtype=float)
+        center_ = np.asarray(center, dtype=np.float64)
+        normal_ = np.asarray(normal, dtype=np.float64)
+        horizontal = np.asarray(horizontal_axis, dtype=np.float64)
         width_, height_ = float(width), float(height)
-        pixels = tuple(int(value) for value in pixel_shape)
+        pixels = tuple(pixel_shape)
         identifier = str(detector_id).strip()
         normal_norm = np.linalg.norm(normal_)
         if normal_norm > 0.0:
@@ -194,7 +194,7 @@ class PlanarXRayDetectorPlan(StrictModule, NonTrainableState):
     ) -> SensitiveHitBank:
         if result.detector_id != self.detector_id:
             raise ValueError("Detector result belongs to another plan.")
-        count = int(transport.history_ids.size)
+        count = transport.history_ids.size
         flat_pixel = (
             result.pixel_index[:, 0] * self.pixel_shape[1] + result.pixel_index[:, 1]
         )

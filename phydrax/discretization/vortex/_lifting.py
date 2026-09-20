@@ -37,8 +37,8 @@ class LiftingSurfacePlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, leading_edge: ArrayLike, trailing_edge: ArrayLike, /):
-        leading = np.asarray(leading_edge, dtype=float)
-        trailing = np.asarray(trailing_edge, dtype=float)
+        leading = np.asarray(leading_edge, dtype=np.float64)
+        trailing = np.asarray(trailing_edge, dtype=np.float64)
         if leading.ndim != 2 or leading.shape[1] != 3 or trailing.shape != leading.shape:
             raise ValueError("Leading/trailing edges must share shape (sections, 3).")
         if (
@@ -89,7 +89,7 @@ class LiftingSurfacePlan(StrictModule, NonTrainableState):
             & jnp.all(width > 0.0)
         )
         normal = eqx.error_if(normal, ~finite, "Prepared lifting panels are degenerate.")
-        panel_count = int(bound_start.shape[0])
+        panel_count = bound_start.shape[0]
         surface_id = canonical_fingerprint(
             {
                 "kind": "prepared-lifting-surface",

@@ -282,8 +282,8 @@ def _preflight_hdf5(
                     raise ValueError(
                         "Only HDF5 deflate, shuffle, and Fletcher32 filters are supported."
                     )
-            decoded_bytes += int(item.size) * int(dtype.itemsize)
-            decoded_elements += int(item.size)
+            decoded_bytes += item.size * dtype.itemsize
+            decoded_elements += item.size
             datasets[name] = item
         else:
             raise ValueError("HDF5 named datatypes are unsupported.")
@@ -295,7 +295,7 @@ def _preflight_hdf5(
     selected = datasets[selected_path]
     # Reserve the detached canonical complex128 array in addition to HDF5's
     # fixed-width decoded buffer before reading any dataset payload.
-    decoded_bytes += int(selected.size) * np.dtype(np.complex128).itemsize
+    decoded_bytes += selected.size * np.dtype(np.complex128).itemsize
     if decoded_bytes > policy.maximum_decoded_bytes:
         raise ResourceReadError(
             "limit", "openPMD decoded datasets exceed maximum_decoded_bytes."
@@ -448,7 +448,7 @@ def _decode_openpmd_laser(
             )
         if not np.issubdtype(dataset.dtype, np.complexfloating):
             raise TypeError("LaserEnvelope payload must use fixed-width complex storage.")
-        dataset_shape = tuple(int(size) for size in dataset.shape)
+        dataset_shape = tuple(dataset.shape)
         metadata = _validate_series_metadata(handle, dataset, policy)
         labels, spacing, offset, position, _, carrier, polarization = metadata
         # The complete HDF5 tree, selected metadata, dtype, shape, and decoded-byte
@@ -507,7 +507,7 @@ def _decode_openpmd_laser(
     accounted = account_bounded_resource(
         resource,
         depth=depth,
-        nodes=objects + int(payload.size),
+        nodes=objects + payload.size,
         attributes=attributes,
         losses=0,
     )
@@ -639,7 +639,7 @@ def _scalar_envelope_for_export(
     polarization = np.asarray(profile.polarization, dtype=np.complex128)
     scalar = np.sum(np.conj(polarization) * values, axis=-1)
     residual = values - scalar[..., None] * polarization
-    denominator = max(float(np.linalg.norm(values)), np.finfo(float).tiny)
+    denominator = max(float(np.linalg.norm(values)), np.finfo(np.float64).tiny)
     relative = float(np.linalg.norm(residual) / denominator)
     if not np.isfinite(relative) or relative > tolerance:
         raise ValueError(

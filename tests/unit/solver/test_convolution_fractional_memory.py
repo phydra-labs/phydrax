@@ -22,7 +22,7 @@ def test_translation_invariant_convolution_backend_matches_causal_integral():
     solution = phx.solver.solve_convolution_volterra(problem, times=times)
 
     assert jnp.isclose(solution.states[-1, 0], 2.0 - jnp.exp(-1.0), atol=3.3e-3)
-    assert solution.solver_id == "solver:volterra:causal-convolution-euler:v1"
+    assert solution.solver_id == "solver:volterra:causal-convolution-euler"
     assert solution.metadata["kernel_structure"] == "translation-invariant"
     assert solution.metadata["convolution_backend"] == "direct-causal"
 
@@ -64,7 +64,7 @@ def test_caputo_product_integration_is_exact_for_constant_forcing_nonuniform_gri
     expected = 1.0 + rate * times**order / jsp.special.gamma(order + 1.0)
 
     assert jnp.allclose(solution.states[:, 0], expected, rtol=0.0, atol=2e-15)
-    assert solution.solver_id == "solver:fractional:caputo-product-integration:v1"
+    assert solution.solver_id == "solver:fractional:caputo-product-integration"
     assert solution.stats["num_memory_cells"] == 10
     assert solution.metadata["grid"] == "nonuniform-supported"
 

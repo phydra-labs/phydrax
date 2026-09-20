@@ -31,11 +31,11 @@ class _LinearField(eqx.Module):
     shift: jnp.ndarray
 
     def __init__(self, matrix, shift=None):
-        self.matrix = jnp.asarray(matrix, dtype=float)
+        self.matrix = jnp.asarray(matrix, dtype="float64")
         self.shift = (
             jnp.zeros((self.matrix.shape[0],))
             if shift is None
-            else jnp.asarray(shift, dtype=float)
+            else jnp.asarray(shift, dtype="float64")
         )
 
     def __call__(self, time, state, args):
@@ -81,8 +81,8 @@ def _normal(dimension: int, *, location=None, covariance=None):
 
 
 def _flow(matrix, *, shift=None):
-    matrix = jnp.asarray(matrix, dtype=float)
-    dimension = int(matrix.shape[0])
+    matrix = jnp.asarray(matrix, dtype="float64")
+    dimension = matrix.shape[0]
     system = phx.dynamics.ContinuousSystem(
         _LinearField(matrix, shift),
         state_layout=phx.dynamics.StateLayout((dimension,)),
@@ -204,7 +204,7 @@ def benchmark_endpoint_physics_case(*, repetitions: int) -> dict[str, Any]:
         target=jnp.full((1, 1), jnp.e),
         source_indices=jnp.zeros((1,), dtype=jnp.int32),
         target_indices=jnp.zeros((1,), dtype=jnp.int32),
-        valid=jnp.ones((1,), dtype=bool),
+        valid=jnp.ones((1,), dtype="bool"),
         log_weights=jnp.zeros((1,)),
         context={"desired": jnp.full((1, 1), jnp.e)},
         coupling_id="benchmark-exponential-endpoint",
@@ -220,7 +220,7 @@ def benchmark_endpoint_physics_case(*, repetitions: int) -> dict[str, Any]:
         state=jnp.ones((1, 1)),
         time=jnp.zeros((1,)),
         target_velocity=jnp.zeros((1, 1)),
-        valid=jnp.ones((1,), dtype=bool),
+        valid=jnp.ones((1,), dtype="bool"),
         log_weights=jnp.zeros((1,)),
         context={"desired": jnp.full((1, 1), jnp.e)},
         evaluation_key=jr.key(91),
@@ -291,7 +291,7 @@ def run_continuous_transport_benchmarks(*, quick: bool = False) -> dict[str, Any
         )
     cases.append(benchmark_endpoint_physics_case(repetitions=repetitions))
     return {
-        "schema": "phydrax-continuous-transport-benchmark-v1",
+        "schema": "phydrax-continuous-transport-benchmark",
         "backend": jax.default_backend(),
         "quick": bool(quick),
         "cases": cases,

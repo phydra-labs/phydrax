@@ -64,7 +64,7 @@ def test_rollout_observers_update_only_accepted_steps_with_final_retention():
     )
     profile = phx.atomistic.PlanarWallProfileObserverPlan(
         frame,
-        jnp.ones((1, 3), dtype=bool),
+        jnp.ones((1, 3), dtype="bool"),
         ("fluid",),
         bin_count=1,
         minimum_count_per_bin=3,
@@ -167,7 +167,7 @@ def test_driven_profile_fit_recovers_two_wall_slip_lengths():
         velocity,
         jnp.zeros((1, 4, 2, 2)),
         jnp.full((1, 4), 10.0),
-        jnp.zeros((1, 4), dtype=bool),
+        jnp.zeros((1, 4), dtype="bool"),
         jnp.asarray(10, dtype=jnp.int32),
         phx.AdmissibilityHeader(
             jnp.ones((1, 4)),

@@ -56,10 +56,10 @@ class ChargedRadiationMaterialLibrary(StrictModule, NonTrainableState):
         commercial_use: bool = False,
         export: bool = False,
     ):
-        energy = np.asarray(energy_ev, dtype=float)
-        stopping = np.asarray(stopping_power_ev_m, dtype=float)
-        scattering = np.asarray(scattering_power_rad2_m, dtype=float)
-        brems = np.asarray(bremsstrahlung_rate_m, dtype=float)
+        energy = np.asarray(energy_ev, dtype=np.float64)
+        stopping = np.asarray(stopping_power_ev_m, dtype=np.float64)
+        scattering = np.asarray(scattering_power_rad2_m, dtype=np.float64)
+        brems = np.asarray(bremsstrahlung_rate_m, dtype=np.float64)
         materials = tuple(str(value).strip() for value in material_ids)
         if not isinstance(manifest, ReferenceArtifactManifest):
             raise TypeError("Charged radiation material data require a manifest.")

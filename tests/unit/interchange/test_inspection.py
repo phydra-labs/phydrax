@@ -69,7 +69,7 @@ def test_host_inspection_rejects_ambiguous_field_and_frame_layouts():
         HostInspectionField(
             "alpha",
             np.ones((2, 3)),
-            np.ones((2,), dtype=bool),
+            np.ones((2,), dtype="bool"),
             "cell",
             "cells",
             "cell-layout",

@@ -72,9 +72,9 @@ def spin_matrices(twice_spin: int, /) -> tuple[Array, Array, Array, Array, Array
     if doubled < 1:
         raise ValueError("twice_spin must be positive.")
     spin = 0.5 * doubled
-    projections = np.arange(-doubled, doubled + 1, 2, dtype=float) * 0.5
+    projections = np.arange(-doubled, doubled + 1, 2, dtype=np.float64) * 0.5
     dimension = doubled + 1
-    raising = np.zeros((dimension, dimension), dtype=complex)
+    raising = np.zeros((dimension, dimension), dtype=np.complex128)
     for column, projection in enumerate(projections[:-1]):
         raising[column + 1, column] = np.sqrt(
             spin * (spin + 1.0) - projection * (projection + 1.0)
@@ -90,7 +90,7 @@ def _spaces_and_operators(
     site_ids: Sequence[str], twice_spins: Sequence[int], /
 ) -> tuple[tuple[LocalSpacePlan, ...], tuple[dict[str, LocalOperatorPlan], ...]]:
     sites = tuple(str(value) for value in site_ids)
-    spins = tuple(int(value) for value in twice_spins)
+    spins = tuple(twice_spins)
     if not sites or len(sites) != len(spins) or len(set(sites)) != len(sites):
         raise ValueError("Quantum spin sites must be unique and align with twice_spins.")
     spaces = tuple(
@@ -123,7 +123,7 @@ def _base_model(
     if not unit:
         raise ValueError("Quantum spin energy_unit must be explicit.")
     specification = QuantumLatticeSpecification(spaces, terms)
-    spins = tuple(int(value) for value in twice_spins)
+    spins = tuple(twice_spins)
     sites = tuple(str(value) for value in site_ids)
     identifier = canonical_fingerprint(
         {
@@ -298,7 +298,7 @@ def dmi_spin_model(
     edges, _ = _bond_inputs(
         len(spaces), bonds, np.zeros((edge_count,)), "dmi bond support"
     )
-    dmi = np.asarray(dmi_vectors, dtype=float)
+    dmi = np.asarray(dmi_vectors, dtype=np.float64)
     if dmi.shape != (edges.shape[0], 3) or np.any(~np.isfinite(dmi)):
         raise ValueError("dmi_vectors must have shape (bond, 3) with finite values.")
     if not np.any(np.abs(dmi) > 0.0):
@@ -308,7 +308,7 @@ def dmi_spin_model(
         (("+", -0.5j), ("-", 0.5j)),
         (("z", 1.0),),
     )
-    epsilon = np.zeros((3, 3, 3), dtype=int)
+    epsilon = np.zeros((3, 3, 3), dtype=np.int64)
     epsilon[0, 1, 2] = epsilon[1, 2, 0] = epsilon[2, 0, 1] = 1
     epsilon[0, 2, 1] = epsilon[2, 1, 0] = epsilon[1, 0, 2] = -1
     adjoint_label = {"+": "-", "-": "+", "z": "z"}
@@ -387,7 +387,7 @@ def dmi_z_spin_model(
     values = np.asarray(dmi_z)
     if values.ndim != 1:
         raise ValueError("dmi_z must be a vector with one value per bond.")
-    vectors = np.zeros((values.size, 3), dtype=np.result_type(values.dtype, float))
+    vectors = np.zeros((values.size, 3), dtype=np.result_type(values.dtype, np.float64))
     vectors[:, 2] = values
     return dmi_spin_model(
         site_ids,

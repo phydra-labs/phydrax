@@ -89,7 +89,7 @@ class LeastSquaresProblem(AbstractLinearProblem):
         else:
             weights_ = jnp.asarray(weights)
             if not jnp.issubdtype(weights_.dtype, jnp.inexact):
-                weights_ = weights_.astype(float)
+                weights_ = weights_.astype("float64")
             if jnp.issubdtype(weights_.dtype, jnp.complexfloating):
                 raise TypeError("Least-squares weights must be real-valued.")
             weights_ = eqx.error_if(

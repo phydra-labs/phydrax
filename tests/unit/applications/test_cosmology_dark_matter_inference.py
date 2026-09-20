@@ -99,7 +99,7 @@ def _external_product(values):
             differentiation=DifferentiationContract.constant(),
         ),
         coordinates,
-        decoder_id="float64-vector-v1",
+        decoder_id="float64-vector",
         product_id="heldout-reference-product",
     )
 
@@ -168,8 +168,8 @@ def _stochastic_evaluator(score_multiplier):
     def evaluate(parameters, tape):
         values = (parameters[0] + tape)[:, None]
         score = (score_multiplier * tape)[:, None]
-        active = jnp.ones(tape.shape, dtype=bool)
-        inactive_event = jnp.zeros(tape.shape, dtype=bool)
+        active = jnp.ones(tape.shape, dtype="bool")
+        inactive_event = jnp.zeros(tape.shape, dtype="bool")
         return FixedTapeStochasticEvaluation(
             values,
             score,
@@ -464,7 +464,7 @@ def test_external_emulator_calibration_denies_unlicensed_use_and_raw_bypass():
             manifest,
             artifact,
             external_provenance,
-            decoder_id="float64-emulator-location-scale-v1",
+            decoder_id="float64-emulator-location-scale",
             product_id="restricted-emulator-product",
             commercial_use=True,
         )

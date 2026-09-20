@@ -63,8 +63,7 @@ class AtomisticInterchangeReport(StrictModule, NonTrainableState):
                 != units.scale.energy_unit.reference_system_id
             ):
                 raise ValueError(
-                    "Interchange source energy must have ENERGY / AMOUNT in the "
-                    "unit system's reference system."
+                    "Interchange source energy must have ENERGY / AMOUNT in the unit system's reference system."
                 )
             if avogadro_constant_set_id != units.constant_set_id:
                 raise ValueError(

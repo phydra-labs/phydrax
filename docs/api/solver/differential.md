@@ -325,7 +325,7 @@ Use an inexact dtype for coefficients that participate in gradients.
 ### CDE solve and the CDE/RDE boundary
 
 `solve_diffrax_cde` solves the differentiable first-level equation
-`dY = V0(t, Y, args) dt + V(t, Y, args) dX`. Construct its dynamics with
+`dY = Canonical(t, Y, args) dt + V(t, Y, args) dX`. Construct its dynamics with
 `RoughDifferentialProblem`: `vector_fields(time, state, args)` returns
 `state_shape + (driver_dimension,)`, and an optional
 `drift(time, state, args)` returns `state_shape`. The context is always the
@@ -860,7 +860,7 @@ spde = phx.solver.semidiscretize_reaction_diffusion(
         coefficients,
         lambda values: values - values**3,
     ),
-    reaction_id=f"allen-cahn-cubic-modal-reaction-v1:{method.prepared_id}",
+    reaction_id=f"allen-cahn-cubic-modal-reaction:{method.prepared_id}",
     noise_basis=noise,
     interpretation="ito",
 )

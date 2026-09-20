@@ -48,16 +48,16 @@ class DetectorCalibrationPayload(StrictModule, NonTrainableState):
         source_id: str,
     ):
         channels = np.asarray(channel_ids)
-        gains_ = np.asarray(gains, dtype=float)
-        offsets_ = np.asarray(offsets, dtype=float)
-        covariance_ = np.asarray(covariance, dtype=float)
+        gains_ = np.asarray(gains, dtype=np.float64)
+        offsets_ = np.asarray(offsets, dtype=np.float64)
+        covariance_ = np.asarray(covariance, dtype=np.float64)
         if (
             channels.ndim != 1
             or channels.size < 1
             or not np.issubdtype(channels.dtype, np.integer)
         ):
             raise ValueError("channel_ids must be a non-empty integer vector.")
-        count = int(channels.size)
+        count = channels.size
         if (
             gains_.shape != (count,)
             or offsets_.shape != (count,)

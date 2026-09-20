@@ -57,7 +57,7 @@ def test_map_candidate_search_finds_exact_correlated_catalog_minimum():
     assert result.valid_evaluations == 4
     assert result.invalid_evaluations == 0
     assert result.effective_batch_size == 3
-    assert result.method_id == "finite-exhaustive-map-candidate-search-v1"
+    assert result.method_id == "finite-exhaustive-map-candidate-search"
     assert result.candidate_signature == candidates.signature()
 
     replay = phx.uq.search_map_candidates(problem, candidates)

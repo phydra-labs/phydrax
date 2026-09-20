@@ -238,7 +238,7 @@ def _coordinate_layout(
     periodic: list[tuple[int, PeriodicNestedCoordinate]] = []
     offset = 0
     for (path, leaf), path_name in zip(path_leaves, actual_paths, strict=True):
-        size = int(jnp.asarray(leaf).size)
+        size = jnp.asarray(leaf).size
         if path_name in finite_by_path:
             if size != 1:
                 raise ValueError("Finite nested-prior paths must name scalar leaves.")
@@ -303,7 +303,7 @@ def _empty_proposal(
         ellipsoid_factors=jnp.zeros(
             (clusters, smooth_dimension, smooth_dimension), dtype=dtype
         ),
-        ellipsoid_active=jnp.zeros((clusters,), dtype=bool),
+        ellipsoid_active=jnp.zeros((clusters,), dtype=jnp.bool_),
         ellipsoid_log_volumes=jnp.full((clusters,), -jnp.inf, dtype=dtype),
         ellipsoid_condition=jnp.asarray(jnp.inf, dtype=dtype),
         flow_mean=jnp.zeros((smooth_dimension,), dtype=dtype),
@@ -348,7 +348,7 @@ def _prepare_proposal_geometry(
     cluster_log_volumes = proposal.ellipsoid_log_volumes
     ellipsoid_condition = proposal.ellipsoid_condition
     if plan.proposal.ellipsoid:
-        count = int(active.shape[0])
+        count = active.shape[0]
         maximum_clusters = min(
             plan.capacity.max_clusters,
             max(1, count // (smooth_dimension + 1)),
@@ -475,7 +475,7 @@ def _flow_log_density(position: Array, proposal: PreparedNestedProposalState, /)
         position - proposal.flow_mean,
         lower=True,
     )
-    dimension = int(position.size)
+    dimension = position.size
     return -0.5 * (
         dimension * jnp.log(2.0 * jnp.pi)
         + 2.0 * proposal.flow_log_determinant
@@ -550,7 +550,7 @@ def execute_prepared_nested(
     from ._nested_diagnostics import build_nested_diagnostics
 
     reference, unravel = ravel_pytree(problem.initial_position)
-    dimension = int(reference.size)
+    dimension = reference.size
     dtype = reference.dtype
     capacity = plan.capacity
     layout = _coordinate_layout(problem.initial_position, plan)
@@ -615,7 +615,7 @@ def execute_prepared_nested(
     phantom_template = PhantomNestedState.initialize(
         capacity.max_phantoms, dimension, dtype=dtype
     )
-    false_live = jnp.zeros((capacity.max_live,), dtype=bool)
+    false_live = jnp.zeros((capacity.max_live,), dtype=jnp.bool_)
     template = PreparedNestedState(
         root_key=root_key,
         initial_log_likelihood=jnp.full((capacity.max_live,), -jnp.inf, dtype=dtype),
@@ -639,7 +639,7 @@ def execute_prepared_nested(
         dead_batch_indices=jnp.zeros((capacity.max_dead_points,), dtype=jnp.int32),
         dead_lineage=jnp.zeros((capacity.max_dead_points,), dtype=jnp.int32),
         insertion_ranks=jnp.zeros((capacity.max_dead_points,), dtype=jnp.int32),
-        inner_accepted=jnp.zeros((capacity.max_dead_points,), dtype=bool),
+        inner_accepted=jnp.zeros((capacity.max_dead_points,), dtype=jnp.bool_),
         proposal_attempts=jnp.zeros((capacity.max_dead_points,), dtype=jnp.int32),
         proposal_shrinkage=jnp.zeros((capacity.max_dead_points,), dtype=jnp.int32),
         phantom=phantom_template,
@@ -860,7 +860,7 @@ def execute_prepared_nested(
             purpose,
             0,
         )
-        anchor_local = int(jr.randint(anchor_key, (), 0, int(active_indices.size)))
+        anchor_local = int(jr.randint(anchor_key, (), 0, active_indices.size))
         anchor = int(active_indices[anchor_local])
         position = current_state.live_positions[anchor]
         log_prior = current_state.live_log_prior[anchor]
@@ -1805,7 +1805,7 @@ def execute_prepared_nested(
     final_likelihood = state.live_log_likelihood[active_indices]
     final_birth = state.live_birth_log_likelihood[active_indices]
     final_lineage = state.live_lineage[active_indices]
-    final_count = int(active_indices.size)
+    final_count = active_indices.size
     final_log_weights = state.log_prior_volume - jnp.log(final_count) + final_likelihood
     dead_positions = state.dead_positions[:dead_count]
     dead_prior = state.dead_log_prior[:dead_count]

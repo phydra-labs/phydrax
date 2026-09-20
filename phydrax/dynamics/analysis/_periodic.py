@@ -16,7 +16,7 @@ from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._geometry_precision import GeometryPrecisionPolicy
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ...linalg import (
     AbstractLinearOperator,
     ArraySpace,
@@ -76,8 +76,8 @@ FLOQUET_NEUTRAL_MISSING = 5
 class AbstractPhaseCondition(StrictModule):
     """One scalar gauge condition removing autonomous-flow phase degeneracy."""
 
-    state_layout: AbstractAttribute[StateLayout]
-    phase_id: AbstractAttribute[str]
+    state_layout: eqx.AbstractVar[StateLayout]
+    phase_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def evaluate(
@@ -196,8 +196,7 @@ class ComponentPhaseCondition(AbstractPhaseCondition):
         ):
             raise ValueError("value must be one finite real inexact scalar.")
         identifier = (
-            f"component-phase:index={index_}:value={float(resolved_value):.17g}:"
-            f"layout={state_layout.layout_id}"
+            f"component-phase:index={index_}:value={float(resolved_value):.17g}:layout={state_layout.layout_id}"
             if phase_id is None
             else str(phase_id)
         )
@@ -613,11 +612,10 @@ def solve_periodic_orbit(
         period = jnp.asarray(float(problem.num_segments), dtype=nodes.dtype)
     adapter = PeriodicOrbitResidual(problem)
     values = adapter.pack(nodes, period)
-    dimension = int(values.size)
+    dimension = values.size
     if linear_method == "dense" and dimension > dense_limit:
         raise ValueError(
-            f"Dense periodic solve dimension {dimension} exceeds "
-            f"max_dense_dimension={dense_limit}."
+            f"Dense periodic solve dimension {dimension} exceeds max_dense_dimension={dense_limit}."
         )
     linear_policy = (
         LinearSolvePolicy(DenseLU())
@@ -842,8 +840,7 @@ def floquet_spectrum(
     elif method == "full":
         if dimension > full_limit:
             raise ValueError(
-                f"Full Floquet dimension {dimension} exceeds "
-                f"max_full_dimension={full_limit}."
+                f"Full Floquet dimension {dimension} exceeds max_full_dimension={full_limit}."
             )
 
         def apply_column(basis):
@@ -925,7 +922,7 @@ def floquet_spectrum(
     valid = jnp.asarray(status == FLOQUET_SUCCESS) & finite
     interval = orbit.period
     exponents = jnp.log(jnp.abs(multipliers)) / interval
-    included = jnp.ones(multipliers.shape, dtype=bool)
+    included = jnp.ones(multipliers.shape, dtype=jnp.bool_)
     if neutral_certified:
         included = included.at[neutral_index].set(False)
     relevant = jnp.where(included, jnp.abs(multipliers), 0.0)

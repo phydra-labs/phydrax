@@ -192,7 +192,7 @@ class BloodTransitJumpProcess(AbstractJumpProcess):
     ) -> None:
         source = jnp.asarray(source_indices, dtype=jnp.int32)
         target = jnp.asarray(target_indices, dtype=jnp.int32)
-        rates = jnp.asarray(transition_rates_per_s, dtype=float)
+        rates = jnp.asarray(transition_rates_per_s, dtype=jnp.float64)
         if (
             source.ndim != 1
             or source.shape != target.shape
@@ -217,7 +217,7 @@ class BloodTransitJumpProcess(AbstractJumpProcess):
         self.transition_rates_per_s = rates
         self.state_shape = (1,)
         self.mark_shape = ()
-        self.num_channels = int(source.shape[0])
+        self.num_channels = source.shape[0]
         self.compartment_count = count
         self.process_id = _identifier(process_id, "process_id")
 
@@ -276,13 +276,15 @@ class PreparedCirculatingBloodModel:
 
     def point_distribution(self, compartment_id: str, /) -> Array:
         index = int(self.encode(compartment_id)[0])
-        return jnp.zeros((len(self.compartment_ids),), dtype=float).at[index].set(1.0)
+        return (
+            jnp.zeros((len(self.compartment_ids),), dtype=jnp.float64).at[index].set(1.0)
+        )
 
     def stationary_distribution(self) -> Array:
         """Return a stationary law only for an irreducible circulation graph."""
 
         adjacency = np.asarray(jax.device_get(self.generator.matrix)) > 0.0
-        reachable = adjacency | np.eye(adjacency.shape[0], dtype=bool)
+        reachable = adjacency | np.eye(adjacency.shape[0], dtype=np.bool_)
         for intermediate in range(reachable.shape[0]):
             reachable |= (
                 reachable[:, intermediate, None] & reachable[None, intermediate, :]
@@ -312,8 +314,7 @@ def prepare_circulating_blood_model(
     flow_count = len(model.flows)
     if compartment_count > state_capacity:
         raise ValueError(
-            f"Circulating-blood compartment capacity exceeded: {compartment_count} > "
-            f"{state_capacity}."
+            f"Circulating-blood compartment capacity exceeded: {compartment_count} > {state_capacity}."
         )
     if flow_count > flow_capacity:
         raise ValueError(

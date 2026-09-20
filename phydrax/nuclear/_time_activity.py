@@ -230,7 +230,7 @@ class PreparedTimeActivityIntegration(StrictModule, NonTrainableState):
         self, values: ArrayLike, valid: ArrayLike, /
     ) -> TimeActivityIntegralEvaluation:
         activity = jnp.asarray(values)
-        validity = jnp.asarray(valid, dtype=bool)
+        validity = jnp.asarray(valid, dtype=jnp.bool_)
         if activity.shape != validity.shape:
             raise ValueError("Activity values and validity must have the same shape.")
         if (
@@ -468,8 +468,7 @@ class TimeActivityIntegrationPlan:
             TemporalSampling(
                 TemporalSamplingKind.CUMULATIVE,
                 origin=(
-                    f"piecewise-linear-integral:{self.time_axis.time_axis_id}:"
-                    f"{start_s:.17g}s:{end_s:.17g}s"
+                    f"piecewise-linear-integral:{self.time_axis.time_axis_id}:{start_s:.17g}s:{end_s:.17g}s"
                 ),
             ),
             field_.sampling.footprint_id,

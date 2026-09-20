@@ -30,7 +30,7 @@ class NoiseSpectralFactor(StrictModule):
         value = jnp.asarray(factor, dtype=jnp.complex128)
         if value.ndim < 2 or bool(jnp.any(~jnp.isfinite(value))):
             raise ValueError("Noise spectral factor must be a finite matrix or batch.")
-        count = int(value.shape[-1])
+        count = value.shape[-1]
         ids = (
             tuple(f"noise-{index}" for index in range(count))
             if source_ids is None
@@ -71,8 +71,8 @@ def thermal_resistor_noise_factor(
     *,
     source_id: str = "resistor-thermal-noise",
 ) -> NoiseSpectralFactor:
-    value = jnp.asarray(resistance, dtype=float)
-    kelvin = jnp.asarray(temperature, dtype=float)
+    value = jnp.asarray(resistance, dtype=jnp.float64)
+    kelvin = jnp.asarray(temperature, dtype=jnp.float64)
     if (
         value.shape != ()
         or kelvin.shape != ()

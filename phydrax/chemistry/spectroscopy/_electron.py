@@ -41,8 +41,8 @@ class PhotoemissionMatrixElementRequest(StrictModule, NonTrainableState):
         geometry_id: str,
         /,
     ):
-        points = jnp.asarray(kpoints, dtype=float)
-        photon = jnp.asarray(photon_energy, dtype=float).reshape(())
+        points = jnp.asarray(kpoints, dtype=jnp.float64)
+        photon = jnp.asarray(photon_energy, dtype=jnp.float64).reshape(())
         vector = jnp.asarray(polarization)
         source = str(spectral_source_id).strip()
         geometry = str(geometry_id).strip()
@@ -114,7 +114,7 @@ class PhotoemissionMatrixElementResult(StrictModule, NonTrainableState):
         self.request = request
         self.provider_id = provider
         self.source_hashes = hashes
-        self.converged = jnp.asarray(converged, dtype=bool).reshape(())
+        self.converged = jnp.asarray(converged, dtype=jnp.bool_).reshape(())
         self.result_id = canonical_fingerprint(
             {
                 "kind": "photoemission-matrix-element-result",
@@ -180,7 +180,7 @@ class ARPESPlan(StrictModule, NonTrainableState):
         band_capacity: int,
         moment_tolerance: float = 5.0e-3,
     ):
-        grid = jnp.asarray(energy, dtype=float)
+        grid = jnp.asarray(energy, dtype=jnp.float64)
         chemical = float(chemical_potential)
         thermal = float(temperature)
         tolerance = float(moment_tolerance)
@@ -224,7 +224,7 @@ class ARPESPlan(StrictModule, NonTrainableState):
         response_unit: UnitDefinition,
         /,
     ) -> ARPESResult:
-        density = jnp.asarray(spectral_density, dtype=float)
+        density = jnp.asarray(spectral_density, dtype=jnp.float64)
         kpoints, bands = matrix_elements.matrix_elements.shape
         if density.shape != (kpoints, bands, self.energy.size):
             raise ValueError("ARPES spectral density must have shape (k, band, energy).")
@@ -273,7 +273,7 @@ class ARPESPlan(StrictModule, NonTrainableState):
         raw = SpectralResponseProduct(
             self.energy,
             resolved,
-            jnp.ones(self.energy.shape, dtype=bool),
+            jnp.ones(self.energy.shape, dtype=jnp.bool_),
             energy_unit,
             response_unit,
             tuple(f"k[{index}]" for index in range(kpoints)),
@@ -294,8 +294,8 @@ class VacuumLDOSRequest(StrictModule, NonTrainableState):
     def __init__(
         self, tip_positions: ArrayLike, energy: ArrayLike, electronic_source_id: str, /
     ):
-        positions = jnp.asarray(tip_positions, dtype=float)
-        grid = jnp.asarray(energy, dtype=float)
+        positions = jnp.asarray(tip_positions, dtype=jnp.float64)
+        grid = jnp.asarray(energy, dtype=jnp.float64)
         source = str(electronic_source_id).strip()
         if (
             positions.ndim != 2
@@ -341,10 +341,10 @@ class VacuumLDOSResult(StrictModule, NonTrainableState):
         converged: ArrayLike,
         /,
     ):
-        density = jnp.asarray(ldos, dtype=float)
+        density = jnp.asarray(ldos, dtype=jnp.float64)
         provider = str(provider_id).strip()
         hashes = tuple(str(value).strip() for value in source_hashes)
-        residual = jnp.asarray(moment_residual, dtype=float).reshape(())
+        residual = jnp.asarray(moment_residual, dtype=jnp.float64).reshape(())
         if (
             density.shape != (request.tip_positions.shape[0], request.energy.size)
             or bool(jnp.any(~jnp.isfinite(density)))
@@ -361,7 +361,7 @@ class VacuumLDOSResult(StrictModule, NonTrainableState):
         self.provider_id = provider
         self.source_hashes = hashes
         self.moment_residual = residual
-        self.converged = jnp.asarray(converged, dtype=bool).reshape(())
+        self.converged = jnp.asarray(converged, dtype=jnp.bool_).reshape(())
         self.result_id = canonical_fingerprint(
             {
                 "kind": "vacuum-ldos-result",
@@ -432,7 +432,7 @@ class TersoffHamannPlan(StrictModule, NonTrainableState):
         position_capacity: int,
         closure_tolerance: float = 1.0e-3,
     ):
-        voltage = jnp.asarray(biases, dtype=float)
+        voltage = jnp.asarray(biases, dtype=jnp.float64)
         thermal = float(temperature)
         scale = float(current_scale)
         tolerance = float(closure_tolerance)
@@ -517,7 +517,7 @@ class TersoffHamannPlan(StrictModule, NonTrainableState):
         raw = SpectralResponseProduct(
             self.biases,
             didv,
-            jnp.ones(self.biases.shape, dtype=bool),
+            jnp.ones(self.biases.shape, dtype=jnp.bool_),
             bias_unit,
             response_unit,
             tuple(f"tip[{index}]" for index in range(didv.shape[0])),

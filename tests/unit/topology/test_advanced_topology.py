@@ -186,7 +186,7 @@ def test_vineyard_and_zigzag_topology_evolution():
         coefficients=phx.topology.PrimeField(2),
     )
     empty_masks = tuple(
-        np.zeros_like(np.asarray(mask), dtype=bool) for mask in complex.masks
+        np.zeros_like(np.asarray(mask), dtype="bool") for mask in complex.masks
     )
     operations = (
         phx.topology.ZigzagCellOperation("insert", 0, 0),

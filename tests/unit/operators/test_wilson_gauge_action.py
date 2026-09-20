@@ -26,7 +26,7 @@ def _action(dimension=2, beta=1.4):
 def _perturbed_links(action):
     dimension = action.link_space.group.algebra_shape[0]
     coordinates = 0.1 * jnp.reshape(
-        jnp.arange(action.link_space.num_edges * dimension, dtype=float) + 1.0,
+        jnp.arange(action.link_space.num_edges * dimension, dtype="float64") + 1.0,
         (action.link_space.num_edges, dimension),
     )
     return action.geometry.retract(action.link_space.identity(), coordinates)

@@ -460,7 +460,7 @@ def test_translating_moving_wall_has_zero_mass_flux_and_uses_relative_cfl():
             atol=2.0e-11,
         )
     for block in result.accepted_flux_integrals.blocks:
-        boundary = block.neighbour_cells < 0
+        boundary = block.neighbor_cells < 0
         np.testing.assert_allclose(
             jnp.where(boundary, block.flux_integral[:, 0], 0.0),
             0.0,
@@ -761,12 +761,12 @@ def test_all_rejected_retries_publish_one_final_attempt_evidence_envelope():
     assert int(rejected_ledger.end_evidence_version) == int(
         geometry.accepted_geometry.evidence.evidence_version
     )
-    assert tuple(
-        int(value) for value in rejected_ledger.stage_geometry_versions
-    ) == tuple(int(metrics.geometry_version) for metrics in stage_metrics)
-    assert tuple(
-        int(value) for value in rejected_ledger.stage_evidence_versions
-    ) == tuple(int(metrics.evidence.evidence_version) for metrics in stage_metrics)
+    assert tuple(rejected_ledger.stage_geometry_versions) == tuple(
+        int(metrics.geometry_version) for metrics in stage_metrics
+    )
+    assert tuple(rejected_ledger.stage_evidence_versions) == tuple(
+        int(metrics.evidence.evidence_version) for metrics in stage_metrics
+    )
     for ledger, metrics in zip(stage_ledgers, stage_metrics, strict=True):
         assert int(ledger.geometry_version) == int(metrics.geometry_version)
         assert int(ledger.evidence_version) == int(metrics.evidence.evidence_version)
@@ -798,12 +798,12 @@ def test_stage_rate_positivity_blends_high_and_fallback_against_target_volumes()
     primitive = jnp.asarray(((1.0, 0.0, 1.0), (1.0, 0.0, 1.0)))
     content = system.primitive_to_conserved(primitive)
     owner = jnp.asarray((0,), dtype=jnp.int32)
-    neighbour = jnp.asarray((1,), dtype=jnp.int32)
+    neighbor = jnp.asarray((1,), dtype=jnp.int32)
     active_face = jnp.asarray((True,))
     high_block = phx.discretization.ConservationStageFluxRateBlock(
         jnp.asarray(((10.0, 0.0, 0.0),)),
         owner,
-        neighbour,
+        neighbor,
         active_face,
         "positivity-face",
         "interior",
@@ -818,10 +818,10 @@ def test_stage_rate_positivity_blends_high_and_fallback_against_target_volumes()
         topology_epoch_id="positivity-epoch",
     )
     high = phx.discretization.ConservationStageLedger(
-        (high_block,), jnp.zeros_like(content), jnp.ones(2, dtype=bool), **kwargs
+        (high_block,), jnp.zeros_like(content), jnp.ones(2, dtype="bool"), **kwargs
     )
     fallback = phx.discretization.ConservationStageLedger(
-        (fallback_block,), jnp.zeros_like(content), jnp.ones(2, dtype=bool), **kwargs
+        (fallback_block,), jnp.zeros_like(content), jnp.ones(2, dtype="bool"), **kwargs
     )
 
     limited = phx.discretization.FluxPositivityPlan().limit_stage_rate_ledgers(
@@ -909,9 +909,7 @@ def test_ale_advance_is_jittable_differentiable_and_checkpoint_versions_are_read
     assert result.runtime_state.topology_journal.current_epoch_id == (
         initial.topology_journal.current_epoch_id
     )
-    assert tuple(
-        int(version) for version in result.accepted_flux_integrals.stage_geometry_versions
-    ) == (0, 1, 2)
+    assert tuple(result.accepted_flux_integrals.stage_geometry_versions) == (0, 1, 2)
     assert int(result.accepted_flux_integrals.end_geometry_version) == 3
 
     def objective(speed):

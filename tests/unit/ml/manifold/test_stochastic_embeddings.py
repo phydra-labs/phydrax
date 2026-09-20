@@ -100,7 +100,7 @@ def test_tsne_jitted_fit_and_case_key_splitting_preserve_case_sample_axes():
     batch = MLBatch(
         features,
         targets,
-        target_mask=jnp.ones_like(targets, dtype=bool).at[:, 0, 1].set(False),
+        target_mask=jnp.ones_like(targets, dtype="bool").at[:, 0, 1].set(False),
         sample_weight=jnp.array([1.0, 1.3, 0.8, 1.1, 1.4, 0.9, 1.2]),
     )
 

@@ -118,7 +118,7 @@ def _separable_affine_lq_game(*, case_shape=()):
     problem = DeterministicFeedbackGameProblem(
         phx.control.DiscreteControlDynamics(system),
         phx.dynamics.TimeGrid(
-            jnp.arange(horizon + 1, dtype=float), time_id="separable-affine-lq-grid"
+            jnp.arange(horizon + 1, dtype="float64"), time_id="separable-affine-lq-grid"
         ),
         jnp.broadcast_to(jnp.asarray([2.0, -0.25]), case_shape + (state_size,)),
         PlayerControlPartition(("left", "right"), (1, 1)),

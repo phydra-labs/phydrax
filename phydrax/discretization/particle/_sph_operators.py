@@ -46,8 +46,8 @@ def sph_summation_density(
     """Evaluate self-inclusive SPH density from one unordered pair relation."""
 
     masses_ = precision.evaluation(masses)
-    active = jnp.asarray(active_mask, dtype=bool)
-    valid = jnp.asarray(physical_pairs, dtype=bool)
+    active = jnp.asarray(active_mask, dtype=jnp.bool_)
+    valid = jnp.asarray(physical_pairs, dtype=jnp.bool_)
     pair_kernel = precision.evaluation(kernel.value(geometry.distance, smoothing_length))
     left_mass = masses_[pairs.left_indices]
     right_mass = masses_[pairs.right_indices]
@@ -200,7 +200,7 @@ def sph_morris_viscous_force(
         / denominator
     )
     pair_force = scalar[:, None] * velocity_difference
-    valid = pairs.valid & jnp.asarray(physical_pairs, dtype=bool)
+    valid = pairs.valid & jnp.asarray(physical_pairs, dtype=jnp.bool_)
     pair_force = jnp.where(valid[:, None], pair_force, 0.0)
     pair_power = jnp.where(
         valid,

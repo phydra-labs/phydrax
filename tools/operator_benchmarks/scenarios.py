@@ -201,7 +201,7 @@ def _generated_provenance(generator: str) -> OperatorDatasetProvenance:
         generator=generator,
         generator_version="2",
         license_id="PhydraX repository license",
-        citation="PhydraX Operator Benchmark v2",
+        citation="PhydraX Operator Benchmark protocol",
     )
 
 
@@ -338,7 +338,7 @@ def _grid_batch(inputs, query_axes, *, case_axis="case") -> OperatorBatch:
 
 def _burgers_step(values, viscosity, dt):
     values_array = np.asarray(jax.device_get(values))
-    size = int(values_array.shape[-1])
+    size = values_array.shape[-1]
     frequencies = 2.0 * np.pi * np.fft.fftfreq(size, d=1.0 / size)
     transformed = np.fft.fft(values_array, axis=-1)
     gradient = np.fft.ifft(1j * frequencies * transformed, axis=-1).real
@@ -355,7 +355,7 @@ def _burgers_step(values, viscosity, dt):
 def _burgers_step_residual(values, target, viscosity, dt) -> float:
     values_array = np.asarray(jax.device_get(values))
     target_array = np.asarray(jax.device_get(target))
-    size = int(values_array.shape[-1])
+    size = values_array.shape[-1]
     frequencies = 2.0 * np.pi * np.fft.fftfreq(size, d=1.0 / size)
     transformed = np.fft.fft(values_array, axis=-1)
     gradient = np.fft.ifft(1j * frequencies * transformed, axis=-1).real
@@ -369,7 +369,7 @@ def _burgers_step_residual(values, target, viscosity, dt) -> float:
 
 
 def _periodic_population_coefficients(key, num_cases, resolved_frequency):
-    frequencies = jnp.arange(1, int(resolved_frequency) + 1, dtype=float)
+    frequencies = jnp.arange(1, int(resolved_frequency) + 1, dtype="float64")
     coefficients = jr.normal(
         key,
         (int(num_cases), int(resolved_frequency), 2),
@@ -395,11 +395,11 @@ def _planar_population_coefficients(key, num_cases, resolved_frequency):
     mode_x = mode_x.reshape(-1)[1:]
     mode_y = mode_y.reshape(-1)[1:]
     mode_scale = jnp.reciprocal(
-        jnp.sqrt(mode_x.astype(float) ** 2 + mode_y.astype(float) ** 2)
+        jnp.sqrt(mode_x.astype("float64") ** 2 + mode_y.astype("float64") ** 2)
     )
     coefficients = jr.normal(
         key,
-        (int(num_cases), int(mode_x.shape[0]), 2),
+        (int(num_cases), mode_x.shape[0], 2),
     )
     coefficients = (
         coefficients * mode_scale[None, :, None] / jnp.sqrt(float(mode_x.shape[0]))
@@ -419,7 +419,7 @@ def _evaluate_planar_population(coefficients, mode_x, mode_y, coordinates):
     )
     basis = jnp.stack((jnp.sin(phase), jnp.cos(phase)), axis=-1)
     values = ein.contract("cmk,mpk->cp", coefficients, basis)
-    return values.reshape((int(coefficients.shape[0]), *coordinates.shape[:-1]))
+    return values.reshape((coefficients.shape[0], *coordinates.shape[:-1]))
 
 
 def _square_symmetry_reference_defects(
@@ -484,7 +484,7 @@ def augment_square_group_training(
 
         def augment_leaf(leaf):
             array = jnp.asarray(leaf)
-            if int(array.shape[0]) != case_count:
+            if array.shape[0] != case_count:
                 raise ValueError(
                     "Square-group augmentation requires case-leading source values."
                 )
@@ -514,8 +514,7 @@ def augment_square_group_training(
             or samples.geometry_case_shape
         ):
             raise ValueError(
-                "Square-group augmentation currently requires shared tensor-grid "
-                "source geometry."
+                "Square-group augmentation currently requires shared tensor-grid source geometry."
             )
         inputs[name] = FunctionSamples(
             values=augment_values(
@@ -1591,7 +1590,7 @@ def square_diffusion_symmetry_scenario(
         int(num_cases),
         resolved_frequency,
     )
-    mode_radius = jnp.sqrt(mode_x.astype(float) ** 2 + mode_y.astype(float) ** 2)
+    mode_radius = jnp.sqrt(mode_x.astype("float64") ** 2 + mode_y.astype("float64") ** 2)
     spectral_tilt = 2.0 * (mode_radius / jnp.maximum(jnp.max(mode_radius), 1.0)) ** 1.5
     shifted_coefficients = shifted_coefficients * spectral_tilt[None, :, None]
     shifted_initial = _evaluate_planar_population(
@@ -1809,12 +1808,12 @@ def navier_stokes_scenario(
     mode_x = mode_x.reshape(-1)[1:]
     mode_y = mode_y.reshape(-1)[1:]
     mode_scale = jnp.reciprocal(
-        jnp.sqrt(mode_x.astype(float) ** 2 + mode_y.astype(float) ** 2)
+        jnp.sqrt(mode_x.astype("float64") ** 2 + mode_y.astype("float64") ** 2)
     )
     coefficient_key, phase_key = jr.split(jr.key(seed))
     coefficients = jr.normal(
         coefficient_key,
-        (num_cases, int(mode_x.shape[0])),
+        (num_cases, mode_x.shape[0]),
     )
     coefficients = coefficients * mode_scale[None, :] / jnp.sqrt(mode_x.shape[0])
     phases = jr.uniform(
@@ -1942,7 +1941,7 @@ def green_function_scenario(
         int(maximum_frequency),
         max(2, (int(source_points) - 1) // 2),
     )
-    frequencies = jnp.arange(1, resolved_frequency + 1, dtype=float)
+    frequencies = jnp.arange(1, resolved_frequency + 1, dtype="float64")
     coefficient_key, phase_key = jr.split(jr.key(seed))
     coefficients = (
         jr.normal(
@@ -2256,7 +2255,7 @@ def causal_relaxation_scenario(
         ),
     )
     resolved_modes = min(int(modes), maximum_resolved_modes)
-    frequencies = jnp.arange(1, resolved_modes + 1, dtype=float) / float(final_time)
+    frequencies = jnp.arange(1, resolved_modes + 1, dtype="float64") / float(final_time)
     coefficient_key = jr.key(seed)
     coefficients = jr.normal(
         coefficient_key,
@@ -2422,7 +2421,7 @@ def irregular_causal_relaxation_scenario(
         )
 
     resolved_modes = min(int(modes), (point_count - 1) // 2)
-    frequencies = jnp.arange(1, resolved_modes + 1, dtype=float) / float(final_time)
+    frequencies = jnp.arange(1, resolved_modes + 1, dtype="float64") / float(final_time)
     coefficient_key, train_key, shifted_key = jr.split(jr.key(seed), 3)
     coefficients = jr.normal(coefficient_key, (case_count, resolved_modes, 2)) / jnp.sqrt(
         float(resolved_modes)
@@ -2459,9 +2458,9 @@ def irregular_causal_relaxation_scenario(
 
     def batch(times, *, mask=None):
         valid = (
-            jnp.ones(times.shape, dtype=bool)
+            jnp.ones(times.shape, dtype="bool")
             if mask is None
-            else jnp.asarray(mask, dtype=bool)
+            else jnp.asarray(mask, dtype="bool")
         )
         coordinates = jnp.where(valid, times, 0.0)[..., None]
         source = FunctionSamples(
@@ -2581,7 +2580,7 @@ def beam_transient_scenario(
         jnp.linspace(0.0, float(final_time), time_points),
         quadrature_weights=jnp.ones((time_points,)) * float(final_time) / time_points,
     )
-    case = jnp.arange(1, num_cases + 1, dtype=float)[:, None]
+    case = jnp.arange(1, num_cases + 1, dtype="float64")[:, None]
     load = jnp.sin(jnp.pi * x_axis.nodes)[None, :] * (1.0 + 0.2 * case)
     time = time_axis.nodes[:, None]
     space = x_axis.nodes[None, :]
@@ -3200,7 +3199,7 @@ def conservative_ring_transport_scenario(
         indexing="ij",
     )
     support_coordinates = jnp.stack((support_x, support_y), axis=-1).reshape((-1, 2))
-    support_count = int(support_coordinates.shape[0])
+    support_count = support_coordinates.shape[0]
     support_weights = jnp.full(
         (support_count,),
         (2.0 * support_extent) ** 2 / support_count,
@@ -3217,7 +3216,7 @@ def conservative_ring_transport_scenario(
         angles = (
             2.0
             * jnp.pi
-            * (jnp.arange(int(count), dtype=float) + float(offset))
+            * (jnp.arange(int(count), dtype="float64") + float(offset))
             / int(count)
         )
         unit = jnp.stack((jnp.cos(angles), jnp.sin(angles)), axis=-1)
@@ -3527,7 +3526,7 @@ def _spectral_project_square(values: np.ndarray, output_size: int, /) -> np.ndar
     """Project a periodic square-grid field onto a smaller Fourier grid."""
 
     array = np.asarray(values)
-    input_size = int(array.shape[-1])
+    input_size = array.shape[-1]
     if array.shape[-2:] != (input_size, input_size):
         raise ValueError("Spectral square projection requires equal trailing grid axes.")
     if not 1 < int(output_size) <= input_size:
@@ -3597,7 +3596,7 @@ def polynomial_poisson_scenario(
         required_reference if required_reference % 2 == 0 else required_reference + 1
     )
 
-    reference_axis = np.arange(reference_resolution, dtype=float) / float(
+    reference_axis = np.arange(reference_resolution, dtype="float64") / float(
         reference_resolution
     )
     reference_x, reference_y = np.meshgrid(
@@ -3827,8 +3826,7 @@ def polynomial_poisson_scenario(
         ),
         reference_evidence=ReferenceSolverEvidence(
             method=(
-                "oversampled Fourier solution and orthogonal projection of the "
-                "band-limited polynomial forcing"
+                "oversampled Fourier solution and orthogonal projection of the band-limited polynomial forcing"
             ),
             verification="discrete_residual",
             resolutions=(reference_resolution,),
@@ -3871,7 +3869,7 @@ def irregular_poisson_scenario(
         int(maximum_frequency),
         max(1, (int(points) - 1) // 2),
     )
-    index = jnp.arange(points, dtype=float)
+    index = jnp.arange(points, dtype="float64")
     source_coordinate = jnp.stack(
         (
             (0.5 + index * 0.61803398875) % 1.0,
@@ -4212,7 +4210,7 @@ def spherical_diffusion_scenario(
     degrees_array = jnp.asarray(degrees)
     coefficients = jr.normal(jr.key(seed), (num_cases, len(basis)))
     coefficients = coefficients / (
-        degrees_array.astype(float)[None, :] ** 1.5 * jnp.sqrt(len(basis))
+        degrees_array.astype("float64")[None, :] ** 1.5 * jnp.sqrt(len(basis))
     )
     values = ein.contract("cm,mxy->cxy", coefficients, basis_array)
     attenuation = jnp.exp(
@@ -4340,7 +4338,7 @@ def _annulus_triangle_complex(radial_layers: int, angular_points: int, /):
             for radius in radii
             for angle in angles
         ],
-        dtype=float,
+        dtype="float64",
     )
     faces = []
     for radial in range(resolved_layers):
@@ -4462,12 +4460,12 @@ def cochain_mixed_darcy_scenario(
     )[:8]
     coefficients = np.asarray(
         jax.device_get(jr.normal(jr.key(seed), (int(num_cases), len(mode_pairs)))),
-        dtype=float,
+        dtype="float64",
     )
 
     def build(points: int):
         complex_ir = _square_triangle_complex(points, warp=mesh_warp)
-        vertices = np.asarray(complex_ir.coordinates[0], dtype=float)
+        vertices = np.asarray(complex_ir.coordinates[0], dtype="float64")
         x = vertices[:, 0]
         y = vertices[:, 1]
         basis = np.stack(
@@ -4478,8 +4476,8 @@ def cochain_mixed_darcy_scenario(
         )
         pressure = coefficients @ basis
         incidence = complex_ir.incidences[0].scipy_matrix().toarray()
-        hodge_zero = np.asarray(complex_ir.hodge_stars[0], dtype=float)
-        hodge_one = np.asarray(complex_ir.hodge_stars[1], dtype=float)
+        hodge_zero = np.asarray(complex_ir.hodge_stars[0], dtype="float64")
+        hodge_one = np.asarray(complex_ir.hodge_stars[1], dtype="float64")
         laplacian = ((incidence * hodge_one[None, :]) @ incidence.T) / hodge_zero[:, None]
         forcing = pressure @ laplacian.T + float(reaction) * pressure
         flux = -(pressure @ incidence)
@@ -4589,9 +4587,9 @@ def _annulus_harmonic_template(complex_ir, /) -> np.ndarray:
     if subspace is None or subspace.ranks[1] < 1:
         raise ValueError("Annulus benchmark requires a nontrivial degree-one nullspace.")
     incidence = complex_ir.incidences[0].scipy_matrix().toarray()
-    coordinates = np.asarray(complex_ir.coordinates[0], dtype=float)
+    coordinates = np.asarray(complex_ir.coordinates[0], dtype="float64")
     angles = np.arctan2(coordinates[:, 1], coordinates[:, 0])
-    angular = np.empty((incidence.shape[1],), dtype=float)
+    angular = np.empty((incidence.shape[1],), dtype="float64")
     for edge in range(incidence.shape[1]):
         column = incidence[:, edge]
         tail = int(np.flatnonzero(column < 0.0)[0])
@@ -4599,8 +4597,8 @@ def _annulus_harmonic_template(complex_ir, /) -> np.ndarray:
         difference = angles[head] - angles[tail]
         angular[edge] = (difference + np.pi) % (2.0 * np.pi) - np.pi
     rank = int(subspace.ranks[1])
-    basis = np.asarray(subspace.bases[1], dtype=float)[:, :rank]
-    metric = np.asarray(complex_ir.hodge_stars[1], dtype=float)
+    basis = np.asarray(subspace.bases[1], dtype="float64")[:, :rank]
+    metric = np.asarray(complex_ir.hodge_stars[1], dtype="float64")
     projected = basis @ (basis.T @ (metric * angular))
     norm = np.sqrt(np.sum(metric * projected * projected))
     if norm <= 1e-12:
@@ -4665,8 +4663,8 @@ def cochain_annulus_harmonic_scenario(
         )
         complex_ir = bare.with_harmonic_subspace(harmonic)
         template = _annulus_harmonic_template(complex_ir)
-        vertex_coordinates = np.asarray(complex_ir.coordinates[0], dtype=float)
-        face_coordinates = np.asarray(complex_ir.coordinates[2], dtype=float)
+        vertex_coordinates = np.asarray(complex_ir.coordinates[0], dtype="float64")
+        face_coordinates = np.asarray(complex_ir.coordinates[2], dtype="float64")
         x_vertex = vertex_coordinates[:, 0]
         y_vertex = vertex_coordinates[:, 1]
         x_face = face_coordinates[:, 0]
@@ -4691,8 +4689,8 @@ def cochain_annulus_harmonic_scenario(
         top_form = face_coefficients @ face_basis
         incidence_zero = complex_ir.incidences[0].scipy_matrix().toarray()
         incidence_one = complex_ir.incidences[1].scipy_matrix().toarray()
-        hodge_one = np.asarray(complex_ir.hodge_stars[1], dtype=float)
-        hodge_two = np.asarray(complex_ir.hodge_stars[2], dtype=float)
+        hodge_one = np.asarray(complex_ir.hodge_stars[1], dtype="float64")
+        hodge_two = np.asarray(complex_ir.hodge_stars[2], dtype="float64")
         exact = potential @ incidence_zero
         coexact = ((top_form * hodge_two[None, :]) @ incidence_one.T) / (
             hodge_one[None, :]

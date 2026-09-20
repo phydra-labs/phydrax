@@ -55,7 +55,7 @@ class FastDiagonalizationEligibility(StrictModule):
         /,
     ):
         reasons_ = tuple(str(reason) for reason in reasons)
-        sizes = tuple(int(size) for size in axis_sizes)
+        sizes = tuple(axis_sizes)
         if any(not reason for reason in reasons_) or any(size < 1 for size in sizes):
             raise ValueError("Fast-diagonalization eligibility evidence is invalid.")
         accepted = bool(eligible)
@@ -209,8 +209,7 @@ class TensorFastDiagonalizationBuilder(AbstractPreconditionerBuilder):
             or reaction_ < 0.0
         ):
             raise ValueError(
-                "Fast-diagonalization diffusion/reaction coefficients must be "
-                "finite and non-negative."
+                "Fast-diagonalization diffusion/reaction coefficients must be finite and non-negative."
             )
         self.mass_operators = masses
         self.stiffness_operators = stiffnesses

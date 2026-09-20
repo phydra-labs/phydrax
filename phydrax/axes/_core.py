@@ -153,7 +153,7 @@ class AxisArray:
             raise ValueError("Provide axes or dims, not both.")
         specification = dims if axes is None else axes
         if specification is None:
-            layout = AxisLayout(tuple(UnboundAxis(int(size)) for size in value.shape))
+            layout = AxisLayout(tuple(UnboundAxis(size) for size in value.shape))
         elif isinstance(specification, AxisLayout):
             layout = specification
         else:
@@ -180,7 +180,7 @@ class AxisArray:
         axes = list(layout.axes)
         if value.ndim > len(axes):
             axes = [
-                UnboundAxis(int(size)) for size in value.shape[: value.ndim - len(axes)]
+                UnboundAxis(size) for size in value.shape[: value.ndim - len(axes)]
             ] + axes
         elif value.ndim < len(axes):
             removed = axes[: len(axes) - value.ndim]
@@ -361,7 +361,7 @@ class AxisArray:
         result = operation(left_data, right_data)
         layout = AxisLayout(
             references
-            + tuple(UnboundAxis(int(size)) for size in result.shape[len(references) :])
+            + tuple(UnboundAxis(size) for size in result.shape[len(references) :])
         )
         return AxisArray(result, axes=layout)
 
@@ -641,7 +641,7 @@ def outer(left: AxisArray, right: AxisArray, /) -> AxisArray:
         result,
         axes=AxisLayout(
             references
-            + tuple(UnboundAxis(int(size)) for size in result.shape[len(references) :])
+            + tuple(UnboundAxis(size) for size in result.shape[len(references) :])
         ),
     )
 

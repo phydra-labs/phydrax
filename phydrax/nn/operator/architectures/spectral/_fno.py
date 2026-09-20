@@ -54,7 +54,7 @@ def _mode_tuple(modes: int | Sequence[int], ndim: int | None = None) -> tuple[in
             return (int(modes),)
         result = (int(modes),) * int(ndim)
     else:
-        result = tuple(int(mode) for mode in modes)
+        result = tuple(modes)
         if ndim is not None and len(result) != int(ndim):
             raise ValueError(f"Expected {ndim} mode counts, got {len(result)}.")
     if not result or any(mode <= 0 for mode in result):
@@ -232,13 +232,13 @@ class SpectralConvND(StrictModule):
             raise ValueError(
                 f"SpectralConvND expects at least {ndim + 1} axes; got {values.ndim}."
             )
-        if int(values.shape[-1]) != self.in_channels:
+        if values.shape[-1] != self.in_channels:
             raise ValueError(
                 f"Expected {self.in_channels} input channels, got {values.shape[-1]}."
             )
 
         spatial_axes = tuple(range(values.ndim - ndim - 1, values.ndim - 1))
-        spatial_shape = tuple(int(values.shape[axis]) for axis in spatial_axes)
+        spatial_shape = tuple(values.shape[axis] for axis in spatial_axes)
         source_dtype = values.dtype
         fft_dtype = jnp.float64 if source_dtype == jnp.float64 else jnp.float32
         transformed = jnp.fft.rfftn(
@@ -326,7 +326,7 @@ class MultiScaleSpectralConvND(StrictModule):
         self.branch_gain = jnp.full(
             (len(self.scales),),
             1.0 / jnp.sqrt(float(len(self.scales))),
-            dtype=float,
+            dtype=jnp.float64,
         )
 
     def __call__(self, values: Array, /) -> Array:
@@ -334,11 +334,11 @@ class MultiScaleSpectralConvND(StrictModule):
         ndim = len(self.n_modes)
         if array.ndim < ndim + 1:
             raise ValueError("MultiScaleSpectralConvND input rank is too small.")
-        source_shape = tuple(int(size) for size in array.shape[-ndim - 1 : -1])
+        source_shape = tuple(array.shape[-ndim - 1 : -1])
         spatial_axes = tuple(range(array.ndim - ndim - 1, array.ndim - 1))
         output = jnp.zeros(
             (*array.shape[:-1], self.out_channels),
-            dtype=jnp.result_type(array.dtype, float),
+            dtype=jnp.result_type(array.dtype, jnp.float64),
         )
         for gain, scale, branch in zip(
             self.branch_gain, self.scales, self.branches, strict=True
@@ -366,8 +366,8 @@ class _ChannelNorm(StrictModule):
     eps: float
 
     def __init__(self, channels: int, *, eps: float = 1e-5):
-        self.scale = jnp.ones((int(channels),), dtype=float)
-        self.bias = jnp.zeros((int(channels),), dtype=float)
+        self.scale = jnp.ones((int(channels),), dtype=jnp.float64)
+        self.bias = jnp.zeros((int(channels),), dtype=jnp.float64)
         self.eps = float(eps)
 
     def __call__(self, values: Array, /) -> Array:
@@ -450,10 +450,9 @@ class _AxialSpectralConvND(StrictModule):
         ndim = len(self.n_modes)
         if hidden.ndim < ndim + 1:
             raise ValueError(
-                f"Axial Fourier convolution expects at least {ndim + 1} axes; "
-                f"got {hidden.ndim}."
+                f"Axial Fourier convolution expects at least {ndim + 1} axes; got {hidden.ndim}."
             )
-        if int(hidden.shape[-1]) != self.in_channels:
+        if hidden.shape[-1] != self.in_channels:
             raise ValueError(
                 f"Expected {self.in_channels} input channels, got {hidden.shape[-1]}."
             )
@@ -676,8 +675,7 @@ class _AbstractFNO(AbstractOperatorModel):
         for axis in axes:
             if axis.size <= 1:
                 raise ValueError(
-                    "FNO expects coord-separable grid evaluation with at least two "
-                    "nodes per spatial axis."
+                    "FNO expects coord-separable grid evaluation with at least two nodes per spatial axis."
                 )
 
     def _prepare_values(
@@ -694,19 +692,19 @@ class _AbstractFNO(AbstractOperatorModel):
         )
         implicit_scalar = array.ndim >= ndim and tuple(array.shape[-ndim:]) == shape
         expected_channels = _get_size(self.in_size)
-        if explicit_channels and int(array.shape[-1]) == expected_channels:
-            case_shape = tuple(int(size) for size in array.shape[: -ndim - 1])
+        if explicit_channels and array.shape[-1] == expected_channels:
+            case_shape = tuple(array.shape[: -ndim - 1])
         elif implicit_scalar:
             array = array[..., None]
-            case_shape = tuple(int(size) for size in array.shape[: -ndim - 1])
+            case_shape = tuple(array.shape[: -ndim - 1])
         elif explicit_channels:
-            case_shape = tuple(int(size) for size in array.shape[: -ndim - 1])
+            case_shape = tuple(array.shape[: -ndim - 1])
         else:
             raise ValueError(
                 "FNO values must end in the spatial sample shape, optionally followed "
                 f"by channels; got {array.shape} for spatial shape {shape}."
             )
-        if int(array.shape[-1]) != _get_size(self.in_size):
+        if array.shape[-1] != _get_size(self.in_size):
             raise ValueError(
                 f"Expected {_get_size(self.in_size)} input channels, got {array.shape[-1]}."
             )
@@ -729,7 +727,7 @@ class _AbstractFNO(AbstractOperatorModel):
 
     def _pad(self, values: Array, /) -> tuple[Array, tuple[int, ...]]:
         ndim = len(self.n_modes)
-        spatial_shape = tuple(int(size) for size in values.shape[-ndim - 1 : -1])
+        spatial_shape = tuple(values.shape[-ndim - 1 : -1])
         pad_counts = tuple(
             int(round(fraction * size))
             for fraction, size in zip(self.domain_padding, spatial_shape, strict=True)
@@ -770,8 +768,7 @@ class _AbstractFNO(AbstractOperatorModel):
                         atol=1e-8,
                     )
                 ),
-                f"FNO requires finite, strictly increasing uniform nodes; "
-                f"axis {axis.name!r} is invalid.",
+                f"FNO requires finite, strictly increasing uniform nodes; axis {axis.name!r} is invalid.",
             )
         if self.coordinate_embedding:
             array = jnp.concatenate(

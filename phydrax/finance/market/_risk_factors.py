@@ -136,7 +136,7 @@ class MarketState(StrictModule, NonTrainableState):
             raise TypeError("layout must be a RiskFactorLayout.")
         count = layout.factor_count
         values_host = np.asarray(values)
-        valid_host = np.asarray(valid_mask, dtype=bool)
+        valid_host = np.asarray(valid_mask, dtype=np.bool_)
         status_host = np.asarray(status, dtype=np.int32)
         event_host = np.asarray(event_time_ns, dtype=np.int64)
         available_host = np.asarray(availability_time_ns, dtype=np.int64)
@@ -218,7 +218,7 @@ class MarketState(StrictModule, NonTrainableState):
         source_available = np.asarray(self.availability_time_ns)
         count = layout.factor_count
         values = np.zeros((count,), dtype=source_values.dtype)
-        valid = np.zeros((count,), dtype=bool)
+        valid = np.zeros((count,), dtype=np.bool_)
         status = np.full((count,), int(MarketStatus.MISSING_FACTOR), dtype=np.int32)
         event = np.zeros((count,), dtype=np.int64)
         available = np.zeros((count,), dtype=np.int64)

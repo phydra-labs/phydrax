@@ -317,7 +317,7 @@ def associative_freeze(
 ) -> Array:
     """Retain the most recent accepted value with an associative prefix scan."""
     flags = jnp.concatenate(
-        (jnp.ones((1,) + accepted.shape[1:], dtype=bool), accepted), axis=0
+        (jnp.ones((1,) + accepted.shape[1:], dtype=jnp.bool_), accepted), axis=0
     )
     seeded_values = jnp.concatenate((initial[None, ...], values), axis=0)
 
@@ -469,8 +469,8 @@ class GaussianMarkovInformation(StrictModule):
             raise ValueError(
                 "diagonal_precision must have shape (..., node, state, state)."
             )
-        node_count = int(diagonal.shape[-3])
-        state_size = int(diagonal.shape[-1])
+        node_count = diagonal.shape[-3]
+        state_size = diagonal.shape[-1]
         if node_count < 1 or state_size < 1:
             raise ValueError(
                 "Gaussian Markov node and state dimensions must be positive."
@@ -483,19 +483,17 @@ class GaussianMarkovInformation(StrictModule):
         expected_vector = diagonal.shape[:-3] + (node_count, state_size)
         if transition.shape != expected_transition:
             raise ValueError(
-                f"transition_precision must have shape {expected_transition}; "
-                f"got {transition.shape}."
+                f"transition_precision must have shape {expected_transition}; got {transition.shape}."
             )
         if vector.shape != expected_vector:
             raise ValueError(
-                f"information_vector must have shape {expected_vector}; "
-                f"got {vector.shape}."
+                f"information_vector must have shape {expected_vector}; got {vector.shape}."
             )
         expected_valid = diagonal.shape[:-2]
         valid = (
-            jnp.ones(expected_valid, dtype=bool)
+            jnp.ones(expected_valid, dtype=jnp.bool_)
             if node_valid is None
-            else jnp.asarray(node_valid, dtype=bool)
+            else jnp.asarray(node_valid, dtype=jnp.bool_)
         )
         if valid.shape != expected_valid:
             raise ValueError(
@@ -517,11 +515,11 @@ class GaussianMarkovInformation(StrictModule):
 
     @property
     def num_nodes(self) -> int:
-        return int(self.diagonal_precision.shape[-3])
+        return self.diagonal_precision.shape[-3]
 
     @property
     def state_size(self) -> int:
-        return int(self.diagonal_precision.shape[-1])
+        return self.diagonal_precision.shape[-1]
 
 
 class GaussianMarkovLogNormalizerResult(StrictModule):
@@ -574,8 +572,8 @@ class GaussianMarkovMoments(StrictModule):
         transition_ = jnp.asarray(transition_second_moments)
         if means_.ndim < 2:
             raise ValueError("means must have shape (..., node, state).")
-        node_count = int(means_.shape[-2])
-        state_size = int(means_.shape[-1])
+        node_count = means_.shape[-2]
+        state_size = means_.shape[-1]
         expected_second = means_.shape + (state_size,)
         expected_transition = means_.shape[:-2] + (
             max(node_count - 1, 0),
@@ -588,21 +586,18 @@ class GaussianMarkovMoments(StrictModule):
             )
         if transition_.shape != expected_transition:
             raise ValueError(
-                "transition_second_moments must have shape "
-                f"{expected_transition}; got {transition_.shape}."
+                f"transition_second_moments must have shape {expected_transition}; got {transition_.shape}."
             )
         expected_node_valid = means_.shape[:-1]
-        node_valid_ = jnp.asarray(node_valid, dtype=bool)
+        node_valid_ = jnp.asarray(node_valid, dtype=jnp.bool_)
         if node_valid_.shape != expected_node_valid:
             raise ValueError(
-                f"node_valid must have shape {expected_node_valid}; "
-                f"got {node_valid_.shape}."
+                f"node_valid must have shape {expected_node_valid}; got {node_valid_.shape}."
             )
         batch_shape = means_.shape[:-2]
         if jnp.shape(log_normalizer) != batch_shape:
             raise ValueError(
-                f"log_normalizer must have shape {batch_shape}; "
-                f"got {jnp.shape(log_normalizer)}."
+                f"log_normalizer must have shape {batch_shape}; got {jnp.shape(log_normalizer)}."
             )
         if jnp.shape(valid) != batch_shape or jnp.shape(status) != batch_shape:
             raise ValueError(
@@ -614,7 +609,7 @@ class GaussianMarkovMoments(StrictModule):
         self.transition_second_moments = transition_.astype(dtype)
         self.node_valid = node_valid_
         self.log_normalizer = jnp.asarray(log_normalizer, dtype=dtype)
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.moments_id = _identifier(moments_id, owner="moments_id")
         self.information_id = _identifier(information_id, owner="information_id")
@@ -627,11 +622,11 @@ class GaussianMarkovMoments(StrictModule):
 
     @property
     def num_nodes(self) -> int:
-        return int(self.means.shape[-2])
+        return self.means.shape[-2]
 
     @property
     def state_size(self) -> int:
-        return int(self.means.shape[-1])
+        return self.means.shape[-1]
 
     @property
     def covariances(self) -> Array:
@@ -848,7 +843,7 @@ def _information_elements(
         information_vector[..., -1, :]
     )
     batch_edge_shape = left_information.shape[:-1]
-    valid = jnp.ones(batch_edge_shape, dtype=bool)
+    valid = jnp.ones(batch_edge_shape, dtype=jnp.bool_)
     status = jnp.zeros(batch_edge_shape, dtype=jnp.int32)
     log_scale = jnp.zeros(batch_edge_shape, dtype=diagonal_precision.dtype)
     return GaussianInformationElement(
@@ -1183,13 +1178,12 @@ def gaussian_markov_moments_from_marginals(
         )
     if cross_.shape != expected_cross:
         raise ValueError(
-            f"transition_cross_covariances must have shape {expected_cross}; "
-            f"got {cross_.shape}."
+            f"transition_cross_covariances must have shape {expected_cross}; got {cross_.shape}."
         )
     valid_nodes = (
-        jnp.ones(means_.shape[:-1], dtype=bool)
+        jnp.ones(means_.shape[:-1], dtype=jnp.bool_)
         if node_valid is None
-        else jnp.asarray(node_valid, dtype=bool)
+        else jnp.asarray(node_valid, dtype=jnp.bool_)
     )
     second = covariance_ + means_[..., :, :, None] * means_[..., :, None, :]
     transition_second = cross_ + means_[..., :-1, :, None] * means_[..., 1:, None, :]
@@ -1319,7 +1313,7 @@ def sample_gaussian_markov(
     """Draw coherent forward-conditional paths from Gaussian Markov moments."""
     if not isinstance(moments, GaussianMarkovMoments):
         raise TypeError("moments must be GaussianMarkovMoments.")
-    samples = tuple(int(size) for size in sample_shape)
+    samples = tuple(sample_shape)
     if any(size <= 0 for size in samples):
         raise ValueError("sample_shape dimensions must be positive.")
     sample_count = prod(samples) if samples else 1

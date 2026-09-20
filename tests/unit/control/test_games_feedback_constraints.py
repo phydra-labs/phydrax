@@ -41,11 +41,11 @@ def _local_suggestion(
 ):
     players = partition.num_players
     controls = partition.joint_control_size
-    control_costs = jnp.asarray(control_costs, dtype=float)
-    control_linear = jnp.asarray(control_linear, dtype=float)
+    control_costs = jnp.asarray(control_costs, dtype="float64")
+    control_linear = jnp.asarray(control_linear, dtype="float64")
     if state_control_cross is None:
         state_control_cross = jnp.zeros((players, 1, controls))
-    state_control_cross = jnp.asarray(state_control_cross, dtype=float)
+    state_control_cross = jnp.asarray(state_control_cross, dtype="float64")
 
     input_layout = phx.dynamics.InputLayout((controls,), roles="control")
 

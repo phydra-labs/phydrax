@@ -50,11 +50,23 @@ def _route():
     plan = FixedBodyRoutePlan(
         ("flexor", "reserved"),
         (0, 3, 5),
-        (int(body_ids[0]), int(body_ids[1]), int(body_ids[2]), int(body_ids[0]), int(body_ids[2])),
+        (
+            int(body_ids[0]),
+            int(body_ids[1]),
+            int(body_ids[2]),
+            int(body_ids[0]),
+            int(body_ids[2]),
+        ),
         route_mask=(True, False),
     )
     local = jnp.asarray(
-        [[0.0, 0.2, 0.0], [0.0, 0.1, 0.0], [0.0, -0.2, 0.0], [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]]
+        [
+            [0.0, 0.2, 0.0],
+            [0.0, 0.1, 0.0],
+            [0.0, -0.2, 0.0],
+            [0.0, 0.0, 0.0],
+            [0.0, 0.0, 0.0],
+        ]
     )
     return plan.prepare(articulation, local)
 
@@ -68,14 +80,12 @@ def test_csr_route_length_jvp_and_transpose_are_exact_virtual_power_duals():
 
     assert evaluation.world_points_m.shape == (5, 3)
     expected_world_points = []
-    for body_id, local_position in zip(
-        route.plan.body_ids, route.local_positions_m
-    ):
+    for body_id, local_position in zip(route.plan.body_ids, route.local_positions_m):
         local_transform = jnp.eye(4).at[:3, 3].set(local_position)
         expected_world_points.append(
-            route.articulation.frame_transform(
-                configuration, body_id, local_transform
-            )[:3, 3]
+            route.articulation.frame_transform(configuration, body_id, local_transform)[
+                :3, 3
+            ]
         )
     assert jnp.allclose(
         evaluation.world_points_m,

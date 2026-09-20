@@ -86,7 +86,7 @@ def _law(
         ),
         axis=1,
     )[..., None]
-    completeness = jnp.ones((4, 2), dtype=bool)
+    completeness = jnp.ones((4, 2), dtype="bool")
     if not complete:
         completeness = completeness.at[0, 1].set(False)
     return FullPathProbabilityLaw(

@@ -61,7 +61,7 @@ class ScalarTransmissionMaterial3D(StrictModule, NonTrainableState):
         self.calderon = calderon
         self.material_id = canonical_fingerprint(
             {
-                "kind": "scalar-transmission-material-3d-v1",
+                "kind": "scalar-transmission-material-3d",
                 "name": name_,
                 "flux_coefficient": coefficient,
                 "assembly_report": calderon.assembly_report.report_id,
@@ -114,7 +114,7 @@ class ScalarTransmissionSideConvention3D(StrictModule, NonTrainableState):
         self.unbounded_side = unbounded
         self.convention_id = canonical_fingerprint(
             {
-                "kind": "scalar-transmission-side-convention-3d-v1",
+                "kind": "scalar-transmission-side-convention-3d",
                 "normal_sign": sign,
                 "derivative": self.derivative_convention,
                 "dirichlet_jump": self.dirichlet_jump,
@@ -212,7 +212,7 @@ class ScalarTransmissionData3D(StrictModule, NonTrainableState):
         ) = values
         self.data_id = canonical_fingerprint(
             {
-                "kind": "scalar-transmission-data-3d-v1",
+                "kind": "scalar-transmission-data-3d",
                 "blocks": array_tree_fingerprint(values),
             }
         )
@@ -403,7 +403,7 @@ def scalar_transmission_formulation_3d(
     )
     operator_id = canonical_fingerprint(
         {
-            "kind": "scalar-transmission-direct-multitrace-3d-v1",
+            "kind": "scalar-transmission-direct-multitrace-3d",
             "minus": minus.material_id,
             "plus": plus.material_id,
             "convention": convention_.convention_id,
@@ -463,7 +463,7 @@ def scalar_transmission_formulation_3d(
     )
     report_id = canonical_fingerprint(
         {
-            "kind": "scalar-transmission-assembly-report-3d-v1",
+            "kind": "scalar-transmission-assembly-report-3d",
             "operator": operator_id,
             "assemblies": (left_report.report_id, right_report.report_id),
             "errors": array_tree_fingerprint(errors),
@@ -513,7 +513,7 @@ def scalar_transmission_formulation_3d(
     )
     formulation_id = canonical_fingerprint(
         {
-            "kind": "scalar-transmission-formulation-3d-v1",
+            "kind": "scalar-transmission-formulation-3d",
             "operator": operator.operator_id,
             "report": report.report_id,
         }

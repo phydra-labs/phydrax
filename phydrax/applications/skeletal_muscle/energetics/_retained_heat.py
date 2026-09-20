@@ -70,14 +70,14 @@ class RetainedHeatLedger(StrictModule, NonTrainableState):
             )
         power = jnp.asarray(category_power_W)
         if not jnp.issubdtype(power.dtype, jnp.floating):
-            power = power.astype(float)
+            power = power.astype("float64")
         if power.shape != (len(RETAINED_HEAT_CATEGORIES), len(ids)):
             raise ValueError("Retained heat requires five category rows by source.")
         storage = jnp.asarray(chemical_storage_power_W, dtype=power.dtype)
         export = jnp.asarray(chemical_export_power_W, dtype=power.dtype)
         start = jnp.asarray(time_start_s, dtype=power.dtype)
         end = jnp.asarray(time_end_s, dtype=power.dtype)
-        accepted = jnp.asarray(source_successful, dtype=bool)
+        accepted = jnp.asarray(source_successful, dtype=jnp.bool_)
         if storage.shape != (len(ids),) or export.shape != storage.shape:
             raise ValueError("Chemical transfer powers must match source IDs.")
         if start.shape != () or end.shape != () or accepted.shape != ():

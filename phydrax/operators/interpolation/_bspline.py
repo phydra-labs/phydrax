@@ -213,10 +213,7 @@ class BSplineInterpolant(StrictModule, NonTrainableState):
         bounds: BoundsMode,
     ):
         coefficients_ = jnp.asarray(coefficients)
-        if (
-            coefficients_.ndim < 1
-            or int(coefficients_.shape[0]) != grid.coefficient_count
-        ):
+        if coefficients_.ndim < 1 or coefficients_.shape[0] != grid.coefficient_count:
             raise ValueError(
                 "Interpolant coefficients must have one leading entry per B-spline basis."
             )
@@ -224,7 +221,7 @@ class BSplineInterpolant(StrictModule, NonTrainableState):
         self.coefficients = coefficients_
         self.diagnostics = diagnostics
         self.bounds = bounds
-        self.output_shape = tuple(int(size) for size in coefficients_.shape[1:])
+        self.output_shape = tuple(coefficients_.shape[1:])
 
     @property
     def dtype(self):
@@ -320,7 +317,7 @@ def _constraint_system(
             _basis_matrix(grid, jnp.asarray([location]), derivative_order=order)[0]
         )
         value_ = jnp.asarray(value, dtype=dtype)
-        try_shape = tuple(int(size) for size in value_.shape)
+        try_shape = tuple(value_.shape)
         if try_shape != output_shape:
             if value_.ndim != 0:
                 raise ValueError(
@@ -355,7 +352,7 @@ def _constraint_system(
     if not rows:
         return (
             jnp.empty((0, grid.coefficient_count), dtype=grid.knots.dtype),
-            jnp.empty((0, int(np.prod(output_shape, dtype=int))), dtype=dtype),
+            jnp.empty((0, int(np.prod(output_shape, dtype=jnp.int64))), dtype=dtype),
         )
     return jnp.stack(tuple(rows)), jnp.stack(tuple(values))
 
@@ -368,7 +365,7 @@ def _constrained_lstsq(
     rcond: float | None,
 ) -> Array:
     constraint_rank, _ = _rank_and_condition(constraints, rcond)
-    if constraint_rank != int(constraints.shape[0]):
+    if constraint_rank != constraints.shape[0]:
         raise ValueError("B-spline boundary constraints are rank deficient or redundant.")
     _, _, vh = np.linalg.svd(np.asarray(constraints), full_matrices=True)
     null_space = jnp.asarray(vh[constraint_rank:].T, dtype=matrix.dtype)
@@ -390,7 +387,7 @@ def _constrained_lstsq(
         return particular
     reduced_matrix = matrix @ null_space
     reduced_rank, _ = _rank_and_condition(reduced_matrix, rcond)
-    if reduced_rank != int(null_space.shape[1]):
+    if reduced_rank != null_space.shape[1]:
         raise ValueError(
             "B-spline fitting system is underdetermined or rank deficient after constraints."
         )
@@ -446,22 +443,24 @@ def fit_bspline(
         raise ValueError("B-spline fitting nodes must be a nonempty rank-one array.")
     if jnp.issubdtype(nodes_raw.dtype, jnp.complexfloating):
         raise TypeError("B-spline fitting nodes must be real-valued.")
-    nodes_host = np.asarray(nodes_raw, dtype=float)
+    nodes_host = np.asarray(nodes_raw, dtype=np.float64)
     if not np.all(np.isfinite(nodes_host)):
         raise ValueError("B-spline fitting nodes must be finite.")
-    if values_raw.ndim < 1 or int(values_raw.shape[0]) != int(nodes_raw.size):
+    if values_raw.ndim < 1 or values_raw.shape[0] != nodes_raw.size:
         raise ValueError("Fitted values must have one leading entry per node.")
     if bool(jnp.any(~jnp.isfinite(values_raw))):
         raise ValueError("Fitted values must be finite.")
-    if int(nodes_raw.size) < plan_.degree + 1:
+    if nodes_raw.size < plan_.degree + 1:
         raise ValueError("B-spline fitting requires at least degree + 1 observations.")
 
     permutation = np.argsort(nodes_host, kind="stable")
-    nodes_ = jnp.asarray(nodes_host[permutation], dtype=jnp.result_type(nodes_raw, float))
-    value_dtype = jnp.result_type(values_raw, float)
+    nodes_ = jnp.asarray(
+        nodes_host[permutation], dtype=jnp.result_type(nodes_raw, jnp.float64)
+    )
+    value_dtype = jnp.result_type(values_raw, jnp.float64)
     values_ = jnp.asarray(values_raw[permutation], dtype=value_dtype)
-    unique_count = int(np.unique(nodes_host).size)
-    if plan_.mode == "interpolate" and unique_count != int(nodes_.size):
+    unique_count = np.unique(nodes_host).size
+    if plan_.mode == "interpolate" and unique_count != nodes_.size:
         raise ValueError("Exact B-spline interpolation requires distinct nodes.")
 
     boundary_count = len(constraints_)
@@ -472,7 +471,7 @@ def fit_bspline(
     if grid is None:
         if plan_.num_intervals is None:
             coefficient_count = (
-                int(nodes_.size) + boundary_count
+                nodes_.size + boundary_count
                 if plan_.mode == "interpolate"
                 else unique_count
             )
@@ -503,16 +502,16 @@ def fit_bspline(
         weights_raw = jnp.asarray(sample_weights)
         if weights_raw.ndim != 1 or weights_raw.shape != nodes_raw.shape:
             raise ValueError("sample_weights must have one scalar entry per node.")
-        weights_host = np.asarray(weights_raw, dtype=float)[permutation]
+        weights_host = np.asarray(weights_raw, dtype=np.float64)[permutation]
         if not np.all(np.isfinite(weights_host)) or np.any(weights_host < 0.0):
             raise ValueError("sample_weights must be finite and nonnegative.")
         if not np.any(weights_host > 0.0):
             raise ValueError("At least one sample weight must be positive.")
         weights_ = jnp.asarray(weights_host, dtype=nodes_.dtype)
 
-    output_shape = tuple(int(size) for size in values_.shape[1:])
-    payload_size = int(np.prod(output_shape, dtype=int))
-    observations = values_.reshape((int(nodes_.size), payload_size))
+    output_shape = tuple(values_.shape[1:])
+    payload_size = int(np.prod(output_shape, dtype=np.int64))
+    observations = values_.reshape((nodes_.size, payload_size))
     basis = _basis_matrix(grid_, nodes_)
     constraint_matrix, constraint_values = _constraint_system(
         grid_, plan_, constraints_, output_shape, value_dtype
@@ -526,8 +525,7 @@ def fit_bspline(
         right_hand_side = jnp.concatenate((observations, constraint_values), axis=0)
         if system.shape[0] != grid_.coefficient_count:
             raise ValueError(
-                "Exact B-spline interpolation requires observations plus constraints "
-                "to equal the coefficient count."
+                "Exact B-spline interpolation requires observations plus constraints to equal the coefficient count."
             )
         rank, condition = _rank_and_condition(system, plan_.rcond)
         if rank != grid_.coefficient_count:
@@ -599,9 +597,9 @@ def fit_bspline(
     regularized = regularization_matrix @ coefficients_flat
     diagnostics = BSplineFitDiagnostics(
         mode=plan_.mode,
-        num_observations=int(nodes_.size),
+        num_observations=nodes_.size,
         coefficient_count=grid_.coefficient_count,
-        constraint_count=int(constraint_matrix.shape[0]),
+        constraint_count=constraint_matrix.shape[0],
         matrix_rank=rank,
         condition_estimate=condition,
         weighted_residual_norm=float(jnp.linalg.norm(weighted_residual)),

@@ -432,7 +432,7 @@ restrictions, and atomic rollback. It retains shared-flux, conservation, pressur
 energy, and admissibility evidence.
 
 With static KSGS, raw production is the negative work of the shared deviatoric
-SGS face momentum flux against the owner-neighbour velocity jump. Each interior
+SGS face momentum flux against the owner-neighbor velocity jump. Each interior
 face transfer is split equally between its two cells and divided by cell volume.
 Negative raw production fails the route. The production limiter retains
 \(P=\min(P_{raw},P_{ceiling})\); the reduction

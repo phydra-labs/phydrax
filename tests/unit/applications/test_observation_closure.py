@@ -27,7 +27,7 @@ def test_wcs_imaging_and_survey_closure():
         jnp.zeros((3, 3)),
         jnp.ones((3, 3)),
         jnp.ones((3, 3)),
-        jnp.zeros((3, 3), dtype=bool),
+        jnp.zeros((3, 3), dtype="bool"),
         jnp.full((3, 3), 100.0),
         provenance,
     )

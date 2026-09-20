@@ -188,8 +188,8 @@ class VertexInterpolationStencil(StrictModule, NonTrainableState):
         target_set = str(target_entity_set_id).strip()
         targets = np.asarray(target_global_ids, dtype=np.int64)
         sources = np.asarray(source_global_ids, dtype=np.int64)
-        coefficients = np.asarray(weights, dtype=float)
-        valid_ = np.asarray(valid, dtype=bool)
+        coefficients = np.asarray(weights, dtype=np.float64)
+        valid_ = np.asarray(valid, dtype=np.bool_)
         if not source_set or not target_set:
             raise ValueError("Interpolation entity set identities must be non-empty.")
         if targets.ndim != 1 or sources.ndim != 2:

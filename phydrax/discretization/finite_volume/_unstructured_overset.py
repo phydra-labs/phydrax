@@ -196,8 +196,7 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
             policy_ = "conservative_bounded"
         if policy_ not in {"conservative", "conservative_bounded"}:
             raise ValueError(
-                "Overset policy must be conservative; nonconservative policies "
-                "are not supported."
+                "Overset policy must be conservative; nonconservative policies are not supported."
             )
         bounded_ = policy_ == "conservative_bounded"
         requested_flags = [
@@ -254,7 +253,7 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
         if donors_raw.ndim != 1 or donors_raw.dtype.kind not in "iu":
             raise ValueError("donor_indices must be a one-dimensional integer array.")
         donors_raw = donors_raw.astype(np.int64)
-        measures = np.asarray(overlap_measures, dtype=float)
+        measures = np.asarray(overlap_measures, dtype=np.float64)
         if offsets.shape != (receptors.size + 1,):
             raise ValueError("receptor_offsets must contain one CSR row per receptor.")
         if (
@@ -319,8 +318,8 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
             name: str, value: ArrayLike | None, count: int, default: bool
         ) -> np.ndarray:
             if value is None:
-                return np.full((count,), default, dtype=bool)
-            result = np.asarray(value, dtype=bool)
+                return np.full((count,), default, dtype=np.bool_)
+            result = np.asarray(value, dtype=np.bool_)
             if result.shape != (count,):
                 raise ValueError(f"{name} must contain one flag per cell.")
             return result
@@ -347,9 +346,9 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
             if value is not None
         ]
         if len(eligibility_values) > 1:
-            reference = np.asarray(eligibility_values[0], dtype=bool)
+            reference = np.asarray(eligibility_values[0], dtype=np.bool_)
             if any(
-                not np.array_equal(reference, np.asarray(value, dtype=bool))
+                not np.array_equal(reference, np.asarray(value, dtype=np.bool_))
                 for value in eligibility_values[1:]
             ):
                 raise ValueError(
@@ -359,7 +358,7 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
         if eligibility_input is None:
             donor_eligible_ = donor_default_eligible
         else:
-            donor_eligible_ = np.asarray(eligibility_input, dtype=bool)
+            donor_eligible_ = np.asarray(eligibility_input, dtype=np.bool_)
             if donor_eligible_.shape != (donor.cell_count,):
                 raise ValueError(
                     "donor_eligibility must contain one flag per donor cell."
@@ -371,8 +370,8 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
 
         if active_mask is not None and receptor_active_mask is not None:
             if not np.array_equal(
-                np.asarray(active_mask, dtype=bool),
-                np.asarray(receptor_active_mask, dtype=bool),
+                np.asarray(active_mask, dtype=np.bool_),
+                np.asarray(receptor_active_mask, dtype=np.bool_),
             ):
                 raise ValueError("active_mask and receptor_active_mask must agree.")
         receptor_active = _mask(
@@ -383,8 +382,8 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
         )
         if hole_mask is not None and receptor_hole_mask is not None:
             if not np.array_equal(
-                np.asarray(hole_mask, dtype=bool),
-                np.asarray(receptor_hole_mask, dtype=bool),
+                np.asarray(hole_mask, dtype=np.bool_),
+                np.asarray(receptor_hole_mask, dtype=np.bool_),
             ):
                 raise ValueError("hole_mask and receptor_hole_mask must agree.")
         receptor_holes = _mask(
@@ -393,10 +392,10 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
             receptor.cell_count,
             False,
         )
-        route_mask = np.zeros((receptor.cell_count,), dtype=bool)
+        route_mask = np.zeros((receptor.cell_count,), dtype=np.bool_)
         route_mask[receptors] = True
         if receptor_mask is not None:
-            provided_receptor_mask = np.asarray(receptor_mask, dtype=bool)
+            provided_receptor_mask = np.asarray(receptor_mask, dtype=np.bool_)
             if provided_receptor_mask.shape != route_mask.shape or not np.array_equal(
                 provided_receptor_mask, route_mask
             ):
@@ -405,8 +404,8 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
                 )
         if fringe_mask is not None and receptor_fringe_mask is not None:
             if not np.array_equal(
-                np.asarray(fringe_mask, dtype=bool),
-                np.asarray(receptor_fringe_mask, dtype=bool),
+                np.asarray(fringe_mask, dtype=np.bool_),
+                np.asarray(receptor_fringe_mask, dtype=np.bool_),
             ):
                 raise ValueError("fringe_mask and receptor_fringe_mask must agree.")
         receptor_fringe = _mask(
@@ -460,7 +459,7 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
         receptor_coverage = np.bincount(
             routes, weights=measures, minlength=receptors.size
         )
-        receptor_volumes = np.asarray(receptor.cell_volumes, dtype=float)[receptors]
+        receptor_volumes = np.asarray(receptor.cell_volumes, dtype=np.float64)[receptors]
         if np.any(~np.isfinite(receptor_volumes)) or np.any(receptor_volumes <= 0.0):
             raise ValueError("Overset receptor volumes must be positive and finite.")
         defect = receptor_coverage - receptor_volumes
@@ -470,7 +469,7 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
         coverage_status_mask = np.abs(defect) <= coverage_limit
 
         donor_coverage = np.bincount(donors, weights=measures, minlength=donor.cell_count)
-        donor_volumes = np.asarray(donor.cell_volumes, dtype=float)
+        donor_volumes = np.asarray(donor.cell_volumes, dtype=np.float64)
         if np.any(~np.isfinite(donor_volumes)) or np.any(donor_volumes <= 0.0):
             raise ValueError("Overset donor volumes must be positive and finite.")
         if np.any(
@@ -480,7 +479,7 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
         if union_volume_certificate is None:
             union_certificate = donor_coverage.copy()
         else:
-            union_certificate = np.asarray(union_volume_certificate, dtype=float)
+            union_certificate = np.asarray(union_volume_certificate, dtype=np.float64)
             if union_certificate.shape != donor_volumes.shape:
                 raise ValueError(
                     "union_volume_certificate must contain one value per donor cell."
@@ -511,14 +510,13 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
         if any(value is not None for value in face_values):
             if any(value is None for value in face_values):
                 raise ValueError(
-                    "Overset receptor face artifacts require IDs, points, normals, "
-                    "measures, and cells together."
+                    "Overset receptor face artifacts require IDs, points, normals, measures, and cells together."
                 )
             face_ids_raw = np.asarray(receptor_face_ids)
-            face_points = np.asarray(receptor_face_points, dtype=float)
-            face_normals = np.asarray(receptor_face_normals, dtype=float)
-            face_measures = np.asarray(receptor_face_measures, dtype=float)
-            face_count = int(face_ids_raw.size)
+            face_points = np.asarray(receptor_face_points, dtype=np.float64)
+            face_normals = np.asarray(receptor_face_normals, dtype=np.float64)
+            face_measures = np.asarray(receptor_face_measures, dtype=np.float64)
+            face_count = face_ids_raw.size
             if (
                 face_ids_raw.ndim != 1
                 or face_ids_raw.dtype.kind not in "iu"
@@ -531,11 +529,10 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
                 or face_measures.shape != face_points.shape[:2]
             ):
                 raise ValueError(
-                    "Overset receptor face artifacts must have shapes "
-                    "(F,), (F,Q,d), (F,Q,d), (F,Q), and (F,)."
+                    "Overset receptor face artifacts must have shapes (F,), (F,Q,d), (F,Q,d), (F,Q), and (F,)."
                 )
             face_ids = face_ids_raw.astype(np.int64)
-            physical_face_count = int(np.asarray(receptor.face_measures).size)
+            physical_face_count = np.asarray(receptor.face_measures).size
             if (
                 np.any(face_ids < 0)
                 or np.any(face_ids >= physical_face_count)
@@ -550,8 +547,7 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
                 or face_cells_raw.dtype.kind not in "iu"
             ):
                 raise ValueError(
-                    "Overset receptor face artifacts must have shapes "
-                    "(F,), (F,Q,d), (F,Q,d), (F,Q), and (F,)."
+                    "Overset receptor face artifacts must have shapes (F,), (F,Q,d), (F,Q,d), (F,Q), and (F,)."
                 )
             face_cells_raw = face_cells_raw.astype(np.int64)
             if np.all((face_cells_raw >= 0) & (face_cells_raw < receptor.cell_count)):
@@ -573,17 +569,16 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
             face_cell_set = frozenset(int(value) for value in face_cells)
             if face_cell_set != routed_cell_set:
                 raise ValueError(
-                    "Overset receptor face cells must cover exactly the routed "
-                    "receptor cells."
+                    "Overset receptor face cells must cover exactly the routed receptor cells."
                 )
             physical_owners = np.asarray(receptor.owner_cells, dtype=np.int32)[face_ids]
-            physical_neighbours = np.asarray(receptor.neighbour_cells, dtype=np.int32)[
+            physical_neighbors = np.asarray(receptor.neighbor_cells, dtype=np.int32)[
                 face_ids
             ]
-            owner_or_neighbour = (physical_owners == face_cells) | (
-                physical_neighbours == face_cells
+            owner_or_neighbor = (physical_owners == face_cells) | (
+                physical_neighbors == face_cells
             )
-            if not np.all(owner_or_neighbour):
+            if not np.all(owner_or_neighbor):
                 raise ValueError(
                     "Overset receptor face IDs are not incident to their routed cells."
                 )
@@ -612,8 +607,7 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
                 )
             ):
                 raise ValueError(
-                    "Overset receptor face artifacts are stale or do not match the "
-                    "identified physical faces."
+                    "Overset receptor face artifacts are stale or do not match the identified physical faces."
                 )
             normal_norms = np.linalg.norm(face_normals, axis=-1)
             if (
@@ -625,8 +619,7 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
                 or np.any(face_measures <= 0.0)
             ):
                 raise ValueError(
-                    "Overset receptor face artifacts require finite unit normals "
-                    "and positive measures."
+                    "Overset receptor face artifacts require finite unit normals and positive measures."
                 )
             face_artifact_id_ = (
                 canonical_fingerprint(
@@ -853,13 +846,12 @@ class UnstructuredOversetPlan(StrictModule, NonTrainableState):
                 "Overset receptor values must contain either all cells or routed cells."
             )
         trailing = (1,) * (donor.ndim - 1)
-        donor_terms = (
-            donor[self.donor_indices]
-            * self.overlap_measures.astype(donor.dtype).reshape((-1,) + trailing)
+        donor_terms = donor[self.donor_indices] * self.overlap_measures.astype(
+            donor.dtype
+        ).reshape((-1,) + trailing)
+        receptor_terms = receptor * self.receptor_volumes.astype(receptor.dtype).reshape(
+            (-1,) + (1,) * (receptor.ndim - 1)
         )
-        receptor_terms = receptor * self.receptor_volumes.astype(
-            receptor.dtype
-        ).reshape((-1,) + (1,) * (receptor.ndim - 1))
         return compensated_sum_chunks(
             (receptor_terms, -donor_terms),
             output_ndim=donor.ndim - 1,
@@ -985,8 +977,8 @@ class PeriodicSlidingInterfacePlan(StrictModule, NonTrainableState):
         coverage_tolerance: float = 1e-12,
     ):
         period_ = float(period)
-        left = np.asarray(left_breaks, dtype=float)
-        right = np.asarray(right_breaks, dtype=float)
+        left = np.asarray(left_breaks, dtype=np.float64)
+        right = np.asarray(right_breaks, dtype=np.float64)
         precision = int(shift_precision)
         tolerance = float(coverage_tolerance)
         if not np.isfinite(period_) or period_ <= 0.0:
@@ -1024,7 +1016,6 @@ class PeriodicSlidingInterfacePlan(StrictModule, NonTrainableState):
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "periodic-sliding-interface",
-                "schema_version": 2,
                 "left_breaks": array_tree_fingerprint(left),
                 "right_breaks": array_tree_fingerprint(right),
                 "period": period_,
@@ -1102,7 +1093,7 @@ class PeriodicSlidingInterfacePlan(StrictModule, NonTrainableState):
                         overlap.append(measure)
         left_routes_ = np.asarray(left_routes, dtype=np.int32)
         right_routes_ = np.asarray(right_routes, dtype=np.int32)
-        overlap_ = np.asarray(overlap, dtype=float)
+        overlap_ = np.asarray(overlap, dtype=np.float64)
         left_measures = np.diff(left)
         right_measures = np.diff(right)
         left_coverage = np.bincount(
@@ -1120,8 +1111,7 @@ class PeriodicSlidingInterfacePlan(StrictModule, NonTrainableState):
         coverage_passed = bool(coverage_error <= self.coverage_tolerance)
         if not coverage_passed:
             raise ValueError(
-                "Sliding overlap rebuild failed periodic coverage "
-                f"(maximum defect={coverage_error:.17g})."
+                f"Sliding overlap rebuild failed periodic coverage (maximum defect={coverage_error:.17g})."
             )
         evidence_id = canonical_fingerprint(
             {
@@ -1138,7 +1128,6 @@ class PeriodicSlidingInterfacePlan(StrictModule, NonTrainableState):
         coupling_id = canonical_fingerprint(
             {
                 "kind": "periodic-sliding-coupling",
-                "schema_version": 2,
                 "plan": self.plan_id,
                 "shift_hex": float(normalized_shift).hex(),
                 "shift_precision": self.shift_precision,

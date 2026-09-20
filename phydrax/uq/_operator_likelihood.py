@@ -124,12 +124,12 @@ class OperatorFactorSamplingPlan(StrictModule):
         probabilities = (
             None
             if sampling_probabilities is None
-            else jnp.asarray(sampling_probabilities, dtype=float)
+            else jnp.asarray(sampling_probabilities, dtype=jnp.float64)
         )
         weights = (
             None
             if estimator_weights is None
-            else jnp.asarray(estimator_weights, dtype=float)
+            else jnp.asarray(estimator_weights, dtype=jnp.float64)
         )
         if ids is not None:
             if not jnp.issubdtype(ids.dtype, jnp.integer):
@@ -356,8 +356,7 @@ class OperatorMinibatchSource:
             raise TypeError("factor_sampling must be OperatorFactorSamplingPlan or None.")
         if loader.sampling is not None and sampling_plan.geometry is None:
             raise ValueError(
-                "Mutating operator anchors/geometry require an explicit "
-                "expected_log_likelihood geometry plan."
+                "Mutating operator anchors/geometry require an explicit expected_log_likelihood geometry plan."
             )
         if jax.process_count() != 1:
             raise ValueError("Operator SG-MCMC currently requires one JAX process.")
@@ -369,11 +368,9 @@ class OperatorMinibatchSource:
         mask = (
             None
             if observation_mask is None
-            else jnp.asarray(observation_mask, dtype=bool)
+            else jnp.asarray(observation_mask, dtype=jnp.bool_)
         )
-        if mask is not None and (
-            mask.ndim == 0 or int(mask.shape[0]) != loader.source.size
-        ):
+        if mask is not None and (mask.ndim == 0 or mask.shape[0] != loader.source.size):
             raise ValueError("observation_mask must have the source case axis in front.")
         loader_fingerprint = loader.fingerprint
         configuration = {
@@ -430,7 +427,7 @@ class OperatorMinibatchSource:
 
     @property
     def num_factors(self) -> int:
-        return int(self.loader.source.size)
+        return self.loader.source.size
 
     @property
     def batch_capacity(self) -> int:
@@ -696,8 +693,7 @@ def _validated_operator_prediction(
     values = jnp.asarray(field.values)
     if values.shape != target.shape:
         raise ValueError(
-            f"Operator likelihood prediction must have shape {target.shape}; "
-            f"got {values.shape}."
+            f"Operator likelihood prediction must have shape {target.shape}; got {values.shape}."
         )
     return _checked_query_values(
         values,
@@ -776,16 +772,18 @@ def _query_design(
     if not jnp.issubdtype(ids.dtype, jnp.integer):
         raise TypeError("query_ids must be an integer array broadcastable to targets.")
     probabilities = (
-        jnp.ones(expected_shape, dtype=float)
+        jnp.ones(expected_shape, dtype=jnp.float64)
         if sampling_probabilities is None
         else jnp.broadcast_to(
-            jnp.asarray(sampling_probabilities, dtype=float), expected_shape
+            jnp.asarray(sampling_probabilities, dtype=jnp.float64), expected_shape
         )
     )
     weights = (
-        jnp.ones(expected_shape, dtype=float)
+        jnp.ones(expected_shape, dtype=jnp.float64)
         if estimator_weights is None
-        else jnp.broadcast_to(jnp.asarray(estimator_weights, dtype=float), expected_shape)
+        else jnp.broadcast_to(
+            jnp.asarray(estimator_weights, dtype=jnp.float64), expected_shape
+        )
     )
     if bool(
         jnp.any(
@@ -909,11 +907,11 @@ def _observation_mask(
     has_channels: bool,
 ) -> Array:
     if mask is None:
-        return jnp.ones(expected_shape, dtype=bool)
+        return jnp.ones(expected_shape, dtype=jnp.bool_)
     if isinstance(mask, cx.AxisArray):
         template = cx.AxisArray(jnp.empty(expected_shape), dims=physical_dims)
-        return jnp.asarray(_broadcast_named(mask, template), dtype=bool)
-    value = jnp.asarray(mask, dtype=bool)
+        return jnp.asarray(_broadcast_named(mask, template), dtype=jnp.bool_)
+    value = jnp.asarray(mask, dtype=jnp.bool_)
     if has_channels and value.shape == expected_shape[:-1]:
         value = value[..., None]
     return jnp.broadcast_to(value, expected_shape)

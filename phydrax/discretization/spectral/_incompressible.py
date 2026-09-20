@@ -62,7 +62,7 @@ class PeriodicLerayProjector(StrictModule, NonTrainableState):
                 )
             )
         squared = jnp.zeros(discretization.modal_shape, dtype=real_dtype)
-        admissible = jnp.ones(discretization.modal_shape, dtype=bool)
+        admissible = jnp.ones(discretization.modal_shape, dtype=jnp.bool_)
         for values, mask in zip(wave_values, masks, strict=True):
             squared = squared + values**2
             admissible = admissible & mask
@@ -71,7 +71,7 @@ class PeriodicLerayProjector(StrictModule, NonTrainableState):
         state_shape = discretization.modal_shape + (dimension,)
         identifier = canonical_fingerprint(
             {
-                "kind": "periodic-leray-projector-v1",
+                "kind": "periodic-leray-projector",
                 "discretization": discretization.prepared_id,
                 "dimension": dimension,
                 "state_shape": list(state_shape),
@@ -91,8 +91,7 @@ class PeriodicLerayProjector(StrictModule, NonTrainableState):
         value = jnp.asarray(state)
         if value.shape != self.state_shape:
             raise ValueError(
-                f"{owner} must have modal velocity shape {self.state_shape}; "
-                f"got {value.shape}."
+                f"{owner} must have modal velocity shape {self.state_shape}; got {value.shape}."
             )
         if not jnp.issubdtype(value.dtype, jnp.complexfloating):
             raise TypeError(f"{owner} must use complex modal coefficients.")
@@ -233,7 +232,9 @@ class IncompressibleSpectralDiagnostics(StrictModule):
         )
         self.projection_energy_defect = jnp.asarray(projection_energy_defect)
         self.maximum_eddy_viscosity = jnp.asarray(maximum_eddy_viscosity)
-        self.algebraic_les_available = jnp.asarray(algebraic_les_available, dtype=bool)
+        self.algebraic_les_available = jnp.asarray(
+            algebraic_les_available, dtype=jnp.bool_
+        )
         self.dynamic_les_energy_rate = jnp.asarray(dynamic_les_energy_rate)
         self.dynamic_les_dissipation = jnp.asarray(dynamic_les_dissipation)
         self.dynamic_les_energy_identity_defect = jnp.asarray(
@@ -253,15 +254,17 @@ class IncompressibleSpectralDiagnostics(StrictModule):
         )
         self.dynamic_accepted_update_count = jnp.asarray(dynamic_accepted_update_count)
         self.dynamic_rejected_update_count = jnp.asarray(dynamic_rejected_update_count)
-        self.dynamic_les_available = jnp.asarray(dynamic_les_available, dtype=bool)
-        self.dynamic_evidence_finite = jnp.asarray(dynamic_evidence_finite, dtype=bool)
+        self.dynamic_les_available = jnp.asarray(dynamic_les_available, dtype=jnp.bool_)
+        self.dynamic_evidence_finite = jnp.asarray(
+            dynamic_evidence_finite, dtype=jnp.bool_
+        )
         self.semidiscrete_energy_rate = jnp.asarray(semidiscrete_energy_rate)
         self.energy_balance_defect = jnp.asarray(energy_balance_defect)
         self.divergence_norm = jnp.asarray(divergence_norm)
         self.imaginary_leakage = jnp.asarray(imaginary_leakage)
         self.forbidden_mode_norm = jnp.asarray(forbidden_mode_norm)
         self.pressure_gauge_residual = jnp.asarray(pressure_gauge_residual)
-        self.finite = jnp.asarray(finite, dtype=bool)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
         self.projector_id = identifier
         self.dynamic_les_id = None if dynamic_les_id is None else str(dynamic_les_id)
 

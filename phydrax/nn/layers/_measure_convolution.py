@@ -24,7 +24,7 @@ def _sizes(value: int | Sequence[int], ndim: int, /, *, owner: str) -> tuple[int
     if isinstance(value, int):
         result = (int(value),) * ndim
     else:
-        result = tuple(int(size) for size in value)
+        result = tuple(value)
         if len(result) != ndim:
             raise ValueError(f"{owner} must contain {ndim} entries.")
     if any(size <= 0 for size in result):
@@ -69,8 +69,7 @@ def _broadcast_sample_field(
         return jnp.broadcast_to(array, expected)
     if array.shape != expected:
         raise ValueError(
-            f"{owner} must have shared shape {sample_shape} or full shape {expected}; "
-            f"got {array.shape}."
+            f"{owner} must have shared shape {sample_shape} or full shape {expected}; got {array.shape}."
         )
     return array
 
@@ -191,7 +190,7 @@ class _AbstractMeasureNormalizedConvND(StrictModule):
         extended = values
         for axis, width in enumerate(halo, start=1):
             if width:
-                size = int(extended.shape[axis])
+                size = extended.shape[axis]
                 indices = jnp.mod(jnp.arange(-width, size + width), size)
                 extended = jnp.take(extended, indices, axis=axis)
         return extended
@@ -211,25 +210,23 @@ class _AbstractMeasureNormalizedConvND(StrictModule):
             raise ValueError(
                 "values must have case axes followed by spatial axes and channels."
             )
-        if int(inputs.shape[-1]) != self.in_channels:
+        if inputs.shape[-1] != self.in_channels:
             raise ValueError(
                 f"Expected {self.in_channels} input channels, got {inputs.shape[-1]}."
             )
-        sample_shape = tuple(
-            int(size) for size in inputs.shape[-(self.spatial_ndim + 1) : -1]
-        )
-        case_shape = tuple(int(size) for size in inputs.shape[: -(self.spatial_ndim + 1)])
+        sample_shape = tuple(inputs.shape[-(self.spatial_ndim + 1) : -1])
+        case_shape = tuple(inputs.shape[: -(self.spatial_ndim + 1)])
         compute_dtype = jnp.result_type(inputs.dtype, self.weight.dtype)
         inputs = inputs.astype(compute_dtype)
         source_valid = (
-            jnp.ones(case_shape + sample_shape, dtype=bool)
+            jnp.ones(case_shape + sample_shape, dtype=jnp.bool_)
             if source_mask is None
             else _broadcast_sample_field(
                 source_mask,
                 case_shape,
                 sample_shape,
                 owner="source_mask",
-                dtype=bool,
+                dtype=jnp.bool_,
             )
         )
         measure = (
@@ -308,7 +305,7 @@ class _AbstractMeasureNormalizedConvND(StrictModule):
             output = output + self.bias.astype(compute_dtype)
         output = jnp.where(has_support, output, jnp.zeros_like(output))
 
-        output_sample_shape = tuple(int(size) for size in output.shape[1:-1])
+        output_sample_shape = tuple(output.shape[1:-1])
         output = jnp.reshape(
             output, case_shape + output_sample_shape + (self.out_channels,)
         )
@@ -318,7 +315,7 @@ class _AbstractMeasureNormalizedConvND(StrictModule):
                 case_shape,
                 output_sample_shape,
                 owner="target_mask",
-                dtype=bool,
+                dtype=jnp.bool_,
             )
             output = jnp.where(target_valid[..., None], output, jnp.zeros_like(output))
         return output

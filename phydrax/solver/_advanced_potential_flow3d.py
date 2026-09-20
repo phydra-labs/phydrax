@@ -176,7 +176,7 @@ class SecondOrderPotentialFlowPlan3D(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, frequencies: ArrayLike, /, *, maximum_frequency_pairs: int):
-        values = np.asarray(frequencies, dtype=float)
+        values = np.asarray(frequencies, dtype=np.float64)
         limit = int(maximum_frequency_pairs)
         if (
             values.ndim != 1
@@ -211,7 +211,7 @@ class SecondOrderPotentialFlowPlan3D(StrictModule, NonTrainableState):
 def prepare_nonlinear_potential_flow_3d(
     area_weights: ArrayLike, policy: NonlinearPotentialFlowPolicy3D, /
 ) -> PreparedNonlinearPotentialFlow3D:
-    weights = np.asarray(area_weights, dtype=float)
+    weights = np.asarray(area_weights, dtype=np.float64)
     if (
         weights.ndim != 1
         or weights.size == 0

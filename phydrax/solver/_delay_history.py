@@ -12,6 +12,8 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from phydrax._strict import StrictModule
+
 from ..metrix import AbstractStateGeometry
 from ._delay import DelayHistory, DelayHistoryDerivative
 
@@ -23,10 +25,10 @@ class _ComputedDelayHistory(Protocol):
 
 
 def _is_history_buffer(value: Any, capacity: int, /) -> bool:
-    return eqx.is_array(value) and value.ndim > 0 and int(value.shape[0]) == capacity
+    return eqx.is_array(value) and value.ndim > 0 and value.shape[0] == capacity
 
 
-class EmptyDelayHistory(eqx.Module):
+class EmptyDelayHistory(StrictModule):
     """Shape-correct accepted-history placeholder before the first accepted step."""
 
     value: Array
@@ -43,7 +45,7 @@ class EmptyDelayHistory(eqx.Module):
         return self.derivative_value
 
 
-class DenseDelayHistory(eqx.Module):
+class DenseDelayHistory(StrictModule):
     """Native local interpolants for accepted Diffrax steps."""
 
     starts: Array
@@ -164,7 +166,7 @@ class DenseDelayHistory(eqx.Module):
         return values.reshape(jnp.shape(times) + values.shape[1:])
 
 
-class RollingDelayHistory(eqx.Module):
+class RollingDelayHistory(StrictModule):
     """Circular native interpolants for the live accepted-delay window.
 
     Physical storage may wrap. ``start`` and ``size`` define the logical oldest-to-
@@ -250,9 +252,7 @@ class RollingDelayHistory(eqx.Module):
             *jax.tree.leaves(self.infos),
         )
         return sum(
-            int(leaf.size) * int(leaf.dtype.itemsize)
-            for leaf in leaves
-            if eqx.is_array(leaf)
+            leaf.size * leaf.dtype.itemsize for leaf in leaves if eqx.is_array(leaf)
         )
 
     @property
@@ -405,7 +405,7 @@ class RollingDelayHistory(eqx.Module):
         return values.reshape(query.shape + values.shape[1:])
 
 
-class DelayHistoryView(eqx.Module):
+class DelayHistoryView(StrictModule):
     """One view combining prehistory with accepted local interpolants."""
 
     initial_history: DelayHistory
@@ -437,7 +437,7 @@ class DelayHistoryView(eqx.Module):
             time,
         )
         if self.geometry is not None:
-            membership = jnp.asarray(self.geometry.contains(value), dtype=bool)
+            membership = jnp.asarray(self.geometry.contains(value), dtype=jnp.bool_)
             if membership.shape != ():
                 raise ValueError(
                     "State geometry contains() must return a scalar boolean."
@@ -492,7 +492,7 @@ class DelayHistoryView(eqx.Module):
         return values.reshape(query.shape + values.shape[1:])
 
 
-class DelayDenseInterpolation(eqx.Module):
+class DelayDenseInterpolation(StrictModule):
     """Dense values from a solved delay interval."""
 
     history: DelayHistoryView
@@ -521,7 +521,7 @@ class DelayDenseInterpolation(eqx.Module):
             raise TypeError("Dense delay query times must be real-valued.")
         if query.size == 0:
             raise ValueError("Dense delay query times must be non-empty.")
-        query = query.astype(float)
+        query = query.astype("float64")
         query = eqx.error_if(
             query,
             ~jnp.all(jnp.isfinite(query)),
@@ -556,7 +556,7 @@ class DelayDenseInterpolation(eqx.Module):
             raise TypeError("Dense delay query times must be real-valued.")
         if query.size == 0:
             raise ValueError("Dense delay query times must be non-empty.")
-        query = query.astype(float)
+        query = query.astype("float64")
         query = eqx.error_if(
             query,
             ~jnp.all(jnp.isfinite(query)),

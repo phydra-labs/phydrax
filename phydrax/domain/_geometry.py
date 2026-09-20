@@ -107,7 +107,7 @@ class GeometryDomain(AbstractGeometry):
 
     @property
     def volume_proportion(self) -> Array:
-        bounds = jnp.asarray(self.bounds, dtype=float)
+        bounds = jnp.asarray(self.bounds, dtype=jnp.float64)
         bounding_measure = jnp.prod(bounds[1] - bounds[0])
         return self.volume / bounding_measure
 
@@ -120,14 +120,14 @@ class GeometryDomain(AbstractGeometry):
 
     def adf(self, points: Array, /) -> Array:
         """Evaluate the certified negative-inside boundary field."""
-        points_ = jnp.asarray(points, dtype=float)
+        points_ = jnp.asarray(points, dtype=jnp.float64)
         if points_.ndim == 0:
             points_ = jnp.repeat(points_[None], self.spatial_dim)
         return self.geometry.boundary_field(points_)
 
     def closest_point(self, points: Array, /) -> ClosestPointResult:
         """Evaluate a capability-certified closest-point map."""
-        points_ = jnp.asarray(points, dtype=float)
+        points_ = jnp.asarray(points, dtype=jnp.float64)
         if points_.ndim == 0:
             points_ = jnp.repeat(points_[None], self.spatial_dim)
         return self.geometry.closest_point(points_)
@@ -143,7 +143,7 @@ class GeometryDomain(AbstractGeometry):
             source = self.adf
 
         def normalized_level_set(points: Array) -> Array:
-            points_ = jnp.asarray(points, dtype=float)
+            points_ = jnp.asarray(points, dtype=jnp.float64)
             leading = points_.shape[:-1]
             flat = points_.reshape((-1, self.spatial_dim))
 
@@ -191,7 +191,7 @@ class GeometryDomain(AbstractGeometry):
         if where is None:
             return self.geometry.sample_interior(count, key=key, plan=plan)
 
-        bounds = jnp.asarray(self.bounds, dtype=float)
+        bounds = jnp.asarray(self.bounds, dtype=jnp.float64)
         plan_ = RejectionSamplingPlan() if plan is None else plan
 
         def proposal(proposal_key, proposal_count):
@@ -282,7 +282,7 @@ class GeometryDomain(AbstractGeometry):
         key: Key[Array, ""] = DOC_KEY0,
     ) -> Array:
         points = self.sample_boundary(int(num_samples), key=key)
-        selected = jnp.asarray(jax.vmap(where)(points), dtype=float)
+        selected = jnp.asarray(jax.vmap(where)(points), dtype=jnp.float64)
         return self.boundary_measure_value * jnp.mean(selected)
 
     def _sample_interior_separable(
@@ -296,7 +296,7 @@ class GeometryDomain(AbstractGeometry):
         if isinstance(num_points, int):
             counts = (int(num_points),) * self.spatial_dim
         else:
-            counts = tuple(int(count) for count in num_points)
+            counts = tuple(num_points)
         if len(counts) != self.spatial_dim:
             raise ValueError(
                 f"num_points must contain {self.spatial_dim} coordinate counts."
@@ -304,13 +304,13 @@ class GeometryDomain(AbstractGeometry):
         if any(count < 0 for count in counts):
             raise ValueError("Coordinate sample counts must be non-negative.")
 
-        bounds = jnp.asarray(self.bounds, dtype=float)
+        bounds = jnp.asarray(self.bounds, dtype=jnp.float64)
         keys = jr.split(key, self.spatial_dim)
         coordinates = []
         for axis, (count, axis_key) in enumerate(zip(counts, keys, strict=True)):
             if sampler == "latin_hypercube":
                 unit = (
-                    jr.permutation(axis_key, jnp.arange(count, dtype=float)) + 0.5
+                    jr.permutation(axis_key, jnp.arange(count, dtype=jnp.float64)) + 0.5
                 ) / jnp.maximum(count, 1)
             else:
                 unit = jr.uniform(axis_key, shape=(count,), dtype=bounds.dtype)
@@ -327,10 +327,10 @@ class GeometryDomain(AbstractGeometry):
         return coordinates_, mask.reshape(grid.shape[:-1])
 
     def _contains(self, points: Array) -> Array:
-        return jnp.asarray(self.geometry.contains(points), dtype=bool)
+        return jnp.asarray(self.geometry.contains(points), dtype=jnp.bool_)
 
     def _on_boundary(self, points: Array) -> Array:
-        bounds = jnp.asarray(self.bounds, dtype=float)
+        bounds = jnp.asarray(self.bounds, dtype=jnp.float64)
         scale = jnp.max(bounds[1] - bounds[0])
         tolerance = self.geometry.tolerance.threshold(scale)
         return jnp.abs(self.geometry.boundary_field(points)) <= tolerance

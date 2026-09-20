@@ -12,11 +12,11 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 
 
 def _event_shape(value, /) -> tuple[int, ...]:
-    shape = tuple(int(size) for size in value)
+    shape = tuple(value)
     if any(size <= 0 for size in shape):
         raise ValueError("event_shape dimensions must be positive.")
     return shape
@@ -65,10 +65,9 @@ class EndpointInterpolantEvaluation(StrictModule):
         time_array = jnp.asarray(time)
         if time_array.shape not in ((), leading):
             raise ValueError(
-                f"Interpolant time must be scalar or have leading shape {leading}; "
-                f"got {time_array.shape}."
+                f"Interpolant time must be scalar or have leading shape {leading}; got {time_array.shape}."
             )
-        validity = jnp.asarray(valid, dtype=bool)
+        validity = jnp.asarray(valid, dtype=jnp.bool_)
         if validity.shape != leading:
             raise ValueError(
                 f"Interpolant validity must have shape {leading}; got {validity.shape}."
@@ -90,10 +89,10 @@ class EndpointInterpolantEvaluation(StrictModule):
 class AbstractEndpointInterpolant(StrictModule):
     """Deterministic state/velocity interpolation between paired endpoints."""
 
-    event_shape: AbstractAttribute[tuple[int, ...]]
-    source_coordinate: AbstractAttribute[Array]
-    target_coordinate: AbstractAttribute[Array]
-    interpolant_id: AbstractAttribute[str]
+    event_shape: eqx.AbstractVar[tuple[int, ...]]
+    source_coordinate: eqx.AbstractVar[Array]
+    target_coordinate: eqx.AbstractVar[Array]
+    interpolant_id: eqx.AbstractVar[str]
 
     @abstractmethod
     def evaluate(
@@ -124,8 +123,8 @@ class LinearEndpointInterpolant(AbstractEndpointInterpolant):
         interpolant_id: str | None = None,
     ):
         events = _event_shape(event_shape)
-        source = jnp.asarray(source_coordinate, dtype=float).reshape(())
-        target = jnp.asarray(target_coordinate, dtype=float).reshape(())
+        source = jnp.asarray(source_coordinate, dtype=jnp.float64).reshape(())
+        target = jnp.asarray(target_coordinate, dtype=jnp.float64).reshape(())
         if not bool(jnp.isfinite(source) & jnp.isfinite(target)):
             raise ValueError("Interpolant coordinates must be finite.")
         if not bool(target > source):
@@ -135,7 +134,7 @@ class LinearEndpointInterpolant(AbstractEndpointInterpolant):
         resolved_id = (
             canonical_fingerprint(
                 {
-                    "kind": "linear-endpoint-interpolant-v1",
+                    "kind": "linear-endpoint-interpolant",
                     "event_shape": list(events),
                     "source_coordinate": float(source),
                     "target_coordinate": float(target),
@@ -164,15 +163,14 @@ class LinearEndpointInterpolant(AbstractEndpointInterpolant):
             raise ValueError("Interpolant source and target shapes must match.")
         leading = _leading_shape(source_array, self.event_shape)
         if not jnp.issubdtype(source_array.dtype, jnp.inexact):
-            source_array = source_array.astype(float)
-            target_array = target_array.astype(float)
+            source_array = source_array.astype("float64")
+            target_array = target_array.astype("float64")
         time_array = jnp.asarray(time, dtype=source_array.real.dtype)
         if time_array.shape == ():
             time_array = jnp.broadcast_to(time_array, leading)
         elif time_array.shape != leading:
             raise ValueError(
-                f"Interpolant time must be scalar or have leading shape {leading}; "
-                f"got {time_array.shape}."
+                f"Interpolant time must be scalar or have leading shape {leading}; got {time_array.shape}."
             )
         time_array = eqx.error_if(
             time_array,

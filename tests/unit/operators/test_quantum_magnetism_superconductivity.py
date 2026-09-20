@@ -38,7 +38,7 @@ from phydrax.sparse import EdgeRelation
 
 
 def _constant_family(matrix, *, hermitian):
-    value = np.asarray(matrix, dtype=complex)
+    value = np.asarray(matrix, dtype="complex128")
     count = value.shape[0]
     target = np.repeat(np.arange(count), count)
     source = np.tile(np.arange(count), count)
@@ -46,7 +46,7 @@ def _constant_family(matrix, *, hermitian):
     relation = EdgeRelation(source, target, source_size=count, target_size=count)
     plan = PeriodicTranslationFamilyPlan(
         relation,
-        np.zeros((count * count, 1), dtype=int),
+        np.zeros((count * count, 1), dtype="int64"),
         reverse,
         hermitian=hermitian,
     )
@@ -89,7 +89,9 @@ def test_heisenberg_dimer_lowers_to_fixed_projection_without_ambient_basis():
     assert operator.source.size == 2
     # In the ascending basis {|down,up>, |up,down>}, H=-S1·S2.
     columns = jnp.stack(
-        tuple(operator.mv(jnp.eye(2, dtype=complex)[:, index]) for index in range(2)),
+        tuple(
+            operator.mv(jnp.eye(2, dtype="complex128")[:, index]) for index in range(2)
+        ),
         axis=1,
     )
     assert jnp.allclose(jnp.linalg.eigvalsh(columns), jnp.asarray([-0.25, 0.75]))
@@ -153,9 +155,9 @@ def test_collinear_lswt_returns_positive_krein_modes_and_rejects_instability():
     lowering = lower_collinear_spin_wave_bonds(
         plan,
         [[[1.0, 0.0], [0.0, 1.0], [0.0, 0.0]]],
-        np.empty((0,), dtype=int),
-        np.empty((0,), dtype=int),
-        np.empty((0, 1), dtype=int),
+        np.empty((0,), dtype="int64"),
+        np.empty((0,), dtype="int64"),
+        np.empty((0, 1), dtype="int64"),
         np.empty((0, 3, 3)),
         zeeman_energies=[[0.0, 0.0, 2.0]],
     )

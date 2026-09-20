@@ -64,8 +64,8 @@ class CalabiYauMetricEvidencePlan(StrictModule):
             raise TypeError(
                 "training_samples and heldout_samples must be projective samples."
             )
-        training_count = int(training_samples.homogeneous_points.shape[0])
-        heldout_count = int(heldout_samples.homogeneous_points.shape[0])
+        training_count = training_samples.homogeneous_points.shape[0]
+        heldout_count = heldout_samples.homogeneous_points.shape[0]
         maximum = int(maximum_samples)
         batches = int(batch_count)
         quantile_values = tuple(float(value) for value in quantiles)
@@ -113,9 +113,9 @@ class CalabiYauMetricEvidencePlan(StrictModule):
         if duplicates:
             raise ValueError("Training and held-out sample sets share an exact point.")
         raw_weights = (
-            np.ones((heldout_count,), dtype=float)
+            np.ones((heldout_count,), dtype=np.float64)
             if heldout_weights is None
-            else np.asarray(heldout_weights, dtype=float)
+            else np.asarray(heldout_weights, dtype=np.float64)
         )
         if raw_weights.shape != (heldout_count,) or not np.all(np.isfinite(raw_weights)):
             raise ValueError("heldout_weights must be one finite sample vector.")
@@ -297,7 +297,7 @@ def evaluate_calabi_yau_metric_evidence(
     rms = jnp.sqrt(jnp.sum(normalized * residual**2))
     maximum = jnp.max(jnp.where(validity, jnp.abs(residual), 0.0))
     minimum_margin = jnp.min(jnp.where(validity, margin, jnp.inf))
-    fraction = jnp.mean(validity.astype(float))
+    fraction = jnp.mean(validity.astype("float64"))
     ess = jnp.where(
         mass > 0.0,
         1.0 / jnp.sum(normalized**2),

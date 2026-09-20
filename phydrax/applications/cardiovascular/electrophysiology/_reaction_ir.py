@@ -171,7 +171,7 @@ class PinnedReactionIR:
         if maximum_depth > 256:
             raise ValueError("reaction IR expression depth exceeds 256.")
         identity = (
-            "pinned-cardiac-reaction-ir-v1\0"
+            "pinned-cardiac-reaction-ir\0"
             + self.program_name
             + "\0"
             + repr(names)

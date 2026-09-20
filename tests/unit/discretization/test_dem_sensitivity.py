@@ -63,7 +63,7 @@ def test_batched_inverse_and_parameter_ensemble_require_valid_certificates():
     problem = phx.discretization.DEMInverseProblem(
         forward,
         observations,
-        jnp.ones_like(observations, dtype=bool),
+        jnp.ones_like(observations, dtype="bool"),
         policy,
         problem_id="linear-identification",
     )

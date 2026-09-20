@@ -113,7 +113,7 @@ class RationalMatrixModel(StrictModule):
 
     @property
     def port_count(self) -> int:
-        return int(self.direct.shape[0])
+        return self.direct.shape[0]
 
     def evaluate_s(self, points: ArrayLike, /) -> Array:
         values = jnp.asarray(points, dtype=jnp.complex128)
@@ -210,7 +210,7 @@ def fit_rational_matrix(
     weights: ArrayLike | None = None,
     model_id: str | None = None,
 ) -> RationalFitResult:
-    omega = jnp.asarray(angular_frequency, dtype=float)
+    omega = jnp.asarray(angular_frequency, dtype=jnp.float64)
     data = jnp.asarray(samples, dtype=jnp.complex128)
     selected = RationalFitPolicy() if policy is None else policy
     if not isinstance(selected, RationalFitPolicy):
@@ -238,7 +238,7 @@ def fit_rational_matrix(
     design = jnp.stack(columns, axis=-1)
     rhs = data.reshape((omega.size, -1))
     if weights is not None:
-        weight = jnp.asarray(weights, dtype=float)
+        weight = jnp.asarray(weights, dtype=jnp.float64)
         if weight.shape != omega.shape or bool(
             jnp.any(~jnp.isfinite(weight)) | jnp.any(weight <= 0.0)
         ):
@@ -322,7 +322,7 @@ def reduce_rational_model(
         raise ValueError("retained_poles must lie within the model pole count.")
     norms = jnp.linalg.norm(model.residues, axis=(-2, -1))
     indices = jnp.sort(jnp.argsort(norms)[-count:])
-    mask = jnp.ones((model.poles.size,), dtype=bool).at[indices].set(False)
+    mask = jnp.ones((model.poles.size,), dtype=jnp.bool_).at[indices].set(False)
     reduced = RationalMatrixModel(
         model.poles[indices],
         model.residues[indices],

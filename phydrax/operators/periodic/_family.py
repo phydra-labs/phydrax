@@ -80,7 +80,7 @@ class PeriodicTranslationFamilyPlan(StrictModule, NonTrainableState):
             raise TypeError("relation must be phydrax.sparse.EdgeRelation.")
         translations_ = np.asarray(translations)
         reverse = np.asarray(reverse_indices)
-        valid = np.asarray(relation.valid, dtype=bool)
+        valid = np.asarray(relation.valid, dtype=np.bool_)
         if (
             translations_.ndim != 2
             or translations_.shape[0] != relation.capacity
@@ -135,7 +135,7 @@ class PeriodicTranslationFamilyPlan(StrictModule, NonTrainableState):
         self.hermitian = hermitian_
         self.maximum_dense_entries = dense_limit
         self.maximum_finite_entries = finite_limit
-        self.rank = int(translations_.shape[1])
+        self.rank = translations_.shape[1]
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "periodic-translation-family-plan",
@@ -188,7 +188,7 @@ class PeriodicTranslationFamilyState(StrictModule, NonTrainableState):
             raise ValueError(
                 "Periodic edge values must be finite with shape (capacity, out, in)."
             )
-        valid = np.asarray(plan.relation.valid, dtype=bool)
+        valid = np.asarray(plan.relation.valid, dtype=np.bool_)
         if np.any(value[~valid] != 0):
             raise ValueError(
                 "Invalid periodic relation routes must carry zero block values."
@@ -223,11 +223,11 @@ class PeriodicTranslationFamilyState(StrictModule, NonTrainableState):
 
     @property
     def output_block_size(self) -> int:
-        return int(self.values.shape[1])
+        return self.values.shape[1]
 
     @property
     def input_block_size(self) -> int:
-        return int(self.values.shape[2])
+        return self.values.shape[2]
 
 
 class PreparedPeriodicTranslationFamily(StrictModule, NonTrainableState):
@@ -329,7 +329,7 @@ class PeriodicFiniteRealization(StrictModule, NonTrainableState):
         self.row_indices = jnp.asarray(row, dtype=jnp.int32)
         self.column_indices = jnp.asarray(column, dtype=jnp.int32)
         self.values = jnp.asarray(value)
-        self.supercell_shape = tuple(int(v) for v in supercell_shape)
+        self.supercell_shape = tuple(supercell_shape)
         self.periodic_axes = tuple(bool(v) for v in periodic_axes)
         self.twists = tuple(float(v) for v in twists)
         self.output_size = int(output_size)
@@ -351,7 +351,7 @@ class PeriodicFiniteRealization(StrictModule, NonTrainableState):
 
     @property
     def entry_count(self) -> int:
-        return int(self.values.size)
+        return self.values.size
 
     def apply(self, vectors: ArrayLike, /) -> Array:
         vector = jnp.asarray(vectors)
@@ -465,7 +465,7 @@ def evaluate_periodic_translation_family(
     """Explicit bounded dense Bloch matrices; never used by sparse action."""
 
     points = _fractional_points(prepared, fractional_points)
-    required = int(points.shape[0]) * prepared.output_size * prepared.input_size
+    required = points.shape[0] * prepared.output_size * prepared.input_size
     if required > prepared.plan.maximum_dense_entries:
         raise PeriodicResourceError(
             "Bloch dense evaluation exceeds maximum_dense_entries."
@@ -513,9 +513,7 @@ def differentiate_periodic_translation_family(
         raise ValueError("Periodic family derivative order must be 1 or 2.")
     points = _fractional_points(prepared, fractional_points)
     rank_factor = prepared.plan.rank ** int(order)
-    required = (
-        int(points.shape[0]) * rank_factor * prepared.output_size * prepared.input_size
-    )
+    required = points.shape[0] * rank_factor * prepared.output_size * prepared.input_size
     if required > prepared.plan.maximum_dense_entries:
         raise PeriodicResourceError(
             "Bloch derivative evaluation exceeds maximum_dense_entries."
@@ -628,7 +626,7 @@ def coalesce_periodic_translation_family(
         raise ValueError("Raw periodic translations must be integers.")
     keys = [
         (
-            tuple(int(v) for v in translation[index]),
+            tuple(translation[index]),
             int(source[index]),
             int(target[index]),
         )
@@ -734,7 +732,7 @@ def realize_periodic_translation_family(
 
     if not isinstance(prepared, PreparedPeriodicTranslationFamily):
         raise TypeError("prepared must be PreparedPeriodicTranslationFamily.")
-    shape = tuple(int(value) for value in supercell_shape)
+    shape = tuple(supercell_shape)
     if len(shape) != prepared.plan.rank or any(value <= 0 for value in shape):
         raise ValueError("supercell_shape must be positive and match family rank.")
     axes = (
@@ -775,7 +773,7 @@ def realize_periodic_translation_family(
     values: list[complex] = []
     output_nodes = prepared.plan.relation.target_size * prepared.state.output_block_size
     input_nodes = prepared.plan.relation.source_size * prepared.state.input_block_size
-    relation_valid = np.asarray(prepared.plan.relation.valid, dtype=bool)
+    relation_valid = np.asarray(prepared.plan.relation.valid, dtype=np.bool_)
     for target_cell in product(*(range(extent) for extent in shape)):
         target_linear = int(np.ravel_multi_index(target_cell, shape))
         for edge in range(prepared.plan.relation.capacity):

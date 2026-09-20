@@ -86,7 +86,7 @@ def test_qcd_transport_and_flow_observables_preserve_physics_contracts():
         heavy_ion.FlowObservablePlan((2, 3)),
         jnp.asarray([[0.0, jnp.pi / 2.0, jnp.pi, 3.0 * jnp.pi / 2.0]]),
         jnp.ones((1, 4)),
-        jnp.ones((1, 4), dtype=bool),
+        jnp.ones((1, 4), dtype="bool"),
     )
     assert bool(flow.valid[0])
     assert jnp.isclose(flow.flow_magnitudes[0, 2 - 2], 0.0, atol=1.0e-12)

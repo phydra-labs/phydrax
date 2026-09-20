@@ -14,7 +14,7 @@ def _tree_leading_size(tree: Any, /) -> int | None:
     leaves = jtu.tree_leaves(tree)
     if not leaves:
         return None
-    return int(jnp.asarray(leaves[0]).shape[0])
+    return jnp.asarray(leaves[0]).shape[0]
 
 
 def get_fully_connected_graph(
@@ -58,7 +58,7 @@ def get_fully_connected_graph(
             tmp_senders = tmp_senders.reshape(-1)
             tmp_receivers = tmp_receivers.reshape(-1)
 
-        per_graph_edges = int(tmp_senders.shape[0])
+        per_graph_edges = tmp_senders.shape[0]
         sender_parts = []
         receiver_parts = []
         for graph_idx in range(n_graph):
@@ -103,11 +103,11 @@ def sparse_matrix_to_graph(
         raise ValueError("`values` must be rank-1.")
     if senders.ndim != 1:
         raise ValueError("`senders` and `receivers` must be rank-1.")
-    if int(values.shape[0]) != int(senders.shape[0]):
+    if values.shape[0] != senders.shape[0]:
         raise ValueError("`values` length must match sender/receiver length.")
     if n_node.ndim != 1:
         raise ValueError("`n_node` must be rank-1.")
-    if int(n_node.shape[0]) != 1:
+    if n_node.shape[0] != 1:
         raise ValueError("`sparse_matrix_to_graph` currently supports exactly one graph.")
     if jnp.any(values < 0):
         raise ValueError("`values` must be non-negative.")

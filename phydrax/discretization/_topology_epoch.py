@@ -55,7 +55,6 @@ class TopologyEpoch(StrictModule, NonTrainableState):
         """Return the complete canonical JSON record for this epoch."""
 
         return {
-            "schema_version": 1,
             "index": self.index,
             "geometry_id": self.geometry_id,
             "topology_id": self.topology_id,
@@ -69,7 +68,6 @@ class TopologyEpoch(StrictModule, NonTrainableState):
 
         fields = frozenset(
             (
-                "schema_version",
                 "index",
                 "geometry_id",
                 "topology_id",
@@ -79,9 +77,6 @@ class TopologyEpoch(StrictModule, NonTrainableState):
         )
         if not isinstance(record, dict) or set(record) != fields:
             raise ValueError("Topology epoch archive fields changed.")
-        schema = record["schema_version"]
-        if isinstance(schema, bool) or not isinstance(schema, int) or schema != 1:
-            raise ValueError("Unsupported topology epoch archive schema.")
         expected = record["epoch_id"]
         if not isinstance(expected, str) or not expected or expected != expected.strip():
             raise ValueError("epoch_id must be a nonempty canonical identifier.")
@@ -142,8 +137,8 @@ class TopologyEpochTransition(StrictModule, NonTrainableState):
             raise ValueError(
                 "Topology transfer needs conservative dual/adjoint pairs and nondifferentiable geometry."
             )
-        source_measure = np.asarray(source_measures, dtype=float)
-        target_measure = np.asarray(target_measures, dtype=float)
+        source_measure = np.asarray(source_measures, dtype=np.float64)
+        target_measure = np.asarray(target_measures, dtype=np.float64)
         if (
             source_measure.shape != (transfer.primal_operator.source.size,)
             or target_measure.shape != (transfer.primal_operator.target.size,)

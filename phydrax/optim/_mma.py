@@ -132,7 +132,7 @@ class MMAEvidence(StrictModule):
     subproblem_iterations: Array
 
 
-class _MMAState(eqx.Module):
+class _MMAState(StrictModule):
     parameters: Array
     previous: Array
     previous_previous: Array
@@ -324,7 +324,7 @@ def _mma_subproblem(
             - offset
         )
 
-    count = int(inequalities.shape[0])
+    count = inequalities.shape[0]
     multipliers = jnp.zeros((count,), dtype=state.parameters.dtype)
 
     def update_coordinate(index, current):
@@ -427,7 +427,7 @@ def _solve_mma(
         problem_id=problem.problem_id,
     )
     layout = _constraint_layout(constraints_only, initial_parameters, args)
-    if int(layout.equality_indices.size):
+    if layout.equality_indices.size:
         raise ValueError("MMA currently supports inequalities, not equalities.")
 
     def objective_flat(coordinates):

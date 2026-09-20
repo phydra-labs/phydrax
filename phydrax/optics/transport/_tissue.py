@@ -108,7 +108,7 @@ class TissueTransportCoefficients(StrictModule, NonTrainableState):
         self.mu_s = jnp.asarray(scattering, dtype=dtype)
         self.g = jnp.asarray(anisotropy, dtype=dtype)
         self.n = jnp.asarray(refractive, dtype=dtype)
-        self.medium_count = int(absorption.size)
+        self.medium_count = absorption.size
 
 
 class TissueTransportPlan(StrictModule, NonTrainableState):
@@ -168,7 +168,7 @@ class TissueTransportPlan(StrictModule, NonTrainableState):
             not math.isfinite(float(value)) or float(value) < 0.0 for value in tolerances
         ):
             raise ValueError("Transport tolerances must be finite and non-negative.")
-        if coefficients.medium_count != int(surfaces.refractive_indices.shape[0]):
+        if coefficients.medium_count != surfaces.refractive_indices.shape[0]:
             raise ValueError(
                 "Surface and transport medium tables must have matching length."
             )
@@ -266,7 +266,7 @@ def prepare_tissue_transport(
         tie_tolerance=plan.tie_tolerance,
     )
     triangle_query = prepare_triangle_ray_query(triangle_plan)
-    scalar_bytes = int(plan.coefficients.mu_a.dtype.itemsize)
+    scalar_bytes = plan.coefficients.mu_a.dtype.itemsize
     state_scalars = 3 + 3 + 1 + 1 + 1 + 1
     tally_scalars = (
         plan.coefficients.medium_count
@@ -413,7 +413,9 @@ def _transport_one(
     optical_depths = jnp.zeros((capacity,), dtype=dtype).at[0].set(initial_tau)
     semantic_ids = jnp.zeros((capacity,), dtype=jnp.uint32)
     live = (
-        jnp.zeros((capacity,), dtype=bool).at[0].set(input_valid & (initial_weight > 0.0))
+        jnp.zeros((capacity,), dtype=jnp.bool_)
+        .at[0]
+        .set(input_valid & (initial_weight > 0.0))
     )
     absorption = jnp.zeros((prepared.coefficients.medium_count,), dtype=dtype)
     surface_flux = jnp.zeros((prepared.surfaces.surface_count,), dtype=dtype)

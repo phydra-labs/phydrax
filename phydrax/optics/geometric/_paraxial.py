@@ -106,12 +106,12 @@ def _real_scalar(value: float, name: str, /) -> float:
 def _host_coordinates(values: ArrayLike, name: str, /) -> np.ndarray:
     raw = np.asarray(values)
     if (
-        raw.dtype == np.dtype(bool)
+        raw.dtype == np.dtype(np.bool_)
         or not np.issubdtype(raw.dtype, np.number)
         or np.issubdtype(raw.dtype, np.complexfloating)
     ):
         raise TypeError(f"{name} must contain real numeric data.")
-    result = raw.astype(float)
+    result = raw.astype("float64")
     if result.shape != (4,) or np.any(~np.isfinite(result)):
         raise ValueError(f"{name} must be a finite real array with shape (4,).")
     return result
@@ -421,7 +421,7 @@ class PreparedParaxialOptics(StrictModule, NonTrainableState):
         if inputs.ndim < 1 or inputs.shape[-1] != 4:
             raise ValueError("coordinates must have shape B + (4,).")
         if jnp.issubdtype(inputs.dtype, jnp.complexfloating) or inputs.dtype == jnp.dtype(
-            bool
+            jnp.bool_
         ):
             raise TypeError("Paraxial coordinates must be real numeric arrays.")
         dtype = jnp.result_type(inputs.dtype, self.differential_map.jacobian.dtype, 0.0)

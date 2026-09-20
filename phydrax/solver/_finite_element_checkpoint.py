@@ -19,9 +19,6 @@ from .._trainable import NonTrainableState
 from ..equations import MaterialSiteId, MaterialState, MaterialTransaction
 
 
-_CHECKPOINT_VERSION = 1
-
-
 class FiniteElementCheckpoint(StrictModule, NonTrainableState):
     """Portable accepted FE field/material state bound to compiled identities."""
 
@@ -76,7 +73,6 @@ class FiniteElementCheckpoint(StrictModule, NonTrainableState):
         self.checkpoint_id = canonical_fingerprint(
             {
                 "kind": "finite-element-checkpoint",
-                "version": _CHECKPOINT_VERSION,
                 "prepared_id": prepared,
                 "compilation_id": compiled,
                 "time": array_tree_fingerprint(np.asarray(time_)),
@@ -95,7 +91,6 @@ def write_finite_element_checkpoint(
     if not isinstance(checkpoint, FiniteElementCheckpoint):
         raise TypeError("checkpoint must be FiniteElementCheckpoint.")
     metadata = {
-        "version": _CHECKPOINT_VERSION,
         "prepared_id": checkpoint.prepared_id,
         "compilation_id": checkpoint.compilation_id,
         "time": float(checkpoint.time),
@@ -143,8 +138,6 @@ def read_finite_element_checkpoint(
 ) -> FiniteElementCheckpoint:
     with np.load(Path(path), allow_pickle=False) as archive:
         metadata = json.loads(str(archive["metadata"]))
-        if metadata["version"] != _CHECKPOINT_VERSION:
-            raise ValueError("Unsupported FE checkpoint version.")
         if (
             metadata["prepared_id"] != prepared_id
             or metadata["compilation_id"] != compilation_id

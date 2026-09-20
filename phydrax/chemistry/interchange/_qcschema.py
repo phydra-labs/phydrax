@@ -200,10 +200,10 @@ def electronic_calculation_to_qcschema(
     coordinate = np.asarray(
         positions, dtype=np.dtype(calculation.system.coordinate_dtype)
     )
-    expected = (int(calculation.system.particle_ids.shape[0]), 3)
+    expected = (calculation.system.particle_ids.shape[0], 3)
     if coordinate.shape != expected:
         raise ValueError(f"positions must have shape {expected}.")
-    active = np.asarray(calculation.system.active_mask, dtype=bool)
+    active = np.asarray(calculation.system.active_mask, dtype=np.bool_)
     numbers = np.asarray(calculation.system.atomic_numbers, dtype=np.int64)[active]
     if np.any(numbers <= 0) or np.any(numbers >= len(_SYMBOLS)):
         raise ValueError("QCSchema export requires supported positive atomic numbers.")
@@ -338,7 +338,7 @@ def electronic_evaluation_from_qcschema(
         raise TypeError("record must be a QCSchema result mapping.")
     driver = _driver(calculation)
     success = bool(record.get("success", False))
-    active = np.asarray(calculation.system.active_mask, dtype=bool)
+    active = np.asarray(calculation.system.active_mask, dtype=np.bool_)
     capacity = active.size
     count = int(np.count_nonzero(active))
     energy_factor = float(
@@ -356,27 +356,27 @@ def electronic_evaluation_from_qcschema(
         active_forces = np.full((count, 3), np.nan)
         if success:
             if driver == "gradient":
-                gradient = np.asarray(record["return_result"], dtype=float).reshape(
+                gradient = np.asarray(record["return_result"], dtype=np.float64).reshape(
                     (count, 3)
                 )
             else:
                 properties = record.get("properties", {})
-                gradient = np.asarray(properties["return_gradient"], dtype=float).reshape(
-                    (count, 3)
-                )
+                gradient = np.asarray(
+                    properties["return_gradient"], dtype=np.float64
+                ).reshape((count, 3))
             active_forces = -force_factor * gradient
-        forces = np.zeros((capacity, 3), dtype=float)
+        forces = np.zeros((capacity, 3), dtype=np.float64)
         forces[active] = active_forces
     if calculation.task.requires(ElectronicProperty.HESSIAN):
         active_hessian = np.full((count, 3, count, 3), np.nan)
         if success:
             active_hessian = (
-                np.asarray(record["return_result"], dtype=float).reshape(
+                np.asarray(record["return_result"], dtype=np.float64).reshape(
                     (count, 3, count, 3)
                 )
                 * hessian_factor
             )
-        hessian = np.zeros((capacity, 3, capacity, 3), dtype=float)
+        hessian = np.zeros((capacity, 3, capacity, 3), dtype=np.float64)
         active_indices = np.flatnonzero(active)
         hessian[np.ix_(active_indices, np.arange(3), active_indices, np.arange(3))] = (
             active_hessian
@@ -386,7 +386,9 @@ def electronic_evaluation_from_qcschema(
         properties = record.get("properties", {})
         if not isinstance(properties, Mapping) or "scf_dipole_moment" not in properties:
             raise ValueError("QCSchema result omitted the requested dipole moment.")
-        dipole = np.asarray(properties["scf_dipole_moment"], dtype=float).reshape((3,))
+        dipole = np.asarray(properties["scf_dipole_moment"], dtype=np.float64).reshape(
+            (3,)
+        )
         charge_factor = float(
             conversion_factor(
                 ELEMENTARY_CHARGE,

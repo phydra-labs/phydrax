@@ -52,7 +52,7 @@ def prepare_dormant_system(
         raise ValueError("Active IDs must be a nonempty unique subset of material IDs.")
     active = np.isin(ids, selected)
     mobile_ids = (
-        tuple(int(x) for x in ids[active & np.asarray(material.mobile_mask)])
+        tuple(ids[active & np.asarray(material.mobile_mask)])
         if mobile_particle_ids is None
         else tuple(mobile_particle_ids)
     )
@@ -205,7 +205,7 @@ class TopologyEpochTransition:
     def inserted_particle_ids(self) -> tuple[int, ...]:
         old, new = self.before.system, self.after.system
         inserted = np.asarray(new.active_mask) & ~np.asarray(old.active_mask)
-        return tuple(int(x) for x in np.asarray(new.plan.particle_ids)[inserted])
+        return tuple(np.asarray(new.plan.particle_ids)[inserted])
 
     @property
     def transition_id(self) -> str:

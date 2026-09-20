@@ -49,7 +49,7 @@ def _scalar(value: ArrayLike, name: str, /) -> Array:
     if array.shape != () or jnp.issubdtype(array.dtype, jnp.complexfloating):
         raise ValueError(f"{name} must be one real scalar.")
     if not jnp.issubdtype(array.dtype, jnp.inexact):
-        array = array.astype(float)
+        array = array.astype("float64")
     return array
 
 
@@ -243,7 +243,7 @@ class BrosaPlanellaTspmeParameters(StrictModule):
             value_unit="1",
         )
         thermodynamic_support = np.asarray(
-            thermodynamic_factor.support_bounds, dtype=float
+            thermodynamic_factor.support_bounds, dtype=np.float64
         )
         if (
             np.any(~np.isfinite(thermodynamic_support))
@@ -251,8 +251,12 @@ class BrosaPlanellaTspmeParameters(StrictModule):
             or (
                 isinstance(thermodynamic_factor, TabulatedPropertyLaw)
                 and (
-                    not np.all(np.asarray(thermodynamic_factor.source_mask, dtype=bool))
-                    or np.any(np.asarray(thermodynamic_factor.nodes, dtype=float) <= 0.0)
+                    not np.all(
+                        np.asarray(thermodynamic_factor.source_mask, dtype=np.bool_)
+                    )
+                    or np.any(
+                        np.asarray(thermodynamic_factor.nodes, dtype=np.float64) <= 0.0
+                    )
                 )
             )
         ):
@@ -260,9 +264,11 @@ class BrosaPlanellaTspmeParameters(StrictModule):
                 "electrolyte_thermodynamic_factor requires connected positive "
                 "concentration support for its exact thermodynamic primitive."
             )
-        transference_mask = np.asarray(electrolyte_transference.source_mask, dtype=bool)
+        transference_mask = np.asarray(
+            electrolyte_transference.source_mask, dtype=np.bool_
+        )
         transference_concentration_nodes = np.asarray(
-            electrolyte_transference.concentration_nodes_mol_m3, dtype=float
+            electrolyte_transference.concentration_nodes_mol_m3, dtype=np.float64
         )
         if not np.all(transference_mask):
             raise ValueError(
@@ -270,7 +276,7 @@ class BrosaPlanellaTspmeParameters(StrictModule):
                 "support for the exact electrolyte-potential primitive."
             )
         if isinstance(thermodynamic_factor, TabulatedPropertyLaw):
-            thermodynamic_nodes = np.asarray(thermodynamic_factor.nodes, dtype=float)
+            thermodynamic_nodes = np.asarray(thermodynamic_factor.nodes, dtype=np.float64)
             if (
                 thermodynamic_nodes.shape != transference_concentration_nodes.shape
                 or np.any(thermodynamic_nodes != transference_concentration_nodes)
@@ -284,8 +290,7 @@ class BrosaPlanellaTspmeParameters(StrictModule):
             or thermodynamic_support[1] < transference_concentration_nodes[-1]
         ):
             raise ValueError(
-                "Constant electrolyte thermodynamic-factor support must cover "
-                "the transference-law concentration axis."
+                "Constant electrolyte thermodynamic-factor support must cover the transference-law concentration axis."
             )
         negative_entropy = _property_law(
             negative_entropic_coefficient,
@@ -492,7 +497,7 @@ class BrosaPlanellaTspmeState(StrictModule):
             )
         if jnp.issubdtype(temperature.dtype, jnp.complexfloating):
             raise TypeError("temperature_k must be real-valued.")
-        dtype = jnp.result_type(temperature, spme_state.negative_amount_mol, float)
+        dtype = jnp.result_type(temperature, spme_state.negative_amount_mol, jnp.float64)
         self.spme_state = Marquis2019SpmeState(
             spme_state.negative_amount_mol.astype(dtype),
             spme_state.positive_amount_mol.astype(dtype),
@@ -1578,8 +1583,7 @@ class BrosaPlanellaTspmeAdapter(StrictModule, NonTrainableState):
             )
         if state.electrolyte_amount_mol.shape != (expected_electrolyte,):
             raise ValueError(
-                "Initial electrolyte TSPMe state must have shape "
-                f"({expected_electrolyte},)."
+                f"Initial electrolyte TSPMe state must have shape ({expected_electrolyte},)."
             )
         if initial_state.temperature_k.shape != ():
             raise ValueError("Initial TSPMe temperature must be scalar.")
@@ -1637,8 +1641,7 @@ class BrosaPlanellaTspmeAdapter(StrictModule, NonTrainableState):
             )
         if state.electrolyte_amount_mol.shape != expected_electrolyte:
             raise ValueError(
-                "Electrolyte TSPMe observation state must have shape "
-                f"{expected_electrolyte}."
+                f"Electrolyte TSPMe observation state must have shape {expected_electrolyte}."
             )
         if states.temperature_k.shape != times.shape:
             raise ValueError("TSPMe observation temperature must match times_s shape.")
@@ -1752,7 +1755,7 @@ class BrosaPlanellaTspmeAdapter(StrictModule, NonTrainableState):
         states = native_solution.states
         if not isinstance(states, BrosaPlanellaTspmeState):
             raise TypeError("TSPMe native solution states have the wrong type.")
-        valid = jnp.asarray(native_solution.valid, dtype=bool)
+        valid = jnp.asarray(native_solution.valid, dtype=jnp.bool_)
         times = jnp.asarray(native_solution.times)
         valid_count = jnp.sum(valid.astype(jnp.int32))
         final_index = jnp.maximum(valid_count - 1, 0)

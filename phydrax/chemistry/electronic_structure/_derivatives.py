@@ -52,7 +52,7 @@ class MolecularHessianResult(StrictModule, NonTrainableState):
             raise ValueError("Molecular Hessians must have shape (atom,3,atom,3).")
         residual = jnp.asarray(antisymmetry_residual, dtype=raw.dtype).reshape(())
         count = jnp.asarray(evaluation_count, dtype=jnp.int32).reshape(())
-        successful_ = jnp.asarray(successful, dtype=bool).reshape(())
+        successful_ = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         if not isinstance(units, AtomisticUnitSystem):
             raise TypeError("units must be AtomisticUnitSystem.")
         sources = tuple(str(value).strip() for value in source_result_ids)
@@ -145,7 +145,7 @@ class MolecularHessianPlan(StrictModule, NonTrainableState):
         positions = np.asarray(
             structure.positions, dtype=np.dtype(self.system.coordinate_dtype)
         )
-        active = np.asarray(self.system.active_mask, dtype=bool)
+        active = np.asarray(self.system.active_mask, dtype=np.bool_)
         active_indices = np.flatnonzero(active)
         cell = None if structure.cell is None else np.asarray(structure.cell)
         if self.surface.capabilities.hessian:

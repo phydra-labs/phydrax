@@ -23,7 +23,7 @@ _BREAKPOINT_NONFINITE = 3
 def _row_values(values: Array, /) -> tuple[Array, Array]:
     flattened = values.reshape((values.shape[0], -1))
     if not jnp.issubdtype(flattened.dtype, jnp.inexact):
-        flattened = flattened.astype(float)
+        flattened = flattened.astype("float64")
     finite = jnp.all(jnp.isfinite(flattened), axis=-1)
     return jnp.where(jnp.isfinite(flattened), flattened, 0.0), finite
 
@@ -45,7 +45,7 @@ def discover_breakpoints(
         raise TypeError("plan must be a BreakpointDiscoveryPlan.")
     if plan.max_candidates > plan.pilot_count - 1:
         raise ValueError("max_candidates cannot exceed the number of pilot intervals.")
-    bounds_ = jnp.asarray(bounds, dtype=float)
+    bounds_ = jnp.asarray(bounds, dtype=jnp.float64)
     if bounds_.shape != (2,):
         raise ValueError("Breakpoint discovery bounds must have shape (2,).")
     parameter = jnp.linspace(0.0, 1.0, plan.pilot_count)

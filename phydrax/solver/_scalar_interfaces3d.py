@@ -152,7 +152,7 @@ def prepare_scalar_transmission_3d(
         raise ValueError("Scalar transmission quadrature evidence is unsupported.")
     problem_id = canonical_fingerprint(
         {
-            "kind": "scalar-transmission-linear-system-3d-v1",
+            "kind": "scalar-transmission-linear-system-3d",
             "formulation": transmission.formulation_id,
         }
     )
@@ -162,7 +162,7 @@ def prepare_scalar_transmission_3d(
     cost = estimate_operator_action_cost(transmission.operator)
     prepared_id = canonical_fingerprint(
         {
-            "kind": "prepared-scalar-transmission-3d-v1",
+            "kind": "prepared-scalar-transmission-3d",
             "formulation": transmission.formulation_id,
             "linear_plan": prepared_linear.plan.plan_id,
         }

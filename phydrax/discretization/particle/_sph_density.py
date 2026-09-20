@@ -4,16 +4,18 @@
 
 from __future__ import annotations
 
+import equinox as eqx
+
 from ..._fingerprint import canonical_fingerprint
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 
 
 class AbstractSPHDensityPlan(StrictModule, NonTrainableState):
     """Static density-state semantics for an SPH method."""
 
-    density_evolved: AbstractAttribute[bool]
-    plan_id: AbstractAttribute[str]
+    density_evolved: eqx.AbstractVar[bool]
+    plan_id: eqx.AbstractVar[str]
 
 
 class SummationDensityPlan(AbstractSPHDensityPlan):

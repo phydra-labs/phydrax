@@ -56,7 +56,7 @@ class MPMParticleLifecyclePlan(StrictModule, NonTrainableState):
     def initialize(self, particle_ids, masses, active, /):
         identifiers = jnp.asarray(particle_ids, dtype=jnp.int64)
         mass = jnp.asarray(masses)
-        active_ = jnp.asarray(active, dtype=bool)
+        active_ = jnp.asarray(active, dtype=jnp.bool_)
         if (
             identifiers.shape != (self.capacity,)
             or mass.shape != identifiers.shape
@@ -338,7 +338,7 @@ class MPMPageTablePlan(StrictModule, NonTrainableState):
         return MPMPageTableState(
             -jnp.ones((self.capacity,), dtype=jnp.int64),
             -jnp.ones((self.capacity,), dtype=jnp.int32),
-            jnp.zeros((self.capacity,), dtype=bool),
+            jnp.zeros((self.capacity,), dtype=jnp.bool_),
             jnp.zeros((), dtype=jnp.int32),
             jnp.asarray(False),
         )
@@ -397,8 +397,8 @@ class MPMAMRPlan(StrictModule, NonTrainableState):
         *,
         refinement_ratio: int = 2,
     ):
-        shapes = tuple(tuple(int(value) for value in shape) for shape in level_shapes)
-        blocks = tuple(int(value) for value in maximum_blocks)
+        shapes = tuple(tuple(shape) for shape in level_shapes)
+        blocks = tuple(maximum_blocks)
         ratio = int(refinement_ratio)
         if (
             not shapes

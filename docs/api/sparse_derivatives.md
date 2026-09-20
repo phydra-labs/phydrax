@@ -155,10 +155,9 @@ For symmetric patterns, every transpose entry must be explicit.
 
 `SparseColoring` stores the pattern, color vector, route-wise extraction indices,
 mode, compiler provenance, and its own deterministic identity. Both artifacts
-support versioned JSON-compatible `to_dict()` and `from_dict()` round trips.
-Unknown fields, unsupported schema versions, invalid extraction indices, and
-fingerprint mismatches are rejected. Executable functions and derivative plans
-are intentionally not serialized.
+support canonical JSON-compatible `to_dict()` and `from_dict()` round trips.
+Unknown fields, invalid extraction indices, and fingerprint mismatches are
+rejected. Executable functions and derivative plans are intentionally not serialized.
 
 ## Verification boundary
 

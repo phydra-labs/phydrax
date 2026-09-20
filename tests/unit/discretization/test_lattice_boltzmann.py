@@ -41,7 +41,7 @@ def _cell_grid(shape, *, periodic=None, lengths=None):
     "velocity_set", [phx.discretization.D2Q9(), phx.discretization.D3Q19()]
 )
 def test_lattice_velocity_sets_satisfy_hydrodynamic_moments(velocity_set):
-    c = np.asarray(velocity_set.velocities, dtype=float)
+    c = np.asarray(velocity_set.velocities, dtype="float64")
     w = np.asarray(velocity_set.weights)
     opposite = np.asarray(velocity_set.opposite)
     dimension = velocity_set.dimension
@@ -67,7 +67,7 @@ def test_lattice_velocity_sets_satisfy_hydrodynamic_moments(velocity_set):
     )
 
 
-def test_lattice_discretization_requires_isotropic_cell_centres():
+def test_lattice_discretization_requires_isotropic_cell_centers():
     grid = _cell_grid((8, 8))
     discretization = phx.discretization.LatticeBoltzmannPlan(
         grid, phx.discretization.D2Q9()
@@ -92,7 +92,7 @@ def test_lattice_discretization_requires_isotropic_cell_centres():
         ),
         axis_names=("x", "y"),
     ).prepare(jnp.asarray(((0.0, 0.0), (1.0, 1.0))))
-    with pytest.raises(ValueError, match="cell-centred"):
+    with pytest.raises(ValueError, match="cell-centered"):
         phx.discretization.LatticeBoltzmannPlan(
             point_grid, phx.discretization.D2Q9()
         ).prepare()

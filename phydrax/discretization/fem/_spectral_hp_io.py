@@ -148,7 +148,7 @@ class HPWorksetMemoryPlan(StrictModule, NonTrainableState):
         maximum_bytes: int,
         /,
     ):
-        widths = tuple(int(value) for value in local_widths)
+        widths = tuple(local_widths)
         components = int(component_count)
         budget = int(maximum_bytes)
         if not widths or min(widths) <= 0 or components <= 0 or budget <= 0:
@@ -351,7 +351,7 @@ class FiniteElementMeshImportReport(StrictModule, NonTrainableState):
     ):
         names = tuple(str(value) for value in block_names)
         kinds = tuple(str(value) for value in cell_kinds)
-        orders = tuple(int(value) for value in geometry_orders)
+        orders = tuple(geometry_orders)
         volumes = tuple(sorted(str(value) for value in volume_names))
         boundaries = tuple(sorted(str(value) for value in boundary_names))
         path = str(source_path)
@@ -522,7 +522,7 @@ def read_finite_element_mesh(path: str | Path, /) -> FiniteElementMeshImport:
     if len(topological_dimensions) != 1:
         raise ValueError("Imported volume blocks must share one topological dimension.")
     topological_dimension = topological_dimensions.pop()
-    points = np.asarray(source.points, dtype=float)
+    points = np.asarray(source.points, dtype=np.float64)
     ambient_dimension = points.shape[1]
     while ambient_dimension > topological_dimension and np.allclose(
         points[:, ambient_dimension - 1], 0.0
@@ -628,7 +628,7 @@ def read_finite_element_mesh(path: str | Path, /) -> FiniteElementMeshImport:
                 continue
             for selected_index in selected_indices:
                 row = np.asarray(cell_block.data)[int(selected_index)]
-                source_vertices = tuple(int(value) for value in row[:boundary_arity])
+                source_vertices = tuple(row[:boundary_arity])
                 if any(value not in compact for value in source_vertices):
                     raise ValueError("Boundary group references a non-volume vertex.")
                 compact_vertices = tuple(
@@ -669,8 +669,7 @@ def read_finite_element_mesh(path: str | Path, /) -> FiniteElementMeshImport:
         losses.append(f"dropped_unsupported_cells:{other_cell_count}")
     if ambient_dimension != np.asarray(source.points).shape[1]:
         losses.append(
-            "dropped_zero_coordinate_axes:"
-            f"{np.asarray(source.points).shape[1] - ambient_dimension}"
+            f"dropped_zero_coordinate_axes:{np.asarray(source.points).shape[1] - ambient_dimension}"
         )
     for name, values in (
         ("point_data", tuple(sorted(str(value) for value in source.point_data))),

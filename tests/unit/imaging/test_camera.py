@@ -183,13 +183,13 @@ def test_all_ray_triangulation_and_parallel_ray_degeneracy():
     solved = triangulate_weighted_rays(
         origins,
         directions,
-        jnp.ones((3,), dtype=bool),
+        jnp.ones((3,), dtype="bool"),
         jnp.ones((3,)),
     )
     degenerate = triangulate_weighted_rays(
         jnp.asarray(((0.0, 0.0, 0.0), (1.0, 0.0, 0.0))),
         jnp.asarray(((0.0, 0.0, 1.0), (0.0, 0.0, 1.0))),
-        jnp.ones((2,), dtype=bool),
+        jnp.ones((2,), dtype="bool"),
         jnp.ones((2,)),
     )
 
@@ -213,9 +213,9 @@ def test_calibration_reports_unobservable_free_focal_lengths():
         rig,
         points,
         pixels,
-        jnp.ones((1, 4), dtype=bool),
+        jnp.ones((1, 4), dtype="bool"),
     )
-    free = np.zeros((1, 16), dtype=bool)
+    free = np.zeros((1, 16), dtype="bool")
     free[0, 0:2] = True
     result = calibrate_camera_rig(problem, CameraCalibrationPlan(free))
 
@@ -246,9 +246,9 @@ def test_calibration_updates_preserve_the_refractive_stack():
         rig,
         points,
         project_points(camera, points).pixels[None, ...],
-        jnp.ones((1, 4), dtype=bool),
+        jnp.ones((1, 4), dtype="bool"),
     )
-    free = np.zeros((1, 16), dtype=bool)
+    free = np.zeros((1, 16), dtype="bool")
     free[0, 0] = True
 
     result = calibrate_camera_rig(problem, CameraCalibrationPlan(free))
@@ -266,7 +266,7 @@ def test_calibration_updates_preserve_the_refractive_stack():
 
 
 def test_reference_camera_gauge_requires_fixed_reference_pose():
-    free = np.zeros((2, 16), dtype=bool)
+    free = np.zeros((2, 16), dtype="bool")
     free[:, 0] = True
     free[0, 10] = True
 

@@ -33,11 +33,11 @@ def prepare_private_operator_batch(
         raise ValueError("Poisson case sampling must not duplicate a privacy unit.")
     if selected.size:
         raw = loader.prepare_indices(
-            tuple(int(value) for value in selected),
+            tuple(selected),
             epoch=0,
             batch_index=int(step),
         )
-        is_padding = jnp.zeros((selected.size,), dtype=bool)
+        is_padding = jnp.zeros((selected.size,), dtype=jnp.bool_)
         return replace(
             raw,
             indices=(),
@@ -57,11 +57,11 @@ def prepare_private_operator_batch(
         epoch=0,
         batch_index=int(step),
         microstep=int(step),
-        case_mask=jnp.ones((1,), dtype=bool),
+        case_mask=jnp.ones((1,), dtype=jnp.bool_),
         sampling_probabilities=jnp.ones(
             (1,), dtype=jnp.asarray(raw.case_log_weights).dtype
         ),
-        is_padding_example=jnp.ones((1,), dtype=bool),
+        is_padding_example=jnp.ones((1,), dtype=jnp.bool_),
     )
 
 

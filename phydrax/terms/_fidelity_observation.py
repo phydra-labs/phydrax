@@ -173,13 +173,15 @@ def _stack_case_coordinates(cases, component: DomainComponent, /):
             )
         return {
             label: jnp.stack(
-                tuple(jnp.asarray(case.inputs[label], dtype=float) for case in cases)
+                tuple(
+                    jnp.asarray(case.inputs[label], dtype=jnp.float64) for case in cases
+                )
             )
             for label in labels
         }
     if any(isinstance(case.inputs, Mapping) for case in cases[1:]):
         raise ValueError("Fidelity observation case input layouts must match.")
-    return jnp.stack(tuple(jnp.asarray(case.inputs, dtype=float) for case in cases))
+    return jnp.stack(tuple(jnp.asarray(case.inputs, dtype=jnp.float64) for case in cases))
 
 
 def _stack_observables(rows) -> Array:
@@ -190,7 +192,7 @@ def _stack_observables(rows) -> Array:
             raise ValueError(
                 "PINN fidelity observations require one array observable leaf."
             )
-        leaves.append(jnp.asarray(observable_leaves[0], dtype=float))
+        leaves.append(jnp.asarray(observable_leaves[0], dtype=jnp.float64))
     targets = jnp.stack(tuple(leaves))
     if bool(jnp.any(~jnp.isfinite(targets))):
         raise ValueError("Active PINN fidelity observation targets must be finite.")

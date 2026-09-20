@@ -321,7 +321,9 @@ def _frequency_once(device, capacitance, omega, rate, sites):
     full_drive = jnp.concatenate((u, lead_inputs), axis=0)
     electronic_charge = charge_chi @ full_drive
     electrode = jnp.diag(jnp.sum(c, axis=0)) - c.T @ u
-    particle = jnp.zeros((3, 3), dtype=complex).at[:2].set(current_chi @ full_drive)
+    particle = (
+        jnp.zeros((3, 3), dtype=jnp.complex128).at[:2].set(current_chi @ full_drive)
+    )
     displacement = -1j * z * electrode
     admittance = particle + displacement
     scale = Q**2 / HBAR

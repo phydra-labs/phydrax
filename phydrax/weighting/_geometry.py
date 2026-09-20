@@ -68,8 +68,7 @@ def prepare_moment_geometry(
         )
     if problem.moment_count > policy.maximum_moments:
         raise ValueError(
-            f"Moment count {problem.moment_count} exceeds the configured maximum "
-            f"{policy.maximum_moments}."
+            f"Moment count {problem.moment_count} exceeds the configured maximum {policy.maximum_moments}."
         )
 
     prior_weights, log_mass, prior_valid = log_normalize(

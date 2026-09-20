@@ -199,22 +199,22 @@ class SparseMACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
             face_upper_cells=tuple(
                 jnp.zeros((capacity,), dtype=jnp.int32) for capacity in face_capacities
             ),
-            cell_valid=jnp.ones((cell_capacity,), dtype=bool),
+            cell_valid=jnp.ones((cell_capacity,), dtype=jnp.bool_),
             face_lower_supported=tuple(
-                jnp.ones((capacity,), dtype=bool) for capacity in face_capacities
+                jnp.ones((capacity,), dtype=jnp.bool_) for capacity in face_capacities
             ),
             face_upper_supported=tuple(
-                jnp.ones((capacity,), dtype=bool) for capacity in face_capacities
+                jnp.ones((capacity,), dtype=jnp.bool_) for capacity in face_capacities
             ),
             face_valid=tuple(
-                jnp.ones((capacity,), dtype=bool) for capacity in face_capacities
+                jnp.ones((capacity,), dtype=jnp.bool_) for capacity in face_capacities
             ),
-            complete=jnp.ones((cell_capacity,), dtype=bool),
+            complete=jnp.ones((cell_capacity,), dtype=jnp.bool_),
         )
         dtype = jnp.dtype(transfer.plan.precision.output_dtype)
         dummy_action = _SparseMACPressureAction(
             dummy_relations,
-            jnp.ones((cell_capacity,), dtype=bool),
+            jnp.ones((cell_capacity,), dtype=jnp.bool_),
             jnp.asarray(1.0, dtype=dtype),
             jnp.ones((cell_capacity,), dtype=dtype),
             spacing,
@@ -404,7 +404,7 @@ class SparseMACFreeSurfaceProjectionPlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("velocity must contain one compact field per face axis.")
         relations = self._relations(state)
-        liquid = jnp.asarray(liquid_mask, dtype=bool)
+        liquid = jnp.asarray(liquid_mask, dtype=jnp.bool_)
         if liquid.shape != relations.cell_valid.shape:
             raise ValueError("liquid_mask must match compact cell storage.")
         liquid = liquid & relations.cell_valid

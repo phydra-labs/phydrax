@@ -52,7 +52,7 @@ class ContractionOperand(StrictModule):
 
 
 class ContractionStructure(StrictModule):
-    """Immutable labelled tensor topology with explicit ordered output incidences.
+    """Immutable labeled tensor topology with explicit ordered output incidences.
 
     Repeated labels on one node express a diagonal/trace. A label may occur on any
     positive number of nodes, so hyperedges have ordinary copy-tensor semantics.
@@ -157,7 +157,7 @@ class CircuitGate(StrictModule):
 
     def __init__(self, gate_id: str, wires: Sequence[int], /):
         identifier = str(gate_id)
-        wires_ = tuple(int(wire) for wire in wires)
+        wires_ = tuple(wires)
         if not identifier or not wires_ or len(set(wires_)) != len(wires_):
             raise ValueError("Circuit gates require an ID and distinct wire indices.")
         if any(wire < 0 for wire in wires_):
@@ -305,7 +305,7 @@ def circuit_contraction_structure(
 ) -> ContractionStructure:
     """Lower a gate list to an operator tensor network with explicit I/O legs."""
 
-    dimensions = tuple(int(value) for value in wire_dimensions)
+    dimensions = tuple(wire_dimensions)
     gates_ = tuple(gates)
     if not dimensions or any(value < 1 for value in dimensions):
         raise ValueError("Circuit wire dimensions must be positive.")

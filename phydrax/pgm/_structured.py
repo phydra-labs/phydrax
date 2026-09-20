@@ -23,7 +23,7 @@ def _edge_array(edges: ArrayLike, variable_count: int, /):
     if not jnp.issubdtype(array.dtype, jnp.integer):
         raise TypeError("edges must contain integer variable indices.")
     array = array.astype(jnp.int32)
-    if array.ndim != 2 or int(array.shape[1]) != 2:
+    if array.ndim != 2 or array.shape[1] != 2:
         raise ValueError("edges must have shape (edge, 2).")
     if array.size and bool(jnp.any((array < 0) | (array >= variable_count))):
         raise ValueError("edge index is outside the variable range.")
@@ -50,7 +50,7 @@ def ising_factor_graph(
     variables = DiscreteVariableGroup(name, shape=resolved_shape, num_states=2)
     edge_values = _edge_array(edges, variable_count)
     coupling_values = jnp.asarray(couplings).reshape((-1,))
-    if coupling_values.shape != (int(edge_values.shape[0]),):
+    if coupling_values.shape != (edge_values.shape[0],):
         raise ValueError("couplings must contain one value per edge.")
     groups = [
         IsingFactorGroup(
@@ -58,7 +58,7 @@ def ising_factor_graph(
             field_values.reshape((-1,)),
         )
     ]
-    if int(edge_values.shape[0]):
+    if edge_values.shape[0]:
         groups.append(
             IsingFactorGroup(
                 (
@@ -84,7 +84,7 @@ def potts_factor_graph(
     unary = jnp.asarray(unary_log_potentials)
     if unary.ndim < 1:
         raise ValueError("unary_log_potentials must have a final state axis.")
-    cardinality = int(unary.shape[-1])
+    cardinality = unary.shape[-1]
     if cardinality < 1:
         raise ValueError("Potts cardinality must be positive.")
     resolved_shape = tuple(unary.shape[:-1]) if shape is None else tuple(shape)
@@ -98,7 +98,7 @@ def potts_factor_graph(
     )
     edge_values = _edge_array(edges, variable_count)
     pairwise = jnp.asarray(pairwise_log_potentials)
-    expected_pairwise = (int(edge_values.shape[0]), cardinality, cardinality)
+    expected_pairwise = (edge_values.shape[0], cardinality, cardinality)
     if pairwise.shape != expected_pairwise:
         raise ValueError(
             f"pairwise_log_potentials must have shape {expected_pairwise}; got {pairwise.shape}."
@@ -109,7 +109,7 @@ def potts_factor_graph(
             unary.reshape((variable_count, cardinality)),
         )
     ]
-    if int(edge_values.shape[0]):
+    if edge_values.shape[0]:
         groups.append(
             PottsFactorGroup(
                 (

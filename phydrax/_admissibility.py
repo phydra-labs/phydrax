@@ -17,6 +17,7 @@ from jaxtyping import Array, ArrayLike
 from ._fingerprint import canonical_fingerprint
 from ._strict import StrictModule
 from ._trainable import NonTrainableState
+from ._validation import canonical_identifier
 
 
 class AdmissibilityReason(IntFlag):
@@ -62,7 +63,7 @@ def _guard_derivative_leaf(
 def _guard_derivative_leaf_jvp(failure, message, primals, tangents):
     value, _, valid = primals
     value_tangent, dependency_tangent, _ = tangents
-    valid_ = jnp.asarray(valid, dtype=bool)
+    valid_ = jnp.asarray(valid, dtype=jnp.bool_)
     if failure == "error":
         value_tangent = eqx.error_if(
             value_tangent,
@@ -101,7 +102,7 @@ def guard_derivative_validity(
     message_ = str(message).strip()
     if not message_:
         raise ValueError("Derivative failure message must be non-empty.")
-    valid_ = jnp.asarray(valid, dtype=bool)
+    valid_ = jnp.asarray(valid, dtype=jnp.bool_)
     dependency_leaves = tuple(
         leaf for leaf in jax.tree.leaves(dependencies) if eqx.is_inexact_array(leaf)
     )
@@ -123,13 +124,6 @@ def guard_derivative_validity(
         ),
         tree,
     )
-
-
-def _identifier(value: str, name: str, /) -> str:
-    identifier = str(value)
-    if not identifier or identifier != identifier.strip():
-        raise ValueError(f"{name} must be a nonempty canonical identifier.")
-    return identifier
 
 
 class AdmissibilityHeader(StrictModule, NonTrainableState):
@@ -171,8 +165,8 @@ class AdmissibilityHeader(StrictModule, NonTrainableState):
         self.eligible = (normalized_margin >= 0.0) & (normalized_reasons == 0)
         self.margin = normalized_margin
         self.reason_bits = normalized_reasons
-        self.model_id = _identifier(model_id, "model_id")
-        self.evidence_id = _identifier(evidence_id, "evidence_id")
+        self.model_id = canonical_identifier(model_id, "model_id")
+        self.evidence_id = canonical_identifier(evidence_id, "evidence_id")
 
     @property
     def globally_eligible(self) -> Array:
@@ -202,14 +196,14 @@ class AdmissibilityTransitionRequest(StrictModule, NonTrainableState):
     ) -> None:
         if not isinstance(evidence, AdmissibilityHeader):
             raise TypeError("evidence must be AdmissibilityHeader.")
-        region = jnp.asarray(region_mask, dtype=bool)
+        region = jnp.asarray(region_mask, dtype=jnp.bool_)
         epoch = jnp.asarray(requested_epoch, dtype=jnp.int32)
         if epoch.shape != ():
             raise ValueError("requested_epoch must be scalar.")
         if region.shape != evidence.eligible.shape:
             raise ValueError("Transition region and evidence must share a shape.")
-        current = _identifier(current_model_id, "current_model_id")
-        target = _identifier(target_model_id, "target_model_id")
+        current = canonical_identifier(current_model_id, "current_model_id")
+        target = canonical_identifier(target_model_id, "target_model_id")
         if current == target:
             raise ValueError("A transition request must change the physical model.")
         self.region_mask = region
@@ -234,7 +228,7 @@ def reason_bits_where(
 ) -> Array:
     """Encode ``reason`` where a required predicate is false."""
 
-    value = jnp.asarray(predicate, dtype=bool)
+    value = jnp.asarray(predicate, dtype=jnp.bool_)
     return jnp.where(
         value,
         jnp.asarray(0, dtype=jnp.uint32),
@@ -267,12 +261,12 @@ def combine_admissibility(
         canonical_fingerprint(
             {
                 "kind": "combined-admissibility",
-                "model": _identifier(model_id, "model_id"),
+                "model": canonical_identifier(model_id, "model_id"),
                 "evidence": tuple(value.evidence_id for value in values),
             }
         )
         if evidence_id is None
-        else _identifier(evidence_id, "evidence_id")
+        else canonical_identifier(evidence_id, "evidence_id")
     )
     return AdmissibilityHeader(margin, reasons, model_id, identity)
 

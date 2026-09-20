@@ -485,7 +485,7 @@ def test_composite_block_amr_poisson_uses_ordinary_linalg_evidence():
     )
     compiler = phx.discretization.BlockTopologyCompiler(hierarchy)
     initial = compiler.initial_topology()
-    tags = jnp.zeros((2, 4), dtype=bool).at[0, 2].set(True)
+    tags = jnp.zeros((2, 4), dtype="bool").at[0, 2].set(True)
     compiled = compiler.compile(initial, (tags,))
     assert compiled.status.successful
     layout = phx.discretization.CompositeAMRCellLayout(

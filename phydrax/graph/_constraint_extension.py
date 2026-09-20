@@ -80,8 +80,7 @@ class GraphHarmonicCorrectionProvider(StrictModule, NonTrainableState):
         uncontrolled = valid - set(anchored) - set(gauged)
         if uncontrolled:
             raise ValueError(
-                f"Graph harmonic extension leaves components {tuple(sorted(uncontrolled))} "
-                "without anchors or gauges."
+                f"Graph harmonic extension leaves components {tuple(sorted(uncontrolled))} without anchors or gauges."
             )
         gauge_id = None if gauge_certificate_id is None else str(gauge_certificate_id)
         if gauged and (gauge_id is None or not gauge_id):
@@ -108,7 +107,7 @@ class GraphHarmonicCorrectionProvider(StrictModule, NonTrainableState):
         self.gauge_certificate_id = gauge_id
         self.provider_id = canonical_fingerprint(
             {
-                "kind": "graph-harmonic-correction-v1",
+                "kind": "graph-harmonic-correction",
                 "restriction": restriction_operator.operator_id,
                 "candidate": candidate_operator.operator_id,
                 "harmonic_residual": harmonic_residual_operator.operator_id,
@@ -128,7 +127,7 @@ class GraphHarmonicCorrectionProvider(StrictModule, NonTrainableState):
     ) -> PreparedTraceExtension:
         construction_id = canonical_fingerprint(
             {
-                "kind": "graph-harmonic-system-v1",
+                "kind": "graph-harmonic-system",
                 "provider": self.provider_id,
                 "topology": self.topology_id,
                 "metric": self.metric_id,
@@ -144,7 +143,7 @@ class GraphHarmonicCorrectionProvider(StrictModule, NonTrainableState):
             preservation_operator=self.harmonic_residual_operator,
             preservation_certificate_id=canonical_fingerprint(
                 {
-                    "kind": "graph-free-harmonic-residual-v1",
+                    "kind": "graph-free-harmonic-residual",
                     "operator": self.harmonic_residual_operator.operator_id,
                     "topology": self.topology_id,
                 }

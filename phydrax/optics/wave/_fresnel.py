@@ -190,7 +190,7 @@ def _uniform_finite_axis(space: PlaneFieldSpace, index: int, /) -> tuple[Array, 
         raise ValueError(
             "Direct Fresnel grids require endpoint-including uniform point axes."
         )
-    nodes = np.asarray(axis.nodes, dtype=float)
+    nodes = np.asarray(axis.nodes, dtype=np.float64)
     if nodes.size < 2:
         raise ValueError("Direct Fresnel axes require at least two points.")
     differences = np.diff(nodes)
@@ -211,10 +211,10 @@ def prepare_direct_fresnel(plan: DirectFresnelPlan, /) -> PreparedDirectFresnel:
     """Validate both finite planes and preflight all fixed-shape workspaces."""
     if not isinstance(plan, DirectFresnelPlan):
         raise TypeError("plan must be a DirectFresnelPlan.")
-    input_rotation = np.asarray(plan.input_space.frame.rotation, dtype=float)
-    output_rotation = np.asarray(plan.output_space.frame.rotation, dtype=float)
-    input_translation = np.asarray(plan.input_space.frame.translation, dtype=float)
-    output_translation = np.asarray(plan.output_space.frame.translation, dtype=float)
+    input_rotation = np.asarray(plan.input_space.frame.rotation, dtype=np.float64)
+    output_rotation = np.asarray(plan.output_space.frame.rotation, dtype=np.float64)
+    input_translation = np.asarray(plan.input_space.frame.translation, dtype=np.float64)
+    output_translation = np.asarray(plan.output_space.frame.translation, dtype=np.float64)
     if not np.array_equal(input_rotation, output_rotation) or not np.array_equal(
         input_translation, output_translation
     ):
@@ -254,8 +254,8 @@ def prepare_direct_fresnel(plan: DirectFresnelPlan, /) -> PreparedDirectFresnel:
         raise ValueError("Direct Fresnel workspace exceeds maximum_workspace_bytes.")
     separations = []
     for source, target in zip(input_axes, output_axes, strict=True):
-        source_host = np.asarray(source, dtype=float)
-        target_host = np.asarray(target, dtype=float)
+        source_host = np.asarray(source, dtype=np.float64)
+        target_host = np.asarray(target, dtype=np.float64)
         separations.append(
             max(
                 abs(float(target_host[0] - source_host[-1])),

@@ -134,8 +134,7 @@ class _ADMMetricMap(StrictModule):
             raise ValueError("ADM lapse must return one scalar.")
         if shift.shape != (self.spatial_dimension,):
             raise ValueError(
-                f"ADM shift must have shape {(self.spatial_dimension,)}; "
-                f"got {shift.shape}."
+                f"ADM shift must have shape {(self.spatial_dimension,)}; got {shift.shape}."
             )
         expected = (self.spatial_dimension, self.spatial_dimension)
         if spatial.shape != expected:

@@ -168,7 +168,7 @@ def build_density_case(segments=3):
     coordinates, cells, load, residual = _mesh(segments)
     centers = jnp.mean(coordinates[cells], axis=1)
     count = cells.shape[0]
-    mask = jnp.ones((count,), dtype=bool).at[0].set(False)
+    mask = jnp.ones((count,), dtype="bool").at[0].set(False)
     fixed = jnp.zeros((count,)).at[0].set(1.0)
     prepared = phx.optim.DensityTransformPlan(
         phx.optim.ConicDensityFilterPlan(
@@ -309,7 +309,7 @@ def run(segments=3, steps=100):
         _reference_solve,
         plan_id="hard-extraction-reference-fe",
     )
-    hard = sm.reanalyse_topology_design(solved.topology_result, hard_plan, initial)
+    hard = sm.reanalyze_topology_design(solved.topology_result, hard_plan, initial)
     shape, shape_initial = build_shape_case(segments)
     shape_solved = phx.optim.solve_state_design(
         shape.problem,

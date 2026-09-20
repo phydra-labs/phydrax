@@ -43,7 +43,7 @@ class CoordinateDecoderState(StrictModule):
         source_names: Sequence[str],
     ):
         value = jnp.asarray(latent)
-        cases = tuple(int(size) for size in case_shape)
+        cases = tuple(case_shape)
         if value.ndim != len(cases) + 1 or value.shape[: len(cases)] != cases:
             raise ValueError(
                 "Coordinate decoder latent must have shape case_shape + (channels,)."
@@ -276,10 +276,9 @@ class CoordinateConditionedOperator(AbstractEncodedOperatorModel):
         key: EvalKey = DOC_KEY0,
     ) -> Array:
         coordinates = query.coordinates_array(case_shape=state.case_shape)
-        if int(coordinates.shape[-1]) != self.coord_dim:
+        if coordinates.shape[-1] != self.coord_dim:
             raise ValueError(
-                f"Expected query coordinate dimension {self.coord_dim}; "
-                f"got {coordinates.shape[-1]}."
+                f"Expected query coordinate dimension {self.coord_dim}; got {coordinates.shape[-1]}."
             )
         sample_shape = query.sample_shape
         latent = state.latent.reshape(

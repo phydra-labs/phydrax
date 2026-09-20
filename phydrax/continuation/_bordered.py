@@ -223,8 +223,7 @@ def plan_bordered_solve(
         raise TypeError("policy must be a LinearSolvePolicy.")
     if policy.failure.mode != "status":
         raise ValueError(
-            "Bordered solves require linear failure mode 'status' so inner failures "
-            "remain explicit."
+            "Bordered solves require linear failure mode 'status' so inner failures remain explicit."
         )
     principal_plan = plan_linear(_principal_problem(system), policy)
     tolerance = float(schur_tolerance)
@@ -478,7 +477,7 @@ class BorderedSolveDiagnostics(StrictModule):
         )
         self.cached_column_solve_reused = jnp.asarray(
             cached_column_solve_reused,
-            dtype=bool,
+            dtype=jnp.bool_,
         )
 
 

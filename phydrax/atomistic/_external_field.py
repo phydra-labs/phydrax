@@ -137,7 +137,7 @@ class GriddedExternalFieldPlan(StrictModule, NonTrainableState):
         self.values = jnp.asarray(values_)
         self.boundary_policy = boundary_policy
         self.coordinate_frame, self.coordinate_unit, self.value_unit = identities
-        self.component_count = 1 if values_.ndim == 3 else int(values_.shape[3])
+        self.component_count = 1 if values_.ndim == 3 else values_.shape[3]
         self.plan_id = identifier
 
     @property
@@ -159,7 +159,7 @@ class PreparedGriddedExternalField(StrictModule, NonTrainableState):
         if not isinstance(plan, GriddedExternalFieldPlan):
             raise TypeError("plan must be a GriddedExternalFieldPlan.")
         self.plan = plan
-        self.grid_shape = tuple(int(size) for size in plan.values.shape[:3])
+        self.grid_shape = tuple(plan.values.shape[:3])
         self.prepared_id = canonical_fingerprint(
             {"kind": "prepared-gridded-external-field", "plan": plan.plan_id}
         )

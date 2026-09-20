@@ -23,7 +23,7 @@ def _hamming_laplacian(points):
     distance = np.sum(
         np.asarray(points)[:, None, :] != np.asarray(points)[None, :, :], axis=-1
     )
-    adjacency = (distance == 1).astype(float)
+    adjacency = (distance == 1).astype("float64")
     return np.diag(np.sum(adjacency, axis=1)) - adjacency
 
 

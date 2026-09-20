@@ -223,12 +223,12 @@ def select_direct_collocation_intervals(
         raise TypeError("policy must be DirectCollocationRefinementPolicy.")
     if not bool(np.asarray(result.successful)):
         raise ValueError("Interval selection requires a successful source result.")
-    defects = np.asarray(result.diagnostics.off_grid.interval_defects, dtype=float)
+    defects = np.asarray(result.diagnostics.off_grid.interval_defects, dtype=np.float64)
     if defects.ndim == 0 or defects.shape[-1] != result.compilation.plan.mesh.num_steps:
         raise ValueError("Source off-grid defects do not match the source mesh.")
     axes = tuple(range(defects.ndim - 1))
     metric = np.sqrt(np.sum(defects**2, axis=axes)) if axes else np.abs(defects)
-    selected = np.zeros(metric.shape, dtype=bool)
+    selected = np.zeros(metric.shape, dtype=np.bool_)
     if policy.mode == "uniform":
         selected[:] = True
     else:
@@ -244,7 +244,7 @@ def select_direct_collocation_intervals(
                 if accumulated >= target:
                     break
     indices = np.flatnonzero(selected)
-    target_intervals = int(metric.size + indices.size)
+    target_intervals = metric.size + indices.size
     threshold = 0.0 if indices.size == 0 else float(np.min(metric[indices]))
     return DirectCollocationRefinementSelection(
         jnp.asarray(metric),
@@ -331,7 +331,7 @@ def refine_direct_collocation(
         raise TypeError("selection must be DirectCollocationRefinementSelection or None.")
     if selection_.capacity_exceeded:
         raise ValueError("Refinement selection exceeds the interval capacity.")
-    selected = np.asarray(selection_.selected_indices, dtype=int)
+    selected = np.asarray(selection_.selected_indices, dtype=np.int64)
     if selected.size == 0:
         raise ValueError("Refinement selection contains no intervals.")
     source_plan = result.compilation.plan
@@ -507,7 +507,7 @@ def solve_refined_direct_collocation(
                 policy,
                 DIRECT_REFINEMENT_CAPACITY_EXCEEDED,
             )
-        if int(selection.selected_indices.size) == 0:
+        if selection.selected_indices.size == 0:
             return _study(
                 initial_result,
                 levels,

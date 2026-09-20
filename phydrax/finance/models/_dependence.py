@@ -21,7 +21,7 @@ from ...linalg import (
 
 
 def _correlation_matrix(value: ArrayLike, /) -> Array:
-    matrix = jnp.asarray(value, dtype=float)
+    matrix = jnp.asarray(value, dtype=jnp.float64)
     if matrix.ndim != 2 or matrix.shape[0] != matrix.shape[1] or matrix.shape[0] < 1:
         raise ValueError("correlation must be a non-empty square matrix.")
     matrix = eqx.error_if(
@@ -62,7 +62,7 @@ class CorrelationMatrix(StrictModule):
     def __init__(self, matrix: ArrayLike, /):
         matrix_ = _correlation_matrix(matrix)
         self.matrix = matrix_
-        self.dimension = int(matrix_.shape[0])
+        self.dimension = matrix_.shape[0]
 
     def cholesky_factor(self) -> Array:
         prepared = factorize(
@@ -82,7 +82,7 @@ class MultiAssetLognormalModel(StrictModule):
     def __init__(self, volatilities: ArrayLike, dependence: CorrelationMatrix, /):
         if not isinstance(dependence, CorrelationMatrix):
             raise TypeError("dependence must be a CorrelationMatrix.")
-        volatility = jnp.asarray(volatilities, dtype=float)
+        volatility = jnp.asarray(volatilities, dtype=jnp.float64)
         if volatility.shape != (dependence.dimension,):
             raise ValueError(
                 "volatilities must contain one entry per dependence dimension."
@@ -116,8 +116,8 @@ class FactorDependenceModel(StrictModule):
     factor_count: int = eqx.field(static=True)
 
     def __init__(self, loadings: ArrayLike, idiosyncratic_variances: ArrayLike, /):
-        loadings_ = jnp.asarray(loadings, dtype=float)
-        residual = jnp.asarray(idiosyncratic_variances, dtype=float)
+        loadings_ = jnp.asarray(loadings, dtype=jnp.float64)
+        residual = jnp.asarray(idiosyncratic_variances, dtype=jnp.float64)
         if loadings_.ndim != 2 or loadings_.shape[0] < 1 or loadings_.shape[1] < 1:
             raise ValueError("loadings must be a non-empty asset-by-factor matrix.")
         if residual.shape != (loadings_.shape[0],):
@@ -161,7 +161,7 @@ class StudentTCopulaModel(StrictModule):
     def __init__(self, dependence: CorrelationMatrix, degrees_of_freedom: ArrayLike, /):
         if not isinstance(dependence, CorrelationMatrix):
             raise TypeError("dependence must be a CorrelationMatrix.")
-        degrees = jnp.asarray(degrees_of_freedom, dtype=float)
+        degrees = jnp.asarray(degrees_of_freedom, dtype=jnp.float64)
         if degrees.shape != ():
             raise ValueError("degrees_of_freedom must be scalar.")
         degrees = eqx.error_if(

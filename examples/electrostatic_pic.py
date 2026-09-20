@@ -33,7 +33,7 @@ field = phx.solver.CochainElectrostaticPlan(
 )
 pic = phx.solver.ElectrostaticPICPlan(field, transfers)
 
-base = (jnp.arange(8, dtype=float)[:, None] + 0.5) / 8.0
+base = (jnp.arange(8, dtype="float64")[:, None] + 0.5) / 8.0
 state = pic.initialize(
     (base + 0.002 * jnp.sin(2.0 * jnp.pi * base), base),
     (jnp.zeros((8, 1)), jnp.zeros((8, 1))),

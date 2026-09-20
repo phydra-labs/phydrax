@@ -12,7 +12,7 @@ from phydrax.applications import magnetic_resonance as mr
 
 
 def _density(state):
-    state = jnp.asarray(state, dtype=complex)
+    state = jnp.asarray(state, dtype="complex128")
     return jnp.outer(state, jnp.conj(state))
 
 

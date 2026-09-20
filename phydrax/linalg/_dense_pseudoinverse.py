@@ -39,8 +39,8 @@ def factor_pseudoinverse(
     if value.ndim < 2:
         raise ValueError("matrix must have at least two dimensions.")
     if not jnp.issubdtype(value.dtype, jnp.inexact):
-        value = value.astype(float)
-    rows, columns = (int(size) for size in value.shape[-2:])
+        value = value.astype(jnp.float64)
+    rows, columns = value.shape[-2:]
     if hermitian and rows != columns:
         raise ValueError("Hermitian pseudoinverse requires square matrices.")
     if hermitian:

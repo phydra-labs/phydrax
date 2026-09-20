@@ -110,7 +110,7 @@ def test_function_scorer_is_usable_inside_jit_without_string_dispatch():
 def test_all_public_edge_statuses_are_jax_integer_scalars():
     success = metrics.mean_absolute_error(jnp.ones(2), jnp.ones(2))
     empty = metrics.mean_absolute_error(
-        jnp.ones(2), jnp.ones(2), mask=jnp.zeros(2, dtype=bool)
+        jnp.ones(2), jnp.ones(2), mask=jnp.zeros(2, dtype="bool")
     )
     invalid = metrics.mean_absolute_error(
         jnp.ones(2), jnp.ones(2), sample_weight=jnp.array([1.0, -1.0])

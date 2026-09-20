@@ -103,7 +103,7 @@ class LieAlgebraCoordinateMetric(StrictModule, NonTrainableState):
         dtype: object = jnp.float64,
     ) -> Array:
         """Sample covector momentum with covariance equal to the Gram matrix."""
-        leading = tuple(int(size) for size in leading_shape)
+        leading = tuple(leading_shape)
         if any(size <= 0 for size in leading):
             raise ValueError("leading_shape dimensions must be positive.")
         normal = jr.normal(key, leading + (self.dimension,), dtype=dtype)

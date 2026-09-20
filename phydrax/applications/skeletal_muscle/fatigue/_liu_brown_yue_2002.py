@@ -59,8 +59,8 @@ class LiuBrownYue2002Parameters(StrictModule):
             raise ValueError("fatigue_rate_per_s must be positive and finite.")
         if not isfinite(recovery) or recovery <= 0.0:
             raise ValueError("recovery_rate_per_s must be positive and finite.")
-        self.fatigue_rate_per_s = jnp.asarray(fatigue, dtype=float)
-        self.recovery_rate_per_s = jnp.asarray(recovery, dtype=float)
+        self.fatigue_rate_per_s = jnp.asarray(fatigue, dtype=jnp.float64)
+        self.recovery_rate_per_s = jnp.asarray(recovery, dtype=jnp.float64)
 
 
 class LiuBrownYue2002Plan(StrictModule):
@@ -95,7 +95,11 @@ class LiuBrownYue2002Plan(StrictModule):
                 "muscle_id": muscle_id,
                 "protocol_id": protocol_id,
                 "compartments": ["uncommitted", "active", "fatigued"],
-                "flows": ["B:uncommitted->active", "F:active->fatigued", "R:fatigued->active"],
+                "flows": [
+                    "B:uncommitted->active",
+                    "F:active->fatigued",
+                    "R:fatigued->active",
+                ],
             }
         )
 
@@ -242,9 +246,7 @@ class PreparedLiuBrownYue2002(StrictModule):
         exchange_decay = jnp.exp(-exchange_rate * safe_duration)
         new_uncommitted = state.uncommitted_fraction * uncommitted_decay
 
-        half_difference_time = (
-            0.5 * (exchange_rate - safe_brain_effort) * safe_duration
-        )
+        half_difference_time = 0.5 * (exchange_rate - safe_brain_effort) * safe_duration
         safe_denominator = jnp.where(
             jnp.abs(half_difference_time) > jnp.sqrt(jnp.finfo(dtype).eps),
             half_difference_time,
@@ -260,9 +262,7 @@ class PreparedLiuBrownYue2002(StrictModule):
         )
         uncommitted_convolution = (
             safe_duration
-            * jnp.exp(
-                -0.5 * (safe_brain_effort + exchange_rate) * safe_duration
-            )
+            * jnp.exp(-0.5 * (safe_brain_effort + exchange_rate) * safe_duration)
             * sinhc
         )
         recovered_equilibrium = (
@@ -287,14 +287,16 @@ class PreparedLiuBrownYue2002(StrictModule):
             state.model_id,
         )
         compartments = jnp.stack(
-            (proposed.uncommitted_fraction, proposed.active_fraction, proposed.fatigued_fraction)
+            (
+                proposed.uncommitted_fraction,
+                proposed.active_fraction,
+                proposed.fatigued_fraction,
+            )
         )
-        state_finite = jnp.all(jnp.isfinite(compartments)) & jnp.isfinite(
-            proposed.time_s
-        )
+        state_finite = jnp.all(jnp.isfinite(compartments)) & jnp.isfinite(proposed.time_s)
         conservation_error = jnp.abs(jnp.sum(compartments) - state.total_fraction)
-        tolerance = 128.0 * jnp.finfo(dtype).eps * jnp.maximum(
-            1.0, jnp.abs(state.total_fraction)
+        tolerance = (
+            128.0 * jnp.finfo(dtype).eps * jnp.maximum(1.0, jnp.abs(state.total_fraction))
         )
         compartments_nonnegative = jnp.min(compartments) >= -tolerance
         conserved = conservation_error <= tolerance
@@ -374,8 +376,7 @@ class PreparedLiuBrownYue2002(StrictModule):
             raise ValueError("state does not belong to this prepared model.")
         return LiuBrownYue2002Capacity(
             state.active_fraction / state.total_fraction,
-            (state.uncommitted_fraction + state.active_fraction)
-            / state.total_fraction,
+            (state.uncommitted_fraction + state.active_fraction) / state.total_fraction,
             state.fatigued_fraction / state.total_fraction,
             state.time_s,
             state.model_id,

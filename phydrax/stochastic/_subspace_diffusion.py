@@ -44,7 +44,7 @@ class AffineSubspaceLayout(StrictModule):
         quadrature_weights: ArrayLike | None = None,
         layout_id: str | None = None,
     ):
-        events = tuple(int(size) for size in event_shape)
+        events = tuple(event_shape)
         if not events or any(size <= 0 for size in events):
             raise ValueError("event_shape must contain positive dimensions.")
         size = prod(events)
@@ -54,12 +54,12 @@ class AffineSubspaceLayout(StrictModule):
             raise TypeError("Affine subspace layouts require real coordinates.")
         dtype = jnp.result_type(center.dtype, raw_vectors.dtype)
         if not jnp.issubdtype(dtype, jnp.inexact):
-            dtype = jnp.dtype(float)
+            dtype = jnp.dtype(jnp.float64)
         center = center.astype(dtype)
         vectors = raw_vectors.astype(dtype)
         if center.shape != events or vectors.ndim != 2 or vectors.shape[0] != size:
             raise ValueError("origin/basis do not match the declared ambient event.")
-        rank = int(vectors.shape[1])
+        rank = vectors.shape[1]
         if rank <= 0 or rank > size:
             raise ValueError("Subspace rank must lie in [1, event_size].")
         weights = (
@@ -161,7 +161,7 @@ class SubspaceGaussianLaw(AbstractProbabilityLaw):
             raise ValueError(
                 "Coefficient law must be unbatched with event shape (rank,)."
             )
-        tolerance = jnp.asarray(support_tolerance, dtype=float).reshape(())
+        tolerance = jnp.asarray(support_tolerance, dtype=jnp.float64).reshape(())
         if bool(~jnp.isfinite(tolerance)) or float(tolerance) < 0.0:
             raise ValueError("support_tolerance must be finite and nonnegative.")
         self.layout = layout

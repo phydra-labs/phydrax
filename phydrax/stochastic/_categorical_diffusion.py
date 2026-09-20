@@ -51,8 +51,8 @@ class CategoricalDiffusionSchedule(StrictModule):
         identifier = schedule_id or canonical_fingerprint(
             {
                 "kind": "categorical-diffusion-schedule",
-                "steps": int(kernels.shape[0]),
-                "classes": int(kernels.shape[1]),
+                "steps": kernels.shape[0],
+                "classes": kernels.shape[1],
                 "transition": kernels.tolist(),
             }
         )
@@ -60,8 +60,8 @@ class CategoricalDiffusionSchedule(StrictModule):
             raise ValueError("schedule_id must be non-empty or None.")
         self.transition = jnp.asarray(kernels)
         self.cumulative = jnp.asarray(np.stack(cumulative))
-        self.num_steps = int(kernels.shape[0])
-        self.num_classes = int(kernels.shape[1])
+        self.num_steps = kernels.shape[0]
+        self.num_classes = kernels.shape[1]
         self.schedule_id = identifier
 
     @classmethod
@@ -81,7 +81,8 @@ class CategoricalDiffusionSchedule(StrictModule):
         kernels = []
         for beta in np.linspace(beta_start, beta_end, steps):
             kernels.append(
-                (1.0 - beta) * np.eye(classes) + beta * np.ones((classes, classes)) / classes
+                (1.0 - beta) * np.eye(classes)
+                + beta * np.ones((classes, classes)) / classes
             )
         return cls(np.stack(kernels))
 
@@ -138,13 +139,15 @@ class CategoricalDiffusionSchedule(StrictModule):
             return self.cumulative[time, state]
         if time.ndim > state.ndim or tuple(state.shape[: time.ndim]) != tuple(time.shape):
             raise ValueError("Timestep arrays must match complete leading sample axes.")
-        flat = state.reshape((int(time.size), -1))
+        flat = state.reshape((time.size, -1))
         probabilities = jax.vmap(lambda t, x: self.cumulative[t, x])(
             time.reshape((-1,)), flat
         )
         return probabilities.reshape(state.shape + (self.num_classes,))
 
-    def corrupt(self, clean: ArrayLike, timestep: ArrayLike, key: Key[Array, ""], /) -> Array:
+    def corrupt(
+        self, clean: ArrayLike, timestep: ArrayLike, key: Key[Array, ""], /
+    ) -> Array:
         probabilities = self.marginal_probabilities(clean, timestep)
         return jr.categorical(key, jnp.log(probabilities), axis=-1).astype(jnp.int32)
 
@@ -179,14 +182,14 @@ class CategoricalDiffusionSchedule(StrictModule):
             return unnormalized / normalizer
 
         if time.shape == ():
-            flat = jax.vmap(lambda a, b: one(a, b, time))(
-                x0.reshape(-1), xt.reshape(-1)
-            )
+            flat = jax.vmap(lambda a, b: one(a, b, time))(x0.reshape(-1), xt.reshape(-1))
         else:
             if time.ndim > x0.ndim or tuple(x0.shape[: time.ndim]) != tuple(time.shape):
-                raise ValueError("Timestep arrays must match complete leading sample axes.")
-            flat_x0 = x0.reshape((int(time.size), -1))
-            flat_xt = xt.reshape((int(time.size), -1))
+                raise ValueError(
+                    "Timestep arrays must match complete leading sample axes."
+                )
+            flat_x0 = x0.reshape((time.size, -1))
+            flat_xt = xt.reshape((time.size, -1))
             flat = jax.vmap(
                 lambda row0, rowt, step: jax.vmap(lambda a, b: one(a, b, step))(
                     row0, rowt
@@ -205,7 +208,9 @@ class CategoricalDiffusionSchedule(StrictModule):
         xt = self._validate_state(noisy)
         logits = jnp.asarray(clean_logits)
         if logits.shape != xt.shape + (self.num_classes,):
-            raise ValueError("Clean-state logits must append one class axis to noisy state.")
+            raise ValueError(
+                "Clean-state logits must append one class axis to noisy state."
+            )
         time = self._validate_timestep(timestep)
 
         def one(noisy_value, predicted_logits, step):
@@ -232,16 +237,16 @@ class CategoricalDiffusionSchedule(StrictModule):
             )
         else:
             if time.ndim > xt.ndim or tuple(xt.shape[: time.ndim]) != tuple(time.shape):
-                raise ValueError("Timestep arrays must match complete leading sample axes.")
-            flat_xt = xt.reshape((int(time.size), -1))
-            flat_logits = logits.reshape((int(time.size), -1, self.num_classes))
+                raise ValueError(
+                    "Timestep arrays must match complete leading sample axes."
+                )
+            flat_xt = xt.reshape((time.size, -1))
+            flat_logits = logits.reshape((time.size, -1, self.num_classes))
             flat = jax.vmap(
                 lambda row, predictions, step: jax.vmap(
                     lambda value, prediction: one(value, prediction, step)
                 )(row, predictions)
-            )(flat_xt, flat_logits, time.reshape((-1,))).reshape(
-                (-1, self.num_classes)
-            )
+            )(flat_xt, flat_logits, time.reshape((-1,))).reshape((-1, self.num_classes))
         return flat.reshape(xt.shape + (self.num_classes,))
 
 
@@ -278,9 +283,13 @@ class CategoricalReverseDiffusion(StrictModule):
         terminal_relationship: CategoricalTerminalRelationship = "assumed",
         terminal_reference_id: str | None = None,
     ):
-        if not isinstance(schedule, CategoricalDiffusionSchedule) or not callable(predictor):
-            raise TypeError("Categorical reverse diffusion requires schedule and predictor.")
-        shape = tuple(int(size) for size in event_shape)
+        if not isinstance(schedule, CategoricalDiffusionSchedule) or not callable(
+            predictor
+        ):
+            raise TypeError(
+                "Categorical reverse diffusion requires schedule and predictor."
+            )
+        shape = tuple(event_shape)
         if not shape or any(size <= 0 for size in shape):
             raise ValueError("event_shape must contain positive dimensions.")
         if terminal_relationship not in ("exact", "approximate", "assumed"):
@@ -329,7 +338,7 @@ class CategoricalReverseDiffusion(StrictModule):
         )
 
     def sample(self, key: Key[Array, ""], sample_shape: Sequence[int], /):
-        samples = tuple(int(size) for size in sample_shape)
+        samples = tuple(sample_shape)
         if any(size <= 0 for size in samples):
             raise ValueError("sample_shape dimensions must be positive.")
         root, initial_key = jr.split(key)
@@ -338,24 +347,18 @@ class CategoricalReverseDiffusion(StrictModule):
             samples + self.event_shape + (self.schedule.num_classes,),
         )
         initial = jr.categorical(initial_key, logits, axis=-1).astype(jnp.int32)
-        timesteps = jnp.arange(
-            self.schedule.num_steps - 1, -1, -1, dtype=jnp.int32
-        )
+        timesteps = jnp.arange(self.schedule.num_steps - 1, -1, -1, dtype=jnp.int32)
 
         def step(carry, timestep):
             state, current_key = carry
             current_key, model_key, sample_key = jr.split(current_key, 3)
             batch_time = jnp.full(samples, timestep, dtype=jnp.int32)
-            clean_logits = jnp.asarray(
-                self.predictor(state, batch_time, key=model_key)
-            )
+            clean_logits = jnp.asarray(self.predictor(state, batch_time, key=model_key))
             expected = state.shape + (self.schedule.num_classes,)
             if clean_logits.shape != expected:
                 raise ValueError("Categorical predictor must return clean-state logits.")
-            reverse_probabilities = (
-                self.schedule.reverse_probabilities_from_clean_logits(
-                    state, clean_logits, batch_time
-                )
+            reverse_probabilities = self.schedule.reverse_probabilities_from_clean_logits(
+                state, clean_logits, batch_time
             )
             next_state = jr.categorical(
                 sample_key, jnp.log(reverse_probabilities), axis=-1
@@ -378,6 +381,7 @@ class CategoricalReverseDiffusion(StrictModule):
             self.terminal_reference_id,
         )
 
+
 def categorical_denoising_loss(
     predictor: Callable,
     schedule: CategoricalDiffusionSchedule,
@@ -396,13 +400,13 @@ def categorical_denoising_loss(
     logits = jnp.asarray(predictor(noisy, time, key=model_key))
     if logits.shape != state.shape + (schedule.num_classes,):
         raise ValueError("Categorical predictor must return one logit per class.")
-    losses = -jnp.take_along_axis(
-        jax.nn.log_softmax(logits), state[..., None], axis=-1
-    )[..., 0]
+    losses = -jnp.take_along_axis(jax.nn.log_softmax(logits), state[..., None], axis=-1)[
+        ..., 0
+    ]
     active = (
-        jnp.ones(state.shape, dtype=bool)
+        jnp.ones(state.shape, dtype=jnp.bool_)
         if mask is None
-        else jnp.broadcast_to(jnp.asarray(mask, dtype=bool), state.shape)
+        else jnp.broadcast_to(jnp.asarray(mask, dtype=jnp.bool_), state.shape)
     )
     count = jnp.sum(active)
     count = eqx.error_if(count, count <= 0, "Categorical denoising mask is empty.")

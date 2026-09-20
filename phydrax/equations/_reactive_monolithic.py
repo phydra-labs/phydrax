@@ -38,9 +38,9 @@ class CellwiseReactiveFluidImplicitPlan(StrictModule, NonTrainableState):
         species_storage: ArrayLike,
         /,
     ):
-        mass = np.asarray(cell_mass, dtype=float)
-        heat = np.asarray(cell_heat_capacity, dtype=float)
-        species = np.asarray(species_storage, dtype=float)
+        mass = np.asarray(cell_mass, dtype=np.float64)
+        heat = np.asarray(cell_heat_capacity, dtype=np.float64)
+        species = np.asarray(species_storage, dtype=np.float64)
         if (
             mass.ndim != 1
             or mass.size == 0
@@ -70,11 +70,11 @@ class CellwiseReactiveFluidImplicitPlan(StrictModule, NonTrainableState):
 
     @property
     def cell_count(self) -> int:
-        return int(self.cell_mass.shape[0])
+        return self.cell_mass.shape[0]
 
     @property
     def species_count(self) -> int:
-        return int(self.species_storage.shape[1])
+        return self.species_storage.shape[1]
 
     def validate_state(self, state: ReactiveFluidImplicitState, /) -> Array:
         if not isinstance(state, ReactiveFluidImplicitState):
@@ -168,7 +168,7 @@ class ReactiveMonolithicCouplingPlan(StrictModule, NonTrainableState):
             raise TypeError("conversion must be PreparedParticleConversionDynamics.")
         if not isinstance(continuum_exchange, ParticleContinuumExchangePlan):
             raise TypeError("continuum_exchange must be ParticleContinuumExchangePlan.")
-        drag = np.asarray(drag_coefficient, dtype=float)
+        drag = np.asarray(drag_coefficient, dtype=np.float64)
         capacity = continuum_exchange.transfer.particle_capacity
         if drag.shape != (capacity,) or np.any(~np.isfinite(drag)) or np.any(drag < 0.0):
             raise ValueError("drag_coefficient must be nonnegative particle data.")

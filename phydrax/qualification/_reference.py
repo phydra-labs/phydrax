@@ -114,8 +114,7 @@ class ReferenceArtifactManifest(StrictModule, NonTrainableState):
             character not in _HEX_DIGITS for character in digest
         ):
             raise ValueError(
-                f"{algorithm} checksum must be exactly "
-                f"{_CHECKSUM_LENGTHS[algorithm]} hexadecimal characters."
+                f"{algorithm} checksum must be exactly {_CHECKSUM_LENGTHS[algorithm]} hexadecimal characters."
             )
         if isinstance(size_bytes, bool) or not isinstance(size_bytes, int):
             raise TypeError("size_bytes must be an integer.")
@@ -185,8 +184,7 @@ class ReferenceArtifactManifest(StrictModule, NonTrainableState):
         payload = memoryview(data)
         if payload.nbytes != self.size_bytes:
             raise ValueError(
-                f"Reference artifact size mismatch: expected {self.size_bytes}, "
-                f"received {payload.nbytes}."
+                f"Reference artifact size mismatch: expected {self.size_bytes}, received {payload.nbytes}."
             )
         digest = hashlib.new(self.checksum_algorithm, payload).hexdigest()
         if digest != self.checksum:

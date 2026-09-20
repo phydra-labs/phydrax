@@ -67,7 +67,7 @@ def _update_replay(
     if keys.shape[:2] != values.shape[:2]:
         raise ValueError("Replay keys must match the chain and sample axes.")
 
-    capacity = int(replay.values.shape[1])
+    capacity = replay.values.shape[1]
 
     def update_chain(chain_values, chain_size, chain_seen, chain_samples, chain_keys):
         def update_one(carry, item):
@@ -136,9 +136,9 @@ def _fit_flow(
     validation_fraction: float,
 ) -> tuple[AbstractDistribution, Array, Array]:
     samples = jnp.asarray(data)
-    validation_count = round(float(validation_fraction) * int(samples.shape[0]))
-    training_count = int(samples.shape[0]) - validation_count
-    if validation_count <= 0 or validation_count >= int(samples.shape[0]):
+    validation_count = round(float(validation_fraction) * samples.shape[0])
+    training_count = samples.shape[0] - validation_count
+    if validation_count <= 0 or validation_count >= samples.shape[0]:
         raise ValueError(
             "Flow training data must produce non-empty train and validation splits."
         )

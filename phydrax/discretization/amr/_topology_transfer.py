@@ -79,7 +79,7 @@ class BlockCellOverlapRoutes(StrictModule, NonTrainableState):
     ):
         source = np.asarray(source_indices, dtype=np.int32)
         target = np.asarray(target_indices, dtype=np.int32)
-        weights = np.asarray(target_weights, dtype=float)
+        weights = np.asarray(target_weights, dtype=np.float64)
         source_count_ = int(source_count)
         target_count_ = int(target_count)
         if (
@@ -264,7 +264,7 @@ def _overlap_routes(
     """Build nested overlap routes by ancestry, never source-by-target scanning."""
     if not source or not target:
         raise ValueError("AMR overlap routes require non-empty source and target cells.")
-    scales_ = tuple(int(value) for value in scales)
+    scales_ = tuple(scales)
     dimension = len(source[0].start)
     if (
         len(scales_)
@@ -365,7 +365,7 @@ def _leaf_measures(
         )
     return np.asarray(
         [base_volume / cumulative[cell.level] ** dimension for cell in cells],
-        dtype=float,
+        dtype=np.float64,
     )
 
 
@@ -453,7 +453,7 @@ class BlockFieldTopologyTransition(StrictModule, NonTrainableState):
         /,
         *,
         component_shape: Sequence[int] = (),
-        dtype=float,
+        dtype=jnp.float64,
     ):
         if not isinstance(source, BlockHierarchyTopology) or not isinstance(
             target, BlockHierarchyTopology
@@ -466,7 +466,7 @@ class BlockFieldTopologyTransition(StrictModule, NonTrainableState):
                 "Block field transitions require consecutive topology epochs."
             )
         name = str(field_name).strip()
-        components = tuple(int(size) for size in component_shape)
+        components = tuple(component_shape)
         if not name or any(size <= 0 for size in components):
             raise ValueError("Field name and component shape must be valid.")
         source_leaf = _cell_references(source, leaves_only=True)

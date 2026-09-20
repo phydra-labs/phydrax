@@ -14,13 +14,13 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from phydrax import ein
 import phydrax.linalg as la
+from phydrax import ein
 from phydrax.nonlinear import (
-    root,
+    NewtonKrylov,
     NonlinearSystemProblem,
     NonlinearTermination,
-    NewtonKrylov,
+    root,
 )
 
 from ..._fingerprint import canonical_fingerprint
@@ -165,7 +165,9 @@ class MOTSSolvePlan(StrictModule, NonTrainableState):
             )
             expansion = jnp.asarray(expansion_operator(surface))
             if expansion.shape != sample_shape:
-                raise ValueError("MOTS expansion operator must return one surface sample.")
+                raise ValueError(
+                    "MOTS expansion operator must return one surface sample."
+                )
             return jnp.real(expansion).reshape((-1,))
 
         nonlinear = root(
@@ -247,22 +249,18 @@ class MOTSSolvePlan(StrictModule, NonTrainableState):
             )
             values = jnp.asarray(expansion_operator(candidate))
             if values.shape != sample_shape:
-                raise ValueError("MOTS expansion operator must return one surface sample.")
+                raise ValueError(
+                    "MOTS expansion operator must return one surface sample."
+                )
             return jnp.real(values).reshape((-1,))
 
         operator = jax.jacfwd(expansion)(radius.reshape((-1,)))
         weights = self.surface_plan.solid_angle_weights.reshape((-1,))
         root_weights = jnp.sqrt(weights)
-        weighted_operator = (
-            root_weights[:, None] * operator / root_weights[None, :]
-        )
+        weighted_operator = root_weights[:, None] * operator / root_weights[None, :]
         symmetric = 0.5 * (weighted_operator + weighted_operator.T)
-        antisymmetry_norm = jnp.max(
-            jnp.abs(weighted_operator - weighted_operator.T)
-        )
-        spectrum = la.HermitianSpectrum(
-            symmetric, tolerance=self.stability_tolerance
-        )
+        antisymmetry_norm = jnp.max(jnp.abs(weighted_operator - weighted_operator.T))
+        spectrum = la.HermitianSpectrum(symmetric, tolerance=self.stability_tolerance)
         scale = jnp.maximum(jnp.max(jnp.abs(symmetric)), 1.0)
         self_adjoint = antisymmetry_norm <= self.stability_tolerance * scale
         finite = (
@@ -280,8 +278,7 @@ class MOTSSolvePlan(StrictModule, NonTrainableState):
         )
         principal = jnp.min(represented_eigenvalues)
         separated_from_sampling_nullspace = (
-            jnp.min(jnp.abs(represented_eigenvalues))
-            > self.stability_tolerance * scale
+            jnp.min(jnp.abs(represented_eigenvalues)) > self.stability_tolerance * scale
         )
         stable = (
             finite
@@ -332,9 +329,7 @@ def null_expansions(
     inverse_result = la.inverse_small_linear(_METRIC_SOLVE, metric)
     inverse_metric = inverse_result.value
     trace_curvature = ein.contract("...ij,...ij->...", inverse_metric, curvature)
-    normal_curvature = ein.contract(
-        "...i,...ij,...j->...", normal, curvature, normal
-    )
+    normal_curvature = ein.contract("...i,...ij,...j->...", normal, curvature, normal)
     extrinsic_expansion = -float(convention_.extrinsic_curvature_sign) * (
         normal_curvature - trace_curvature
     )

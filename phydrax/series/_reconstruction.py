@@ -120,8 +120,7 @@ class SampledSeriesReconstruction(StrictModule):
         capabilities = _capabilities(interpolation)
         if series.alignment != capabilities.alignment:
             raise ValueError(
-                f"interpolation={interpolation!r} requires a "
-                f"{capabilities.alignment}-aligned series."
+                f"interpolation={interpolation!r} requires a {capabilities.alignment}-aligned series."
             )
         if series.support.coordinate_kind == "discrete" and interpolation in (
             "linear",
@@ -188,7 +187,7 @@ class SampledSeriesReconstruction(StrictModule):
         /,
     ) -> tuple[Any, ...]:
         coordinates = self.series.support.broadcast_coordinates()
-        dtype = jnp.result_type(coordinates.dtype, jnp.asarray(query).dtype, float)
+        dtype = jnp.result_type(coordinates.dtype, jnp.asarray(query).dtype, jnp.float64)
         query_ = jnp.asarray(query, dtype=dtype)
         query_ = eqx.error_if(
             query_, jnp.any(~jnp.isfinite(query_)), "Series queries must be finite."
@@ -295,7 +294,7 @@ class SampledSeriesReconstruction(StrictModule):
             query_shape,
         ) = self._geometry(query, series_indices)
         rows_tree = self._selected_value_rows(indices, query_shape)
-        query_count = int(query_eval.size)
+        query_count = query_eval.size
         lower_flat = lower.reshape((-1,))
         upper_flat = upper.reshape((-1,))
         fraction_flat = fraction.reshape((-1,))
@@ -463,7 +462,10 @@ class SampledSeriesReconstruction(StrictModule):
         """Return fixed-capacity interior coordinates and their validity mask."""
         coordinates = self.series.support.coordinates_for(series_index)
         dtype = jnp.result_type(
-            coordinates.dtype, jnp.asarray(lower).dtype, jnp.asarray(upper).dtype, float
+            coordinates.dtype,
+            jnp.asarray(lower).dtype,
+            jnp.asarray(upper).dtype,
+            jnp.float64,
         )
         lower_ = jnp.asarray(lower, dtype=dtype)
         upper_ = jnp.asarray(upper, dtype=dtype)

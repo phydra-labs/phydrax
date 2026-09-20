@@ -85,7 +85,7 @@ class CrackFrontGeometry(StrictModule, NonTrainableState):
         crack_id: str = "crack",
         intersection_tolerance: float = 1.0e-12,
     ):
-        points = np.asarray(vertices, dtype=float)
+        points = np.asarray(vertices, dtype=np.float64)
         connectivity = np.asarray(segments, dtype=np.int32)
         orientation_ = int(orientation)
         identifier = str(crack_id)
@@ -321,7 +321,7 @@ class CrackFrontGeometry(StrictModule, NonTrainableState):
         /,
     ) -> CrackFrontGeometry:
         identifier = int(tip_id)
-        point = np.asarray(endpoint, dtype=float)
+        point = np.asarray(endpoint, dtype=np.float64)
         if point.shape != (2,) or np.any(~np.isfinite(point)):
             raise ValueError(
                 "A crack-growth endpoint must be one finite two-dimensional point."
@@ -592,8 +592,7 @@ def build_sharp_crack_topology(
                 > tolerance_
             ):
                 raise ValueError(
-                    "A kink spanning multiple front segments in one T3 cell "
-                    "requires mesh refinement."
+                    "A kink spanning multiple front segments in one T3 cell requires mesh refinement."
                 )
         segment_index, lower, upper = max(
             hits,

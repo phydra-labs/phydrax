@@ -275,11 +275,11 @@ def _design(
     data: Sequence[ScientificLimitDatum],
 ) -> np.ndarray:
     orders = dict(variation.axis_orders)
-    columns = [np.ones((len(data),), dtype=float)]
+    columns = [np.ones((len(data),), dtype=np.float64)]
     for axis in plan.axes:
         coordinate = np.asarray(
             [axis.coordinate(item.coordinate_map()[axis.name]) for item in data],
-            dtype=float,
+            dtype=np.float64,
         )
         for power in range(1, orders[axis.name] + 1):
             columns.append(coordinate**power)

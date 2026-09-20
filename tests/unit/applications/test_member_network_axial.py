@@ -26,7 +26,7 @@ def _axial_problem(*, cable: bool = False, rest_length: float = 1.0):
         structure, positions, rest_lengths=jnp.asarray((rest_length,))
     )
     dofs = mn.MemberDOFLayout(
-        structure, rotation_constrained=jnp.ones((2, 1), dtype=bool)
+        structure, rotation_constrained=jnp.ones((2, 1), dtype="bool")
     )
     definition = mn.MemberNetworkDefinition(structure, reference, properties, dofs)
     law = mn.TensionOnlyCableLaw() if cable else mn.LinearAxialLaw()

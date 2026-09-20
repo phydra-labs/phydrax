@@ -147,7 +147,7 @@ class _AbstractSoftTree(AbstractArrayModel):
         case_shape: tuple[int, ...] = (),
         out_size: int | tuple[int, ...] | Literal["scalar"] | None = None,
     ):
-        case_shape_ = tuple(int(size) for size in case_shape)
+        case_shape_ = tuple(case_shape)
         logits = jnp.asarray(feature_logits)
         if not jnp.issubdtype(logits.dtype, jnp.inexact):
             logits = logits.astype(jnp.float32)
@@ -185,7 +185,7 @@ class _AbstractSoftTree(AbstractArrayModel):
             raise ValueError(
                 "leaf_value must have shape case_shape + (tree, leaf, output)."
             )
-        output_count = int(leaf_.shape[-1])
+        output_count = leaf_.shape[-1]
         inferred_out = "scalar" if output_count == 1 else output_count
         out_size_ = inferred_out if out_size is None else out_size
         expected_outputs = (
@@ -238,19 +238,19 @@ class _AbstractSoftTree(AbstractArrayModel):
 
     @property
     def tree_count(self) -> int:
-        return int(self.feature_logits.shape[-3])
+        return self.feature_logits.shape[-3]
 
     @property
     def internal_node_count(self) -> int:
-        return int(self.feature_logits.shape[-2])
+        return self.feature_logits.shape[-2]
 
     @property
     def leaf_count(self) -> int:
-        return int(self.leaf_value.shape[-2])
+        return self.leaf_value.shape[-2]
 
     @property
     def output_count(self) -> int:
-        return int(self.leaf_value.shape[-1])
+        return self.leaf_value.shape[-1]
 
     def _evaluate(self, x: Any, /) -> tuple[Array, Array, tuple[int, ...]]:
         values = jnp.asarray(x)
@@ -348,7 +348,9 @@ class _AbstractSoftTree(AbstractArrayModel):
         child_valid = indices < internal
         left = jnp.where(child_valid, left, -1)
         right = jnp.where(child_valid, right, -1)
-        default_left = jnp.zeros(shape, dtype=bool).at[..., :internal].set(missing >= 0.0)
+        default_left = (
+            jnp.zeros(shape, dtype=jnp.bool_).at[..., :internal].set(missing >= 0.0)
+        )
         leaf_nodes = (
             jnp.zeros(shape + (self.output_count,), dtype=leaves.dtype)
             .at[..., internal:, :]
@@ -361,9 +363,9 @@ class _AbstractSoftTree(AbstractArrayModel):
             right_child=right,
             default_left=default_left,
             leaf_value=leaf_nodes,
-            node_mask=jnp.ones(shape, dtype=bool),
+            node_mask=jnp.ones(shape, dtype=jnp.bool_),
             leaf_mask=jnp.broadcast_to(indices >= internal, shape),
-            tree_mask=jnp.ones(self.case_shape + (self.tree_count,), dtype=bool),
+            tree_mask=jnp.ones(self.case_shape + (self.tree_count,), dtype=jnp.bool_),
             tree_weight=tree_weight,
             base_score=base,
             feature_schema=self.feature_schema,
@@ -463,8 +465,8 @@ def _fit_soft_case(
     )
     internal = 2**depth - 1
     leaves = 2**depth
-    feature_count = int(x.shape[-1])
-    output_count = int(y.shape[-1])
+    feature_count = x.shape[-1]
+    output_count = y.shape[-1]
     logits_key, threshold_key, leaf_key = jax.random.split(key, 3)
     logits = 0.05 * jax.random.normal(
         logits_key, (tree_count, internal, feature_count), dtype=x.dtype
@@ -653,7 +655,7 @@ class _AbstractSoftTreeRecipe(AbstractRecipe):
             and self.objective != "squared_error"
         ):
             raise TypeError("Only soft squared-error trees support complex targets.")
-        case_count = int(x.shape[0])
+        case_count = x.shape[0]
         case_keys = jax.random.split(key, case_count)
         if self.ensemble_kind == "forest":
             tree_weight_single = jnp.full(
@@ -752,7 +754,7 @@ class _AbstractSoftTreeRecipe(AbstractRecipe):
                 batch.case_shape, self.tree_count * (2 ** (self.depth + 1) - 1)
             ),
             leaves_used=jnp.full(batch.case_shape, self.tree_count * 2**self.depth),
-            capacity_exhausted=jnp.zeros(batch.case_shape, dtype=bool),
+            capacity_exhausted=jnp.zeros(batch.case_shape, dtype=jnp.bool_),
             converged=valid,
             method=f"soft_{self.ensemble_kind}",
             split_search="relaxed",

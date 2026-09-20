@@ -59,7 +59,7 @@ class _SurfaceFEMBinding3D(StrictModule, NonTrainableState):
             raise ValueError(
                 "[geometry] Surface Galerkin preparation requires a watertight mesh."
             )
-        vertices = np.asarray(triangle_mesh.vertices, dtype=float)
+        vertices = np.asarray(triangle_mesh.vertices, dtype=np.float64)
         faces = np.asarray(triangle_mesh.faces, dtype=np.int32)
         component_ids = np.asarray(topology.face_component_ids, dtype=np.int32)
         component_count = int(topology.num_face_components)
@@ -71,14 +71,14 @@ class _SurfaceFEMBinding3D(StrictModule, NonTrainableState):
             axis=1,
         )
         scale = max(float(np.max(np.ptp(vertices, axis=0))), 1.0)
-        area_tolerance = 64.0 * np.finfo(float).eps * scale * scale
+        area_tolerance = 64.0 * np.finfo(np.float64).eps * scale * scale
         if np.any(~np.isfinite(vertices)) or np.any(~np.isfinite(doubled_area)):
             raise ValueError("[geometry] Surface Galerkin geometry must be finite.")
         if np.any(doubled_area <= area_tolerance):
             raise ValueError("[geometry] Surface Galerkin faces must be nondegenerate.")
 
         component_bounds: list[tuple[np.ndarray, np.ndarray]] = []
-        volume_tolerance = 64.0 * np.finfo(float).eps * scale**3
+        volume_tolerance = 64.0 * np.finfo(np.float64).eps * scale**3
         for component in range(component_count):
             component_faces = faces[component_ids == component]
             component_triangles = vertices[component_faces]
@@ -97,8 +97,7 @@ class _SurfaceFEMBinding3D(StrictModule, NonTrainableState):
             )
             if not np.isfinite(signed_volume) or signed_volume <= volume_tolerance:
                 raise ValueError(
-                    "[geometry] Every conductor component must have positive "
-                    "outward signed volume."
+                    "[geometry] Every conductor component must have positive outward signed volume."
                 )
             component_vertices = vertices[np.unique(component_faces)]
             component_bounds.append(
@@ -112,10 +111,9 @@ class _SurfaceFEMBinding3D(StrictModule, NonTrainableState):
                     np.maximum(left_min - right_max, right_min - left_max),
                     0.0,
                 )
-                if float(np.linalg.norm(gap)) <= 64.0 * np.finfo(float).eps * scale:
+                if float(np.linalg.norm(gap)) <= 64.0 * np.finfo(np.float64).eps * scale:
                     raise ValueError(
-                        "[geometry] Initial capacitance geometry requires strictly "
-                        "separated component bounding boxes."
+                        "[geometry] Initial capacitance geometry requires strictly separated component bounding boxes."
                     )
 
         mesh = CellMesh.from_triangles(
@@ -178,7 +176,7 @@ class _SurfaceFEMBinding3D(StrictModule, NonTrainableState):
         self.numeric_version = version
         self.binding_id = canonical_fingerprint(
             {
-                "kind": "surface-fem-binding-3d-v1",
+                "kind": "surface-fem-binding-3d",
                 "region": region.feature_id,
                 "faces": array_tree_fingerprint(triangle_mesh.faces),
                 "mesh": mesh.mesh_id,
@@ -191,7 +189,7 @@ class _SurfaceFEMBinding3D(StrictModule, NonTrainableState):
 
     @property
     def face_count(self) -> int:
-        return int(self.face_areas.shape[0])
+        return self.face_areas.shape[0]
 
 
 __all__: list[str] = []

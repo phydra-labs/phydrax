@@ -105,7 +105,7 @@ def test_mots_is_not_promoted_without_complete_outermost_search_evidence():
 
     no_surface = search.search(
         no_physical_surface,
-        excluded=jnp.ones((search.candidate_capacity,), dtype=bool),
+        excluded=jnp.ones((search.candidate_capacity,), dtype="bool"),
         search_complete=True,
     )
     assert int(no_surface.search.found_count) == 0

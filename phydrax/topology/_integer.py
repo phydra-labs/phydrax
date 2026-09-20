@@ -49,7 +49,7 @@ class ExactIntegerCOO(StrictModule, NonTrainableState):
             raise ValueError("Exact integer matrix dimensions must be non-negative.")
         rows = np.asarray(row_indices)
         columns = np.asarray(column_indices)
-        values = tuple(int(value) for value in coefficients)
+        values = tuple(coefficients)
         if rows.ndim != 1 or columns.ndim != 1:
             raise ValueError("Exact integer matrix indices must be rank-1.")
         if rows.shape != columns.shape or rows.size != len(values):
@@ -138,7 +138,7 @@ class ExactIntegerCOO(StrictModule, NonTrainableState):
             boundary.column_count,
             boundary.row_indices,
             boundary.column_indices,
-            tuple(int(value) for value in np.asarray(boundary.coefficients)),
+            tuple(np.asarray(boundary.coefficients)),
             source_id=f"{boundary.source_id}:degree:{boundary.degree}",
             target_id=f"{boundary.source_id}:degree:{boundary.degree - 1}",
         )
@@ -256,7 +256,7 @@ class ExactIntegerCOO(StrictModule, NonTrainableState):
         )
 
     def apply_integer(self, vector: Sequence[int], /) -> tuple[int, ...]:
-        values = tuple(int(value) for value in vector)
+        values = tuple(vector)
         if len(values) != self.column_count:
             raise ValueError("Exact matrix vector has the wrong coordinate count.")
         output = [0] * self.row_count
@@ -358,8 +358,8 @@ def block_matrix(
     target_id: str,
 ) -> ExactIntegerCOO:
     """Assemble one exact block matrix from coordinate-compatible blocks."""
-    rows_ = tuple(int(value) for value in row_sizes)
-    columns_ = tuple(int(value) for value in column_sizes)
+    rows_ = tuple(row_sizes)
+    columns_ = tuple(column_sizes)
     row_offsets = np.cumsum((0,) + rows_[:-1], dtype=np.int64)
     column_offsets = np.cumsum((0,) + columns_[:-1], dtype=np.int64)
     rows = []

@@ -35,9 +35,9 @@ class GaussianProcessCondition(StrictModule):
     ):
         points = _as_design(query_points)
         mean_array = _as_vector(mean, name="conditioned GP mean")
-        covariance_array = jnp.asarray(covariance, dtype=float)
+        covariance_array = jnp.asarray(covariance, dtype=jnp.float64)
         variance_array = _as_vector(variance, name="conditioned GP variance")
-        count = int(points.shape[0])
+        count = points.shape[0]
         if mean_array.shape != (count,) or variance_array.shape != (count,):
             raise ValueError("Conditioned GP moments must align with query points.")
         if covariance_array.shape != (count, count):
@@ -82,7 +82,7 @@ class GaussianProcessCondition(StrictModule):
         valid_data = jnp.all(jnp.isfinite(data), axis=1)
         conditional = None
         if observation_variance is not None:
-            variance = jnp.asarray(observation_variance, dtype=float)
+            variance = jnp.asarray(observation_variance, dtype=jnp.float64)
             if bool(jnp.any(variance < 0.0)):
                 raise ValueError("observation_variance must be non-negative.")
             variance = jnp.broadcast_to(variance, self.mean.shape)
@@ -114,11 +114,11 @@ class GaussianProcessConditioner(StrictModule):
         output_dims: tuple[str | None, ...],
     ):
         points = _as_design(query_points)
-        projection = jnp.asarray(residual_projection, dtype=float)
-        covariance_array = jnp.asarray(covariance, dtype=float)
+        projection = jnp.asarray(residual_projection, dtype=jnp.float64)
+        covariance_array = jnp.asarray(covariance, dtype=jnp.float64)
         variance_array = _as_vector(variance, name="conditioned GP variance")
-        count = int(points.shape[0])
-        if projection.ndim != 2 or int(projection.shape[0]) != count:
+        count = points.shape[0]
+        if projection.ndim != 2 or projection.shape[0] != count:
             raise ValueError("GP residual projection must have one row per query point.")
         if covariance_array.shape != (count, count) or variance_array.shape != (count,):
             raise ValueError("Conditioner moments must align with query points.")
@@ -133,7 +133,7 @@ class GaussianProcessConditioner(StrictModule):
     def condition(self, residual: ArrayLike, /) -> GaussianProcessCondition:
         """Project a new residual vector without rebuilding any GP factors."""
         values = _as_vector(residual, name="GP residual")
-        if int(values.shape[0]) != int(self.residual_projection.shape[1]):
+        if values.shape[0] != self.residual_projection.shape[1]:
             raise ValueError("GP residual must align with conditioner observations.")
         return GaussianProcessCondition(
             query_points=self.query_points,
@@ -160,20 +160,20 @@ def _sample_gaussian_psd(
 
 
 def _as_design(value: ArrayLike) -> Array:
-    array = jnp.asarray(value, dtype=float)
+    array = jnp.asarray(value, dtype=jnp.float64)
     if array.ndim == 1:
         array = array[:, None]
     if array.ndim < 2:
         raise ValueError(
             "GP inputs must have one design axis and at least one input axis."
         )
-    if any(int(size) <= 0 for size in array.shape[1:]):
+    if any(size <= 0 for size in array.shape[1:]):
         raise ValueError("GP kernel input axes must be nonempty.")
     return array
 
 
 def _as_vector(value: ArrayLike, /, *, name: str) -> Array:
-    array = jnp.asarray(value, dtype=float)
+    array = jnp.asarray(value, dtype=jnp.float64)
     if array.ndim != 1:
         raise ValueError(f"{name} must be one-dimensional.")
     return array

@@ -393,8 +393,7 @@ def _validate_method(
     if isinstance(problem.source, ShallowWaterCoriolisSource):
         if not isinstance(system, ShallowWaterSystem) or system.dimension != 2:
             raise ValueError(
-                "Shallow-water Coriolis forcing requires a two-dimensional "
-                "ShallowWaterSystem."
+                "Shallow-water Coriolis forcing requires a two-dimensional ShallowWaterSystem."
             )
     solver = method.interface_solver
     if isinstance(solver, RoeFluxPlan) and not isinstance(
@@ -495,8 +494,7 @@ def compile_conservation_problem(
                 value is not None for value in (capacity, bathymetry, precision, coupling)
             ):
                 raise ValueError(
-                    "Nodal DG does not accept finite-volume capacity, bathymetry, "
-                    "precision, or coupling options."
+                    "Nodal DG does not accept finite-volume capacity, bathymetry, precision, or coupling options."
                 )
             dynamics = PreparedNodalDGConservationDynamics(
                 problem.system,
@@ -521,8 +519,7 @@ def compile_conservation_problem(
                 )
         else:
             raise TypeError(
-                "Finite-element DGSEM supports EulerSystem or "
-                "CompressibleNavierStokesSystem."
+                "Finite-element DGSEM supports EulerSystem or CompressibleNavierStokesSystem."
             )
         if problem.boundaries is not None and not isinstance(
             problem.boundaries, FiniteElementBoundarySet
@@ -540,8 +537,7 @@ def compile_conservation_problem(
         certificate = method.compatibility
         if (certificate is None) != (entropy_pair is None):
             raise ValueError(
-                "DGSEM entropy_pair and flux compatibility certificate must be "
-                "supplied together."
+                "DGSEM entropy_pair and flux compatibility certificate must be supplied together."
             )
         dynamics = PreparedDGSEMConservationDynamics(
             problem.system,
@@ -565,8 +561,7 @@ def compile_conservation_problem(
             value is not None for value in (capacity, bathymetry, precision, coupling)
         ):
             raise ValueError(
-                "SBP conservation does not accept finite-volume capacity, "
-                "bathymetry, precision, or coupling options."
+                "SBP conservation does not accept finite-volume capacity, bathymetry, precision, or coupling options."
             )
         if method.entropy_diagnostics != (entropy_pair is not None):
             raise ValueError(
@@ -629,8 +624,7 @@ def compile_conservation_problem(
             raise TypeError("Explicit-face geometry requires patch boundary ownership.")
         if entropy_pair is not None:
             raise ValueError(
-                "entropy_pair diagnostics currently support structured and mapped "
-                "finite-volume geometry only."
+                "entropy_pair diagnostics currently support structured and mapped finite-volume geometry only."
             )
         if isinstance(
             method.interface_solver, (HLLCFluxPlan, EinfeldtHLLFluxPlan)
@@ -638,8 +632,7 @@ def compile_conservation_problem(
             problem.system, (EulerSystem, CompressibleNavierStokesSystem)
         ):
             raise ValueError(
-                "Unstructured HLLC and Einfeldt HLL fluxes require an "
-                "Euler-compatible system."
+                "Unstructured HLLC and Einfeldt HLL fluxes require an Euler-compatible system."
             )
         if capacity is not None:
             raise ValueError(
@@ -691,8 +684,7 @@ def compile_conservation_problem(
                 )
             if type(method.reconstruction) is not PiecewiseConstantReconstruction:
                 raise ValueError(
-                    "Per-stage PLIC coupling currently requires exact "
-                    "PiecewiseConstantReconstruction."
+                    "Per-stage PLIC coupling currently requires exact PiecewiseConstantReconstruction."
                 )
             if prepared_coupling.amr is not None:
                 raise ValueError(
@@ -717,8 +709,7 @@ def compile_conservation_problem(
                 )
             if isinstance(problem.system, CompressibleNavierStokesSystem):
                 raise ValueError(
-                    "Viscous embedded-boundary methods are not supported; cut-wall "
-                    "viscous closure must fail closed."
+                    "Viscous embedded-boundary methods are not supported; cut-wall viscous closure must fail closed."
                 )
         dynamics = PreparedUnstructuredFiniteVolumeDynamics(
             problem.system,
@@ -742,8 +733,7 @@ def compile_conservation_problem(
             raise TypeError("Triangle geometry requires patch boundary ownership.")
         if entropy_pair is not None:
             raise ValueError(
-                "entropy_pair diagnostics currently support structured and mapped "
-                "finite-volume geometry only."
+                "entropy_pair diagnostics currently support structured and mapped finite-volume geometry only."
             )
         if isinstance(
             method.interface_solver, (HLLCFluxPlan, EinfeldtHLLFluxPlan)
@@ -751,8 +741,7 @@ def compile_conservation_problem(
             problem.system, (EulerSystem, CompressibleNavierStokesSystem)
         ):
             raise ValueError(
-                "Triangle HLLC and Einfeldt HLL fluxes require an "
-                "Euler-compatible system."
+                "Triangle HLLC and Einfeldt HLL fluxes require an Euler-compatible system."
             )
         triangle_reconstruction_geometry = None
         if isinstance(method.reconstruction, TriangleMUSCLReconstructionPlan):

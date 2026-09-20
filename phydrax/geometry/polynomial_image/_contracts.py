@@ -91,7 +91,7 @@ class PolynomialImageClaimEvidence(StrictModule, NonTrainableState):
         ) = values
         self.evidence_id = canonical_fingerprint(
             {
-                "kind": "polynomial-image-claim-evidence-v1",
+                "kind": "polynomial-image-claim-evidence",
                 "numerical_discovery": numerical_discovery.value,
                 "exact_containment": exact_containment.value,
                 "ideal_equality": ideal_equality.value,
@@ -150,7 +150,7 @@ class TargetMonomialSupport(StrictModule, NonTrainableState):
         self.monomial_count = powers.shape[0]
         self.support_id = canonical_fingerprint(
             {
-                "kind": "target-monomial-support-v1",
+                "kind": "target-monomial-support",
                 "variable_labels": labels,
                 "exponents": array_tree_fingerprint(powers),
             }
@@ -192,8 +192,7 @@ class PolynomialImageResourceEvidence(StrictModule, NonTrainableState):
         limiting_resource: str | None,
     ):
         counts = tuple(
-            int(value)
-            for value in (
+            (
                 sample_count,
                 monomial_count,
                 design_entries,
@@ -219,7 +218,7 @@ class PolynomialImageResourceEvidence(StrictModule, NonTrainableState):
         self.limiting_resource = limiting
         self.evidence_id = canonical_fingerprint(
             {
-                "kind": "polynomial-image-resource-evidence-v1",
+                "kind": "polynomial-image-resource-evidence",
                 "sample_count": counts[0],
                 "monomial_count": counts[1],
                 "design_entries": counts[2],
@@ -322,7 +321,7 @@ class JacobianRankEvidence(StrictModule, NonTrainableState):
         self.svd_plan_ids = plan_ids
         self.evidence_id = canonical_fingerprint(
             {
-                "kind": "polynomial-image-jacobian-rank-evidence-v1",
+                "kind": "polynomial-image-jacobian-rank-evidence",
                 "arrays": array_tree_fingerprint(
                     (
                         singular,
@@ -385,11 +384,11 @@ class TargetRelationEvidence(StrictModule, NonTrainableState):
     ):
         singular = jnp.asarray(singular_values)
         coefficients = jnp.asarray(candidate_coefficients)
-        active = jnp.asarray(candidate_active, dtype=bool)
+        active = jnp.asarray(candidate_active, dtype=jnp.bool_)
         discovery = jnp.asarray(discovery_residuals, dtype=singular.dtype)
         heldout = jnp.asarray(heldout_residuals, dtype=singular.dtype)
         tolerances = jnp.asarray(heldout_tolerances, dtype=singular.dtype)
-        accepted = jnp.asarray(heldout_accepted, dtype=bool)
+        accepted = jnp.asarray(heldout_accepted, dtype=jnp.bool_)
         if singular.ndim != 1 or coefficients.ndim != 2:
             raise ValueError("Relation singular values and candidates have invalid rank.")
         capacity = coefficients.shape[0]
@@ -432,7 +431,7 @@ class TargetRelationEvidence(StrictModule, NonTrainableState):
         self.svd_plan_id = plan_id
         self.evidence_id = canonical_fingerprint(
             {
-                "kind": "polynomial-image-target-relation-evidence-v1",
+                "kind": "polynomial-image-target-relation-evidence",
                 "arrays": array_tree_fingerprint(
                     (
                         singular,
@@ -540,7 +539,7 @@ class PolynomialImageAnalysisResult(StrictModule, NonTrainableState):
         self.plan_id = plan_id_
         self.result_id = canonical_fingerprint(
             {
-                "kind": "polynomial-image-analysis-result-v1",
+                "kind": "polynomial-image-analysis-result",
                 "status": status.value,
                 "source_kind": source_kind.value,
                 "points": array_tree_fingerprint(
@@ -575,8 +574,7 @@ class ExactCompositionRemainder(StrictModule, NonTrainableState):
     ):
         label = str(equation_label)
         canonical_terms = tuple(
-            (tuple(int(power) for power in exponent), str(coefficient))
-            for exponent, coefficient in terms
+            (tuple(exponent), str(coefficient)) for exponent, coefficient in terms
         )
         if not label:
             raise ValueError("Exact composition equation labels must be non-empty.")
@@ -591,7 +589,7 @@ class ExactCompositionRemainder(StrictModule, NonTrainableState):
         self.terms = canonical_terms
         self.remainder_id = canonical_fingerprint(
             {
-                "kind": "exact-polynomial-composition-remainder-v1",
+                "kind": "exact-polynomial-composition-remainder",
                 "equation_label": label,
                 "terms": canonical_terms,
             }
@@ -645,7 +643,7 @@ class ExactPolynomialContainmentResult(StrictModule, NonTrainableState):
         self.relation_system_id = relation_id
         self.proof_id = canonical_fingerprint(
             {
-                "kind": "exact-polynomial-image-containment-v1",
+                "kind": "exact-polynomial-image-containment",
                 "map": map_id_,
                 "relations": relation_id,
                 "remainders": [value.remainder_id for value in values],

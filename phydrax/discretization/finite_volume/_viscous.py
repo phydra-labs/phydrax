@@ -180,8 +180,7 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
             missing = tuple(axis for axis in periodic_axes if axis not in seam_axes)
             if missing:
                 raise ValueError(
-                    "Mapped periodic viscous flux requires prepared isometry evidence "
-                    f"for axes {missing!r}."
+                    f"Mapped periodic viscous flux requires prepared isometry evidence for axes {missing!r}."
                 )
             return _mapped_conserved_gradient(
                 system, time, value, discretization, halo, args
@@ -369,15 +368,15 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
         if value.shape != discretization.state_shape:
             raise ValueError("Unstructured viscous state has incompatible shape.")
         owner = discretization.owner_cells
-        neighbour = discretization.neighbour_cells
-        internal = neighbour >= 0
+        neighbor = discretization.neighbor_cells
+        internal = neighbor >= 0
         internal_owner = owner[internal]
-        internal_neighbour = neighbour[internal]
+        internal_neighbor = neighbor[internal]
         displacement = (
-            discretization.cell_centers[internal_neighbour]
+            discretization.cell_centers[internal_neighbor]
             - discretization.cell_centers[internal_owner]
         )
-        difference = value[internal_neighbour] - value[internal_owner]
+        difference = value[internal_neighbor] - value[internal_owner]
         matrix_terms = displacement[..., :, None] * displacement[..., None, :]
         rhs_terms = difference[..., :, None] * displacement[..., None, :]
         dimension = discretization.cell_dimension
@@ -389,9 +388,9 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
             dtype=value.dtype,
         )
         matrix = matrix.at[internal_owner].add(matrix_terms)
-        matrix = matrix.at[internal_neighbour].add(matrix_terms)
+        matrix = matrix.at[internal_neighbor].add(matrix_terms)
         right_hand_side = right_hand_side.at[internal_owner].add(rhs_terms)
-        right_hand_side = right_hand_side.at[internal_neighbour].add(rhs_terms)
+        right_hand_side = right_hand_side.at[internal_neighbor].add(rhs_terms)
         length_scale = jnp.maximum(
             jnp.max(jnp.abs(discretization.cell_centers), axis=-1),
             jnp.asarray(1.0, dtype=value.dtype),
@@ -432,13 +431,13 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
         )
         equation = system.diffusion_evaluation(value, gradient, args)
         owner = discretization.owner_cells
-        neighbour = discretization.neighbour_cells
-        safe_neighbour = jnp.maximum(neighbour, 0)
-        neighbour_tensor = equation.flux[safe_neighbour]
-        tensor = 0.5 * (equation.flux[owner] + neighbour_tensor)
+        neighbor = discretization.neighbor_cells
+        safe_neighbor = jnp.maximum(neighbor, 0)
+        neighbor_tensor = equation.flux[safe_neighbor]
+        tensor = 0.5 * (equation.flux[owner] + neighbor_tensor)
         normal = discretization.area_vectors / discretization.face_measures[..., None]
         face_flux = ein.contract("fcd,fd->fc", tensor, normal)
-        boundary = neighbour < 0
+        boundary = neighbor < 0
         owner_flux = ein.contract("fcd,fd->fc", equation.flux[owner], normal)
         face_flux = jnp.where(boundary[:, None], owner_flux, face_flux)
         if boundary_normal_flux is not None:
@@ -477,14 +476,14 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
             raise ValueError("Unstructured viscous evaluation requires one face block.")
         integrated = evaluation.face_fluxes[0] * discretization.face_measures[..., None]
         owner = discretization.owner_cells
-        neighbour = discretization.neighbour_cells
+        neighbor = discretization.neighbor_cells
         residual = jnp.asarray(evaluation.cell_source)
         residual = residual.at[owner].add(
             integrated / discretization.cell_volumes[owner, None]
         )
-        internal = neighbour >= 0
-        residual = residual.at[neighbour[internal]].add(
-            -integrated[internal] / discretization.cell_volumes[neighbour[internal], None]
+        internal = neighbor >= 0
+        residual = residual.at[neighbor[internal]].add(
+            -integrated[internal] / discretization.cell_volumes[neighbor[internal], None]
         )
         return residual
 
@@ -534,11 +533,11 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
             (discretization.cell_count,),
         )
         owner = discretization.owner_cells
-        neighbour = discretization.neighbour_cells
-        safe_neighbour = jnp.maximum(neighbour, 0)
+        neighbor = discretization.neighbor_cells
+        safe_neighbor = jnp.maximum(neighbor, 0)
         face_diffusivity = jnp.where(
-            neighbour >= 0,
-            0.5 * (diffusivity[owner] + diffusivity[safe_neighbour]),
+            neighbor >= 0,
+            0.5 * (diffusivity[owner] + diffusivity[safe_neighbor]),
             diffusivity[owner],
         )
         owner_distance = jnp.abs(
@@ -548,12 +547,12 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
                 axis=-1,
             )
         )
-        neighbour_distance = jnp.where(
-            neighbour >= 0,
+        neighbor_distance = jnp.where(
+            neighbor >= 0,
             jnp.abs(
                 jnp.sum(
                     (
-                        discretization.cell_centers[safe_neighbour]
+                        discretization.cell_centers[safe_neighbor]
                         - discretization.face_centers
                     )
                     * (
@@ -565,7 +564,7 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
             ),
             owner_distance,
         )
-        distance = owner_distance + neighbour_distance
+        distance = owner_distance + neighbor_distance
         distance = eqx.error_if(
             distance,
             jnp.any(~jnp.isfinite(distance) | (distance <= 0.0)),
@@ -574,8 +573,8 @@ class ViscousFluxPlan(StrictModule, NonTrainableState):
         weight = 2.0 * discretization.face_measures * face_diffusivity / distance
         rate = jnp.zeros((discretization.cell_count,), dtype=value.dtype)
         rate = rate.at[owner].add(weight)
-        internal = neighbour >= 0
-        rate = rate.at[neighbour[internal]].add(weight[internal])
+        internal = neighbor >= 0
+        rate = rate.at[neighbor[internal]].add(weight[internal])
         rate = rate / discretization.cell_volumes
         maximum_rate = jnp.max(rate)
         step = jnp.where(

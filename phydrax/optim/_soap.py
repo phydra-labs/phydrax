@@ -87,9 +87,7 @@ def _initialize_preconditioner(
     if array.ndim == 1 and not precondition_1d:
         return SOAPPreconditioner((None,))
     return SOAPPreconditioner(
-        jnp.zeros((size, size), dtype=matrix_dtype)
-        if 0 < size <= maximum_size
-        else None
+        jnp.zeros((size, size), dtype=matrix_dtype) if 0 < size <= maximum_size else None
         for size in array.shape
     )
 
@@ -251,8 +249,8 @@ def scale_by_soap(
 
     b1_ = float(b1)
     b2_ = float(b2)
-    covariance_decay = b2_ if preconditioner_decay is None else float(
-        preconditioner_decay
+    covariance_decay = (
+        b2_ if preconditioner_decay is None else float(preconditioner_decay)
     )
     epsilon = float(eps)
     frequency = int(precondition_frequency)
@@ -346,8 +344,7 @@ def scale_by_soap(
         )
         first_moment = jax.tree.map(
             lambda gradient, moment: (
-                b1_ * moment
-                + (1.0 - b1_) * jnp.asarray(gradient, dtype=moment.dtype)
+                b1_ * moment + (1.0 - b1_) * jnp.asarray(gradient, dtype=moment.dtype)
             ),
             projected,
             state.first_moment,
@@ -355,8 +352,7 @@ def scale_by_soap(
         second_moment = jax.tree.map(
             lambda gradient, moment: (
                 b2_ * moment
-                + (1.0 - b2_)
-                * jnp.square(jnp.asarray(gradient, dtype=moment.dtype))
+                + (1.0 - b2_) * jnp.square(jnp.asarray(gradient, dtype=moment.dtype))
             ),
             projected,
             state.second_moment,
@@ -369,8 +365,9 @@ def scale_by_soap(
             first_scale = jnp.asarray(1.0)
             second_scale = jnp.asarray(1.0)
         normalized = jax.tree.map(
-            lambda first, second: (first / first_scale)
-            / (jnp.sqrt(second / second_scale) + epsilon),
+            lambda first, second: (
+                (first / first_scale) / (jnp.sqrt(second / second_scale) + epsilon)
+            ),
             first_moment,
             second_moment,
         )

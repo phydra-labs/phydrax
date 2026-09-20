@@ -86,7 +86,7 @@ class SphericalModeLayout(StrictModule, NonTrainableState):
         self.spin = spin_
         self.reality = reality_
         self.coefficient_shape = (limit, 2 * limit - 1)
-        self.logical_mode_count = int(indices.size)
+        self.logical_mode_count = indices.size
         self.level_multiplicities = multiplicities
         self.mode_ids = mode_ids
         self.normalization = normalization
@@ -169,8 +169,7 @@ class SphericalModeLayout(StrictModule, NonTrainableState):
         levels = jnp.asarray(values)
         if levels.shape != (self.bandlimit,):
             raise ValueError(
-                f"Spherical level values must have shape {(self.bandlimit,)}; "
-                f"got {levels.shape}."
+                f"Spherical level values must have shape {(self.bandlimit,)}; got {levels.shape}."
             )
         padded = jnp.broadcast_to(levels[:, None], self.coefficient_shape)
         return jnp.where(self.valid_mask, padded, jnp.zeros((), dtype=padded.dtype))

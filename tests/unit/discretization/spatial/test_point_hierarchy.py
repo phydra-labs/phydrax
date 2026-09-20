@@ -69,7 +69,7 @@ def test_point_hierarchy_is_permutation_invariant_by_stable_id() -> None:
 
 def test_point_hierarchy_handles_empty_and_coincident_points() -> None:
     points = jnp.full((6, 3), 0.25)
-    empty = _plan().build(points, active_mask=jnp.zeros((6,), dtype=bool))
+    empty = _plan().build(points, active_mask=jnp.zeros((6,), dtype="bool"))
     assert bool(empty.evidence.successful)
     assert int(empty.evidence.active_nodes) == 0
     assert int(empty.root_slot) == -1

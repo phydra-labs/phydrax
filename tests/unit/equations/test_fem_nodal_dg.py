@@ -57,10 +57,7 @@ def _triangle_problem(order=2):
             component_shape=(system.component_count,),
         ),
     ).prepare()
-    exterior = tuple(
-        int(value)
-        for value in np.asarray(discretization.exterior_facet_domain.entity_indices)
-    )
+    exterior = tuple(np.asarray(discretization.exterior_facet_domain.entity_indices))
     boundaries = FiniteElementBoundarySet(
         discretization,
         {"outflow": (exterior, ExtrapolationBoundary())},
@@ -176,10 +173,7 @@ def test_tetrahedron_nodal_dg_preserves_free_stream():
             component_shape=(system.component_count,),
         ),
     ).prepare()
-    exterior = tuple(
-        int(value)
-        for value in np.asarray(discretization.exterior_facet_domain.entity_indices)
-    )
+    exterior = tuple(np.asarray(discretization.exterior_facet_domain.entity_indices))
     boundaries = FiniteElementBoundarySet(
         discretization,
         {"outflow": (exterior, ExtrapolationBoundary())},
@@ -235,10 +229,7 @@ def test_mixed_triangle_quadrilateral_nodal_dg_uses_conservative_mortar():
             component_shape=(system.component_count,),
         ),
     ).prepare()
-    exterior = tuple(
-        int(value)
-        for value in np.asarray(discretization.exterior_facet_domain.entity_indices)
-    )
+    exterior = tuple(np.asarray(discretization.exterior_facet_domain.entity_indices))
     boundaries = FiniteElementBoundarySet(
         discretization,
         {"outflow": (exterior, ExtrapolationBoundary())},
@@ -303,10 +294,7 @@ def test_prism_and_pyramid_nodal_dg_preserve_free_stream():
                 component_shape=(system.component_count,),
             ),
         ).prepare()
-        exterior = tuple(
-            int(value)
-            for value in np.asarray(discretization.exterior_facet_domain.entity_indices)
-        )
+        exterior = tuple(np.asarray(discretization.exterior_facet_domain.entity_indices))
         boundaries = FiniteElementBoundarySet(
             discretization,
             {"outflow": (exterior, ExtrapolationBoundary())},
@@ -372,10 +360,7 @@ def test_tetrahedron_nodal_ldg_preserves_stationary_rest_state():
             component_shape=(system.component_count,),
         ),
     ).prepare()
-    exterior = tuple(
-        int(value)
-        for value in np.asarray(discretization.exterior_facet_domain.entity_indices)
-    )
+    exterior = tuple(np.asarray(discretization.exterior_facet_domain.entity_indices))
     boundaries = FiniteElementBoundarySet(
         discretization,
         {
@@ -446,10 +431,7 @@ def test_polyhedral_three_dimensional_interface_is_conservative():
             component_shape=(system.component_count,),
         ),
     ).prepare()
-    exterior = tuple(
-        int(value)
-        for value in np.asarray(discretization.exterior_facet_domain.entity_indices)
-    )
+    exterior = tuple(np.asarray(discretization.exterior_facet_domain.entity_indices))
     boundaries = FiniteElementBoundarySet(
         discretization,
         {"outflow": (exterior, ExtrapolationBoundary())},
@@ -494,10 +476,7 @@ def test_interval_p_zero_nodal_dg_preserves_constant_state():
             component_shape=(1,),
         ),
     ).prepare()
-    exterior = tuple(
-        int(value)
-        for value in np.asarray(discretization.exterior_facet_domain.entity_indices)
-    )
+    exterior = tuple(np.asarray(discretization.exterior_facet_domain.entity_indices))
     boundaries = FiniteElementBoundarySet(
         discretization,
         {"outflow": (exterior, ExtrapolationBoundary())},
@@ -543,10 +522,7 @@ def test_hexahedron_general_nodal_dg_preserves_free_stream():
             component_shape=(system.component_count,),
         ),
     ).prepare()
-    exterior = tuple(
-        int(value)
-        for value in np.asarray(discretization.exterior_facet_domain.entity_indices)
-    )
+    exterior = tuple(np.asarray(discretization.exterior_facet_domain.entity_indices))
     boundaries = FiniteElementBoundarySet(
         discretization,
         {"outflow": (exterior, ExtrapolationBoundary())},
@@ -653,10 +629,7 @@ def test_nodal_entropy_plan_prepares_formal_simplex_sbp_operator():
             ),
         ),
     )
-    exterior = tuple(
-        int(value)
-        for value in np.asarray(discretization.exterior_facet_domain.entity_indices)
-    )
+    exterior = tuple(np.asarray(discretization.exterior_facet_domain.entity_indices))
     boundaries = FiniteElementBoundarySet(
         discretization,
         {"outflow": (exterior, ExtrapolationBoundary())},
@@ -710,10 +683,7 @@ def test_executable_equilibrium_family_cancels_discrete_source_imbalance():
         equilibrium_state,
         equilibrium_id="linear-density-equilibrium",
     )
-    exterior = tuple(
-        int(value)
-        for value in np.asarray(discretization.exterior_facet_domain.entity_indices)
-    )
+    exterior = tuple(np.asarray(discretization.exterior_facet_domain.entity_indices))
     boundaries = FiniteElementBoundarySet(
         discretization,
         {"outflow": (exterior, ExtrapolationBoundary())},
@@ -734,10 +704,7 @@ def test_executable_equilibrium_family_cancels_discrete_source_imbalance():
 def test_mixed_triangle_viscous_dg_preserves_stationary_rest_state():
     _euler_compiled, _euler, discretization = _triangle_problem(order=2)
     system = CompressibleNavierStokesSystem(ConstantTransport(0.1, 0.2), 2)
-    exterior = tuple(
-        int(value)
-        for value in np.asarray(discretization.exterior_facet_domain.entity_indices)
-    )
+    exterior = tuple(np.asarray(discretization.exterior_facet_domain.entity_indices))
     boundaries = FiniteElementBoundarySet(
         discretization,
         {

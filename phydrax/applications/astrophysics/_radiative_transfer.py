@@ -35,7 +35,7 @@ class RayTransferPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, segment_lengths: ArrayLike, /, *, ray_id: str):
-        lengths = np.asarray(segment_lengths, dtype=float)
+        lengths = np.asarray(segment_lengths, dtype=np.float64)
         squeeze = lengths.ndim == 1
         if squeeze:
             lengths = lengths[None, :]
@@ -141,7 +141,7 @@ class PolarizedRadiativeTransferPlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, segment_lengths, /, *, plan_id="polarized-radiative-transfer"):
-        lengths = np.asarray(segment_lengths, dtype=float)
+        lengths = np.asarray(segment_lengths, dtype=np.float64)
         identifier = str(plan_id)
         if (
             lengths.ndim != 1

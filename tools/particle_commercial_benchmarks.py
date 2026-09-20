@@ -17,7 +17,6 @@ import phydrax as phx
 
 @dataclass(frozen=True)
 class CommercialParticleBenchmark:
-    schema_version: int
     maturity: str
     native_pair_count: int
     native_data_plane_successful: bool
@@ -65,8 +64,8 @@ def run_commercial_particle_benchmark():
     prepared_cells = phx.discretization.MultiPopulationCellPlan(
         box, 0.25, (4, 4)
     ).prepare((first, second))
-    first_position = (jnp.arange(count, dtype=float) + 0.25)[:, None] * spacing
-    second_position = (jnp.arange(count, dtype=float) + 0.75)[:, None] * spacing
+    first_position = (jnp.arange(count, dtype="float64") + 0.25)[:, None] * spacing
+    second_position = (jnp.arange(count, dtype="float64") + 0.75)[:, None] * spacing
     cell_state = prepared_cells.build((first_position, second_position))
     relation = prepared_cells.bipartite_relation(
         cell_state,
@@ -91,7 +90,7 @@ def run_commercial_particle_benchmark():
     neighborhood = phx.discretization.DenseParticleNeighborhoodPlan(
         count * (count - 1) // 2, box=box
     ).prepare(particles)
-    position = (jnp.arange(count, dtype=float) + 0.5)[:, None] * spacing
+    position = (jnp.arange(count, dtype="float64") + 0.5)[:, None] * spacing
     velocity = jnp.zeros_like(position)
     kernel = phx.discretization.WendlandC2SPHKernel(1)
     iisph = phx.discretization.PreparedIISPH(
@@ -146,7 +145,6 @@ def run_commercial_particle_benchmark():
         )
     )
     return CommercialParticleBenchmark(
-        schema_version=1,
         maturity="experimental",
         native_pair_count=int(relation.pair_count),
         native_data_plane_successful=bool(relation.successful),

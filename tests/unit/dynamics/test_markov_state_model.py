@@ -42,7 +42,7 @@ def test_hard_and_soft_reversible_models_agree_and_obey_detailed_balance():
 
 def test_disconnected_markov_model_reports_nonunique_support():
     assignments = jnp.asarray([0, 0, 0, 1, 1, 1], dtype=jnp.int32)
-    reset = jnp.zeros((assignments.size - 1,), dtype=bool).at[2].set(True)
+    reset = jnp.zeros((assignments.size - 1,), dtype="bool").at[2].set(True)
     data = phx.dynamics.TrajectoryData(
         jnp.arange(assignments.size, dtype=jnp.float64),
         assignments[:, None].astype(jnp.float64),

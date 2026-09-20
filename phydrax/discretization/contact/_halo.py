@@ -43,7 +43,7 @@ class ContactHaloExchangePlan(StrictModule, NonTrainableState):
         route_owner = np.asarray(epoch.route_owner)
         send_indices = np.zeros((ranks, capacity), dtype=np.int32)
         send_targets = np.zeros((ranks, capacity), dtype=np.int32)
-        send_valid = np.zeros((ranks, capacity), dtype=bool)
+        send_valid = np.zeros((ranks, capacity), dtype=np.bool_)
         counts = np.zeros((ranks,), dtype=np.int32)
         for route, pair in enumerate(participant_ranks):
             first, second = int(pair[0]), int(pair[1])
@@ -65,7 +65,7 @@ class ContactHaloExchangePlan(StrictModule, NonTrainableState):
             jnp.asarray(send_valid),
             ranks,
             capacity,
-            int(route_owner.size),
+            route_owner.size,
             canonical_fingerprint(
                 {
                     "kind": "contact-halo-exchange-plan",
@@ -146,7 +146,7 @@ def reduce_contact_halo(
     local = jnp.asarray(local_route_values)
     received = jnp.asarray(received_values, dtype=local.dtype)
     indices = jnp.asarray(received_route_indices, dtype=jnp.int32)
-    valid = jnp.asarray(received_valid, dtype=bool)
+    valid = jnp.asarray(received_valid, dtype=jnp.bool_)
     if (
         local.shape[0] != plan.route_count
         or received.shape[0] != indices.size
@@ -165,7 +165,7 @@ def reduce_contact_halo(
         (indices[:, None] == indices[None, :])
         & valid[:, None]
         & valid[None, :]
-        & ~jnp.eye(indices.size, dtype=bool)
+        & ~jnp.eye(indices.size, dtype=jnp.bool_)
     )
     duplicates = jnp.sum(jnp.any(equality, axis=1), dtype=jnp.int32)
     expected_change = jnp.sum(contribution, axis=0)

@@ -96,7 +96,7 @@ class StreamingGaussianMoments(StrictModule):
         )
         active = jnp.isfinite(w) & (w >= 0.0) & jnp.all(jnp.isfinite(x), axis=-1)
         if mask is not None:
-            active &= jnp.broadcast_to(jnp.asarray(mask, dtype=bool), x.shape[:-1])
+            active &= jnp.broadcast_to(jnp.asarray(mask, dtype=jnp.bool_), x.shape[:-1])
         w = jnp.where(active, w, 0.0)
         safe_x = jnp.where(active[..., None], x, 0)
         batch_mass = jnp.sum(w, axis=-1)

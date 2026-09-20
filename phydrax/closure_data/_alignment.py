@@ -109,8 +109,8 @@ class PreparedConservativeAlignment(StrictModule, NonTrainableState):
     ):
         if not isinstance(plan, ConservativeAlignmentPlan):
             raise TypeError("plan must be a ConservativeAlignmentPlan.")
-        source = tuple(int(value) for value in source_shape)
-        target = tuple(int(value) for value in target_shape)
+        source = tuple(source_shape)
+        target = tuple(target_shape)
         if (
             not source
             or len(source) != len(target)
@@ -182,8 +182,7 @@ class PreparedConservativeAlignment(StrictModule, NonTrainableState):
         rank = len(self.source_shape)
         if source.ndim < rank or tuple(source.shape[:rank]) != self.source_shape:
             raise ValueError(
-                f"Alignment values must begin with source shape {self.source_shape}; "
-                f"got {source.shape}."
+                f"Alignment values must begin with source shape {self.source_shape}; got {source.shape}."
             )
         if self.kind == "identity":
             aligned = source
@@ -242,7 +241,7 @@ def conservative_restrict(
     fine_cell_volumes: ArrayLike | None = None,
 ) -> Array:
     values = jnp.asarray(fine_values)
-    ratio = tuple(int(value) for value in refinement_ratio)
+    ratio = tuple(refinement_ratio)
     rank = len(ratio)
     if (
         not ratio
@@ -276,7 +275,7 @@ def conservative_prolong(
     coarse_values: ArrayLike, refinement_ratio: tuple[int, ...], /
 ) -> Array:
     values = jnp.asarray(coarse_values)
-    ratio = tuple(int(value) for value in refinement_ratio)
+    ratio = tuple(refinement_ratio)
     if not ratio or values.ndim < len(ratio) or any(value <= 0 for value in ratio):
         raise ValueError("Coarse values and refinement ratio are incompatible.")
     result = values

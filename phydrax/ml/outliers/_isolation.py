@@ -44,13 +44,13 @@ def _build_tree_one(
     key: Array,
     max_depth: int,
 ) -> tuple[Array, Array, Array, Array]:
-    feature_count = int(x.shape[-1])
+    feature_count = x.shape[-1]
     node_count = 2 ** (max_depth + 1) - 1
     internal_count = 2**max_depth - 1
-    membership = jnp.zeros((node_count, x.shape[0]), dtype=bool).at[0].set(active)
+    membership = jnp.zeros((node_count, x.shape[0]), dtype=jnp.bool_).at[0].set(active)
     features = jnp.zeros((node_count,), dtype=jnp.int32)
     thresholds = jnp.zeros((node_count,), dtype=x.dtype)
-    splittable = jnp.zeros((node_count,), dtype=bool)
+    splittable = jnp.zeros((node_count,), dtype=jnp.bool_)
     keys = jax.random.split(key, internal_count * 2)
 
     for node in range(internal_count):
@@ -82,7 +82,7 @@ def _build_tree_one(
 
     active_count = jnp.sum(active)
     mean_weight = jnp.sum(weights) / jnp.maximum(active_count, 1)
-    normalized_weights = weights / jnp.maximum(mean_weight, jnp.finfo(float).tiny)
+    normalized_weights = weights / jnp.maximum(mean_weight, jnp.finfo(jnp.float64).tiny)
     leaf_mass = jnp.sum(membership * normalized_weights[None, :], axis=-1)
     return features, thresholds, splittable, leaf_mass
 
@@ -132,7 +132,7 @@ def _hard_forest_scores_one(
             lambda f_, t_, s_, m_: _hard_tree_path(point, f_, t_, s_, m_, max_depth)
         )(features, thresholds, splittable, leaf_mass)
         return jnp.exp2(
-            -jnp.mean(paths) / jnp.maximum(normalization, jnp.finfo(float).tiny)
+            -jnp.mean(paths) / jnp.maximum(normalization, jnp.finfo(jnp.float64).tiny)
         )
 
     return jax.vmap(score_point)(queries)
@@ -147,7 +147,7 @@ def _smooth_tree_path(
     max_depth: int,
     temperature: float,
 ) -> Array:
-    node_count = int(features.shape[0])
+    node_count = features.shape[0]
     internal_count = 2**max_depth - 1
     probabilities = jnp.zeros((node_count,), dtype=point.dtype).at[0].set(1.0)
     expected = jnp.asarray(0.0, dtype=point.dtype)
@@ -189,7 +189,7 @@ def _smooth_forest_scores_one(
             )
         )(features, thresholds, splittable, leaf_mass)
         return jnp.exp2(
-            -jnp.mean(paths) / jnp.maximum(normalization, jnp.finfo(float).tiny)
+            -jnp.mean(paths) / jnp.maximum(normalization, jnp.finfo(jnp.float64).tiny)
         )
 
     return jax.vmap(score_point)(queries)
@@ -225,7 +225,7 @@ class IsolationForestModel(AbstractArrayModel):
     ):
         self.feature_indices = jnp.asarray(feature_indices, dtype=jnp.int32)
         self.thresholds = jnp.asarray(thresholds)
-        self.splittable = jnp.asarray(splittable, dtype=bool)
+        self.splittable = jnp.asarray(splittable, dtype=jnp.bool_)
         self.leaf_mass = jnp.asarray(leaf_mass)
         self.normalization = jnp.asarray(normalization)
         self.threshold = jnp.asarray(threshold)
@@ -319,7 +319,7 @@ class SmoothIsolationForestModel(AbstractArrayModel):
             raise ValueError("temperature must be positive.")
         self.feature_indices = jnp.asarray(feature_indices, dtype=jnp.int32)
         self.thresholds = jnp.asarray(thresholds)
-        self.splittable = jnp.asarray(splittable, dtype=bool)
+        self.splittable = jnp.asarray(splittable, dtype=jnp.bool_)
         self.leaf_mass = jnp.asarray(leaf_mass)
         self.normalization = jnp.asarray(normalization)
         self.threshold = jnp.asarray(threshold)
@@ -446,7 +446,7 @@ class IsolationForestRecipe(AbstractRecipe):
             valid=valid,
             status=status,
             objective=jnp.sum(jnp.where(active, weights * training_scores, 0.0), axis=-1)
-            / jnp.maximum(jnp.sum(weights, axis=-1), jnp.finfo(float).tiny),
+            / jnp.maximum(jnp.sum(weights, axis=-1), jnp.finfo(jnp.float64).tiny),
             iterations=self.max_depth,
             effective_samples=effective,
             threshold=threshold,

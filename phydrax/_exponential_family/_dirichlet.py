@@ -65,7 +65,7 @@ def _solve_dirichlet_concentration(
     max_iterations: int,
 ) -> tuple[Array, Array, Array]:
     dtype = mean.dtype
-    categories = int(mean.shape[-1])
+    categories = mean.shape[-1]
     gap = -jax.nn.logsumexp(mean, axis=-1)
     initial_total = jnp.maximum((categories - 1.0) / (2.0 * gap), 0.01)
     lower = jnp.log(initial_total) - 4.0
@@ -93,7 +93,7 @@ def _solve_dirichlet_concentration(
     lower, upper = jax.lax.fori_loop(0, 16, bracket_step, (lower, upper))
     concentration = concentration_from_log_total(0.5 * (lower + upper))
     iterations = jnp.zeros(mean.shape[:-1], dtype=jnp.int32)
-    converged = jnp.zeros(mean.shape[:-1], dtype=bool)
+    converged = jnp.zeros(mean.shape[:-1], dtype=jnp.bool_)
     coordinate_scale = jnp.maximum(jnp.abs(mean), 1.0)
     coordinate_tolerance = (
         jnp.maximum(atol, 64.0 * jnp.finfo(dtype).eps * coordinate_scale)
@@ -230,10 +230,9 @@ class DirichletFamily(AbstractExponentialFamily):
         values = jnp.asarray(concentration)
         if jnp.issubdtype(values.dtype, jnp.complexfloating):
             raise TypeError("Dirichlet concentrations must be real-valued.")
-        if values.ndim == 0 or int(values.shape[-1]) != self.num_categories:
+        if values.ndim == 0 or values.shape[-1] != self.num_categories:
             raise ValueError(
-                "Dirichlet concentration must end in num_categories="
-                f"{self.num_categories}; got {values.shape}."
+                f"Dirichlet concentration must end in num_categories={self.num_categories}; got {values.shape}."
             )
         values = values.astype(jnp.result_type(values, 0.0))
         return self.natural(values - 1.0)
@@ -271,10 +270,9 @@ class DirichletFamily(AbstractExponentialFamily):
         raw = jnp.asarray(value)
         if jnp.issubdtype(raw.dtype, jnp.complexfloating):
             raise TypeError("Dirichlet observations must be real-valued.")
-        if raw.ndim == 0 or int(raw.shape[-1]) != self.num_categories:
+        if raw.ndim == 0 or raw.shape[-1] != self.num_categories:
             raise ValueError(
-                "Dirichlet observations must end in simplex dimension "
-                f"{self.num_categories}; got {raw.shape}."
+                f"Dirichlet observations must end in simplex dimension {self.num_categories}; got {raw.shape}."
             )
         observation = raw.astype(jnp.result_type(raw, 0.0))
         tolerance = 64.0 * jnp.finfo(observation.dtype).eps
@@ -288,7 +286,7 @@ class DirichletFamily(AbstractExponentialFamily):
 
     def _log_base_density(self, value: ArrayLike, /) -> Array:
         values = jnp.asarray(value)
-        if values.ndim == 0 or int(values.shape[-1]) != self.num_categories:
+        if values.ndim == 0 or values.shape[-1] != self.num_categories:
             raise ValueError("Dirichlet observations have an incompatible event shape.")
         dtype = jnp.result_type(values, 0.0)
         return jnp.full(

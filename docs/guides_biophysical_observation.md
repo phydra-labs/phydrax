@@ -170,6 +170,6 @@ or a different fixed-capacity layout are not defined.
   likelihood and censor-aware MLE.
 
 Concentrations are in `mol/m³`, temperature in kelvin, molar free energies in
-`J/mol`, potential in volts, distances in metres, and time in seconds unless a
+`J/mol`, potential in volts, distances in meters, and time in seconds unless a
 plan records another explicit display unit. Unit strings document the numerical
 contract; PhydraX does not rescale arrays implicitly.

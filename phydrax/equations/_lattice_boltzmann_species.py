@@ -77,9 +77,9 @@ class SpeciesLatticeBoltzmannProblemIR(StrictModule, NonTrainableState):
         ):
             raise TypeError("boundaries must contain SpeciesBoundaryCondition values.")
         source = (
-            np.zeros((schema.species_count,), dtype=float)
+            np.zeros((schema.species_count,), dtype=np.float64)
             if volumetric_source is None
-            else np.asarray(volumetric_source, dtype=float)
+            else np.asarray(volumetric_source, dtype=np.float64)
         )
         if (
             source.ndim == 0
@@ -137,10 +137,10 @@ class CompiledSpeciesLatticeBoltzmannProblem(StrictModule, NonTrainableState):
         cell_measure: ArrayLike,
         /,
     ):
-        shape = tuple(int(value) for value in spatial_shape)
+        shape = tuple(spatial_shape)
         dx = float(spacing)
         dt = float(step_size)
-        measure = np.asarray(cell_measure, dtype=float)
+        measure = np.asarray(cell_measure, dtype=np.float64)
         if not isinstance(problem, SpeciesLatticeBoltzmannProblemIR):
             raise TypeError("problem must be a SpeciesLatticeBoltzmannProblemIR.")
         if not isinstance(lattice, LatticeBoltzmannVelocitySet):
@@ -266,7 +266,7 @@ def compile_species_lattice_boltzmann_problem(
     step_size: float,
     cell_measure: ArrayLike | None = None,
 ) -> CompiledSpeciesLatticeBoltzmannProblem:
-    shape = tuple(int(value) for value in spatial_shape)
+    shape = tuple(spatial_shape)
     measure = spacing ** len(shape) if cell_measure is None else cell_measure
     return CompiledSpeciesLatticeBoltzmannProblem(
         problem, lattice, precision, shape, spacing, step_size, measure

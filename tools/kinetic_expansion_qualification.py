@@ -19,8 +19,8 @@ from phydrax.discretization.finite_difference._distributed import (
 )
 from phydrax.discretization.finite_difference._stencil import StencilFootprint
 from phydrax.discretization.lattice_boltzmann._collision import quadratic_equilibrium
-from phydrax.discretization.lattice_boltzmann._colour_gradient import (
-    recolour_populations,
+from phydrax.discretization.lattice_boltzmann._color_gradient import (
+    recolor_populations,
 )
 from phydrax.discretization.lattice_boltzmann._execution import (
     LatticeBoltzmannExecutionStep,
@@ -159,7 +159,7 @@ def _boundary_case() -> dict[str, object]:
         sign,
         body,
         fraction,
-        np.ones(shape[:-1], dtype=bool),
+        np.ones(shape[:-1], dtype="bool"),
         topology_id="kinetic-expansion-qualification",
     )
     streamed = topology.commit(
@@ -213,10 +213,10 @@ def _geometry_transfer_case() -> dict[str, object]:
     ).prepare()
     source = phx.discretization.LatticeBoltzmannGeometryEpoch.from_mask(
         discretization,
-        np.ones(grid.shape, dtype=bool),
+        np.ones(grid.shape, dtype="bool"),
         source_id="qualification-all-fluid",
     )
-    target_mask = np.ones(grid.shape, dtype=bool)
+    target_mask = np.ones(grid.shape, dtype="bool")
     target_mask[3, 4] = False
     target = phx.discretization.LatticeBoltzmannGeometryEpoch.from_mask(
         discretization,
@@ -282,9 +282,9 @@ def _multiphysics_case() -> dict[str, object]:
     blue = 1.0 - red
     total = jnp.broadcast_to(weights, red.shape + (lattice.population_count,))
     normal = jnp.broadcast_to(jnp.asarray((0.6, 0.8)), red.shape + (2,))
-    recoloured = recolour_populations(total, red, blue, normal, lattice, 0.7)
-    recolour_closure = _maximum_absolute(
-        recoloured.red_populations + recoloured.blue_populations - total
+    recolored = recolor_populations(total, red, blue, normal, lattice, 0.7)
+    recolor_closure = _maximum_absolute(
+        recolored.red_populations + recolored.blue_populations - total
     )
 
     velocity = jnp.broadcast_to(jnp.asarray((0.02, -0.01)), red.shape + (2,))
@@ -307,11 +307,11 @@ def _multiphysics_case() -> dict[str, object]:
     )
     tolerance = 2.0e-13
     return {
-        "recolouring_closure_residual": recolour_closure,
+        "recoloring_closure_residual": recolor_closure,
         "thermal_moment_residual": thermal_residual,
         "species_moment_residual": species_residual,
         "tolerance": tolerance,
-        "passed": max(recolour_closure, thermal_residual, species_residual) <= tolerance,
+        "passed": max(recolor_closure, thermal_residual, species_residual) <= tolerance,
     }
 
 

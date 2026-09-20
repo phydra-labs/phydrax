@@ -29,8 +29,10 @@ def _paired_batch(domain, xs, ts):
     axis = axis_names[0]
     points = frozendict(
         {
-            "x": cx.AxisArray(jnp.asarray(xs, dtype=float), dims=(axis, None)),
-            "t": cx.AxisArray(jnp.asarray(ts, dtype=float).reshape((-1,)), dims=(axis,)),
+            "x": cx.AxisArray(jnp.asarray(xs, dtype="float64"), dims=(axis, None)),
+            "t": cx.AxisArray(
+                jnp.asarray(ts, dtype="float64").reshape((-1,)), dims=(axis,)
+            ),
         }
     )
     return PointBatch(points=points, structure=structure)
@@ -54,7 +56,7 @@ def test_mixed_constraints_2d_transient():
 
     left = domain.component({"x": Boundary()}, where={"x": lambda p: p[0] < -0.9})
     right = domain.component({"x": Boundary()}, where={"x": lambda p: p[0] > 0.9})
-    full_boundary = domain.component({"x": Boundary()})
+    domain.component({"x": Boundary()})
     initial = domain.component({"t": FixedStart()})
 
     specs = [
@@ -65,9 +67,9 @@ def test_mixed_constraints_2d_transient():
         EnforcementSpec(phx.conditions.Initial("u", initial, target=0.0, order=2)),
     ]
 
-    sensors = jnp.array([[0.2, 0.1], [0.4, -0.2]], dtype=float)
-    times = jnp.array([0.25, 0.75], dtype=float)
-    sensor_values = jnp.array([[4.0, 5.0], [6.0, 7.0]], dtype=float)
+    sensors = jnp.array([[0.2, 0.1], [0.4, -0.2]], dtype="float64")
+    times = jnp.array([0.25, 0.75], dtype="float64")
+    sensor_values = jnp.array([[4.0, 5.0], [6.0, 7.0]], dtype="float64")
     interior = InteriorAnchors(
         "u",
         sensors=sensors,
@@ -131,7 +133,7 @@ def test_mixed_constraints_3d_transient():
 
     left = domain.component({"x": Boundary()}, where={"x": lambda p: p[0] < -0.9})
     right = domain.component({"x": Boundary()}, where={"x": lambda p: p[0] > 0.9})
-    full_boundary = domain.component({"x": Boundary()})
+    domain.component({"x": Boundary()})
     initial = domain.component({"t": FixedStart()})
 
     specs = [
@@ -142,9 +144,9 @@ def test_mixed_constraints_3d_transient():
         EnforcementSpec(phx.conditions.Initial("u", initial, target=0.0, order=2)),
     ]
 
-    sensors = jnp.array([[0.2, 0.1, -0.1], [0.4, -0.2, 0.3]], dtype=float)
-    times = jnp.array([0.25, 0.75], dtype=float)
-    sensor_values = jnp.array([[4.0, 5.0], [6.0, 7.0]], dtype=float)
+    sensors = jnp.array([[0.2, 0.1, -0.1], [0.4, -0.2, 0.3]], dtype="float64")
+    times = jnp.array([0.25, 0.75], dtype="float64")
+    sensor_values = jnp.array([[4.0, 5.0], [6.0, 7.0]], dtype="float64")
     interior = InteriorAnchors(
         "u",
         sensors=sensors,

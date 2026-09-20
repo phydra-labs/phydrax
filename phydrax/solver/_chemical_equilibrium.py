@@ -132,14 +132,14 @@ class ChemicalEquilibriumPlan(StrictModule):
                 "Surface species require a site-balanced surface-equilibrium profile."
             )
         gas = np.asarray(
-            tuple(kind is ChemicalPhaseKind.GAS for kind in schema.phases), dtype=bool
+            tuple(kind is ChemicalPhaseKind.GAS for kind in schema.phases), dtype=np.bool_
         )
         if not np.any(gas):
             raise ValueError("Chemical equilibrium requires at least one gas species.")
         full_balance = np.concatenate(
             (
-                np.asarray(schema.element_composition, dtype=float),
-                np.asarray(schema.charges, dtype=float)[None, :],
+                np.asarray(schema.element_composition, dtype=np.float64),
+                np.asarray(schema.charges, dtype=np.float64)[None, :],
             ),
             axis=0,
         )
@@ -147,7 +147,7 @@ class ChemicalEquilibriumPlan(StrictModule):
         balance = full_balance[np.asarray(active_rows, dtype=np.int32)]
         _, _, right_vectors = np.linalg.svd(balance, full_matrices=True)
         nullspace = right_vectors[len(active_rows) :].T
-        phase_pressure = np.ones((schema.phase_count,), dtype=float)
+        phase_pressure = np.ones((schema.phase_count,), dtype=np.float64)
         for index, phase in enumerate(schema.phase_specs):
             if phase.kind is ChemicalPhaseKind.GAS:
                 phase_pressure[index] = float(phase.standard_pressure)

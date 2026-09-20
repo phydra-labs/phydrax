@@ -68,7 +68,7 @@ def test_whole_fmm_position_and_mass_gradients_track_direct_force() -> None:
     def direct_loss(position, mass):
         displacement = position[None, :, :] - position[:, None, :]
         radius_squared = jnp.sum(displacement * displacement, axis=-1) + softening**2
-        valid = ~jnp.eye(position.shape[0], dtype=bool)
+        valid = ~jnp.eye(position.shape[0], dtype="bool")
         acceleration = jnp.sum(
             jnp.where(
                 valid[..., None],

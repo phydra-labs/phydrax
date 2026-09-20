@@ -16,15 +16,14 @@ from ._sampling import _positive_scalar
 
 
 def _paths_array(paths: ArrayLike, slicing: TemporalMesh, /) -> Array:
-    out = jnp.asarray(paths, dtype=float)
+    out = jnp.asarray(paths, dtype=jnp.float64)
     if out.ndim < 2:
         raise ValueError("paths must have shape (..., num_nodes, state_dim).")
-    if int(out.shape[-2]) != slicing.num_nodes:
+    if out.shape[-2] != slicing.num_nodes:
         raise ValueError(
-            "paths node axis must match slicing.num_nodes; "
-            f"got {int(out.shape[-2])} and {slicing.num_nodes}."
+            f"paths node axis must match slicing.num_nodes; got {out.shape[-2]} and {slicing.num_nodes}."
         )
-    if int(out.shape[-1]) < 1:
+    if out.shape[-1] < 1:
         raise ValueError("paths state dimension must be non-empty.")
     return eqx.error_if(out, ~jnp.all(jnp.isfinite(out)), "paths must be finite.")
 
@@ -68,7 +67,7 @@ def potential_action(
     q = _paths_array(paths, slicing)
     mid_q = 0.5 * (q[..., :-1, :] + q[..., 1:, :])
     leading_shape = mid_q.shape[:-2]
-    flat_q = jnp.reshape(mid_q, (-1, int(mid_q.shape[-1])))
+    flat_q = jnp.reshape(mid_q, (-1, mid_q.shape[-1]))
     times = jnp.broadcast_to(
         slicing.midpoints,
         leading_shape + (slicing.num_steps,),

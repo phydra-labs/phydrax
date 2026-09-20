@@ -80,8 +80,8 @@ class FiniteElementReferenceActions(LocalReferenceActions):
             raise ValueError("FE reference values and gradients disagree.")
         if hessians.size and hessians.shape != gradients.shape + (gradients.shape[-1],):
             raise ValueError("FE reference Hessians have incompatible axes.")
-        width = int(values.shape[-1])
-        point_count = int(values.shape[-2])
+        width = values.shape[-1]
+        point_count = values.shape[-2]
         derivative_order = int(maximum_derivative_order)
         modes = tuple(dict.fromkeys(str(value) for value in kernel_modes))
         if derivative_order < 0 or derivative_order > 2:
@@ -243,7 +243,7 @@ class FiniteElementGeometryActions(LocalGeometryActions):
             raise ValueError("FE local geometry actions are inconsistent.")
         self.runtime_layout_id = layout
         self.domain_kind = kind
-        self.entity_count = int(gathers.shape[0])
+        self.entity_count = gathers.shape[0]
         self.coordinate_basis = basis
         self.coordinate_gradients = gradients
         self.coordinate_gathers = gathers
@@ -528,9 +528,9 @@ class FiniteElementLocalProvider(StrictModule):
                 domain.support_id,
                 domain.entity_set_id,
                 owner_cells=np.asarray(domain.owner_cells)[domain_rows],
-                neighbour_cells=np.asarray(domain.neighbour_cells)[domain_rows],
+                neighbor_cells=np.asarray(domain.neighbor_cells)[domain_rows],
                 owner_local_entities=np.asarray(domain.owner_local_entities)[domain_rows],
-                neighbour_local_entities=np.asarray(domain.neighbour_local_entities)[
+                neighbor_local_entities=np.asarray(domain.neighbor_local_entities)[
                     domain_rows
                 ],
                 selection_id=domain.selection_id,

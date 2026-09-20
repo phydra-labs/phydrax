@@ -150,8 +150,7 @@ class MACVariableDensityProjectionPlan(StrictModule, NonTrainableState):
             raise ValueError("solve_method must be 'auto', 'iterative', or 'direct'.")
         if solve_method == "direct":
             raise ValueError(
-                "Variable-density direct pressure solve is unsupported here; no "
-                "iterative fallback was taken."
+                "Variable-density direct pressure solve is unsupported here; no iterative fallback was taken."
             )
         unit_face = tuple(
             jnp.ones(layout.shape, dtype=operators.pressure_space.dtype)

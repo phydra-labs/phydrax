@@ -61,9 +61,9 @@ class PartialAssemblyOperator(StrictModule, NonTrainableState):
         if size <= 0 or bool(jnp.any((routes < 0) | (routes >= size))):
             raise ValueError("Partial assembly routes or global size are invalid.")
         valid_ = (
-            jnp.ones((routes.shape[0],), dtype=bool)
+            jnp.ones((routes.shape[0],), dtype=jnp.bool_)
             if valid is None
-            else jnp.asarray(valid, dtype=bool)
+            else jnp.asarray(valid, dtype=jnp.bool_)
         )
         if valid_.shape != (routes.shape[0],):
             raise ValueError("Partial assembly validity must match entities.")
@@ -80,9 +80,9 @@ class PartialAssemblyOperator(StrictModule, NonTrainableState):
         self.operator_id = canonical_fingerprint(
             {
                 "kind": "partial-assembly-operator",
-                "cells": int(routes.shape[0]),
-                "quadrature": int(basis.shape[0]),
-                "local_width": int(basis.shape[1]),
+                "cells": routes.shape[0],
+                "quadrature": basis.shape[0],
+                "local_width": basis.shape[1],
                 "global_size": size,
             }
         )
@@ -290,9 +290,9 @@ class TensorProductPartialAssemblyOperator(StrictModule, NonTrainableState):
         if size <= 0 or bool(jnp.any((routes < 0) | (routes >= size))):
             raise ValueError("Tensor-product routes or global size are invalid.")
         valid_ = (
-            jnp.ones((routes.shape[0],), dtype=bool)
+            jnp.ones((routes.shape[0],), dtype=jnp.bool_)
             if valid is None
-            else jnp.asarray(valid, dtype=bool)
+            else jnp.asarray(valid, dtype=jnp.bool_)
         )
         if valid_.shape != (routes.shape[0],):
             raise ValueError("Tensor-product validity must match entities.")
@@ -456,7 +456,7 @@ class CollocatedTensorProductOperator(StrictModule, NonTrainableState):
             dimension = 3
         else:
             raise ValueError("Collocated metric must pack 2-D or 3-D symmetric entries.")
-        expected_grid = tuple(int(value) for value in metric.shape[1:-1])
+        expected_grid = tuple(metric.shape[1:-1])
         if isinstance(derivative, Sequence):
             derivatives = tuple(jnp.asarray(value) for value in derivative)
         else:
@@ -476,9 +476,9 @@ class CollocatedTensorProductOperator(StrictModule, NonTrainableState):
         if routes.shape != (metric.shape[0], int(jnp.prod(jnp.asarray(expected_grid)))):
             raise ValueError("Collocated gathers do not match tensor grid size.")
         valid_ = (
-            jnp.ones((routes.shape[0],), dtype=bool)
+            jnp.ones((routes.shape[0],), dtype=jnp.bool_)
             if valid is None
-            else jnp.asarray(valid, dtype=bool)
+            else jnp.asarray(valid, dtype=jnp.bool_)
         )
         if valid_.shape != (routes.shape[0],):
             raise ValueError("Collocated validity must match element count.")
@@ -502,7 +502,7 @@ class CollocatedTensorProductOperator(StrictModule, NonTrainableState):
                 "kind": "collocated-tensor-product-operator",
                 "dimension": dimension,
                 "points": expected_grid,
-                "elements": int(routes.shape[0]),
+                "elements": routes.shape[0],
                 "global_size": size,
             }
         )

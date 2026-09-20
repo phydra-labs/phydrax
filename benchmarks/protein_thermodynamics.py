@@ -74,7 +74,7 @@ def main():
                 )
                 series = SampledSeries(
                     SeriesSupport(
-                        jnp.arange(args.samples, dtype=float),
+                        jnp.arange(args.samples, dtype="float64"),
                         coordinate_id=PICOSECOND.unit_id,
                     ),
                     values,
@@ -143,7 +143,7 @@ def main():
         "analytical-free-energy-run",
     )
     work_count = 1024
-    active = jnp.ones((work_count,), dtype=bool)
+    active = jnp.ones((work_count,), dtype="bool")
     work_dataset = free_energy_workflow.work_dataset(
         jnp.full((work_count,), 2.4),
         active,

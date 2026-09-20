@@ -161,7 +161,7 @@ class LinearOEDAdapter(StrictModule, NonTrainableState):
             ),
             axis=-1,
         )
-        valid = jnp.full(times_s.shape, self.domain_ok, dtype=bool)
+        valid = jnp.full(times_s.shape, self.domain_ok, dtype="bool")
         return BatteryModelOutput(values, valid)
 
     def ledger(self, prepared_model, native_solution, runtime_inputs, /):
@@ -1133,7 +1133,7 @@ def test_unreleased_profile_calibration_binding_and_asymmetric_prior_are_rejecte
         )
 
     near_symmetric = np.eye(3)
-    near_symmetric[0, 1] = 8.0 * np.finfo(float).eps
+    near_symmetric[0, 1] = 8.0 * np.finfo(np.float64).eps
     prepared = prepare_battery_oed(
         calibration,
         _support(),

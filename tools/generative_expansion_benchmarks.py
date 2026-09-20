@@ -95,9 +95,7 @@ def benchmark_subspace_law(*, sample_count: int):
     seconds = perf_counter() - start
     coefficients, residual = layout.project(samples)
     maximum_residual = jnp.max(residual)
-    reconstruction_error = jnp.max(
-        jnp.abs(layout.synthesize(coefficients) - samples)
-    )
+    reconstruction_error = jnp.max(jnp.abs(layout.synthesize(coefficients) - samples))
     return {
         "case": "hausdorff-subspace-gaussian",
         "sample_count": sample_count,
@@ -122,10 +120,12 @@ def benchmark_complex_law(*, sample_count: int):
     _ready(log_prob)
     seconds = perf_counter() - start
     mean_error = jnp.linalg.vector_norm(jnp.mean(samples, axis=0) - location)
-    empirical_variance = jnp.mean(jnp.abs(samples - jnp.mean(samples, axis=0)) ** 2, axis=0)
-    variance_error = jnp.linalg.vector_norm(empirical_variance - variance) / jnp.linalg.vector_norm(
-        variance
+    empirical_variance = jnp.mean(
+        jnp.abs(samples - jnp.mean(samples, axis=0)) ** 2, axis=0
     )
+    variance_error = jnp.linalg.vector_norm(
+        empirical_variance - variance
+    ) / jnp.linalg.vector_norm(variance)
     return {
         "case": "proper-complex-gaussian",
         "sample_count": sample_count,
@@ -133,7 +133,9 @@ def benchmark_complex_law(*, sample_count: int):
         "variance_relative_error": float(variance_error),
         "seconds": seconds,
         "passed": bool(
-            jnp.all(jnp.isfinite(log_prob)) and mean_error < 0.05 and variance_error < 0.06
+            jnp.all(jnp.isfinite(log_prob))
+            and mean_error < 0.05
+            and variance_error < 0.06
         ),
     }
 

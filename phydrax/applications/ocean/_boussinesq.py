@@ -111,8 +111,8 @@ class CartesianBoussinesqOceanPlan(StrictModule, NonTrainableState):
         f = float(coriolis_parameter)
         if not np.isfinite(viscosity_) or viscosity_ < 0.0 or not np.isfinite(f):
             raise ValueError("Ocean viscosity and Coriolis parameter are invalid.")
-        temperature_diffusivity_ = jnp.asarray(temperature_diffusivity, dtype=float)
-        salinity_diffusivity_ = jnp.asarray(salinity_diffusivity, dtype=float)
+        temperature_diffusivity_ = jnp.asarray(temperature_diffusivity, dtype=jnp.float64)
+        salinity_diffusivity_ = jnp.asarray(salinity_diffusivity, dtype=jnp.float64)
         for name, value in (
             ("temperature", temperature_diffusivity_),
             ("salinity", salinity_diffusivity_),
@@ -428,8 +428,7 @@ class PreparedCartesianBoussinesqOcean(StrictModule):
             raise ValueError("sgs_kinetic_energy is valid only for an ocean KSGS plan.")
         if self.plan.ksgs is not None and sgs_kinetic_energy is None:
             raise ValueError(
-                "Ocean KSGS initial state requires explicit nonnegative "
-                "sgs_kinetic_energy."
+                "Ocean KSGS initial state requires explicit nonnegative sgs_kinetic_energy."
             )
         scalars: dict[str, ArrayLike] = {
             self.plan.reference.temperature_name: temperature,

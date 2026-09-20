@@ -213,16 +213,16 @@ class ClusterDiagnostics(StrictModule):
         degeneracy: Any = False,
         method: str,
     ):
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.status = jnp.asarray(status, dtype=jnp.int32)
         self.objective = jnp.asarray(objective)
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32)
         self.effective_samples = jnp.asarray(effective_samples)
         self.cluster_mass = jnp.asarray(cluster_mass)
-        self.active_clusters = jnp.asarray(active_clusters, dtype=bool)
-        self.empty_clusters_seen = jnp.asarray(empty_clusters_seen, dtype=bool)
-        self.converged = jnp.asarray(converged, dtype=bool)
-        self.degeneracy = jnp.asarray(degeneracy, dtype=bool)
+        self.active_clusters = jnp.asarray(active_clusters, dtype=jnp.bool_)
+        self.empty_clusters_seen = jnp.asarray(empty_clusters_seen, dtype=jnp.bool_)
+        self.converged = jnp.asarray(converged, dtype=jnp.bool_)
+        self.degeneracy = jnp.asarray(degeneracy, dtype=jnp.bool_)
         self.method = str(method)
 
 
@@ -247,7 +247,7 @@ class HardClusterModel(AbstractArrayModel):
         method: str,
     ):
         self.centers = jnp.asarray(centers)
-        self.active_clusters = jnp.asarray(active_clusters, dtype=bool)
+        self.active_clusters = jnp.asarray(active_clusters, dtype=jnp.bool_)
         self.in_size = self.centers.shape[-1]
         self.out_size = "scalar"
         self.case_shape = self.centers.shape[:-2]
@@ -295,7 +295,7 @@ class SoftClusterModel(AbstractArrayModel):
         method: str,
     ):
         self.centers = jnp.asarray(centers)
-        self.active_clusters = jnp.asarray(active_clusters, dtype=bool)
+        self.active_clusters = jnp.asarray(active_clusters, dtype=jnp.bool_)
         self.temperature = positive_scalar(
             jnp.asarray(temperature, dtype=real_dtype(self.centers.dtype)), "temperature"
         )

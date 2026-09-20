@@ -67,8 +67,7 @@ class HolzapfelOgden2009Parameters(StrictModule, NonTrainableState):
             bool(value == 0.0) for value in amplitudes
         ):
             raise ValueError(
-                "Holzapfel--Ogden stress amplitudes must be nonnegative with at "
-                "least one positive amplitude."
+                "Holzapfel--Ogden stress amplitudes must be nonnegative with at least one positive amplitude."
             )
         if any(bool(value <= 0.0) for value in exponents):
             raise ValueError(

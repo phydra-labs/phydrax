@@ -77,8 +77,8 @@ def test_finite_and_truncated_link_algebras_have_explicit_cutoff_defects():
         u1.electric_field @ u1.link_operator - u1.link_operator @ u1.electric_field,
         u1.link_operator,
     )
-    center = jnp.zeros((u1.dimension,), dtype=complex).at[2].set(1.0)
-    boundary = jnp.zeros((u1.dimension,), dtype=complex).at[-1].set(1.0)
+    center = jnp.zeros((u1.dimension,), dtype="complex128").at[2].set(1.0)
+    boundary = jnp.zeros((u1.dimension,), dtype="complex128").at[-1].set(1.0)
     assert u1.cutoff_evidence(center).valid
     assert not u1.cutoff_evidence(boundary).valid
     assert u1.cutoff_evidence(boundary).state_defect_norm == 1.0
@@ -87,8 +87,8 @@ def test_finite_and_truncated_link_algebras_have_explicit_cutoff_defects():
     assert su2.dimension == 5
     assert su2.algebra.valid
     assert su2.algebra.link_covariance_residual <= 1e-12
-    singlet = jnp.zeros((su2.dimension,), dtype=complex).at[0].set(1.0)
-    doublet = jnp.zeros((su2.dimension,), dtype=complex).at[-1].set(1.0)
+    singlet = jnp.zeros((su2.dimension,), dtype="complex128").at[0].set(1.0)
+    doublet = jnp.zeros((su2.dimension,), dtype="complex128").at[-1].set(1.0)
     assert su2.cutoff_evidence(singlet).boundary_probability == 0.0
     assert su2.cutoff_evidence(doublet).boundary_probability == 1.0
 

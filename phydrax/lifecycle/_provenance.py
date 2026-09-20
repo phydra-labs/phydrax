@@ -206,7 +206,7 @@ class BuildProvenance:
 
     def to_record(self) -> dict[str, object]:
         return {
-            "kind": "build-provenance-v1",
+            "kind": "build-provenance",
             **self._content_record(),
             "provenance_id": self.provenance_id,
         }

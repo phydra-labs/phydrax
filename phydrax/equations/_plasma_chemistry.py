@@ -102,7 +102,7 @@ class PreparedPlasmaMechanism(StrictModule, NonTrainableState):
         mode_energy_per_progress: ArrayLike,
     ):
         specifications = tuple(temperatures)
-        mode_energy = np.asarray(mode_energy_per_progress, dtype=float)
+        mode_energy = np.asarray(mode_energy_per_progress, dtype=np.float64)
         if (
             not isinstance(mechanism, PreparedChemicalMechanism)
             or len(specifications) != mechanism.reaction_count

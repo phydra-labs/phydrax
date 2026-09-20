@@ -47,7 +47,7 @@ RoughDelayVectorFields: TypeAlias = Callable[[Array, Array, DelayValues, Any], A
 RoughDelayDrift: TypeAlias = Callable[[Array, Array, DelayValues, Any], ArrayLike]
 
 
-class _ZeroRoughDelayDrift(eqx.Module):
+class _ZeroRoughDelayDrift(StrictModule):
     zero: Array
 
     def __call__(self, time, state, memory, args):
@@ -95,8 +95,7 @@ class RoughDelayDifferentialProblem(StrictModule):
         allowed = (ConstantDelay, StateDependentDelay, FunctionalDelay, DistributedDelay)
         if not terms or any(not isinstance(term, allowed) for term in terms):
             raise TypeError(
-                "Rough delay terms must be constant, state-dependent, functional, "
-                "or distributed retarded delays."
+                "Rough delay terms must be constant, state-dependent, functional, or distributed retarded delays."
             )
         names = tuple(term.name for term in terms)
         if len(set(names)) != len(names):
@@ -107,12 +106,12 @@ class RoughDelayDifferentialProblem(StrictModule):
         if drift is not None and not callable(drift):
             raise TypeError("drift must be callable or None.")
         resolved_drift = drift
-        start = jnp.asarray(t0, dtype=float)
+        start = jnp.asarray(t0, dtype=jnp.float64)
         if start.shape != ():
             raise ValueError("t0 must be scalar.")
         start = eqx.error_if(start, ~jnp.isfinite(start), "t0 must be finite.")
         state = jnp.asarray(history(start, args))
-        state_shape = tuple(int(size) for size in state.shape)
+        state_shape = tuple(state.shape)
         if not state_shape or any(size <= 0 for size in state_shape):
             raise ValueError("history(t0, args) must have a non-empty positive shape.")
         resolved_geometry = EuclideanStateGeometry() if geometry is None else geometry
@@ -129,22 +128,20 @@ class RoughDelayDifferentialProblem(StrictModule):
             )
         if not resolved_geometry.supports_exact_inverse:
             raise ValueError(
-                "Rough delay history interpolation requires exact "
-                "inverse-retraction capability."
+                "Rough delay history interpolation requires exact inverse-retraction capability."
             )
         tangent_zero = jnp.asarray(
             resolved_geometry.project_tangent(state, jnp.zeros_like(state))
         )
-        tangent_shape = tuple(int(size) for size in tangent_zero.shape)
+        tangent_shape = tuple(tangent_zero.shape)
         local_zero = jnp.asarray(
             resolved_geometry.retraction_inverse_jvp(state, state, tangent_zero)
         )
-        local_shape = tuple(int(size) for size in local_zero.shape)
+        local_shape = tuple(local_zero.shape)
         retracted_zero = jnp.asarray(resolved_geometry.retract(state, local_zero))
         if retracted_zero.shape != state.shape:
             raise ValueError(
-                "Rough delay geometry retraction must return point shape "
-                f"{state.shape}; got {retracted_zero.shape}."
+                f"Rough delay geometry retraction must return point shape {state.shape}; got {retracted_zero.shape}."
             )
         reconstructed_zero = jnp.asarray(
             resolved_geometry.retraction_jvp(
@@ -185,8 +182,7 @@ class RoughDelayDifferentialProblem(StrictModule):
         expected_fields = tangent_shape + (dimension,)
         if fields.shape != expected_fields:
             raise ValueError(
-                f"vector_fields must return physical tangent shape "
-                f"{expected_fields}; got {fields.shape}."
+                f"vector_fields must return physical tangent shape {expected_fields}; got {fields.shape}."
             )
         invalid_fields = jax.vmap(
             lambda column: _invalid_geometry_tangent(
@@ -205,8 +201,7 @@ class RoughDelayDifferentialProblem(StrictModule):
         drift_value = jnp.asarray(resolved_drift(start, state, memory, args))
         if drift_value.shape != tangent_shape:
             raise ValueError(
-                f"drift must return physical tangent shape {tangent_shape}; "
-                f"got {drift_value.shape}."
+                f"drift must return physical tangent shape {tangent_shape}; got {drift_value.shape}."
             )
         drift_value = _validated_geometry_tangent(
             resolved_geometry,
@@ -251,7 +246,7 @@ class RoughDelayDifferentialProblem(StrictModule):
         return jnp.max(jnp.stack(tuple(jnp.asarray(value) for value in values)))
 
 
-class _RoughDelayHistoryView(eqx.Module):
+class _RoughDelayHistoryView(StrictModule):
     times: Array
     states: Array
     current_index: Array
@@ -391,7 +386,7 @@ def _rough_delay_memory(
 def _nearest_time_index(times: Array, value: Array, /) -> Array:
     upper = jnp.searchsorted(times, value, side="left")
     lower = jnp.maximum(upper - 1, 0)
-    safe_upper = jnp.minimum(upper, int(times.size) - 1)
+    safe_upper = jnp.minimum(upper, times.size - 1)
     return jnp.where(
         jnp.abs(times[lower] - value) <= jnp.abs(times[safe_upper] - value),
         lower,
@@ -417,8 +412,7 @@ def _validate_rough_delay_control(
         davie = True
         if any(not isinstance(term, ConstantDelay) for term in problem.delay_terms):
             raise ValueError(
-                "Davie rough delay execution requires constant point delays and "
-                "their delayed cross iterated integrals."
+                "Davie rough delay execution requires constant point delays and their delayed cross iterated integrals."
             )
     else:
         raise TypeError("Rough delay execution currently supports RoughEuler or Davie.")
@@ -556,8 +550,7 @@ def _rough_delay_integrate(
                 else:
                     if not problem.geometry.supports_transport:
                         raise ValueError(
-                            "Unequal-space rough delay Davie correction requires "
-                            "tangent transport."
+                            "Unequal-space rough delay Davie correction requires tangent transport."
                         )
                     tangent_zero = jnp.zeros(
                         problem.tangent_shape,

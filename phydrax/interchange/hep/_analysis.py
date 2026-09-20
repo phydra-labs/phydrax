@@ -34,7 +34,7 @@ def binned_likelihood_to_pyhf_workspace(
 
     if not isinstance(plan, BinnedLikelihoodPlan):
         raise TypeError("plan must be BinnedLikelihoodPlan.")
-    observed = np.asarray(observations, dtype=float)
+    observed = np.asarray(observations, dtype=np.float64)
     nominal = np.asarray(plan.nominal_expectation)
     if (
         observed.shape != nominal.shape

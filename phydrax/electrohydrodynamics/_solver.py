@@ -62,16 +62,16 @@ class CoupledElectrohydrodynamicSolver:
         *,
         tolerance: float = 1e-10,
     ) -> CoupledElectrohydrodynamicSolver:
-        volumes = np.asarray(cell_volumes_m3, dtype=float)
-        poisson = np.asarray(poisson_operator, dtype=float)
-        field = np.asarray(electric_field_operator, dtype=float)
-        transport = np.asarray(charge_transport_generator_s_inv, dtype=float)
-        mobility = np.asarray(fluid_mobility_m3_s_kg, dtype=float)
+        volumes = np.asarray(cell_volumes_m3, dtype=np.float64)
+        poisson = np.asarray(poisson_operator, dtype=np.float64)
+        field = np.asarray(electric_field_operator, dtype=np.float64)
+        transport = np.asarray(charge_transport_generator_s_inv, dtype=np.float64)
+        mobility = np.asarray(fluid_mobility_m3_s_kg, dtype=np.float64)
         permittivity = np.broadcast_to(
-            np.asarray(permittivity_f_m, dtype=float), volumes.shape
+            np.asarray(permittivity_f_m, dtype=np.float64), volumes.shape
         )
         conductivity = np.broadcast_to(
-            np.asarray(conductivity_s_m, dtype=float), volumes.shape
+            np.asarray(conductivity_s_m, dtype=np.float64), volumes.shape
         )
         cells = volumes.size
         vectors = cells * int(spatial_dimension)

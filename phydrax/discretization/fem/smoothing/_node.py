@@ -104,14 +104,14 @@ def node_smoothing_layout(mesh: CellMesh, /) -> SmoothingPatchLayout:
     max_vertices = max(len(record[1]) for record in patch_records)
     max_sources = 3
     dof_routes = np.zeros((vertex_count, max_dofs), dtype=np.int32)
-    dof_valid = np.zeros_like(dof_routes, dtype=bool)
+    dof_valid = np.zeros_like(dof_routes, dtype=np.bool_)
     vertex_sources = np.zeros((vertex_count, max_vertices, max_sources), dtype=np.int32)
-    vertex_coefficients = np.zeros_like(vertex_sources, dtype=float)
-    vertex_valid = np.zeros((vertex_count, max_vertices), dtype=bool)
+    vertex_coefficients = np.zeros_like(vertex_sources, dtype=np.float64)
+    vertex_valid = np.zeros((vertex_count, max_vertices), dtype=np.bool_)
     boundary_edges = np.zeros((vertex_count, max_vertices, 2), dtype=np.int32)
-    boundary_valid = np.zeros((vertex_count, max_vertices), dtype=bool)
+    boundary_valid = np.zeros((vertex_count, max_vertices), dtype=np.bool_)
     boundary_shape_values = np.zeros(
-        (vertex_count, max_vertices, rule_points.size, max_dofs), dtype=float
+        (vertex_count, max_vertices, rule_points.size, max_dofs), dtype=np.float64
     )
     for node, (stencil, ordered, coefficients_by_key, shapes_by_key) in enumerate(
         patch_records

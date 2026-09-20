@@ -59,7 +59,7 @@ def _take_cases(
     partition_id: str,
     /,
 ) -> TrajectoryData:
-    positions = jnp.asarray(tuple(int(index) for index in indices), dtype=jnp.int32)
+    positions = jnp.asarray(tuple(indices), dtype=jnp.int32)
     case_rank = len(data.case_shape)
     num_cases = data.num_cases
     coordinates = _case_first(data.coordinates, num_cases, case_rank)[positions]

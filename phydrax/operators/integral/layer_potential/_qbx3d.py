@@ -84,7 +84,7 @@ def evaluate_qbx_3d(
     triangle_plan: AdaptiveTrianglePlan,
 ) -> QBXEvaluation3D:
     """Evaluate a 3D Laplace field with surface coefficient quadrature."""
-    values = jnp.asarray(targets, dtype=float)
+    values = jnp.asarray(targets, dtype=jnp.float64)
     if values.ndim != 2 or values.shape[1] != 3 or values.shape[0] == 0:
         raise ValueError("3D QBX targets must have shape (target_count, 3).")
     if not isinstance(triangle_plan, AdaptiveTrianglePlan):
@@ -171,7 +171,7 @@ def evaluate_qbx_3d(
             direction = displacement / jnp.linalg.norm(displacement)
             for source_panel in range(panelization.panel_count):
                 start = source_panel * panelization.nodes_per_panel
-                stop = start + panelization.nodes_per_panel
+                start + panelization.nodes_per_panel
                 source_chart = panelization.chart_indices[start]
 
                 def density_at(reference: Array) -> Array:
@@ -295,9 +295,9 @@ def evaluate_qbx_3d(
         clearance=clearance_values,
         association_id=canonical_fingerprint(
             {
-                "kind": "qbx-target-association-3d-v1",
+                "kind": "qbx-target-association-3d",
                 "panelization_id": panelization.panelization_id,
-                "target_count": int(values.shape[0]),
+                "target_count": values.shape[0],
                 "order": expansion_order,
                 "radius_factor": factor,
                 "associations": associations,

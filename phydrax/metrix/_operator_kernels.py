@@ -31,8 +31,7 @@ def apply_cotangent_map(
     dimension = covector_array.shape[-1]
     if matrix.shape[-2:] != (dimension, dimension):
         raise ValueError(
-            "A cotangent map must have trailing shape "
-            f"{(dimension, dimension)}; got {matrix.shape}."
+            f"A cotangent map must have trailing shape {(dimension, dimension)}; got {matrix.shape}."
         )
     return ein.contract("...ij,...j->...i", matrix, covector_array)
 
@@ -54,8 +53,7 @@ class _DensityDivergenceEvaluator(StrictModule):
         dimension = self.density.chart.dimension
         if vector.shape != (dimension,):
             raise ValueError(
-                f"Pointwise vector field must have shape {(dimension,)}; "
-                f"got {vector.shape}."
+                f"Pointwise vector field must have shape {(dimension,)}; got {vector.shape}."
             )
         derivative = jax.jacfwd(self.field)(coordinates)
         log_density_derivative = jax.grad(self.density.log_value)(coordinates)
@@ -112,8 +110,7 @@ class _CovariantSymbolEvaluator(StrictModule):
         symbol = jnp.asarray(self.symbol(coordinates))
         if symbol.shape != (dimension, dimension):
             raise ValueError(
-                f"Pointwise principal symbol must have shape {(dimension, dimension)}; "
-                f"got {symbol.shape}."
+                f"Pointwise principal symbol must have shape {(dimension, dimension)}; got {symbol.shape}."
             )
         result = ein.contract("ij,ij->", symbol, covariant_hessian)
         if self.drift is not None:

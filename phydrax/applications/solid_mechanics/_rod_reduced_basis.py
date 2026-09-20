@@ -192,8 +192,7 @@ class RodStrainBasisPlan(StrictModule, NonTrainableState):
             or coefficients.shape[3] < 1
         ):
             raise ValueError(
-                "polynomial_coefficients must have shape "
-                "(intervals, 6, coordinates, polynomial_coefficients)."
+                "polynomial_coefficients must have shape (intervals, 6, coordinates, polynomial_coefficients)."
             )
         dtype = np.dtype(jnp.asarray(coefficients).dtype)
         coefficients = coefficients.astype(dtype, copy=False)
@@ -243,8 +242,8 @@ class RodStrainBasisPlan(StrictModule, NonTrainableState):
                 "basis_kind": basis_kind,
                 "dimension": dimension_,
                 "components": list(indices),
-                "coordinate_count": int(coefficients.shape[2]),
-                "polynomial_degree": int(coefficients.shape[3] - 1),
+                "coordinate_count": coefficients.shape[2],
+                "polynomial_degree": coefficients.shape[3] - 1,
                 "quadrature_order": order,
                 "rank_tolerance": rank,
                 "maximum_condition_number": condition,
@@ -256,8 +255,8 @@ class RodStrainBasisPlan(StrictModule, NonTrainableState):
         self.component_scales = jnp.asarray(scales)
         self.component_indices = indices
         self.dimension = dimension_
-        self.coordinate_count = int(coefficients.shape[2])
-        self.polynomial_degree = int(coefficients.shape[3] - 1)
+        self.coordinate_count = coefficients.shape[2]
+        self.polynomial_degree = coefficients.shape[3] - 1
         self.quadrature_order = order
         self.rank_tolerance = rank
         self.maximum_condition_number = condition
@@ -311,7 +310,7 @@ class RodStrainBasisPlan(StrictModule, NonTrainableState):
         indices = _component_indices(dimension_, components)
         raw_points = _real_array("breakpoints", breakpoints, 1)
         dtype = raw_points.dtype
-        interval_count = int(raw_points.shape[0] - 1)
+        interval_count = raw_points.shape[0] - 1
         if interval_count < 1:
             raise ValueError("piecewise_constant requires at least one interval.")
         coordinate_count = len(indices) * interval_count
@@ -351,7 +350,7 @@ class RodStrainBasisPlan(StrictModule, NonTrainableState):
         dimension_ = _dimension(dimension)
         indices = _component_indices(dimension_, components)
         if isinstance(degree, Sequence):
-            degrees = tuple(int(value) for value in degree)
+            degrees = tuple(degree)
             if len(degrees) != len(indices):
                 raise ValueError("degree must contain one value per selected component.")
         else:
@@ -626,7 +625,7 @@ def prepare_rod_strain_basis(
         jnp.asarray(dtype_retained),
         jnp.asarray(finite),
         jnp.asarray(finite and full_column_rank and condition_valid and dtype_retained),
-        int(weighted.shape[0]),
+        weighted.shape[0],
         coordinate_count,
         plan_dtype.str,
         np.dtype(stretch_shear_basis.dtype).str,

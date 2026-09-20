@@ -126,7 +126,7 @@ class EventLocalizationPolicy(StrictModule):
         identifier = (
             canonical_fingerprint(
                 {
-                    "kind": "event-localization-policy-v2",
+                    "kind": "event-localization-policy",
                     "corrector": corrector_.method_id,
                     "absolute_residual": termination_.absolute_residual,
                     "relative_residual": termination_.relative_residual,

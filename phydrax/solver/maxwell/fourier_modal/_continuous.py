@@ -265,9 +265,9 @@ def prepare_continuous_fourier_modal_layer(
     prefix_relations.extend(
         boundary for _ in range(policy.maximum_segments + 1 - len(prefix_relations))
     )
-    edges = np.ones((policy.maximum_segments + 1,), dtype=float) * thickness
-    active = np.zeros((policy.maximum_segments,), dtype=bool)
-    defect_values = np.zeros((policy.maximum_segments,), dtype=float)
+    edges = np.ones((policy.maximum_segments + 1,), dtype=np.float64) * thickness
+    active = np.zeros((policy.maximum_segments,), dtype=np.bool_)
+    defect_values = np.zeros((policy.maximum_segments,), dtype=np.float64)
     edges[: len(segments)] = np.asarray([value[0] for value in segments])
     edges[len(segments)] = thickness
     active[: len(segments)] = True

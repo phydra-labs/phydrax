@@ -47,8 +47,7 @@ class RiemannianHypersurface(StrictModule):
         expected = (self.chart.dimension,)
         if covector.shape != expected:
             raise ValueError(
-                f"Pointwise hypersurface conormal must have shape {expected}; "
-                f"got {covector.shape}."
+                f"Pointwise hypersurface conormal must have shape {expected}; got {covector.shape}."
             )
         return covector
 

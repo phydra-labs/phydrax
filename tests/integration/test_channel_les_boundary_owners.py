@@ -91,7 +91,7 @@ def test_mixed_channel_stokes_enforces_traction_without_tangential_no_slip(route
     lower_physical = jnp.zeros(physical_shape).at[..., 0].set(0.02)
     upper_physical = jnp.zeros(physical_shape).at[..., 0].set(-0.01)
     solved = solver.solve(
-        jnp.zeros(space.modal_shape + (3,), dtype=complex),
+        jnp.zeros(space.modal_shape + (3,), dtype="complex128"),
         lower_tangential_traction=solver.project_horizontal_boundary(lower_physical),
         upper_tangential_traction=solver.project_horizontal_boundary(upper_physical),
     )
@@ -306,7 +306,7 @@ def test_unsupported_wall_pressure_gradient_and_open_inflow_refuse():
     with pytest.raises(ValueError, match="accepted-step boundary owner"):
         phx.solver.solve_channel_sbdf2(
             pressure_driven,
-            jnp.zeros(pressure_driven.state_shape, dtype=complex),
+            jnp.zeros(pressure_driven.state_shape, dtype="complex128"),
             jnp.asarray((0.0, 1.0e-5)),
         )
 

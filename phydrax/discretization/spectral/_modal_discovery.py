@@ -64,7 +64,7 @@ class ModalSupportDiscoveryPlan(StrictModule, NonTrainableState):
             if bool(jnp.any(conjugates[conjugates] != jnp.arange(size))):
                 raise ValueError("conjugate_indices must be an involution.")
             if signs is None:
-                signs = jnp.ones((size,), dtype=float)
+                signs = jnp.ones((size,), dtype=jnp.float64)
             if signs.shape != (size,):
                 raise ValueError("conjugate_signs must match candidate capacity.")
         elif signs is not None:
@@ -117,7 +117,7 @@ def discover_modal_support(
     if not isinstance(plan, ModalSupportDiscoveryPlan):
         raise TypeError("plan must be ModalSupportDiscoveryPlan.")
     values = jnp.asarray(coefficients)
-    shape = tuple(int(value) for value in plan.candidate_layout.coefficient_shape)
+    shape = tuple(plan.candidate_layout.coefficient_shape)
     channel_last = (
         values.shape[-len(shape) - 1 : -1] == shape if values.ndim > len(shape) else False
     )
@@ -139,7 +139,7 @@ def discover_modal_support(
             target.shape[:-2] + (matrix.shape[1], target.shape[-1]),
             dtype=jnp.result_type(matrix.dtype, target.dtype),
         )
-        selected_mask = jnp.zeros((matrix.shape[1],), dtype=bool)
+        selected_mask = jnp.zeros((matrix.shape[1],), dtype=jnp.bool_)
         selected_count = jnp.asarray(0, dtype=jnp.int32)
         selection_steps = plan.capacity
         if plan.conjugate_indices is not None:
@@ -205,10 +205,7 @@ def discover_modal_support(
             energy,
             energy + energy[plan.conjugate_indices],
         )
-        order = tuple(
-            int(value)
-            for value in jax.device_get(jnp.argsort(-group_energy, stable=True))
-        )
+        order = tuple(jax.device_get(jnp.argsort(-group_energy, stable=True)))
         selected_host: list[int] = []
         active_host: list[bool] = []
         for candidate in order:
@@ -227,7 +224,7 @@ def discover_modal_support(
         selected_host.extend((0,) * padding)
         active_host.extend((False,) * padding)
         selected = jnp.asarray(selected_host, dtype=jnp.int32)
-        active = jnp.asarray(active_host, dtype=bool)
+        active = jnp.asarray(active_host, dtype=jnp.bool_)
     if plan.conjugate_indices is None:
         active = energy[selected] > 0.0
     selected_coefficients = jnp.take(flat, selected, axis=-2)
@@ -244,7 +241,7 @@ def discover_modal_support(
         {
             "kind": "prepared-modal-support",
             "plan": plan.plan_id,
-            "indices": tuple(int(value) for value in jax.device_get(selected)),
+            "indices": tuple(jax.device_get(selected)),
             "active": tuple(bool(value) for value in jax.device_get(active)),
         }
     )
@@ -277,9 +274,9 @@ def estimate_spectral_regularity(
     *,
     noise_floor: float = 0.0,
 ) -> SpectralRegularityEstimate:
-    wave = jnp.asarray(wavenumbers, dtype=float).reshape((-1,))
-    energy = jnp.asarray(energies, dtype=float).reshape((-1,))
-    edges = jnp.asarray(shell_edges, dtype=float)
+    wave = jnp.asarray(wavenumbers, dtype=jnp.float64).reshape((-1,))
+    energy = jnp.asarray(energies, dtype=jnp.float64).reshape((-1,))
+    edges = jnp.asarray(shell_edges, dtype=jnp.float64)
     if wave.shape != energy.shape or edges.ndim != 1 or edges.shape[0] < 3:
         raise ValueError("Regularity inputs have incompatible finite shapes.")
     shell = jnp.clip(
@@ -295,7 +292,7 @@ def estimate_spectral_regularity(
     usable = (count > 0) & (sums > noise_floor) & (centers > 0.0)
     x_log = jnp.log(jnp.where(usable, centers, 1.0))
     y = jnp.log(jnp.where(usable, sums / jnp.maximum(count, 1), 1.0))
-    weights = usable.astype(float)
+    weights = usable.astype("float64")
 
     def slope(x):
         mean_x = jnp.sum(weights * x) / jnp.maximum(jnp.sum(weights), 1.0)

@@ -255,11 +255,11 @@ class RodPlan(StrictModule, NonTrainableState):
         if not np.issubdtype(segments.dtype, np.integer):
             raise TypeError("segment_node_ids must have an integer dtype.")
         positions = _require_real_array("rest_positions", rest_positions, 2)
-        dimension = int(positions.shape[1])
+        dimension = positions.shape[1]
         if dimension not in (2, 3):
             raise ValueError("Cosserat rods require ambient dimension 2 or 3.")
-        segment_count = int(segments.shape[0])
-        node_count = int(positions.shape[0])
+        segment_count = segments.shape[0]
+        node_count = positions.shape[0]
         if node_count != segment_count + 1:
             raise ValueError("An ordered rod must contain one more node than segments.")
         expected_ids = np.arange(node_count)
@@ -442,8 +442,7 @@ class RodState(StrictModule):
                 3,
             ):
                 raise ValueError(
-                    "Spatial orientations/angular velocities must have shapes "
-                    "(segments, 4) and (segments, 3)."
+                    "Spatial orientations/angular velocities must have shapes (segments, 4) and (segments, 3)."
                 )
         for name, value in (
             ("positions", positions_),

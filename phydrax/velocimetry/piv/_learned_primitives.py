@@ -73,7 +73,7 @@ class CostVolumePlan(StrictModule, NonTrainableState):
 
     @property
     def offset_count(self) -> int:
-        return int(self.offsets_rc.shape[0])
+        return self.offsets_rc.shape[0]
 
 
 class CostVolumeResult(StrictModule, NonTrainableState):
@@ -150,23 +150,25 @@ def build_cost_volume_2d(
         raise TypeError("plan must be a CostVolumePlan.")
 
     base = (
-        jnp.zeros((rows, columns, 2), dtype=jnp.result_type(reference.dtype, float))
+        jnp.zeros((rows, columns, 2), dtype=jnp.result_type(reference.dtype, jnp.float64))
         if base_displacement_rc is None
         else jnp.asarray(base_displacement_rc)
     )
     if base.shape != (rows, columns, 2):
         raise ValueError("base_displacement_rc must have shape (rows, columns, 2).")
     reference_support = (
-        jnp.ones((rows, columns), dtype=bool)
+        jnp.ones((rows, columns), dtype=jnp.bool_)
         if reference_valid is None
-        else jnp.asarray(reference_valid, dtype=bool)
+        else jnp.asarray(reference_valid, dtype=jnp.bool_)
     )
     if reference_support.shape != (rows, columns):
         raise ValueError("reference_valid must have shape (rows, columns).")
     if target_valid is not None and jnp.asarray(target_valid).shape != (rows, columns):
         raise ValueError("target_valid must have shape (rows, columns).")
 
-    normalization = jnp.asarray(channels, dtype=jnp.result_type(reference.dtype, float))
+    normalization = jnp.asarray(
+        channels, dtype=jnp.result_type(reference.dtype, jnp.float64)
+    )
 
     def evaluate_offset(offset_rc: Array) -> tuple[Array, Array]:
         candidate = base + offset_rc
@@ -235,7 +237,7 @@ def resize_displacement_2d(
 
 
 def _masked_mean(values: Array, valid: Array) -> tuple[Array, Array]:
-    mask = jnp.asarray(valid, dtype=bool)
+    mask = jnp.asarray(valid, dtype=jnp.bool_)
     if values.shape != mask.shape:
         mask = jnp.broadcast_to(mask, values.shape)
     safe_values = jnp.where(mask, values, 0.0)
@@ -255,14 +257,14 @@ def _robust_penalty(residual: Array, epsilon: float, exponent: float) -> Array:
 def _resize_image(image: Array, shape: tuple[int, int]) -> Array:
     return jax.image.resize(
         image,
-        shape + (int(image.shape[-1]),),
+        shape + (image.shape[-1],),
         method="linear",
         antialias=True,
     )
 
 
 def _resize_mask(mask: Array, shape: tuple[int, int]) -> Array:
-    resized = jax.image.resize(mask.astype(float), shape, method="nearest")
+    resized = jax.image.resize(mask.astype("float64"), shape, method="nearest")
     return resized > 0.5
 
 
@@ -482,14 +484,14 @@ class MultiScaleRobustPIVLoss(StrictModule, NonTrainableState):
             )
         full_shape = first.shape[:2]
         first_mask = (
-            jnp.ones(full_shape, dtype=bool)
+            jnp.ones(full_shape, dtype=jnp.bool_)
             if first_valid is None
-            else jnp.asarray(first_valid, dtype=bool)
+            else jnp.asarray(first_valid, dtype=jnp.bool_)
         )
         second_mask = (
-            jnp.ones(full_shape, dtype=bool)
+            jnp.ones(full_shape, dtype=jnp.bool_)
             if second_valid is None
-            else jnp.asarray(second_valid, dtype=bool)
+            else jnp.asarray(second_valid, dtype=jnp.bool_)
         )
         if first_mask.shape != full_shape or second_mask.shape != full_shape:
             raise ValueError("Image validity masks must match the image spatial shape.")
@@ -500,7 +502,9 @@ class MultiScaleRobustPIVLoss(StrictModule, NonTrainableState):
             None if target_backward_rc is None else jnp.asarray(target_backward_rc)
         )
         target_mask = (
-            first_mask if target_valid is None else jnp.asarray(target_valid, dtype=bool)
+            first_mask
+            if target_valid is None
+            else jnp.asarray(target_valid, dtype=jnp.bool_)
         )
         if target_forward is not None and target_forward.shape != full_shape + (2,):
             raise ValueError(
@@ -539,7 +543,7 @@ class MultiScaleRobustPIVLoss(StrictModule, NonTrainableState):
                 raise ValueError(
                     "Every displacement level must have equal shape (rows, columns, 2)."
                 )
-            shape = (int(forward.shape[0]), int(forward.shape[1]))
+            shape = (forward.shape[0], forward.shape[1])
             scale_weight = raw_weight / weight_sum
             first_level = _resize_image(first, shape)
             second_level = _resize_image(second, shape)

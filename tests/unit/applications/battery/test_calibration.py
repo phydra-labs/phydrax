@@ -179,9 +179,9 @@ def _record(
         current=np.ones(3),
         voltage=voltage,
         temperature=np.full(3, 300.0),
-        current_mask=np.ones(3, dtype=bool),
+        current_mask=np.ones(3, dtype="bool"),
         voltage_mask=np.asarray(voltage_mask),
-        temperature_mask=np.ones(3, dtype=bool),
+        temperature_mask=np.ones(3, dtype="bool"),
     )
     return preprocess_battery_time_series(
         raw,

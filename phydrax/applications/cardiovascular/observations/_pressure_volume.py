@@ -53,7 +53,7 @@ def _finite_nonnegative(value: float, name: str, /) -> float:
 def _matrix(
     values: ArrayLike, target_count: int, source_count: int, name: str, /
 ) -> np.ndarray:
-    matrix = np.asarray(values, dtype=float)
+    matrix = np.asarray(values, dtype=np.float64)
     if matrix.shape != (target_count, source_count) or np.any(~np.isfinite(matrix)):
         raise ValueError(
             f"{name} must be a finite ({target_count}, {source_count}) matrix."
@@ -87,7 +87,7 @@ def _record_values(
     if record.time_axis_id != timebase.time_axis_id:
         raise ValueError("Observation record and plan time bases differ.")
     values = _trace(record.values, timebase, width, "Observation record values")
-    valid = jnp.asarray(record.valid_mask, dtype=bool)
+    valid = jnp.asarray(record.valid_mask, dtype=jnp.bool_)
     if valid.shape != values.shape:
         raise ValueError("Observation record validity mask must match its values.")
     return values, valid
@@ -114,7 +114,7 @@ class PressureTraceResult(StrictModule):
 
 
 class PressureObservationPlan(StrictModule, NonTrainableState):
-    """Fixed labelled pressure response with an explicit target gauge reference."""
+    """Fixed labeled pressure response with an explicit target gauge reference."""
 
     response: LinearObservationPlan
     reference_pressure_kpa: Array
@@ -143,7 +143,7 @@ class PressureObservationPlan(StrictModule, NonTrainableState):
         response = _matrix(
             response_matrix, len(channels), len(sources), "Pressure response"
         )
-        reference = np.asarray(reference_pressure_kpa, dtype=float)
+        reference = np.asarray(reference_pressure_kpa, dtype=np.float64)
         if reference.shape == ():
             reference = np.full((len(channels),), float(reference))
         if reference.shape != (len(channels),) or np.any(~np.isfinite(reference)):
@@ -187,7 +187,7 @@ class PressureObservationPlan(StrictModule, NonTrainableState):
             len(self.source_labels),
             "Absolute pressure",
         )
-        return self._observe(values, jnp.ones_like(values, dtype=bool))
+        return self._observe(values, jnp.ones_like(values, dtype=jnp.bool_))
 
     def from_record(self, record: ObservationRecord, /) -> PressureTraceResult:
         values, valid = _record_values(
@@ -222,7 +222,7 @@ class PressureObservationPlan(StrictModule, NonTrainableState):
 
 
 class VolumeTraceResult(StrictModule):
-    """Observed chamber or control-volume traces in cubic millimetres."""
+    """Observed chamber or control-volume traces in cubic millimeters."""
 
     volume_mm3: Array
     timebase: SampleTimeAxis
@@ -232,7 +232,7 @@ class VolumeTraceResult(StrictModule):
 
 
 class VolumeObservationPlan(StrictModule, NonTrainableState):
-    """Fixed labelled linear response for chamber/control-volume observations."""
+    """Fixed labeled linear response for chamber/control-volume observations."""
 
     response: LinearObservationPlan
     timebase: SampleTimeAxis
@@ -282,7 +282,7 @@ class VolumeObservationPlan(StrictModule, NonTrainableState):
 
     def observe(self, volume_mm3: ArrayLike, /) -> VolumeTraceResult:
         values = _trace(volume_mm3, self.timebase, len(self.source_labels), "Volume")
-        return self._observe(values, jnp.ones_like(values, dtype=bool))
+        return self._observe(values, jnp.ones_like(values, dtype=jnp.bool_))
 
     def from_record(self, record: ObservationRecord, /) -> VolumeTraceResult:
         values, valid = _record_values(
@@ -315,7 +315,7 @@ class VolumeObservationPlan(StrictModule, NonTrainableState):
 
 
 class FlowTraceResult(StrictModule):
-    """Oriented volumetric-flow traces in cubic millimetres per millisecond."""
+    """Oriented volumetric-flow traces in cubic millimeters per millisecond."""
 
     flow_mm3_per_ms: Array
     timebase: SampleTimeAxis
@@ -326,7 +326,7 @@ class FlowTraceResult(StrictModule):
 
 
 class FlowObservationPlan(StrictModule, NonTrainableState):
-    """Fixed labelled flow response with explicit per-port orientation signs."""
+    """Fixed labeled flow response with explicit per-port orientation signs."""
 
     response: LinearObservationPlan
     orientation_signs: Array
@@ -358,7 +358,7 @@ class FlowObservationPlan(StrictModule, NonTrainableState):
         if len(directions) != len(channels):
             raise ValueError("One positive flow direction is required per channel.")
         response = _matrix(response_matrix, len(channels), len(sources), "Flow response")
-        signs = np.asarray(orientation_signs, dtype=float)
+        signs = np.asarray(orientation_signs, dtype=np.float64)
         if signs.shape != (len(channels),) or np.any(np.abs(signs) != 1.0):
             raise ValueError(
                 "Flow orientation signs must be exactly +1 or -1 per channel."
@@ -392,7 +392,7 @@ class FlowObservationPlan(StrictModule, NonTrainableState):
 
     def observe(self, flow_mm3_per_ms: ArrayLike, /) -> FlowTraceResult:
         values = _trace(flow_mm3_per_ms, self.timebase, len(self.source_labels), "Flow")
-        return self._observe(values, jnp.ones_like(values, dtype=bool))
+        return self._observe(values, jnp.ones_like(values, dtype=jnp.bool_))
 
     def from_record(self, record: ObservationRecord, /) -> FlowTraceResult:
         values, valid = _record_values(

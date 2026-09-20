@@ -129,8 +129,8 @@ class ConvexProgramCertificate(StrictModule):
         self.dual_ray_residual_norm = jnp.asarray(dual_ray_residual_norm)
         self.primal_ray_objective = jnp.asarray(primal_ray_objective)
         self.dual_ray_objective = jnp.asarray(dual_ray_objective)
-        self.primal_ray_valid = jnp.asarray(primal_ray_valid, dtype=bool)
-        self.dual_ray_valid = jnp.asarray(dual_ray_valid, dtype=bool)
+        self.primal_ray_valid = jnp.asarray(primal_ray_valid, dtype=jnp.bool_)
+        self.dual_ray_valid = jnp.asarray(dual_ray_valid, dtype=jnp.bool_)
 
 
 class ConvexWarmStart(StrictModule):

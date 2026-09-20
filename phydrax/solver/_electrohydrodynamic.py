@@ -47,7 +47,7 @@ class CochainElectrohydrodynamicForcePlan(StrictModule, NonTrainableState):
         if not isinstance(bridge, StructuredCochainBridge):
             raise TypeError("bridge must be StructuredCochainBridge.")
         incidence = bridge.cochain.topology.incidences[0]
-        valid = np.asarray(incidence.relation.valid, dtype=bool)
+        valid = np.asarray(incidence.relation.valid, dtype=np.bool_)
         source = np.asarray(incidence.relation.source_indices)[valid]
         target = np.asarray(incidence.relation.target_indices)[valid]
         signs = np.asarray(incidence.signs)[valid]

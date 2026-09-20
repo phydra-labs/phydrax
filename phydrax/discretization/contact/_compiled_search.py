@@ -62,7 +62,7 @@ def _primitive_pair_is_legal(
     )
     if set(left_vertices) & set(right_vertices):
         return False
-    static = np.asarray(scene.feature_static_mask, dtype=bool)
+    static = np.asarray(scene.feature_static_mask, dtype=np.bool_)
     if bool(static[left_feature]) and bool(static[right_feature]):
         return False
     participants = np.asarray(scene.feature_participant_ids, dtype=np.int64)
@@ -194,7 +194,7 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
                 "LBVH traversal visit budget exceeds int32 evidence capacity."
             )
         primitive_vertices = _primitive_vertices(scene)
-        primitive_count = int(primitive_vertices.shape[0])
+        primitive_count = primitive_vertices.shape[0]
         excluded = _scene_excluded_vertex_pairs(scene)
         left, right, leaf_count, root, hierarchy_depth = _balanced_morton_hierarchy(
             primitive_count
@@ -208,7 +208,7 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
         self.feature_participant_ids = jnp.asarray(
             scene.feature_participant_ids, dtype=jnp.int64
         )
-        self.feature_static_mask = jnp.asarray(scene.feature_static_mask, dtype=bool)
+        self.feature_static_mask = jnp.asarray(scene.feature_static_mask, dtype=jnp.bool_)
         self.feature_contact_extent = jnp.asarray(scene.feature_contact_extent)
         self.allowed_participant_pairs = jnp.asarray(
             scene.pair_policy.allowed_participant_pairs, dtype=jnp.int64
@@ -315,7 +315,7 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
         sorted_codes = codes[order]
         duplicate_codes = jnp.sum(sorted_codes[1:] == sorted_codes[:-1], dtype=jnp.int32)
 
-        primitive_count = int(codes.size)
+        primitive_count = codes.size
         node_count = 2 * primitive_count - 1
         node_min = jnp.zeros(
             (node_count, self.ambient_dimension), dtype=primitive_min.dtype
@@ -579,7 +579,7 @@ class LBVHContactSearchPlan(StrictModule, NonTrainableState):
 
             def push_pairs(active_state, new_first, new_second):
                 active_size = active_state[2]
-                pair_count = int(new_first.shape[0])
+                pair_count = new_first.shape[0]
                 has_capacity = active_size + pair_count <= stack_capacity
 
                 def store_pairs(store_state):
@@ -830,7 +830,7 @@ class CompiledContactSearchPlan(StrictModule, NonTrainableState):
         primitives = _primitive_vertices(scene)
         excluded_array = _scene_excluded_vertex_pairs(scene)
         excluded = {(int(pair[0]), int(pair[1])) for pair in excluded_array.tolist()}
-        extent = np.asarray(scene.feature_contact_extent, dtype=float)
+        extent = np.asarray(scene.feature_contact_extent, dtype=np.float64)
         edge_offset = scene.vertex_count
         face_offset = edge_offset + edges.shape[0]
         edge_vertex: list[tuple[int, int]] = []
@@ -1029,7 +1029,7 @@ def _balanced_morton_hierarchy(leaf_count: int, /):
 def _empty_candidate_batch(kind, capacity):
     return CompiledCandidateBatch(
         jnp.full((capacity, 4), -1, dtype=jnp.int32),
-        jnp.zeros((capacity,), dtype=bool),
+        jnp.zeros((capacity,), dtype=jnp.bool_),
         jnp.asarray(0, dtype=jnp.int32),
         jnp.asarray(0, dtype=jnp.int32),
         kind,
@@ -1053,10 +1053,10 @@ def _empty_lbvh_result(plan, finite_bounds, /, *, stack_overflow, visit_overflow
         jnp.asarray(0, dtype=jnp.int32),
         jnp.asarray(0, dtype=jnp.int32),
         jnp.asarray(0, dtype=jnp.int32),
-        jnp.asarray(stack_overflow, dtype=bool),
-        jnp.asarray(visit_overflow, dtype=bool),
+        jnp.asarray(stack_overflow, dtype=jnp.bool_),
+        jnp.asarray(visit_overflow, dtype=jnp.bool_),
         jnp.asarray(0, dtype=jnp.int32),
-        jnp.asarray(finite_bounds, dtype=bool),
+        jnp.asarray(finite_bounds, dtype=jnp.bool_),
         jnp.asarray(False),
         plan.plan_id,
     )
@@ -1064,7 +1064,7 @@ def _empty_lbvh_result(plan, finite_bounds, /, *, stack_overflow, visit_overflow
 
 
 def _append_traversal_candidate(indices, count, row, accepted, capacity):
-    accepted = jnp.asarray(accepted, dtype=bool)
+    accepted = jnp.asarray(accepted, dtype=jnp.bool_)
     if capacity == 0:
         return indices, count + accepted.astype(jnp.int32)
 
@@ -1111,7 +1111,7 @@ def _pack_compiled_pairs(
     if pairs.shape[0] == 0:
         return CompiledCandidateBatch(
             jnp.full((capacity, 4), -1, dtype=jnp.int32),
-            jnp.zeros((capacity,), dtype=bool),
+            jnp.zeros((capacity,), dtype=jnp.bool_),
             jnp.asarray(0, dtype=jnp.int32),
             jnp.asarray(0, dtype=jnp.int32),
             kind,
@@ -1127,7 +1127,7 @@ def _pack_compiled_pairs(
         radius,
     )
     if legal is not None:
-        mask = mask & jnp.asarray(legal, dtype=bool)
+        mask = mask & jnp.asarray(legal, dtype=jnp.bool_)
     selected, valid, count, overflow = _pack_indices(mask, capacity)
     selected_pairs = pairs[selected]
     endpoints = primitive_topology[selected_pairs[:, 1]]
@@ -1157,7 +1157,7 @@ def _pack_compiled_same_pairs(
     if pairs.shape[0] == 0:
         return CompiledCandidateBatch(
             jnp.full((capacity, 4), -1, dtype=jnp.int32),
-            jnp.zeros((capacity,), dtype=bool),
+            jnp.zeros((capacity,), dtype=jnp.bool_),
             jnp.asarray(0, dtype=jnp.int32),
             jnp.asarray(0, dtype=jnp.int32),
             kind,
@@ -1167,7 +1167,7 @@ def _pack_compiled_same_pairs(
     second = pairs[:, 1]
     mask = _aabb_mask(lower[first], upper[first], lower[second], upper[second], radius)
     if legal is not None:
-        mask = mask & jnp.asarray(legal, dtype=bool)
+        mask = mask & jnp.asarray(legal, dtype=jnp.bool_)
     selected, valid, count, overflow = _pack_indices(mask, capacity)
     selected_pairs = pairs[selected]
     indices = jnp.concatenate(

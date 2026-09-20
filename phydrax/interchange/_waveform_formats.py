@@ -158,10 +158,10 @@ def _trace_record(trace, contract, sample_unit, resource_id, row):
     values = np.asanyarray(trace.data)
     if np.ma.isMaskedArray(values):
         valid = ~np.ma.getmaskarray(values)
-        samples = np.asarray(values.filled(0), dtype=float)
+        samples = np.asarray(values.filled(0), dtype=np.float64)
     else:
-        samples = np.asarray(values, dtype=float)
-        valid = np.ones(samples.shape, dtype=bool)
+        samples = np.asarray(values, dtype=np.float64)
+        valid = np.ones(samples.shape, dtype=np.bool_)
     return _qualified_trace(
         samples,
         valid,
@@ -289,8 +289,8 @@ def read_miniseed3(
                 if not np.isfinite(sample_rate) or sample_rate == 0:
                     raise ValueError("miniSEED3 sample rate must be finite and nonzero.")
                 delta = 1.0 / sample_rate if sample_rate > 0 else -sample_rate
-                samples = np.array(segment.np_datasamples, dtype=float, copy=True)
-                valid = np.ones(samples.shape, dtype=bool)
+                samples = np.array(segment.np_datasamples, dtype=np.float64, copy=True)
+                valid = np.ones(samples.shape, dtype=np.bool_)
                 qualified.append(
                     _qualified_trace(
                         samples,

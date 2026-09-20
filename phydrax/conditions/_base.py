@@ -14,7 +14,7 @@ from jaxtyping import Array, ArrayLike
 
 from phydrax.domain import ComponentSum, Domain, DomainComponent, DomainFunction
 
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 
 
 ConditionSupport = DomainComponent | ComponentSum
@@ -64,9 +64,9 @@ def _same_support(left: Domain, right: Domain, /) -> bool:
 class AbstractCondition(StrictModule):
     """Declarative scientific condition independent of numerical realization."""
 
-    fields: AbstractAttribute[tuple[str, ...]]
-    on: AbstractAttribute[ConditionSupport]
-    label: AbstractAttribute[str | None]
+    fields: eqx.AbstractVar[tuple[str, ...]]
+    on: eqx.AbstractVar[ConditionSupport]
+    label: eqx.AbstractVar[str | None]
 
     def as_condition(
         self,
@@ -101,7 +101,7 @@ class AbstractResidualCondition(AbstractCondition):
 class AbstractMomentCondition(AbstractCondition):
     """Condition represented by an integrated moment target."""
 
-    target: AbstractAttribute[Array]
+    target: eqx.AbstractVar[Array]
 
     @abstractmethod
     def integrand(

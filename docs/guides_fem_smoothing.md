@@ -70,7 +70,7 @@ residual = operator.mv(jnp.zeros((10,)))
 ## Node smoothing
 
 `node_smoothing_layout(mesh)` constructs each node star by unioning the
-centroid/mid-edge subcells of incident T3 cells and extracting the uncancelled
+centroid/mid-edge subcells of incident T3 cells and extracting the uncanceled
 oriented boundary. Boundary-node stars retain physical-boundary pieces.
 
 No universal upper-bound certificate is emitted. Any energy-bound evidence must

@@ -51,7 +51,7 @@ class CircuitInputBinding(StrictModule):
     ):
         identifier = str(instance_id)
         names = tuple(str(name) for name in input_names)
-        bound = tuple(int(index) for index in indices)
+        bound = tuple(indices)
         if not identifier:
             raise ValueError("Circuit input binding instance_id must be non-empty.")
         if len(names) != len(bound):
@@ -71,7 +71,7 @@ class CircuitInputBinding(StrictModule):
                     f"Circuit law {self.instance_id!r} requires explicit inputs."
                 )
             return jnp.zeros((0,), dtype=dtype)
-        return jnp.take(inputs, jnp.asarray(self.indices, dtype=int), axis=0)
+        return jnp.take(inputs, jnp.asarray(self.indices, dtype=jnp.int64), axis=0)
 
 
 class CircuitDAEPlan(StrictModule):
@@ -112,12 +112,12 @@ class PreparedCircuitDAE(StrictModule):
         voltages = (
             jnp.zeros((nodes,))
             if node_voltages is None
-            else jnp.asarray(node_voltages, dtype=float)
+            else jnp.asarray(node_voltages, dtype=jnp.float64)
         )
         state = (
             jnp.zeros((auxiliaries,))
             if auxiliary_state is None
-            else jnp.asarray(auxiliary_state, dtype=float)
+            else jnp.asarray(auxiliary_state, dtype=jnp.float64)
         )
         if voltages.shape != (nodes,) or state.shape != (auxiliaries,):
             raise ValueError("Initial node and auxiliary values have wrong shapes.")

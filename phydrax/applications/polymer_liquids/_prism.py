@@ -182,7 +182,10 @@ class PreparedPRISM(StrictModule, NonTrainableState):
         if (
             plan.closure.hard_core_diameters is not None
             and plan.closure.hard_core_diameters.shape
-            != (mixture.site_count, mixture.site_count)
+            != (
+                mixture.site_count,
+                mixture.site_count,
+            )
         ):
             raise ValueError(
                 "PRISM closure hard-core dimensions differ from the mixture."

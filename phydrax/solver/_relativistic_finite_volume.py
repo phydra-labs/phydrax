@@ -197,7 +197,7 @@ class GRHDFaceFluxPlan(StrictModule, NonTrainableState):
             speed,
             finite,
             physical,
-            jnp.zeros(geometry.leading_shape, dtype=bool),
+            jnp.zeros(geometry.leading_shape, dtype=jnp.bool_),
             self.flux_id,
         )
 

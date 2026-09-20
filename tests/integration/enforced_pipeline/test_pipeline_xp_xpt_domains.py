@@ -32,10 +32,10 @@ def _paired_batch_xp(domain, xs, ps):
     points = frozendict(
         {
             "x": cx.AxisArray(
-                jnp.asarray(xs, dtype=float).reshape((-1, 1)), dims=(axis, None)
+                jnp.asarray(xs, dtype="float64").reshape((-1, 1)), dims=(axis, None)
             ),
             "p": cx.AxisArray(
-                jnp.asarray(ps, dtype=float).reshape((-1, 1)), dims=(axis, None)
+                jnp.asarray(ps, dtype="float64").reshape((-1, 1)), dims=(axis, None)
             ),
         }
     )
@@ -50,12 +50,14 @@ def _paired_batch_xpt(domain, xs, ps, ts):
     points = frozendict(
         {
             "x": cx.AxisArray(
-                jnp.asarray(xs, dtype=float).reshape((-1, 1)), dims=(axis, None)
+                jnp.asarray(xs, dtype="float64").reshape((-1, 1)), dims=(axis, None)
             ),
             "p": cx.AxisArray(
-                jnp.asarray(ps, dtype=float).reshape((-1, 1)), dims=(axis, None)
+                jnp.asarray(ps, dtype="float64").reshape((-1, 1)), dims=(axis, None)
             ),
-            "t": cx.AxisArray(jnp.asarray(ts, dtype=float).reshape((-1,)), dims=(axis,)),
+            "t": cx.AxisArray(
+                jnp.asarray(ts, dtype="float64").reshape((-1,)), dims=(axis,)
+            ),
         }
     )
     return PointBatch(points=points, structure=structure)
@@ -72,7 +74,7 @@ def test_xp_steady_state_explicit_anchors():
 
     left = domain.component({"x": Boundary()}, where={"x": lambda p: p[0] < 0.5})
     right = domain.component({"x": Boundary()}, where={"x": lambda p: p[0] > 0.5})
-    full_boundary = domain.component({"x": Boundary()})
+    domain.component({"x": Boundary()})
 
     specs = [
         EnforcementSpec(phx.conditions.Dirichlet("u", left, target=1.0)),
@@ -80,10 +82,10 @@ def test_xp_steady_state_explicit_anchors():
     ]
 
     anchors = {
-        "x": jnp.array([[0.25], [0.75]], dtype=float),
-        "p": jnp.array([[-0.5], [0.5]], dtype=float),
+        "x": jnp.array([[0.25], [0.75]], dtype="float64"),
+        "p": jnp.array([[-0.5], [0.5]], dtype="float64"),
     }
-    values = jnp.array([3.0, 4.0], dtype=float)
+    values = jnp.array([3.0, 4.0], dtype="float64")
     interior = InteriorAnchors("u", points=anchors, values=values)
 
     program = EnforcementProgram.build(
@@ -97,8 +99,8 @@ def test_xp_steady_state_explicit_anchors():
 
     batch = _paired_batch_xp(
         domain,
-        xs=jnp.array([[0.0], [1.0]], dtype=float),
-        ps=jnp.array([[0.0], [0.0]], dtype=float),
+        xs=jnp.array([[0.0], [1.0]], dtype="float64"),
+        ps=jnp.array([[0.0], [0.0]], dtype="float64"),
     )
     out = jnp.asarray(eval_jit(batch)).reshape((-1,))
     assert jnp.allclose(out, jnp.array([1.0, 2.0]), atol=5e-2)
@@ -147,7 +149,7 @@ def test_xpt_transient_explicit_anchors():
     left = domain.component({"x": Boundary()}, where={"x": lambda p: p[0] < 0.5})
     right = domain.component({"x": Boundary()}, where={"x": lambda p: p[0] > 0.5})
     initial = domain.component({"t": FixedStart()})
-    full_boundary = domain.component({"x": Boundary()})
+    domain.component({"x": Boundary()})
 
     specs = [
         EnforcementSpec(phx.conditions.Dirichlet("u", left, target=1.0)),
@@ -158,11 +160,11 @@ def test_xpt_transient_explicit_anchors():
     ]
 
     anchors = {
-        "x": jnp.array([[0.25], [0.75]], dtype=float),
-        "p": jnp.array([[-0.5], [0.5]], dtype=float),
-        "t": jnp.array([0.4, 0.6], dtype=float),
+        "x": jnp.array([[0.25], [0.75]], dtype="float64"),
+        "p": jnp.array([[-0.5], [0.5]], dtype="float64"),
+        "t": jnp.array([0.4, 0.6], dtype="float64"),
     }
-    values = jnp.array([4.0, 5.0], dtype=float)
+    values = jnp.array([4.0, 5.0], dtype="float64")
     interior = InteriorAnchors("u", points=anchors, values=values)
 
     program = EnforcementProgram.build(
@@ -176,18 +178,18 @@ def test_xpt_transient_explicit_anchors():
 
     batch = _paired_batch_xpt(
         domain,
-        xs=jnp.array([[0.0], [1.0]], dtype=float),
-        ps=jnp.array([[0.0], [0.0]], dtype=float),
-        ts=jnp.array([0.5, 0.5], dtype=float),
+        xs=jnp.array([[0.0], [1.0]], dtype="float64"),
+        ps=jnp.array([[0.0], [0.0]], dtype="float64"),
+        ts=jnp.array([0.5, 0.5], dtype="float64"),
     )
     out = jnp.asarray(eval_jit(batch)).reshape((-1,))
     assert jnp.allclose(out, jnp.array([1.0, 2.0]), atol=5e-2)
 
     batch = _paired_batch_xpt(
         domain,
-        xs=jnp.array([[0.5]], dtype=float),
-        ps=jnp.array([[0.0]], dtype=float),
-        ts=jnp.array([0.0], dtype=float),
+        xs=jnp.array([[0.5]], dtype="float64"),
+        ps=jnp.array([[0.0]], dtype="float64"),
+        ts=jnp.array([0.0], dtype="float64"),
     )
     out = jnp.asarray(eval_jit(batch)).reshape((-1,))
     assert jnp.allclose(out, 3.0, atol=2e-2)

@@ -85,12 +85,12 @@ class ParquetIterationPlan(StrictModule, NonTrainableState):
         channel_mixing: ArrayLike | None = None,
         /,
     ) -> "PreparedParquetIteration":
-        bare = np.asarray(fully_irreducible_vertex, dtype=complex)
-        bubbles = np.asarray(channel_bubbles, dtype=complex)
+        bare = np.asarray(fully_irreducible_vertex, dtype=np.complex128)
+        bubbles = np.asarray(channel_bubbles, dtype=np.complex128)
         mixing = (
-            np.eye(3, dtype=complex)
+            np.eye(3, dtype=np.complex128)
             if channel_mixing is None
-            else np.asarray(channel_mixing, dtype=complex)
+            else np.asarray(channel_mixing, dtype=np.complex128)
         )
         if bare.ndim != 2 or bare.shape[0] != bare.shape[1] or bare.shape[0] == 0:
             raise ValueError(
@@ -100,7 +100,7 @@ class ParquetIterationPlan(StrictModule, NonTrainableState):
             raise ValueError("channel_bubbles must have shape (3, n, n).")
         if mixing.shape != (3, 3):
             raise ValueError("channel_mixing must have shape (3, 3).")
-        required = int(bare.size + bubbles.size + mixing.size + 3 * bare.size)
+        required = bare.size + bubbles.size + mixing.size + 3 * bare.size
         if required > self.maximum_vertex_elements:
             raise ValueError("Prepared parquet arrays exceed maximum_vertex_elements.")
         if not all(np.all(np.isfinite(value)) for value in (bare, bubbles, mixing)):

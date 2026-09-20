@@ -216,8 +216,8 @@ class IncompressibleGaussianMixturePlan(StrictModule, NonTrainableState):
         /,
     ):
         identifiers = tuple(str(value).strip() for value in species_ids)
-        lengths = np.asarray(statistical_segment_lengths, dtype=float)
-        interactions = np.asarray(chi_n, dtype=float)
+        lengths = np.asarray(statistical_segment_lengths, dtype=np.float64)
+        interactions = np.asarray(chi_n, dtype=np.float64)
         values = tuple(components)
         count = len(identifiers)
         if (

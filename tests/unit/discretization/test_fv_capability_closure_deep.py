@@ -45,7 +45,7 @@ def _grid(shape, *, periodic=None):
 def _quad_mesh():
     vertices = np.asarray(
         [(0, 0), (1, 0), (2, 0), (0, 1), (1, 1), (2, 1), (0, 2), (1, 2), (2, 2)],
-        dtype=float,
+        dtype="float64",
     )
     quads = np.asarray(((0, 1, 4, 3), (1, 2, 5, 4), (3, 4, 7, 6), (4, 5, 8, 7)))
     return phx.discretization.UnstructuredFiniteVolumePlan(
@@ -54,7 +54,7 @@ def _quad_mesh():
 
 
 def _large_quad_mesh():
-    vertices = np.asarray([(x, y) for y in range(4) for x in range(4)], dtype=float)
+    vertices = np.asarray([(x, y) for y in range(4) for x in range(4)], dtype="float64")
     quads = np.asarray(
         [
             (

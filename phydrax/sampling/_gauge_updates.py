@@ -168,7 +168,7 @@ class GaugeReplicaExchangePlan(StrictModule):
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, inverse_temperatures: ArrayLike, /):
-        beta = jnp.asarray(inverse_temperatures, dtype=float).reshape((-1,))
+        beta = jnp.asarray(inverse_temperatures, dtype=jnp.float64).reshape((-1,))
         if (
             beta.size < 2
             or beta.size > 65536
@@ -222,13 +222,13 @@ def prepare_gauge_update(
         raise TypeError("staple_plan must be GaugeStaplePlan.")
     link_space = staple_plan.link_space
     colors = np.asarray(color_of_link)
-    conflicts = np.asarray(conflict_adjacency, dtype=bool)
+    conflicts = np.asarray(conflict_adjacency, dtype=np.bool_)
     if colors.ndim != 1 or colors.size < 1 or not np.issubdtype(colors.dtype, np.integer):
         raise ValueError("color_of_link must be a nonempty integer vector.")
     colors = colors.astype(np.int32)
     if np.any(colors < 0):
         raise ValueError("Gauge conflict colors must be nonnegative.")
-    num_links = int(colors.size)
+    num_links = colors.size
     if int(colors.max()) >= num_links:
         raise ValueError("Gauge colors must be contiguous within the link count.")
     if conflicts.shape != (num_links, num_links):
@@ -261,8 +261,8 @@ def prepare_gauge_update(
         )
     route_edges = np.asarray(staple_plan.complement_edges, dtype=np.int32)
     route_active = (
-        np.asarray(staple_plan.complement_valid, dtype=bool)
-        & np.asarray(staple_plan.route_valid, dtype=bool)[..., None]
+        np.asarray(staple_plan.complement_valid, dtype=np.bool_)
+        & np.asarray(staple_plan.route_valid, dtype=np.bool_)[..., None]
     )
     required_conflicts = np.zeros_like(conflicts)
     for edge in range(num_links):
@@ -366,7 +366,7 @@ def _sample_von_mises(
     key: Key[Array, ""], mean: Array, concentration: Array, attempts: int, /
 ) -> tuple[Array, Array, Array]:
     """Best--Fisher exact rejection with explicit finite-capacity exhaustion."""
-    dtype = jnp.result_type(mean, concentration, float)
+    dtype = jnp.result_type(mean, concentration, jnp.float64)
     keys = jr.split(key, attempts)
     uniforms = jax.vmap(lambda value: jr.uniform(value, (3,), dtype=dtype))(keys)
     zero_concentration = concentration == 0.0
@@ -422,7 +422,7 @@ def _sample_su2(
     key: Key[Array, ""], concentration: Array, attempts: int, /
 ) -> tuple[Array, Array, Array]:
     """Exact SU(2) Haar heatbath rejection for density exp(k a0)."""
-    dtype = jnp.result_type(concentration, float)
+    dtype = jnp.result_type(concentration, jnp.float64)
     keys = jr.split(key, attempts + 1)
     uniforms = jax.vmap(lambda value: jr.uniform(value, (2,), dtype=dtype))(keys[:-1])
     zero_concentration = concentration == 0.0
@@ -656,8 +656,8 @@ def initialize_gauge_replica_state(
     if not isinstance(plan, GaugeReplicaExchangePlan):
         raise TypeError("plan must be GaugeReplicaExchangePlan.")
     configurations_ = jnp.asarray(configurations)
-    potentials = jnp.asarray(reduced_potentials, dtype=float)
-    count = int(plan.inverse_temperatures.size)
+    potentials = jnp.asarray(reduced_potentials, dtype=jnp.float64)
+    count = plan.inverse_temperatures.size
     if configurations_.shape[0] != count or potentials.shape != (count, count):
         raise ValueError("Replica configurations and reduced-potential matrix disagree.")
     if not bool(jnp.all(jnp.isfinite(configurations_))) or not bool(
@@ -690,7 +690,7 @@ def gauge_replica_exchange(
         raise TypeError("state must be GaugeReplicaState.")
     if state.plan_id != plan.plan_id:
         raise ValueError("Replica state belongs to another exchange plan.")
-    count = int(plan.inverse_temperatures.size)
+    count = plan.inverse_temperatures.size
     starts = jnp.arange(count - 1, dtype=jnp.int32)
     attempted = starts % 2 == state.exchange_parity
     labels = state.label_at_slot

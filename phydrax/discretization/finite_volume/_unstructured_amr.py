@@ -32,7 +32,7 @@ def _scalar_time(value: ArrayLike, name: str, /) -> float:
 
 
 def _time_tolerance(first: float, second: float) -> float:
-    return 64.0 * np.finfo(float).eps * max(1.0, abs(first), abs(second))
+    return 64.0 * np.finfo(np.float64).eps * max(1.0, abs(first), abs(second))
 
 
 def _interval(
@@ -63,9 +63,9 @@ def _required_interval(
 
 def _mask(value: ArrayLike | None, count: int, name: str, /) -> Array:
     if value is None:
-        return jnp.ones((count,), dtype=bool)
+        return jnp.ones((count,), dtype=jnp.bool_)
     array = jnp.asarray(value)
-    if array.shape != (count,) or array.dtype != jnp.dtype(bool):
+    if array.shape != (count,) or array.dtype != jnp.dtype(jnp.bool_):
         raise ValueError(f"{name} must be boolean with one entry per cell.")
     return array
 

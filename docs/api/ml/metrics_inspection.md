@@ -86,7 +86,7 @@ linear leverage and Cook's distance use exact model structure.
 cluster projectors. With eigenvalues `λ`, the selected numerical cluster uses
 `τ = absolute_tolerance + relative_tolerance × max(1, maxⱼ |λⱼ|)` and includes
 exactly the modes within `τ` of the model's selected eigenvalue. Exterior gaps
-are measured from the cluster boundary; a missing endpoint neighbour is
+are measured from the cluster boundary; a missing endpoint neighbor is
 reported as `+∞`.
 
 A singleton tolerance cluster with exterior gaps greater than `τ` is reported

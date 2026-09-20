@@ -197,9 +197,9 @@ def test_point_force_binding_is_order_invariant_not_quadrature_weighted():
 def test_all_fixed_marker_map_retains_full_reactions():
     model, state = _model()
     fixed = RigidBodySetPlan(
-        np.zeros(2, dtype=int),
+        np.zeros(2, dtype="int64"),
         np.broadcast_to(np.eye(3), (2, 3, 3)),
-        fixed_mask=np.ones(2, dtype=bool),
+        fixed_mask=np.ones(2, dtype="bool"),
     ).prepare(model.bodies.particles)
     mapping = RigidMarkerMapPlan(
         model.marker_map.markers, fixed, model.marker_map.marker_owner
@@ -296,7 +296,7 @@ def test_anisotropic_heat_bath_has_fluctuation_dissipation_covariance():
     ).prepare()
     inertia = np.array([np.diag([1.0, 2.0, 4.0]), np.diag([2.0, 3.0, 5.0])])
     bodies = RigidBodySetPlan(
-        np.zeros(2, dtype=int), inertia, fixed_mask=np.array([False, True])
+        np.zeros(2, dtype="int64"), inertia, fixed_mask=np.array([False, True])
     ).prepare(particles)
     state = bodies.kinematics(
         jnp.zeros((2, 3)),
@@ -448,7 +448,7 @@ def test_inactive_marker_force_nan_is_not_material_and_never_enters_loads():
         ambient_dimension=3,
     ).prepare()
     bodies = RigidBodySetPlan(
-        np.zeros(3, dtype=int),
+        np.zeros(3, dtype="int64"),
         np.broadcast_to(np.eye(3), (3, 3, 3)),
         fixed_mask=np.array([False, True, False]),
     ).prepare(particles)

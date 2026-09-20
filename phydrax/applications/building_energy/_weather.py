@@ -67,7 +67,7 @@ def parse_epw(
     interval's Wh/m², converted to J/m². Dry-bulb/dew-point observations become
     Kelvin. TMY dates are placed on one explicit representative calendar while
     original source years and quality flags remain available. Discontinuous
-    records are rejected rather than fabricated or relabelled.
+    records are rejected rather than fabricated or relabeled.
     """
     rows = [
         tuple(cell.strip() for cell in row)
@@ -163,7 +163,7 @@ def parse_epw(
         ends.append(end)
         previous_md = md
     origin = ends[0] - timedelta(seconds=duration)
-    boundaries = np.arange(len(records) + 1, dtype=float) * duration
+    boundaries = np.arange(len(records) + 1, dtype=np.float64) * duration
     edge_support = SeriesSupport(
         boundaries, coordinate_name="time", coordinate_id="epw-standard-time"
     )

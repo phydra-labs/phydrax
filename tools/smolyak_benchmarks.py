@@ -61,7 +61,7 @@ def _domain(dimension: int, rule: SmolyakAxisRule):
 
 def _target(domain, dimension: int, output_size: int):
     labels = tuple(f"x{axis}" for axis in range(dimension))
-    frequencies = jnp.arange(1, output_size + 1, dtype=float)
+    frequencies = jnp.arange(1, output_size + 1, dtype="float64")
 
     def observable(*coordinates):
         signal = sum(
@@ -101,7 +101,7 @@ def _interpolation_record(
         rules,
     )
     topology_ms = 1e3 * (time.perf_counter() - started)
-    tensor_entries = sum(int(term.gather_indices.size) for term in topology)
+    tensor_entries = sum(term.gather_indices.size for term in topology)
 
     domain = _domain(dimension, rule)
     function = _target(domain, dimension, output_size)
@@ -173,7 +173,7 @@ def _interpolation_record(
         "output_size": output_size,
         "num_indices": len(indices),
         "num_terms": len(terms),
-        "num_unique_nodes": int(canonical_points.shape[0]),
+        "num_unique_nodes": canonical_points.shape[0],
         "tensor_entries": tensor_entries,
         "num_blocks": interpolant.num_blocks,
         "maximum_active_dimension": interpolant.maximum_active_dimension,
@@ -194,7 +194,7 @@ def _integration_record(dimension: int, level: int):
         "dimension": dimension,
         "level": level,
         "rule": "clenshaw-curtis",
-        "num_unique_nodes": int(nodes.shape[0]),
+        "num_unique_nodes": nodes.shape[0],
         "weight_sum": float(jnp.asarray(weights).sum()),
         "expected_reference_mass": float(2.0**dimension),
         "mass_error": abs(float(weights.sum()) - math.pow(2.0, dimension)),

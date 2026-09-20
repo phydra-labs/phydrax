@@ -125,7 +125,7 @@ def initialize_tracks(
     plan: TrackLinkPlan,
     /,
     *,
-    dtype: Any = float,
+    dtype: Any = jnp.float64,
     initial_time: float | None = None,
     first_track_id: int = 0,
 ) -> TrackRuntimeState:
@@ -146,7 +146,7 @@ def initialize_tracks(
     time = 0.0 if initial_time is None else float(initial_time)
     return TrackRuntimeState(
         track_ids=jnp.full((capacity,), -1, dtype=jnp.int64),
-        active=jnp.zeros((capacity,), dtype=bool),
+        active=jnp.zeros((capacity,), dtype=jnp.bool_),
         age=jnp.zeros((capacity,), dtype=jnp.int32),
         missed=jnp.zeros((capacity,), dtype=jnp.int32),
         states=jnp.zeros((capacity, 6), dtype=resolved_dtype),
@@ -175,7 +175,7 @@ def _motion_matrices(dt: Array, acceleration_variance: float, dtype, /):
 def _validate_measurements(positions, covariance, valid, /):
     if positions.ndim != 2 or positions.shape[-1] != 3:
         raise ValueError("positions_xyz must have shape (observation, 3).")
-    capacity = int(positions.shape[0])
+    capacity = positions.shape[0]
     if covariance.shape != (capacity, 3, 3):
         raise ValueError("covariance_xyz must have shape (observation, 3, 3).")
     if valid.shape != (capacity,):
@@ -222,11 +222,11 @@ def link_tracks_step(
         raise ValueError("Track runtime state and plan do not match.")
     positions = jnp.asarray(positions_xyz, dtype=state.states.dtype)
     covariance = jnp.asarray(covariance_xyz, dtype=state.states.dtype)
-    observation_valid = jnp.asarray(valid, dtype=bool)
+    observation_valid = jnp.asarray(valid, dtype=jnp.bool_)
     positions, covariance, observation_valid = _validate_measurements(
         positions, covariance, observation_valid
     )
-    observation_capacity = int(positions.shape[0])
+    observation_capacity = positions.shape[0]
     current_time = jnp.asarray(time, dtype=state.states.dtype)
     current_time = eqx.error_if(
         current_time,
@@ -275,7 +275,7 @@ def link_tracks_step(
     track_capacity = state.capacity
     dimension = track_capacity + observation_capacity
     costs = jnp.zeros((dimension, dimension), dtype=state.states.dtype)
-    allowed = jnp.zeros((dimension, dimension), dtype=bool)
+    allowed = jnp.zeros((dimension, dimension), dtype=jnp.bool_)
     costs = costs.at[:track_capacity, :observation_capacity].set(pair_cost)
     allowed = allowed.at[:track_capacity, :observation_capacity].set(pair_valid)
     track_index = jnp.arange(track_capacity, dtype=jnp.int32)
@@ -361,7 +361,7 @@ def link_tracks_step(
         jax.nn.one_hot(
             jnp.clip(track_observation, 0, observation_capacity - 1),
             observation_capacity,
-            dtype=bool,
+            dtype=jnp.bool_,
         )
         & matched[:, None]
     )
@@ -425,7 +425,7 @@ def link_tracks_step(
         & jnp.isfinite(ordered_cost[:, 1])
         & ((ordered_cost[:, 1] - ordered_cost[:, 0]) <= plan.ambiguity_margin)
         if observation_capacity > 1
-        else jnp.zeros((track_capacity,), dtype=bool)
+        else jnp.zeros((track_capacity,), dtype=jnp.bool_)
     )
     status = jnp.where(
         ~assignment.valid,
@@ -496,10 +496,10 @@ def link_tracks(
         raise TypeError(
             "reconstructions must contain ParticleReconstructionResult values."
         )
-    time_values = jnp.asarray(times, dtype=float)
+    time_values = jnp.asarray(times, dtype=jnp.float64)
     if time_values.shape != (len(sequence),):
         raise ValueError("times must contain one scalar per reconstruction frame.")
-    observation_capacity = int(sequence[0].positions_xyz.shape[0])
+    observation_capacity = sequence[0].positions_xyz.shape[0]
     if any(item.positions_xyz.shape != (observation_capacity, 3) for item in sequence):
         raise ValueError("Every reconstruction must use one observation capacity.")
     runtime = (
@@ -548,7 +548,7 @@ def link_tracks(
             (track_ids[:, 1:] != track_ids[:, :-1]) | ~observed[:, 1:] | ~observed[:, :-1]
         )
     else:
-        resets = jnp.zeros((plan.maximum_tracks, 0), dtype=bool)
+        resets = jnp.zeros((plan.maximum_tracks, 0), dtype=jnp.bool_)
     observation_track_ids = jnp.stack(
         tuple(step.observation_track_ids for step in steps), axis=0
     )
@@ -671,7 +671,7 @@ def refine_tracks_min_cost_flow(
         raise TypeError(
             "reconstructions must contain ParticleReconstructionResult values."
         )
-    time_values = jnp.asarray(times, dtype=float)
+    time_values = jnp.asarray(times, dtype=jnp.float64)
     if time_values.shape != (len(sequence),):
         raise ValueError("times must contain one scalar per reconstruction frame.")
     if bool(jnp.any(~jnp.isfinite(time_values))) or bool(
@@ -680,7 +680,7 @@ def refine_tracks_min_cost_flow(
         raise ValueError(
             "Offline refinement times must be finite and strictly increasing."
         )
-    observation_capacity = int(sequence[0].positions_xyz.shape[0])
+    observation_capacity = sequence[0].positions_xyz.shape[0]
     if any(item.positions_xyz.shape != (observation_capacity, 3) for item in sequence):
         raise ValueError("Every reconstruction must have the same observation capacity.")
     positions = jnp.stack(tuple(item.positions_xyz for item in sequence), axis=0)

@@ -75,8 +75,7 @@ def _field_name(prediction: OperatorPrediction, requested: str | None) -> str:
     if requested is not None:
         if requested not in prediction.fields:
             raise KeyError(
-                f"Unknown linearization field {requested!r}; "
-                f"expected one of {tuple(prediction.fields)!r}."
+                f"Unknown linearization field {requested!r}; expected one of {tuple(prediction.fields)!r}."
             )
         return str(requested)
     if len(prediction.fields) != 1:
@@ -204,8 +203,7 @@ class OperatorLinearization:
         tangent_array = jnp.asarray(tangent, dtype=self.base_input.dtype)
         if tangent_array.shape != self.base_input.shape:
             raise ValueError(
-                f"Source tangent must have shape {self.base_input.shape}; "
-                f"got {tangent_array.shape}."
+                f"Source tangent must have shape {self.base_input.shape}; got {tangent_array.shape}."
             )
         _, output_tangent = jax.jvp(
             self._evaluate,
@@ -219,8 +217,7 @@ class OperatorLinearization:
         cotangent_array = jnp.asarray(cotangent, dtype=self.base_output.dtype)
         if cotangent_array.shape != self.base_output.shape:
             raise ValueError(
-                f"Output cotangent must have shape {self.base_output.shape}; "
-                f"got {cotangent_array.shape}."
+                f"Output cotangent must have shape {self.base_output.shape}; got {cotangent_array.shape}."
             )
         _, pullback = jax.vjp(self._evaluate, self.base_input)
         if hermitian and (
@@ -304,8 +301,7 @@ def linearize_operator(
         raise TypeError("linearize_operator requires an OperatorBatch.")
     if source_name not in batch.inputs:
         raise KeyError(
-            f"Unknown linearization source {source_name!r}; "
-            f"expected one of {tuple(batch.inputs)!r}."
+            f"Unknown linearization source {source_name!r}; expected one of {tuple(batch.inputs)!r}."
         )
     source = batch.input(source_name)
     if source.values is None:

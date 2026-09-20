@@ -151,7 +151,7 @@ class TLEPropagationEpoch(StrictModule):
             raise ValueError("A TLE propagation epoch must use the UTC scale.")
         offset = jnp.asarray(offset_seconds).reshape(())
         if not jnp.issubdtype(offset.dtype, jnp.inexact):
-            offset = offset.astype(float)
+            offset = offset.astype("float64")
         self.source = source
         self.offset_seconds = offset
         self.epoch_model_id = canonical_fingerprint(
@@ -202,7 +202,7 @@ class TLEPropagationResult(StrictModule):
 
 
 class TLEPropagationPlan(StrictModule, NonTrainableState):
-    """Bounded SGP4/SDP4 emitting native Earth-TEME kilometre/second states."""
+    """Bounded SGP4/SDP4 emitting native Earth-TEME kilometer/second states."""
 
     record: TleRecord = eqx.field(static=True)
     context: AstrodynamicsContext
@@ -222,7 +222,7 @@ class TLEPropagationPlan(StrictModule, NonTrainableState):
 
     @staticmethod
     def native_context(record: TleRecord, /) -> AstrodynamicsContext:
-        """Construct the unconverted kilometre/second Earth-TEME output contract."""
+        """Construct the unconverted kilometer/second Earth-TEME output contract."""
 
         if not isinstance(record, TleRecord):
             raise TypeError("record must be a TleRecord.")
@@ -370,7 +370,7 @@ class TLEPropagationPlan(StrictModule, NonTrainableState):
     def propagate(self, minutes_since_epoch: ArrayLike, /) -> TLEPropagationResult:
         minutes = jnp.asarray(minutes_since_epoch).reshape(())
         if not jnp.issubdtype(minutes.dtype, jnp.inexact):
-            minutes = minutes.astype(float)
+            minutes = minutes.astype("float64")
         finite_time = jnp.isfinite(minutes)
         within_capacity = jnp.abs(minutes) <= self.maximum_minutes
         range_valid = finite_time & within_capacity

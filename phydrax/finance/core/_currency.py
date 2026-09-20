@@ -136,7 +136,7 @@ class MonetaryArray(StrictModule):
         values_ = jnp.asarray(values)
         if not jnp.issubdtype(values_.dtype, jnp.floating):
             raise TypeError("monetary values must have a floating dtype.")
-        if values_.ndim < 1 or any(int(size) <= 0 for size in values_.shape):
+        if values_.ndim < 1 or any(size <= 0 for size in values_.shape):
             raise ValueError("monetary values must have a non-empty fixed shape.")
         currencies_ = _currency_tuple(currencies)
         raw_index = jnp.asarray(currency_index)
@@ -147,7 +147,7 @@ class MonetaryArray(StrictModule):
                 "currency_index must be an integer array matching values shape."
             )
         mask = jnp.asarray(valid)
-        if mask.shape != values_.shape or mask.dtype != jnp.dtype(bool):
+        if mask.shape != values_.shape or mask.dtype != jnp.dtype(jnp.bool_):
             raise TypeError("valid must be a boolean array matching values shape.")
         values_ = eqx.error_if(
             values_,

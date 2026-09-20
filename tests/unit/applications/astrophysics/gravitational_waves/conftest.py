@@ -44,7 +44,7 @@ def build_wave_problem(*, sample_count=64):
     zero_data = tuple(
         gw.DetectorStrainData(
             detector_id,
-            jnp.zeros_like(frequency, dtype=complex),
+            jnp.zeros_like(frequency, dtype="complex128"),
             psd,
             provenance,
             start_time_gps=0.0,

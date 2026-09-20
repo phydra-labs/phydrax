@@ -77,7 +77,7 @@ class ThermalModeSpec(StrictModule, NonTrainableState):
         maximum_temperature: float = 50000.0,
     ):
         name_ = str(name)
-        theta = np.asarray(characteristic_temperatures, dtype=float)
+        theta = np.asarray(characteristic_temperatures, dtype=np.float64)
         minimum = float(minimum_temperature)
         maximum = float(maximum_temperature)
         degrees = float(degrees_of_freedom)
@@ -102,8 +102,8 @@ class ThermalModeSpec(StrictModule, NonTrainableState):
         ):
             raise ValueError("Thermal-mode definition or bounds are invalid.")
         if kind == "discrete-levels":
-            energies = np.asarray(level_energies, dtype=float)
-            degeneracies = np.asarray(level_degeneracies, dtype=float)
+            energies = np.asarray(level_energies, dtype=np.float64)
+            degeneracies = np.asarray(level_degeneracies, dtype=np.float64)
             if (
                 energies.ndim != 2
                 or energies.shape[0] != theta.size
@@ -121,8 +121,8 @@ class ThermalModeSpec(StrictModule, NonTrainableState):
         else:
             if level_energies is not None or level_degeneracies is not None:
                 raise ValueError("Level data are only valid for discrete-level modes.")
-            energies = np.zeros((theta.size, 0), dtype=float)
-            degeneracies = np.zeros((theta.size, 0), dtype=float)
+            energies = np.zeros((theta.size, 0), dtype=np.float64)
+            degeneracies = np.zeros((theta.size, 0), dtype=np.float64)
         value = jnp.asarray(theta)
         self.name = name_
         self.kind = kind

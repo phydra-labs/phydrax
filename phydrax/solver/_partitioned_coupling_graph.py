@@ -591,8 +591,7 @@ def _shape_validate_subsystems(
         )
         if not isinstance(result, CouplingSubsystemResult):
             raise TypeError(
-                f"Coupling subsystem {subsystem.subsystem_id!r} must return "
-                "CouplingSubsystemResult."
+                f"Coupling subsystem {subsystem.subsystem_id!r} must return CouplingSubsystemResult."
             )
         if eqx.tree_equal(result.candidate_state, _shape_tree(state_value)) is not True:
             raise ValueError(
@@ -601,8 +600,7 @@ def _shape_validate_subsystems(
             )
         if len(result.outputs) != len(subsystem.output_ports):
             raise ValueError(
-                f"Coupling subsystem {subsystem.subsystem_id!r} returned the wrong "
-                "number of output ports."
+                f"Coupling subsystem {subsystem.subsystem_id!r} returned the wrong number of output ports."
             )
         for port, output in zip(subsystem.output_ports, result.outputs, strict=True):
             shaped_output = output
@@ -693,15 +691,13 @@ def prepare_coupling(
             subsystem.capabilities.supports_endpoint
         ):
             raise ValueError(
-                f"Coupling subsystem {subsystem.subsystem_id!r} does not support "
-                "its endpoint ports."
+                f"Coupling subsystem {subsystem.subsystem_id!r} does not support its endpoint ports."
             )
         if any(port.waveform_plan is not None for port in ports_) and not (
             subsystem.capabilities.supports_waveform
         ):
             raise ValueError(
-                f"Coupling subsystem {subsystem.subsystem_id!r} does not support "
-                "its waveform ports."
+                f"Coupling subsystem {subsystem.subsystem_id!r} does not support its waveform ports."
             )
 
     ports: dict[str, tuple[int, int, CouplingPort]] = {}
@@ -757,14 +753,12 @@ def prepare_coupling(
                 != exchange.transfer.target.field_space_id
             ):
                 raise ValueError(
-                    f"Coupling exchange {exchange.exchange_id!r} field spaces do not "
-                    "match its forward transfer."
+                    f"Coupling exchange {exchange.exchange_id!r} field spaces do not match its forward transfer."
                 )
         else:
             if exchange.transfer.hilbert_adjoint_operator is None:
                 raise ValueError(
-                    f"Coupling exchange {exchange.exchange_id!r} requests an unavailable "
-                    "adjoint transfer."
+                    f"Coupling exchange {exchange.exchange_id!r} requests an unavailable adjoint transfer."
                 )
             if source_port.field_space is None or target_port.field_space is None:
                 raise ValueError("Adjoint transfers require field-valued ports.")
@@ -775,8 +769,7 @@ def prepare_coupling(
                 != exchange.transfer.source.field_space_id
             ):
                 raise ValueError(
-                    f"Coupling exchange {exchange.exchange_id!r} field spaces do not "
-                    "match its adjoint transfer."
+                    f"Coupling exchange {exchange.exchange_id!r} field spaces do not match its adjoint transfer."
                 )
         _validate_requirement(exchange)
         _validate_physical_exchange(exchange, source_port, target_port)
@@ -924,7 +917,7 @@ def prepare_coupling(
     for exchange_index in implicit_exchange_indices:
         target_port = ports[exchanges[exchange_index].target_port_id][2]
         flattened = flatten_coupling_signal(target_port, validated_values[exchange_index])
-        size = int(flattened.size)
+        size = flattened.size
         if size <= 0:
             raise ValueError("Implicit coupling interface spaces must be non-empty.")
         interface_offsets.append(offset)

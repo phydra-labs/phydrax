@@ -14,6 +14,15 @@ from jaxtyping import PyTree
 
 from .._iteration import IterationPlan
 from .._linear_refresh import prepare_refresh_state
+from .._tree_math import (
+    tree_add_scaled as _tree_add_scaled,
+    tree_allfinite as _tree_allfinite,
+    tree_inner as _tree_inner,
+    tree_negative as _tree_negative,
+    tree_norm as _tree_norm,
+    tree_where as _tree_where,
+    validate_real_inexact_tree as _validate_real_inexact_tree,
+)
 from ..linalg import (
     FunctionLinearOperator,
     LinearSolveControl,
@@ -30,13 +39,6 @@ from ._iterative._base import AbstractScalarIterativeMethod
 from ._iterative._globalization import armijo_backtracking, ArmijoLineSearch
 from ._iterative._types import (
     _PreparedMinimizationValue,
-    _tree_add_scaled,
-    _tree_allfinite,
-    _tree_inner,
-    _tree_negative,
-    _tree_norm,
-    _tree_where,
-    _validate_real_inexact_tree,
     IterativeStepMetrics,
     MinimizationProblem,
     MinimizationResult,

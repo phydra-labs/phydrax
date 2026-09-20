@@ -202,29 +202,29 @@ class UnstructuredTwoMaterialThermalDiffusionPlan(StrictModule, NonTrainableStat
             alpha0 * self.phase0_conductivity + (1.0 - alpha0) * self.phase1_conductivity
         )
         owner = self.discretization.owner_cells.astype(jnp.int32)
-        neighbour = self.discretization.neighbour_cells.astype(jnp.int32)
-        safe_neighbour = jnp.maximum(neighbour, 0)
+        neighbor = self.discretization.neighbor_cells.astype(jnp.int32)
+        safe_neighbor = jnp.maximum(neighbor, 0)
         internal = (
-            (neighbour >= 0)
+            (neighbor >= 0)
             & face_active
             & active_cells[owner]
-            & active_cells[safe_neighbour]
+            & active_cells[safe_neighbor]
         )
         owner_conductivity = conductivity[owner]
-        neighbour_conductivity = conductivity[safe_neighbour]
+        neighbor_conductivity = conductivity[safe_neighbor]
         face_conductivity = (
             2.0
             * owner_conductivity
-            * neighbour_conductivity
+            * neighbor_conductivity
             / jnp.maximum(
-                owner_conductivity + neighbour_conductivity,
+                owner_conductivity + neighbor_conductivity,
                 jnp.finfo(conductivity.dtype).tiny,
             )
         )
-        center_difference = cell_centers[safe_neighbour] - cell_centers[owner]
+        center_difference = cell_centers[safe_neighbor] - cell_centers[owner]
         distance = jnp.linalg.norm(center_difference, axis=-1)
         safe_distance = jnp.maximum(distance, 64.0 * jnp.finfo(distance.dtype).eps)
-        temperature_jump = temperature[safe_neighbour] - temperature[owner]
+        temperature_jump = temperature[safe_neighbor] - temperature[owner]
         owner_inward_flux = face_conductivity * temperature_jump / safe_distance
         owner_inward_flux = jnp.where(internal, owner_inward_flux, 0.0)
         boundary_distance = jnp.linalg.norm(face_centers - cell_centers[owner], axis=-1)
@@ -254,7 +254,7 @@ class UnstructuredTwoMaterialThermalDiffusionPlan(StrictModule, NonTrainableStat
         face_energy_rate = owner_inward_flux * face_measures
         cell_energy_rate = jnp.zeros((self.discretization.cell_count,), dtype=value.dtype)
         cell_energy_rate = cell_energy_rate.at[owner].add(face_energy_rate)
-        cell_energy_rate = cell_energy_rate.at[safe_neighbour].add(
+        cell_energy_rate = cell_energy_rate.at[safe_neighbor].add(
             jnp.where(internal, -face_energy_rate, 0.0)
         )
         cell_energy_rate = jnp.where(active_cells, cell_energy_rate, 0.0)
@@ -271,7 +271,7 @@ class UnstructuredTwoMaterialThermalDiffusionPlan(StrictModule, NonTrainableStat
         )
         conductance = conductance + boundary_conductance
         inverse_rate = inverse_rate.at[owner].add(conductance)
-        inverse_rate = inverse_rate.at[safe_neighbour].add(
+        inverse_rate = inverse_rate.at[safe_neighbor].add(
             jnp.where(internal, conductance, 0.0)
         )
         inverse_rate = inverse_rate / jnp.maximum(

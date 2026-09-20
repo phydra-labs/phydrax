@@ -82,7 +82,7 @@ class FunctionalHierarchyPlan(StrictModule, NonTrainableState):
         *,
         epsilons: Sequence[float] | None = None,
     ):
-        iterations_ = tuple(int(value) for value in iterations)
+        iterations_ = tuple(iterations)
         if not iterations_ or any(value <= 0 for value in iterations_):
             raise ValueError("iterations must contain positive per-level work counts.")
         epsilons_ = (
@@ -188,11 +188,9 @@ class FunctionalCyclePlan(StrictModule, NonTrainableState):
         kind: Literal["v", "f"] = "v",
     ):
         cycles_ = int(cycles)
-        descending = tuple(int(value) for value in descending_iterations)
+        descending = tuple(descending_iterations)
         ascending = (
-            descending
-            if ascending_iterations is None
-            else tuple(int(value) for value in ascending_iterations)
+            descending if ascending_iterations is None else tuple(ascending_iterations)
         )
         if cycles_ <= 0 or not descending or any(value <= 0 for value in descending):
             raise ValueError("Cycle work counts must be positive.")

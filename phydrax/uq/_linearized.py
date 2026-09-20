@@ -83,10 +83,8 @@ class LinearizedDenseCovariance(StrictModule):
         self.leaf_paths = tuple(
             jax.tree_util.keystr(path) or "<root>" for path, _ in path_leaves
         )
-        self.leaf_shapes = tuple(
-            tuple(int(size) for size in leaf.shape) for _, leaf in path_leaves
-        )
-        self.dimension = int(self.matrix.shape[0])
+        self.leaf_shapes = tuple(tuple(leaf.shape) for _, leaf in path_leaves)
+        self.dimension = self.matrix.shape[0]
         self.unravel = unravel
 
     def covariance_vector_product(
@@ -139,19 +137,17 @@ class LinearizedPropagationResult(StrictModule):
             input_template,
         )
         flat_output, output_unravel = ravel_pytree(mean)
-        output_dimension = int(flat_output.size)
+        output_dimension = flat_output.size
         if output_dimension <= 0:
             raise ValueError("Linearized outputs must contain at least one scalar.")
 
         input_structure = jax.tree_util.tree_structure(input_template)
         input_shapes = tuple(
-            tuple(int(size) for size in leaf.shape)
-            for leaf in jax.tree_util.tree_leaves(input_template)
+            tuple(leaf.shape) for leaf in jax.tree_util.tree_leaves(input_template)
         )
         output_structure = jax.tree_util.tree_structure(mean)
         output_shapes = tuple(
-            tuple(int(size) for size in leaf.shape)
-            for leaf in jax.tree_util.tree_leaves(mean)
+            tuple(leaf.shape) for leaf in jax.tree_util.tree_leaves(mean)
         )
         input_probe = jax.tree_util.tree_map(jnp.ones_like, input_template)
         output_probe = jax.tree_util.tree_map(jnp.ones_like, mean)
@@ -325,8 +321,7 @@ class LinearizedPropagationResult(StrictModule):
             raise ValueError("max_dimension must be positive.")
         if self.output_dimension > maximum:
             raise ValueError(
-                "Dense output covariance exceeds max_dimension; "
-                f"got {self.output_dimension} > {maximum}."
+                f"Dense output covariance exceeds max_dimension; got {self.output_dimension} > {maximum}."
             )
         chunk = _batch_size(batch_size, self.output_dimension)
         flat_mean, _ = ravel_pytree(self.mean)
@@ -501,10 +496,7 @@ def _validate_like(
     _validate_tree_shapes(
         value,
         jax.tree_util.tree_structure(template),
-        tuple(
-            tuple(int(size) for size in leaf.shape)
-            for leaf in jax.tree_util.tree_leaves(template)
-        ),
+        tuple(tuple(leaf.shape) for leaf in jax.tree_util.tree_leaves(template)),
         owner=owner,
     )
 

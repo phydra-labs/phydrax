@@ -168,7 +168,7 @@ class StochasticLevelSpec(StrictModule):
             raise ValueError(
                 "resolutions must contain one finite positive value per refinement axis."
             )
-        shape = tuple(int(size) for size in state_shape)
+        shape = tuple(state_shape)
         if not shape or any(size <= 0 for size in shape):
             raise ValueError("state_shape must contain positive dimensions.")
         if noise_coupling not in ("shared", "nested", "independent"):
@@ -361,8 +361,7 @@ class StochasticCouplingPlan(StrictModule):
                 and level.state_transfer_id is None
             ):
                 raise ValueError(
-                    f"Level {level.level_id!r} changes state_shape and requires "
-                    "state_transfer_id."
+                    f"Level {level.level_id!r} changes state_shape and requires state_transfer_id."
                 )
         problem_ids = {level.problem_id for level in values}
         observable_ids = {level.observable_id for level in values}
@@ -428,8 +427,7 @@ class StochasticCouplingPlan(StrictModule):
                     None
                     if fine.noise_coupling == "independent"
                     else (
-                        f"{identifier}:{coarse.level_id}:{fine.level_id}:"
-                        f"{fine.noise_coupling}"
+                        f"{identifier}:{coarse.level_id}:{fine.level_id}:{fine.noise_coupling}"
                     )
                 ),
                 coupling=fine.noise_coupling,

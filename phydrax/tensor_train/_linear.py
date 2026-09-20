@@ -94,8 +94,8 @@ class TensorTrainLinear(StrictModule):
         relative_tolerance: float,
         max_dense_entries: int,
     ) -> TensorTrainLinear:
-        inputs = tuple(int(size) for size in input_shape)
-        outputs = tuple(int(size) for size in output_shape)
+        inputs = tuple(input_shape)
+        outputs = tuple(output_shape)
         matrix = jnp.asarray(weight)
         if matrix.shape != (prod(outputs), prod(inputs)):
             raise ValueError(

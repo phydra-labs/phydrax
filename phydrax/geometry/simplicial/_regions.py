@@ -14,6 +14,8 @@ import jax.random as jr
 import numpy as np
 from jaxtyping import Array
 
+import phydrax.ein as ein
+
 from ..._strict import StrictModule
 from .._atlas import AbstractBoundaryMap, BoundaryAtlas
 from .._capabilities import GeometryCapability
@@ -59,10 +61,10 @@ class SegmentQueryResult(StrictModule):
     normal: Array
 
     def __init__(self, *, closest_point, distance, segment_index, normal):
-        self.closest_point = jnp.asarray(closest_point, dtype=float)
-        self.distance = jnp.asarray(distance, dtype=float)
+        self.closest_point = jnp.asarray(closest_point, dtype=jnp.float64)
+        self.distance = jnp.asarray(distance, dtype=jnp.float64)
         self.segment_index = jnp.asarray(segment_index, dtype=jnp.int32)
-        self.normal = jnp.asarray(normal, dtype=float)
+        self.normal = jnp.asarray(normal, dtype=jnp.float64)
 
 
 class SegmentMesh(StrictModule):
@@ -73,7 +75,7 @@ class SegmentMesh(StrictModule):
     source_id: str = eqx.field(static=True)
 
     def __init__(self, vertices: Array, edges: Array, *, source_id: str | None = None):
-        vertices_host = np.asarray(vertices, dtype=float)
+        vertices_host = np.asarray(vertices, dtype=np.float64)
         if (
             vertices_host.ndim != 2
             or vertices_host.shape[1] != 2
@@ -88,7 +90,7 @@ class SegmentMesh(StrictModule):
             raise ValueError("SegmentMesh contains a zero-length edge.")
         if source_id is not None and not source_id:
             raise ValueError("source_id must be non-empty.")
-        self.vertices = jnp.asarray(vertices_host, dtype=float)
+        self.vertices = jnp.asarray(vertices_host, dtype=jnp.float64)
         self.topology = topology
         self.source_id = source_id or f"segment-mesh-{uuid4().hex}"
 
@@ -187,7 +189,7 @@ class PlanarMeshRegion(GeometrySource):
         *,
         feature_id: str | None = None,
     ):
-        vertices_host = np.asarray(vertices, dtype=float)
+        vertices_host = np.asarray(vertices, dtype=np.float64)
         if vertices_host.ndim != 2 or vertices_host.shape[1] != 2:
             raise ValueError("vertices must have shape (num_vertices, 2).")
         loops_host = [np.asarray(loop, dtype=np.int32) for loop in loops]
@@ -220,7 +222,7 @@ class PlanarMeshRegion(GeometrySource):
             )
         offsets = np.zeros((len(loops_host) + 1,), dtype=np.int32)
         offsets[1:] = np.cumsum([loop.size for loop in loops_host], dtype=np.int32)
-        self.vertices = jnp.asarray(vertices_host, dtype=float)
+        self.vertices = jnp.asarray(vertices_host, dtype=jnp.float64)
         self.edges = jnp.asarray(edges, dtype=jnp.int32)
         self.loop_offsets = jnp.asarray(offsets, dtype=jnp.int32)
         self.feature_id = feature_id or f"planar-region-{uuid4().hex}"
@@ -482,7 +484,7 @@ class MeshRegion(GeometrySource):
         triangles = vertices_host[faces_host]
         signed_volume = (
             np.sum(
-                np.einsum(
+                ein.contract(
                     "ij,ij->i",
                     triangles[:, 0],
                     np.cross(triangles[:, 1], triangles[:, 2]),
@@ -491,7 +493,9 @@ class MeshRegion(GeometrySource):
             / 6.0
         )
         volume_tolerance = (
-            np.finfo(float).eps * float(np.max(np.ptp(vertices_host, axis=0))) ** 3 * 64.0
+            np.finfo(np.float64).eps
+            * float(np.max(np.ptp(vertices_host, axis=0))) ** 3
+            * 64.0
         )
         if abs(signed_volume) <= volume_tolerance:
             raise ValueError("MeshRegion has zero signed volume.")
@@ -568,7 +572,7 @@ class _MeshRegionKernel(GeometryKernel):
         return self._vertices(state)[self.faces]
 
     def _query(self, state, points):
-        points_ = jnp.asarray(points, dtype=float)
+        points_ = jnp.asarray(points, dtype=jnp.float64)
         leading = points_.shape[:-1]
         flat = points_.reshape((-1, 3))
         triangles = self._triangles(state)
@@ -592,7 +596,7 @@ class _MeshRegionKernel(GeometryKernel):
         )
 
     def contains(self, state, points, /):
-        points_ = jnp.asarray(points, dtype=float)
+        points_ = jnp.asarray(points, dtype=jnp.float64)
         triangles = self._triangles(state)
         a = triangles[:, 0] - points_[..., None, :]
         b = triangles[:, 1] - points_[..., None, :]
@@ -634,7 +638,7 @@ class _MeshRegionKernel(GeometryKernel):
         return self._query(state, points).normal
 
     def closest_point(self, state, points, /):
-        points_ = jnp.asarray(points, dtype=float)
+        points_ = jnp.asarray(points, dtype=jnp.float64)
         leading = points_.shape[:-1]
         flat = points_.reshape((-1, 3))
         triangles = self._triangles(state)

@@ -36,7 +36,7 @@ def _geometry_and_conditions():
         readout_ids=jnp.zeros(2, dtype=jnp.int32),
         centroids=jnp.asarray([[0.0, 0.0, 1.0], [1.0, 0.0, 2.0]]),
         volumes=jnp.ones(2),
-        active=jnp.ones(2, dtype=bool),
+        active=jnp.ones(2, dtype="bool"),
         dead=jnp.asarray([False, True]),
         senders=jnp.asarray([0, 1]),
         receivers=jnp.asarray([1, 0]),
@@ -57,7 +57,7 @@ def test_calorimeter_energy_ledger_keeps_dead_and_unknown_leakage_distinct():
         positions=jnp.zeros((1, 3, 3)),
         times=jnp.zeros((1, 3)),
         energies=jnp.asarray([[2.0, 3.0, 4.0]]),
-        active=jnp.ones((1, 3), dtype=bool),
+        active=jnp.ones((1, 3), dtype="bool"),
         conditions_id=conditions.conditions_id,
     )
     truth = detector.calorimetry.route_calorimeter_hits(
@@ -87,7 +87,7 @@ def test_calorimeter_response_and_observables_are_conditioned_on_live_cells():
         positions=jnp.zeros((1, 1, 3)),
         times=jnp.zeros((1, 1)),
         energies=jnp.asarray([[2.0]]),
-        active=jnp.ones((1, 1), dtype=bool),
+        active=jnp.ones((1, 1), dtype="bool"),
         conditions_id=conditions.conditions_id,
     )
     truth = detector.calorimetry.route_calorimeter_hits(
@@ -183,7 +183,7 @@ def test_fixed_association_track_fit_recovers_observable_trajectory():
         times=times[None, None, :],
         variances=jnp.full((1, 1, 3, 3), 1.0e-4),
         surface_ids=jnp.asarray([[[0, 1, 2]]]),
-        active=jnp.ones((1, 1, 3), dtype=bool),
+        active=jnp.ones((1, 1, 3), dtype="bool"),
         association_id="fixed-test",
         conditions_id="conditions-test",
     )
@@ -227,7 +227,6 @@ def test_weighted_analysis_retains_negative_bins_and_nested_cutflow():
 
 
 def test_calochallenge_profile_admits_pinned_resident_hdf5_arrays():
-    detector = phx.applications.detector
     _, geometry = _geometry_and_conditions()
     stream = BytesIO()
     with h5py.File(stream, "w") as handle:

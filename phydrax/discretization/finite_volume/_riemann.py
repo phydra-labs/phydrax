@@ -23,7 +23,7 @@ if TYPE_CHECKING:
     from ...equations._entropy_pair import ConvexEntropyPair
 
 
-_NORMAL_ALE_CONTRACT = "physical-normal-flux-minus-grid-transport-relative-waves-v1"
+_NORMAL_ALE_CONTRACT = "physical-normal-flux-minus-grid-transport-relative-waves"
 
 
 def _normal_ale_inputs(
@@ -39,8 +39,7 @@ def _normal_ale_inputs(
     grid_velocity = jnp.asarray(grid_normal_velocity)
     if grid_velocity.shape != left_.shape[:-1]:
         raise ValueError(
-            "grid_normal_velocity must exactly match the face batch shape; "
-            "scalar broadcasting is not permitted."
+            "grid_normal_velocity must exactly match the face batch shape; scalar broadcasting is not permitted."
         )
     if not jnp.issubdtype(grid_velocity.dtype, jnp.floating):
         raise TypeError("grid_normal_velocity must have a real floating dtype.")
@@ -70,9 +69,9 @@ class NumericalFluxResult(StrictModule):
         flux = jnp.asarray(normal_flux)
         speed = jnp.asarray(max_speed)
         fallback = (
-            jnp.zeros(speed.shape, dtype=bool)
+            jnp.zeros(speed.shape, dtype=jnp.bool_)
             if fallback_activated is None
-            else jnp.asarray(fallback_activated, dtype=bool)
+            else jnp.asarray(fallback_activated, dtype=jnp.bool_)
         )
         if speed.shape != flux.shape[:-1] or fallback.shape != speed.shape:
             raise ValueError(
@@ -1067,7 +1066,7 @@ class EntropyConservativeEulerFluxPlan(AbstractSymmetricTwoPointFluxPlan):
         self.differentiability = "smooth_discrete"
         self.flux_id = canonical_fingerprint(
             {
-                "kind": "entropy-conservative-euler-flux-v2",
+                "kind": "entropy-conservative-euler-flux",
                 "symmetric": True,
                 "consistent": True,
             }

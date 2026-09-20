@@ -135,8 +135,8 @@ def test_multiclass_compositions_preserve_labels_normalization_and_distinct_evid
 def test_one_vs_rest_preserves_case_masks_weights_and_keys_and_rejects_sparse_input():
     features = jnp.stack((_FEATURES, 1.1 * _FEATURES + 0.2))
     targets = jnp.stack((_TARGETS, _TARGETS))
-    feature_mask = jnp.ones_like(features, dtype=bool).at[:, 3, 0].set(False)
-    target_mask = jnp.ones_like(targets, dtype=bool).at[:, 7].set(False)
+    feature_mask = jnp.ones_like(features, dtype="bool").at[:, 3, 0].set(False)
+    target_mask = jnp.ones_like(targets, dtype="bool").at[:, 7].set(False)
     batch = MLBatch(
         features,
         targets,
@@ -189,7 +189,7 @@ def test_one_vs_rest_preserves_case_masks_weights_and_keys_and_rejects_sparse_in
 def test_multilabel_and_chain_families_preserve_target_axis_masks_and_probabilities(
     recipe, model_type, method, prediction_inputs
 ):
-    target_mask = jnp.ones_like(_MULTILABEL_TARGETS, dtype=bool).at[1, 2].set(False)
+    target_mask = jnp.ones_like(_MULTILABEL_TARGETS, dtype="bool").at[1, 2].set(False)
     batch = MLBatch(
         _MULTILABEL_FEATURES,
         _MULTILABEL_TARGETS,
@@ -367,7 +367,7 @@ def test_composition_failures_report_vocabulary_support_multilabel_domain_and_ca
         MLBatch(
             _MULTILABEL_FEATURES,
             _MULTILABEL_TARGETS,
-            sample_mask=jnp.zeros(10, dtype=bool),
+            sample_mask=jnp.zeros(10, dtype="bool"),
         )
     )
 

@@ -173,7 +173,7 @@ def test_signature_recurrent_cell_resets_to_a_new_path_basepoint():
         cell,
         phx.nn.layers.RecurrentBatch(
             points,
-            jnp.ones((4,), dtype=bool),
+            jnp.ones((4,), dtype="bool"),
             reset=reset,
         ),
     )
@@ -195,15 +195,15 @@ def test_signature_recurrent_cell_streaming_carry_matches_one_pass():
     cell = phx.stochastic.SignatureRecurrentCell(2, 4)
     full = phx.nn.layers.run_recurrent(
         cell,
-        phx.nn.layers.RecurrentBatch(paths, jnp.ones(paths.shape[:-1], dtype=bool)),
+        phx.nn.layers.RecurrentBatch(paths, jnp.ones(paths.shape[:-1], dtype="bool")),
     )
     first = phx.nn.layers.run_recurrent(
         cell,
-        phx.nn.layers.RecurrentBatch(paths[:, :3], jnp.ones((2, 3), dtype=bool)),
+        phx.nn.layers.RecurrentBatch(paths[:, :3], jnp.ones((2, 3), dtype="bool")),
     )
     second = phx.nn.layers.run_recurrent(
         cell,
-        phx.nn.layers.RecurrentBatch(paths[:, 3:], jnp.ones((2, 2), dtype=bool)),
+        phx.nn.layers.RecurrentBatch(paths[:, 3:], jnp.ones((2, 2), dtype="bool")),
         initial_state=first.final_state,
     )
 
@@ -216,7 +216,7 @@ def test_signature_recurrent_cell_streaming_carry_matches_one_pass():
 
 def test_signature_recurrent_cell_jit_gradients_and_case_axes():
     points = jnp.arange(48.0).reshape((2, 3, 4, 2)) / 10.0
-    valid = jnp.ones((2, 3, 4), dtype=bool)
+    valid = jnp.ones((2, 3, 4), dtype="bool")
     cell = phx.stochastic.SignatureRecurrentCell(2, 2, include_scalar=True)
 
     def terminal(values):

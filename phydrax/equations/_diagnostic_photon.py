@@ -156,8 +156,7 @@ class DiagnosticPhotonCoefficientTable(StrictModule, NonTrainableState):
         else:
             if not isinstance(interpolation, DiagnosticPhotonInterpolationPolicy):
                 raise TypeError(
-                    "interpolation must be DiagnosticPhotonInterpolationPolicy "
-                    "or its canonical string value."
+                    "interpolation must be DiagnosticPhotonInterpolationPolicy or its canonical string value."
                 )
             interpolation_policy = interpolation
         if interpolation_policy is DiagnosticPhotonInterpolationPolicy.LOG_LOG and np.any(
@@ -205,13 +204,12 @@ class DiagnosticPhotonCoefficientTable(StrictModule, NonTrainableState):
                 )
             if expected_provenance.provenance_id != self.provenance.provenance_id:
                 raise ValueError(
-                    "Expected nuclear-data provenance does not match the "
-                    "coefficient table."
+                    "Expected nuclear-data provenance does not match the coefficient table."
                 )
         query_raw = jnp.asarray(energy_j)
         if jnp.issubdtype(query_raw.dtype, jnp.complexfloating):
             raise TypeError("Photon energy queries must be real-valued.")
-        query = query_raw.astype(jnp.result_type(query_raw, float))
+        query = query_raw.astype(jnp.result_type(query_raw, jnp.float64))
         grid = self.energy_grid.energy_j.astype(query.dtype)
         finite_positive = jnp.isfinite(query) & (query > 0.0)
         supported = finite_positive & (query >= grid[0]) & (query <= grid[-1])
@@ -223,7 +221,7 @@ class DiagnosticPhotonCoefficientTable(StrictModule, NonTrainableState):
         lower = jnp.clip(
             jnp.searchsorted(grid, safe_query, side="right") - 1,
             0,
-            int(grid.size) - 2,
+            grid.size - 2,
         ).astype(jnp.int32)
         upper = lower + 1
         lower_energy = grid[lower]

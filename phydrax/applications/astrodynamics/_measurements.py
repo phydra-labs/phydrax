@@ -57,9 +57,9 @@ class OrbitMeasurementPlan(StrictModule, NonTrainableState):
             raise ValueError("Unknown orbit measurement kind.")
         if not isinstance(context, AstrodynamicsContext):
             raise TypeError("context must be an AstrodynamicsContext.")
-        times_host = np.asarray(times, dtype=float)
-        position_host = np.asarray(observer_position, dtype=float)
-        velocity_host = np.asarray(observer_velocity, dtype=float)
+        times_host = np.asarray(times, dtype=np.float64)
+        position_host = np.asarray(observer_position, dtype=np.float64)
+        velocity_host = np.asarray(observer_velocity, dtype=np.float64)
         count = times_host.size
         if (
             times_host.ndim != 1
@@ -68,7 +68,7 @@ class OrbitMeasurementPlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("Observer states must have shape (num_measurements,3).")
         output_dimension = 2 if kind == "right_ascension_declination" else 1
-        covariance_host = np.asarray(covariance, dtype=float)
+        covariance_host = np.asarray(covariance, dtype=np.float64)
         if covariance_host.shape not in (
             (output_dimension, output_dimension),
             (count, output_dimension, output_dimension),
@@ -127,7 +127,7 @@ class OrbitMeasurementPlan(StrictModule, NonTrainableState):
 
     def evaluate(self, states: ArrayLike, /) -> OrbitMeasurementResult:
         state_values = jnp.asarray(states)
-        if state_values.shape != (int(self.times.size), 6):
+        if state_values.shape != (self.times.size, 6):
             raise ValueError("Measurement states must have shape (num_measurements,6).")
         predicted = jax.vmap(self._one)(
             state_values, self.observer_position, self.observer_velocity

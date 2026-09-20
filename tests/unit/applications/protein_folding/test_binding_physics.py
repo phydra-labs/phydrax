@@ -132,7 +132,7 @@ def _fixture():
         [12 if z == 6 else 14 if z == 7 else 16 if z == 8 else 1 for z in numbers],
         units,
         topology=topology,
-        molecule_ids=np.zeros(len(names), dtype=int),
+        molecule_ids=np.zeros(len(names), dtype="int64"),
     )
     potential = atomistic.AtomisticPotentialProgram(
         [atomistic.HarmonicBondPotential(np.ones(len(routes)), 0.95 * lengths)]

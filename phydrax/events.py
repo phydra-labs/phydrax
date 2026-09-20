@@ -42,8 +42,7 @@ class DeterministicEventAddress(StrictModule, NonTrainableState):
     ):
         realization = str(realization_id).strip()
         integers = tuple(
-            int(value)
-            for value in (
+            (
                 macroepoch,
                 process_id,
                 source_id,
@@ -94,8 +93,8 @@ class FixedCapacityEventState(StrictModule):
         recipient = jnp.asarray(recipient_ids, dtype=source.dtype)
         channel = jnp.asarray(channels, dtype=jnp.int32)
         status = jnp.asarray(statuses, dtype=jnp.int8)
-        active = jnp.asarray(active_mask, dtype=bool)
-        overflow_ = jnp.asarray(overflow, dtype=bool).reshape(())
+        active = jnp.asarray(active_mask, dtype=jnp.bool_)
+        overflow_ = jnp.asarray(overflow, dtype=jnp.bool_).reshape(())
         if (
             recipient.shape != source.shape
             or channel.shape != source.shape

@@ -65,7 +65,7 @@ def _traverse_one_tree(
 ) -> tuple[Array, Array, Array]:
     """Traverse one tree for one point using a statically bounded JAX loop."""
     node_capacity = feature_index.shape[0]
-    path0 = jnp.zeros((node_capacity,), dtype=bool).at[0].set(node_mask[0])
+    path0 = jnp.zeros((node_capacity,), dtype=jnp.bool_).at[0].set(node_mask[0])
 
     def step(_, state):
         node, done, path = state
@@ -204,14 +204,14 @@ class TreeStructureDiagnostics(StrictModule):
         maximum_depth_bound: Any,
         capacity_exhausted: Any,
     ):
-        self.valid = jnp.asarray(valid, dtype=bool)
+        self.valid = jnp.asarray(valid, dtype=jnp.bool_)
         self.used_trees = jnp.asarray(used_trees, dtype=jnp.int32)
         self.tree_capacity = jnp.asarray(tree_capacity, dtype=jnp.int32)
         self.used_nodes = jnp.asarray(used_nodes, dtype=jnp.int32)
         self.node_capacity = jnp.asarray(node_capacity, dtype=jnp.int32)
         self.used_leaves = jnp.asarray(used_leaves, dtype=jnp.int32)
         self.maximum_depth_bound = jnp.asarray(maximum_depth_bound, dtype=jnp.int32)
-        self.capacity_exhausted = jnp.asarray(capacity_exhausted, dtype=bool)
+        self.capacity_exhausted = jnp.asarray(capacity_exhausted, dtype=jnp.bool_)
 
 
 class TreeEnsemble(AbstractArrayModel):
@@ -281,7 +281,7 @@ class TreeEnsemble(AbstractArrayModel):
         max_steps: int | None = None,
         capacity_exhausted: ArrayLike = False,
     ):
-        case_shape_ = tuple(int(size) for size in case_shape)
+        case_shape_ = tuple(case_shape)
         prefix = case_shape_
         feature_index_ = jnp.asarray(feature_index, dtype=jnp.int32)
         if feature_index_.ndim != len(prefix) + 2:
@@ -298,9 +298,9 @@ class TreeEnsemble(AbstractArrayModel):
             threshold_ = threshold_.astype(jnp.float32)
         left_child_ = jnp.asarray(left_child, dtype=jnp.int32)
         right_child_ = jnp.asarray(right_child, dtype=jnp.int32)
-        default_left_ = jnp.asarray(default_left, dtype=bool)
-        node_mask_ = jnp.asarray(node_mask, dtype=bool)
-        leaf_mask_ = jnp.asarray(leaf_mask, dtype=bool)
+        default_left_ = jnp.asarray(default_left, dtype=jnp.bool_)
+        node_mask_ = jnp.asarray(node_mask, dtype=jnp.bool_)
+        leaf_mask_ = jnp.asarray(leaf_mask, dtype=jnp.bool_)
         for name, value in (
             ("threshold", threshold_),
             ("left_child", left_child_),
@@ -321,7 +321,7 @@ class TreeEnsemble(AbstractArrayModel):
             raise ValueError(
                 "leaf_value must have shape case_shape + (tree, node, output)."
             )
-        output_count = int(leaf_value_.shape[-1])
+        output_count = leaf_value_.shape[-1]
         if output_count <= 0:
             raise ValueError("Tree outputs must be non-empty.")
         inferred_out: int | tuple[int, ...] | Literal["scalar"] = (
@@ -333,7 +333,7 @@ class TreeEnsemble(AbstractArrayModel):
             raise ValueError("out_size does not match the leaf value output axis.")
 
         tree_shape = prefix + (tree_capacity,)
-        tree_mask_ = jnp.asarray(tree_mask, dtype=bool)
+        tree_mask_ = jnp.asarray(tree_mask, dtype=jnp.bool_)
         if tree_mask_.shape != tree_shape:
             raise ValueError(f"tree_mask must have shape {tree_shape}.")
         tree_weight_ = (
@@ -353,7 +353,7 @@ class TreeEnsemble(AbstractArrayModel):
             raise ValueError(f"split_kind must have shape {node_shape}.")
         if category_values is None:
             category_values_ = jnp.zeros(node_shape + (1,), dtype=threshold_.dtype)
-            category_mask_ = jnp.zeros(node_shape + (1,), dtype=bool)
+            category_mask_ = jnp.zeros(node_shape + (1,), dtype=jnp.bool_)
         else:
             category_values_ = jnp.asarray(category_values, dtype=threshold_.dtype)
             if (
@@ -364,9 +364,9 @@ class TreeEnsemble(AbstractArrayModel):
                     "category_values must have shape case_shape + (tree, node, category)."
                 )
             category_mask_ = (
-                jnp.ones(category_values_.shape, dtype=bool)
+                jnp.ones(category_values_.shape, dtype=jnp.bool_)
                 if category_mask is None
-                else jnp.asarray(category_mask, dtype=bool)
+                else jnp.asarray(category_mask, dtype=jnp.bool_)
             )
             if category_mask_.shape != category_values_.shape:
                 raise ValueError("category_mask must match category_values.")
@@ -441,7 +441,7 @@ class TreeEnsemble(AbstractArrayModel):
         self.out_size = out_size_
         self.max_steps = max_steps_
         self.capacity_exhausted = jnp.broadcast_to(
-            jnp.asarray(capacity_exhausted, dtype=bool), case_shape_
+            jnp.asarray(capacity_exhausted, dtype=jnp.bool_), case_shape_
         )
 
     @property
@@ -451,15 +451,15 @@ class TreeEnsemble(AbstractArrayModel):
 
     @property
     def tree_capacity(self) -> int:
-        return int(self.feature_index.shape[-2])
+        return self.feature_index.shape[-2]
 
     @property
     def node_capacity(self) -> int:
-        return int(self.feature_index.shape[-1])
+        return self.feature_index.shape[-1]
 
     @property
     def output_count(self) -> int:
-        return int(self.leaf_value.shape[-1])
+        return self.leaf_value.shape[-1]
 
     def _flat_case_arrays(self):
         count = math.prod(self.case_shape) if self.case_shape else 1

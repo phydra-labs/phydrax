@@ -59,7 +59,7 @@ operators, and shape derivatives. Connectivity changes require a new plan.
 
 `EntitySelection` composes union, intersection, difference, and complement over
 one exact entity set. A selected cell, exterior-facet, or interior-facet
-`IntegrationDomain` owns resolved owner/neighbour and local-facet routes. Terms
+`IntegrationDomain` owns resolved owner/neighbor and local-facet routes. Terms
 bind existing `phydrax.integration` reference rules by cell block.
 
 `FiniteElementForm` supports diffusion, mass, source, boundary load, general

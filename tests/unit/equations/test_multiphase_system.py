@@ -271,7 +271,7 @@ def test_kapila_model_variant_changes_all_two_material_identities(eos):
     system = TwoMaterialVOFSystem(2, eos=eos)
     closure_payload = {
         "kind": "two-material-eos-closure",
-        "model_variant": "kapila-five-equation-v1",
+        "model_variant": "kapila-five-equation",
         "material_0": eos.material_0.material_id,
         "material_1": eos.material_1.material_id,
         "alpha_floor": eos.alpha_floor,
@@ -282,7 +282,7 @@ def test_kapila_model_variant_changes_all_two_material_identities(eos):
     }
     legacy_payload = dict(closure_payload)
     legacy_payload.pop("model_variant")
-    assert eos.model_variant == "kapila-five-equation-v1"
+    assert eos.model_variant == "kapila-five-equation"
     assert eos.closure_id == canonical_fingerprint(closure_payload)
     assert eos.closure_id != canonical_fingerprint(legacy_payload)
     assert system.diagnostics.diagnostics_id == canonical_fingerprint(

@@ -248,7 +248,7 @@ def test_differential_solution_conversion_collapses_shared_batched_time_grid():
     solution = SimpleNamespace(
         times=jnp.broadcast_to(times, (3, 4)),
         states=states,
-        valid=jnp.ones((3, 4), dtype=bool),
+        valid=jnp.ones((3, 4), dtype="bool"),
         sample_shape=(3,),
         realization=realization,
         solver_name="test-solver",

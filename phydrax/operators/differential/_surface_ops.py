@@ -345,8 +345,7 @@ def ambient_surface_hessian_trace(
         nv = jnp.asarray(n2.func(*[args[i] for i in n_pos], key=key, **kwargs))
         if nv.shape[-1] != var_dim:
             raise ValueError(
-                "ambient_surface_hessian_trace expected normal last axis "
-                f"{var_dim}, got {nv.shape[-1]}."
+                f"ambient_surface_hessian_trace expected normal last axis {var_dim}, got {nv.shape[-1]}."
             )
         P = tangent_projector_from_normal(nv)
         if Hv.ndim == P.ndim:
@@ -354,8 +353,7 @@ def ambient_surface_hessian_trace(
         if Hv.ndim == P.ndim + 1:
             return ein.contract("...ij,...mjk,...ki->...m", P, Hv, P)
         raise ValueError(
-            "ambient_surface_hessian_trace got incompatible ranks: "
-            f"H.ndim={Hv.ndim}, P.ndim={P.ndim}."
+            f"ambient_surface_hessian_trace got incompatible ranks: H.ndim={Hv.ndim}, P.ndim={P.ndim}."
         )
 
     return DomainFunction(domain=joined, deps=deps, func=_op, metadata=u.metadata)
@@ -385,8 +383,7 @@ def laplace_beltrami(
     """
     if not isinstance(metric, RiemannianMetric):
         raise TypeError(
-            "laplace_beltrami requires a RiemannianMetric; "
-            "use ambient_surface_hessian_trace for a boundary component."
+            "laplace_beltrami requires a RiemannianMetric; use ambient_surface_hessian_trace for a boundary component."
         )
     from ._riemannian_ops import intrinsic_laplace_beltrami
 

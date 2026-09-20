@@ -17,6 +17,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
 from jaxtyping import Array, ArrayLike, Key
 
 from ._iteration import (
@@ -76,7 +77,7 @@ class ExponentialMovingAverageTargetPolicy:
         object.__setattr__(self, "update_every", int(self.update_every))
 
 
-class TargetParameterState(eqx.Module):
+class TargetParameterState(StrictModule):
     """Checkpointable stopped target tree and exact update cursor."""
 
     target: Any
@@ -127,7 +128,7 @@ class TargetParameterState(eqx.Module):
         accepted: ArrayLike = True,
         evaluation_parameters: Any | None = None,
     ) -> "TargetParameterState":
-        accepted_value = jnp.asarray(accepted, dtype=bool)
+        accepted_value = jnp.asarray(accepted, dtype=jnp.bool_)
         if accepted_value.shape != ():
             raise ValueError("accepted must be scalar.")
         next_count = self.update_count + accepted_value.astype(jnp.int32)
@@ -211,8 +212,7 @@ def resolve_evaluation_parameters(
             and (expected.shape != actual.shape or expected.dtype != actual.dtype)
         ):
             raise ValueError(
-                "evaluation_parameters must preserve every training-parameter "
-                "leaf shape and dtype."
+                "evaluation_parameters must preserve every training-parameter leaf shape and dtype."
             )
     return evaluation_parameters
 
@@ -692,11 +692,15 @@ class TensorBoardLogger:
         self._writer.close()
 
     def scalar(self, tag: str, value: Any, step: int) -> None:
+        array = jnp.asarray(value)
+        if array.shape != () or jnp.issubdtype(array.dtype, jnp.complexfloating):
+            raise ValueError("TensorBoard scalar values must be real scalars.")
+        host_value = np.asarray(jax.device_get(array))
         summary = self._summary_cls(
             value=[
                 {
                     "tag": str(tag),
-                    "simple_value": float(jnp.asarray(value, dtype=float).reshape(())),
+                    "simple_value": float(host_value),
                 }
             ]
         )

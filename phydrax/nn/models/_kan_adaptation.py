@@ -147,8 +147,7 @@ def _calibration_batch(model: KAN, calibration_inputs: ArrayLike) -> Array:
             batch = values[:, 0]
         else:
             raise ValueError(
-                "Scalar KAN calibration inputs must have shape (samples,) or "
-                "(samples, 1)."
+                "Scalar KAN calibration inputs must have shape (samples,) or (samples, 1)."
             )
     else:
         if values.ndim == 1 and values.shape[0] == in_size:
@@ -197,7 +196,9 @@ def _adapted_grid(
     if interior_count == 0:
         return old_grid, False
 
-    samples = np.clip(np.asarray(activations, dtype=float).reshape((-1,)), lower, upper)
+    samples = np.clip(
+        np.asarray(activations, dtype=np.float64).reshape((-1,)), lower, upper
+    )
     degenerate = (
         samples.size < interior_count + 1
         or np.unique(samples).size < 2
@@ -214,7 +215,7 @@ def _adapted_grid(
         quantiles = np.quantile(samples, probabilities, method=plan.quantile_method)
         candidates = (1.0 - plan.blend) * quantiles + plan.blend * uniform
     interior = _minimum_span_knots(
-        np.asarray(candidates, dtype=float),
+        np.asarray(candidates, dtype=np.float64),
         lower,
         upper,
         plan.minimum_span,
@@ -253,7 +254,7 @@ def _adapt_layer(
         old_grids = (
             old_grid.grids
             if isinstance(old_grid, BSplineGridBank)
-            else (old_grid,) * int(coefficients.shape[1])
+            else (old_grid,) * coefficients.shape[1]
         )
         new_grids: list[BSplineGrid] = []
         coefficient_columns: list[Array] = []
@@ -273,7 +274,7 @@ def _adapt_layer(
             records.projection_error_bounds.append(
                 transfer.projection_error_bound * float(np.max(coefficient_norms))
             )
-            records.activation_counts.append(int(input_values.size))
+            records.activation_counts.append(input_values.size)
             if degenerate:
                 records.degenerate_paths.append(path)
                 records.degenerate_grid_paths.append((*path, input_index))
@@ -313,7 +314,7 @@ def _adapt_layer(
     records.projection_error_bounds.append(
         transfer.projection_error_bound * float(np.max(coefficient_norms))
     )
-    records.activation_counts.append(int(normalized_inputs.size))
+    records.activation_counts.append(normalized_inputs.size)
     if degenerate:
         records.degenerate_paths.append(path)
     return new_layer
@@ -359,16 +360,14 @@ def _adapt_separable_kan(
             coordinate_batches = (values,)
         else:
             raise ValueError(
-                "Replicated scalar SeparableKAN calibration inputs must have shape "
-                "(samples,) or (samples, 1)."
+                "Replicated scalar SeparableKAN calibration inputs must have shape (samples,) or (samples, 1)."
             )
     else:
         if values.ndim == 1 and values.shape[0] == wrapper._base_in_dim:
             values = values.reshape((1, wrapper._base_in_dim))
         if values.ndim != 2 or values.shape[1] != wrapper._base_in_dim:
             raise ValueError(
-                "SeparableKAN calibration inputs must have shape "
-                f"(samples, {wrapper._base_in_dim})."
+                f"SeparableKAN calibration inputs must have shape (samples, {wrapper._base_in_dim})."
             )
         coordinate_batches = tuple(
             values[:, index] for index in range(wrapper._base_in_dim)

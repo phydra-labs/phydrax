@@ -147,8 +147,7 @@ class SupportBundleAuthorization:
         disclosures = frozenset(self.disclosures)
         if disclosures != _FULL_SUPPORT_DISCLOSURE:
             raise ValueError(
-                "Full-archive support authorization must explicitly grant every "
-                "sensitive disclosure category."
+                "Full-archive support authorization must explicitly grant every sensitive disclosure category."
             )
         object.__setattr__(self, "disclosures", disclosures)
 

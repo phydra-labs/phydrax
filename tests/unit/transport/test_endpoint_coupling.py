@@ -13,7 +13,7 @@ class _FixedPlan(AbstractBalancedTransportPlan):
     convergence: jnp.ndarray
 
     def __init__(self, matrix, *, converged=True):
-        self.matrix = jnp.asarray(matrix, dtype=float)
+        self.matrix = jnp.asarray(matrix, dtype="float64")
         self.regularized_cost = jnp.asarray(0.0)
         self.convergence = jnp.asarray(converged)
 

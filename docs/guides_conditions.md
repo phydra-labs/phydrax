@@ -258,7 +258,7 @@ Typed finite conditions can couple several fields and are projected jointly:
 ```python
 import jax.numpy as jnp
 
-value = phx.conditions.ArrayCodomain.from_shape((2,), dtype=float)
+value = phx.conditions.ArrayCodomain.from_shape((2,), dtype="float64")
 fields = phx.conditions.ProductFieldSpec(
     (
         phx.conditions.FieldSpec("u", value),

@@ -88,7 +88,7 @@ class PEPS(StrictModule):
         self.tensors = arrays
         self.rows = rows_
         self.columns = columns_
-        self.physical_dimensions = tuple(int(array.shape[4]) for array in arrays)
+        self.physical_dimensions = tuple(array.shape[4] for array in arrays)
         self.precision = precision_
         self.state_id = canonical_fingerprint(
             {
@@ -172,8 +172,8 @@ class PEPO(StrictModule):
         self.tensors = arrays
         self.rows = rows_
         self.columns = columns_
-        self.output_dimensions = tuple(int(array.shape[4]) for array in arrays)
-        self.input_dimensions = tuple(int(array.shape[5]) for array in arrays)
+        self.output_dimensions = tuple(array.shape[4] for array in arrays)
+        self.input_dimensions = tuple(array.shape[5] for array in arrays)
         self.precision = precision_
         self.operator_id = canonical_fingerprint(
             {
@@ -253,7 +253,7 @@ def _double_layer_specification(left: PEPS, right: PEPS, /):
             "PEPS overlap requires identical lattice and physical dimensions."
         )
     shapes = tuple(
-        tuple(int(a * b) for a, b in zip(first.shape[:4], second.shape[:4], strict=True))
+        tuple(a * b for a, b in zip(first.shape[:4], second.shape[:4], strict=True))
         for first, second in zip(left.tensors, right.tensors, strict=True)
     )
     return _grid_structure(shapes, left.rows, left.columns), shapes
@@ -319,15 +319,13 @@ def peps_amplitude(
 ) -> PEPSContractionResult:
     """Exactly contract one computational-basis amplitude."""
 
-    values = tuple(int(value) for value in configuration)
+    values = tuple(configuration)
     if len(values) != len(state.tensors) or any(
         value < 0 or value >= dimension
         for value, dimension in zip(values, state.physical_dimensions, strict=True)
     ):
         raise ValueError("PEPS configuration lies outside the physical dimensions.")
-    shapes = tuple(
-        tuple(int(value) for value in tensor.shape[:4]) for tensor in state.tensors
-    )
+    shapes = tuple(tuple(tensor.shape[:4]) for tensor in state.tensors)
     structure = _grid_structure(shapes, state.rows, state.columns)
     plan = plan_contraction(
         structure,
@@ -376,9 +374,7 @@ def contract_pepo_trace_exact(
         raise ValueError(
             "PEPO trace requires matching local output and input dimensions."
         )
-    shapes = tuple(
-        tuple(int(value) for value in tensor.shape[:4]) for tensor in operator.tensors
-    )
+    shapes = tuple(tuple(tensor.shape[:4]) for tensor in operator.tensors)
     structure = _grid_structure(shapes, operator.rows, operator.columns)
     plan = plan_contraction(
         structure,

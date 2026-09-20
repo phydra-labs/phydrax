@@ -12,31 +12,31 @@ from .contracts import OpenSystemGraduationResult, VerifiedOpenSystemCampaign
 
 
 CAMPAIGN_IDS = (
-    "gaussian-affine-v1",
-    "dense-trajectories-v1",
-    "mps-trajectories-v1",
-    "lpdo-xxz-v1",
-    "heom-spin-boson-v1",
-    "constructive-memory-v1",
-    "process-recovery-v1",
-    "causal-distillation-v1",
-    "enumerable-neural-v1",
+    "gaussian-affine",
+    "dense-trajectories",
+    "mps-trajectories",
+    "lpdo-xxz",
+    "heom-spin-boson",
+    "constructive-memory",
+    "process-recovery",
+    "causal-distillation",
+    "enumerable-neural",
 )
 
 
 def _policy(campaign_id: str) -> OpenSystemPromotionPolicy:
     requirements = {
-        "gaussian-affine-v1": (
+        "gaussian-affine": (
             ("time-step",),
             ("analytic-covariance-error",),
             ("representation-closure",),
         ),
-        "dense-trajectories-v1": (
+        "dense-trajectories": (
             ("relative-tolerance", "trajectory-count"),
             ("coupled-observable-difference", "dense-reference-difference"),
             ("trace", "hermiticity", "positivity"),
         ),
-        "mps-trajectories-v1": (
+        "mps-trajectories": (
             ("time-step", "bond-dimension"),
             (
                 "maximum-discarded-weight",
@@ -45,7 +45,7 @@ def _policy(campaign_id: str) -> OpenSystemPromotionPolicy:
             ),
             ("trace", "representation-closure"),
         ),
-        "lpdo-xxz-v1": (
+        "lpdo-xxz": (
             ("time-step", "physical-bond", "purification-rank"),
             (
                 "time-refinement-error",
@@ -56,7 +56,7 @@ def _policy(campaign_id: str) -> OpenSystemPromotionPolicy:
             ),
             ("trace", "positivity", "representation-closure"),
         ),
-        "heom-spin-boson-v1": (
+        "heom-spin-boson": (
             ("hierarchy-depth", "bath-pole-order", "relative-tolerance"),
             (
                 "depth-difference",
@@ -67,7 +67,7 @@ def _policy(campaign_id: str) -> OpenSystemPromotionPolicy:
             ),
             ("trace", "hermiticity", "positivity"),
         ),
-        "constructive-memory-v1": (
+        "constructive-memory": (
             ("memory-step", "memory-horizon"),
             (
                 "time-refinement-error",
@@ -82,17 +82,17 @@ def _policy(campaign_id: str) -> OpenSystemPromotionPolicy:
                 "trace-preservation",
             ),
         ),
-        "process-recovery-v1": (
+        "process-recovery": (
             ("memory-dimension", "intervention-settings"),
             ("held-out-probability-error", "post-fit-to-pre-fit-error-ratio"),
             ("trace", "positivity", "complete-positivity", "trace-preservation"),
         ),
-        "causal-distillation-v1": (
+        "causal-distillation": (
             ("memory-dimension", "slot-count"),
             ("held-out-probability-error", "post-fit-to-pre-fit-error-ratio"),
             ("trace", "positivity", "complete-positivity", "trace-preservation"),
         ),
-        "enumerable-neural-v1": (
+        "enumerable-neural": (
             ("sample-count", "time-step", "parameter-dimension"),
             (
                 "rate-standard-error",

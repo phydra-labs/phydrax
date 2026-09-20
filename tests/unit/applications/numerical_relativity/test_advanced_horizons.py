@@ -6,8 +6,8 @@ import numpy as np
 import pytest
 
 from phydrax.applications.numerical_relativity._dynamical_horizon import (
-    DynamicalHorizonStatus,
     DynamicalHorizonBalancePlan,
+    DynamicalHorizonStatus,
     HorizonWorldtubeRegime,
     QuasilocalHorizonWorldtube,
 )
@@ -44,8 +44,8 @@ def _completed_minkowski_history(times, *, transverse_rate, completed=True):
         metric,
         np.ones(shape),
         np.zeros(shape + (3, 3)),
-        np.ones(shape, dtype=bool),
-        np.ones(shape, dtype=bool),
+        np.ones(shape, dtype="bool"),
+        np.ones(shape, dtype="bool"),
         snapshot_token=0,
         chart_id="minkowski-cartesian",
         convention_id="mostly-plus",
@@ -75,7 +75,7 @@ def _trace_plan(times, *, terminal_positions, caustic_distance):
         surface,
         terminal_positions,
         terminal_covectors,
-        np.ones((2,), dtype=bool),
+        np.ones((2,), dtype="bool"),
         np.asarray(((1,), (0,))),
         time_capacity=len(times),
         grid_shape=(3, 3, 3),
@@ -90,13 +90,11 @@ def _trace_plan(times, *, terminal_positions, caustic_distance):
 def test_offline_generators_converge_backward_and_report_caustics():
     times = np.linspace(0.0, 1.0, 9)
     transverse_rate = 2.0
-    history = _completed_minkowski_history(
-        times, transverse_rate=transverse_rate
-    )
+    history = _completed_minkowski_history(times, transverse_rate=transverse_rate)
     terminal = np.asarray(((0.0, -0.5, 0.0), (0.0, 0.5, 0.0)))
-    trace = _trace_plan(
-        times, terminal_positions=terminal, caustic_distance=0.2
-    ).trace(history)
+    trace = _trace_plan(times, terminal_positions=terminal, caustic_distance=0.2).trace(
+        history
+    )
 
     expected_initial_y = terminal[:, 1] * np.exp(-transverse_rate)
     np.testing.assert_allclose(
@@ -133,9 +131,9 @@ def test_offline_event_horizon_trace_fails_closed_outside_completed_coverage():
     times = np.linspace(0.0, 1.0, 5)
     history = _completed_minkowski_history(times, transverse_rate=0.0)
     terminal = np.asarray(((0.0, -2.5, 0.0), (0.0, 2.5, 0.0)))
-    trace = _trace_plan(
-        times, terminal_positions=terminal, caustic_distance=0.1
-    ).trace(history)
+    trace = _trace_plan(times, terminal_positions=terminal, caustic_distance=0.1).trace(
+        history
+    )
     assert not bool(trace.coverage_complete)
     assert not bool(trace.qualified)
     assert int(trace.status) & int(EventHorizonStatus.OUTSIDE_HISTORY_COVERAGE)
@@ -222,9 +220,7 @@ def test_dynamical_and_isolated_worldtube_flux_laws_are_quasilocal():
     np.testing.assert_allclose(
         dynamical.angular_momentum_balance_residual, 0.0, atol=2.0e-7
     )
-    assert np.all(
-        np.asarray(dynamical.regime) == int(HorizonWorldtubeRegime.DYNAMICAL)
-    )
+    assert np.all(np.asarray(dynamical.regime) == int(HorizonWorldtubeRegime.DYNAMICAL))
     assert bool(dynamical.qualified)
 
     isolated_mots, isolated_geometries = _quasilocal_slices(
@@ -243,9 +239,7 @@ def test_dynamical_and_isolated_worldtube_flux_laws_are_quasilocal():
     )
     isolated = plan.evaluate(isolated_worldtube)
     assert np.all(np.asarray(isolated.isolated))
-    assert np.all(
-        np.asarray(isolated.regime) == int(HorizonWorldtubeRegime.ISOLATED)
-    )
+    assert np.all(np.asarray(isolated.regime) == int(HorizonWorldtubeRegime.ISOLATED))
     assert bool(isolated.qualified)
     assert not bool(isolated.derivative_valid)
 

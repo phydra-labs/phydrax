@@ -69,14 +69,14 @@ def _run_context():
 
 
 def _event_plan():
-    catalogue = phx.particle_physics.ParticleCatalogueReference(
+    catalog = phx.particle_physics.ParticleCatalogReference(
         source_id="pdg-test",
         provider_release="test",
-        checksum="catalogue-checksum",
+        checksum="catalog-checksum",
         citation_url="https://pdg.lbl.gov/",
     )
     return phx.particle_physics.ParticleEventPlan(
-        catalogue=catalogue,
+        catalog=catalog,
         momentum_unit=phx.units.GIGAELECTRONVOLT,
         length_unit=phx.units.MILLIMETER,
         time_unit=phx.units.NANOSECOND,

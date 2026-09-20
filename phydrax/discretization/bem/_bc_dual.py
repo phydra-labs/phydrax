@@ -136,9 +136,9 @@ def _bc_barycentric_transform(
         (int(start), int(stop)): edge_id
         for edge_id, (start, stop) in enumerate(refined_edges)
     }
-    refined_edge_lengths = np.asarray(barycentric_surface.edge_lengths, dtype=float)
+    refined_edge_lengths = np.asarray(barycentric_surface.edge_lengths, dtype=np.float64)
     transform = np.zeros(
-        (barycentric_surface.edge_count, surface.edge_count), dtype=float
+        (barycentric_surface.edge_count, surface.edge_count), dtype=np.float64
     )
     vertex_count = surface.vertex_count
     edge_count = surface.edge_count
@@ -217,17 +217,17 @@ def _rwg_bc_cross_mass(
     refined_edges = np.asarray(refined.face_edges, dtype=np.int64)
     coarse_opposite = np.asarray(coarse.opposite_vertices, dtype=np.int64)
     refined_opposite = np.asarray(refined.opposite_vertices, dtype=np.int64)
-    coarse_points = np.asarray(coarse.vertices, dtype=float)
-    refined_points = np.asarray(refined.vertices, dtype=float)
+    coarse_points = np.asarray(coarse.vertices, dtype=np.float64)
+    refined_points = np.asarray(refined.vertices, dtype=np.float64)
     coarse_scale = (
-        np.asarray(coarse.face_edge_signs, dtype=float)
-        * np.asarray(coarse.edge_lengths, dtype=float)[coarse_edges]
-        / (2.0 * np.asarray(coarse.face_areas, dtype=float)[:, None])
+        np.asarray(coarse.face_edge_signs, dtype=np.float64)
+        * np.asarray(coarse.edge_lengths, dtype=np.float64)[coarse_edges]
+        / (2.0 * np.asarray(coarse.face_areas, dtype=np.float64)[:, None])
     )
     refined_scale = (
-        np.asarray(refined.face_edge_signs, dtype=float)
-        * np.asarray(refined.edge_lengths, dtype=float)[refined_edges]
-        / (2.0 * np.asarray(refined.face_areas, dtype=float)[:, None])
+        np.asarray(refined.face_edge_signs, dtype=np.float64)
+        * np.asarray(refined.edge_lengths, dtype=np.float64)[refined_edges]
+        / (2.0 * np.asarray(refined.face_areas, dtype=np.float64)[:, None])
     )
     quadrature = np.asarray(
         (
@@ -237,9 +237,9 @@ def _rwg_bc_cross_mass(
         )
     )
     refined_faces = np.asarray(refined.triangles, dtype=np.int64)
-    refined_areas = np.asarray(refined.face_areas, dtype=float)
-    refined_normals = np.asarray(refined.face_normals, dtype=float)
-    cross_mass = np.zeros((primal.size, primal.size), dtype=float)
+    refined_areas = np.asarray(refined.face_areas, dtype=np.float64)
+    refined_normals = np.asarray(refined.face_normals, dtype=np.float64)
+    cross_mass = np.zeros((primal.size, primal.size), dtype=np.float64)
     for refined_face_id, refined_face in enumerate(refined_faces):
         coarse_face_id = int(parent_faces[refined_face_id])
         points = quadrature @ refined_points[refined_face]
@@ -283,12 +283,12 @@ def prepare_buffa_christiansen_dual_3d(
     barycentric_rwg = RWGSurfaceCurrentSpace3D(
         barycentric_surface, coefficient_dtype=primal.vector_space.dtype
     )
-    parent_normals = np.asarray(surface.face_normals, dtype=float)[parent_faces]
-    refined_normals = np.asarray(barycentric_surface.face_normals, dtype=float)
+    parent_normals = np.asarray(surface.face_normals, dtype=np.float64)[parent_faces]
+    refined_normals = np.asarray(barycentric_surface.face_normals, dtype=np.float64)
     orientation_alignment = np.sum(parent_normals * refined_normals, axis=1)
     minimum_alignment = float(np.min(orientation_alignment))
-    parent_areas = np.asarray(surface.face_areas, dtype=float)
-    refined_areas = np.asarray(barycentric_surface.face_areas, dtype=float).reshape(
+    parent_areas = np.asarray(surface.face_areas, dtype=np.float64)
+    refined_areas = np.asarray(barycentric_surface.face_areas, dtype=np.float64).reshape(
         (surface.face_count, 6)
     )
     area_defect = float(
@@ -315,12 +315,12 @@ def prepare_buffa_christiansen_dual_3d(
         primal,
         barycentric_rwg,
         parent_faces,
-        np.asarray(stored_transform, dtype=float),
+        np.asarray(stored_transform, dtype=np.float64),
     )
     stored_cross = np.asarray(cross, dtype=storage_dtype)
     if np.any(~np.isfinite(stored_cross)):
         raise ValueError("RWG/BC cross mass is nonfinite.")
-    singular = np.linalg.svd(np.asarray(stored_cross, dtype=float), compute_uv=False)
+    singular = np.linalg.svd(np.asarray(stored_cross, dtype=np.float64), compute_uv=False)
     minimum_singular = float(singular[-1])
     condition = (
         float(singular[0] / minimum_singular) if minimum_singular > 0.0 else float("inf")
@@ -333,7 +333,7 @@ def prepare_buffa_christiansen_dual_3d(
         raise ValueError("RWG/BC cross mass exceeds the declared condition envelope.")
     evidence_id = canonical_fingerprint(
         {
-            "kind": "buffa-christiansen-dual-evidence-3d-v2",
+            "kind": "buffa-christiansen-dual-evidence-3d",
             "primal": primal.space_id,
             "barycentric_surface": barycentric_surface.complex_id,
             "transform": array_tree_fingerprint(stored_transform),
@@ -357,7 +357,7 @@ def prepare_buffa_christiansen_dual_3d(
     )
     space_id = canonical_fingerprint(
         {
-            "kind": "buffa-christiansen-dual-space-3d-v2",
+            "kind": "buffa-christiansen-dual-space-3d",
             "primal": primal.space_id,
             "barycentric_rwg": barycentric_rwg.space_id,
             "evidence": evidence_id,

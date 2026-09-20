@@ -147,8 +147,8 @@ class CoherentTransportPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Quantum occupancy must have shape (species, cell, momentum)."
             )
-        momentum = np.asarray(momentum_weights, dtype=float)
-        cells = np.asarray(cell_volumes, dtype=float)
+        momentum = np.asarray(momentum_weights, dtype=np.float64)
+        cells = np.asarray(cell_volumes, dtype=np.float64)
         if (
             momentum.shape != (occupancy_shape[2],)
             or cells.shape != (occupancy_shape[1],)
@@ -326,8 +326,8 @@ class LocalKrausCollisionMap(StrictModule):
     ):
         values = jnp.asarray(operators)
         if not jnp.issubdtype(values.dtype, jnp.inexact):
-            values = values.astype(float)
-        mask = jnp.asarray(active, dtype=bool)
+            values = values.astype("float64")
+        mask = jnp.asarray(active, dtype=jnp.bool_)
         dimension = int(internal_dimension)
         tolerance = float(trace_tolerance)
         if dimension < 1 or dimension > 4 or dimension != internal_dimension:
@@ -431,8 +431,10 @@ def coherent_state_evidence(
     minimum = jnp.min(eigenvalues, axis=-1)
     traces = jnp.real(jnp.trace(density, axis1=-2, axis2=-1))
     active = (
-        jnp.asarray(plan.quantum_support.spatial_active, dtype=bool)[:, None, None]
-        & jnp.asarray(plan.quantum_support.momentum_active, dtype=bool)[None, :, None]
+        jnp.asarray(plan.quantum_support.spatial_active, dtype=jnp.bool_)[:, None, None]
+        & jnp.asarray(plan.quantum_support.momentum_active, dtype=jnp.bool_)[
+            None, :, None
+        ]
     )
     active = jnp.broadcast_to(active, traces.shape)
     inactive_residual = jnp.max(jnp.abs(jnp.where(active[..., None, None], 0.0, density)))
@@ -504,8 +506,10 @@ def initialize_coherent_state(
     identity = jnp.eye(plan.internal_dimension, dtype=jnp.complex128)
     density = occupancy[..., None, None] * identity / plan.internal_dimension
     active = (
-        jnp.asarray(plan.quantum_support.spatial_active, dtype=bool)[:, None, None]
-        & jnp.asarray(plan.quantum_support.momentum_active, dtype=bool)[None, :, None]
+        jnp.asarray(plan.quantum_support.spatial_active, dtype=jnp.bool_)[:, None, None]
+        & jnp.asarray(plan.quantum_support.momentum_active, dtype=jnp.bool_)[
+            None, :, None
+        ]
     )
     density = jnp.where(active[..., None, None], density, 0.0)
     initial_time = plan.quantum_support.time if time is None else time

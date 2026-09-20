@@ -216,15 +216,14 @@ def _entity_type_payload(
     payload = graph.nodes if kind == "nodes" else graph.edges
     if not isinstance(payload, Mapping):
         raise TypeError(
-            f"{type(component).__name__} requires mapping-valued graph {kind} "
-            f"with key {component.type_key!r}."
+            f"{type(component).__name__} requires mapping-valued graph {kind} with key {component.type_key!r}."
         )
     if component.type_key not in payload:
         raise KeyError(
             f"Graph {kind} payload does not contain type key {component.type_key!r}."
         )
     type_arr = jnp.asarray(payload[component.type_key])
-    if type_arr.ndim == 2 and int(type_arr.shape[1]) == 1:
+    if type_arr.ndim == 2 and type_arr.shape[1] == 1:
         type_arr = type_arr[:, 0]
     if type_arr.ndim != 1:
         raise ValueError(
@@ -252,10 +251,10 @@ def _cochain_cell_indices(graph: Any, component: CochainCells, /) -> Array:
         boundary = jnp.asarray(graph.nodes["boundary"])
         if boundary.ndim != 1 or boundary.shape != cell_dim.shape:
             raise ValueError("graph.nodes['boundary'] must match graph cell count.")
-        boundary = boundary.astype(bool)
+        boundary = boundary.astype("bool")
         mask = mask & (boundary if component.region == "boundary" else ~boundary)
     if graph.node_mask is not None:
-        mask = mask & jnp.asarray(graph.node_mask, dtype=bool)
+        mask = mask & jnp.asarray(graph.node_mask, dtype=jnp.bool_)
     return jnp.asarray(np.nonzero(np.asarray(mask))[0], dtype=jnp.int32)
 
 

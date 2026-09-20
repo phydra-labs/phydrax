@@ -240,7 +240,7 @@ def compile_network(network: PowerNetwork, study: PowerStudy) -> CompiledNetwork
         _finite((control.voltage, control.angle), "Study voltage data")
         if control.voltage <= 0:
             raise ValueError("Study voltage magnitudes must be positive.")
-    neighbours = [set() for _ in range(n)]
+    neighbors = [set() for _ in range(n)]
     from_indices, to_indices, stamps = [], [], []
     for bus in network.buses:
         _finite((bus.base_kv, bus.v_min, bus.v_max), "Bus data")
@@ -267,8 +267,8 @@ def compile_network(network: PowerNetwork, study: PowerStudy) -> CompiledNetwork
         from_indices.append(f)
         to_indices.append(t)
         if branch.in_service:
-            neighbours[f].add(t)
-            neighbours[t].add(f)
+            neighbors[f].add(t)
+            neighbors[t].add(f)
             series = 1 / complex(branch.r, branch.x)
             total = series + 0.5j * branch.b
             tap = branch.tap * jnp.exp(1j * branch.phase)
@@ -278,7 +278,7 @@ def compile_network(network: PowerNetwork, study: PowerStudy) -> CompiledNetwork
                 )
             )
         else:
-            stamps.append(jnp.zeros(4, dtype=complex))
+            stamps.append(jnp.zeros(4, dtype=jnp.complex128))
     islands, references = [], []
     unseen = set(range(n))
     while unseen:
@@ -287,7 +287,7 @@ def compile_network(network: PowerNetwork, study: PowerStudy) -> CompiledNetwork
             bus_index = queue.pop()
             if bus_index not in reached:
                 reached.add(bus_index)
-                queue.extend(neighbours[bus_index] - reached)
+                queue.extend(neighbors[bus_index] - reached)
         unseen -= reached
         island = tuple(sorted(reached))
         reference = tuple(i for i in island if controls[i].kind == "reference")
@@ -343,7 +343,7 @@ def compile_network(network: PowerNetwork, study: PowerStudy) -> CompiledNetwork
             raise ValueError("A PV bus requires at least one in-service generator.")
     f = jnp.asarray(from_indices, dtype=jnp.int32)
     t = jnp.asarray(to_indices, dtype=jnp.int32)
-    branch_y = jnp.stack(stamps) if stamps else jnp.zeros((0, 4), dtype=complex)
+    branch_y = jnp.stack(stamps) if stamps else jnp.zeros((0, 4), dtype=jnp.complex128)
     diagonal = jnp.arange(n, dtype=jnp.int32)
     relation = EdgeRelation(
         jnp.concatenate((f, t, f, t, diagonal)),

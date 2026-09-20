@@ -4,9 +4,9 @@ Phydrax closes named HEP production profiles by composing bounded native kernels
 
 ## Ownership
 
-`phydrax.particle_physics` owns shared particle-catalogue references, event identities, bounded generator truth, named weights, associations, provider capabilities, reproducibility grades, and complete cross-section accounting. Material particles, accelerator macroparticles, detector tracks, hits, digits, clusters, reconstructed particles, and QCD thermodynamic states remain distinct.
+`phydrax.particle_physics` owns shared particle-catalog references, event identities, bounded generator truth, named weights, associations, provider capabilities, reproducibility grades, and complete cross-section accounting. Material particles, accelerator macroparticles, detector tracks, hits, digits, clusters, reconstructed particles, and QCD thermodynamic states remain distinct.
 
-`phydrax.applications.relativistic_scattering` owns the native two-to-two hard-process path. A `HardProcessPlan` binds a `ScatteringProcess`, two-particle centre-of-momentum beam, scales, PDG identities, matrix-element identity, spin/color averages, symmetry factor, and fiducial cosine support. `produce_hard_events` returns the existing fixed-leg weighted stream, a bounded truth event, the generated/selected masks, derivative evidence, and a cross-section ledger. `integrate_hard_process` uses the existing frozen-grid VEGAS implementation.
+`phydrax.applications.relativistic_scattering` owns the native two-to-two hard-process path. A `HardProcessPlan` binds a `ScatteringProcess`, two-particle center-of-momentum beam, scales, PDG identities, matrix-element identity, spin/color averages, symmetry factor, and fiducial cosine support. `produce_hard_events` returns the existing fixed-leg weighted stream, a bounded truth event, the generated/selected masks, derivative evidence, and a cross-section ledger. `integrate_hard_process` uses the existing frozen-grid VEGAS implementation.
 
 General matrix elements, PDFs, NLO calculations, matching/merging, showers, hadronization, and unrestricted decays remain external. `ExternalHEPProvider` uses the existing pinned executable runtime and refuses capabilities absent from the provider contract.
 

@@ -40,18 +40,18 @@ def test_market_curve_valuation_archive_workflow(tmp_path):
     lineage = finance.market.DataLineage("synthetic", "workflow")
     quote_key = finance.QuoteKey(asset.asset_id, "close", currency=usd)
     quote = finance.QuoteObservation(
-        quote_key, 100.0, _timestamp(10, 12, "spot-v1"), lineage
+        quote_key, 100.0, _timestamp(10, 12, "spot"), lineage
     )
     reference = finance.ReferenceDataSnapshot(
         (asset,),
         (),
         (usd,),
-        as_of=_timestamp(20, 20, "reference-v1"),
+        as_of=_timestamp(20, 20, "reference"),
         lineage=lineage,
     )
     market = finance.MarketDataSnapshot(
         (quote,),
-        snapshot_time=_timestamp(20, 20, "market-v1"),
+        snapshot_time=_timestamp(20, 20, "market"),
         reference_data_id=reference.snapshot_id,
     )
     layout = finance.RiskFactorLayout((finance.RiskFactorKey("spot", quote_key),))

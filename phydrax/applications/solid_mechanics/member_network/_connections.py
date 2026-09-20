@@ -4,9 +4,10 @@
 
 from __future__ import annotations
 
-import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
+
+from phydrax._strict import StrictModule
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ._blocks import AbstractMemberBlock, MemberBlockEvaluation
@@ -22,8 +23,8 @@ def _empty_evaluation(energy: Array, valid: Array, dtype, dimension: int):
         jnp.empty((0, max(dimension - 1, 1)), dtype=dtype),
         jnp.empty((0, max(dimension - 1, 1)), dtype=dtype),
         empty,
-        jnp.empty((0,), dtype=bool),
-        jnp.empty((0,), dtype=bool),
+        jnp.empty((0,), dtype=jnp.bool_),
+        jnp.empty((0,), dtype=jnp.bool_),
         empty,
         valid,
     )
@@ -193,7 +194,7 @@ class NonlinearMomentRotationBlock(AbstractMemberBlock):
         )
 
 
-class GapSupportState(eqx.Module):
+class GapSupportState(StrictModule):
     gap: Array
     reaction: Array
     active: Array
@@ -220,7 +221,7 @@ def gap_support_response(
     return GapSupportState(signed_gap, reaction, penetration > 0.0, complementarity)
 
 
-class FrictionSupportState(eqx.Module):
+class FrictionSupportState(StrictModule):
     normal_reaction: Array
     tangential_reaction: Array
     sticking: Array

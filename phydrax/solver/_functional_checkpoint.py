@@ -12,7 +12,7 @@ import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 
-from .._model._structure import deserialise_model_leaf, serialise_model_leaf
+from .._model._structure import deserialize_model_leaf, serialize_model_leaf
 from .._training import (
     DelayedTargetPolicy,
     ExponentialMovingAverageTargetPolicy,
@@ -87,7 +87,7 @@ def save_functional_training_checkpoint(
         lambda target: eqx.tree_serialise_leaves(
             target,
             (solver.functions, solver.objective, state),
-            filter_spec=serialise_model_leaf,
+            filter_spec=serialize_model_leaf,
         ),
     )
     manifest = {
@@ -149,8 +149,7 @@ def _read_functional_manifest(path: str | Path, /) -> tuple[dict[str, Any], Path
     unknown = set(manifest) - expected
     if missing or unknown:
         raise ValueError(
-            "Functional checkpoint fields are not canonical; "
-            f"missing={sorted(missing)}, unknown={sorted(unknown)}."
+            f"Functional checkpoint fields are not canonical; missing={sorted(missing)}, unknown={sorted(unknown)}."
         )
     if manifest["format"] != _FUNCTIONAL_CHECKPOINT_FORMAT:
         raise ValueError("File is not a Phydrax functional training checkpoint.")
@@ -193,7 +192,7 @@ def load_functional_training_checkpoint(
     functions, objective, restored = eqx.tree_deserialise_leaves(
         state_path,
         (solver_like.functions, solver_like.objective, state_like),
-        filter_spec=deserialise_model_leaf,
+        filter_spec=deserialize_model_leaf,
     )
     progress = TrainingProgress(**manifest["progress"])
     if progress.update_step != int(manifest["step"]):

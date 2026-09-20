@@ -16,7 +16,7 @@ from phydrax.applications.cellular_mechanics._active_polymers import (
 
 
 def test_chromatin_joint_occupancy_and_extrusion_collision_evidence():
-    positions = np.arange(8, dtype=float)[:, None]
+    positions = np.arange(8, dtype="float64")[:, None]
     runtime = ChromatinDynamicsPlan(
         8,
         2,
@@ -51,7 +51,7 @@ def test_chromatin_joint_occupancy_and_extrusion_collision_evidence():
 
 
 def test_chromatin_direct_capture_canonicalizes_reversed_feet():
-    positions = np.arange(8, dtype=float)[:, None]
+    positions = np.arange(8, dtype="float64")[:, None]
     runtime = ChromatinDynamicsPlan(
         8,
         1,
@@ -66,7 +66,7 @@ def test_chromatin_direct_capture_canonicalizes_reversed_feet():
 
 
 def test_chromatin_addressed_step_replays_identically():
-    positions = np.arange(12, dtype=float)[:, None]
+    positions = np.arange(12, dtype="float64")[:, None]
     runtime = ChromatinDynamicsPlan(
         12,
         4,

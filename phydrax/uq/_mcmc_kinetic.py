@@ -255,7 +255,7 @@ def prepare_mcmc_kinetic(
             plan.parameter_blocks, block_inverse_masses, strict=True
         ):
             current_indices = jnp.concatenate(tuple(offsets[path] for path in paths))
-            size = int(current_indices.size)
+            size = current_indices.size
             if size > plan.max_block_size:
                 raise ValueError("A prepared MCMC block exceeds max_block_size.")
             value = jnp.asarray(matrix, dtype=dtype)

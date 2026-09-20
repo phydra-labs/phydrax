@@ -207,7 +207,7 @@ class PreparedDirectPeriodicRPYMobility(AbstractPreparedHydrodynamicMobility):
                 "reduce the extent or increase the cell size."
             )
         space = ArraySpace(
-            (int(slots.size), 3),
+            (slots.size, 3),
             dtype=dtype,
             space_id=f"periodic-rpy:{plan.mobility_id}:coordinates",
         )

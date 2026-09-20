@@ -4,7 +4,7 @@ Particle interiors now share one mesh contract across radial, two-dimensional, a
 
 ## Mesh contract
 
-`AbstractParticleInternalMeshPlan` prepares a fixed-capacity mesh with cell measures, face measures, owner/neighbour routes, boundary faces, stable identities, and geometry evidence. Implementations include:
+`AbstractParticleInternalMeshPlan` prepares a fixed-capacity mesh with cell measures, face measures, owner/neighbor routes, boundary faces, stable identities, and geometry evidence. Implementations include:
 
 - `RadialShellMeshPlan`;
 - `UnstructuredParticleInternalMeshPlan` for triangles, quadrilaterals, and tetrahedra.
@@ -15,7 +15,7 @@ Unstructured meshes are defined in body coordinates. Scale changes update cell a
 
 ## Conservative transport
 
-Every active interior face is evaluated once. Heat and species fluxes are scattered with opposite signs to owner and neighbour cells. Boundary transfer is distributed over active boundary faces and deposits exact opposite extensive content into the continuum.
+Every active interior face is evaluated once. Heat and species fluxes are scattered with opposite signs to owner and neighbor cells. Boundary transfer is distributed over active boundary faces and deposits exact opposite extensive content into the continuum.
 
 The conversion solver dispatches to:
 

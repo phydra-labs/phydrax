@@ -330,8 +330,7 @@ class SCMPlan(StrictModule):
             expected = graph.parents(mechanism.output)
             if mechanism.parents != expected:
                 raise ValueError(
-                    f"Mechanism {mechanism.output!r} parents {mechanism.parents} "
-                    f"do not match graph parents {expected}."
+                    f"Mechanism {mechanism.output!r} parents {mechanism.parents} do not match graph parents {expected}."
                 )
             _validate_mechanism_schema(graph.schema, mechanism)
         mechanism_ids = tuple(mechanism.mechanism_id for mechanism in ordered)
@@ -550,7 +549,7 @@ class FactualObservation(StrictModule, NonTrainableState):
         canonical = tuple(jnp.asarray(value) for value in values)
         if len(canonical) != len(schema.variables):
             raise ValueError("FactualObservation needs one value per schema variable.")
-        n_samples = int(canonical[0].shape[0])
+        n_samples = canonical[0].shape[0]
         for variable, value in zip(schema.variables, canonical, strict=True):
             if value.shape != (n_samples,) + variable.event_shape:
                 raise ValueError("Factual observation shapes do not match the schema.")
@@ -756,7 +755,7 @@ def evaluate_counterfactual(
             CounterfactualStatus.INTERVENTION_UNSUPPORTED,
             "Counterfactual execution currently supports perfect interventions only.",
         )
-    count = int(factual.values[0].shape[0])
+    count = factual.values[0].shape[0]
     replacements = {item.variable: item for item in regime.interventions.interventions}
     noise_by_output = {
         mechanism.output: noise
@@ -837,7 +836,7 @@ def compile_finite_scm(regime: MechanismRegime) -> CompiledFiniteSCM:
             value = int(np.asarray(intervention.value))
             if value < 0 or value >= child_cardinality:
                 raise ValueError("Perfect finite intervention leaves the child support.")
-            table = np.zeros((child_cardinality,), dtype=float)
+            table = np.zeros((child_cardinality,), dtype=np.float64)
             table[value] = 1.0
             parents: tuple[str, ...] = ()
         else:
@@ -885,9 +884,7 @@ def finite_observed_law_from_scm(
     *,
     maximum_assignments: int = 1_000_000,
 ) -> FiniteObservedLaw:
-    cardinalities = tuple(
-        int(value) for value in np.asarray(compiled.factor_graph.cardinalities)
-    )
+    cardinalities = tuple(np.asarray(compiled.factor_graph.cardinalities))
     total = int(np.prod(cardinalities, dtype=np.int64))
     if total > maximum_assignments:
         raise ValueError("Finite SCM law exceeds maximum_assignments.")

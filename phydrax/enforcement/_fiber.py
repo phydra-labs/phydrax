@@ -123,7 +123,7 @@ def _fiber_product_leaves(value: Any, /) -> tuple[cx.AxisArray, ...]:
 def _pack_fiber_product(value: Any, fiber_dims: tuple[str, ...], /) -> cx.AxisArray:
     leaves = _fiber_product_leaves(value)
     axis = len(fiber_dims)
-    fiber_shape = tuple(int(size) for size in leaves[0].data.shape[:axis])
+    fiber_shape = tuple(leaves[0].data.shape[:axis])
     blocks = []
     for leaf in leaves:
         if leaf.dims[:axis] != fiber_dims or any(
@@ -132,9 +132,9 @@ def _pack_fiber_product(value: Any, fiber_dims: tuple[str, ...], /) -> cx.AxisAr
             raise ValueError(
                 "Every product factor must share the prepared leading fiber axes."
             )
-        if tuple(int(size) for size in leaf.data.shape[:axis]) != fiber_shape:
+        if tuple(leaf.data.shape[:axis]) != fiber_shape:
             raise ValueError("Fiber product factors have different named-axis sizes.")
-        event_shape = tuple(int(size) for size in leaf.data.shape[axis:])
+        event_shape = tuple(leaf.data.shape[axis:])
         event_size = prod(event_shape) if event_shape else 1
         blocks.append(jnp.asarray(leaf.data).reshape(fiber_shape + (event_size,)))
     data = blocks[0] if len(blocks) == 1 else jnp.concatenate(tuple(blocks), axis=-1)
@@ -174,8 +174,8 @@ def _factor_layout(value: cx.AxisArray, name: str, /):
         raise ValueError("Fiber named axes must be unique.")
     return (
         tuple(value.data.shape[:-2]),
-        int(value.data.shape[-2]),
-        int(value.data.shape[-1]),
+        value.data.shape[-2],
+        value.data.shape[-1],
     )
 
 
@@ -188,13 +188,13 @@ def _local_mv(matrix: cx.AxisArray, residual: cx.AxisArray, /) -> cx.AxisArray:
         raise ValueError("Residual axes do not match the prepared fiber factor.")
     if tuple(residual.data.shape[:axis]) != tuple(matrix.data.shape[:-2]):
         raise ValueError("Residual fiber sizes do not match the prepared factor.")
-    k, m = (int(size) for size in matrix.data.shape[-2:])
-    if int(residual.data.shape[axis]) != m or any(
+    k, m = (size for size in matrix.data.shape[-2:])
+    if residual.data.shape[axis] != m or any(
         dim is not None for dim in residual.dims[axis + 1 :]
     ):
         raise ValueError("Residual event layout is incompatible with the factor.")
-    fiber_shape = tuple(int(size) for size in residual.data.shape[:axis])
-    rhs_shape = tuple(int(size) for size in residual.data.shape[axis + 1 :])
+    fiber_shape = tuple(residual.data.shape[:axis])
+    rhs_shape = tuple(residual.data.shape[axis + 1 :])
     b = prod(fiber_shape) if fiber_shape else 1
     r = prod(rhs_shape) if rhs_shape else 1
     matrices = jnp.asarray(matrix.data).reshape((b, k, m))
@@ -217,11 +217,11 @@ def _shared_mv(matrix: Any, residual: cx.AxisArray, /) -> cx.AxisArray:
         dim is not None for dim in residual.dims[named:]
     ):
         raise ValueError("Named residual axes must precede unnamed event axes.")
-    k, m = (int(size) for size in matrix_.shape)
-    if int(residual.data.shape[named]) != m:
+    k, m = (size for size in matrix_.shape)
+    if residual.data.shape[named] != m:
         raise ValueError("Separable residual dimension does not match the factor.")
-    fiber_shape = tuple(int(size) for size in residual.data.shape[:named])
-    rhs_shape = tuple(int(size) for size in residual.data.shape[named + 1 :])
+    fiber_shape = tuple(residual.data.shape[:named])
+    rhs_shape = tuple(residual.data.shape[named + 1 :])
     b = prod(fiber_shape) if fiber_shape else 1
     r = prod(rhs_shape) if rhs_shape else 1
     rhs = jnp.asarray(residual.data).reshape((b, m, r))
@@ -248,8 +248,8 @@ def _shared_lift(operator: PreparedConstraintOperator, residual: Any, /) -> cx.A
     correction = _shared_mv(operator.right_inverse, packed)
     if operator.evidence.full_row_rank:
         return correction
-    fiber_shape = tuple(int(size) for size in packed.data.shape[:named])
-    rhs_shape = tuple(int(size) for size in packed.data.shape[named + 1 :])
+    fiber_shape = tuple(packed.data.shape[:named])
+    rhs_shape = tuple(packed.data.shape[named + 1 :])
     count = prod(fiber_shape + rhs_shape) if fiber_shape or rhs_shape else 1
     targets = jnp.moveaxis(packed.data, named, -1).reshape(
         (count, operator.target_space.size)

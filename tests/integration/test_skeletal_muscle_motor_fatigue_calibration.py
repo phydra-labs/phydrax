@@ -42,9 +42,7 @@ def test_motor_force_calibration_and_macroscopic_fatigue_remain_separate_routes(
         10.0,
         random_input,
     )
-    motor_state = commit_fuglevand_winter_patla_1993(
-        motor_candidate, motor_state
-    )
+    motor_state = commit_fuglevand_winter_patla_1993(motor_candidate, motor_state)
     arbitrary_force = motor.force(motor_state).total_force_arbitrary
     assert float(arbitrary_force) > 0.0
 
@@ -62,12 +60,8 @@ def test_motor_force_calibration_and_macroscopic_fatigue_remain_separate_routes(
         600.0 * relative_protocol + 2.0,
         jnp.ones((5,)),
     )
-    calibration_state = commit_physical_relative_force_calibration(
-        fit, calibration_state
-    )
-    normalized_motor_force = arbitrary_force / jnp.sum(
-        motor.peak_twitch_force_arbitrary
-    )
+    calibration_state = commit_physical_relative_force_calibration(fit, calibration_state)
+    normalized_motor_force = arbitrary_force / jnp.sum(motor.peak_twitch_force_arbitrary)
     observed = calibration.observe(calibration_state, normalized_motor_force)
     np.testing.assert_allclose(
         observed.force_newton,

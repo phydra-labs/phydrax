@@ -110,12 +110,12 @@ def test_bidirectional_recurrence_reverses_each_reset_delimited_segment_independ
     backward = GRUCell(2, 3, dtype=jnp.float64, key=jr.key(9))
     model = BidirectionalRecurrentSequenceModel(forward, backward)
     inputs = jr.normal(jr.key(10), (6, 2))
-    valid = jnp.ones((6,), dtype=bool)
+    valid = jnp.ones((6,), dtype="bool")
     reset = jnp.array([False, False, False, True, False, False])
 
     packed = model(RecurrentBatch(inputs, valid, reset=reset))
-    first = model(RecurrentBatch(inputs[:3], jnp.ones((3,), dtype=bool)))
-    second = model(RecurrentBatch(inputs[3:], jnp.ones((3,), dtype=bool)))
+    first = model(RecurrentBatch(inputs[:3], jnp.ones((3,), dtype="bool")))
+    second = model(RecurrentBatch(inputs[3:], jnp.ones((3,), dtype="bool")))
     assert jnp.allclose(packed, jnp.concatenate((first, second)), atol=1e-10, rtol=1e-10)
 
 
@@ -123,7 +123,7 @@ def test_bidirectional_time_aware_recurrence_matches_explicit_reverse_time():
     cell = _PhysicalVectorAccumulator()
     model = BidirectionalRecurrentSequenceModel(cell, cell)
     inputs = jnp.ones((4, 1))
-    valid = jnp.ones((4,), dtype=bool)
+    valid = jnp.ones((4,), dtype="bool")
     times = jnp.asarray((0.0, 1.0, 4.0, 10.0))
     batch = RecurrentBatch(inputs, valid, time=times)
 
@@ -297,7 +297,7 @@ def test_cfc_sequence_is_jittable_differentiable_and_respects_packing():
 def test_cfc_streaming_preserves_the_boundary_interval():
     cell = CfCCell(2, 3, dtype=jnp.float64, key=jr.key(16))
     inputs = jr.normal(jr.key(17), (6, 2), dtype=jnp.float64)
-    valid = jnp.ones((6,), dtype=bool)
+    valid = jnp.ones((6,), dtype="bool")
     time = jnp.asarray((0.0, 0.2, 0.8, 1.7, 3.1, 5.0))
     split = 3
 
@@ -341,7 +341,7 @@ def test_stacked_recurrent_cell_forwards_context_to_nested_cfc_cells():
     )
     stack = StackedRecurrentCell((first_cell, second_cell))
     inputs = jnp.asarray(((0.1,), (0.2,), (-0.1,), (0.4,)))
-    valid = jnp.ones((4,), dtype=bool)
+    valid = jnp.ones((4,), dtype="bool")
     time = jnp.asarray((0.0, 0.3, 1.1, 2.8))
     batch = RecurrentBatch(inputs, valid, time=time)
 

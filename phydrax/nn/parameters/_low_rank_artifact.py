@@ -308,7 +308,7 @@ def read_low_rank_adapter(
                 f"Low-rank adapter site {weight_path!r} transform handler changed."
             )
         weight = jnp.asarray(value.weight)
-        shape = tuple(int(size) for size in record["shape"])
+        shape = tuple(record["shape"])
         dtype = str(record["dtype"])
         if tuple(weight.shape) != shape or jnp.dtype(weight.dtype).str != dtype:
             raise ValueError(

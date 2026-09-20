@@ -1,16 +1,15 @@
+from importlib import import_module
+
 #
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
-
 from . import layer_potential, multipole as multipole, vortex as vortex
 from ._batch_ops import integral, integrate_boundary, integrate_interior, mean
-from ._convolution_quadrature import *  # noqa: F403
 from ._convolution_quadrature import __all__ as _convolution_quadrature_all
 from ._diffrax_collocation import DiffraxCollocationIntegralOperator
 from ._local_ops import local_integral, local_integral_ball
 from ._spatial_ops import nonlocal_integral, spatial_integral
 from ._time_convolution import time_convolution
-from .layer_potential import *  # noqa: F403
 from .layer_potential import (
     __all__ as _layer_potential_all,
     AbstractLayerBackend,
@@ -63,10 +62,30 @@ from .layer_potential import (
     SurfacePanelization3D,
     SurfaceTargetReport3D,
 )
-from .multipole import *  # noqa: F403
 from .multipole import __all__ as _multipole_all
-from .vortex import *  # noqa: F403
 from .vortex import __all__ as _vortex_all
+
+
+_FACADE_EXPORT_MODULES = (
+    "._convolution_quadrature",
+    ".layer_potential",
+    ".multipole",
+    ".vortex",
+)
+
+
+def __getattr__(name: str):
+    for module_name in reversed(_FACADE_EXPORT_MODULES):
+        module = import_module(module_name, __package__)
+        if name in module.__all__:
+            value = getattr(module, name)
+            globals()[name] = value
+            return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
 
 
 __all__ = [

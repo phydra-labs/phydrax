@@ -64,7 +64,7 @@ def _identifier(value: str, owner: str, /) -> str:
 
 
 def _shape(value: Sequence[int], owner: str, /) -> tuple[int, ...]:
-    resolved = tuple(int(size) for size in value)
+    resolved = tuple(value)
     if any(size <= 0 for size in resolved):
         raise ValueError(f"{owner} dimensions must be positive.")
     return resolved
@@ -77,7 +77,7 @@ def _real_inexact(value: ArrayLike, owner: str, /) -> Array:
         and not jnp.issubdtype(array.dtype, jnp.complexfloating)
     ):
         raise TypeError(f"{owner} must be a real numeric array.")
-    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype(float)
+    return array if jnp.issubdtype(array.dtype, jnp.inexact) else array.astype("float64")
 
 
 def _event_finite(value: Array, event_shape: tuple[int, ...], /) -> Array:
@@ -227,11 +227,11 @@ class PreparedControlledNoise(StrictModule):
             raise ValueError(
                 f"increments must end in noise_shape {noises}; got {values.shape}."
             )
-        path_count = int(values.shape[0])
-        step_count = int(values.shape[1])
+        path_count = values.shape[0]
+        step_count = values.shape[1]
         if path_count < 1 or step_count < 1:
             raise ValueError("increments must contain at least one path and one step.")
-        validity = jnp.asarray(valid, dtype=bool)
+        validity = jnp.asarray(valid, dtype=jnp.bool_)
         if tuple(validity.shape) != (path_count,):
             raise ValueError(f"valid must have shape ({path_count},).")
         raw_labels = jnp.asarray(independence_labels)
@@ -360,7 +360,7 @@ class ControlledPathBatch(StrictModule):
         stage = _real_inexact(stage_costs, "stage_costs")
         terminal = _real_inexact(terminal_costs, "terminal_costs")
         returns_ = _real_inexact(returns, "returns")
-        validity = jnp.asarray(valid, dtype=bool)
+        validity = jnp.asarray(valid, dtype=jnp.bool_)
         statuses = jnp.asarray(status, dtype=jnp.int32)
         expected_path = (count,)
         if tuple(states_.shape) != expected_states:
@@ -398,7 +398,7 @@ class ControlledPathBatch(StrictModule):
 
     @property
     def path_count(self) -> int:
-        return int(self.returns.shape[0])
+        return self.returns.shape[0]
 
     @property
     def path_ids(self) -> tuple[str, ...]:
@@ -605,8 +605,7 @@ def rollout_feedback(
         expected_action = (count,) + problem.action_shape
         if tuple(action.shape) != expected_action:
             raise ValueError(
-                f"policy must return action_shape {problem.action_shape} per path; "
-                f"got batched shape {action.shape}."
+                f"policy must return action_shape {problem.action_shape} per path; got batched shape {action.shape}."
             )
         stage = jax.vmap(
             lambda current_state, current_action: jnp.asarray(
@@ -695,7 +694,7 @@ def _cluster_summary(
     /,
 ) -> tuple[Array, Array, Array, Array]:
     labels = np.asarray(independence_labels, dtype=np.int64)
-    unique_labels = tuple(int(label) for label in np.unique(labels))
+    unique_labels = tuple(np.unique(labels))
     summaries = []
     complete = []
     for label in unique_labels:
@@ -850,8 +849,7 @@ def evaluate_feedback_policy(
         risk_measure, (ExpectationRisk, MeanVarianceRisk, CVaRRisk, EntropicRisk)
     ):
         raise TypeError(
-            "risk must be ExpectationRisk, MeanVarianceRisk, CVaRRisk, EntropicRisk, "
-            "or None."
+            "risk must be ExpectationRisk, MeanVarianceRisk, CVaRRisk, EntropicRisk, or None."
         )
     paths = rollout_feedback(problem, policy, prepared_noise, policy_id=policy_id)
     valid_count = jnp.sum(paths.valid)

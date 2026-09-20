@@ -37,7 +37,7 @@ class ManufacturingRuntimeState:
             zeros,
             zeros,
             MaterialActivationState(
-                jnp.zeros((control_volume_count,), dtype=bool),
+                jnp.zeros((control_volume_count,), dtype=jnp.bool_),
                 jnp.full((control_volume_count,), -jnp.inf),
             ),
         )
@@ -70,8 +70,8 @@ class ManufacturingRuntime:
         interaction_radius_m: float,
         /,
     ) -> ManufacturingRuntime:
-        coordinates = np.asarray(coordinates_m, dtype=float)
-        volumes = np.asarray(control_volumes_m3, dtype=float)
+        coordinates = np.asarray(coordinates_m, dtype=np.float64)
+        volumes = np.asarray(control_volumes_m3, dtype=np.float64)
         if coordinates.ndim != 2 or coordinates.shape[0] == 0:
             raise ValueError("Manufacturing coordinates require shape (cell, dimension).")
         if volumes.shape != (coordinates.shape[0],) or np.any(volumes <= 0):

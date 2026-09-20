@@ -82,7 +82,7 @@ class MAPSearchResult(StrictModule):
         design_signature,
     ):
         position_ = jax.tree_util.tree_map(jnp.asarray, position)
-        objective_ = jnp.asarray(objective, dtype=float).reshape(())
+        objective_ = jnp.asarray(objective, dtype=jnp.float64).reshape(())
         self.problem = problem
         self.position = position_
         self.parameters = problem.parameter_space.constrain(position_)
@@ -91,8 +91,10 @@ class MAPSearchResult(StrictModule):
         self.population_positions = jax.tree_util.tree_map(
             jnp.asarray, population_positions
         )
-        self.population_objectives = jnp.asarray(population_objectives, dtype=float)
-        self.best_objective_history = jnp.asarray(best_objective_history, dtype=float)
+        self.population_objectives = jnp.asarray(population_objectives, dtype=jnp.float64)
+        self.best_objective_history = jnp.asarray(
+            best_objective_history, dtype=jnp.float64
+        )
         self.lower_bounds = jax.tree_util.tree_map(jnp.asarray, lower_bounds)
         self.upper_bounds = jax.tree_util.tree_map(jnp.asarray, upper_bounds)
         self.key = key

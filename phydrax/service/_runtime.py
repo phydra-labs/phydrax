@@ -201,13 +201,13 @@ class _ProviderContext:
         with self._service._lock:
             if self._job.attempt != self._attempt or self._job.state not in (
                 JobState.RUNNING,
-                JobState.CANCELLING,
+                JobState.CANCELING,
             ):
                 raise _ExecutionSuperseded(
                     "Execution attempt has been replaced or is no longer active."
                 )
-            if self._job.state is JobState.CANCELLING:
-                raise CancellationRequested("The job was cancelled.")
+            if self._job.state is JobState.CANCELING:
+                raise CancellationRequested("The job was canceled.")
             self._service._require_execution_fence(
                 self._job, self._attempt, self._durable_version
             )
@@ -435,18 +435,18 @@ class InProcessReferenceService:
             job = self._job(principal.tenant_id, job_id)
             self._expire_job(job)
             if job.state.terminal:
-                raise InvalidTransition("A terminal job cannot be cancelled.")
+                raise InvalidTransition("A terminal job cannot be canceled.")
             if job.state is JobState.QUEUED:
-                job.state = JobState.CANCELLED
+                job.state = JobState.CANCELED
                 job.finished_at = self._clock.now()
                 job.run_record = self._run_record(
                     job_id,
                     job.submission,
-                    "cancelled",
+                    "canceled",
                     job.checkpoint_ids[-1] if job.checkpoint_ids else None,
                 )
             else:
-                job.state = JobState.CANCELLING
+                job.state = JobState.CANCELING
                 job.cancel_requested_at = self._clock.now()
             self._sync_durable_job(job)
             audit_record = self._audit_event(
@@ -455,7 +455,7 @@ class InProcessReferenceService:
             status = self._status(job)
         emit(
             "WARNING",
-            "service.job.cancelled",
+            "service.job.canceled",
             "Service job cancellation committed",
             audit_event_id=audit_record.event_id,
             job_id=job_id,
@@ -539,8 +539,8 @@ class InProcessReferenceService:
             if not isinstance(result, ProviderResult):
                 raise IntegrityError("Provider must return a ProviderResult.")
             with self._lock:
-                if job.state is JobState.CANCELLING:
-                    raise CancellationRequested("The job was cancelled.")
+                if job.state is JobState.CANCELING:
+                    raise CancellationRequested("The job was canceled.")
                 self._require_execution_fence(
                     job, execution_attempt, context._durable_version
                 )
@@ -586,12 +586,12 @@ class InProcessReferenceService:
                 run_record = self._run_record(
                     job_id,
                     job.submission,
-                    "cancelled",
+                    "canceled",
                     job.checkpoint_ids[-1] if job.checkpoint_ids else None,
                 )
                 committed_job = replace(
                     job,
-                    state=JobState.CANCELLED,
+                    state=JobState.CANCELED,
                     finished_at=finished_at,
                     run_record=run_record,
                 )
@@ -600,7 +600,7 @@ class InProcessReferenceService:
                     expected_attempt=execution_attempt,
                     expected_version=current_version,
                 )
-                job.state = JobState.CANCELLED
+                job.state = JobState.CANCELED
                 job.finished_at = finished_at
                 job.run_record = run_record
                 audit_record = self._audit_event(
@@ -609,7 +609,7 @@ class InProcessReferenceService:
                     "job",
                     job_id,
                     "allowed",
-                    "cancelled",
+                    "canceled",
                     "",
                 )
         except Exception:
@@ -662,7 +662,7 @@ class InProcessReferenceService:
         with self._lock:
             status = self._status(job)
         event_name = {
-            JobState.CANCELLED: "service.job.cancelled",
+            JobState.CANCELED: "service.job.canceled",
             JobState.FAILED: "service.job.failed",
             JobState.SUCCEEDED: "service.job.completed",
         }.get(status.state, "service.job.updated")
@@ -1177,7 +1177,7 @@ class InProcessReferenceService:
     def _current_execution_version(self, job: _Job, attempt: int, /) -> int | None:
         if job.attempt != attempt or job.state not in (
             JobState.RUNNING,
-            JobState.CANCELLING,
+            JobState.CANCELING,
         ):
             raise _ExecutionSuperseded(
                 "Execution attempt has been replaced or is no longer active."
@@ -1189,7 +1189,7 @@ class InProcessReferenceService:
             if (
                 current is None
                 or current.attempt != attempt
-                or current.state not in (JobState.RUNNING, JobState.CANCELLING)
+                or current.state not in (JobState.RUNNING, JobState.CANCELING)
             ):
                 raise _ExecutionSuperseded("Durable execution attempt was superseded.")
             return current.version
@@ -1231,7 +1231,7 @@ class InProcessReferenceService:
                     current is None
                     or current.attempt != attempt
                     or current.version != durable_version
-                    or current.state not in (JobState.RUNNING, JobState.CANCELLING)
+                    or current.state not in (JobState.RUNNING, JobState.CANCELING)
                 ):
                     raise _ExecutionSuperseded(
                         "Durable heartbeat lost its attempt/version fence."
@@ -1313,7 +1313,7 @@ class InProcessReferenceService:
                 raise _ExecutionSuperseded(
                     "Checkpoint belongs to a superseded execution attempt."
                 )
-            if job.state not in (JobState.RUNNING, JobState.CANCELLING):
+            if job.state not in (JobState.RUNNING, JobState.CANCELING):
                 raise InvalidTransition(
                     "Checkpoints can only be recorded during execution."
                 )
@@ -1339,12 +1339,12 @@ class InProcessReferenceService:
 
     def _expire_job(self, job: _Job) -> None:
         if self._clock.now() >= job.expires_at and not job.state.terminal:
-            job.state = JobState.CANCELLED
+            job.state = JobState.CANCELED
             job.finished_at = self._clock.now()
             job.run_record = self._run_record(
                 job.job_id,
                 job.submission,
-                "cancelled",
+                "canceled",
                 job.checkpoint_ids[-1] if job.checkpoint_ids else None,
             )
             self._sync_durable_job(job)

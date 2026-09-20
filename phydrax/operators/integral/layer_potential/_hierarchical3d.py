@@ -336,7 +336,7 @@ def _cluster_basis(
     exponents: tuple[tuple[int, int, int], ...],
     /,
 ) -> np.ndarray:
-    scale = max(0.5 * cluster.diameter, np.finfo(float).eps)
+    scale = max(0.5 * cluster.diameter, np.finfo(np.float64).eps)
     local = (points[cluster.indices] - cluster.center[None, :]) / scale
     vandermonde = np.stack(
         tuple(
@@ -383,10 +383,10 @@ def _prepare_scalar_fast_provider_3d(
     if not isinstance(selected, ScalarFastPolicy3D):
         raise TypeError("policy must be ScalarFastPolicy3D or None.")
     triangle_mesh = prepared._binding.region.triangle_mesh
-    vertices = np.asarray(triangle_mesh.vertices, dtype=float)
+    vertices = np.asarray(triangle_mesh.vertices, dtype=np.float64)
     faces = np.asarray(triangle_mesh.faces, dtype=np.int32)
     centroids = np.mean(vertices[faces], axis=1)
-    areas = np.asarray(prepared.face_areas, dtype=float)
+    areas = np.asarray(prepared.face_areas, dtype=np.float64)
     clusters_host, root = _cluster_tree(centroids, selected)
     far_pairs, near_pairs = _block_partition(clusters_host, root, selected)
     exact = LaplaceDP0ExactNearProvider3D(
@@ -443,7 +443,7 @@ def _prepare_scalar_fast_provider_3d(
     maximum_error = 0.0
     maximum_rank = 0
     resident_bytes = sum(
-        int(block.values.size * block.values.dtype.itemsize) for block in near_blocks
+        block.values.size * block.values.dtype.itemsize for block in near_blocks
     )
     for target_index, source_index in far_pairs:
         target = clusters_host[target_index]
@@ -455,7 +455,7 @@ def _prepare_scalar_fast_provider_3d(
             source.indices,
             selected.formulation,
         )
-        norm = max(float(np.linalg.norm(matrix)), np.finfo(float).tiny)
+        norm = max(float(np.linalg.norm(matrix)), np.finfo(np.float64).tiny)
         if algorithm == "h-matrix":
             left, singular_values, right_transpose = np.linalg.svd(
                 matrix, full_matrices=False

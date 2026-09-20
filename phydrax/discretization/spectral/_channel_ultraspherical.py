@@ -61,7 +61,7 @@ class _PreparedBatchedTauSolve(StrictModule, NonTrainableState):
         system_rhs = rhs.at[:, self.tau_start : self.tau_start + self.rank, :].multiply(
             self.tau_rhs_scale[..., None]
         )
-        layout = RHSLayout((int(rhs.shape[-1]),))
+        layout = RHSLayout((rhs.shape[-1],))
 
         def solve_once(value: Array) -> tuple[Array, Array]:
             base_result = solve_linear(self.base, value, rhs_layout=layout)
@@ -454,7 +454,7 @@ class PreparedUltrasphericalChannel(StrictModule, NonTrainableState):
 
 
 def _conversion_matrix(count: int, order: int, /) -> np.ndarray:
-    degrees = np.arange(count, dtype=float)
+    degrees = np.arange(count, dtype=np.float64)
     if order == 0:
         diagonal = np.where(degrees == 0.0, 1.0, 0.5)
     else:
@@ -466,7 +466,7 @@ def _conversion_matrix(count: int, order: int, /) -> np.ndarray:
 
 
 def _upper_bands(matrix: np.ndarray, upper_bandwidth: int, /) -> np.ndarray:
-    count = int(matrix.shape[-1])
+    count = matrix.shape[-1]
     batch_shape = matrix.shape[:-2]
     bands = np.zeros(batch_shape + (upper_bandwidth + 1, count), dtype=matrix.dtype)
     for offset in range(upper_bandwidth + 1):
@@ -483,7 +483,7 @@ def _replace_tau_rows(
     /,
 ) -> np.ndarray:
     updated = np.array(bands, copy=True)
-    count = int(updated.shape[-1])
+    count = updated.shape[-1]
     for row in range(tau_start, tau_start + rank):
         for offset in range(min(upper_bandwidth, count - row - 1) + 1):
             updated[..., upper_bandwidth - offset, row + offset] = 0.0
@@ -492,7 +492,7 @@ def _replace_tau_rows(
 
 
 def _array_bytes(*arrays: Array) -> int:
-    return sum(int(array.nbytes) for array in arrays)
+    return sum(array.nbytes for array in arrays)
 
 
 def _tau_factor_estimate(
@@ -527,7 +527,7 @@ def _prepare_batched_tau_solve(
     residual_tolerance: float,
 ) -> _PreparedBatchedTauSolve:
     batch_size, _, count = base_bands.shape
-    rank = int(desired_rows.shape[1])
+    rank = desired_rows.shape[1]
     dtype = jnp.asarray(base_bands).dtype
     row_norm = np.max(np.abs(desired_rows), axis=-1)
     if np.any(row_norm <= 0.0):
@@ -637,16 +637,16 @@ def prepare_ultraspherical_channel(
     zero_mode_index: int,
     /,
 ) -> PreparedUltrasphericalChannel:
-    count = int(synthesis.shape[0])
+    count = synthesis.shape[0]
     dtype = jnp.result_type(synthesis.dtype, 1j)
     complex_dtype = np.dtype(dtype)
     real_dtype = np.dtype(jnp.empty((), dtype=dtype).real.dtype)
     synthesis_values = np.asarray(synthesis)
     if np.any(np.imag(synthesis_values) != 0.0):
         raise ValueError("Chebyshev synthesis data must be real-valued.")
-    synthesis_host = np.asarray(np.real(synthesis_values), dtype=float)
-    basis_scale = np.asarray(synthesis_host[-1], dtype=float)
-    if np.any(np.abs(basis_scale) <= np.finfo(float).eps):
+    synthesis_host = np.asarray(np.real(synthesis_values), dtype=np.float64)
+    basis_scale = np.asarray(synthesis_host[-1], dtype=np.float64)
+    if np.any(np.abs(basis_scale) <= np.finfo(np.float64).eps):
         raise ValueError("Chebyshev synthesis scaling is singular.")
 
     s01 = _conversion_matrix(count, 0) * basis_scale[None, :]
@@ -657,12 +657,12 @@ def prepare_ultraspherical_channel(
     s24 = s34 @ s23
     s04 = s24 @ s02
     wall_scale = 2.0 / float(plan.discretization.axes[1].length)
-    derivative_two = np.zeros((count, count), dtype=float)
+    derivative_two = np.zeros((count, count), dtype=np.float64)
     degrees_two = np.arange(2, count)
     derivative_two[degrees_two - 2, degrees_two] = (
         2.0 * degrees_two * wall_scale**2 * basis_scale[degrees_two]
     )
-    derivative_four = np.zeros((count, count), dtype=float)
+    derivative_four = np.zeros((count, count), dtype=np.float64)
     degrees_four = np.arange(4, count)
     derivative_four[degrees_four - 4, degrees_four] = (
         48.0 * degrees_four * wall_scale**4 * basis_scale[degrees_four]
@@ -670,7 +670,7 @@ def prepare_ultraspherical_channel(
     derivative_values = np.asarray(plan.discretization.axes[1].derivative_matrix)
     if np.any(np.imag(derivative_values) != 0.0):
         raise ValueError("Chebyshev derivative data must be real-valued.")
-    modal_derivative = np.asarray(np.real(derivative_values), dtype=float)
+    modal_derivative = np.asarray(np.real(derivative_values), dtype=np.float64)
     derivative_traces = synthesis_host[[0, -1]] @ modal_derivative
     second_derivative_traces = derivative_traces @ modal_derivative
 
@@ -678,8 +678,8 @@ def prepare_ultraspherical_channel(
     kz_flat = np.asarray(spanwise_wavenumbers).reshape((-1,))
     wave_square = kx_flat * kx_flat + kz_flat * kz_flat
     nonzero_indices = np.flatnonzero(wave_square != 0.0).astype(np.int32)
-    horizontal_batch_size = int(wave_square.size)
-    nonzero_batch_size = int(nonzero_indices.size)
+    horizontal_batch_size = wave_square.size
+    nonzero_batch_size = nonzero_indices.size
     complex_itemsize = complex_dtype.itemsize
     real_itemsize = real_dtype.itemsize
     helmholtz_bandwidth = min(4, count - 1)
@@ -788,12 +788,12 @@ def prepare_ultraspherical_channel(
     )
 
     pressure_diagonal = np.concatenate(
-        (wall_scale * np.arange(1, count, dtype=float), np.ones((1,)))
+        (wall_scale * np.arange(1, count, dtype=np.float64), np.ones((1,)))
     )
     pressure_bands = pressure_diagonal.reshape((1, 1, count)).astype(complex_dtype)
     pressure_gauge = np.asarray(quadrature_weights) @ synthesis_host
     pressure_permutation = np.concatenate(
-        (np.arange(1, count), np.zeros((1,), dtype=int))
+        (np.arange(1, count), np.zeros((1,), dtype=np.int64))
     )
     pressure_desired = pressure_gauge[pressure_permutation][None, None, :].astype(
         complex_dtype

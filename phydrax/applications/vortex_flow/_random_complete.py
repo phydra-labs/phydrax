@@ -80,8 +80,8 @@ class RandomVortexSolverPlan(StrictModule, NonTrainableState):
             raise ValueError("Random-vortex boundary policy is unsupported.")
         if bool(antithetic) and int(ensemble_size) % 2:
             raise ValueError("Antithetic random-vortex ensembles require even size.")
-        lower_ = None if lower is None else jnp.asarray(lower, dtype=float)
-        upper_ = None if upper is None else jnp.asarray(upper, dtype=float)
+        lower_ = None if lower is None else jnp.asarray(lower, dtype=jnp.float64)
+        upper_ = None if upper is None else jnp.asarray(upper, dtype=jnp.float64)
         if boundary != "free":
             if (
                 lower_ is None
@@ -217,8 +217,8 @@ class RandomVortexSolverPlan(StrictModule, NonTrainableState):
             )
         displacement = dt * drift + jnp.sqrt(2.0 * self.viscosity * dt) * noise
         candidate = state.positions + displacement
-        absorbed = jnp.zeros(state.active_mask.shape, dtype=bool)
-        reflected = jnp.zeros(state.active_mask.shape, dtype=bool)
+        absorbed = jnp.zeros(state.active_mask.shape, dtype=jnp.bool_)
+        reflected = jnp.zeros(state.active_mask.shape, dtype=jnp.bool_)
         if self.boundary == "periodic":
             width = self.upper - self.lower
             candidate = self.lower + jnp.mod(candidate - self.lower, width)

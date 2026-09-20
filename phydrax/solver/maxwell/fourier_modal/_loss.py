@@ -278,7 +278,7 @@ def evaluate_fourier_modal_loss(
         physical_stack_digest = revision_metadata["physical_stack_digest"]
     revision_bound = jnp.asarray(numeric_revision is not None)
     revision_id = None if numeric_revision is None else numeric_revision.revision_id
-    rhs_count = int(result.net_port_power_into_stack.shape[0])
+    rhs_count = result.net_port_power_into_stack.shape[0]
     layer_count = prepared.problem.layer_count
     static_eligible = (
         layer_count > 0
@@ -385,10 +385,10 @@ def evaluate_fourier_modal_loss(
     passive_claims = (
         jnp.asarray(
             tuple(layer.layer.material.passive is True for layer in layers),
-            dtype=bool,
+            dtype=jnp.bool_,
         )
         if static_eligible
-        else jnp.zeros((layer_count,), dtype=bool)
+        else jnp.zeros((layer_count,), dtype=jnp.bool_)
     )
     passive_violation = passive_claims & (passive_minimum < -policy.passive_psd_tolerance)
     finite = (

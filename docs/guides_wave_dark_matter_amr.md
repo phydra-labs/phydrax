@@ -13,7 +13,7 @@ owned potential without invoking a second wave Poisson solve.
 
 ## Periodic finite-difference authority
 
-`PeriodicWaveFiniteDifferencePlan` binds a complex cell-centred field, a
+`PeriodicWaveFiniteDifferencePlan` binds a complex cell-centered field, a
 volume-paired self-adjoint negative Laplacian, periodic cosmology, and a fixed increasing
 scale schedule. `PreparedPeriodicWaveFiniteDifference` advances the kinetic subflow with
 a global Cayley action through `phydrax.linalg`, applies explicit potential phases, and

@@ -86,18 +86,18 @@ def _topology(prepared):
     level_count = len(initial.plan.levels)
     if level_count == 1:
         return initial
-    coarse_tags = jnp.zeros((4, 4), dtype=bool)
+    coarse_tags = jnp.zeros((4, 4), dtype="bool")
     coarse_tags = coarse_tags.at[1:3].set(True)
     if level_count == 2:
         result = prepared.compile_topology(initial, (coarse_tags,))
         assert result.status.successful
         return result.topology
-    empty_middle = jnp.zeros((16, 2), dtype=bool)
+    empty_middle = jnp.zeros((16, 2), dtype="bool")
     middle = prepared.compile_topology(
         initial,
         (coarse_tags, empty_middle),
     ).topology
-    middle_tags = jnp.zeros((16, 2), dtype=bool).at[3, 1].set(True)
+    middle_tags = jnp.zeros((16, 2), dtype="bool").at[3, 1].set(True)
     result = prepared.compile_topology(middle, (coarse_tags, middle_tags))
     assert result.status.successful
     return result.topology

@@ -75,7 +75,7 @@ class PlanarWallProfileObserverPlan(AbstractAtomisticObserverPlan, NonTrainableS
         bin_count: int,
         minimum_count_per_bin: int = 1,
     ) -> None:
-        masks = np.asarray(group_masks, dtype=bool)
+        masks = np.asarray(group_masks, dtype=np.bool_)
         names = tuple(str(value) for value in group_names)
         bins = int(bin_count)
         minimum = int(minimum_count_per_bin)
@@ -183,7 +183,9 @@ class PlanarWallProfileObserverPlan(AbstractAtomisticObserverPlan, NonTrainableS
             observer_state.samples + jnp.asarray(1, dtype=jnp.int32),
             self.observer_id,
         )
-        return tree_where(jnp.asarray(accepted, dtype=bool), candidate, observer_state)
+        return tree_where(
+            jnp.asarray(accepted, dtype=jnp.bool_), candidate, observer_state
+        )
 
     def finalize(
         self, observer_state: PlanarWallProfileState, /
@@ -317,7 +319,7 @@ class MultiOriginCorrelationObserverPlan(
         origin_velocity = jnp.zeros_like(origins)
         origin_times = jnp.zeros((self.origin_capacity,), dtype=dtype)
         origin_steps = -jnp.ones((self.origin_capacity,), dtype=jnp.int32)
-        origin_valid = jnp.zeros((self.origin_capacity,), dtype=bool)
+        origin_valid = jnp.zeros((self.origin_capacity,), dtype=jnp.bool_)
         origins = origins.at[0].set(position)
         origin_velocity = origin_velocity.at[0].set(velocity)
         origin_times = origin_times.at[0].set(state.time)
@@ -444,7 +446,9 @@ class MultiOriginCorrelationObserverPlan(
             counts,
             self.observer_id,
         )
-        return tree_where(jnp.asarray(accepted, dtype=bool), candidate, observer_state)
+        return tree_where(
+            jnp.asarray(accepted, dtype=jnp.bool_), candidate, observer_state
+        )
 
     def finalize(
         self, observer_state: MultiOriginCorrelationState, /

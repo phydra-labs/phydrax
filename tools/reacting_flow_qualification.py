@@ -52,14 +52,12 @@ ROUTES: dict[str, RouteDefinition] = {
             _gate(
                 "thermo-standard-state-identity",
                 "scientific",
-                "Catalog, gas phase, species calorics, and explicit standard "
-                "pressure retain one identity.",
+                "Catalog, gas phase, species calorics, and explicit standard pressure retain one identity.",
             ),
             _gate(
                 "thermo-derivatives",
                 "scientific",
-                "Canonical caloric, mixing, response, and sound-speed derivatives "
-                "match the governed reference.",
+                "Canonical caloric, mixing, response, and sound-speed derivatives match the governed reference.",
             ),
             _RESOURCE_GATE,
             _gate(
@@ -121,8 +119,7 @@ ROUTES: dict[str, RouteDefinition] = {
             _gate(
                 "mechanism-energy",
                 "scientific",
-                "Full chemical total energy remains unchanged by the zero-energy "
-                "reaction source.",
+                "Full chemical total energy remains unchanged by the zero-energy reaction source.",
             ),
             _gate(
                 "mechanism-reference-rates",
@@ -147,20 +144,17 @@ ROUTES: dict[str, RouteDefinition] = {
             _gate(
                 "state-species-closure",
                 "scientific",
-                "All species densities own total density and composition without "
-                "dependent-species reconstruction.",
+                "All species densities own total density and composition without dependent-species reconstruction.",
             ),
             _gate(
                 "state-energy-closure",
                 "scientific",
-                "Canonical primitive-conserved round-trip closes full chemical "
-                "total and internal energy.",
+                "Canonical primitive-conserved round-trip closes full chemical total and internal energy.",
             ),
             _gate(
                 "state-admissibility",
                 "scientific",
-                "Species densities, pressure, temperature, and Helmholtz-domain "
-                "evidence remain admissible.",
+                "Species densities, pressure, temperature, and Helmholtz-domain evidence remain admissible.",
             ),
             _RESOURCE_GATE,
             _RESTART_GATE,

@@ -68,7 +68,7 @@ def finite_difference_derivative(
     event_rank = len(data.state_layout.shape)
     case_rank = len(data.case_shape)
     derivative = jnp.full_like(data.states, jnp.nan)
-    valid = jnp.zeros(data.case_shape + (data.capacity,), dtype=bool)
+    valid = jnp.zeros(data.case_shape + (data.capacity,), dtype=jnp.bool_)
     order = jnp.zeros(data.case_shape + (data.capacity,), dtype=jnp.int32)
     condition = jnp.full(
         data.case_shape + (data.capacity,), jnp.inf, dtype=data.coordinates.dtype
@@ -77,12 +77,12 @@ def finite_difference_derivative(
     for index in range(data.capacity):
         current_index = _time_index(case_rank, index)
         previous_valid = (
-            jnp.zeros(data.case_shape, dtype=bool)
+            jnp.zeros(data.case_shape, dtype=jnp.bool_)
             if index == 0
             else data.transition_valid[..., index - 1]
         )
         next_valid = (
-            jnp.zeros(data.case_shape, dtype=bool)
+            jnp.zeros(data.case_shape, dtype=jnp.bool_)
             if index + 1 == data.capacity
             else data.transition_valid[..., index]
         )
@@ -167,7 +167,7 @@ def finite_difference_derivative(
 def _connected(data: TrajectoryData, source: int, target: int, /) -> Array:
     lower = min(source, target)
     upper = max(source, target)
-    connected = jnp.ones(data.case_shape, dtype=bool)
+    connected = jnp.ones(data.case_shape, dtype=jnp.bool_)
     for index in range(lower, upper):
         connected = connected & data.transition_valid[..., index]
     return connected
@@ -211,7 +211,7 @@ def local_polynomial_derivative(
             connected = (
                 _connected(data, clipped, target)
                 if in_bounds
-                else jnp.zeros(data.case_shape, dtype=bool)
+                else jnp.zeros(data.case_shape, dtype=jnp.bool_)
             )
             row_valid = (
                 data.sample_valid[..., clipped]
@@ -316,9 +316,9 @@ def bspline_derivative(
         (data.num_cases, data.capacity - 1)
     )
     flat_weights = np.asarray(data.weights).reshape((data.num_cases, data.capacity))
-    derivative = np.full_like(flat_states, np.nan, dtype=float)
-    valid = np.zeros((data.num_cases, data.capacity), dtype=bool)
-    condition = np.full((data.num_cases, data.capacity), np.inf, dtype=float)
+    derivative = np.full_like(flat_states, np.nan, dtype=np.float64)
+    valid = np.zeros((data.num_cases, data.capacity), dtype=np.bool_)
+    condition = np.full((data.num_cases, data.capacity), np.inf, dtype=np.float64)
     minimum = resolved_plan.degree + 1
 
     for case in range(data.num_cases):

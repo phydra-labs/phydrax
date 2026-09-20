@@ -74,8 +74,8 @@ _LEVEL_SET_CERTIFICATE = FieldCertificate(
 )
 _TWO_PI = 2.0 * jnp.pi
 _GL_RULE = gauss_legendre_data(48)
-_GL_NODES = jnp.asarray(_GL_RULE.nodes, dtype=float)
-_GL_WEIGHTS = jnp.asarray(_GL_RULE.weights, dtype=float)
+_GL_NODES = jnp.asarray(_GL_RULE.nodes, dtype=jnp.float64)
+_GL_WEIGHTS = jnp.asarray(_GL_RULE.weights, dtype=jnp.float64)
 
 
 def _validate_positive_vector(value: Any, dimension: int, *, name: str) -> Array:
@@ -86,19 +86,19 @@ def _validate_positive_vector(value: Any, dimension: int, *, name: str) -> Array
 
 
 def _validate_angle(value: Any, *, name: str = "angle") -> Array:
-    host = np.asarray(value, dtype=float)
+    host = np.asarray(value, dtype=np.float64)
     if host.shape != () or not np.isfinite(host):
         raise ValueError(f"{name} must be a finite scalar.")
     scalar = float(host)
     if scalar <= 0.0 or scalar > 2.0 * math.pi:
         raise ValueError(f"{name} must be in (0, 2π].")
-    return jnp.asarray(scalar, dtype=float)
+    return jnp.asarray(scalar, dtype=jnp.float64)
 
 
 def _normal_from_field(
     kernel: GeometryKernel, state: DesignState, points: Array
 ) -> Array:
-    points_ = jnp.asarray(points, dtype=float)
+    points_ = jnp.asarray(points, dtype=jnp.float64)
     shape = points_.shape
     flat = points_.reshape((-1, shape[-1]))
     gradient = jax.vmap(jax.grad(lambda point: kernel.boundary_field(state, point)))(flat)
@@ -557,7 +557,7 @@ class Polygon(GeometrySource):
     feature_id: str = eqx.field(static=True)
 
     def __init__(self, vertices: Any, *, feature_id: str | None = None):
-        host = np.asarray(vertices, dtype=float)
+        host = np.asarray(vertices, dtype=np.float64)
         if host.ndim != 2 or host.shape[1] != 2 or host.shape[0] < 3:
             raise ValueError("vertices must have shape (num_vertices >= 3, 2).")
         if not np.all(np.isfinite(host)):
@@ -569,7 +569,7 @@ class Polygon(GeometrySource):
             raise ValueError("Self-intersection or zero-area polygon detected.")
         if not polygon.exterior.is_ccw:
             host = host[::-1].copy()
-        self.vertices = jnp.asarray(host, dtype=float)
+        self.vertices = jnp.asarray(host, dtype=jnp.float64)
         self.feature_id = _feature_id(feature_id, "polygon")
 
     def _compile(self, context: _ParameterCollector, /) -> GeometryKernel:
@@ -880,7 +880,7 @@ class _EllipsoidKernel(GeometryKernel):
         center, radii = self._parameters(state)
         return BoundaryAtlas(
             _EllipsoidBoundaryMap(center, radii),
-            orientation=-jnp.ones((1,), dtype=float),
+            orientation=-jnp.ones((1,), dtype=jnp.float64),
             source_entity_ids=jnp.asarray([0], dtype=jnp.int32),
             source_id=self.source_id,
         )
@@ -1249,8 +1249,8 @@ class Cone(GeometrySource):
         self.axis = _validate_vector(axis, 3, name="axis")
         if float(np.linalg.norm(np.asarray(self.axis))) <= 0.0:
             raise ValueError("axis must have non-zero length.")
-        r0 = np.asarray(radius0, dtype=float)
-        r1 = np.asarray(radius1, dtype=float)
+        r0 = np.asarray(radius0, dtype=np.float64)
+        r1 = np.asarray(radius1, dtype=np.float64)
         if (
             r0.shape != ()
             or r1.shape != ()
@@ -1260,7 +1260,7 @@ class Cone(GeometrySource):
             or float(r1) < 0.0
         ):
             raise ValueError("radius0 must be positive and radius1 must be non-negative.")
-        self.radii = jnp.asarray([r0, r1], dtype=float)
+        self.radii = jnp.asarray([r0, r1], dtype=jnp.float64)
         self.angle = _validate_angle(angle)
         self.full = math.isclose(
             float(self.angle), 2.0 * math.pi, rel_tol=0.0, abs_tol=1e-12
@@ -1513,8 +1513,8 @@ class Torus(GeometrySource):
             or outer <= inner
         ):
             raise ValueError("Torus radii require 0 <= inner_radius < outer_radius.")
-        self.major_radius = jnp.asarray(0.5 * (inner + outer), dtype=float)
-        self.minor_radius = jnp.asarray(0.5 * (outer - inner), dtype=float)
+        self.major_radius = jnp.asarray(0.5 * (inner + outer), dtype=jnp.float64)
+        self.minor_radius = jnp.asarray(0.5 * (outer - inner), dtype=jnp.float64)
         self.angle = _validate_angle(angle)
         self.full = math.isclose(
             float(self.angle), 2.0 * math.pi, rel_tol=0.0, abs_tol=1e-12
@@ -1719,7 +1719,7 @@ class Wedge(GeometrySource):
         top = float(np.asarray(top_extent))
         if not np.isfinite(top) or top < 0.0 or top > float(self.extents[0]):
             raise ValueError("top_extent must lie in [0, extents[0]].")
-        self.top_extent = jnp.asarray(top, dtype=float)
+        self.top_extent = jnp.asarray(top, dtype=jnp.float64)
         self.feature_id = _feature_id(feature_id, "wedge")
 
     def _compile(self, context):

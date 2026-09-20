@@ -33,7 +33,7 @@ def partition_softmax(
     *,
     sum_partitions: int | None = None,
 ) -> jnp.ndarray:
-    n_partitions = int(partitions.shape[0])
+    n_partitions = partitions.shape[0]
     segment_ids = jnp.repeat(
         jnp.arange(n_partitions, dtype=jnp.int32),
         partitions,

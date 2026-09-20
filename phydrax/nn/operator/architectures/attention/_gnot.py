@@ -209,7 +209,7 @@ class GNOT(AbstractOperatorModel):
         cases = prod(case_shape) if case_shape else 1
         query_count = prod(batch.require_single_query().sample_shape)
         query_coordinates = _sample_coordinates(batch.require_single_query(), case_shape)
-        if int(query_coordinates.shape[-1]) != self.coord_dim:
+        if query_coordinates.shape[-1] != self.coord_dim:
             raise ValueError("GNOT query coordinate dimension does not match coord_dim.")
         query_mask = _sample_mask(batch.require_single_query(), case_shape)
         query_measure = (
@@ -245,7 +245,7 @@ class GNOT(AbstractOperatorModel):
             source = batch.input(name)
             source_count = prod(source.sample_shape)
             source_coordinates = _sample_coordinates(source, case_shape)
-            if int(source_coordinates.shape[-1]) != self.coord_dim:
+            if source_coordinates.shape[-1] != self.coord_dim:
                 raise ValueError(
                     f"GNOT source {name!r} coordinate dimension does not match coord_dim."
                 )
@@ -289,7 +289,7 @@ class GNOT(AbstractOperatorModel):
         shaped = output.reshape(
             case_shape
             + batch.require_single_query().sample_shape
-            + (int(jnp.asarray(output).shape[-1]),)
+            + (jnp.asarray(output).shape[-1],)
         )
         if self.out_size == "scalar":
             return shaped[..., 0]

@@ -25,8 +25,8 @@ def _unwrap_factor(factor: object, /) -> object:
 def _time_start(u: DomainFunction, time_var: str) -> Array:
     factor = _unwrap_factor(u.domain.factor(time_var))
     if isinstance(factor, AbstractScalarDomain):
-        return jnp.asarray(factor.fixed("start"), dtype=float)
-    return jnp.array(0.0, dtype=float)
+        return jnp.asarray(factor.fixed("start"), dtype=jnp.float64)
+    return jnp.array(0.0, dtype=jnp.float64)
 
 
 def time_convolution(
@@ -86,7 +86,7 @@ def time_convolution(
 
     def _op(*args, key=None, **kwargs):
         evaluation_key = DOC_KEY0 if key is None else key
-        target_time = jnp.asarray(args[time_position], dtype=float).reshape(())
+        target_time = jnp.asarray(args[time_position], dtype=jnp.float64).reshape(())
         duration = jnp.maximum(target_time - t0, 0.0)
         u_args = [args[index] for index in u_positions]
 

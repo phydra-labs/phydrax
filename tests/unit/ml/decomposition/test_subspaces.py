@@ -25,7 +25,7 @@ def test_pca_preserves_case_sample_mask_weight_and_canonicalization_contracts():
         ]
     )
     features = jnp.stack((base, 2.0 * base), axis=0)
-    mask = jnp.ones_like(features, dtype=bool).at[:, 2, 2].set(False)
+    mask = jnp.ones_like(features, dtype="bool").at[:, 2, 2].set(False)
     batch = MLBatch(
         features,
         feature_mask=mask,
@@ -101,7 +101,7 @@ def test_physical_pod_centering_mask_complex_phase_and_inverse_are_metric_correc
     modes = jnp.array([[1.0 + 1.0j, 0.0, 1.0], [0.0, 1.0 - 0.5j, -1.0]])
     mean = jnp.array([3.0 + 0.2j, -2.0, 1.0])
     values = coefficients @ modes + mean
-    feature_mask = jnp.ones_like(values, dtype=bool).at[:, 2].set(False)
+    feature_mask = jnp.ones_like(values, dtype="bool").at[:, 2].set(False)
     metric = jnp.array([0.5, 2.0, 0.0])
     result = POD(
         2,

@@ -68,7 +68,7 @@ class QuantumClassicalInterface(StrictModule):
             raise ValueError(
                 "Classical and quantum carrier populations require disjoint owners."
             )
-        bounds = jnp.asarray(voltage_bounds, dtype=float)
+        bounds = jnp.asarray(voltage_bounds, dtype=jnp.float64)
         host = np.asarray(bounds)
         if host.shape != (2,) or not np.all(np.isfinite(host)) or not host[0] < host[1]:
             raise ValueError("voltage_bounds must be two increasing finite SI voltages.")
@@ -125,8 +125,7 @@ class HybridCouplingEvidence(StrictModule):
     closure: str = eqx.field(
         static=True,
         default=(
-            "stationary electron-selective reservoir matching; disjoint "
-            "classical/quantum populations"
+            "stationary electron-selective reservoir matching; disjoint classical/quantum populations"
         ),
     )
 
@@ -209,7 +208,7 @@ def solve_quantum_classical_interface(
         raise ValueError("Classical and hybrid interface energy references differ.")
     if coherent.hamiltonian.energy_reference != interface.energy_reference:
         raise ValueError("Quantum and hybrid interface energy references differ.")
-    voltages = jnp.asarray(classical_voltages, dtype=float)
+    voltages = jnp.asarray(classical_voltages, dtype=jnp.float64)
     if voltages.shape != (prepared.num_terminals,) or bool(
         jnp.any(~jnp.isfinite(voltages))
     ):

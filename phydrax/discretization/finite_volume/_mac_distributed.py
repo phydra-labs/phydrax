@@ -422,7 +422,7 @@ class MACDistributedTopologyPlan(StrictModule, NonTrainableState):
             mesh_names
         ):
             raise ValueError("MAC mesh axis names must be unique nonempty strings.")
-        mesh_shape = {str(name): int(mesh.shape[name]) for name in mesh.axis_names}
+        mesh_shape = {str(name): mesh.shape[name] for name in mesh.axis_names}
         if any(
             name is not None and name not in mesh_shape for name in pressure_entries
         ) or any(

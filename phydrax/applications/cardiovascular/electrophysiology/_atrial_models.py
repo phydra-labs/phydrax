@@ -200,7 +200,7 @@ class CourtemancheAtrialParameters(StrictModule, NonTrainableState):
             object.__setattr__(self, name, value)
         self.parameter_id = canonical_fingerprint(
             {
-                "kind": "cardiovascular-atrial-crn1998-reduced-parameters-v1",
+                "kind": "cardiovascular-atrial-crn1998-reduced-parameters",
                 "phenotype": self.phenotype.value,
                 "coefficients": values,
             }
@@ -279,7 +279,7 @@ class AtrialStateLayout(StrictModule, NonTrainableState):
         self.names = names
         self.state_size = len(names)
         self.layout_id = canonical_fingerprint(
-            {"kind": "cardiovascular-atrial-state-layout-v1", "names": list(names)}
+            {"kind": "cardiovascular-atrial-state-layout", "names": list(names)}
         )
 
     def index(self, name: str, /) -> int:
@@ -388,7 +388,7 @@ class CourtemancheAtrialModel(StrictModule, NonTrainableState):
         self.layout = layout
         self.model_id = canonical_fingerprint(
             {
-                "kind": "prepared-cardiovascular-atrial-crn1998-reduced-v1",
+                "kind": "prepared-cardiovascular-atrial-crn1998-reduced",
                 "parameters": parameters.parameter_id,
                 "layout": layout.layout_id,
             }
@@ -923,7 +923,7 @@ class CourtemancheAtrialReactionAdapter:
             "model_id",
             canonical_fingerprint(
                 {
-                    "kind": "cardiovascular-atrial-reaction-adapter-v1",
+                    "kind": "cardiovascular-atrial-reaction-adapter",
                     "cell_model": self.cell_model.model_id,
                     "membrane_surface_to_volume_per_mm": (
                         self.scaling.membrane_surface_to_volume_per_mm

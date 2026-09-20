@@ -148,7 +148,7 @@ def test_weighted_samples_are_scale_replication_and_padding_invariant_with_ridge
         padded_points,
         padded_target,
         mask=jnp.concatenate(
-            (jnp.ones((21,), dtype=bool), jnp.asarray([False, True, False]))
+            (jnp.ones((21,), dtype="bool"), jnp.asarray([False, True, False]))
         ),
         weights=jnp.concatenate((weights, jnp.asarray([jnp.inf, 0.0, 1.0]))),
         ridge=0.2,
@@ -164,7 +164,7 @@ def test_weighted_samples_are_scale_replication_and_padding_invariant_with_ridge
     )
     np.testing.assert_allclose(assessment.rmse, scaled_assessment.rmse, atol=1e-12)
     empty = pc.fit_population_decoder(
-        population, points, target, mask=jnp.zeros((21,), dtype=bool)
+        population, points, target, mask=jnp.zeros((21,), dtype="bool")
     )
     assert not bool(empty.least_squares.valid)
     empty_assessment = pc.assess_population_code(

@@ -44,8 +44,8 @@ class MultiChargeCanonicalPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(convention, ChemicalChargeConvention):
             raise TypeError("convention must be ChemicalChargeConvention.")
-        nodes = tuple(int(value) for value in node_shape)
-        bounds = tuple(int(value) for value in charge_bounds)
+        nodes = tuple(node_shape)
+        bounds = tuple(charge_bounds)
         periods = tuple(float(value) for value in periodicities)
         volume_ = float(volume)
         if len(nodes) != 3 or len(bounds) != 3 or len(periods) != 3:

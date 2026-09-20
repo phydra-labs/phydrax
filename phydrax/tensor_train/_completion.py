@@ -43,7 +43,7 @@ class TensorCompletionPlan(StrictModule):
         regularization: float,
         max_local_unknowns: int,
     ):
-        modes = tuple(int(size) for size in mode_sizes)
+        modes = tuple(mode_sizes)
         rank = int(max_rank)
         sweep_count = int(sweeps)
         tolerance = float(relative_tolerance)
@@ -264,8 +264,7 @@ def weighted_tensor_completion(
             frame = _sample_core_frame(tensor, indices, axis)
             if frame.shape[1] > plan.max_local_unknowns:
                 raise ValueError(
-                    f"Completion core needs {frame.shape[1]} unknowns, exceeding "
-                    f"budget {plan.max_local_unknowns}."
+                    f"Completion core needs {frame.shape[1]} unknowns, exceeding budget {plan.max_local_unknowns}."
                 )
             solution = regularized_least_squares(
                 square_root_weights[:, None] * frame,

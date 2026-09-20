@@ -83,10 +83,7 @@ class ElectronicKineticPolicy(StrictModule, NonTrainableState):
         self.trace_method = trace_method
         self.coordinate_chunk_size = chunk
         self.compute_dtype = dtype
-        self.method_id = (
-            f"electronic-kinetic:{trace_method}:"
-            f"chunk={chunk if chunk is not None else 'all'}:dtype={dtype}"
-        )
+        self.method_id = f"electronic-kinetic:{trace_method}:chunk={chunk if chunk is not None else 'all'}:dtype={dtype}"
 
     def _trace_and_gradient(
         self,
@@ -94,9 +91,9 @@ class ElectronicKineticPolicy(StrictModule, NonTrainableState):
         configuration: Array,
         /,
     ) -> tuple[Array, Array, Array]:
-        shape = tuple(int(size) for size in configuration.shape)
+        shape = tuple(configuration.shape)
         flat = jnp.asarray(configuration, dtype=self.compute_dtype).reshape((-1,))
-        dimension = int(flat.shape[0])
+        dimension = flat.shape[0]
 
         def log_components(coordinates):
             amplitude = model(coordinates.reshape(shape))
@@ -235,7 +232,7 @@ class ElectronicCoulombHamiltonian(AbstractLocalQuantumOperator):
         )
 
         electron_pair = jnp.triu(
-            jnp.ones((self.electron_count, self.electron_count), dtype=bool), k=1
+            jnp.ones((self.electron_count, self.electron_count), dtype=jnp.bool_), k=1
         )
         electron_delta = coordinate[:, None, :] - coordinate[None, :, :]
         electron_squared_distance = jnp.sum(electron_delta**2, axis=-1)
@@ -253,7 +250,7 @@ class ElectronicCoulombHamiltonian(AbstractLocalQuantumOperator):
         electron_nuclear_delta = coordinate[:, None, :] - nuclei_positions[None, :, :]
         electron_nuclear_mask = jnp.broadcast_to(
             nuclei_mask[None, :],
-            (self.electron_count, int(nuclei_mask.shape[0])),
+            (self.electron_count, nuclei_mask.shape[0]),
         )
         electron_nuclear_squared_distance = jnp.sum(electron_nuclear_delta**2, axis=-1)
         electron_nuclear_distance = jnp.sqrt(
@@ -280,8 +277,8 @@ class ElectronicCoulombHamiltonian(AbstractLocalQuantumOperator):
             & nuclei_mask[None, :]
             & jnp.triu(
                 jnp.ones(
-                    (int(nuclei_mask.shape[0]), int(nuclei_mask.shape[0])),
-                    dtype=bool,
+                    (nuclei_mask.shape[0], nuclei_mask.shape[0]),
+                    dtype=jnp.bool_,
                 ),
                 k=1,
             )
@@ -351,7 +348,7 @@ class ElectronicCoulombHamiltonian(AbstractLocalQuantumOperator):
         /,
     ) -> LocalOperatorEstimate:
         configs = jnp.asarray(configurations)
-        batch_shape = tuple(int(size) for size in configs.shape[:-2])
+        batch_shape = tuple(configs.shape[:-2])
         count = math.prod(batch_shape) if batch_shape else 1
         flat = configs.reshape((count,) + self.configuration_shape)
         value, valid, status = jax.vmap(lambda x: self._estimate_one(model, x))(flat)
@@ -401,7 +398,7 @@ class _HarmonicMeanElectronProposal(AbstractProposal):
             active[:, None], self.nuclei.positions.astype(coordinate.dtype), 0.0
         )
         included = jnp.broadcast_to(
-            active[None, :], (self.electron_count, int(active.shape[0]))
+            active[None, :], (self.electron_count, active.shape[0])
         )
         squared_distance = jnp.sum(
             (coordinate[:, None, :] - positions[None, :, :]) ** 2, axis=-1
@@ -519,12 +516,11 @@ def electronic_initial_walkers(
         or walkers <= 0
     ):
         raise ValueError(
-            "electron_count must match an admitted resource_plan and "
-            "walker_count must be positive."
+            "electron_count must match an admitted resource_plan and walker_count must be positive."
         )
     if not np.isfinite(spread_value) or spread_value <= 0.0:
         raise ValueError("spread must be finite and positive.")
-    active = np.asarray(nuclei.active_mask, dtype=bool)
+    active = np.asarray(nuclei.active_mask, dtype=np.bool_)
     active_indices = np.flatnonzero(active)
     charges = np.asarray(nuclei.atomic_numbers, dtype=np.int32)[active_indices]
     charge_centers = np.repeat(active_indices, charges)

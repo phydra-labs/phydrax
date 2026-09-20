@@ -92,7 +92,7 @@ class SimplexTransform(AbstractParameterTransform):
         value = jnp.asarray(raw)
         if jnp.issubdtype(value.dtype, jnp.complexfloating):
             raise TypeError("SimplexTransform requires real coordinates.")
-        if value.ndim < 1 or int(value.shape[-1]) < 1:
+        if value.ndim < 1 or value.shape[-1] < 1:
             raise ValueError(
                 "SimplexTransform requires a non-empty trailing coordinate axis."
             )
@@ -163,7 +163,7 @@ class PackedSkewSymmetricTransform(AbstractParameterTransform):
                 "PackedSkewSymmetricTransform requires a packed trailing axis."
             )
         dimension = _strict_packed_dimension(
-            int(value.shape[-1]), name="PackedSkewSymmetricTransform"
+            value.shape[-1], name="PackedSkewSymmetricTransform"
         )
         row, column = jnp.tril_indices(dimension, k=-1)
         matrix = jnp.zeros(value.shape[:-1] + (dimension, dimension), dtype=value.dtype)
@@ -183,7 +183,7 @@ class PositiveSemidefiniteTransform(AbstractParameterTransform):
                 "PositiveSemidefiniteTransform requires a packed trailing axis."
             )
         dimension = _packed_dimension(
-            int(value.shape[-1]), name="PositiveSemidefiniteTransform"
+            value.shape[-1], name="PositiveSemidefiniteTransform"
         )
         row, column = jnp.tril_indices(dimension)
         factor = jnp.zeros(value.shape[:-1] + (dimension, dimension), dtype=value.dtype)
@@ -211,9 +211,7 @@ class PositiveDefiniteTransform(AbstractParameterTransform):
             raise TypeError("PositiveDefiniteTransform requires real coordinates.")
         if value.ndim < 1:
             raise ValueError("PositiveDefiniteTransform requires a packed trailing axis.")
-        dimension = _packed_dimension(
-            int(value.shape[-1]), name="PositiveDefiniteTransform"
-        )
+        dimension = _packed_dimension(value.shape[-1], name="PositiveDefiniteTransform")
         row, column = jnp.tril_indices(dimension)
         factor = jnp.zeros(value.shape[:-1] + (dimension, dimension), dtype=value.dtype)
         factor = factor.at[..., row, column].set(value)
@@ -270,7 +268,7 @@ class SchurStableTransform(AbstractParameterTransform):
 
     def __call__(self, raw: tuple[ArrayLike, ArrayLike], /) -> Array:
         generator = HurwitzTransform(self.minimum_damping)(raw)
-        dimension = int(generator.shape[-1])
+        dimension = generator.shape[-1]
         identity = jnp.eye(dimension, dtype=generator.dtype)
         step = jnp.asarray(self.step, dtype=generator.dtype)
         return jnp.linalg.solve(
@@ -288,7 +286,7 @@ class StiefelTransform(AbstractParameterTransform):
         value = jnp.asarray(raw)
         if jnp.issubdtype(value.dtype, jnp.complexfloating):
             raise TypeError("StiefelTransform requires real coordinates.")
-        if value.ndim < 2 or int(value.shape[-2]) < int(value.shape[-1]):
+        if value.ndim < 2 or value.shape[-2] < value.shape[-1]:
             raise ValueError(
                 "StiefelTransform requires trailing shape (rows, columns) with rows >= columns."
             )

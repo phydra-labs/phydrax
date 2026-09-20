@@ -109,14 +109,14 @@ class ImplicitPointProjectionEvidence(StrictModule):
         if not isinstance(geometry, GeometryValidityEvidence):
             raise TypeError("geometry must be GeometryValidityEvidence.")
         self.geometry = geometry
-        self.root_residual = jnp.asarray(root_residual, dtype=float).reshape(())
+        self.root_residual = jnp.asarray(root_residual, dtype=jnp.float64).reshape(())
         self.minimum_gradient_norm = jnp.asarray(
-            minimum_gradient_norm, dtype=float
+            minimum_gradient_norm, dtype=jnp.float64
         ).reshape(())
         self.maximum_displacement_ratio = jnp.asarray(
-            maximum_displacement_ratio, dtype=float
+            maximum_displacement_ratio, dtype=jnp.float64
         ).reshape(())
-        self.finite = jnp.asarray(finite, dtype=bool).reshape(())
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_).reshape(())
         self.status = jnp.asarray(status, dtype=jnp.int32).reshape(())
         self.plan_id = str(plan_id)
 
@@ -149,7 +149,7 @@ class ImplicitPointProjectionResult(StrictModule):
         evidence: ImplicitPointProjectionEvidence,
         /,
     ):
-        proposed = jnp.asarray(proposed_points, dtype=float)
+        proposed = jnp.asarray(proposed_points, dtype=jnp.float64)
         safe = jnp.asarray(points, dtype=proposed.dtype)
         normals_ = jnp.asarray(normals, dtype=proposed.dtype)
         if proposed.ndim != 2 or safe.shape != proposed.shape:
@@ -203,7 +203,7 @@ class ImplicitPointProjectionPlan(StrictModule):
             raise TypeError("policy must be ImplicitProjectionPolicy.")
         if not source_id:
             raise ValueError("source_id must be non-empty.")
-        anchors_host = np.asarray(anchors, dtype=float)
+        anchors_host = np.asarray(anchors, dtype=np.float64)
         if (
             anchors_host.ndim != 2
             or anchors_host.shape[0] == 0
@@ -213,7 +213,7 @@ class ImplicitPointProjectionPlan(StrictModule):
             raise ValueError(
                 "anchors must be a non-empty finite array with shape (points, dim)."
             )
-        trust_host = np.asarray(trust_radii, dtype=float)
+        trust_host = np.asarray(trust_radii, dtype=np.float64)
         if trust_host.shape == ():
             trust_host = np.full((anchors_host.shape[0],), float(trust_host))
         if (
@@ -233,8 +233,7 @@ class ImplicitPointProjectionPlan(StrictModule):
         minimum_gradient = float(np.min(np.linalg.norm(np.asarray(gradients), axis=-1)))
         if residual > policy.root_tolerance:
             raise ValueError(
-                "Projection anchors must lie on the discovery zero set within "
-                "root_tolerance."
+                "Projection anchors must lie on the discovery zero set within root_tolerance."
             )
         if minimum_gradient < policy.minimum_gradient_norm:
             raise ValueError("Projection anchors must be regular field points.")
@@ -302,7 +301,7 @@ class ImplicitPointProjectionPlan(StrictModule):
             0,
             int(policy.maximum_steps),
             step,
-            (self.anchors, jnp.zeros(self.anchors.shape[:1], dtype=bool)),
+            (self.anchors, jnp.zeros(self.anchors.shape[:1], dtype=jnp.bool_)),
         )
         proposed = _attach_normal_gauge(
             self.kernel,

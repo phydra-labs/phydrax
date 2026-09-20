@@ -104,7 +104,7 @@ def test_time_bars_use_exact_half_open_windows() -> None:
         jnp.asarray([10, 19, 20, 29, 30]),
         jnp.asarray([1.0, 2.0, 10.0, 20.0, 100.0]),
         jnp.ones((5,)),
-        jnp.ones((5,), dtype=bool),
+        jnp.ones((5,), dtype="bool"),
         jnp.asarray([10, 20]),
         jnp.asarray([20, 30]),
         lineage,

@@ -363,7 +363,7 @@ def _place_batch(
         case_log_weights,
         dtype=dtype_policy.reduction_dtype,
     )
-    case_mask = jnp.asarray(case_mask, dtype=bool)
+    case_mask = jnp.asarray(case_mask, dtype=jnp.bool_)
     if sharding_policy is not None:
         batch = shard_operator_batch(batch, sharding_policy)
         targets = shard_operator_targets(targets, sharding_policy)
@@ -427,8 +427,7 @@ def _resolve_output_map(
         }
     if set(resolved) != set(declared) or set(resolved.values()) != set(target_names):
         raise ValueError(
-            "output_field_map must bijectively map every model output to a physical "
-            "output field."
+            "output_field_map must bijectively map every model output to a physical output field."
         )
     return resolved
 
@@ -480,7 +479,7 @@ def _has_trainable_arrays(parameters: Any, /) -> bool:
 
 def _metric_dict(names: tuple[str, ...], values: Sequence[Any], /) -> dict[str, float]:
     return {
-        name: float(jax.device_get(jnp.asarray(value, dtype=float).reshape(())))
+        name: float(jax.device_get(jnp.asarray(value, dtype=jnp.float64).reshape(())))
         for name, value in zip(names, values, strict=True)
     }
 
@@ -533,8 +532,7 @@ def _rollout_target_aliases(
     for term in rollout_terms:
         if len(term.time_weights) != int(policy.maximum_horizon):
             raise ValueError(
-                f"Rollout loss {term.name!r} must provide one time weight per "
-                "maximum-horizon step."
+                f"Rollout loss {term.name!r} must provide one time weight per maximum-horizon step."
             )
         if any(
             sum(term.time_weights[:horizon]) <= 0.0
@@ -544,14 +542,12 @@ def _rollout_target_aliases(
             )
         ):
             raise ValueError(
-                f"Rollout loss {term.name!r} must have positive time-weight "
-                "mass at every reachable horizon."
+                f"Rollout loss {term.name!r} must have positive time-weight mass at every reachable horizon."
             )
         if isinstance(term, SupervisedOperatorRolloutLoss):
             if len(term.target_fields) != int(policy.maximum_horizon):
                 raise ValueError(
-                    f"Rollout loss {term.name!r} must provide one ordered target "
-                    "alias per maximum-horizon step."
+                    f"Rollout loss {term.name!r} must provide one ordered target alias per maximum-horizon step."
                 )
             for alias in term.target_fields:
                 if alias in task_targets:
@@ -665,8 +661,7 @@ def fit_operator(
             raise ValueError("Private operator training does not support loss scaling.")
         if int(gradient_accumulation) != 1:
             raise ValueError(
-                "Private operator training uses provider microbatching and requires "
-                "gradient_accumulation=1."
+                "Private operator training uses provider microbatching and requires gradient_accumulation=1."
             )
         if include_model_losses:
             raise ValueError(
@@ -675,8 +670,7 @@ def fit_operator(
             )
         if normalization == "fit":
             raise ValueError(
-                "Private operator training requires public or separately certified "
-                "normalization."
+                "Private operator training requires public or separately certified normalization."
             )
         if validation is not None and not privacy.validation_is_public:
             raise ValueError(
@@ -688,13 +682,11 @@ def fit_operator(
             )
         if batch_size is not None:
             raise ValueError(
-                "Private operator batches are owned by the privacy sampler; "
-                "batch_size must be None."
+                "Private operator batches are owned by the privacy sampler; batch_size must be None."
             )
         if int(epochs) != 1:
             raise ValueError(
-                "Private operator training uses its fixed mechanism iteration schedule "
-                "and requires epochs=1."
+                "Private operator training uses its fixed mechanism iteration schedule and requires epochs=1."
             )
         if steps is not None and not (0 <= int(steps) <= privacy.mechanism.iterations):
             raise ValueError(
@@ -749,8 +741,7 @@ def fit_operator(
         )
         if checkpoint_path is not None and not resolved_evaluation_parameters_id:
             raise ValueError(
-                "Checkpointed fits with evaluation_parameters require a stable "
-                "evaluation_parameters_id."
+                "Checkpointed fits with evaluation_parameters require a stable evaluation_parameters_id."
             )
     if task is not None and not isinstance(task, OperatorTask):
         raise TypeError("task must be an OperatorTask.")
@@ -770,8 +761,7 @@ def fit_operator(
         )
         if unsupported:
             raise ValueError(
-                "gradient_accumulation > 1 requires case-additive mean loss terms; "
-                f"unsupported terms: {unsupported}."
+                f"gradient_accumulation > 1 requires case-additive mean loss terms; unsupported terms: {unsupported}."
             )
     if gradient_composition is not None:
         if not isinstance(gradient_composition, ConflictFreeGradientPolicy):
@@ -1057,15 +1047,13 @@ def fit_operator(
             evidence.checkpoint_id or evidence.corpus_id
         ):
             raise ValueError(
-                "Private operator artifacts require training evidence without raw "
-                "checkpoint or corpus identities."
+                "Private operator artifacts require training evidence without raw checkpoint or corpus identities."
             )
     else:
         model.operator_contract.validate(physical_first).require_runtime()
     if private_prepared is not None and provenance:
         raise ValueError(
-            "Private operator artifacts require empty provenance until a public-safe "
-            "provenance contract is available."
+            "Private operator artifacts require empty provenance until a public-safe provenance contract is available."
         )
 
     fixed_query_fingerprints: dict[str, str] = {}
@@ -1078,8 +1066,7 @@ def fit_operator(
         )
     ):
         raise ValueError(
-            "Private operator training does not publish data-derived fixed-query "
-            "fingerprints."
+            "Private operator training does not publish data-derived fixed-query fingerprints."
         )
     if task is not None and (
         task.problem.query_is_fixed is True
@@ -1573,11 +1560,11 @@ def fit_operator(
     ):
         if private_clipped_gradient is not None:
             assert private_prepared is not None
-            padding = jnp.asarray(is_padding_example, dtype=bool)
+            padding = jnp.asarray(is_padding_example, dtype=jnp.bool_)
             real = ~padding
             case_mask = eqx.error_if(
-                jnp.asarray(case_mask, dtype=bool),
-                jnp.any(real & ~jnp.asarray(case_mask, dtype=bool)),
+                jnp.asarray(case_mask, dtype=jnp.bool_),
+                jnp.any(real & ~jnp.asarray(case_mask, dtype=jnp.bool_)),
                 "The initial private profile requires every sampled case active.",
             )
             case_log_weights = eqx.error_if(
@@ -1637,7 +1624,7 @@ def fit_operator(
                 component_arrays,
                 gradient,
                 (),
-                jnp.zeros((0,), dtype=bool),
+                jnp.zeros((0,), dtype=jnp.bool_),
                 finite,
                 next_privacy_noise_state,
             )
@@ -1690,7 +1677,7 @@ def fit_operator(
                     loss_scale_state_,
                 )
             component_gradients = ()
-            active = jnp.zeros((0,), dtype=bool)
+            active = jnp.zeros((0,), dtype=jnp.bool_)
             composition_finite = jnp.asarray(True)
         else:
 
@@ -1748,7 +1735,7 @@ def fit_operator(
                         jnp.zeros_like(component_values).at[index].set(1.0),
                     )
                 )[0]
-                for index in range(int(component_values.shape[0]))
+                for index in range(component_values.shape[0])
             )
             if gradient_composition is None:
                 gradient = pullback(
@@ -1819,7 +1806,7 @@ def fit_operator(
             effective[:, None]
             & effective[None, :]
             & jnp.tril(
-                jnp.ones_like(alignment.gradient_cosine_matrix, dtype=bool),
+                jnp.ones_like(alignment.gradient_cosine_matrix, dtype=jnp.bool_),
                 -1,
             )
         )
@@ -1986,7 +1973,9 @@ def fit_operator(
             return None
         assert rollout_policy is not None
         return int(
-            jax.device_get(rollout_policy.active_horizon(jnp.asarray(step, dtype=float)))
+            jax.device_get(
+                rollout_policy.active_horizon(jnp.asarray(step, dtype=jnp.float64))
+            )
         )
 
     def evaluate(current_model, loader: OperatorBatchLoader, step: int):
@@ -2018,7 +2007,7 @@ def fit_operator(
                 training_batch.case_mask,
                 training_batch.sampling_probabilities,
                 jr.fold_in(jr.fold_in(master_key, int(step)), 1000 + batch_index),
-                jnp.asarray(step, dtype=float),
+                jnp.asarray(step, dtype=jnp.float64),
                 active_rollout_horizon,
                 training=False,
             )
@@ -2167,7 +2156,7 @@ def fit_operator(
                 "mesh_axis": sharding_policy.mesh_axis,
                 "case_axis": sharding_policy.case_axis,
                 "mesh_shape": list(sharding_policy.mesh.devices.shape),
-                "device_count": int(sharding_policy.mesh.devices.size),
+                "device_count": sharding_policy.mesh.devices.size,
             }
         ),
         "iteration_session": (
@@ -2484,7 +2473,7 @@ def fit_operator(
                         training_batch.sampling_probabilities,
                         training_batch.is_padding_example,
                         key,
-                        jnp.asarray(control.progress.update_step + 1, dtype=float),
+                        jnp.asarray(control.progress.update_step + 1, dtype=jnp.float64),
                         resolved_active_horizon(control.progress.update_step + 1),
                         loss_scale_state,
                         privacy_noise_state,
@@ -2576,8 +2565,7 @@ def fit_operator(
                     )
                     if not bool(jax.device_get(candidate_finite_array)):
                         raise FloatingPointError(
-                            "Operator optimizer produced non-finite state from "
-                            "finite gradients."
+                            "Operator optimizer produced non-finite state from finite gradients."
                         )
                     parameters = candidate_parameters
                     optimizer_state = candidate_optimizer_state

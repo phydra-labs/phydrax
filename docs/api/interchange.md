@@ -482,7 +482,7 @@ ordered, exact-count corrections on detached bytes:
    `void BarrelSetup(PHG4Reco* g4Reco)` to
    `double BarrelSetup(PHG4Reco* g4Reco)` once;
 2. in `G4_Barrel_EIC.C`, replace both occurrences of
-   `pitch / 10000. / sqrt(12.)` with `pitch / sqrt(12.)` so micrometre pitch is
+   `pitch / 10000. / sqrt(12.)` with `pitch / sqrt(12.)` so micrometer pitch is
    not converted twice;
 3. in `G4_FST_EIC.C`, replace
    `Form("SI_L%i_THICKNESS", j + 1)]*Units::um` with
@@ -500,7 +500,7 @@ does not exactly match the pin or any known-bad expression remains. The artifact
 retains both complete original and corrected source-file identities, both source-tree
 identities, the correction ledger, geometry and field-map hashes, runtime identity,
 seed, and engine evidence. The corrected geometry semantics are explicit: positions,
-radii, and barrel lengths are cm; pitch and disk thickness are micrometres; barrel
+radii, and barrel lengths are cm; pitch and disk thickness are micrometers; barrel
 thickness is percent radiation length using silicon `X0 = 9.37 cm`.
 
 `GYMDetectorProfile` fixes the reconstruction support to 50 eta/momentum bins over
@@ -519,7 +519,7 @@ percent with propagated disjoint-bin fit diagnostic, Kalman inefficiency with
 binomial error, elapsed time, and both simulation/reconstruction artifacts. The
 upstream fit error is a chi-square-scaled fit diagnostic, not calibrated observation
 noise. The legacy inverse-thickness sum combines reciprocals of unlike native units
-(barrel percent-X0 and disk micrometres); it is retained only as
+(barrel percent-X0 and disk micrometers); it is retained only as
 `upstream_inverse_thickness_diagnostic`, explicitly listed in `excluded_costs`, and
 is never an accepted objective, cost, or training penalty.
 

@@ -27,9 +27,7 @@ def main() -> None:
         "peak_sarcolemmal_voltage_mV": float(
             jnp.max(trajectory.states[:, voltage_index])
         ),
-        "peak_bulk_cytosolic_calcium_uM": float(
-            jnp.max(trajectory.states[:, ca2_index])
-        ),
+        "peak_bulk_cytosolic_calcium_uM": float(jnp.max(trajectory.states[:, ca2_index])),
         "peak_force_bearing_crossbridge_uM": float(
             jnp.max(trajectory.states[:, a2_index])
         ),

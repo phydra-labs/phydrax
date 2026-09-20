@@ -165,7 +165,7 @@ def main() -> None:
     force_plan = cosmo.PeriodicImageForcePlan(
         (1.0, 1.0, 1.0), 1.0, softening=0.01, image_shells=1
     )
-    coordinate = (jnp.arange(32, dtype=float) + 0.5) / 32.0
+    coordinate = (jnp.arange(32, dtype="float64") + 0.5) / 32.0
     positions = jnp.stack(
         (coordinate, jnp.mod(3.0 * coordinate, 1.0), jnp.mod(7.0 * coordinate, 1.0)),
         axis=-1,
@@ -183,7 +183,7 @@ def main() -> None:
 
     ell = jnp.arange(2, 3002)
     cmb_values = jnp.zeros((1, ell.size, 4, 4))
-    diagonal = 1.0 / (ell.astype(float) * (ell + 1.0))
+    diagonal = 1.0 / (ell.astype("float64") * (ell + 1.0))
     for field in range(4):
         cmb_values = cmb_values.at[0, :, field, field].set(diagonal)
     cmb_table = cosmo.CmbSpectrumTable(
@@ -201,28 +201,28 @@ def main() -> None:
     cmb_result, cmb_steady = _measure(cmb_function, cmb_table)
 
     report = {
-        "distance_queries": int(redshifts.size),
+        "distance_queries": redshifts.size,
         "distance_compile_seconds": distance_compile,
         "distance_steady_seconds": distance_steady,
         "correction_shape": list(values.shape),
         "correction_compile_seconds": correction_compile,
         "correction_steady_seconds": correction_steady,
-        "variance_masses": int(masses.size),
+        "variance_masses": masses.size,
         "variance_compile_seconds": variance_compile,
         "variance_steady_seconds": variance_steady,
-        "limber_multipoles": int(angular_plan.multipoles.size),
+        "limber_multipoles": angular_plan.multipoles.size,
         "limber_compile_seconds": angular_compile,
         "limber_steady_seconds": angular_steady,
         "limber_successful": bool(angular_result.successful),
-        "force_particles": int(positions.shape[0]),
+        "force_particles": positions.shape[0],
         "force_compile_seconds": force_compile,
         "force_steady_seconds": force_steady,
         "force_finite": bool(jnp.all(jnp.isfinite(force_result))),
-        "baryon_cells": int(baryon_state.gas.cell_average.shape[0]),
+        "baryon_cells": baryon_state.gas.cell_average.shape[0],
         "baryon_compile_seconds": baryon_compile,
         "baryon_steady_seconds": baryon_steady,
         "baryon_successful": bool(baryon_result.successful),
-        "cmb_multipoles": int(ell.size),
+        "cmb_multipoles": ell.size,
         "cmb_compile_seconds": cmb_compile,
         "cmb_steady_seconds": cmb_steady,
         "cmb_output_shape": list(cmb_result.shape),

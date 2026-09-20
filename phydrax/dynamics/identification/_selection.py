@@ -39,7 +39,7 @@ def _variant_design(
     feature_indices: Array | None = None,
     variant_id: str,
 ) -> SINDyDesign:
-    resolved_valid = design.valid & jnp.asarray(valid, dtype=bool)
+    resolved_valid = design.valid & jnp.asarray(valid, dtype=jnp.bool_)
     multiplier = (
         jnp.ones_like(design.weights)
         if weight_multiplier is None
@@ -59,7 +59,7 @@ def _variant_design(
         matrix,
         mask=resolved_valid,
         weights=weights,
-        max_features=int(matrix.shape[1]),
+        max_features=matrix.shape[1],
     )
     design_variant = {
         "valid": np.asarray(resolved_valid).tolist(),
@@ -593,12 +593,14 @@ def fit_ensemble_sindy(
             .set(regression.coefficients)
         )
         expanded_support = (
-            jnp.zeros((design.output_size, design.num_features), dtype=bool)
+            jnp.zeros((design.output_size, design.num_features), dtype=jnp.bool_)
             .at[:, feature_indices]
             .set(regression.support)
         )
         included = (
-            jnp.zeros((design.num_features,), dtype=bool).at[feature_indices].set(True)
+            jnp.zeros((design.num_features,), dtype=jnp.bool_)
+            .at[feature_indices]
+            .set(True)
         )
         coefficient_samples.append(expanded_coefficients)
         support_samples.append(expanded_support)

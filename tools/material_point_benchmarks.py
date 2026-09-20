@@ -81,7 +81,7 @@ def _case(
     axes = tuple((jnp.arange(side) + 0.37) / side for _ in range(dimension))
     mesh = jnp.meshgrid(*axes, indexing="ij")
     position = jnp.stack(mesh, axis=-1).reshape((-1, dimension))
-    particle_count = int(position.shape[0])
+    particle_count = position.shape[0]
     volume = jnp.full((particle_count,), 1.0 / particle_count)
     particles = phx.discretization.ParticleSetPlan(
         jnp.arange(particle_count), volume, ambient_dimension=dimension

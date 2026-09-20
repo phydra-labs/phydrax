@@ -145,7 +145,7 @@ def make_pair_relation_events(
     right: ArrayLike = (),
     relation_kind: ArrayLike = (),
     parameters: ArrayLike | None = None,
-    dtype: np.dtype | type = float,
+    dtype: np.dtype | type = jnp.float64,
 ) -> PairRelationEventBatch:
     """Pad host event data into one canonical fixed-capacity event batch.
 
@@ -161,7 +161,7 @@ def make_pair_relation_events(
     if not np.issubdtype(np.dtype(dtype), np.inexact):
         raise TypeError("Relation parameters must use an inexact dtype.")
     event_values = np.asarray(event_kind, dtype=np.int32)
-    count = int(event_values.size)
+    count = event_values.size
     if event_values.ndim != 1 or count > capacity:
         raise ValueError("event_kind must be rank one and fit event_capacity.")
 
@@ -180,9 +180,9 @@ def make_pair_relation_events(
     right_ = padded(right, -1, "right")
     kinds = padded(relation_kind, -1, "relation_kind")
     if valid is None:
-        valid_ = np.ones((count,), dtype=bool)
+        valid_ = np.ones((count,), dtype=np.bool_)
     else:
-        valid_ = np.asarray(valid, dtype=bool)
+        valid_ = np.asarray(valid, dtype=np.bool_)
         if valid_.shape != (count,):
             raise ValueError("valid must have the event-count shape.")
     valid_ = np.pad(valid_, (0, capacity - count), constant_values=False)
@@ -273,35 +273,35 @@ class DynamicPairRelationPlan(StrictModule, NonTrainableState):
             )
         if incarnation_limit <= 0 or incarnation_limit > np.iinfo(np.int32).max:
             raise ValueError("incarnation_maximum is invalid.")
-        endpoint_count = int(types.size)
+        endpoint_count = types.size
         type_count = int(types.max()) + 1
         endpoint_mask = (
-            np.ones((endpoint_count,), dtype=bool)
+            np.ones((endpoint_count,), dtype=np.bool_)
             if endpoint_active is None
-            else np.asarray(endpoint_active, dtype=bool)
+            else np.asarray(endpoint_active, dtype=np.bool_)
         )
         if endpoint_mask.shape != (endpoint_count,):
             raise ValueError("endpoint_active must have endpoint-capacity shape.")
         compatible = (
-            np.ones((kinds, type_count, type_count), dtype=bool)
+            np.ones((kinds, type_count, type_count), dtype=np.bool_)
             if compatibility is None
-            else np.asarray(compatibility, dtype=bool)
+            else np.asarray(compatibility, dtype=np.bool_)
         )
         if compatible.shape != (kinds, type_count, type_count):
             raise ValueError(
                 "compatibility must have shape (kind count, endpoint type count, endpoint type count)."
             )
         excluded = (
-            np.zeros((kinds, kinds), dtype=bool)
+            np.zeros((kinds, kinds), dtype=np.bool_)
             if exclusion is None
-            else np.asarray(exclusion, dtype=bool)
+            else np.asarray(exclusion, dtype=np.bool_)
         )
         if excluded.shape != (kinds, kinds) or not np.array_equal(excluded, excluded.T):
             raise ValueError("exclusion must be a symmetric kind-by-kind matrix.")
         symmetric = (
-            np.zeros((kinds,), dtype=bool)
+            np.zeros((kinds,), dtype=np.bool_)
             if symmetric_kinds is None
-            else np.asarray(symmetric_kinds, dtype=bool)
+            else np.asarray(symmetric_kinds, dtype=np.bool_)
         )
         if symmetric.shape != (kinds,):
             raise ValueError("symmetric_kinds must have kind-count shape.")
@@ -414,11 +414,13 @@ class PreparedDynamicPairRelations(StrictModule, NonTrainableState):
         capacity = self.plan.relation_capacity
         width = self.plan.parameter_width
         occupied_ = (
-            np.zeros((capacity,), dtype=bool)
+            np.zeros((capacity,), dtype=np.bool_)
             if occupied is None
-            else np.asarray(occupied, dtype=bool)
+            else np.asarray(occupied, dtype=np.bool_)
         )
-        active_ = occupied_.copy() if active is None else np.asarray(active, dtype=bool)
+        active_ = (
+            occupied_.copy() if active is None else np.asarray(active, dtype=np.bool_)
+        )
         left_ = (
             np.full((capacity,), -1, dtype=np.int32)
             if left is None
@@ -435,7 +437,7 @@ class PreparedDynamicPairRelations(StrictModule, NonTrainableState):
             else np.asarray(relation_kind, dtype=np.int32)
         )
         parameters_ = (
-            np.zeros((capacity, width), dtype=float)
+            np.zeros((capacity, width), dtype=np.float64)
             if parameters is None
             else np.asarray(parameters)
         )
@@ -639,7 +641,7 @@ class PreparedDynamicPairRelations(StrictModule, NonTrainableState):
         endpoint_mask = (
             self.plan.endpoint_active
             if endpoint_active is None
-            else jnp.asarray(endpoint_active, dtype=bool)
+            else jnp.asarray(endpoint_active, dtype=jnp.bool_)
         )
         self._validate_shapes(state, events, endpoint_mask)
         order = jnp.argsort(
@@ -656,7 +658,7 @@ class PreparedDynamicPairRelations(StrictModule, NonTrainableState):
         initial_state_finite = self._state_finite(state)
         initial_state_valid = initial_state_structural & initial_state_finite
         initial_status = jnp.zeros((self.plan.event_capacity,), dtype=jnp.int32)
-        initial_applied = jnp.zeros((self.plan.event_capacity,), dtype=bool)
+        initial_applied = jnp.zeros((self.plan.event_capacity,), dtype=jnp.bool_)
         indices = jnp.arange(self.plan.relation_capacity, dtype=jnp.int32)
 
         def apply_event(index: int, carry: tuple[Array, ...]) -> tuple[Array, ...]:

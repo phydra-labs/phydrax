@@ -56,8 +56,8 @@ class NestedSamplingDiagnostics(StrictModule):
         self.insertion_ranks = jnp.asarray(insertion_ranks, dtype=jnp.int32)
         self.insertion_rank_pvalue = jnp.asarray(insertion_rank_pvalue)
         self.rolling_insertion_rank_pvalues = jnp.asarray(rolling_insertion_rank_pvalues)
-        self.likelihood_monotonic = jnp.asarray(likelihood_monotonic, dtype=bool)
-        self.constraints_satisfied = jnp.asarray(constraints_satisfied, dtype=bool)
+        self.likelihood_monotonic = jnp.asarray(likelihood_monotonic, dtype=jnp.bool_)
+        self.constraints_satisfied = jnp.asarray(constraints_satisfied, dtype=jnp.bool_)
         self.initial_finite_fraction = jnp.asarray(initial_finite_fraction)
         self.inner_acceptance_rate = jnp.asarray(inner_acceptance_rate)
         self.expansion_cap_fraction = jnp.asarray(expansion_cap_fraction)
@@ -99,12 +99,12 @@ def insertion_rank_pvalue(ranks: Array, num_live: int, /) -> Array:
     if count < 2:
         raise ValueError("num_live must be at least two.")
     values = jnp.asarray(ranks, dtype=jnp.int32).reshape((-1,))
-    if int(values.size) == 0:
+    if values.size == 0:
         return jnp.asarray(jnp.nan)
     if bool(jnp.any((values < 0) | (values >= count))):
         raise ValueError("Insertion ranks must lie in [0, num_live).")
     observed = jnp.bincount(values, length=count)
-    expected = jnp.asarray(values.size / count, dtype=float)
+    expected = jnp.asarray(values.size / count, dtype=jnp.float64)
     statistic = jnp.sum((observed - expected) ** 2 / expected)
     return jsp.special.gammaincc(0.5 * (count - 1), 0.5 * statistic)
 
@@ -121,12 +121,12 @@ def rolling_insertion_rank_pvalues(
     width = max(4 * int(num_live), 100) if window is None else int(window)
     if width <= 0:
         raise ValueError("window must be positive.")
-    if int(values.size) < width:
-        return jnp.empty((0,), dtype=float)
+    if values.size < width:
+        return jnp.empty((0,), dtype=jnp.float64)
     return jnp.stack(
         [
             insertion_rank_pvalue(values[start : start + width], num_live)
-            for start in range(0, int(values.size) - width + 1, width)
+            for start in range(0, values.size - width + 1, width)
         ]
     )
 
@@ -152,7 +152,7 @@ def build_nested_diagnostics(
     deaths = jnp.asarray(dead_log_likelihood)
     births = jnp.asarray(dead_birth_log_likelihood)
     ranks = jnp.asarray(insertion_ranks, dtype=jnp.int32).reshape((-1,))
-    accepted = jnp.asarray(inner_accepted, dtype=bool)
+    accepted = jnp.asarray(inner_accepted, dtype=jnp.bool_)
     expansions = jnp.asarray(num_expansions)
     shrinkages = jnp.asarray(num_shrink)
     initial = jnp.asarray(initial_log_likelihood)
@@ -161,11 +161,11 @@ def build_nested_diagnostics(
 
     monotonic = jnp.all(jnp.diff(deaths) >= 0.0)
     constraints = jnp.all(jnp.isnan(births) | (deaths > births))
-    finite_fraction = jnp.mean(jnp.isfinite(initial).astype(float))
-    acceptance_rate = jnp.mean(accepted.astype(float))
-    zero_movement = jnp.mean((~jnp.any(accepted, axis=-1)).astype(float))
-    expansion_cap = jnp.mean((expansions >= int(max_expansions)).astype(float))
-    shrinkage_cap = jnp.mean((shrinkages >= int(max_shrinkage)).astype(float))
+    finite_fraction = jnp.mean(jnp.isfinite(initial).astype("float64"))
+    acceptance_rate = jnp.mean(accepted.astype("float64"))
+    zero_movement = jnp.mean((~jnp.any(accepted, axis=-1)).astype("float64"))
+    expansion_cap = jnp.mean((expansions >= int(max_expansions)).astype("float64"))
+    shrinkage_cap = jnp.mean((shrinkages >= int(max_shrinkage)).astype("float64"))
     rank_pvalue = insertion_rank_pvalue(ranks, num_live)
     rolling = rolling_insertion_rank_pvalues(ranks, num_live)
 
@@ -178,7 +178,7 @@ def build_nested_diagnostics(
     )
     effective_lineages = jnp.exp(lineage_entropy)
     live_leaves = jax.tree_util.tree_leaves(final_live_positions)
-    live_count = int(live_leaves[0].shape[0])
+    live_count = live_leaves[0].shape[0]
     live_matrix = jnp.concatenate(
         tuple(jnp.asarray(leaf).reshape((live_count, -1)) for leaf in live_leaves),
         axis=1,
@@ -194,7 +194,7 @@ def build_nested_diagnostics(
     )
     eigenvalues = jnp.maximum(jnp.linalg.eigvalsh(covariance), 0.0)
     largest = jnp.max(eigenvalues)
-    dimension = int(eigenvalues.size)
+    dimension = eigenvalues.size
     tolerance = (
         jnp.finfo(live_matrix.dtype).eps
         * max(live_count, dimension)
@@ -217,7 +217,7 @@ def build_nested_diagnostics(
         failures.append("evidence quadrature is invalid")
     if bool(zero_movement >= 1.0):
         failures.append("every replacement exhausted its inner chain without moving")
-    if int(ranks.size) >= 4 * int(num_live) and bool(rank_pvalue < 1e-6):
+    if ranks.size >= 4 * int(num_live) and bool(rank_pvalue < 1e-6):
         failures.append("insertion ranks reject constrained-prior uniformity")
 
     return NestedSamplingDiagnostics(

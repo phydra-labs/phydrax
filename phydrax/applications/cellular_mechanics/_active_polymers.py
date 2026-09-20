@@ -73,7 +73,7 @@ def _batch(
     return PairRelationEventBatch(
         event_ids.astype(jnp.int32),
         event_kind.astype(jnp.int32),
-        valid.astype(bool),
+        valid.astype("bool"),
         relation_ids.astype(jnp.int32),
         incarnations.astype(jnp.int32),
         left.astype(jnp.int32),
@@ -90,7 +90,7 @@ def _empty(
     return _batch(
         jnp.arange(capacity),
         jnp.zeros((capacity,), dtype=jnp.int32),
-        jnp.zeros((capacity,), dtype=bool),
+        jnp.zeros((capacity,), dtype=jnp.bool_),
         jnp.full((capacity,), -1, dtype=jnp.int32),
         jnp.full((capacity,), -1, dtype=jnp.int32),
         jnp.full((capacity,), -1, dtype=jnp.int32),
@@ -189,9 +189,9 @@ class ChromatinDynamicsPlan(StrictModule, NonTrainableState):
         dimension = int(ambient_dimension)
         capacity = int(relation_capacity)
         barriers = (
-            np.zeros((sites,), dtype=bool)
+            np.zeros((sites,), dtype=np.bool_)
             if roadblocks is None and sites >= 0
-            else np.asarray(roadblocks, dtype=bool)
+            else np.asarray(roadblocks, dtype=np.bool_)
         )
         rates = (float(binding_rate), float(unbinding_rate), float(extrusion_rate))
         capture = float(capture_distance)
@@ -220,9 +220,9 @@ class ChromatinDynamicsPlan(StrictModule, NonTrainableState):
             np.zeros((sites,), dtype=np.int32),
             capacity,
             2,
-            compatibility=np.ones((1, 1, 1), dtype=bool),
-            exclusion=np.ones((1, 1), dtype=bool),
-            symmetric_kinds=np.ones((1,), dtype=bool),
+            compatibility=np.ones((1, 1, 1), dtype=np.bool_),
+            exclusion=np.ones((1, 1), dtype=np.bool_),
+            symmetric_kinds=np.ones((1,), dtype=np.bool_),
             event_capacity=capacity,
         )
         spring = PairSpringPlan(0, 1)
@@ -358,7 +358,7 @@ class PreparedChromatinDynamics(StrictModule, NonTrainableState):
             occupied = (left_ >= 0) & (right_ >= 0)
             canonical_left = np.where(occupied, np.minimum(left_, right_), left_)
             canonical_right = np.where(occupied, np.maximum(left_, right_), right_)
-            parameters = np.zeros((capacity, 2), dtype=float)
+            parameters = np.zeros((capacity, 2), dtype=np.float64)
             parameters[:, 0] = self.plan.spring_stiffness
             parameters[:, 1] = self.plan.spring_rest_length
             relations = self.relations.initialize(
@@ -631,7 +631,7 @@ class PreparedChromatinDynamics(StrictModule, NonTrainableState):
         right = jnp.maximum(first, second)
         distance = jnp.sqrt(jnp.sum((positions[right] - positions[left]) ** 2, axis=-1))
         site_occupied = _occupancy(relation, site_count) > 0
-        move_destinations = jnp.zeros((site_count,), dtype=bool)
+        move_destinations = jnp.zeros((site_count,), dtype=jnp.bool_)
         move_destinations = move_destinations.at[
             jnp.clip(relation.left - 1, 0, site_count - 1)
         ].max(moving)
@@ -777,9 +777,9 @@ class ActinNetworkPlan(StrictModule, NonTrainableState):
             np.zeros((nodes,), dtype=np.int32),
             edges,
             2,
-            compatibility=np.ones((2, 1, 1), dtype=bool),
-            exclusion=np.zeros((2, 2), dtype=bool),
-            symmetric_kinds=np.zeros((2,), dtype=bool),
+            compatibility=np.ones((2, 1, 1), dtype=np.bool_),
+            exclusion=np.zeros((2, 2), dtype=np.bool_),
+            symmetric_kinds=np.zeros((2,), dtype=np.bool_),
             kind_count=2,
             event_capacity=edges,
         )
@@ -913,7 +913,7 @@ class PreparedActinNetwork(StrictModule, NonTrainableState):
             jnp.asarray(positions),
             jnp.asarray(active),
             jnp.asarray(np.where(active, self.plan.monomer_mass, 0.0), dtype=seeds.dtype),
-            jnp.zeros((self.plan.node_capacity,), dtype=bool),
+            jnp.zeros((self.plan.node_capacity,), dtype=jnp.bool_),
             jnp.asarray(
                 np.where(active, np.arange(self.plan.node_capacity), -1),
                 dtype=jnp.int32,
@@ -1212,7 +1212,9 @@ class PreparedActinNetwork(StrictModule, NonTrainableState):
             lambda value: value.capped,
             state,
             state.capped.at[safe_node].set(
-                jnp.where(valid, jnp.asarray(capped, dtype=bool), state.capped[safe_node])
+                jnp.where(
+                    valid, jnp.asarray(capped, dtype=jnp.bool_), state.capped[safe_node]
+                )
             ),
         )
         return self._finish(
@@ -1510,8 +1512,8 @@ class MotorCrosslinkerPlan(StrictModule, NonTrainableState):
             np.zeros((endpoints,), dtype=np.int32),
             capacity,
             2,
-            compatibility=np.ones((2, 1, 1), dtype=bool),
-            exclusion=np.zeros((2, 2), dtype=bool),
+            compatibility=np.ones((2, 1, 1), dtype=np.bool_),
+            exclusion=np.zeros((2, 2), dtype=np.bool_),
             symmetric_kinds=np.asarray([True, False]),
             kind_count=2,
             event_capacity=capacity,
@@ -1600,7 +1602,7 @@ class PreparedMotorCrosslinkers(StrictModule, NonTrainableState):
 
     def initialize(
         self,
-        dtype: np.dtype | type = float,
+        dtype: np.dtype | type = jnp.float64,
         /,
         *,
         left: ArrayLike | None = None,
@@ -1621,9 +1623,9 @@ class PreparedMotorCrosslinkers(StrictModule, NonTrainableState):
                 raise ValueError("Initial endpoints must have relation-capacity shape.")
             occupied = (left_ >= 0) & (right_ >= 0)
             motor_ = (
-                np.zeros((capacity,), dtype=bool)
+                np.zeros((capacity,), dtype=np.bool_)
                 if motor is None
-                else np.asarray(motor, dtype=bool)
+                else np.asarray(motor, dtype=np.bool_)
             )
             if motor_.shape != (capacity,):
                 raise ValueError("motor must have relation-capacity shape.")
@@ -1855,14 +1857,14 @@ class FocalAdhesionPlan(StrictModule, NonTrainableState):
         endpoint_types = np.concatenate(
             (np.zeros((cells,), dtype=np.int32), np.ones((substrate,), dtype=np.int32))
         )
-        compatibility = np.zeros((1, 2, 2), dtype=bool)
+        compatibility = np.zeros((1, 2, 2), dtype=np.bool_)
         compatibility[0, 0, 1] = True
         relations = DynamicPairRelationPlan(
             endpoint_types,
             capacity,
             2,
             compatibility=compatibility,
-            exclusion=np.ones((1, 1), dtype=bool),
+            exclusion=np.ones((1, 1), dtype=np.bool_),
             event_capacity=capacity,
         )
         generated = canonical_fingerprint(
@@ -1960,7 +1962,7 @@ class PreparedFocalAdhesions(StrictModule, NonTrainableState):
 
     def initialize(
         self,
-        dtype: np.dtype | type = float,
+        dtype: np.dtype | type = jnp.float64,
         /,
         *,
         cell_endpoints: ArrayLike | None = None,

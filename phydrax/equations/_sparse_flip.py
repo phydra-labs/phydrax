@@ -182,7 +182,7 @@ class CompiledSparseFLIPProblem(StrictModule, NonTrainableState):
         )
         liquid = jnp.asarray(
             p2g.liquid_fraction >= self.method.liquid_fraction_threshold,
-            dtype=bool,
+            dtype=jnp.bool_,
         )
         classification_margin = jnp.min(
             jnp.abs(p2g.liquid_fraction - self.method.liquid_fraction_threshold),

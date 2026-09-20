@@ -4,6 +4,8 @@
 
 """Reference designs, proposals, and stateful Markov sampling."""
 
+from importlib import import_module
+
 from .._sampling import (
     AbstractChainSampleResult,
     AbstractProposal,
@@ -12,7 +14,6 @@ from .._sampling import (
     AdaptiveProposalState,
     AntitheticDesign,
     CallableProposal,
-    DESIGN_ALGORITHM_VERSION,
     design_capabilities,
     design_name,
     design_signature,
@@ -66,14 +67,32 @@ from ._compact_group_hamiltonian import (
     PreparedCompactGroupHamiltonianKernel,
     sample_compact_group_hamiltonian,
 )
-from ._exact_learned import *  # noqa: F403
 from ._exact_learned import __all__ as _exact_learned_all
-from ._gauge_updates import *  # noqa: F403
 from ._gauge_updates import __all__ as _gauge_updates_all
-from ._rhmc import *  # noqa: F403
 from ._rhmc import __all__ as _rhmc_all
-from ._split_group_dynamics import *  # noqa: F403
 from ._split_group_dynamics import __all__ as _split_group_dynamics_all
+
+
+_FACADE_EXPORT_MODULES = (
+    "._exact_learned",
+    "._gauge_updates",
+    "._rhmc",
+    "._split_group_dynamics",
+)
+
+
+def __getattr__(name: str):
+    for module_name in reversed(_FACADE_EXPORT_MODULES):
+        module = import_module(module_name, __package__)
+        if name in module.__all__:
+            value = getattr(module, name)
+            globals()[name] = value
+            return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
 
 
 __all__ = [
@@ -94,7 +113,6 @@ __all__ = [
     "AntitheticDesign",
     "CallableProposal",
     "FullMarkovTarget",
-    "DESIGN_ALGORITHM_VERSION",
     "DesignCapabilities",
     "HaltonDesign",
     "GaussianRandomWalkProposal",

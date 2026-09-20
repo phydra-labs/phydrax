@@ -209,8 +209,7 @@ def _anderson_candidate(
         "native-block-krylov",
     ):
         raise ValueError(
-            "The selected Anderson coefficient backend cannot enforce the "
-            "aggregate maximum_linear_iterations budget."
+            "The selected Anderson coefficient backend cannot enforce the aggregate maximum_linear_iterations budget."
         )
     structural_linear_limit = linear_policy.tolerance.max_steps or max(
         linear_problem.operator.source.size,

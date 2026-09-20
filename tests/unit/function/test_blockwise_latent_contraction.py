@@ -110,7 +110,7 @@ class MonomialScalarLatentModel(_AbstractBaseModel):
 
     def __call__(self, x, /, *, key=jr.key(0)):
         x = _as_scalar(x)
-        return jnp.asarray([x**self.power], dtype=float)
+        return jnp.asarray([x**self.power], dtype="float64")
 
 
 def test_domain_model_blockwise_pointsbatch_singleton_blocks():
@@ -188,7 +188,7 @@ def test_latent_derivative_path_matches_exact_values():
     x = jnp.asarray(batch.points["x"][0].data)
     t = jnp.asarray(batch.points["t"].data).reshape((-1,))
     expected_dt_tx = (x**2)[:, None] * (3.0 * t**2)[None, :]
-    expected_dxx_tx = jnp.ones((x.shape[0], 1), dtype=float) * (2.0 * t**3)[None, :]
+    expected_dxx_tx = jnp.ones((x.shape[0], 1), dtype="float64") * (2.0 * t**3)[None, :]
 
     du_dt = dt_n(u, var="t", order=1, backend="ad")
     du_dt_partial = partial_t(u, var="t")
@@ -416,7 +416,7 @@ def test_binary_expression_derivative_hook_composes():
     assert get_derivative_rule(expr) is not None
 
     dexpr = partial_n(expr, var="x", axis=0, order=1, backend="ad")
-    x = jnp.asarray([0.25], dtype=float)
+    x = jnp.asarray([0.25], dtype="float64")
     out = jnp.asarray(dexpr.func(x))
     expected = -1.0 / ((1.0 + x[0]) ** 2)
     assert jnp.allclose(out, expected, atol=1e-6)
@@ -439,7 +439,7 @@ def test_boundary_gate_style_blend_preserves_hook():
     assert get_derivative_rule(blended) is not None
 
     du_dt = dt_n(blended, var="t", order=1, backend="ad")
-    out = jnp.asarray(du_dt.func(jnp.asarray([0.2], dtype=float), 0.4))
+    out = jnp.asarray(du_dt.func(jnp.asarray([0.2], dtype="float64"), 0.4))
     assert out.shape == ()
 
 

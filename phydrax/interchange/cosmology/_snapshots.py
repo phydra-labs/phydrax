@@ -267,8 +267,8 @@ def read_concept_snapshot(
             raise ValueError(f"Declared CONCEPT {selected_kind} dataset is absent.")
         if len(available) > 1 and kinematic_kind is None:
             raise ValueError("CONCEPT velocity versus momentum semantics are ambiguous.")
-        positions = np.asarray(group["pos"], dtype=float)
-        kinematics = np.asarray(group[dataset_name], dtype=float)
+        positions = np.asarray(group["pos"], dtype=np.float64)
+        kinematics = np.asarray(group[dataset_name], dtype=np.float64)
         if (
             positions.ndim != 2
             or positions.shape[1] != 3
@@ -283,15 +283,15 @@ def read_concept_snapshot(
         if "N" in group.attrs and int(group.attrs["N"]) != count:
             raise ValueError("CONCEPT component N attribute disagrees with its datasets.")
         if "mass" in group:
-            masses = np.asarray(group["mass"], dtype=float)
+            masses = np.asarray(group["mass"], dtype=np.float64)
         elif "mass" in group.attrs:
-            masses = np.full(count, float(group.attrs["mass"]), dtype=float)
+            masses = np.full(count, float(group.attrs["mass"]), dtype=np.float64)
         else:
             raise ValueError(
                 "CONCEPT particle masses are required for canonical momentum."
             )
         if masses.shape == ():
-            masses = np.full(count, float(masses), dtype=float)
+            masses = np.full(count, float(masses), dtype=np.float64)
         if (
             masses.shape != (count,)
             or np.any(~np.isfinite(masses))

@@ -154,7 +154,7 @@ def test_force_field_term_families_and_settle():
         ),
         phx.atomistic.RyckaertBellemansPotential([[0.1, 0.2, 0.1, 0.0, 0.0, 0.0]], route),
         phx.atomistic.CMAPPotential(
-            jnp.arange(64, dtype=float).reshape((8, 8)) * 1.0e-3,
+            jnp.arange(64, dtype="float64").reshape((8, 8)) * 1.0e-3,
             [[0, 1, 2, 3, 0, 1, 2, 3]],
         ),
         phx.atomistic.PairOverrideLennardJonesPotential(

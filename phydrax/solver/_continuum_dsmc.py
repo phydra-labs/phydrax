@@ -113,7 +113,7 @@ class ContinuumDSMCInterfacePlan(StrictModule, NonTrainableState):
         tolerance: float = 1.0e-12,
         interface_id: str | None = None,
     ) -> None:
-        measures = np.asarray(face_measures, dtype=float)
+        measures = np.asarray(face_measures, dtype=np.float64)
         tolerance_ = float(tolerance)
         if (
             not isinstance(schema, ContinuumDSMCConservedSchema)
@@ -410,9 +410,9 @@ class DSMCToContinuumReductionPlan(StrictModule, NonTrainableState):
         if particles.velocity.shape[-1] != self.dimension:
             raise ValueError("DSMC particle velocity dimension does not match reduction.")
         region = (
-            jnp.ones((particles.capacity,), dtype=bool)
+            jnp.ones((particles.capacity,), dtype=jnp.bool_)
             if region_mask is None
-            else jnp.asarray(region_mask, dtype=bool)
+            else jnp.asarray(region_mask, dtype=jnp.bool_)
         )
         if region.shape != (particles.capacity,):
             raise ValueError("DSMC reduction mask must match particle capacity.")
@@ -558,7 +558,7 @@ class HybridOwnershipEpochPlan(StrictModule, NonTrainableState):
         )
 
     def initialize(self, kinetic_mask: ArrayLike, /) -> HybridOwnershipEpochState:
-        mask = jnp.asarray(kinetic_mask, dtype=bool)
+        mask = jnp.asarray(kinetic_mask, dtype=jnp.bool_)
         return HybridOwnershipEpochState(
             mask,
             jnp.zeros(mask.shape, dtype=jnp.int32),
@@ -577,7 +577,7 @@ class HybridOwnershipEpochPlan(StrictModule, NonTrainableState):
         /,
     ) -> HybridOwnershipRequest:
         metric = jnp.asarray(breakdown_metric)
-        adjacency_ = jnp.asarray(adjacency, dtype=bool)
+        adjacency_ = jnp.asarray(adjacency, dtype=jnp.bool_)
         available = jnp.asarray(particle_capacity_available, dtype=jnp.int32)
         per_cell = int(particles_per_new_cell)
         if (

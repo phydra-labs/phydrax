@@ -515,14 +515,14 @@ def _implicit_unstructured_transport_step(
         state.porosity,
     )
     owner = metrics.owner_cells
-    neighbour = metrics.neighbour_cells
-    safe_neighbour = jnp.maximum(neighbour, 0)
+    neighbor = metrics.neighbor_cells
+    safe_neighbor = jnp.maximum(neighbor, 0)
     interior = (~metrics.boundary_faces)[None, :] & metrics.active_faces
     amount_sum = jnp.sum(state.species_amount, axis=-1, keepdims=True)
     fraction = state.species_amount / jnp.maximum(amount_sum, 1.0e-30)
     conductivity = jnp.sum(fraction * material.transport.thermal_conductivity, axis=-1)
     face_conductivity = _harmonic_mean(
-        conductivity[:, owner], conductivity[:, safe_neighbour]
+        conductivity[:, owner], conductivity[:, safe_neighbor]
     )
     heat_conductance = (
         face_conductivity * metrics.face_measures / metrics.center_distances
@@ -575,7 +575,7 @@ def _implicit_unstructured_transport_step(
     )
     face_diffusivity = _harmonic_mean(
         effective_diffusivity[:, owner, :],
-        effective_diffusivity[:, safe_neighbour, :],
+        effective_diffusivity[:, safe_neighbor, :],
     )
     species_conductance = (
         face_diffusivity
@@ -616,9 +616,9 @@ def _implicit_unstructured_transport_step(
         (
             diagonal,
             (face + boundary_conductance) / volume[..., owner],
-            face / volume[..., safe_neighbour],
+            face / volume[..., safe_neighbor],
             -face / volume[..., owner],
-            -face / volume[..., safe_neighbour],
+            -face / volume[..., safe_neighbor],
         ),
         axis=-1,
     )

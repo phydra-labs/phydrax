@@ -1,5 +1,5 @@
 {
-  "catalog_id": "7df5c559bb37a90075951a7520742401c6042da6861cbea39f2abfd8e5cc0f67",
+  "catalog_id": "43e73de78a9b4219a332334e3d9fc63e0ef7d763aabf519924c4f37a29729de4",
   "kind": "application-promotion-portfolios",
   "portfolios": [
     {
@@ -393,15 +393,15 @@
       ],
       "kind": "application-promotion-portfolio",
       "name": "biology-medical",
-      "portfolio_id": "146332bfdee3d77fb10d3cab686a11adb3a8dd40bb3973f36881387d45a593fb",
+      "portfolio_id": "e77c56cdb8d8431625aac9e271d4f868792ff8d6b0ee5b5d3213ebfb7e5fe771",
       "profile_ids": [
         "0db85f7b81d3f2cf9b4753b3f25b116de42309c0a425044196ee94d69f72e566",
-        "420c673f935c64ba17aadc5c7d6ac206ded925392eb9a9d70508280ed32eadbb",
-        "58aa2a1551fccceb74979f96cb1e9b10d09901220625b20d8b14dbbf3af09fa0",
         "6a39943fe08f1bce09b8a25e7677fa5c8f352834feca2e4cdc6efeba42562569",
         "6ab02e957ac7aebae33c0deb12020babdb28f13226bb7e6daf2d49c534339cfd",
         "909e443aaa587a8809e2d15a0f24a87959ca32ce2b5829a8bcf1dd40d5e38bef",
-        "c5cec7c7075723af5a0603883e69ccfcc98d22bd5552af3217ba2edd4e3168fc"
+        "ae8bb2cfebc6b9e9950db079a1f5719e8180dd36b59751821d8cc9730d0f9690",
+        "c5cec7c7075723af5a0603883e69ccfcc98d22bd5552af3217ba2edd4e3168fc",
+        "cd68978dee4580194349581f52c4d160e35131037b432f7859bd2a9c0dfa1345"
       ],
       "ready_for_release_review": false
     },

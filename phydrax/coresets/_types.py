@@ -33,8 +33,8 @@ class CoresetSelection(StrictModule):
         method: str,
     ):
         indices_ = jnp.asarray(indices, dtype=jnp.int32)
-        log_weights_ = jnp.asarray(log_weights, dtype=float)
-        mask_ = jnp.asarray(mask, dtype=bool)
+        log_weights_ = jnp.asarray(log_weights, dtype=jnp.float64)
+        mask_ = jnp.asarray(mask, dtype=jnp.bool_)
         if indices_.ndim != 1:
             raise ValueError("Coreset indices must be one-dimensional.")
         if log_weights_.shape != indices_.shape or mask_.shape != indices_.shape:
@@ -52,7 +52,7 @@ class CoresetSelection(StrictModule):
 
     @property
     def capacity(self) -> int:
-        return int(self.indices.shape[0])
+        return self.indices.shape[0]
 
     @property
     def active_points(self) -> Array:

@@ -217,9 +217,9 @@ def to_pivpy(
             "pivpy conversion requires one grid shared by every time sample.",
         )
     times_ = (
-        np.arange(len(fields_), dtype=float)
+        np.arange(len(fields_), dtype=np.float64)
         if times is None
-        else np.asarray(tuple(times), dtype=float)
+        else np.asarray(tuple(times), dtype=np.float64)
     )
     if times_.shape != (len(fields_),) or not np.all(np.isfinite(times_)):
         raise ValueError("times must contain one finite value per field.")

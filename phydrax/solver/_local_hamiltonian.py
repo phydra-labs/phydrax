@@ -66,7 +66,7 @@ class LocalHamiltonianTerm(StrictModule):
         if value.ndim != 2 or value.shape[0] != value.shape[1] or value.shape[0] == 0:
             raise ValueError("generator must be one nonempty square matrix.")
         if not jnp.issubdtype(value.dtype, jnp.inexact):
-            value = value.astype(float)
+            value = value.astype("float64")
         if not jnp.issubdtype(value.dtype, jnp.complexfloating):
             value = value.astype(jnp.result_type(value.dtype, 1j))
         targets = tuple(str(target) for target in target_wire_ids)
@@ -267,13 +267,13 @@ class FixedGridLocalHamiltonian(StrictModule):
             raise TypeError("time_grid must be real.")
         if jnp.issubdtype(values.dtype, jnp.complexfloating):
             raise TypeError("coefficients must be real.")
-        dtype = jnp.result_type(times, values, float)
+        dtype = jnp.result_type(times, values, jnp.float64)
         times = times.astype(dtype)
         values = values.astype(dtype)
         hbar_ = jnp.asarray(hbar, dtype=dtype)
         if hbar_.shape != ():
             raise ValueError("hbar must be scalar.")
-        source_valid_ = jnp.asarray(source_valid, dtype=bool)
+        source_valid_ = jnp.asarray(source_valid, dtype=jnp.bool_)
         if source_valid_.shape != ():
             raise ValueError("source_valid must be scalar.")
         intervals = jnp.diff(times)
@@ -307,7 +307,7 @@ class FixedGridLocalHamiltonian(StrictModule):
         self.positive_intervals = positive
         self.finite = finite
         self.valid = valid
-        self.interval_count = int(times.shape[0] - 1)
+        self.interval_count = times.shape[0] - 1
         self.schedule_id = identifier
 
 
@@ -362,7 +362,7 @@ class LocalHamiltonianEvolutionPolicy(StrictModule):
             for value in (norm_tolerance, unitarity_tolerance)
         ):
             raise ValueError("Evolution tolerances must be finite and non-negative.")
-        saves = tuple(int(index) for index in save_indices)
+        saves = tuple(save_indices)
         if any(index < 0 for index in saves) or len(set(saves)) != len(saves):
             raise ValueError("save_indices must be unique and non-negative.")
         if differentiation == "reversible-product-formula" and saves:
@@ -1085,7 +1085,7 @@ def local_hamiltonian_linear_operator(
     if not isinstance(hamiltonian, LocalHamiltonian):
         raise TypeError("hamiltonian must be a LocalHamiltonian.")
     values = (
-        jnp.ones((len(hamiltonian.terms),), dtype=float)
+        jnp.ones((len(hamiltonian.terms),), dtype=jnp.float64)
         if coefficients is None
         else jnp.asarray(coefficients)
     )

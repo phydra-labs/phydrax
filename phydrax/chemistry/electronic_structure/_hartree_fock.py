@@ -88,7 +88,7 @@ class SCFState(StrictModule, NonTrainableState):
         self.total_energy = jnp.asarray(total_energy, dtype=density_.dtype).reshape(())
         self.residual = jnp.asarray(residual, dtype=density_.dtype).reshape(())
         self.iterations = jnp.asarray(iterations, dtype=jnp.int32).reshape(())
-        self.converged = jnp.asarray(converged, dtype=bool).reshape(())
+        self.converged = jnp.asarray(converged, dtype=jnp.bool_).reshape(())
         self.state_id = canonical_fingerprint(
             {
                 "kind": "native-rhf-state",
@@ -109,7 +109,7 @@ class SCFState(StrictModule, NonTrainableState):
 
 
 def _symmetric_eigh(matrix: Array, /) -> tuple[Array, Array]:
-    count = int(matrix.shape[0])
+    count = matrix.shape[0]
     result = eigensolve(
         Eigenproblem(
             DenseLinearOperator(
@@ -371,7 +371,7 @@ class NativeRHFPlan(StrictModule, NonTrainableState):
         state = self.solve_atomic_units(coordinate_bohr)
         all_converged = bool(state.converged)
         forces = jnp.zeros_like(coordinate)
-        for atom in range(int(coordinate.shape[0])):
+        for atom in range(coordinate.shape[0]):
             for component in range(3):
                 displacement = (
                     jnp.zeros_like(coordinate)
@@ -566,7 +566,7 @@ class PreparedNativeRHFCalculation(AbstractPreparedElectronicCalculation):
                 ),
             ),
             work=ElectronicWorkEvidence(
-                energy_evaluations=1 + 6 * int(self.calculation.system.particle_ids.size),
+                energy_evaluations=1 + 6 * self.calculation.system.particle_ids.size,
                 force_evaluations=1,
                 property_evaluations=int(kernel.dipole is not None),
             ),

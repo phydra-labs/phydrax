@@ -53,9 +53,7 @@ def test_pseudo_transient_root_uses_explicit_relaxation_map():
         params,
         fixed,
         solver.enforcement,
-        training=phx.solver.FunctionalTrainingPlan(
-            pseudo_transient=(policy,)
-        ),
+        training=phx.solver.FunctionalTrainingPlan(pseudo_transient=(policy,)),
         previous_functions={"u": previous},
         pseudo_inverse_steps=(jnp.asarray(3.0),),
     )
@@ -161,9 +159,7 @@ def _two_term_solver():
         points=points,
         label="v",
     )
-    return phx.solver.FunctionalSolver(
-        functions={"u": u, "v": v}, terms=(first, second)
-    )
+    return phx.solver.FunctionalSolver(functions={"u": u, "v": v}, terms=(first, second))
 
 
 def test_gradient_norm_balancing_is_mean_one_and_reports_orthogonal_alignment():
@@ -186,9 +182,7 @@ def test_gradient_norm_balancing_is_mean_one_and_reports_orthogonal_alignment():
         every=1,
         momentum=0.0,
     )
-    diagnostics = phx.solver.FunctionalDiagnosticsPolicy(
-        every=1, gradient_alignment=True
-    )
+    diagnostics = phx.solver.FunctionalDiagnosticsPolicy(every=1, gradient_alignment=True)
     update = prepare_functional_update(
         physical,
         params,

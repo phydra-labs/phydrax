@@ -147,7 +147,7 @@ class TrajectoryData(StrictModule):
         sample_shape = (
             state_values.shape[:-event_rank] if event_rank else state_values.shape
         )
-        cases = tuple(int(size) for size in sample_shape[:-1])
+        cases = tuple(sample_shape[:-1])
         capacity = int(sample_shape[-1])
         if capacity < 2:
             raise ValueError(
@@ -161,7 +161,7 @@ class TrajectoryData(StrictModule):
                 f"states must have shape {expected_states}; got {state_values.shape}."
             )
         if not jnp.issubdtype(state_values.dtype, jnp.inexact):
-            state_values = state_values.astype(float)
+            state_values = state_values.astype("float64")
 
         coordinate_values = jnp.asarray(coordinates)
         if coordinate_values.shape not in ((capacity,), cases + (capacity,)):
@@ -171,14 +171,14 @@ class TrajectoryData(StrictModule):
         if jnp.issubdtype(coordinate_values.dtype, jnp.complexfloating):
             raise TypeError("Trajectory coordinates must be real-valued.")
         coordinate_values = coordinate_values.astype(
-            jnp.result_type(coordinate_values, float)
+            jnp.result_type(coordinate_values, jnp.float64)
         )
         coordinates_full = jnp.broadcast_to(coordinate_values, cases + (capacity,))
 
         valid = (
-            jnp.ones(cases + (capacity,), dtype=bool)
+            jnp.ones(cases + (capacity,), dtype=jnp.bool_)
             if sample_valid is None
-            else jnp.asarray(sample_valid, dtype=bool)
+            else jnp.asarray(sample_valid, dtype=jnp.bool_)
         )
         if valid.shape == (capacity,):
             valid = jnp.broadcast_to(valid, cases + (capacity,))
@@ -193,9 +193,9 @@ class TrajectoryData(StrictModule):
             "Every valid trajectory sample must have finite coordinate and state values.",
         )
         resets = (
-            jnp.zeros(cases + (capacity - 1,), dtype=bool)
+            jnp.zeros(cases + (capacity - 1,), dtype=jnp.bool_)
             if reset_mask is None
-            else jnp.asarray(reset_mask, dtype=bool)
+            else jnp.asarray(reset_mask, dtype=jnp.bool_)
         )
         if resets.shape == (capacity - 1,):
             resets = jnp.broadcast_to(resets, cases + (capacity - 1,))
@@ -206,7 +206,7 @@ class TrajectoryData(StrictModule):
         transitions = (
             adjacent_valid
             if transition_valid is None
-            else jnp.asarray(transition_valid, dtype=bool)
+            else jnp.asarray(transition_valid, dtype=jnp.bool_)
         )
         if transitions.shape == (capacity - 1,):
             transitions = jnp.broadcast_to(transitions, cases + (capacity - 1,))
@@ -258,12 +258,12 @@ class TrajectoryData(StrictModule):
                     f"inputs must have shape {expected_inputs}; got {input_values.shape}."
                 )
             if not jnp.issubdtype(input_values.dtype, jnp.inexact):
-                input_values = input_values.astype(float)
+                input_values = input_values.astype("float64")
             input_support = valid if input_alignment == "samples" else transitions
             resolved_input_valid = (
                 input_support
                 if input_valid is None
-                else jnp.asarray(input_valid, dtype=bool)
+                else jnp.asarray(input_valid, dtype=jnp.bool_)
             )
             if resolved_input_valid.shape == (input_count,):
                 resolved_input_valid = jnp.broadcast_to(
@@ -275,8 +275,7 @@ class TrajectoryData(StrictModule):
             input_values = eqx.error_if(
                 input_values,
                 jnp.any(resolved_input_valid & (~input_support | ~input_finite)),
-                "Valid inputs require valid supporting samples or transitions "
-                "and finite input values.",
+                "Valid inputs require valid supporting samples or transitions and finite input values.",
             )
 
         if derivatives is None:
@@ -291,11 +290,11 @@ class TrajectoryData(StrictModule):
                     f"derivatives must have shape {expected_states}; got {derivative_values.shape}."
                 )
             if not jnp.issubdtype(derivative_values.dtype, jnp.inexact):
-                derivative_values = derivative_values.astype(float)
+                derivative_values = derivative_values.astype("float64")
             resolved_derivative_valid = (
                 valid
                 if derivative_valid is None
-                else jnp.asarray(derivative_valid, dtype=bool)
+                else jnp.asarray(derivative_valid, dtype=jnp.bool_)
             )
             if resolved_derivative_valid.shape == (capacity,):
                 resolved_derivative_valid = jnp.broadcast_to(

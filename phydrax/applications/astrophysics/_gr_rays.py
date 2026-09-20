@@ -77,8 +77,8 @@ class GRRayState(StrictModule):
                 "GR ray coordinates and tangents must have shape (num_rays, 4)."
             )
         if not jnp.issubdtype(points.dtype, jnp.inexact):
-            points = points.astype(float)
-            velocities = velocities.astype(float)
+            points = points.astype("float64")
+            velocities = velocities.astype("float64")
         basis = (
             None
             if screen_basis is None
@@ -87,9 +87,9 @@ class GRRayState(StrictModule):
         if basis is not None and basis.shape != (points.shape[0], 2, 4):
             raise ValueError("screen_basis must have shape (num_rays, 2, 4).")
         mask = (
-            jnp.ones((points.shape[0],), dtype=bool)
+            jnp.ones((points.shape[0],), dtype=jnp.bool_)
             if active is None
-            else jnp.asarray(active, dtype=bool)
+            else jnp.asarray(active, dtype=jnp.bool_)
         )
         if mask.shape != (points.shape[0],):
             raise ValueError("active must have shape (num_rays,).")
@@ -100,7 +100,7 @@ class GRRayState(StrictModule):
 
     @property
     def num_rays(self) -> int:
-        return int(self.coordinates.shape[0])
+        return self.coordinates.shape[0]
 
 
 class GRRayPlan(StrictModule):
@@ -482,8 +482,8 @@ class GRRayResult(StrictModule):
         points = jnp.asarray(coordinates)
         velocities = jnp.asarray(tangents, dtype=points.dtype)
         affine = jnp.asarray(affine_parameter, dtype=points.dtype)
-        active_ = jnp.asarray(active, dtype=bool)
-        valid_ = jnp.asarray(valid, dtype=bool)
+        active_ = jnp.asarray(active, dtype=jnp.bool_)
+        valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         status_ = jnp.asarray(status, dtype=jnp.int32)
         residual = jnp.asarray(null_residual, dtype=points.dtype)
         if points.ndim != 3 or points.shape[-1] != 4 or velocities.shape != points.shape:
@@ -728,10 +728,12 @@ def _solve_batched(
             solver_configuration_id=f"{plan.plan_id}:solver",
         )
         triggered = (
-            jnp.zeros((3,), dtype=bool)
+            jnp.zeros((3,), dtype=jnp.bool_)
             if event is None
             else jnp.stack(
-                tuple(jnp.asarray(value, dtype=bool) for value in solution.event_mask)
+                tuple(
+                    jnp.asarray(value, dtype=jnp.bool_) for value in solution.event_mask
+                )
             )
         )
         return (
@@ -750,9 +752,9 @@ def _solve_batched(
     ) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array]:
         return (
             jnp.broadcast_to(initial, (history_size, initial.shape[0])),
-            jnp.zeros((history_size,), dtype=bool),
+            jnp.zeros((history_size,), dtype=jnp.bool_),
             jnp.asarray(False),
-            jnp.zeros((3,), dtype=bool),
+            jnp.zeros((3,), dtype=jnp.bool_),
             jnp.asarray(0, dtype=jnp.int32),
             plan.affine_parameter[0],
             initial,

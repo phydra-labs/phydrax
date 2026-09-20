@@ -98,9 +98,9 @@ def _feature_metric_values(
     name: str,
     /,
 ) -> np.ndarray:
-    values = np.asarray(value, dtype=float)
+    values = np.asarray(value, dtype=np.float64)
     if values.shape == ():
-        values = np.full((count,), float(values), dtype=float)
+        values = np.full((count,), float(values), dtype=np.float64)
     if values.shape != (count,):
         raise ValueError(f"{name} must be scalar or have one value per feature.")
     if np.any(~np.isfinite(values)) or np.any(values < 0.0):
@@ -174,14 +174,14 @@ class CollisionFeaturePolicy(StrictModule, NonTrainableState):
             raise ValueError(
                 "Collision features must use canonical vertex/edge/face/analytic order."
             )
-        count = int(identifiers.size)
+        count = identifiers.size
         participant = _feature_integer_values(participant_ids, count, "participant_ids")
         body = _feature_integer_values(body_ids, count, "body_ids")
         material = _feature_integer_values(material_ids, count, "material_ids")
         patch = _feature_integer_values(patch_ids, count, "patch_ids")
-        static = np.asarray(static_mask, dtype=bool)
+        static = np.asarray(static_mask, dtype=np.bool_)
         if static.shape == ():
-            static = np.full((count,), bool(static), dtype=bool)
+            static = np.full((count,), bool(static), dtype=np.bool_)
         if static.shape != (count,):
             raise ValueError("static_mask must be scalar or have feature shape.")
         radius = _feature_metric_values(physical_radius, count, "physical_radius")
@@ -415,9 +415,9 @@ def _default_surface_feature_policy(
     proxy_error: ArrayLike | float,
     provenance_id: str | None,
 ) -> CollisionFeaturePolicy:
-    vertex_count = int(vertex_ids.size)
-    edge_count = int(edges.shape[0])
-    face_count = int(faces.shape[0])
+    vertex_count = vertex_ids.size
+    edge_count = edges.shape[0]
+    face_count = faces.shape[0]
     next_identifier = int(np.max(vertex_ids)) + 1
     edge_identifiers = (
         np.arange(next_identifier, next_identifier + edge_count, dtype=np.int64)
@@ -461,9 +461,9 @@ def _default_surface_feature_policy(
         else _feature_integer_values(material_ids, vertex_count, "material_ids")
     )
     patch = _feature_integer_values(patch_ids, vertex_count, "patch_ids")
-    static = np.asarray(static_mask, dtype=bool)
+    static = np.asarray(static_mask, dtype=np.bool_)
     if static.shape == ():
-        static = np.full((vertex_count,), bool(static), dtype=bool)
+        static = np.full((vertex_count,), bool(static), dtype=np.bool_)
     if static.shape != (vertex_count,):
         raise ValueError("static_mask must be scalar or have vertex shape.")
     radius = _feature_metric_values(physical_radius, vertex_count, "physical_radius")
@@ -571,8 +571,7 @@ class CollisionSurfacePlan(StrictModule, NonTrainableState):
         allow_isolated = bool(allow_isolated_vertices)
         if edge_array.shape[0] == 0 and not allow_isolated:
             raise ValueError(
-                "Collision surfaces require an edge unless isolated vertices "
-                "are explicitly enabled."
+                "Collision surfaces require an edge unless isolated vertices are explicitly enabled."
             )
         if dimension == 2 and face_array.shape[0] != 0:
             raise ValueError("Two-dimensional collision surfaces use edges, not faces.")
@@ -595,14 +594,14 @@ class CollisionSurfacePlan(StrictModule, NonTrainableState):
         ranks = np.empty((count,), dtype=np.int64)
         ranks[np.argsort(identifiers, kind="stable")] = np.arange(count, dtype=np.int64)
         orientable = (
-            np.ones((count,), dtype=bool)
+            np.ones((count,), dtype=np.bool_)
             if orientable_mask is None
-            else np.asarray(orientable_mask, dtype=bool)
+            else np.asarray(orientable_mask, dtype=np.bool_)
         )
         codimensional = (
-            np.zeros((count,), dtype=bool)
+            np.zeros((count,), dtype=np.bool_)
             if codimensional_mask is None
-            else np.asarray(codimensional_mask, dtype=bool)
+            else np.asarray(codimensional_mask, dtype=np.bool_)
         )
         if orientable.shape != (count,) or codimensional.shape != (count,):
             raise ValueError(
@@ -1295,13 +1294,12 @@ def prepare_cell_mesh_collision_surface(
     expected = (mesh.coordinates.shape[0], mesh.ambient_dimension)
     if source_space.shape != expected:
         raise ValueError(
-            "Direct cell-mesh collision extraction requires one nodal vector "
-            "unknown per mesh coordinate."
+            "Direct cell-mesh collision extraction requires one nodal vector unknown per mesh coordinate."
         )
     connectivity = mesh.connectivity
     if isinstance(connectivity, PolygonalConnectivity):
         boundary_edges = np.asarray(connectivity.edges)[
-            np.asarray(connectivity.boundary_edges, dtype=bool)
+            np.asarray(connectivity.boundary_edges, dtype=np.bool_)
         ]
         boundary_vertices = np.unique(boundary_edges.reshape((-1,)))
         local = np.full((mesh.coordinates.shape[0],), -1, dtype=np.int32)
@@ -1310,7 +1308,7 @@ def prepare_cell_mesh_collision_surface(
         faces = None
     elif isinstance(connectivity, TetrahedralConnectivity):
         boundary_faces = np.asarray(connectivity.faces)[
-            np.asarray(connectivity.boundary_faces, dtype=bool)
+            np.asarray(connectivity.boundary_faces, dtype=np.bool_)
         ]
         boundary_vertices = np.unique(boundary_faces.reshape((-1,)))
         local = np.full((mesh.coordinates.shape[0],), -1, dtype=np.int32)
@@ -1319,10 +1317,9 @@ def prepare_cell_mesh_collision_surface(
         edges = None
     else:
         raise TypeError(
-            "Certified direct collision extraction currently supports polygonal "
-            "2-D meshes and tetrahedral 3-D meshes."
+            "Certified direct collision extraction currently supports polygonal 2-D meshes and tetrahedral 3-D meshes."
         )
-    count = int(boundary_vertices.size)
+    count = boundary_vertices.size
     policy = ContactPairPolicy(count) if pair_policy is None else pair_policy
     plan = CollisionSurfacePlan(
         np.asarray(mesh.vertex_global_ids)[boundary_vertices],

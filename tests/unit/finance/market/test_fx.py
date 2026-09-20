@@ -37,7 +37,7 @@ def _state(factors: tuple[RiskFactorKey, ...], values: tuple[float, ...]) -> Mar
     return MarketState(
         layout,
         jnp.asarray(values),
-        jnp.ones((count,), dtype=bool),
+        jnp.ones((count,), dtype="bool"),
         jnp.zeros((count,), dtype=jnp.int32),
         jnp.zeros((count,), dtype=jnp.int64),
         jnp.zeros((count,), dtype=jnp.int64),

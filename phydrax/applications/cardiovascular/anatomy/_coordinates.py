@@ -45,10 +45,10 @@ def _mesh_components(mesh: CellMesh, /) -> tuple[np.ndarray, ...]:
     cells = np.concatenate(
         tuple(np.asarray(block.vertices, dtype=np.int32) for block in mesh.blocks), axis=0
     )
-    neighbours = [set() for _ in range(mesh.coordinates.shape[0])]
+    neighbors = [set() for _ in range(mesh.coordinates.shape[0])]
     for cell in cells:
         for first in cell:
-            neighbours[int(first)].update(
+            neighbors[int(first)].update(
                 int(second) for second in cell if second != first
             )
     unseen = set(range(mesh.coordinates.shape[0]))
@@ -59,7 +59,7 @@ def _mesh_components(mesh: CellMesh, /) -> tuple[np.ndarray, ...]:
         while pending:
             current = pending.pop()
             component.append(current)
-            attached = unseen.intersection(neighbours[current])
+            attached = unseen.intersection(neighbors[current])
             unseen.difference_update(attached)
             pending.extend(attached)
         components.append(np.asarray(sorted(component), dtype=np.int32))
@@ -154,8 +154,8 @@ class HarmonicCoordinateEvidence(StrictModule, NonTrainableState):
         self.free_residual_norm = jnp.asarray(free_residual_norm)
         self.maximum_boundary_error = jnp.asarray(maximum_boundary_error)
         self.maximum_principle_violation = jnp.asarray(maximum_principle_violation)
-        self.finite = jnp.asarray(finite, dtype=bool)
-        self.successful = jnp.asarray(successful, dtype=bool)
+        self.finite = jnp.asarray(finite, dtype=jnp.bool_)
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_)
 
     @property
     def all_successful(self) -> Array:
@@ -189,7 +189,7 @@ class HarmonicCoordinateFields(StrictModule):
         nodal = jnp.asarray(nodal_values)
         cells = jnp.asarray(cell_values)
         gradients = jnp.asarray(cell_gradients)
-        masks = jnp.asarray(dirichlet_masks, dtype=bool)
+        masks = jnp.asarray(dirichlet_masks, dtype=jnp.bool_)
         if not names_ or len(set(names_)) != len(names_):
             raise ValueError("Committed coordinate names must be unique and non-empty.")
         count = len(names_)
@@ -302,8 +302,8 @@ class HarmonicCoordinatePlan(StrictModule, NonTrainableState):
             raise ValueError("Harmonic coordinate names must be unique.")
         components = _mesh_components(mesh)
         for spec in normalized:
-            lower = np.asarray(roles.vertex_mask(spec.lower_role), dtype=bool)
-            upper = np.asarray(roles.vertex_mask(spec.upper_role), dtype=bool)
+            lower = np.asarray(roles.vertex_mask(spec.lower_role), dtype=np.bool_)
+            upper = np.asarray(roles.vertex_mask(spec.upper_role), dtype=np.bool_)
             if np.any(lower & upper):
                 raise ValueError(
                     f"Coordinate {spec.name!r} Dirichlet role closures must be disjoint."
@@ -311,8 +311,7 @@ class HarmonicCoordinatePlan(StrictModule, NonTrainableState):
             for component in components:
                 if not np.any(lower[component]) or not np.any(upper[component]):
                     raise ValueError(
-                        f"Coordinate {spec.name!r} must span both endpoints on every "
-                        "mesh component."
+                        f"Coordinate {spec.name!r} must span both endpoints on every mesh component."
                     )
         self.mesh = mesh
         self.roles = roles
@@ -361,10 +360,10 @@ class PreparedHarmonicCoordinates(StrictModule, NonTrainableState):
         free_routes: list[np.ndarray] = []
         node_count = plan.mesh.coordinates.shape[0]
         for spec in plan.specs:
-            lower = np.asarray(plan.roles.vertex_mask(spec.lower_role), dtype=bool)
-            upper = np.asarray(plan.roles.vertex_mask(spec.upper_role), dtype=bool)
+            lower = np.asarray(plan.roles.vertex_mask(spec.lower_role), dtype=np.bool_)
+            upper = np.asarray(plan.roles.vertex_mask(spec.upper_role), dtype=np.bool_)
             mask = lower | upper
-            prescribed = np.zeros((node_count,), dtype=float)
+            prescribed = np.zeros((node_count,), dtype=np.float64)
             prescribed[lower] = spec.lower_value
             prescribed[upper] = spec.upper_value
             masks.append(mask)

@@ -12,7 +12,7 @@ import phydrax as phx
 def _compiled_1d(bathymetry, reconstruction, *, source=None):
     bed = jnp.asarray(bathymetry)
     grid = phx.discretization.TensorGridPlan(
-        (phx.discretization.UniformCellAxisSpec(int(bed.size), periodic=True),),
+        (phx.discretization.UniformCellAxisSpec(bed.size, periodic=True),),
         axis_names=("x",),
     ).prepare(jnp.asarray(((0.0,), (1.0,))))
     system = phx.equations.ShallowWaterSystem()

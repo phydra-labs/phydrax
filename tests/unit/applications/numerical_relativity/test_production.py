@@ -694,9 +694,9 @@ def test_bounded_terminal_manifests_preserve_checkpoint_and_distinct_statuses(
     production, prepared, initial = _compiled(tmp_path, output_artifacts=1)
     state = prepared.initial_state(initial)
 
-    cancelled = _replace_status(state, "cancelled", "")
+    canceled = _replace_status(state, "canceled", "")
     cancellation_result = ProductionRunResult(
-        cancelled, jnp.asarray(False), None, prepared.run_id, None
+        canceled, jnp.asarray(False), None, prepared.run_id, None
     )
     cancellation = production.cancellation_manifest(
         prepared, cancellation_result, "operator cancellation"
@@ -705,7 +705,7 @@ def test_bounded_terminal_manifests_preserve_checkpoint_and_distinct_statuses(
     assert len(cancellation.checkpoint_receipt_id) == 64
     assert len(cancellation.checkpoint_content_digest) == 64
     assert cancellation.checkpoint_generation == 0
-    assert cancellation.checkpoint_accepted_step == int(cancelled.step_index)
+    assert cancellation.checkpoint_accepted_step == int(canceled.step_index)
     assert cancellation.checkpoint_durable_size_bytes > 0
     assert len(cancellation.checkpoint_durable_sha256) == 64
     restored_cancellation = prepared.resume(state)

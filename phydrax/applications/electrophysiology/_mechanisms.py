@@ -138,7 +138,7 @@ class PassiveLeak(StrictModule, NonTrainableState):
         self.conductance_density_area_to_uS = _conductance_density_area_to_microsiemens()
         self.mechanism_id = canonical_fingerprint(
             {
-                "kind": "passive-leak-v1",
+                "kind": "passive-leak",
                 "name": identifier,
                 "conductance_density_mS_cm2": conductance,
                 "reversal_mV": reversal,
@@ -254,7 +254,7 @@ class HodgkinHuxleyNaK(StrictModule, NonTrainableState):
         self.conductance_density_area_to_uS = _conductance_density_area_to_microsiemens()
         self.mechanism_id = canonical_fingerprint(
             {
-                "kind": "hodgkin-huxley-na-k-v1",
+                "kind": "hodgkin-huxley-na-k",
                 "name": identifier,
                 "sodium_conductance_density_mS_cm2": sodium,
                 "potassium_conductance_density_mS_cm2": potassium,
@@ -367,7 +367,7 @@ class SodiumPotassiumPump(StrictModule, NonTrainableState):
         self.current_density_area_to_nA = _current_density_area_to_nanoamperes()
         self.mechanism_id = canonical_fingerprint(
             {
-                "kind": "sodium-potassium-pump-v1",
+                "kind": "sodium-potassium-pump",
                 "name": identifier,
                 "maximum_current_density_uA_cm2": maximum,
                 "sodium_half_saturation_mM": sodium_half,
@@ -460,7 +460,7 @@ class MembraneProgram(StrictModule, NonTrainableState):
         self.has_nonlinear_mechanisms = any(value.nonlinear for value in values)
         self.program_id = canonical_fingerprint(
             {
-                "kind": "electrophysiology-membrane-program-v1",
+                "kind": "electrophysiology-membrane-program",
                 "mechanisms": list(identifiers),
                 "gate_counts": [value.gate_count for value in values],
                 "units_id": ELECTROPHYSIOLOGY_UNITS.units_id,

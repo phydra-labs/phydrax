@@ -4,6 +4,8 @@
 
 """Measure-aware deterministic, adaptive, and stochastic integration."""
 
+from importlib import import_module
+
 from .._axis_factorization import (
     AxisContractionPlan,
     AxisContractionResult,
@@ -53,7 +55,6 @@ from ._calabi_yau_observables import (
     PreparedCalabiYauModuliSamples,
 )
 from ._calibration import calibrate, MeasureCalibrationDiagnostics
-from ._complex_weight import *  # noqa: F403
 from ._complex_weight import __all__ as _complex_weight_all
 from ._compression import compress, MeasureCompressionDiagnostics
 from ._deformed_measure import (
@@ -263,8 +264,24 @@ from ._transformations import (
     MeasureTransformationRecord,
     TransformedIntegrationDiagnostics,
 )
-from ._vegas import *  # noqa: F403
 from ._vegas import __all__ as _vegas_all
+
+
+_FACADE_EXPORT_MODULES = ("._complex_weight", "._vegas")
+
+
+def __getattr__(name: str):
+    for module_name in reversed(_FACADE_EXPORT_MODULES):
+        module = import_module(module_name, __package__)
+        if name in module.__all__:
+            value = getattr(module, name)
+            globals()[name] = value
+            return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
+def __dir__() -> list[str]:
+    return sorted(set(globals()) | set(__all__))
 
 
 __all__ = [

@@ -40,9 +40,9 @@ def nondominated_mask(objectives: ArrayLike, valid: ArrayLike | None = None, /) 
 
 def _finite_rows(values: Array, valid: ArrayLike | None, /) -> Array:
     active = (
-        jnp.ones((values.shape[0],), dtype=bool)
+        jnp.ones((values.shape[0],), dtype=jnp.bool_)
         if valid is None
-        else jnp.asarray(valid, dtype=bool)
+        else jnp.asarray(valid, dtype=jnp.bool_)
     )
     if active.shape != (values.shape[0],):
         raise ValueError("valid must contain one mask entry per point.")
@@ -72,7 +72,7 @@ def hypervolume(
         or max_points < 1
     ):
         raise ValueError("max_points must be a positive integer.")
-    values = jnp.asarray(objectives, dtype=float)
+    values = jnp.asarray(objectives, dtype=jnp.float64)
     ref = jnp.asarray(reference, dtype=values.dtype)
     if values.ndim != 2 or values.shape[1] not in (2, 3):
         raise ValueError("Exact hypervolume supports only two or three objectives.")

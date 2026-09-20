@@ -7,7 +7,7 @@
 The interior equations are p_t = -rho*c**2 div(v) + rho*c**2 Q/V and
 v_t = -grad(p)/rho. Sources are volume rates (m³/s in 3D, m²/s per unit
 out-of-plane length in 2D). Pressure is in Pa, velocity in m/s, time in s.
-Velocity-Verlet and centred staggered differences are second order. The outer
+Velocity-Verlet and centered staggered differences are second order. The outer
 normal velocity is zero: without a layer the box has reflecting rigid walls.
 
 The optional absorber evolves actual axis-split pressure memories with matching
@@ -148,7 +148,7 @@ class ConstantDensityAcousticPlan(StrictModule, NonTrainableState):
             zip(grid.shape, grid.spacing, strict=True)
         ):
             for face, output in ((False, p_damping), (True, v_damping)):
-                coordinates = np.arange(size + int(face), dtype=float) + (
+                coordinates = np.arange(size + int(face), dtype=np.float64) + (
                     0.0 if face else 0.5
                 )
                 if width:
@@ -242,7 +242,7 @@ class ConstantDensityAcousticPlan(StrictModule, NonTrainableState):
         if receivers < 0 or checkpoints < 0:
             raise ValueError("Receiver and checkpoint counts must be nonnegative.")
         cells = int(prod(self.grid.shape))
-        scalar_bytes = int(self.pressure_damping[0].dtype.itemsize)
+        scalar_bytes = self.pressure_damping[0].dtype.itemsize
         state_scalars = cells * (1 + 2 * self.grid.dimensions)
         retained = state_scalars * scalar_bytes
         retained += sum(
@@ -264,7 +264,7 @@ class ConstantDensityAcousticPlan(StrictModule, NonTrainableState):
         )
 
     def _wavespeed(self, wavespeed: ArrayLike) -> Array:
-        value = jnp.asarray(wavespeed, dtype=float)
+        value = jnp.asarray(wavespeed, dtype=jnp.float64)
         if value.shape not in ((), self.grid.shape):
             raise ValueError("Wavespeed must be scalar or match the acoustic grid.")
         value = eqx.error_if(
@@ -277,7 +277,7 @@ class ConstantDensityAcousticPlan(StrictModule, NonTrainableState):
         return jnp.broadcast_to(value, self.grid.shape)
 
     def initial_state(self, pressure: ArrayLike = 0.0, /) -> AcousticState:
-        values = jnp.asarray(pressure, dtype=float)
+        values = jnp.asarray(pressure, dtype=jnp.float64)
         if values.shape not in ((), self.grid.shape):
             raise ValueError(
                 "Initial pressure must be scalar or match the acoustic grid."
@@ -374,7 +374,7 @@ class ConstantDensityAcousticPlan(StrictModule, NonTrainableState):
     ) -> AcousticState:
         """Advance once; rates are the interval-mean physical monopole volume rates."""
         self._acquisition(acquisition)
-        rates = jnp.asarray(source_rates, dtype=float)
+        rates = jnp.asarray(source_rates, dtype=jnp.float64)
         if rates.shape != (acquisition.sources.count,):
             raise ValueError(
                 "A source step requires one physical volume rate per source."
@@ -523,7 +523,7 @@ def ricker_wavelet(times: ArrayLike, frequency: float, /, *, delay: float = 0.0)
         raise ValueError(
             "Ricker frequency must be finite and positive; delay must be finite."
         )
-    phase = (jnp.pi * frequency * (jnp.asarray(times, dtype=float) - delay)) ** 2
+    phase = (jnp.pi * frequency * (jnp.asarray(times, dtype=jnp.float64) - delay)) ** 2
     return (1.0 - 2.0 * phase) * jnp.exp(-phase)
 
 

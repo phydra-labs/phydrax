@@ -82,13 +82,13 @@ class MortarInterfacePenalty(AbstractScalarTerm):
         label: str | None = None,
         gram_tolerance: float = 1.0e-12,
     ):
-        basis = np.asarray(basis_values, dtype=float)
+        basis = np.asarray(basis_values, dtype=np.float64)
         if basis.ndim != 2 or basis.shape[0] <= 0 or basis.shape[1] <= 0:
             raise ValueError("basis_values must have shape (points, modes).")
         weights_ = (
-            np.full((basis.shape[0],), 1.0 / basis.shape[0], dtype=float)
+            np.full((basis.shape[0],), 1.0 / basis.shape[0], dtype=np.float64)
             if weights is None
-            else np.asarray(weights, dtype=float)
+            else np.asarray(weights, dtype=np.float64)
         )
         if weights_.shape != (basis.shape[0],):
             raise ValueError("Mortar weights must have one value per point.")
@@ -102,7 +102,7 @@ class MortarInterfacePenalty(AbstractScalarTerm):
         if not verified:
             raise ValueError("Mortar basis Gram matrix is singular or ill-conditioned.")
         gram_inverse = np.linalg.solve(gram, np.eye(gram.shape[0]))
-        scale_ = jnp.asarray(scale, dtype=float).reshape(())
+        scale_ = jnp.asarray(scale, dtype=jnp.float64).reshape(())
         if float(scale_) < 0.0:
             raise ValueError("scale must be non-negative.")
         self.fields = (_name(left_field), _name(right_field))
@@ -174,7 +174,7 @@ class NitscheInterfaceFunctional(AbstractScalarTerm):
     ):
         if pairing.normal is None:
             raise ValueError("Nitsche coupling requires an oriented interface normal.")
-        penalty_ = jnp.asarray(penalty, dtype=float).reshape(())
+        penalty_ = jnp.asarray(penalty, dtype=jnp.float64).reshape(())
         if not bool(jnp.isfinite(penalty_)) or float(penalty_) <= 0.0:
             raise ValueError("Nitsche penalty must be finite and positive.")
         self.fields = (_name(left_field), _name(right_field))
@@ -275,7 +275,7 @@ class AugmentedValueConstraint(AbstractScalarTerm):
         )
         if previous.shape != multiplier_.shape:
             raise ValueError("previous_residual must match multiplier shape.")
-        penalty_ = jnp.asarray(penalty, dtype=float).reshape(())
+        penalty_ = jnp.asarray(penalty, dtype=jnp.float64).reshape(())
         if not bool(jnp.isfinite(penalty_)) or float(penalty_) <= 0.0:
             raise ValueError("Augmented constraint penalty must be finite and positive.")
         self.fields = (_name(left_field), _name(right_field))

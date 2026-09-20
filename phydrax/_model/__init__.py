@@ -27,10 +27,10 @@ from ._protocols import (
     StructuredDerivativeProvider,
 )
 from ._structure import (
-    deserialise_model_leaf,
+    deserialize_model_leaf,
     model_from_structure_recipe,
     model_structure_recipe,
-    serialise_model_leaf,
+    serialize_model_leaf,
 )
 
 
@@ -39,7 +39,7 @@ __all__ = [
     "AxisModelEvaluator",
     "artifact_value",
     "artifact_value_id",
-    "deserialise_model_leaf",
+    "deserialize_model_leaf",
     "OperatorArchitectureCodec",
     "operator_architecture_codec",
     "operator_architecture_codec_for",
@@ -60,6 +60,6 @@ __all__ = [
     "model_structure_recipe",
     "model_objective_values",
     "ModelInputMode",
-    "serialise_model_leaf",
+    "serialize_model_leaf",
     "StructuredDerivativeProvider",
 ]

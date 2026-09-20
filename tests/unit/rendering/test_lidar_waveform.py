@@ -6,7 +6,9 @@ import phydrax as phx
 
 
 def _surface_and_rays():
-    vertices = np.asarray(((-1, -1, 2), (1, -1, 2), (0, 1, 2), (0, 0, 4)), dtype=float)
+    vertices = np.asarray(
+        ((-1, -1, 2), (1, -1, 2), (0, 1, 2), (0, 0, 4)), dtype="float64"
+    )
     triangles = np.asarray(((0, 2, 1), (0, 1, 3), (1, 2, 3), (2, 0, 3)))
     contract = phx.SpatialCoordinateContract(
         phx.units.METER, coordinate_system="cartesian", reference_frame="world"

@@ -2,7 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-"""Exact executable campaign contracts, not a catalogue of promised support."""
+"""Exact executable campaign contracts, not a catalog of promised support."""
 
 from __future__ import annotations
 

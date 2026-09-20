@@ -25,7 +25,9 @@ def axial_chain(node_count: int):
     edges = jnp.stack((jnp.arange(nodes - 1), jnp.arange(1, nodes)), axis=-1).astype(
         jnp.int32
     )
-    constraints = jnp.zeros((nodes, 2), dtype=bool).at[:, 1].set(True).at[0, 0].set(True)
+    constraints = (
+        jnp.zeros((nodes, 2), dtype="bool").at[:, 1].set(True).at[0, 0].set(True)
+    )
     structure = sm.ForceDensityStructure.from_edges(
         edges, nodes, 2, constrained_dofs=constraints
     )
@@ -39,7 +41,7 @@ def axial_chain(node_count: int):
     )
     reference = mn.MemberReferenceState(structure, positions)
     dofs = mn.MemberDOFLayout(
-        structure, rotation_constrained=jnp.ones((nodes, 1), dtype=bool)
+        structure, rotation_constrained=jnp.ones((nodes, 1), dtype="bool")
     )
     definition = mn.MemberNetworkDefinition(structure, reference, properties, dofs)
     assembly = mn.MemberNetworkAssembly((mn.AxialMemberBlock(jnp.arange(nodes - 1)),))

@@ -206,7 +206,7 @@ class CutCellLeafletRoute(StrictModule, NonTrainableState):
             raise TypeError("geometry_plan must be MACDiffuseSDFGeometryPlan.")
         if not callable(geometry_arguments):
             raise TypeError("geometry_arguments must be callable.")
-        masks = tuple(np.asarray(mask, dtype=bool) for mask in leakage_face_masks)
+        masks = tuple(np.asarray(mask, dtype=np.bool_) for mask in leakage_face_masks)
         face_shapes = tuple(
             tuple(value.shape) for value in geometry_plan.operators.face_dual_measures
         )

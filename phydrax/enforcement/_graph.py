@@ -88,7 +88,7 @@ def _valid_entities(batch: GraphBatch, /) -> Array:
     field = batch.points.get(GRAPH_GRAPH_INDEX_KEY)
     if isinstance(field, cx.AxisArray):
         return jnp.asarray(field.data, dtype=jnp.int32) >= 0
-    return jnp.ones((_entity_indices(batch).shape[0],), dtype=bool)
+    return jnp.ones((_entity_indices(batch).shape[0],), dtype=jnp.bool_)
 
 
 def _local_entity_indices(batch: GraphBatch, /) -> Array:
@@ -102,8 +102,8 @@ def _local_entity_indices(batch: GraphBatch, /) -> Array:
 def _isin(values: Array, options: Array, /) -> Array:
     values = jnp.asarray(values, dtype=jnp.int32)
     options = jnp.asarray(options, dtype=jnp.int32)
-    if int(options.shape[0]) == 0:
-        return jnp.zeros(values.shape, dtype=bool)
+    if options.shape[0] == 0:
+        return jnp.zeros(values.shape, dtype=jnp.bool_)
     return jnp.any(values[:, None] == options[None, :], axis=1)
 
 
@@ -119,7 +119,7 @@ def _type_mask(batch: GraphBatch, component: NodeType | EdgeType, /) -> Array:
     if not isinstance(field, cx.AxisArray):
         raise TypeError("Graph type payload must be a phydrax.axes.AxisArray.")
     type_ids = jnp.asarray(field.data)
-    if type_ids.ndim == 2 and int(type_ids.shape[1]) == 1:
+    if type_ids.ndim == 2 and type_ids.shape[1] == 1:
         type_ids = type_ids[:, 0]
     if type_ids.ndim != 1:
         raise ValueError("Graph type payload must have shape (n,) or (n, 1).")
@@ -141,7 +141,7 @@ def _cochain_mask(batch: GraphBatch, component: CochainCells, /) -> Array:
         raise KeyError(
             "CochainCells boundary regions require graph.nodes['boundary'] metadata."
         )
-    boundary = jnp.asarray(boundary_field.data, dtype=bool)
+    boundary = jnp.asarray(boundary_field.data, dtype=jnp.bool_)
     return mask & (boundary if component.region == "boundary" else ~boundary)
 
 
@@ -154,7 +154,7 @@ def _component_mask(
     selector = component.spec.selection_for(graph_label)
     kind = graph_component_kind(selector)
     if kind != batch.component_kind:
-        return jnp.zeros((_entity_indices(batch).shape[0],), dtype=bool)
+        return jnp.zeros((_entity_indices(batch).shape[0],), dtype=jnp.bool_)
 
     valid = _valid_entities(batch)
     explicit = graph_component_indices(selector)
@@ -243,8 +243,7 @@ class _GraphRestrictedField(StrictModule, BatchEvaluator):
             raise TypeError("Graph restriction requires GraphBatch evaluation.")
         if batch.graph_label != self.graph_label:
             raise ValueError(
-                f"Graph restriction expects label {self.graph_label!r}, "
-                f"got {batch.graph_label!r}."
+                f"Graph restriction expects label {self.graph_label!r}, got {batch.graph_label!r}."
             )
         field = self.value(batch, key=key, **kwargs)
         if not isinstance(field, cx.AxisArray):
@@ -254,7 +253,7 @@ class _GraphRestrictedField(StrictModule, BatchEvaluator):
             raise ValueError("Graph field is missing the graph sampling axis.")
         axis_pos = field.dims.index(axis)
         data = jnp.moveaxis(jnp.asarray(field.data), axis_pos, 0)
-        if int(data.shape[0]) != int(_entity_indices(batch).shape[0]):
+        if data.shape[0] != _entity_indices(batch).shape[0]:
             raise ValueError(
                 "Graph restriction output size does not match the finite graph batch."
             )
@@ -290,12 +289,12 @@ class GraphRestriction(AbstractConditionOperator):
             raise TypeError("GraphRestriction requires one DomainComponent.")
         label = _graph_label_for_component(component, graph_label)
         selector = component.spec.selection_for(label)
-        kind = graph_component_kind(selector)
+        graph_component_kind(selector)
         factor = component.domain.factor(label)
         graph = factor.graph
         topology_id = canonical_fingerprint(
             {
-                "kind": "graph-topology-v1",
+                "kind": "graph-topology",
                 "nodes": int(graph.num_nodes),
                 "edges": int(graph.num_edges),
                 "graphs": int(graph.num_graphs),
@@ -307,7 +306,7 @@ class GraphRestriction(AbstractConditionOperator):
         if isinstance(selector, CochainCells):
             orientation_id = canonical_fingerprint(
                 {
-                    "kind": "cochain-orientation-v1",
+                    "kind": "cochain-orientation",
                     "degree": selector.degree,
                     "region": selector.region,
                     "selection": repr(selector),
@@ -315,7 +314,7 @@ class GraphRestriction(AbstractConditionOperator):
             )
         action_id = canonical_fingerprint(
             {
-                "kind": "graph-restriction-action-v1",
+                "kind": "graph-restriction-action",
                 "field": field_,
                 "graph_label": label,
                 "component": repr(component.spec),
@@ -518,8 +517,7 @@ class _GraphResidualScatter(StrictModule, BatchEvaluator):
             raise TypeError("Graph correction requires GraphBatch evaluation.")
         if batch.graph_label != self.graph_label:
             raise ValueError(
-                f"Graph correction expects label {self.graph_label!r}, "
-                f"got {batch.graph_label!r}."
+                f"Graph correction expects label {self.graph_label!r}, got {batch.graph_label!r}."
             )
         base = self.base(batch, key=key, **kwargs)
         target = self.target(batch, key=key, **kwargs)
@@ -532,7 +530,7 @@ class _GraphResidualScatter(StrictModule, BatchEvaluator):
             )
         axis_pos = base.dims.index(axis)
         data = jnp.moveaxis(jnp.asarray(base.data), axis_pos, 0)
-        if int(data.shape[0]) != int(_entity_indices(batch).shape[0]):
+        if data.shape[0] != _entity_indices(batch).shape[0]:
             raise ValueError(
                 "Graph correction output size does not match the finite graph batch."
             )
@@ -562,7 +560,7 @@ class GraphRestrictionCorrectionAction(StrictModule):
     def __init__(self, restriction: GraphRestriction | CochainAction, /):
         provider_id = canonical_fingerprint(
             {
-                "kind": "graph-restriction-correction-v1",
+                "kind": "graph-restriction-correction",
                 "action": restriction.action_id,
             }
         )
@@ -591,8 +589,7 @@ class GraphRestrictionCorrectionAction(StrictModule):
             residual = residual[0]
         if not isinstance(residual, DomainFunction):
             raise TypeError(
-                "Graph restriction residuals must remain function-valued until "
-                "GraphBatch evaluation."
+                "Graph restriction residuals must remain function-valued until GraphBatch evaluation."
             )
         restriction = (
             self.restriction.restriction
@@ -712,8 +709,7 @@ def enforce_graph_values(
         field_spec = cochain_field_spec(u)
         if field_spec.degree != selector.degree:
             raise ValueError(
-                f"Cannot enforce degree-{selector.degree} cells on a degree-"
-                f"{field_spec.degree} cochain field."
+                f"Cannot enforce degree-{selector.degree} cells on a degree-{field_spec.degree} cochain field."
             )
     target_fn = _coerce_target(target, u)
     if isinstance(selector, CochainCells):

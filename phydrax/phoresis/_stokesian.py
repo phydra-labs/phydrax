@@ -38,7 +38,7 @@ class HydrodynamicPhoreticSolver:
         spatial_dimension: int,
         /,
     ) -> HydrodynamicPhoreticSolver:
-        radii = np.asarray(particle_radii_m, dtype=float)
+        radii = np.asarray(particle_radii_m, dtype=np.float64)
         if dynamic_viscosity_pa_s <= 0:
             raise ValueError("Phoresis dynamic viscosity must be positive.")
         if radii.ndim != 1 or radii.size == 0 or np.any(radii <= 0):

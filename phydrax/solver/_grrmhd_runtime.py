@@ -140,7 +140,7 @@ def _ct_weighted(
 
 
 class FixedGridGRRMHDIMEXPlan(StrictModule, NonTrainableState):
-    """Atomic ideal-GRMHD plus grey-M1 IMEX-SSP2(2,2,2) runtime."""
+    """Atomic ideal-GRMHD plus gray-M1 IMEX-SSP2(2,2,2) runtime."""
 
     material_transport: GRMHDSSPRK3Plan
     radiation_transport: FixedGridGRM1SSPRK3Plan
@@ -397,7 +397,7 @@ class FixedGridGRRMHDIMEXPlan(StrictModule, NonTrainableState):
             ct,
             finite,
             qualified,
-            jnp.asarray(accepted, dtype=bool),
+            jnp.asarray(accepted, dtype=jnp.bool_),
             self.plan_id,
         )
 

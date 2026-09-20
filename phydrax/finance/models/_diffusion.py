@@ -18,7 +18,7 @@ from ..._strict import StrictModule
 
 
 def _scalar(value: ArrayLike, name: str, /, *, lower: float | None = None) -> Array:
-    array = jnp.asarray(value, dtype=float)
+    array = jnp.asarray(value, dtype=jnp.float64)
     if array.shape != ():
         raise ValueError(f"{name} must be scalar.")
     invalid = ~jnp.isfinite(array)
@@ -37,7 +37,7 @@ def _correlation(value: ArrayLike, name: str = "correlation") -> Array:
 
 
 def _ordered_grid(value: ArrayLike, name: str, /, *, positive: bool = False) -> Array:
-    grid = jnp.asarray(value, dtype=float)
+    grid = jnp.asarray(value, dtype=jnp.float64)
     if grid.ndim != 1 or grid.size < 2:
         raise ValueError(f"{name} must be a rank-one grid with at least two nodes.")
     invalid = jnp.any(~jnp.isfinite(grid)) | jnp.any(jnp.diff(grid) <= 0.0)
@@ -177,9 +177,9 @@ class SABRModel(StrictModule):
     ) -> Array:
         """Hagan lognormal SABR approximation with a stable ATM branch."""
 
-        forward_ = jnp.asarray(forward, dtype=float) + self.shift
-        strike_ = jnp.asarray(strike, dtype=float) + self.shift
-        maturity_ = jnp.asarray(maturity, dtype=float)
+        forward_ = jnp.asarray(forward, dtype=jnp.float64) + self.shift
+        strike_ = jnp.asarray(strike, dtype=jnp.float64) + self.shift
+        maturity_ = jnp.asarray(maturity, dtype=jnp.float64)
         checked = eqx.error_if(
             forward_,
             jnp.any(~jnp.isfinite(forward_))
@@ -236,8 +236,8 @@ class LocalVolatilityModel(StrictModule):
     ):
         expiries_ = _ordered_grid(expiries, "expiries", positive=True)
         strikes_ = _ordered_grid(log_moneyness, "log_moneyness")
-        variance = jnp.asarray(local_variance, dtype=float)
-        expected = (int(expiries_.size), int(strikes_.size))
+        variance = jnp.asarray(local_variance, dtype=jnp.float64)
+        expected = (expiries_.size, strikes_.size)
         if variance.shape != expected:
             raise ValueError(f"local_variance must have shape {expected}.")
         variance = eqx.error_if(
@@ -253,8 +253,8 @@ class LocalVolatilityModel(StrictModule):
     def variance(self, expiry: ArrayLike, log_moneyness: ArrayLike, /) -> Array:
         """Bilinear interpolation with flat boundary extrapolation."""
 
-        t = jnp.asarray(expiry, dtype=float)
-        k = jnp.asarray(log_moneyness, dtype=float)
+        t = jnp.asarray(expiry, dtype=jnp.float64)
+        k = jnp.asarray(log_moneyness, dtype=jnp.float64)
         t, k = jnp.broadcast_arrays(t, k)
         t = eqx.error_if(
             t,
@@ -317,7 +317,7 @@ class LocalStochasticVolatilityModel(StrictModule):
     def spot_variance(
         self, expiry: ArrayLike, log_moneyness: ArrayLike, variance: ArrayLike, /
     ) -> Array:
-        variance_ = jnp.asarray(variance, dtype=float)
+        variance_ = jnp.asarray(variance, dtype=jnp.float64)
         variance_ = eqx.error_if(
             variance_,
             jnp.any(~jnp.isfinite(variance_)) | jnp.any(variance_ < 0.0),

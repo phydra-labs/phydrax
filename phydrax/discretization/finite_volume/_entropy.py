@@ -60,7 +60,7 @@ class FiniteVolumeEntropyDiagnostics(StrictModule):
         ):
             if value.shape != ():
                 raise ValueError(f"{name} must be scalar; got {value.shape}.")
-        admissible_ = jnp.asarray(admissible, dtype=bool)
+        admissible_ = jnp.asarray(admissible, dtype=jnp.bool_)
         if admissible_.shape != ():
             raise ValueError("admissible must be scalar.")
         self.pair_id = identifier
@@ -108,8 +108,7 @@ def _validated_arrays(
     volumes = jnp.asarray(effective_volumes)
     if volumes.shape != state_.shape[:-1]:
         raise ValueError(
-            "effective_volumes must match the state leading cell shape; "
-            f"got {volumes.shape} for {state_.shape}."
+            f"effective_volumes must match the state leading cell shape; got {volumes.shape} for {state_.shape}."
         )
     volumes = eqx.error_if(
         volumes,

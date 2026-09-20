@@ -190,7 +190,7 @@ class PseudoTransientPolicy(StrictModule, NonTrainableState):
             raise ValueError("term_index must be non-negative.")
         if not isinstance(relaxation, ResidualRelaxationMap):
             raise TypeError("relaxation must be a ResidualRelaxationMap.")
-        values = jnp.asarray(inverse_step, dtype=float)
+        values = jnp.asarray(inverse_step, dtype=jnp.float64)
         if values.ndim > 1 or values.size < 1:
             raise ValueError("inverse_step must be a scalar or one-dimensional array.")
         if not bool(jnp.all(jnp.isfinite(values) & (values > 0.0))):
@@ -390,7 +390,7 @@ class FunctionalDiagnosticsPolicy(StrictModule, NonTrainableState):
         ntk_probes: int = 16,
         ntk_eigenvalues: int = 8,
     ):
-        values = tuple(int(value) for value in (every, ntk_probes, ntk_eigenvalues))
+        values = tuple((every, ntk_probes, ntk_eigenvalues))
         if any(value < 1 for value in values):
             raise ValueError("Diagnostic cadence and capacities must be positive.")
         self.every, self.ntk_probes, self.ntk_eigenvalues = values
@@ -501,8 +501,7 @@ class FunctionalTrainingPlan(StrictModule, NonTrainableState):
             raise ValueError("At most one causal policy may target each term.")
         if term_balance is not None and gradient_composition is not None:
             raise ValueError(
-                "Functional term balancing and gradient composition are mutually "
-                "exclusive."
+                "Functional term balancing and gradient composition are mutually exclusive."
             )
         expected = (
             (term_balance, FunctionalTermBalancePolicy, "term_balance"),
@@ -649,8 +648,7 @@ class FunctionalTrainingState(StrictModule):
             ConflictFreeUpdateStatistics,
         ):
             raise TypeError(
-                "update_alignment_statistics must be "
-                "ConflictFreeUpdateStatistics or None."
+                "update_alignment_statistics must be ConflictFreeUpdateStatistics or None."
             )
         identifier = str(run_id)
         seconds = float(training_seconds)
@@ -674,7 +672,9 @@ class FunctionalTrainingState(StrictModule):
         self.pseudo_inverse_steps = tuple(
             jnp.asarray(value) for value in pseudo_inverse_steps
         )
-        self.term_multipliers = jnp.asarray(term_multipliers, dtype=float).reshape((-1,))
+        self.term_multipliers = jnp.asarray(term_multipliers, dtype=jnp.float64).reshape(
+            (-1,)
+        )
         self.previous_gradient = previous_gradient
         self.update_alignment_statistics = update_alignment_statistics
         self.progress = progress

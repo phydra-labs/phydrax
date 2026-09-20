@@ -46,7 +46,7 @@ def test_fixed_branch_ray_likelihood_and_sensitivity_are_evidenced():
         realization_id="ray:fixed-camera",
         branch_id="event-free-rays",
         adapter_id="ray-forward",
-        evaluator_semantic_id="gr-ray-theory:v1",
+        evaluator_semantic_id="gr-ray-theory",
         evaluator_numeric_id="gr-ray-forward:r1",
     )
     layout = CoordinateLayout(("pixel-0", "pixel-1"))
@@ -111,7 +111,7 @@ def test_posterior_binding_preserves_chain_draw_axes_and_realization_identity():
     )
     prediction = {
         "intensity": jnp.arange(24.0).reshape(2, 3, 4),
-        "valid": jnp.ones((2, 3), dtype=bool),
+        "valid": jnp.ones((2, 3), dtype="bool"),
     }
     bound = binding.bind_prediction(prediction)
 
@@ -155,7 +155,7 @@ def test_ray_inference_rejects_a_switched_branch_in_normal_evaluation():
         realization_id="ray:fixed-camera",
         branch_id="event-free-rays",
         adapter_id="ray-switched-branch",
-        evaluator_semantic_id="gr-ray-theory:v1",
+        evaluator_semantic_id="gr-ray-theory",
         evaluator_numeric_id="gr-ray-forward:switched",
     )
     layout = CoordinateLayout(("pixel-0", "pixel-1"))

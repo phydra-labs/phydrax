@@ -18,7 +18,7 @@ from ...units import conversion_factor, ENERGY, JOULE, SECOND, TIME, UnitDefinit
 
 
 def profile(value: Any, size: int, name: str, *, nonnegative: bool = False) -> np.ndarray:
-    array = np.asarray(value, dtype=float)
+    array = np.asarray(value, dtype=np.float64)
     if array.shape not in ((), (size,)):
         raise ValueError(f"{name} must be scalar or have shape ({size},).")
     result = np.broadcast_to(array, (size,))
@@ -345,7 +345,7 @@ class Chronology(StrictModule):
     @property
     def physical_duration(self) -> np.ndarray:
         return np.concatenate(
-            [np.asarray(h.durations, dtype=float) for h in self.horizons]
+            [np.asarray(h.durations, dtype=np.float64) for h in self.horizons]
         )
 
     @property

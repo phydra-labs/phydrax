@@ -495,8 +495,7 @@ class GeospatialContract(StrictModule, NonTrainableState):
                 or horizontal_unit is None
             ):
                 raise ValueError(
-                    "Geographic grids require explicit longitude domain, angular unit, "
-                    "and seam semantics."
+                    "Geographic grids require explicit longitude domain, angular unit, and seam semantics."
                 )
             period = 360.0 / float(conversion_factor(horizontal_unit, DEGREE))
             if not np.isclose(
@@ -572,7 +571,7 @@ class QualifiedGeospatialGrid(StrictModule, NonTrainableState):
                 "Grid values must be a real matrix in explicit (y, x) order."
             )
         if valid is None:
-            mask = np.ones(raw.shape, dtype=bool)
+            mask = np.ones(raw.shape, dtype=np.bool_)
         else:
             mask = np.asarray(valid)
             if mask.dtype.kind != "b" or mask.shape != raw.shape:

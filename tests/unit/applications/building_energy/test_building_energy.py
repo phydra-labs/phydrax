@@ -347,7 +347,7 @@ def test_native_hvac_optimization_replays_bounded_controls():
 def test_identifiable_calibration_predicts_unseen_forcing():
     time = jnp.arange(6) * 300.0
     truth = compile_building(one_zone(capacity=10000, conductance=10))
-    heat = jnp.array([[0], [100], [20], [80], [0]], dtype=float)
+    heat = jnp.array([[0], [100], [20], [80], [0]], dtype="float64")
     outside = jnp.full((5,), 280.0)
     target = replay_building(truth, jnp.array([300.0]), time, outside, heat).temperature[
         1:

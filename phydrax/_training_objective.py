@@ -27,7 +27,7 @@ class _ObjectiveContribution:
     def __post_init__(self) -> None:
         numerator = jnp.asarray(self.numerator)
         if not jnp.issubdtype(numerator.dtype, jnp.inexact):
-            numerator = numerator.astype(float)
+            numerator = numerator.astype("float64")
         support_dtype = jnp.real(numerator).dtype
         support = jnp.asarray(self.support, dtype=support_dtype)
         log_scale = jnp.asarray(self.log_scale, dtype=support_dtype)

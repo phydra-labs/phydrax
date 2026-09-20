@@ -17,10 +17,10 @@ def _estimate_positive_log_weights(
     *,
     scale: Array,
 ) -> PathIntegralEstimate:
-    values = jnp.asarray(log_weights, dtype=float)
+    values = jnp.asarray(log_weights, dtype=jnp.float64)
     if values.ndim < 1:
         raise ValueError("log_weights must have a trailing path axis.")
-    count = int(values.shape[-1])
+    count = values.shape[-1]
     if count < 1:
         raise ValueError("log_weights must contain at least one path.")
 

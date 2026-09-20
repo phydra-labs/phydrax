@@ -141,7 +141,7 @@ class NativeMixedIntegerBranchAndBound(AbstractMixedIntegerMethod):
 
     @property
     def method_id(self) -> str:
-        return "native-mixed-integer-branch-and-bound-v2"
+        return "native-mixed-integer-branch-and-bound"
 
     @property
     def backend(self) -> str:

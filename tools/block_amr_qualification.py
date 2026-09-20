@@ -121,10 +121,10 @@ def _topology_evidence(result: BlockTopologyCompileResult) -> dict[str, Any]:
         "leaf_cells": [
             int(
                 np.count_nonzero(
-                    np.asarray(metadata.active, dtype=bool).reshape(
+                    np.asarray(metadata.active, dtype="bool").reshape(
                         (metadata.active.shape[0],) + (1,) * len(level.block_shape)
                     )
-                    & ~np.asarray(topology.covered_cells[index], dtype=bool)
+                    & ~np.asarray(topology.covered_cells[index], dtype="bool")
                 )
             )
             for index, (level, metadata) in enumerate(
@@ -193,16 +193,16 @@ def _hierarchy(
     initial = prepared.topology_compiler.initialize()
     if levels == 1:
         return prepared, initial, initial
-    coarse_tags = jnp.zeros((4, 4), dtype=bool).at[1:3].set(True)
+    coarse_tags = jnp.zeros((4, 4), dtype="bool").at[1:3].set(True)
     if levels == 2:
         refined = prepared.compile_topology(initial.topology, (coarse_tags,))
         return prepared, initial, refined
-    empty_middle = jnp.zeros((fine_capacity, 2), dtype=bool)
+    empty_middle = jnp.zeros((fine_capacity, 2), dtype="bool")
     middle = prepared.compile_topology(
         initial.topology,
         (coarse_tags, empty_middle),
     )
-    middle_tags = jnp.zeros((fine_capacity, 2), dtype=bool).at[3, 1].set(True)
+    middle_tags = jnp.zeros((fine_capacity, 2), dtype="bool").at[3, 1].set(True)
     refined = prepared.compile_topology(
         middle.topology,
         (coarse_tags, middle_tags),
@@ -230,7 +230,7 @@ def _state(
             (level_plan.maximum_blocks, *level_plan.block_shape, 1),
             dtype=jnp.float64,
         )
-        active = np.asarray(metadata.active, dtype=bool)
+        active = np.asarray(metadata.active, dtype="bool")
         logical = np.asarray(metadata.logical_indices, dtype=np.int32)
         local = jnp.arange(level_plan.block_shape[0], dtype=values.dtype)
         for slot in np.flatnonzero(active):
@@ -301,7 +301,7 @@ def _halo_evidence(fill: Any) -> dict[str, Any]:
             {
                 "workspace_shape": list(workspace.values.shape),
                 "valid_cells": int(np.count_nonzero(np.asarray(workspace.valid))),
-                "total_cells": int(workspace.valid.size),
+                "total_cells": workspace.valid.size,
                 "source_class_counts": {
                     name: int(np.count_nonzero(source == code))
                     for code, name in _SOURCE_NAMES.items()
@@ -418,7 +418,7 @@ def _topology_transition_gate(execution_id: str) -> dict[str, Any]:
         )
     ).prepare()
     overflow_initial = overflow_prepared.topology_compiler.initialize()
-    overflow_tags = jnp.ones((4, 4), dtype=bool)
+    overflow_tags = jnp.ones((4, 4), dtype="bool")
     overflow = overflow_prepared.compile_topology(
         overflow_initial.topology,
         (overflow_tags,),
@@ -489,9 +489,7 @@ def _advection_reflux_gate(execution_id: str) -> dict[str, Any]:
         for ledger in result.accepted_ledgers
     )
     expected_steps = tuple(runtime.plan.schedule.level_substeps_per_root)
-    observed_steps = tuple(
-        int(value) for value in np.asarray(result.runtime_state.level_accepted_steps)
-    )
+    observed_steps = tuple(np.asarray(result.runtime_state.level_accepted_steps))
     passed = (
         bool(result.accepted)
         and observed_steps == expected_steps
@@ -562,7 +560,7 @@ def _cell_centers(layout: CompositeAMRCellLayout) -> tuple[jax.Array, ...]:
             (level_plan.maximum_blocks, *level_plan.block_shape),
             dtype=layout.dtype,
         )
-        active = np.asarray(metadata.active, dtype=bool)
+        active = np.asarray(metadata.active, dtype="bool")
         logical = np.asarray(metadata.logical_indices, dtype=np.int32)
         local = jnp.arange(level_plan.block_shape[0], dtype=layout.dtype)
         for slot in np.flatnonzero(active):

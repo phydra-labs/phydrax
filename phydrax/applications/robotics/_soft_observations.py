@@ -1458,7 +1458,7 @@ class _PreparedSensorPlan(StrictModule, NonTrainableState):
         )
         fresh = (sample_time == time) & (sample_epoch == epoch)
         age = time - sample_time
-        finite = (
+        (
             jnp.all(jnp.isfinite(held_values))
             & jnp.all(jnp.isfinite(held_ideal))
             & jnp.all(jnp.isfinite(held_bias))

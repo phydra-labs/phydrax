@@ -73,7 +73,7 @@ must bind it independently in each process.
 
 Event names use lowercase dotted names: `<subsystem>.<object>.<action>`. State
 transitions use consistent actions such as `started`, `completed`, `failed`,
-`cancelled`, `selected`, and `committed`.
+`canceled`, `selected`, and `committed`.
 
 Field names use lowercase underscores. Unit-bearing values name the unit explicitly,
 for example `elapsed_seconds`, `byte_count`, and `iteration_count`.

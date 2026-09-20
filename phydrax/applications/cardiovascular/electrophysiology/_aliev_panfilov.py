@@ -131,7 +131,7 @@ class AlievPanfilovState(StrictModule):
                 "activation and recovery must have identical nonempty shapes."
             )
         if not jnp.issubdtype(activation_.dtype, jnp.inexact):
-            activation_ = activation_.astype(float)
+            activation_ = activation_.astype("float64")
             recovery_ = recovery_.astype(activation_.dtype)
         self.activation = activation_
         self.recovery = recovery_

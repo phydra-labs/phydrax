@@ -67,7 +67,7 @@ class JastrowSpinAmplitude(StrictModule):
             )
         self.fields = h.astype(jnp.result_type(h.dtype, matrix.dtype, 1j))
         self.couplings = 0.5 * (matrix + matrix.T).astype(self.fields.dtype)
-        self.site_count = int(h.shape[0])
+        self.site_count = h.shape[0]
 
     def initialize_cache(self, configuration: ArrayLike, /) -> JastrowSpinCache:
         spins = _spin_configuration(configuration, self.site_count)
@@ -93,7 +93,7 @@ class JastrowSpinAmplitude(StrictModule):
     ) -> tuple[Array, JastrowSpinCache, Array]:
         sites, mask = (
             jnp.asarray(indices, dtype=jnp.int32),
-            jnp.asarray(active, dtype=bool),
+            jnp.asarray(active, dtype=jnp.bool_),
         )
         if sites.ndim != 1 or mask.shape != sites.shape:
             raise ValueError("indices/active must be matching fixed-capacity vectors.")
@@ -140,8 +140,8 @@ class RestrictedBoltzmannAmplitude(StrictModule):
         self.visible_bias = visible.astype(dtype)
         self.hidden_bias = hidden.astype(dtype)
         self.weights = matrix.astype(dtype)
-        self.site_count = int(visible.shape[0])
-        self.hidden_count = int(hidden.shape[0])
+        self.site_count = visible.shape[0]
+        self.hidden_count = hidden.shape[0]
 
     def initialize_cache(self, configuration: ArrayLike, /) -> RestrictedBoltzmannCache:
         spins = _spin_configuration(configuration, self.site_count)
@@ -170,7 +170,7 @@ class RestrictedBoltzmannAmplitude(StrictModule):
     ):
         sites, mask = (
             jnp.asarray(indices, dtype=jnp.int32),
-            jnp.asarray(active, dtype=bool),
+            jnp.asarray(active, dtype=jnp.bool_),
         )
         if sites.ndim != 1 or mask.shape != sites.shape:
             raise ValueError("indices/active must be matching fixed-capacity vectors.")
@@ -271,7 +271,7 @@ class AutoregressiveSpinAmplitude(StrictModule):
             raise ValueError(
                 "Autoregressive bias/weights require (sites,) and (sites,sites)."
             )
-        count = int(bias.shape[0])
+        count = bias.shape[0]
         phases = jnp.zeros_like(bias) if phase_bias is None else jnp.asarray(phase_bias)
         phase_matrix = (
             jnp.zeros_like(weights)

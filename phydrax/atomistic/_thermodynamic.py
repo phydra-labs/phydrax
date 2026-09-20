@@ -112,9 +112,9 @@ class AtomisticThermodynamicStatePlan(StrictModule, NonTrainableState):
         pressure_ = None if pressure is None else float(pressure)
         ids = tuple(control_ids)
         values = (
-            jnp.zeros((0,), dtype=float)
+            jnp.zeros((0,), dtype=jnp.float64)
             if controls is None
-            else jnp.asarray(controls, dtype=float).reshape((-1,))
+            else jnp.asarray(controls, dtype=jnp.float64).reshape((-1,))
         )
         if (
             len(ids) != values.size
@@ -285,10 +285,10 @@ class PreparedThermodynamicStateTable(StrictModule, NonTrainableState):
         dtype = np.dtype(dynamics.system.plan.coordinate_dtype)
         boltzmann = dynamics.system.plan.units.boltzmann_constant
         temperature_mask = np.asarray(
-            [state.temperature is not None for state in plans], dtype=bool
+            [state.temperature is not None for state in plans], dtype=np.bool_
         )
         pressure_mask = np.asarray(
-            [state.pressure is not None for state in plans], dtype=bool
+            [state.pressure is not None for state in plans], dtype=np.bool_
         )
         temperature = np.asarray(
             [0.0 if state.temperature is None else state.temperature for state in plans],

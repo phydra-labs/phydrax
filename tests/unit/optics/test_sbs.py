@@ -17,15 +17,15 @@ _EPSILON_0 = 8.8541878128e-12
 
 
 def _domain(volume_weights, *, boundary_weights=None):
-    weights = np.asarray(volume_weights, dtype=float)
+    weights = np.asarray(volume_weights, dtype="float64")
     count = weights.size
     identity = np.eye(count)
     if boundary_weights is None:
-        boundary = np.zeros((0,), dtype=float)
-        to_boundary = np.zeros((0, count), dtype=float)
-        normals = np.zeros((0, 2), dtype=float)
+        boundary = np.zeros((0,), dtype="float64")
+        to_boundary = np.zeros((0, count), dtype="float64")
+        normals = np.zeros((0, 2), dtype="float64")
     else:
-        boundary = np.asarray(boundary_weights, dtype=float)
+        boundary = np.asarray(boundary_weights, dtype="float64")
         assert boundary.size == count
         to_boundary = identity
         normals = np.broadcast_to(np.asarray([0.0, 1.0]), (count, 2))
@@ -59,17 +59,17 @@ def _interaction(*, acoustic_wavenumber=2.0):
 
 
 def _single_point_plan(*, photoelastic_sign=-1.0, pump=1.0, stokes=1.0, acoustic=1.0):
-    tensor = np.zeros((2, 2, 2, 2), dtype=complex)
+    tensor = np.zeros((2, 2, 2, 2), dtype="complex128")
     tensor[0, 0, 0, 0] = photoelastic_sign
-    strain = np.zeros((1, 2, 2), dtype=complex)
+    strain = np.zeros((1, 2, 2), dtype="complex128")
     strain[0, 0, 0] = acoustic
     return SBSOverlapPlan(
         _domain([1.0], boundary_weights=[1.0]),
-        pump_electric=np.asarray([[pump, 0.0]], dtype=complex),
-        pump_electric_displacement=np.zeros((1, 2), dtype=complex),
-        stokes_electric=np.asarray([[stokes, 0.0]], dtype=complex),
-        stokes_electric_displacement=np.zeros((1, 2), dtype=complex),
-        acoustic_displacement=np.asarray([[0.0, acoustic]], dtype=complex),
+        pump_electric=np.asarray([[pump, 0.0]], dtype="complex128"),
+        pump_electric_displacement=np.zeros((1, 2), dtype="complex128"),
+        stokes_electric=np.asarray([[stokes, 0.0]], dtype="complex128"),
+        stokes_electric_displacement=np.zeros((1, 2), dtype="complex128"),
+        acoustic_displacement=np.asarray([[0.0, acoustic]], dtype="complex128"),
         acoustic_strain=strain,
         relative_permittivity=1.0,
         photoelastic_tensor=tensor,

@@ -40,7 +40,7 @@ class ClosedTimePathPlan(StrictModule, NonTrainableState):
         maximum_contour_points: int = 4096,
         maximum_two_point_elements: int = 16_777_216,
     ):
-        times = np.asarray(time_nodes, dtype=float)
+        times = np.asarray(time_nodes, dtype=np.float64)
         contour_capacity = int(maximum_contour_points)
         two_point_capacity = int(maximum_two_point_elements)
         if (
@@ -165,9 +165,9 @@ class FreeKeldyshPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(grid, ClosedTimePathGrid):
             raise TypeError("grid must be ClosedTimePathGrid.")
-        frequency = np.asarray(frequencies, dtype=float)
+        frequency = np.asarray(frequencies, dtype=np.float64)
         mode_capacity = int(maximum_modes)
-        required = int(grid.plan.time_nodes.size) ** 2 * int(frequency.size)
+        required = grid.plan.time_nodes.size**2 * frequency.size
         if (
             frequency.ndim != 1
             or frequency.size == 0

@@ -21,7 +21,7 @@ def _system(**hooks):
         state_scale=jnp.asarray([2.0]),
         residual_scale=jnp.asarray([0.5]),
         trial_validity=lambda time, state, rate, args, inputs: jnp.all(state > 0.0),
-        trial_validity_id="positive-dae-domain-v1",
+        trial_validity_id="positive-dae-domain",
         system_id="positive-dae",
         **hooks,
     )

@@ -70,7 +70,7 @@ class WilsonGaugeAction(AbstractIncrementalLatticeAction):
         if not isinstance(link_space.group, (UnitaryGroup, SpecialUnitaryGroup)):
             raise TypeError("WilsonGaugeAction currently supports U(N) and SU(N).")
         num_plaquettes = boundaries.paths.num_paths
-        coupling_host = np.asarray(plaquette_couplings, dtype=float)
+        coupling_host = np.asarray(plaquette_couplings, dtype=np.float64)
         if coupling_host.shape == ():
             coupling_host = np.full((num_plaquettes,), float(coupling_host))
         if coupling_host.shape != (num_plaquettes,):
@@ -89,7 +89,7 @@ class WilsonGaugeAction(AbstractIncrementalLatticeAction):
                 affected[int(edge)].append(path_index)
         capacity = max(1, max((len(value) for value in affected), default=0))
         edge_paths = np.zeros((link_space.num_edges, capacity), dtype=np.int32)
-        edge_paths_valid = np.zeros((link_space.num_edges, capacity), dtype=bool)
+        edge_paths_valid = np.zeros((link_space.num_edges, capacity), dtype=np.bool_)
         for edge, path_indices in enumerate(affected):
             edge_paths[edge, : len(path_indices)] = path_indices
             edge_paths_valid[edge, : len(path_indices)] = True

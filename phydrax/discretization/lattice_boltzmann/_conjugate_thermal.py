@@ -33,7 +33,7 @@ class SolidThermalEnergyState(StrictModule):
         /,
     ):
         energy = jnp.asarray(sensible_energy)
-        success = jnp.asarray(successful, dtype=bool)
+        success = jnp.asarray(successful, dtype=jnp.bool_)
         step = jnp.asarray(step_index)
         identifier = str(plan_id)
         if energy.ndim == 0:
@@ -115,9 +115,9 @@ class ConjugateThermalPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(fluid, ThermalLatticeBoltzmannPlan):
             raise TypeError("fluid must be a ThermalLatticeBoltzmannPlan.")
-        capacity = np.asarray(solid_volumetric_heat_capacity, dtype=float)
-        conductivity = np.asarray(solid_thermal_conductivity, dtype=float)
-        contact = np.asarray(contact_resistance, dtype=float)
+        capacity = np.asarray(solid_volumetric_heat_capacity, dtype=np.float64)
+        conductivity = np.asarray(solid_thermal_conductivity, dtype=np.float64)
+        contact = np.asarray(contact_resistance, dtype=np.float64)
         if capacity.shape != () or not np.isfinite(capacity) or capacity <= 0.0:
             raise ValueError(
                 "solid_volumetric_heat_capacity must be finite and positive."
@@ -184,9 +184,9 @@ class ConjugateThermalPlan(StrictModule, NonTrainableState):
         interface_measure: ArrayLike,
         /,
     ) -> "PreparedConjugateThermalPlan":
-        fluid_distance = np.asarray(fluid_normal_distance, dtype=float)
-        solid_distance = np.asarray(solid_normal_distance, dtype=float)
-        measure = np.asarray(interface_measure, dtype=float)
+        fluid_distance = np.asarray(fluid_normal_distance, dtype=np.float64)
+        solid_distance = np.asarray(solid_normal_distance, dtype=np.float64)
+        measure = np.asarray(interface_measure, dtype=np.float64)
         if (
             fluid_distance.ndim == 0
             or fluid_distance.shape != solid_distance.shape

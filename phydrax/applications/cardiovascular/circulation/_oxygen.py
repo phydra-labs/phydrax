@@ -102,7 +102,7 @@ class BloodOxygenModel(StrictModule, NonTrainableState):
         self.inversion_tolerance_mL_per_dL = tolerance
         self.model_id = canonical_fingerprint(
             {
-                "kind": "blood-oxygen-content-v1",
+                "kind": "blood-oxygen-content",
                 "hemoglobin_g_per_dL": hemoglobin,
                 "binding_capacity_mL_per_g": capacity,
                 "solubility_mL_per_dL_kPa": solubility,
@@ -386,7 +386,7 @@ class OxygenTransportPlan(StrictModule, NonTrainableState):
         inflow_cell_index: ArrayLike = (),
         outflow_cell_index: ArrayLike = (),
     ):
-        volumes_host = np.asarray(cell_volume_mm3, dtype=float)
+        volumes_host = np.asarray(cell_volume_mm3, dtype=np.float64)
         source_host = np.asarray(source_index, dtype=np.int32)
         destination_host = np.asarray(destination_index, dtype=np.int32)
         inflow_host = np.asarray(inflow_cell_index, dtype=np.int32)
@@ -400,7 +400,7 @@ class OxygenTransportPlan(StrictModule, NonTrainableState):
             raise ValueError("Transport edge index vectors must have equal shape.")
         if inflow_host.ndim != 1 or outflow_host.ndim != 1:
             raise ValueError("Boundary index arrays must be one-dimensional.")
-        count = int(volumes_host.size)
+        count = volumes_host.size
         for indices in (source_host, destination_host, inflow_host, outflow_host):
             if np.any(indices < 0) or np.any(indices >= count):
                 raise ValueError("Transport topology contains an invalid cell index.")
@@ -415,12 +415,12 @@ class OxygenTransportPlan(StrictModule, NonTrainableState):
         self.outflow_cell_index = jnp.asarray(outflow_host)
         self.step_size_ms = step
         self.cell_count = count
-        self.edge_count = int(source_host.size)
-        self.inflow_count = int(inflow_host.size)
-        self.outflow_count = int(outflow_host.size)
+        self.edge_count = source_host.size
+        self.inflow_count = inflow_host.size
+        self.outflow_count = outflow_host.size
         self.plan_id = canonical_fingerprint(
             {
-                "kind": "oxygen-content-transport-v1",
+                "kind": "oxygen-content-transport",
                 "cell_volume_mm3": volumes_host.tolist(),
                 "source_index": source_host.tolist(),
                 "destination_index": destination_host.tolist(),
@@ -640,7 +640,7 @@ class MembraneOxygenatorModel(StrictModule, NonTrainableState):
         self.maximum_flow_mm3_per_ms = maximum
         self.model_id = canonical_fingerprint(
             {
-                "kind": "membrane-oxygenator-v1",
+                "kind": "membrane-oxygenator",
                 "blood_model": blood_model.model_id,
                 "gas_partial_pressure_kPa": pressure,
                 "transfer_capacity_mm3_per_ms": capacity,

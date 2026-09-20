@@ -12,7 +12,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
-from .._strict import AbstractAttribute, StrictModule
+from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.particle import (
     DEMRuntimeState,
@@ -42,7 +42,7 @@ class HydrodynamicClosureResult(StrictModule):
 
 
 class AbstractHydrodynamicClosurePlan(StrictModule, NonTrainableState):
-    closure_id: AbstractAttribute[str]
+    closure_id: eqx.AbstractVar[str]
 
     @abc.abstractmethod
     def evaluate(

@@ -40,8 +40,8 @@ class AerothermodynamicValidationCase(StrictModule, NonTrainableState):
         name_ = str(name)
         domain_ = str(domain)
         observables = tuple(str(value) for value in observable_names)
-        values = np.asarray(reference_values, dtype=float)
-        uncertainty = np.asarray(uncertainties, dtype=float)
+        values = np.asarray(reference_values, dtype=np.float64)
+        uncertainty = np.asarray(uncertainties, dtype=np.float64)
         if (
             not name_
             or not domain_

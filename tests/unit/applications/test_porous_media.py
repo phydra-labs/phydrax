@@ -53,7 +53,7 @@ def _termination():
 
 
 def _exterior(discretization):
-    return np.flatnonzero(np.asarray(discretization.neighbour_cells) < 0)
+    return np.flatnonzero(np.asarray(discretization.neighbor_cells) < 0)
 
 
 def test_hybrid_mimetic_rotated_tensor_is_affine_exact_and_conservative():
@@ -68,7 +68,7 @@ def test_hybrid_mimetic_rotated_tensor_is_affine_exact_and_conservative():
     np.testing.assert_allclose(
         local, jnp.where(diffusion.valid, expected, 0.0), atol=2.0e-14
     )
-    interior = np.asarray(discretization.neighbour_cells) >= 0
+    interior = np.asarray(discretization.neighbor_cells) >= 0
     np.testing.assert_allclose(
         diffusion.continuity_residual(local)[interior], 0.0, atol=2.0e-14
     )

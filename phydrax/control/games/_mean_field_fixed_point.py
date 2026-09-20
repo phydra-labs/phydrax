@@ -290,7 +290,7 @@ def _induced_identity_is_new(
     )
 
 
-def _normalised_weights(flow: EmpiricalMeanField) -> Array:
+def _normalized_weights(flow: EmpiricalMeanField) -> Array:
     weights = flow.weights.reshape((flow.num_particles, flow.times.size))
     valid = flow.valid.reshape((flow.num_particles, flow.times.size))
     valid_weights = jnp.where(valid, weights, 0.0)
@@ -353,8 +353,8 @@ def _law_mixture_is_valid(
     )
     expected_weights = jnp.concatenate(
         (
-            (1.0 - damping) * _normalised_weights(current),
-            damping * _normalised_weights(induced),
+            (1.0 - damping) * _normalized_weights(current),
+            damping * _normalized_weights(induced),
         ),
         axis=0,
     )
@@ -362,7 +362,7 @@ def _law_mixture_is_valid(
         (mixture.num_particles, time_count) + mixture.state_shape
     )
     mixture_valid = mixture.valid.reshape((mixture.num_particles, time_count))
-    mixture_weights = _normalised_weights(mixture)
+    mixture_weights = _normalized_weights(mixture)
     expected_order = _canonical_particle_order(
         expected_particles, expected_valid, expected_weights
     )
@@ -413,14 +413,14 @@ def solve_mean_field_game_fixed_point(
         raise ValueError("law_mixture and law_mixture_id are required when damping < 1.")
 
     capacity = plan.maximum_iterations
-    dtype = jnp.result_type(problem.initial_flow.particles, float)
+    dtype = jnp.result_type(problem.initial_flow.particles, jnp.float64)
     distance_history = jnp.full((capacity,), jnp.nan, dtype=dtype)
     current_ess_history = jnp.full((capacity,), jnp.nan, dtype=dtype)
     induced_ess_history = jnp.full((capacity,), jnp.nan, dtype=dtype)
-    best_response_validity = jnp.zeros((capacity,), dtype=bool)
-    induced_flow_validity = jnp.zeros((capacity,), dtype=bool)
-    consistency_validity = jnp.zeros((capacity,), dtype=bool)
-    iteration_validity = jnp.zeros((capacity,), dtype=bool)
+    best_response_validity = jnp.zeros((capacity,), dtype=jnp.bool_)
+    induced_flow_validity = jnp.zeros((capacity,), dtype=jnp.bool_)
+    consistency_validity = jnp.zeros((capacity,), dtype=jnp.bool_)
+    iteration_validity = jnp.zeros((capacity,), dtype=jnp.bool_)
     current_flow_ids: list[str | None] = [None] * capacity
     induced_flow_ids: list[str | None] = [None] * capacity
 

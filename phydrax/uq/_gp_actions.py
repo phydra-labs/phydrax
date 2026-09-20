@@ -78,9 +78,9 @@ class _ResolvedGaussianProcessActions(StrictModule):
         _validate_action_operator(operator)
         action_count = operator.source.size
         mask = (
-            jnp.ones((action_count,), dtype=bool)
+            jnp.ones((action_count,), dtype=jnp.bool_)
             if active_mask is None
-            else jnp.asarray(active_mask, dtype=bool)
+            else jnp.asarray(active_mask, dtype=jnp.bool_)
         )
         if mask.shape != (action_count,):
             raise ValueError("active_mask must align with action capacity.")
@@ -92,12 +92,14 @@ class _ResolvedGaussianProcessActions(StrictModule):
         if history.ndim != 1:
             raise ValueError("residual_history must be a vector.")
         breakdown = (
-            ~mask if breakdown_mask is None else jnp.asarray(breakdown_mask, dtype=bool)
+            ~mask
+            if breakdown_mask is None
+            else jnp.asarray(breakdown_mask, dtype=jnp.bool_)
         )
         convergence = (
             ~mask
             if convergence_mask is None
-            else jnp.asarray(convergence_mask, dtype=bool)
+            else jnp.asarray(convergence_mask, dtype=jnp.bool_)
         )
         indices = (
             jnp.full((action_count,), -1, dtype=jnp.int32)
@@ -139,7 +141,7 @@ class _BlockSparseGaussianProcessOperator(AbstractSparseLinearOperator):
     source_indices: Array
 
     def __init__(self, values: Array, num_actions: int, /):
-        observation_count = int(values.shape[0])
+        observation_count = values.shape[0]
         action_count = int(num_actions)
         source = ArraySpace((action_count,), dtype=values.dtype)
         target = ArraySpace((observation_count,), dtype=values.dtype)
@@ -241,7 +243,7 @@ class FixedGaussianProcessActionPolicy(AbstractGaussianProcessActionPolicy):
             raw_matrix = jnp.asarray(actions)
             if jnp.issubdtype(raw_matrix.dtype, jnp.complexfloating):
                 raise TypeError("GP actions must be real-valued.")
-            matrix = raw_matrix.astype(float)
+            matrix = raw_matrix.astype("float64")
             if matrix.ndim != 2:
                 raise ValueError(
                     "Dense GP actions must have shape (observations, actions)."
@@ -250,8 +252,7 @@ class FixedGaussianProcessActionPolicy(AbstractGaussianProcessActionPolicy):
         _validate_action_operator(operator)
         if not isinstance(operator, (DenseLinearOperator, AbstractSparseLinearOperator)):
             raise TypeError(
-                "Fixed GP actions must use a DenseLinearOperator or "
-                "AbstractSparseLinearOperator."
+                "Fixed GP actions must use a DenseLinearOperator or AbstractSparseLinearOperator."
             )
         self.operator = operator
 
@@ -266,7 +267,7 @@ class FixedGaussianProcessActionPolicy(AbstractGaussianProcessActionPolicy):
         del residual
         _require_state(state)
         points = jnp.asarray(observation_points)
-        if self.operator.target.size != int(points.shape[0]):
+        if self.operator.target.size != points.shape[0]:
             raise ValueError("Fixed GP actions must align with the observation design.")
         if self.operator.target.structure().dtype != points.dtype:
             raise TypeError("Fixed GP action dtype must match observation-point dtype.")
@@ -283,11 +284,11 @@ class BlockSparseGaussianProcessActionPolicy(AbstractGaussianProcessActionPolicy
         raw_values = jnp.asarray(values)
         if jnp.issubdtype(raw_values.dtype, jnp.complexfloating):
             raise TypeError("GP actions must be real-valued.")
-        array = raw_values.astype(float)
+        array = raw_values.astype("float64")
         count = int(num_actions)
-        if array.ndim != 1 or int(array.shape[0]) <= 0:
+        if array.ndim != 1 or array.shape[0] <= 0:
             raise ValueError("Block-sparse GP action values must be a nonempty vector.")
-        if count < 1 or count > int(array.shape[0]):
+        if count < 1 or count > array.shape[0]:
             raise ValueError(
                 "num_actions must lie between one and the observation count."
             )
@@ -324,8 +325,8 @@ class BlockSparseGaussianProcessActionPolicy(AbstractGaussianProcessActionPolicy
         del residual
         _require_state(state)
         points = jnp.asarray(observation_points)
-        observation_count = int(points.shape[0])
-        if observation_count != int(self.values.shape[0]):
+        observation_count = points.shape[0]
+        if observation_count != self.values.shape[0]:
             raise ValueError(
                 "Block-sparse GP action values must align with observations."
             )
@@ -366,8 +367,8 @@ class PseudoInputGaussianProcessActionPolicy(AbstractGaussianProcessActionPolicy
         raw_points = jnp.asarray(pseudo_inputs)
         if jnp.issubdtype(raw_points.dtype, jnp.complexfloating):
             raise TypeError("GP pseudo-inputs must be real-valued.")
-        points = raw_points.astype(float)
-        if points.ndim < 2 or int(points.shape[0]) <= 0:
+        points = raw_points.astype("float64")
+        if points.ndim < 2 or points.shape[0] <= 0:
             raise ValueError(
                 "Pseudo-input GP actions need one action axis and kernel input axes."
             )
@@ -395,8 +396,8 @@ class PseudoInputGaussianProcessActionPolicy(AbstractGaussianProcessActionPolicy
             raise ValueError(
                 "Observation and pseudo-input trailing dimensions must match."
             )
-        observation_count = int(observations.shape[0])
-        action_count = int(pseudo_inputs.shape[0])
+        observation_count = observations.shape[0]
+        action_count = pseudo_inputs.shape[0]
         if action_count > observation_count:
             raise ValueError("Pseudo-input action count cannot exceed observations.")
         matrix = state.kernel.matrix(observations, pseudo_inputs)
@@ -445,7 +446,7 @@ class LanczosGaussianProcessActionPolicy(AbstractGaussianProcessActionPolicy):
         breakdown_tolerance: float = 1e-8,
     ):
         vector = _action_vector(start_vector, name="start_vector")
-        count = _action_count(max_actions, observation_count=int(vector.shape[0]))
+        count = _action_count(max_actions, observation_count=vector.shape[0])
         self.start_vector = vector
         self.max_actions = count
         self.breakdown_tolerance = _positive_tolerance(
@@ -543,8 +544,8 @@ class ConjugateGradientGaussianProcessActionPolicy(AbstractGaussianProcessAction
         residual: Array | None = None,
     ) -> _ResolvedGaussianProcessActions:
         points, covariance = _iterative_covariance(observation_points, state)
-        count = _action_count(self.max_actions, observation_count=int(points.shape[0]))
-        values = _required_residual(residual, observation_count=int(points.shape[0]))
+        count = _action_count(self.max_actions, observation_count=points.shape[0])
+        values = _required_residual(residual, observation_count=points.shape[0])
         remainder = values.astype(points.dtype)
         direction = remainder
         squared = jnp.vdot(remainder, remainder).real
@@ -621,7 +622,7 @@ class GaussSeidelGaussianProcessActionPolicy(AbstractGaussianProcessActionPolicy
             order = jnp.asarray(fixed_order)
             if order.ndim != 1 or not jnp.issubdtype(order.dtype, jnp.integer):
                 raise ValueError("fixed_order must be an integer vector.")
-            if int(order.shape[0]) < count:
+            if order.shape[0] < count:
                 raise ValueError("fixed_order must cover max_actions entries.")
         elif fixed_order is not None:
             raise ValueError("fixed_order is valid only with ordering='fixed'.")
@@ -647,7 +648,7 @@ class GaussSeidelGaussianProcessActionPolicy(AbstractGaussianProcessActionPolicy
         residual: Array | None = None,
     ) -> _ResolvedGaussianProcessActions:
         points, covariance = _iterative_covariance(observation_points, state)
-        observation_count = int(points.shape[0])
+        observation_count = points.shape[0]
         count = _action_count(self.max_actions, observation_count=observation_count)
         values = _required_residual(residual, observation_count=observation_count)
         if self.ordering == "fixed":
@@ -661,7 +662,7 @@ class GaussSeidelGaussianProcessActionPolicy(AbstractGaussianProcessActionPolicy
                     "fixed_order must select distinct in-range observation indices."
                 )
         remainder = values.astype(points.dtype)
-        used = jnp.zeros((observation_count,), dtype=bool)
+        used = jnp.zeros((observation_count,), dtype=jnp.bool_)
         columns = []
         masks = []
         indices = []
@@ -711,9 +712,9 @@ def _iterative_covariance(
     _require_state(state)
     points = jnp.asarray(observation_points)
     expected_rank = state.kernel.input_ndim + 1
-    if points.ndim != expected_rank or int(points.shape[0]) <= 0:
+    if points.ndim != expected_rank or points.shape[0] <= 0:
         raise ValueError("Observation design does not match the kernel input rank.")
-    observation_count = int(points.shape[0])
+    observation_count = points.shape[0]
     noise = jnp.broadcast_to(state.noise_scale, (observation_count,))
     covariance = state.kernel.matrix(points, points) + jnp.diag(
         noise * noise + state.jitter
@@ -734,8 +735,7 @@ def _required_residual(
 ) -> Array:
     if residual is None:
         raise ValueError(
-            "This GP action policy is residual-dependent; reusable factor() without "
-            "a residual is not defined."
+            "This GP action policy is residual-dependent; reusable factor() without a residual is not defined."
         )
     values = jnp.asarray(residual)
     if values.shape != (observation_count,):
@@ -751,8 +751,8 @@ def _action_vector(value: ArrayLike, /, *, name: str) -> Array:
     raw = jnp.asarray(value)
     if jnp.issubdtype(raw.dtype, jnp.complexfloating):
         raise TypeError(f"{name} must be real-valued.")
-    vector = raw.astype(float)
-    if vector.ndim != 1 or int(vector.shape[0]) <= 0:
+    vector = raw.astype("float64")
+    if vector.ndim != 1 or vector.shape[0] <= 0:
         raise ValueError(f"{name} must be a nonempty vector.")
     return eqx.error_if(
         vector,
@@ -816,9 +816,9 @@ def _validate_action_operator(operator: AbstractLinearOperator, /) -> None:
 
 def _action_storage(operator: AbstractLinearOperator, /) -> tuple[int, bool]:
     if isinstance(operator, DenseLinearOperator):
-        return int(operator.matrix.size), False
+        return operator.matrix.size, False
     if isinstance(operator, AbstractSparseLinearOperator):
-        return int(operator.sparse_storage().values.size), True
+        return operator.sparse_storage().values.size, True
     raise TypeError("GP action storage is known only for dense and sparse operators.")
 
 

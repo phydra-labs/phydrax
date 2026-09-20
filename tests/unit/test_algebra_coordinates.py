@@ -80,7 +80,7 @@ def test_cochain_hodge_uses_shared_complexified_real_action():
         axis_names=("x",),
     ).prepare(jnp.asarray([[0.0], [1.0]]))
     cochain = phx.discretization.StructuredCochainBridge(grid).cochain
-    value = jnp.arange(cochain.cell_counts[0], dtype=float) + 1j * jnp.linspace(
+    value = jnp.arange(cochain.cell_counts[0], dtype="float64") + 1j * jnp.linspace(
         -0.5, 0.5, cochain.cell_counts[0]
     )
     space = cochain.field_spaces[0].vector_space

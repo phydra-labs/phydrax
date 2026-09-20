@@ -122,7 +122,7 @@ def run_trefftz_benchmarks(
 ) -> dict[str, Any]:
     """Run deterministic nD harmonic boundary-fit workloads."""
 
-    dimensions_ = tuple(int(value) for value in dimensions)
+    dimensions_ = tuple(dimensions)
     if not dimensions_ or any(value < 2 for value in dimensions_):
         raise ValueError("Benchmark dimensions must be at least two.")
     if boundary_points <= 0 or evaluation_points <= 0:
@@ -139,7 +139,6 @@ def run_trefftz_benchmarks(
     )
     device = jax.devices()[0]
     return {
-        "schema_version": 1,
         "dimensions": list(dimensions_),
         "boundary_points": int(boundary_points),
         "evaluation_points": int(evaluation_points),

@@ -25,7 +25,7 @@ from ..._identity import (
     SemanticProvenance,
     strict_module_payload,
 )
-from ..._strict import AbstractAttribute, StrictModule
+from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization.particle._rigid_body import quaternion_rotation_matrix
 from ...dynamics._plant import (
@@ -131,7 +131,7 @@ def _validate_frame(
 
 def _mask(value: ArrayLike, case_shape: tuple[int, ...], owner: str, /) -> Array:
     mask = jnp.asarray(value)
-    if np.dtype(mask.dtype) != np.dtype(bool):
+    if np.dtype(mask.dtype) != np.dtype(np.bool_):
         raise TypeError(f"{owner} must have boolean dtype.")
     if mask.shape == ():
         return jnp.broadcast_to(mask, case_shape)
@@ -141,7 +141,7 @@ def _mask(value: ArrayLike, case_shape: tuple[int, ...], owner: str, /) -> Array
 
 
 def _all_masks(values: tuple[Array, ...], case_shape: tuple[int, ...], /) -> Array:
-    result = jnp.ones(case_shape, dtype=bool)
+    result = jnp.ones(case_shape, dtype=jnp.bool_)
     for value in values:
         result = result & _mask(value, case_shape, "Hybrid evidence mask")
     return result
@@ -313,7 +313,7 @@ class RigidFrameAttachmentPlan(StrictModule, NonTrainableState):
         position = np.asarray(local_position)
         if position.ndim != 1 or position.shape[0] not in (2, 3):
             raise ValueError("Rigid local_position must be a planar or spatial vector.")
-        dimension = int(position.shape[0])
+        dimension = position.shape[0]
         position_ = _local_position(position, dimension, "Rigid local_position")
         rotation = _proper_rotation(local_rotation, dimension, "Rigid local_rotation")
         frame_id_ = _identifier(frame_id, "frame_id")
@@ -351,7 +351,7 @@ class SoftEndpointAttachmentPlan(StrictModule, NonTrainableState):
         position = np.asarray(local_position)
         if position.ndim != 1 or position.shape[0] not in (2, 3):
             raise ValueError("Soft local_position must be a planar or spatial vector.")
-        dimension = int(position.shape[0])
+        dimension = position.shape[0]
         position_ = _local_position(position, dimension, "Soft local_position")
         rotation = _proper_rotation(local_rotation, dimension, "Soft local_rotation")
         endpoint_id_ = _identifier(endpoint_id, "endpoint_id")
@@ -455,7 +455,7 @@ class SynchronizedStepPolicy(StrictModule):
 
     def duration_valid(self, context: PlantStepContext, /) -> Array:
         if self.fixed_duration is None:
-            return jnp.ones(context.duration.shape, dtype=bool)
+            return jnp.ones(context.duration.shape, dtype=jnp.bool_)
         working_dtype = jnp.result_type(context.duration, jnp.asarray(1.0))
         observed = jnp.asarray(context.duration, dtype=working_dtype)
         duration = jnp.asarray(self.fixed_duration, dtype=working_dtype)
@@ -466,15 +466,15 @@ class SynchronizedStepPolicy(StrictModule):
 class AbstractHybridPlantPort(StrictModule):
     """Prepared state/frame/dual-effort adapter owned by one child plant profile."""
 
-    semantic_provenance_id: AbstractAttribute[str]
-    numeric_revision_id: AbstractAttribute[str]
-    state_schema_id: AbstractAttribute[str]
-    control_schema_id: AbstractAttribute[str | None]
-    execution_signature_id: AbstractAttribute[str]
-    topology_id: AbstractAttribute[str]
-    step_policy_id: AbstractAttribute[str]
-    frame_ids: AbstractAttribute[tuple[str, ...]]
-    supports_external_wrenches: AbstractAttribute[bool]
+    semantic_provenance_id: eqx.AbstractVar[str]
+    numeric_revision_id: eqx.AbstractVar[str]
+    state_schema_id: eqx.AbstractVar[str]
+    control_schema_id: eqx.AbstractVar[str | None]
+    execution_signature_id: eqx.AbstractVar[str]
+    topology_id: eqx.AbstractVar[str]
+    step_policy_id: eqx.AbstractVar[str]
+    frame_ids: eqx.AbstractVar[tuple[str, ...]]
+    supports_external_wrenches: eqx.AbstractVar[bool]
 
     @abstractmethod
     def frame_state(self, payload: PyTree[Any], frame_id: str, /) -> AttachmentFrameState:
@@ -1042,7 +1042,7 @@ def transform_attachment_frame(
     """Apply one fixed SE(2)/SE(3) frame transform and its exact tangent map."""
     position = jnp.asarray(local_position)
     rotation = jnp.asarray(local_rotation)
-    dimension = int(position.shape[0])
+    dimension = position.shape[0]
     _validate_frame(parent, dimension, "parent")
     if position.shape != (dimension,) or rotation.shape != (dimension, dimension):
         raise ValueError("Local attachment transform has the wrong dimension.")
@@ -1105,7 +1105,7 @@ def evaluate_attachment_kinematics(
         soft_attachment.linear_velocity,
         soft_attachment.angular_velocity,
     )
-    finite = jnp.ones(rigid_case, dtype=bool)
+    finite = jnp.ones(rigid_case, dtype=jnp.bool_)
     for value in arrays:
         axes = tuple(range(len(rigid_case), value.ndim))
         finite = finite & jnp.all(jnp.isfinite(value), axis=axes)

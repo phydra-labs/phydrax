@@ -148,8 +148,7 @@ class FiniteElementFunctional(StrictModule, NonTrainableState):
                 )
                 if density.shape != metric.physical_weights.shape:
                     raise ValueError(
-                        "Finite-element functional density must return one scalar "
-                        "per local point."
+                        "Finite-element functional density must return one scalar per local point."
                     )
                 valid = jnp.asarray(region.valid) & jnp.asarray(metric.valid)
                 contributions.append(
@@ -211,8 +210,7 @@ class FiniteElementFunctional(StrictModule, NonTrainableState):
             expected = geometry.physical_weights.shape
             if density.shape != expected:
                 raise ValueError(
-                    "Finite-element functional density must return one scalar "
-                    "per selected quadrature point."
+                    "Finite-element functional density must return one scalar per selected quadrature point."
                 )
             contributions.append(
                 discretization.precision_policy.accumulation(

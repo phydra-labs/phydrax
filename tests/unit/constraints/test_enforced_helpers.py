@@ -47,7 +47,7 @@ def _points_on_time(time: TimeInterval, ts: jnp.ndarray) -> PointBatch:
     axis_names = structure.axis_names
     assert axis_names is not None
     axis = axis_names[0]
-    pts = jnp.asarray(ts, dtype=float).reshape((-1,))
+    pts = jnp.asarray(ts, dtype="float64").reshape((-1,))
     points = frozendict({"t": cx.AxisArray(pts, dims=(axis,))})
     return PointBatch(points=points, structure=structure)
 
@@ -61,7 +61,7 @@ def test_enforce_dirichlet_enforces_values_on_boundary():
         return x[0]
 
     u_enforced = enforce_dirichlet(u, component, target=2.0)
-    batch = _points_on_interval(geom, jnp.array([0.0, 1.0], dtype=float))
+    batch = _points_on_interval(geom, jnp.array([0.0, 1.0], dtype="float64"))
     out = jnp.asarray(u_enforced(batch).data).reshape((-1,))
     assert jnp.allclose(out, 2.0)
 
@@ -124,7 +124,7 @@ def test_enforce_neumann_enforces_normal_derivative_on_boundary():
     n = component.normal(var="x")
     dd = directional_derivative(u_enforced, n, var="x")
 
-    batch = _points_on_interval(geom, jnp.array([0.0, 1.0], dtype=float))
+    batch = _points_on_interval(geom, jnp.array([0.0, 1.0], dtype="float64"))
     out = jnp.asarray(dd(batch).data).reshape((-1,))
     assert jnp.allclose(out, 0.0, atol=1e-5)
 
@@ -175,12 +175,12 @@ def test_enforce_traction_rejects_coord_separable_evaluation():
 
     @geom.Function("x")
     def u(x):
-        return jnp.asarray([x[0]], dtype=float)
+        return jnp.asarray([x[0]], dtype="float64")
 
     u_enforced = enforce_traction(
         u,
         boundary,
-        target=jnp.zeros((1,), dtype=float),
+        target=jnp.zeros((1,), dtype="float64"),
         lambda_=1.0,
         mu=1.0,
     )
@@ -247,7 +247,7 @@ def test_enforce_blend_combines_subset_pieces_without_leakage():
         num_reference=256,
     )
 
-    batch = _points_on_interval(geom, jnp.array([0.0, 1.0], dtype=float))
+    batch = _points_on_interval(geom, jnp.array([0.0, 1.0], dtype="float64"))
     out = jnp.asarray(blended(batch).data).reshape((-1,))
     assert jnp.allclose(out[0], 1.0, atol=1e-3)
     assert jnp.allclose(out[1], 2.0, atol=1e-3)
@@ -297,7 +297,7 @@ def test_enforce_initial_rational_gate_bounded_fixed_start_value_only():
     u = time.Function()(1.0)
     u_enforced = enforce_initial(u, component, targets={0: 0.0}, gate_eps=1e-2)
 
-    batch = _points_on_time(time, jnp.array([0.0, 2.0], dtype=float))
+    batch = _points_on_time(time, jnp.array([0.0, 2.0], dtype="float64"))
     out = jnp.asarray(u_enforced(batch).data).reshape((-1,))
     assert jnp.allclose(out[0], 0.0, atol=1e-10)
     assert float(out[1]) < 1.0
@@ -318,7 +318,7 @@ def test_enforce_initial_rational_gate_enforces_first_derivative_fixed_start():
         gate_eps=1e-2,
     )
 
-    batch0 = _points_on_time(time, jnp.array([0.0], dtype=float))
+    batch0 = _points_on_time(time, jnp.array([0.0], dtype="float64"))
     out0 = jnp.asarray(u_enforced(batch0).data).reshape(())
     assert jnp.allclose(out0, 0.0, atol=1e-10)
 
@@ -326,7 +326,7 @@ def test_enforce_initial_rational_gate_enforces_first_derivative_fixed_start():
     dout0 = jnp.asarray(du_dt(batch0).data).reshape(())
     assert jnp.allclose(dout0, 0.0, atol=1e-8)
 
-    batch_end = _points_on_time(time, jnp.array([2.0], dtype=float))
+    batch_end = _points_on_time(time, jnp.array([2.0], dtype="float64"))
     out_end = jnp.asarray(u_enforced(batch_end).data).reshape(())
     raw_end = jnp.asarray(u(batch_end).data).reshape(())
     assert float(out_end) <= float(raw_end) + 1e-10
@@ -339,7 +339,7 @@ def test_enforce_initial_rational_gate_bounded_fixed_end_value_only():
     u = time.Function()(1.0)
     u_enforced = enforce_initial(u, component, targets={0: 0.0}, gate_eps=1e-2)
 
-    batch = _points_on_time(time, jnp.array([2.0, 0.0], dtype=float))
+    batch = _points_on_time(time, jnp.array([2.0, 0.0], dtype="float64"))
     out = jnp.asarray(u_enforced(batch).data).reshape((-1,))
     assert jnp.allclose(out[0], 0.0, atol=1e-10)
     assert float(out[1]) < 1.0

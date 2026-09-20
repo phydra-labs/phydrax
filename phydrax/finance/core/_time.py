@@ -443,7 +443,7 @@ class ResolvedSchedule(StrictModule):
             raise TypeError(
                 "year_fractions must be a floating array matching date shape."
             )
-        if mask.shape != shape or mask.dtype != np.dtype(bool):
+        if mask.shape != shape or mask.dtype != np.dtype(np.bool_):
             raise TypeError("valid must be a boolean array matching date shape.")
         count = int(np.sum(mask))
         if count < 1 or not np.array_equal(mask, np.arange(shape[0]) < count):
@@ -679,8 +679,8 @@ def resolve_schedule(
     starts = np.zeros((capacity_,), dtype=np.int32)
     ends = np.zeros((capacity_,), dtype=np.int32)
     payments = np.zeros((capacity_,), dtype=np.int32)
-    fractions = np.zeros((capacity_,), dtype=float)
-    valid = np.zeros((capacity_,), dtype=bool)
+    fractions = np.zeros((capacity_,), dtype=np.float64)
+    valid = np.zeros((capacity_,), dtype=np.bool_)
     for index in range(period_count):
         accrual_start = adjusted_boundaries[index]
         accrual_end = adjusted_boundaries[index + 1]

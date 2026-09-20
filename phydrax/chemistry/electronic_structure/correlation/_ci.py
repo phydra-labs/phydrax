@@ -175,7 +175,7 @@ class CASCIResult(StrictModule, NonTrainableState):
         self.hamiltonian_residuals = residuals_
         self.determinant_bits = determinant_bits
         self.active_orbitals = active_orbitals
-        self.successful = jnp.asarray(successful, dtype=bool).reshape(())
+        self.successful = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         self.plan_id = str(plan_id)
         self.store_id = str(store_id)
         self.result_id = canonical_fingerprint(
@@ -217,7 +217,7 @@ class CASCIPlan(StrictModule, NonTrainableState):
         maximum_determinants: int = 100_000,
         residual_tolerance: float = 1.0e-9,
     ):
-        active = tuple(int(value) for value in active_orbitals)
+        active = tuple(active_orbitals)
         alpha = int(active_alpha_electrons)
         beta = int(active_beta_electrons)
         roots = int(root_count)

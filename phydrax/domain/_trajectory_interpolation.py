@@ -31,8 +31,7 @@ RaggedTimeSeriesHardGate = Literal["sin2", "sin4"]
 def _field_array(batch: PointBatch, key: str, /) -> Array:
     if key not in batch:
         raise ValueError(
-            "Ragged time-series evaluation requires trajectory batches "
-            f"with internal field {key!r}."
+            f"Ragged time-series evaluation requires trajectory batches with internal field {key!r}."
         )
     field = batch[key]
     if not isinstance(field, cx.AxisArray):
@@ -41,15 +40,15 @@ def _field_array(batch: PointBatch, key: str, /) -> Array:
 
 
 def _broadcast_like(values: Array, reference: Array, /) -> Array:
-    arr = jnp.asarray(values, dtype=float)
-    ref = jnp.asarray(reference, dtype=float)
+    arr = jnp.asarray(values, dtype=jnp.float64)
+    ref = jnp.asarray(reference, dtype=jnp.float64)
     if arr.ndim == ref.ndim:
         return arr
     if arr.ndim != 1:
         raise ValueError(
             f"Cannot broadcast shape {arr.shape} against reference shape {ref.shape}."
         )
-    return arr.reshape((int(arr.shape[0]),) + (1,) * (ref.ndim - 1))
+    return arr.reshape((arr.shape[0],) + (1,) * (ref.ndim - 1))
 
 
 def _validate_values(
@@ -57,17 +56,16 @@ def _validate_values(
     values: ArrayLike,
     /,
 ) -> Array:
-    arr = jnp.asarray(values, dtype=float)
+    arr = jnp.asarray(values, dtype=jnp.float64)
     if arr.ndim < 2:
         raise ValueError("values must have shape (N, T, ...) with a time axis.")
-    if int(arr.shape[0]) != domain.size:
+    if arr.shape[0] != domain.size:
         raise ValueError(
             f"values leading axis must be N={domain.size}, got {arr.shape[0]}."
         )
-    if int(arr.shape[1]) < domain.max_length:
+    if arr.shape[1] < domain.max_length:
         raise ValueError(
-            "values time axis must have at least "
-            f"{domain.max_length} entries, got {arr.shape[1]}."
+            f"values time axis must have at least {domain.max_length} entries, got {arr.shape[1]}."
         )
     return arr
 
@@ -99,7 +97,7 @@ class _RaggedTimeSeriesTable(StrictModule, NonTrainableState):
         self.values = _validate_values(domain, values)
         self.interpolation = interpolation
         self.gate = gate
-        self.snap_tol = jnp.asarray(snap, dtype=float)
+        self.snap_tol = jnp.asarray(snap, dtype=jnp.float64)
 
     def max_derivative_order(self) -> int:
         if self.interpolation == "linear":
@@ -113,13 +111,13 @@ class _RaggedTimeSeriesTable(StrictModule, NonTrainableState):
     ) -> tuple[Array, Array, Array, Array, Array, Array, Array, Array, Array]:
         case_idx = _field_array(batch, TRAJECTORY_CASE_INDEX_KEY).astype(jnp.int32)
         time_idx = _field_array(batch, TRAJECTORY_TIME_INDEX_KEY).astype(jnp.int32)
-        t = _field_array(batch, self.domain.time_label).astype(float)
+        t = _field_array(batch, self.domain.time_label).astype("float64")
         values = jax.lax.stop_gradient(self.values)
         start = jax.lax.stop_gradient(self.domain.start)
         dt = jax.lax.stop_gradient(self.domain.dt)
 
         lengths = self.domain.lengths[case_idx]
-        max_tau = lengths.astype(float) - 1.0
+        max_tau = lengths.astype("float64") - 1.0
         tau_raw = (t - start) / dt
         tau = jnp.clip(tau_raw, 0.0, max_tau)
 
@@ -127,7 +125,7 @@ class _RaggedTimeSeriesTable(StrictModule, NonTrainableState):
         k0 = jnp.floor(tau).astype(jnp.int32)
         k0 = jnp.clip(k0, 0, max_left)
         k1 = jnp.minimum(k0 + 1, lengths - 1)
-        s = jnp.where(lengths > 1, tau - k0.astype(float), 0.0)
+        s = jnp.where(lengths > 1, tau - k0.astype("float64"), 0.0)
 
         node_idx = jnp.clip(time_idx, 0, lengths - 1)
         node_t = self.domain.observation_times(case_idx, node_idx)
@@ -172,7 +170,7 @@ class _RaggedTimeSeriesTable(StrictModule, NonTrainableState):
         y1 = values[case_idx, k1]
         target = linear_segment(y0, y1, s, dt)
         node_target = values[case_idx, node_idx]
-        on_node_b = _broadcast_like(on_node.astype(float), target)
+        on_node_b = _broadcast_like(on_node.astype("float64"), target)
         target = on_node_b * node_target + (1.0 - on_node_b) * target
         if int(max_order) == 0:
             return (target,)
@@ -200,7 +198,7 @@ class _RaggedTimeSeriesTable(StrictModule, NonTrainableState):
 
         target = cubic_hermite_segment(y0, y1, m0, m1, s, dt)
         node_target = values[case_idx, node_idx]
-        on_node_b = _broadcast_like(on_node.astype(float), target)
+        on_node_b = _broadcast_like(on_node.astype("float64"), target)
         target = on_node_b * node_target + (1.0 - on_node_b) * target
         if int(max_order) == 0:
             return (target,)
@@ -288,8 +286,7 @@ class _RaggedTimeSeriesTable(StrictModule, NonTrainableState):
         limit = self.max_derivative_order()
         if order > limit:
             raise ValueError(
-                f"interpolation={self.interpolation!r} supports hard time "
-                f"derivatives only up to order {limit}."
+                f"interpolation={self.interpolation!r} supports hard time derivatives only up to order {limit}."
             )
         (
             case_idx,

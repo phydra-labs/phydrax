@@ -47,7 +47,7 @@ def _vector3(value: ArrayLike, name: str, /) -> Array:
     if array.shape != (3,):
         raise ValueError(f"{name} must have shape (3,).")
     if not jnp.issubdtype(array.dtype, jnp.inexact):
-        array = array.astype(float)
+        array = array.astype("float64")
     return array
 
 
@@ -56,7 +56,7 @@ def _positive(value: ArrayLike, name: str, /) -> Array:
     if scalar.shape != ():
         raise ValueError(f"{name} must be scalar.")
     if not jnp.issubdtype(scalar.dtype, jnp.inexact):
-        scalar = scalar.astype(float)
+        scalar = scalar.astype("float64")
     concrete = np.asarray(scalar)
     if not np.isfinite(concrete) or concrete <= 0.0:
         raise ValueError(f"{name} must be positive and finite.")
@@ -189,9 +189,7 @@ class PreparedSphereRouteWrap(StrictModule):
         second = end - self.center_m
         first_distance = _norm(first)
         second_distance = _norm(second)
-        inside = (first_distance <= self.radius_m) | (
-            second_distance <= self.radius_m
-        )
+        inside = (first_distance <= self.radius_m) | (second_distance <= self.radius_m)
         normal, normal_magnitude = _unit(jnp.cross(first, second), tolerance)
         degenerate = normal_magnitude <= tolerance
 
@@ -225,7 +223,9 @@ class PreparedSphereRouteWrap(StrictModule):
                 * jnp.sqrt(jnp.maximum(distance**2 - self.radius_m**2, 0.0))
                 / safe_square
             )
-            return jnp.stack((base - coefficient * transverse, base + coefficient * transverse))
+            return jnp.stack(
+                (base - coefficient * transverse, base + coefficient * transverse)
+            )
 
         first_tangents = endpoint_tangents(first, first_distance)
         second_tangents = endpoint_tangents(second, second_distance)
@@ -233,9 +233,7 @@ class PreparedSphereRouteWrap(StrictModule):
         second_candidates = jnp.tile(second_tangents, (2, 1))
         first_units = first_candidates / self.radius_m
         second_units = second_candidates / self.radius_m
-        cosines = jnp.clip(
-            jnp.sum(first_units * second_units, axis=-1), -1.0, 1.0
-        )
+        cosines = jnp.clip(jnp.sum(first_units * second_units, axis=-1), -1.0, 1.0)
         angles = jnp.arccos(cosines)
         chosen = jnp.argmin(angles)
         sorted_angles = jnp.sort(angles)
@@ -250,9 +248,7 @@ class PreparedSphereRouteWrap(StrictModule):
         signed_angle = orientation * short_angle
         if self.plan.sense == "long":
             signed_angle = -orientation * (2.0 * jnp.pi - short_angle)
-        parameters = jnp.linspace(
-            0.0, 1.0, self.plan.sample_count, dtype=start.dtype
-        )
+        parameters = jnp.linspace(0.0, 1.0, self.plan.sample_count, dtype=start.dtype)
         surface_local = jnp.stack(
             tuple(
                 _rotation(tangent_start_local, normal, fraction * signed_angle)
@@ -264,9 +260,7 @@ class PreparedSphereRouteWrap(StrictModule):
         tangent_end = tangent_end_local + self.center_m
         surface_length = self.radius_m * jnp.abs(signed_angle)
         total_length = (
-            _norm(start - tangent_start)
-            + surface_length
-            + _norm(end - tangent_end)
+            _norm(start - tangent_start) + surface_length + _norm(end - tangent_end)
         )
         direct_length = _norm(end - start)
         surface_mask = jnp.full((self.plan.sample_count,), apply_wrap)
@@ -284,9 +278,9 @@ class PreparedSphereRouteWrap(StrictModule):
             & jnp.isfinite(total_length)
         )
         status = jnp.asarray(int(AnalyticWrapStatus.SUCCESS), dtype=jnp.int32)
-        status |= jnp.where(
-            inside, int(AnalyticWrapStatus.ENDPOINT_INSIDE), 0
-        ).astype(jnp.int32)
+        status |= jnp.where(inside, int(AnalyticWrapStatus.ENDPOINT_INSIDE), 0).astype(
+            jnp.int32
+        )
         status |= jnp.where(
             would_wrap & degenerate,
             int(AnalyticWrapStatus.DEGENERATE_GEOMETRY),
@@ -302,9 +296,9 @@ class PreparedSphereRouteWrap(StrictModule):
             int(AnalyticWrapStatus.TANGENT_PAIR_TIE),
             0,
         ).astype(jnp.int32)
-        status |= jnp.where(
-            finite, 0, int(AnalyticWrapStatus.NONFINITE)
-        ).astype(jnp.int32)
+        status |= jnp.where(finite, 0, int(AnalyticWrapStatus.NONFINITE)).astype(
+            jnp.int32
+        )
         fatal = int(
             AnalyticWrapStatus.ENDPOINT_INSIDE
             | AnalyticWrapStatus.DEGENERATE_GEOMETRY
@@ -321,8 +315,7 @@ class PreparedSphereRouteWrap(StrictModule):
         )
         surface_residual = jnp.max(
             jnp.abs(
-                jnp.sqrt(jnp.sum(surface_local * surface_local, axis=-1))
-                - self.radius_m
+                jnp.sqrt(jnp.sum(surface_local * surface_local, axis=-1)) - self.radius_m
             )
         )
         scale = jnp.maximum(self.radius_m, tolerance)
@@ -330,7 +323,9 @@ class PreparedSphereRouteWrap(StrictModule):
             jnp.minimum(first_distance - self.radius_m, second_distance - self.radius_m),
             jnp.minimum(
                 normal_magnitude / scale,
-                jnp.minimum(jnp.abs(discriminant) / (safe_segment_square * scale**2), tie_margin),
+                jnp.minimum(
+                    jnp.abs(discriminant) / (safe_segment_square * scale**2), tie_margin
+                ),
             ),
         )
         evidence = AnalyticWrapEvidence(
@@ -465,10 +460,7 @@ class PreparedPlanarCylinderRouteWrap(StrictModule):
             & (root_second < 1.0)
         )
         apply_wrap = (
-            (intersects | self.plan.mandatory)
-            & planar
-            & ~outside_lateral
-            & ~inside
+            (intersects | self.plan.mandatory) & planar & ~outside_lateral & ~inside
         )
 
         def radial_tangents(vector: Array, distance: Array) -> Array:
@@ -500,9 +492,7 @@ class PreparedPlanarCylinderRouteWrap(StrictModule):
             signed_angle = signed_angle - orientation * 2.0 * jnp.pi
         first_local = first_candidates[chosen] + common_axial * self.axis
         second_local = second_candidates[chosen] + common_axial * self.axis
-        parameters = jnp.linspace(
-            0.0, 1.0, self.plan.sample_count, dtype=start.dtype
-        )
+        parameters = jnp.linspace(0.0, 1.0, self.plan.sample_count, dtype=start.dtype)
         surface_local = jnp.stack(
             tuple(
                 _rotation(first_candidates[chosen], self.axis, fraction * signed_angle)
@@ -515,9 +505,7 @@ class PreparedPlanarCylinderRouteWrap(StrictModule):
         tangent_end = second_local + self.origin_m
         surface_length = self.radius_m * jnp.abs(signed_angle)
         total_length = (
-            _norm(start - tangent_start)
-            + surface_length
-            + _norm(end - tangent_end)
+            _norm(start - tangent_start) + surface_length + _norm(end - tangent_end)
         )
         direct_length = _norm(end - start)
         mask = jnp.full((self.plan.sample_count,), apply_wrap)
@@ -535,9 +523,9 @@ class PreparedPlanarCylinderRouteWrap(StrictModule):
             & jnp.isfinite(total_length)
         )
         status = jnp.asarray(int(AnalyticWrapStatus.SUCCESS), dtype=jnp.int32)
-        status |= jnp.where(
-            inside, int(AnalyticWrapStatus.ENDPOINT_INSIDE), 0
-        ).astype(jnp.int32)
+        status |= jnp.where(inside, int(AnalyticWrapStatus.ENDPOINT_INSIDE), 0).astype(
+            jnp.int32
+        )
         status |= jnp.where(
             ~planar, int(AnalyticWrapStatus.NONPLANAR_CYLINDER_ROUTE), 0
         ).astype(jnp.int32)
@@ -556,9 +544,9 @@ class PreparedPlanarCylinderRouteWrap(StrictModule):
             int(AnalyticWrapStatus.TANGENT_PAIR_TIE),
             0,
         ).astype(jnp.int32)
-        status |= jnp.where(
-            finite, 0, int(AnalyticWrapStatus.NONFINITE)
-        ).astype(jnp.int32)
+        status |= jnp.where(finite, 0, int(AnalyticWrapStatus.NONFINITE)).astype(
+            jnp.int32
+        )
         fatal = int(
             AnalyticWrapStatus.ENDPOINT_INSIDE
             | AnalyticWrapStatus.DEGENERATE_GEOMETRY
@@ -573,9 +561,10 @@ class PreparedPlanarCylinderRouteWrap(StrictModule):
             jnp.abs(_dot(start - tangent_start, start_radial_tangent)),
             jnp.abs(_dot(end - tangent_end, end_radial_tangent)),
         )
-        radial_surface = surface_local - contract(
-            "ni,i->n", surface_local, self.axis
-        )[:, None] * self.axis
+        radial_surface = (
+            surface_local
+            - contract("ni,i->n", surface_local, self.axis)[:, None] * self.axis
+        )
         surface_residual = jnp.max(
             jnp.abs(
                 jnp.sqrt(jnp.sum(radial_surface * radial_surface, axis=-1))

@@ -30,7 +30,7 @@ def _parabola_witness():
         1,
         np.asarray([[0.0, 1.0]]),
         np.asarray([-1.0]),
-        np.asarray([[-1.0, 1.0], [1.0, 1.0]], dtype=complex),
+        np.asarray([[-1.0, 1.0], [1.0, 1.0]], dtype="complex128"),
         np.asarray([0.0, 0.0]),
     )
 
@@ -111,7 +111,7 @@ def test_isolated_point_and_parabola_form_dimension_indexed_witness_collection()
         0,
         np.zeros((0, 2)),
         np.zeros((0,)),
-        np.asarray([[0.0, 0.0]], dtype=complex),
+        np.asarray([[0.0, 0.0]], dtype="complex128"),
         np.asarray([0.0]),
     )
     parabola = _parabola_witness()

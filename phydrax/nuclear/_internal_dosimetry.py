@@ -262,7 +262,7 @@ class PreparedRegionalSValuePlan(StrictModule, NonTrainableState):
         self, time_integrated_activity_bq_s: ArrayLike, valid: ArrayLike, /
     ) -> RegionalSValueEvaluation:
         activity = jnp.asarray(time_integrated_activity_bq_s)
-        validity = jnp.asarray(valid, dtype=bool)
+        validity = jnp.asarray(valid, dtype=jnp.bool_)
         if activity.shape != (self.source_count,) or validity.shape != activity.shape:
             raise ValueError("Regional activity must match the source-region axis.")
         source_valid = validity & jnp.isfinite(activity) & (activity >= 0.0)
@@ -275,7 +275,7 @@ class PreparedRegionalSValuePlan(StrictModule, NonTrainableState):
         return RegionalSValueEvaluation(dose, target_valid)
 
     def affected_targets(self, source_mask: ArrayLike, /) -> Array:
-        mask = jnp.asarray(source_mask, dtype=bool)
+        mask = jnp.asarray(source_mask, dtype=jnp.bool_)
         if mask.shape != (self.source_count,):
             raise ValueError("Regional quality masks must match the source-region axis.")
         return jnp.any(self.dependencies & mask[None, :], axis=1)
@@ -546,7 +546,7 @@ class SpatialSValueKernel:
 
 
 def _convolve_nonperiodic(values: Array, kernel: Array, /) -> Array:
-    padding = tuple((int(size) // 2, int(size) // 2) for size in kernel.shape)
+    padding = tuple((size // 2, size // 2) for size in kernel.shape)
     result = lax.conv_general_dilated(
         values[None, ..., None],
         jnp.flip(kernel, axis=(0, 1, 2))[..., None, None],
@@ -573,7 +573,7 @@ class PreparedSpatialSValueConvolution(StrictModule, NonTrainableState):
         self, time_integrated_activity_concentration: ArrayLike, valid: ArrayLike, /
     ) -> SpatialSValueEvaluation:
         concentration = jnp.asarray(time_integrated_activity_concentration)
-        validity = jnp.asarray(valid, dtype=bool)
+        validity = jnp.asarray(valid, dtype=jnp.bool_)
         if (
             concentration.shape != self.volume_shape
             or validity.shape != self.volume_shape
@@ -591,7 +591,7 @@ class PreparedSpatialSValueConvolution(StrictModule, NonTrainableState):
         return SpatialSValueEvaluation(dose, target_valid)
 
     def affected_targets(self, source_mask: ArrayLike, /) -> Array:
-        mask = jnp.asarray(source_mask, dtype=bool)
+        mask = jnp.asarray(source_mask, dtype=jnp.bool_)
         if mask.shape != self.volume_shape:
             raise ValueError("Spatial quality masks must match the exact source grid.")
         affected = _convolve_nonperiodic(

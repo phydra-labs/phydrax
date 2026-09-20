@@ -11,7 +11,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike, Bool, Float, Key
 
 from ..._doc import DOC_KEY0
-from ..._sampling import get_sampler_host, seed_from_key
+from ..._sampling import host_design_factory, seed_from_key
 from .._base import EnforcementGateMethod
 from ._base import _AbstractGeometry1D
 
@@ -44,8 +44,8 @@ class Interval1d(_AbstractGeometry1D):
         *,
         label: str = "x",
     ):
-        start_arr = jnp.asarray(start, dtype=float).reshape(())
-        end_arr = jnp.asarray(end, dtype=float).reshape(())
+        start_arr = jnp.asarray(start, dtype=jnp.float64).reshape(())
+        end_arr = jnp.asarray(end, dtype=jnp.float64).reshape(())
         if bool(start_arr >= end_arr):
             raise ValueError("`start` must be less than `end`.")
         if not isinstance(label, str) or not label:
@@ -91,7 +91,7 @@ class Interval1d(_AbstractGeometry1D):
 
     @property
     def bounds(self) -> Float[Array, "2 1"]:
-        return jnp.array([[self.start], [self.end]], dtype=float)
+        return jnp.array([[self.start], [self.end]], dtype=jnp.float64)
 
     def _same_factor_support(self, other: object, /) -> bool:
         if not isinstance(other, Interval1d):
@@ -122,13 +122,13 @@ class Interval1d(_AbstractGeometry1D):
 
         def _sample_interior_host(num_points, sampler, where, key):
             rng = np.random.default_rng(seed_from_key(key))
-            sampler_fn = get_sampler_host(sampler, dim=1, seed=rng)
-            sampled_points = np.empty((0, 1), dtype=float)
+            sampler_fn = host_design_factory(sampler, dimension=1, seed=rng)
+            sampled_points = np.empty((0, 1), dtype=np.float64)
 
             while sampled_points.shape[0] < num_points:
                 remaining_points = num_points - sampled_points.shape[0]
 
-                samples = jnp.asarray(sampler_fn(remaining_points), dtype=float)
+                samples = jnp.asarray(sampler_fn(remaining_points), dtype=jnp.float64)
 
                 if where:
                     # Map samples in [0,1] to [start,end] before applying `where`.
@@ -141,7 +141,7 @@ class Interval1d(_AbstractGeometry1D):
             sampled_points = sampled_points[:num_points]
             return sampled_points
 
-        zeros = jnp.zeros((num_points, 1), dtype=float)
+        zeros = jnp.zeros((num_points, 1), dtype=jnp.float64)
         shape_dtype = jax.ShapeDtypeStruct(zeros.shape, zeros.dtype)
 
         sampled_points = eqx.filter_pure_callback(
@@ -180,7 +180,7 @@ class Interval1d(_AbstractGeometry1D):
             key=key,
         )
 
-        mask = jnp.ones(sampled_points.shape[0], dtype=bool)
+        mask = jnp.ones(sampled_points.shape[0], dtype=jnp.bool_)
 
         return (sampled_points,), mask
 
@@ -196,27 +196,27 @@ class Interval1d(_AbstractGeometry1D):
 
         def _sample_boundary_host(num_points, sampler, where, key):
             rng = np.random.default_rng(seed_from_key(key))
-            sampled_points = np.empty((0, 1), dtype=float)
+            sampled_points = np.empty((0, 1), dtype=np.float64)
 
             while sampled_points.shape[0] < num_points:
                 remaining_points = num_points - sampled_points.shape[0]
 
-                choices = np.array([float(self.start), float(self.end)], dtype=float)
+                choices = np.array([float(self.start), float(self.end)], dtype=np.float64)
 
                 sampled_points_batch = rng.choice(choices, size=(remaining_points, 1))
 
                 if where:
-                    pts = jnp.asarray(sampled_points_batch, dtype=float)
+                    pts = jnp.asarray(sampled_points_batch, dtype=jnp.float64)
                     inside = jax.vmap(where)(pts)
                     pts = pts[inside]
-                    sampled_points_batch = np.asarray(pts, dtype=float)
+                    sampled_points_batch = np.asarray(pts, dtype=np.float64)
 
                 sampled_points = np.vstack((sampled_points, sampled_points_batch))
 
             sampled_points = sampled_points[:num_points]
             return sampled_points
 
-        zeros = jnp.zeros((num_points, 1), dtype=float)
+        zeros = jnp.zeros((num_points, 1), dtype=jnp.float64)
         shape_dtype = jax.ShapeDtypeStruct(zeros.shape, zeros.dtype)
 
         sampled_points = eqx.filter_pure_callback(
@@ -230,7 +230,7 @@ class Interval1d(_AbstractGeometry1D):
         return sampled_points
 
     def _contains(self, points: Array) -> Bool[Array, " num_points"]:
-        pts = jnp.asarray(points, dtype=float)
+        pts = jnp.asarray(points, dtype=jnp.float64)
         a = self.start
         b = self.end
         pts_ = pts[:, 0] if (pts.ndim == 2 and pts.shape[1] == 1) else jnp.squeeze(pts)
@@ -239,14 +239,14 @@ class Interval1d(_AbstractGeometry1D):
         return inside | on_boundary
 
     def _on_boundary(self, points: Array) -> Bool[Array, " num_points"]:
-        pts = jnp.asarray(points, dtype=float)
+        pts = jnp.asarray(points, dtype=jnp.float64)
         a = self.start
         b = self.end
         pts_ = pts[:, 0] if (pts.ndim == 2 and pts.shape[1] == 1) else jnp.squeeze(pts)
         return jnp.isclose(pts_, a) | jnp.isclose(pts_, b)
 
     def _boundary_normals(self, points: Array) -> Float[Array, "num_points 1"]:
-        pts = jnp.asarray(points, dtype=float)
+        pts = jnp.asarray(points, dtype=jnp.float64)
         a = self.start
         b = self.end
         midpoint = 0.5 * (a + b)
@@ -261,7 +261,7 @@ class Interval1d(_AbstractGeometry1D):
         with outward unit derivative at the endpoints. It is not the exact distance:
         its parabolic interior deliberately remains differentiable at the midpoint.
         """
-        x = jnp.asarray(points, dtype=float)
+        x = jnp.asarray(points, dtype=jnp.float64)
         a = self.start
         b = self.end
 
@@ -295,4 +295,4 @@ class Interval1d(_AbstractGeometry1D):
         del num_samples, key
         pts = jnp.stack([jnp.atleast_1d(self.start), jnp.atleast_1d(self.end)], axis=0)
         mask = jax.vmap(where)(pts)
-        return jnp.sum(mask.astype(float))
+        return jnp.sum(mask.astype("float64"))

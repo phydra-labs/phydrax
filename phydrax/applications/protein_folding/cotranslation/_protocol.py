@@ -193,9 +193,7 @@ class CotranslationProtocol:
             )
             self.non_native_qualification.require_uncertainty()
         first = self.stages[0]
-        all_ids = tuple(
-            int(x) for x in np.asarray(first.runtime.system.plan.particle_ids)
-        )
+        all_ids = tuple(np.asarray(first.runtime.system.plan.particle_ids))
         if not set(self.residue_particle_ids) <= set(all_ids):
             raise ValueError("Residue binding contains IDs outside prepared capacity.")
         residue_set = set(self.residue_particle_ids)
@@ -213,9 +211,7 @@ class CotranslationProtocol:
             count = stage.nascent_residue_count
             if not 0 < count <= self.construct.residue_count:
                 raise ValueError("Nascent residue count exceeds the construct.")
-            ids = tuple(
-                int(x) for x in np.asarray(stage.runtime.system.plan.particle_ids)
-            )
+            ids = tuple(np.asarray(stage.runtime.system.plan.particle_ids))
             if ids != all_ids:
                 raise ValueError("Stages must preserve stable capacity ordering.")
             active = set(

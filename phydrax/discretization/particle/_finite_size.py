@@ -89,10 +89,10 @@ class FiniteParticleProperties(StrictModule):
         diffusion_tensors: ArrayLike,
         /,
     ) -> None:
-        radius = np.asarray(radii, dtype=float)
-        relaxation = np.asarray(relaxation_times, dtype=float)
-        mobility = np.asarray(mobilities, dtype=float)
-        diffusion = np.asarray(diffusion_tensors, dtype=float)
+        radius = np.asarray(radii, dtype=np.float64)
+        relaxation = np.asarray(relaxation_times, dtype=np.float64)
+        mobility = np.asarray(mobilities, dtype=np.float64)
+        diffusion = np.asarray(diffusion_tensors, dtype=np.float64)
         if (
             radius.ndim != 1
             or relaxation.shape != radius.shape

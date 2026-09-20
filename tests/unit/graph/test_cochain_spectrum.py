@@ -14,7 +14,7 @@ def _graph(node_count, senders, receivers, weights, *, edge_mask=None):
     receivers = jnp.asarray(receivers, dtype=jnp.int32)
     return phx.graph.GraphIR(
         nodes=jnp.zeros((node_count, 1)),
-        edges={"conductance": jnp.asarray(weights, dtype=float)},
+        edges={"conductance": jnp.asarray(weights, dtype="float64")},
         senders=senders,
         receivers=receivers,
         n_node=jnp.asarray([node_count], dtype=jnp.int32),

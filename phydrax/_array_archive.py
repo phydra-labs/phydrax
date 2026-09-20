@@ -812,7 +812,7 @@ def read_array_archive(
             ):
                 raise TypeError("Expected archive inventory is invalid.")
             shape, dtype = specification
-            shape_ = tuple(int(extent) for extent in shape)
+            shape_ = tuple(shape)
             if any(extent < 0 for extent in shape_):
                 raise ValueError("Expected archive shapes must be nonnegative.")
             expected[name] = (
@@ -906,8 +906,7 @@ def read_array_archive(
                         expected_dtype is not None and dtype != expected_dtype
                     ):
                         raise ArrayArchiveCorruptionError(
-                            f"Archive array {logical_name!r} changed template "
-                            "shape, dtype, or byte count."
+                            f"Archive array {logical_name!r} changed template shape, dtype, or byte count."
                         )
                 if total_elements > policy.max_total_array_elements - elements:
                     raise ArrayArchiveCorruptionError(

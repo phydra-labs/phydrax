@@ -1033,8 +1033,7 @@ def execute_weighted_pressure_iteration(
         converged=converged,
         route="pcg",
         route_reason=(
-            "mapped/ALE matrix-free weighted action with epoch-refreshed "
-            "constant preconditioner"
+            "mapped/ALE matrix-free weighted action with epoch-refreshed constant preconditioner"
         ),
         geometry_id=identity,
         geometry_epoch=epoch,
