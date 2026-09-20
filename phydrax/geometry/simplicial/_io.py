@@ -11,7 +11,7 @@ from typing import Any
 import meshio
 import numpy as np
 
-import phydrax.ein as ein
+from phydrax import ein
 
 from ..._external_resource import read_bounded_resource, ResourceLimits
 from ._mesh import TriangleMesh

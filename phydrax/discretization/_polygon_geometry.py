@@ -27,8 +27,6 @@ def _cross_2d(left, right):
     return left[..., 0] * right[..., 1] - left[..., 1] * right[..., 0]
 
 
-
-
 def _remove_collinear(points: np.ndarray, indices: list[int], /) -> list[int]:
     changed = True
     scale = max(float(np.max(np.abs(points))), 1.0)
