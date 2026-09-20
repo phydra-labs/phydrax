@@ -172,15 +172,15 @@ def run_benchmarks(
     native_jacobian_compile_ms = 1e3 * (time.perf_counter() - compile_started)
 
     compile_started = time.perf_counter()
-    asdex_jacobian = phx.sparse.compile_sparse_jacobian(
+    structural_jacobian = phx.sparse.compile_sparse_jacobian(
         residual,
         point,
         source=sparse_space,
         target=sparse_target,
-        compiler="asdex",
+        compiler="auto",
     )
-    synchronize(asdex_jacobian)
-    asdex_jacobian_compile_ms = 1e3 * (time.perf_counter() - compile_started)
+    synchronize(structural_jacobian)
+    structural_jacobian_compile_ms = 1e3 * (time.perf_counter() - compile_started)
 
     native_jacobian_evaluate = jax.jit(
         lambda values: native_jacobian.coefficients(values)
@@ -189,9 +189,11 @@ def run_benchmarks(
         lambda: native_jacobian_evaluate(point),
         repeats=repeats,
     )
-    asdex_jacobian_evaluate = jax.jit(lambda values: asdex_jacobian.coefficients(values))
-    asdex_coefficients, asdex_jacobian_ms, asdex_jacobian_std = _measure(
-        lambda: asdex_jacobian_evaluate(point),
+    structural_jacobian_evaluate = jax.jit(
+        lambda values: structural_jacobian.coefficients(values)
+    )
+    structural_coefficients, structural_jacobian_ms, structural_jacobian_std = _measure(
+        lambda: structural_jacobian_evaluate(point),
         repeats=repeats,
     )
     native_jacobian_action = jax.jit(
@@ -201,11 +203,11 @@ def run_benchmarks(
         lambda: native_jacobian_action(point, direction),
         repeats=repeats,
     )
-    asdex_jacobian_action = jax.jit(
-        lambda values, vector: asdex_jacobian.operator(values).mv(vector)
+    structural_jacobian_action = jax.jit(
+        lambda values, vector: structural_jacobian.operator(values).mv(vector)
     )
-    asdex_action, asdex_action_ms, asdex_action_std = _measure(
-        lambda: asdex_jacobian_action(point, direction),
+    structural_action, structural_action_ms, structural_action_std = _measure(
+        lambda: structural_jacobian_action(point, direction),
         repeats=repeats,
     )
     dense_pattern_coefficients = dense_jacobian[
@@ -217,9 +219,9 @@ def run_benchmarks(
             jnp.concatenate(
                 (
                     native_coefficients - dense_pattern_coefficients,
-                    asdex_coefficients - dense_pattern_coefficients,
+                    structural_coefficients - dense_pattern_coefficients,
                     native_action - dense_action,
-                    asdex_action - dense_action,
+                    structural_action - dense_action,
                 )
             )
         )
@@ -250,27 +252,31 @@ def run_benchmarks(
     native_hessian_compile_ms = 1e3 * (time.perf_counter() - compile_started)
 
     compile_started = time.perf_counter()
-    asdex_hessian = phx.sparse.compile_sparse_hessian(
+    structural_hessian = phx.sparse.compile_sparse_hessian(
         energy,
         point,
         space=sparse_space,
         contract=phx.sparse.SparseHessianContract("riesz"),
         structure=hessian_pattern,
-        compiler="asdex",
+        compiler="auto",
         properties=properties,
     )
-    synchronize(asdex_hessian)
-    asdex_hessian_compile_ms = 1e3 * (time.perf_counter() - compile_started)
+    synchronize(structural_hessian)
+    structural_hessian_compile_ms = 1e3 * (time.perf_counter() - compile_started)
 
     native_hessian_evaluate = jax.jit(lambda values: native_hessian.coefficients(values))
     native_hessian_coefficients, native_hessian_ms, native_hessian_std = _measure(
         lambda: native_hessian_evaluate(point),
         repeats=repeats,
     )
-    asdex_hessian_evaluate = jax.jit(lambda values: asdex_hessian.coefficients(values))
-    asdex_hessian_coefficients, asdex_hessian_ms, asdex_hessian_std = _measure(
-        lambda: asdex_hessian_evaluate(point),
-        repeats=repeats,
+    structural_hessian_evaluate = jax.jit(
+        lambda values: structural_hessian.coefficients(values)
+    )
+    structural_hessian_coefficients, structural_hessian_ms, structural_hessian_std = (
+        _measure(
+            lambda: structural_hessian_evaluate(point),
+            repeats=repeats,
+        )
     )
     native_hessian_action = jax.jit(
         lambda values, vector: native_hessian.operator(values).mv(vector)
@@ -291,7 +297,7 @@ def run_benchmarks(
         repeats=repeats,
     )
     hessian_maximum_difference = jnp.maximum(
-        jnp.max(jnp.abs(native_hessian_coefficients - asdex_hessian_coefficients)),
+        jnp.max(jnp.abs(native_hessian_coefficients - structural_hessian_coefficients)),
         jnp.max(jnp.abs(native_hessian_value - direct_hessian_value)),
     )
 
@@ -469,12 +475,12 @@ def run_benchmarks(
             "native_evaluation_standard_deviation_ms": native_jacobian_std,
             "native_action_mean_ms": native_action_ms,
             "native_action_standard_deviation_ms": native_action_std,
-            "asdex_compile_ms": asdex_jacobian_compile_ms,
-            "asdex_num_colors": asdex_jacobian.num_colors,
-            "asdex_evaluation_mean_ms": asdex_jacobian_ms,
-            "asdex_evaluation_standard_deviation_ms": asdex_jacobian_std,
-            "asdex_action_mean_ms": asdex_action_ms,
-            "asdex_action_standard_deviation_ms": asdex_action_std,
+            "structural_compile_ms": structural_jacobian_compile_ms,
+            "structural_num_colors": structural_jacobian.num_colors,
+            "structural_evaluation_mean_ms": structural_jacobian_ms,
+            "structural_evaluation_standard_deviation_ms": structural_jacobian_std,
+            "structural_action_mean_ms": structural_action_ms,
+            "structural_action_standard_deviation_ms": structural_action_std,
             "maximum_value_difference": float(jacobian_maximum_difference),
         },
         "hessian": {
@@ -486,10 +492,10 @@ def run_benchmarks(
             "native_evaluation_standard_deviation_ms": native_hessian_std,
             "native_action_mean_ms": native_hessian_action_ms,
             "native_action_standard_deviation_ms": native_hessian_action_std,
-            "asdex_compile_ms": asdex_hessian_compile_ms,
-            "asdex_num_colors": asdex_hessian.num_colors,
-            "asdex_evaluation_mean_ms": asdex_hessian_ms,
-            "asdex_evaluation_standard_deviation_ms": asdex_hessian_std,
+            "structural_compile_ms": structural_hessian_compile_ms,
+            "structural_num_colors": structural_hessian.num_colors,
+            "structural_evaluation_mean_ms": structural_hessian_ms,
+            "structural_evaluation_standard_deviation_ms": structural_hessian_std,
             "direct_hvp_mean_ms": direct_hessian_ms,
             "direct_hvp_standard_deviation_ms": direct_hessian_std,
             "maximum_value_difference": float(hessian_maximum_difference),

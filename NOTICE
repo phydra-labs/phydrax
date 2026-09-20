@@ -184,9 +184,9 @@ See LICENSES/CEPHES-BSD-3-CLAUSE.txt.
 ASDEX
 Copyright (c) 2024 Adrian Hill <gh@adrianhill.de>
 Licensed under the MIT License.
-Phydrax uses ASDEX as a compile-time global sparsity-detection and optimized-
-coloring dependency through its public Python API. ASDEX artifacts are
-normalized before Phydrax evaluates compressed derivatives through native JAX.
+Phydrax incorporates and adapts ASDEX JAXPR dependency-propagation handlers for
+native global structural sparsity tracing. Coloring, sparse artifacts, and
+compressed derivative execution remain Phydrax-owned native substrates.
 See LICENSES/ASDEX-MIT.txt.
 
 SeqJAX

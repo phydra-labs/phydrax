@@ -138,7 +138,7 @@ def test_process_realization_keeps_input_and_process_uncertainty_separate():
     assert first.realization_id != changed.realization_id
 
 
-def test_flowjax_coefficient_process_is_a_marginal_law_not_a_path_claim():
+def test_native_flow_coefficient_process_is_a_marginal_law_not_a_path_claim():
     process = phx.nn.models.conditional_coupling_flow_process(
         jr.key(6),
         state_shape=(2,),
@@ -153,7 +153,7 @@ def test_flowjax_coefficient_process_is_a_marginal_law_not_a_path_claim():
 
     assert isinstance(process, phx.stochastic.AbstractMarginalTransitionLaw)
     assert not isinstance(process, phx.stochastic.AbstractPathwiseTransition)
-    assert isinstance(distribution, phx.nn.models.FlowJAXProcessDistribution)
+    assert isinstance(distribution, phx.nn.models.FlowProcessDistribution)
     assert distribution.uncertainty_source == "process"
     assert distribution.batch_shape == (3,)
     assert distribution.event_shape == (2,)
@@ -166,7 +166,7 @@ def test_flowjax_coefficient_process_is_a_marginal_law_not_a_path_claim():
     assert jnp.isfinite(statistics.average_log_prob)
 
 
-def test_flowjax_semigroup_objective_is_differentiable_but_not_assumed_satisfied():
+def test_native_flow_semigroup_objective_is_differentiable_but_not_assumed_satisfied():
     process = phx.nn.models.conditional_coupling_flow_process(
         jr.key(8),
         state_shape=(2,),

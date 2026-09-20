@@ -24,19 +24,19 @@ sampling without depending on its source representation.
 
 ## Mesh and CAD input
 
-`mesh_region_from_source(...)` validates and canonicalizes build123d, meshio,
-PyVista, trimesh, or file-backed triangular meshes. Surface meshes must be
-finite, nondegenerate, consistently oriented, watertight, and enclose nonzero
-volume.
+`mesh_region_from_source(...)` validates and canonicalizes native triangle
+arrays, `TriangleMesh`, Meshio data, or Meshio-supported paths. Surface meshes
+must be finite, nondegenerate, consistently oriented, watertight, and enclose
+nonzero volume.
 
 STEP, IGES, and BREP input lowers to `BRepSource`, preserving face patches,
 trims, topology identities, and import provenance:
 
 ```python
-import build123d as bd
+from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
 
 model = phx.geometry.model_from_occt_shape(
-    bd.Box(1.0, 2.0, 3.0).wrapped,
+    BRepPrimAPI_MakeBox(1.0, 2.0, 3.0).Shape(),
     linear_deflection=0.1,
 )
 solid = phx.domain.GeometryDomain(phx.geometry.BRepSource(model).compile())

@@ -153,7 +153,6 @@ results, signatures, verification, attestations, notices, or approval.
 `commercial_ready` remains false even when the generated evidence can support
 G5; the typed G0–G7 evaluation and independent decision must still run. A
 dirty or non-Git tree, missing lock, PNPL repository license, absent external
-records, and missing notice license texts are blockers. In particular, the
-current NOTICE references `SING-MIT.txt` and `ASDEX-MIT.txt`; both absent files
-are reported explicitly. The current source distribution therefore remains a
-deterministic refusal and must not be described as commercial-ready.
+records, and missing notice license texts are blockers. The SING and ASDEX MIT
+license texts referenced by `NOTICE` are present; commercial readiness still
+requires the remaining signed evidence and independent release decision.

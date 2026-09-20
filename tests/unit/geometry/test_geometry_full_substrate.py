@@ -158,7 +158,7 @@ def test_matrix_free_ddg_linear_precision():
 
 def test_occt_brep_import_preserves_topology_patches_and_boundary_identity():
     model = phx.geometry.model_from_occt_shape(
-        bd.Box(1.0, 2.0, 3.0).wrapped,
+        BRepPrimAPI_MakeBox(1.0, 2.0, 3.0).Shape(),
         coordinate_contract=_SI_COORDINATES,
         linear_deflection=0.1,
         angular_deflection=0.3,

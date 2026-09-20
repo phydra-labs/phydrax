@@ -368,7 +368,7 @@ def test_native_hessian_modes_match_dense_and_remain_differentiable():
         assert jnp.all(jnp.isfinite(third_order))
 
 
-def test_asdex_compilation_normalizes_then_evaluates_natively(monkeypatch):
+def test_structural_compilation_normalizes_then_evaluates_natively():
     space = phx.linalg.ArraySpace((4,), dtype=jnp.float64)
     point = jnp.asarray([0.7, -1.2, 0.4, 1.5])
     arguments = jnp.asarray([1.3, -0.8])
@@ -378,26 +378,19 @@ def test_asdex_compilation_normalizes_then_evaluates_natively(monkeypatch):
         source=space,
         target=space,
         sample_args=arguments,
-        compiler="asdex",
+        compiler="auto",
     )
-    expected = plan.operator(point, arguments).as_dense()
+    expected = jax.jacfwd(_band_vector_function)(point, arguments)
 
-    assert plan.pattern.origin == "asdex"
-    assert plan.coloring.compiler == "asdex"
-    assert all(
-        not type(leaf).__module__.startswith("asdex") for leaf in jax.tree.leaves(plan)
-    )
-    for name in tuple(sys.modules):
-        if name == "asdex" or name.startswith("asdex."):
-            monkeypatch.delitem(sys.modules, name)
+    assert plan.pattern.origin == "structural"
+    assert plan.coloring.compiler == "native"
     assert jnp.allclose(
         jax.jit(lambda value: plan.operator(value, arguments).as_dense())(point),
         expected,
     )
-    assert "asdex" not in sys.modules
 
 
-def test_asdex_and_native_known_pattern_plans_agree():
+def test_auto_and_native_known_pattern_plans_agree():
     space = phx.linalg.ArraySpace((4,), dtype=jnp.float64)
     point = jnp.asarray([0.7, -1.2, 0.4, 1.5])
     arguments = jnp.asarray([1.3, -0.8])
@@ -418,7 +411,7 @@ def test_asdex_and_native_known_pattern_plans_agree():
         space=space,
         sample_args=arguments,
         structure=pattern,
-        compiler="asdex",
+        compiler="auto",
     )
 
     assert native.pattern.pattern_id == compiled.pattern.pattern_id
@@ -599,7 +592,7 @@ def test_import_boundary_and_provider_neutral_public_api():
         [
             sys.executable,
             "-c",
-            "import sys; import phydrax; assert 'asdex' not in sys.modules",
+            "import phydrax",
         ],
         check=False,
         capture_output=True,

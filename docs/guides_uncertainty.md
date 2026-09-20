@@ -121,12 +121,12 @@ point-value observables or applying the physical spatial quadrature measure.
 
 `space.eigenpairs(rank=...)` forms weighted-orthonormal real point-value modes and
 selects only the requested lowest tensor sums. `SpatialNoiseBasis.from_spectrum`
-instead constructs modes in the modal primary field space. Kernel-defined point-value
-covariance uses `SpatialNoiseBasis.from_kernel_covariance`, whose Matfree
-pivoted-Cholesky path queries entries on demand. A covariance available only as a
-point-value matvec uses
+instead constructs modes in the modal primary field space. Kernel-defined
+point-value covariance uses `SpatialNoiseBasis.from_kernel_covariance`, whose
+native pivoted-Cholesky path queries entries on demand. A covariance available
+only as a point-value matvec uses
 `SpatialNoiseBasis.from_covariance_operator(..., key=..., oversampling=...)` and
-randomized Nyström. Both routes expose their method, rank, tolerance,
+native randomized Nyström. Both routes expose their method, rank, tolerance,
 residual estimate, convergence flag, and seed/sketch provenance through
 `noise.approximation`; check that record before treating a truncation as
 numerically adequate.
@@ -309,10 +309,10 @@ finite-sample moments, log density, replay, query consistency, cocycle error,
 and empirical Gaussian-moment error.
 
 `phx.nn.models.conditional_coupling_flow_process` builds a
-`LatentFlowJAXCoefficientProcess` for non-Gaussian latent transition marginals.
+`LatentFlowCoefficientProcess` for non-Gaussian latent transition marginals.
 It intentionally implements only `AbstractMarginalTransitionLaw`: independent
-FlowJAX transition draws do not identify a common driving path and must not be
-used to claim cocycle consistency.
+flow transition draws do not identify a common driving path and must not be used
+to claim cocycle consistency.
 
 ### Finite-activity jump processes
 
@@ -892,7 +892,7 @@ represent only a declared noise floor plus learned factors; set
 when the distribution represents sensor noise. `OperatorDistributionNLL` evaluates
 the exact masked complete-field density during `fit_operator`.
 
-`ConditionalFlowFunctionOperator` uses a FlowJAX conditional coupling flow for a
+`ConditionalFlowFunctionOperator` uses a native conditional coupling flow for a
 non-Gaussian residual around a deterministic location operator. An
 `OperatorBatchConditioner` encodes named source functions into the condition vector.
 The output event, mask, and physical query geometry are constructor-fixed. Loader
@@ -1794,7 +1794,7 @@ implied.
 ## Flow-assisted NUTS
 
 `sample_flow_nuts` combines independently adapted NUTS chains with a shared
-FlowJAX normalizing flow. It is intended for posteriors with nonlinear global
+native normalizing flow. It is intended for posteriors with nonlinear global
 geometry or multiple modes that are already represented by the initial chains.
 It is not a mode-discovery algorithm and does not estimate evidence.
 
@@ -1854,9 +1854,10 @@ frozen flow.
 
 Automatic chain initialization requires declared factorized priors. A custom joint
 log prior requires explicit `initial_positions`. Checkpointing commits complete
-adaptation rounds, stabilization chunks, and production chunks; resume reconstructs
-the dynamic FlowJAX arrays against a locally rebuilt static template and rejects
-configuration, package-version, shape, dtype, or flow-fingerprint mismatches.
+adaptation rounds, stabilization chunks, and production chunks; resume
+reconstructs the dynamic native-flow arrays against a locally rebuilt static
+template and rejects configuration, architecture, shape, dtype, or
+flow-fingerprint mismatches.
 
 This implementation is native Phydrax orchestration, not a wrapper around
 [`flowMC`](https://github.com/kazewong/flowMC). The flow-assisted sampling rationale

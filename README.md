@@ -604,10 +604,9 @@ Otherwise, Phydrax will default to the cpu version.
 uv add phydrax
 ```
 
-The base install includes ASDEX for compile-time global sparse-derivative
-detection and optimized coloring. Compiled sparse Jacobian and Hessian plans
-evaluate through native JAX and integrate directly with `phydrax.linalg`; ASDEX
-is not imported by ordinary Phydrax or linear-algebra use.
+The base install includes native JAXPR structural tracing and deterministic
+coloring for sparse derivative plans. Compiled sparse Jacobian and Hessian plans
+integrate directly with `phydrax.linalg` and require no external tracing runtime.
 
 ## Documentation
 

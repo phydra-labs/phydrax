@@ -258,7 +258,7 @@ outside `filter_value_and_grad` and the compiled loss. The identical batch is re
 for every value, gradient, line-search, and same-update parameter-view evaluation.
 This prevents differentiation through Monte Carlo target construction and prevents
 an optimizer population from silently receiving different targets within one update.
-Evosax likewise materializes one batch per population update.
+Native distribution evolution likewise materializes one batch per population update.
 
 Fixed sampled terms return the same batch on every call and are the default for
 common-random-number comparisons. Resampled terms receive deterministic fresh
@@ -423,7 +423,7 @@ shape.
 - an Optax `GradientTransformation` (standard first-order optimizers),
 - an Optax `GradientTransformationExtraArgs` (line-search style optimizers),
 - a Phydrax Riemannian optimizer,
-- an Evosax distribution-based algorithm, or
+- a native `OpenEvolutionStrategy`, or
 - `phx.optim.kfac(...)` for supported quadratic residual objectives.
 
 Optimizer selection changes only the numerical update backend. Every backend
@@ -434,12 +434,9 @@ interruption handling do not depend on the optimizer family. `num_iter` is
 validated before dispatch for every backend; zero is a no-op and negative values
 are rejected.
 
-Evosax population-based algorithms are not accepted by `FunctionalSolver`. They
-require an explicit initial population, finite search bounds, and selection semantics
-that a general neural-network parameter PyTree does not provide. Low-dimensional
-geometry design uses
-[`DesignConstraintSystem.search`](api/geometry.md#bounded-global-design-search),
-which supplies those contracts explicitly.
+Population methods requiring an explicit initial population, finite search
+bounds, and selection semantics remain owned by
+[`DesignConstraintSystem.search`](api/geometry.md#bounded-global-design-search).
 
 ### Optimizer evaluation parameters
 
@@ -461,7 +458,7 @@ solver = solver.solve(
 )
 ```
 
-This contract is available for Optax optimizers, not evosax algorithms.
+This contract is available for Optax optimizers, not distribution evolution.
 
 ### Iteration counter (`iter_`)
 
@@ -474,7 +471,7 @@ Every optimizer update first prepares one immutable objective realization. This
 step selects the active training terms, samples explicit sampling terms,
 materializes per-step integration sources, binds adaptive-collocation batches and
 local weights, and assigns the evaluation keys and iteration value. Gradient
-evaluation, line search, Riemannian candidate comparison, Evosax population
+evaluation, line search, Riemannian candidate comparison, distribution-population
 evaluation, and KFAC residual lowering consume that prepared object rather than
 sampling independently.
 

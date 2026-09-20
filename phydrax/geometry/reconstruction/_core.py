@@ -7,21 +7,19 @@ from __future__ import annotations
 import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 import equinox as eqx
 import numpy as np
-import pyvista as pv
-import trimesh
 from jaxtyping import ArrayLike
-from shapely.geometry import Polygon as ShapelyPolygon
-from shapely.geometry.polygon import orient
-from shapely.ops import unary_union
+from scipy.spatial import Delaunay, QhullError
 
 from ...measurement.lidar import LidarPointProduct
 from .._contracts import GeometryKernel, GeometrySource
 from ..design._schema import _ParameterCollector
-from ..simplicial import MeshRegion, PlanarMeshRegion
+from ..simplicial import MeshRegion, planar_region_from_triangles, PlanarMeshRegion
+from ..simplicial._io import _canonical_triangle_arrays
+from ..simplicial._topology import TriangleTopology
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,7 +160,59 @@ def _recenter(points: np.ndarray, enabled: bool) -> tuple[np.ndarray, np.ndarray
     return points - offset, offset
 
 
-def _polydata_triangles(polydata: pv.PolyData) -> tuple[np.ndarray, np.ndarray]:
+def _require_pyvista():
+    try:
+        import pyvista
+    except ImportError as error:
+        raise ImportError(
+            "Implicit point-cloud reconstruction requires the optional "
+            "'geometry-pyvista' dependency group."
+        ) from error
+    return pyvista
+
+
+def _planar_triangulation(
+    points: np.ndarray,
+    /,
+    *,
+    tolerance: float,
+    alpha: float,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    scale = max(float(np.max(np.ptp(points, axis=0))), 1.0)
+    if tolerance > 0.0:
+        quantized = np.rint(points / (tolerance * scale)).astype(np.int64)
+        _, retained = np.unique(quantized, axis=0, return_index=True)
+    else:
+        _, retained = np.unique(points, axis=0, return_index=True)
+    retained = np.sort(retained)
+    vertices = points[retained]
+    if vertices.shape[0] < 3:
+        raise ValueError("Planar reconstruction retained fewer than three points.")
+    try:
+        faces = np.asarray(Delaunay(vertices).simplices, dtype=np.int32)
+    except QhullError as error:
+        raise ValueError("Planar Delaunay triangulation failed.") from error
+    triangles = vertices[faces]
+    doubled_area = (triangles[:, 1, 0] - triangles[:, 0, 0]) * (
+        triangles[:, 2, 1] - triangles[:, 0, 1]
+    ) - (triangles[:, 1, 1] - triangles[:, 0, 1]) * (
+        triangles[:, 2, 0] - triangles[:, 0, 0]
+    )
+    negative = doubled_area < 0.0
+    faces[negative] = faces[negative][:, [0, 2, 1]]
+    doubled_area = np.abs(doubled_area)
+    if alpha > 0.0:
+        first = np.linalg.norm(triangles[:, 1] - triangles[:, 0], axis=1)
+        second = np.linalg.norm(triangles[:, 2] - triangles[:, 1], axis=1)
+        third = np.linalg.norm(triangles[:, 0] - triangles[:, 2], axis=1)
+        radius = first * second * third / np.maximum(2.0 * doubled_area, 1.0e-300)
+        faces = faces[radius <= alpha]
+    if faces.shape[0] == 0:
+        raise ValueError("Planar reconstruction produced no retained triangles.")
+    return vertices, faces, retained
+
+
+def _polydata_triangles(polydata: Any) -> tuple[np.ndarray, np.ndarray]:
     surface = polydata.triangulate()
     vertices = np.asarray(surface.points, dtype=np.float64)
     packed = np.asarray(surface.faces, dtype=np.int64)
@@ -177,17 +227,10 @@ def _polydata_triangles(polydata: pv.PolyData) -> tuple[np.ndarray, np.ndarray]:
 def _clean_surface_mesh(
     vertices: np.ndarray,
     faces: np.ndarray,
-) -> trimesh.Trimesh:
-    mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=True, validate=True)
-    mesh.update_faces(mesh.unique_faces() & mesh.nondegenerate_faces())
-    mesh.remove_unreferenced_vertices()
-    mesh.merge_vertices()
-    mesh.fix_normals(multibody=True)
-    if not mesh.is_watertight:
-        mesh.fill_holes()
-        mesh.remove_unreferenced_vertices()
-        mesh.fix_normals(multibody=True)
-    return mesh
+) -> tuple[np.ndarray, np.ndarray, TriangleTopology]:
+    vertices_, faces_ = _canonical_triangle_arrays(vertices, faces)
+    topology = TriangleTopology(faces_, num_vertices=vertices_.shape[0])
+    return vertices_, faces_, topology
 
 
 def _parameter_records(**parameters) -> tuple[tuple[str, str], ...]:
@@ -210,63 +253,32 @@ def reconstruct_planar_region(
     points_ = _validated_points(points, 2)
     if alpha < 0.0 or tolerance < 0.0 or offset <= 0.0:
         raise ValueError("alpha/tolerance must be non-negative and offset positive.")
-    embedded = np.column_stack((points_, np.zeros((points_.shape[0],), dtype=np.float64)))
-    surface = pv.PolyData(embedded).delaunay_2d(
-        tol=float(tolerance),
+    vertices_2d, faces, _ = _planar_triangulation(
+        points_,
+        tolerance=float(tolerance),
         alpha=float(alpha),
-        offset=float(offset),
-        bound=bool(bound),
-        progress_bar=bool(progress_bar),
     )
-    vertices_3d, faces = _polydata_triangles(surface)
-    triangle_polygons = []
-    for face in faces:
-        polygon = ShapelyPolygon(vertices_3d[face, :2])
-        if polygon.area > 0.0:
-            triangle_polygons.append(polygon)
-    region = unary_union(triangle_polygons)
-    algorithm = "pyvista_delaunay_2d_union"
+    planar = planar_region_from_triangles(
+        vertices_2d,
+        faces,
+        recenter=False,
+        feature_id=feature_id,
+    )
+    planar_vertices = np.asarray(planar.vertices, dtype=np.float64)
+    vertices, center = _recenter(planar_vertices, recenter)
+    offsets = np.asarray(planar.loop_offsets, dtype=np.int32)
+    loops = tuple(
+        np.arange(offsets[index], offsets[index + 1], dtype=np.int32)
+        for index in range(offsets.shape[0] - 1)
+    )
+    source = PlanarMeshRegion(vertices, loops, feature_id=feature_id)
+    algorithm = "scipy_delaunay_2d_native_boundary"
     parameters = _parameter_records(
         alpha=float(alpha),
         tolerance=float(tolerance),
         offset=float(offset),
         bound=bool(bound),
     )
-    if region.geom_type != "Polygon":
-        components = len(region.geoms) if region.geom_type == "MultiPolygon" else 0
-        report = ReconstructionReport(
-            source_kind="planar_point_cloud",
-            algorithm=algorithm,
-            input_digest=_point_digest(points_),
-            input_points=points_.shape[0],
-            retained_points=points_.shape[0],
-            output_vertices=vertices_3d.shape[0],
-            output_cells=faces.shape[0],
-            connected_components=components,
-            watertight=False,
-            winding_consistent=False,
-            recenter_offset=(0.0, 0.0),
-            parameters=parameters,
-            warnings=("Triangulation did not produce one connected planar polygon.",),
-        )
-        raise ReconstructionFailure(
-            "Planar reconstruction must produce one connected polygon.", report
-        )
-    region = orient(region, sign=1.0)
-    loops_host = [np.asarray(region.exterior.coords[:-1], dtype=np.float64)]
-    loops_host.extend(
-        np.asarray(interior.coords[:-1], dtype=np.float64)
-        for interior in region.interiors
-    )
-    vertices = np.concatenate(loops_host, axis=0)
-    vertices, center = _recenter(vertices, recenter)
-    loops: list[np.ndarray] = []
-    cursor = 0
-    for loop_points in loops_host:
-        loop = np.arange(cursor, cursor + loop_points.shape[0], dtype=np.int32)
-        loops.append(loop)
-        cursor += loop_points.shape[0]
-    source = PlanarMeshRegion(vertices, loops, feature_id=feature_id)
     report = ReconstructionReport(
         source_kind="planar_point_cloud",
         algorithm=algorithm,
@@ -286,7 +298,7 @@ def reconstruct_planar_region(
 
 def _surface_source(
     points: np.ndarray,
-    surface: pv.PolyData,
+    surface: Any,
     *,
     source_kind: str,
     algorithm: str,
@@ -297,11 +309,32 @@ def _surface_source(
     feature_id: str | None = None,
     source_product_id: str | None = None,
 ) -> ReconstructedGeometrySource:
-    vertices, faces = _polydata_triangles(surface)
-    mesh = _clean_surface_mesh(vertices, faces)
-    components = len(mesh.split(only_watertight=False))
-    vertices_clean = np.asarray(mesh.vertices, dtype=np.float64)
-    faces_clean = np.asarray(mesh.faces, dtype=np.int32)
+    vertices, faces = (
+        surface if isinstance(surface, tuple) else _polydata_triangles(surface)
+    )
+    try:
+        vertices_clean, faces_clean, topology = _clean_surface_mesh(vertices, faces)
+        winding_consistent = True
+    except ValueError as error:
+        report = ReconstructionReport(
+            source_kind=source_kind,
+            algorithm=algorithm,
+            input_digest=_point_digest(points),
+            input_points=input_points,
+            retained_points=points.shape[0],
+            output_vertices=vertices.shape[0],
+            output_cells=faces.shape[0],
+            connected_components=0,
+            watertight=False,
+            winding_consistent=False,
+            recenter_offset=(0.0, 0.0, 0.0),
+            parameters=parameters,
+            warnings=(*warnings, str(error)),
+            source_product_id=source_product_id,
+        )
+        raise ReconstructionFailure(
+            "Surface reconstruction produced invalid triangle topology.", report
+        ) from error
     vertices_clean, center = _recenter(vertices_clean, recenter)
     report = ReconstructionReport(
         source_kind=source_kind,
@@ -311,9 +344,9 @@ def _surface_source(
         retained_points=points.shape[0],
         output_vertices=vertices_clean.shape[0],
         output_cells=faces_clean.shape[0],
-        connected_components=components,
-        watertight=bool(mesh.is_watertight),
-        winding_consistent=bool(mesh.is_winding_consistent),
+        connected_components=topology.num_face_components,
+        watertight=topology.watertight,
+        winding_consistent=winding_consistent,
         recenter_offset=tuple(float(value) for value in center),
         parameters=parameters,
         warnings=tuple(warnings),
@@ -344,7 +377,8 @@ def reconstruct_surface_region(
         raise ValueError("neighborhood_size must be positive when provided.")
     if sample_spacing is not None and sample_spacing <= 0.0:
         raise ValueError("sample_spacing must be positive when provided.")
-    surface = pv.PolyData(points_).reconstruct_surface(
+    pyvista = _require_pyvista()
+    surface = pyvista.PolyData(points_).reconstruct_surface(
         nbr_sz=neighborhood_size,
         sample_spacing=sample_spacing,
         progress_bar=bool(progress_bar),
@@ -414,22 +448,37 @@ def reconstruct_dem_region(
         raise ValueError(
             "alpha/tolerance must be non-negative and extrude_depth positive."
         )
-    surface = pv.PolyData(points).delaunay_2d(
-        tol=float(tolerance),
+    planar_vertices, top_faces, retained_indices = _planar_triangulation(
+        points[:, :2],
+        tolerance=float(tolerance),
         alpha=float(alpha),
-        bound=bool(bound),
-        progress_bar=bool(progress_bar),
     )
-    solid = surface.triangulate().extrude(
-        (0.0, 0.0, -float(extrude_depth)),
-        capping=True,
-        progress_bar=bool(progress_bar),
+    top_vertices = points[retained_indices].copy()
+    top_vertices[:, :2] = planar_vertices
+    topology = TriangleTopology(top_faces, num_vertices=top_vertices.shape[0])
+    boundary = np.asarray(topology.boundary_halfedges, dtype=np.int32)
+    origins = np.asarray(topology.halfedge_origin, dtype=np.int32)[boundary]
+    destinations = np.asarray(topology.halfedge_destination, dtype=np.int32)[boundary]
+    count = top_vertices.shape[0]
+    bottom_vertices = top_vertices.copy()
+    bottom_vertices[:, 2] -= float(extrude_depth)
+    side_first = np.stack((origins + count, destinations + count, destinations), axis=1)
+    side_second = np.stack((origins + count, destinations, origins), axis=1)
+    solid_vertices = np.concatenate((top_vertices, bottom_vertices), axis=0)
+    solid_faces = np.concatenate(
+        (
+            top_faces,
+            top_faces[:, [0, 2, 1]] + count,
+            side_first,
+            side_second,
+        ),
+        axis=0,
     )
     return _surface_source(
         points,
-        solid,
+        (solid_vertices, solid_faces),
         source_kind="digital_elevation_model",
-        algorithm="pyvista_delaunay_2d_capped_extrusion",
+        algorithm="native_delaunay_2d_capped_extrusion",
         recenter=recenter,
         parameters=_parameter_records(
             alpha=float(alpha),
@@ -486,7 +535,8 @@ def reconstruct_point_region(
         raise ValueError("neighborhood_size must be positive when provided.")
     if sample_spacing is not None and sample_spacing <= 0.0:
         raise ValueError("sample_spacing must be positive when provided.")
-    surface = pv.PolyData(retained).reconstruct_surface(
+    pyvista = _require_pyvista()
+    surface = pyvista.PolyData(retained).reconstruct_surface(
         nbr_sz=neighborhood_size,
         sample_spacing=sample_spacing,
         progress_bar=bool(progress_bar),

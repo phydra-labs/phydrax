@@ -7,9 +7,9 @@ owned by Phydrax. It is intentionally narrow: each object exposes a concrete num
 contract, while the consuming workflow retains its geometry, sampling, objective,
 reconstruction, validity, checkpoint, and result semantics.
 
-Phydrax does not mirror upstream Optax, Evosax, or Optimistix APIs. Import those objects
-from their native packages. A workflow accepts an external optimizer only when it has an
-explicit adapter for that optimizer family.
+Phydrax owns distribution evolution and does not mirror upstream optimizer APIs.
+A workflow accepts an external optimizer only when it has an explicit adapter
+for that optimizer family.
 
 ## Finite exhaustive search
 
@@ -2192,15 +2192,14 @@ is supplied externally so checkpoint identity does not depend on an opaque Pytho
 
 An explicit `ParameterSubspace` may be supplied to `FunctionalSolver.solve` or
 `fit_operator`. In the initial contract this restriction is supported only by
-standard and extra-argument Optax transformations. KFAC, Evosax, mirror,
-Riemannian, scalar, least-squares, and composite backends reject it rather than
-silently optimizing the complete ambient PyTree.
+standard and extra-argument Optax transformations. KFAC, distribution evolution,
+mirror, Riemannian, scalar, least-squares, and composite backends reject it
+rather than silently optimizing the complete ambient PyTree.
 
-Evosax distribution-based algorithms remain accepted by `FunctionalSolver`; its
-population-based algorithms require an explicit finite search-space contract and are
-rejected there. Optimistix interoperation is deliberately explicit and standalone:
-wrap a compatible upstream minimizer in `OptimistixMethod`. Phydrax does not inspect an
-arbitrary upstream object or silently reinterpret its stopping rules.
+`OpenEvolutionStrategy` is the native antithetic distribution-search method
+accepted by `FunctionalSolver`. Population methods requiring an explicit finite
+search-space contract remain owned by `DesignConstraintSystem.search(...)`.
+Optimistix interoperation remains explicit through `OptimistixMethod`.
 
 ## Metric-aware density transforms
 

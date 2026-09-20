@@ -11,9 +11,7 @@ from phydrax.finance.interchange import (
     export_fpml_contract,
     FinanceRecordBatch,
     import_fpml_contract,
-    market_records_to_polars,
     market_snapshot_to_records,
-    polars_to_market_records,
     records_to_market_snapshot,
 )
 from phydrax.finance.market import (
@@ -73,12 +71,7 @@ def test_market_records_round_trip_all_identity_bearing_children():
     assert restored.snapshot_id == snapshot.snapshot_id
     assert restored.observations[0].observation_id == observation.observation_id
 
-    frame = market_records_to_polars(records)
-    reframed = polars_to_market_records(
-        frame,
-        primary_key=("observation_id",),
-        context=records.context(),
-    )
+    reframed = FinanceRecordBatch.from_record(records.to_record())
     assert reframed.batch_id == records.batch_id
 
 

@@ -840,7 +840,7 @@ _OPERATOR_ARCHITECTURE_STATUSES = {
         "ConditionalFlowFunctionOperator",
         "ConditionalFlowFunctionOperator",
         "experimental",
-        "Conditional FlowJAX residual densities are supported on shared fixed query "
+        "Conditional native residual flows are supported on shared fixed query "
         "geometries; arbitrary-query and resolution-transfer claims are excluded.",
     ),
     "ConditionalFunctionFrameFlowOperator": _status(

@@ -156,9 +156,9 @@ point queries. `MeshRegion` and `PlanarMeshRegion` lower watertight 3D meshes an
 planar triangulations to the common geometry kernel.
 
 `discrete_operators(...)` constructs matrix-free DDG incidence, mass, Laplacian,
-and gradient operators from the same topology. Mesh adapters accept build123d,
-meshio, PyVista, and trimesh inputs through the canonical import functions instead
-of maintaining representation-specific query code.
+and gradient operators from the same topology. Mesh adapters accept native
+triangle arrays, `TriangleMesh`, Meshio data, or Meshio-supported paths through
+the canonical import functions.
 
 ## Boundary atlases and measure partitions
 
@@ -212,11 +212,11 @@ surface Jacobians and boundary frames remain finite instead of collapsing to a
 constant endpoint branch.
 
 ```python
-import build123d as bd
+from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
 
 coordinate_contract = phx.SpatialCoordinateContract(phx.units.MILLIMETER)
 model = phx.geometry.model_from_occt_shape(
-    bd.Box(1.0, 2.0, 3.0).wrapped,
+    BRepPrimAPI_MakeBox(1.0, 2.0, 3.0).Shape(),
     coordinate_contract=coordinate_contract,
     linear_deflection=0.1,
 )

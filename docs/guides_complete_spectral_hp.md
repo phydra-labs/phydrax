@@ -66,8 +66,9 @@ covariant and contravariant physical mappings. `TensorDeRhamTransferPlan`,
 
 ## Simplex and hybrid references
 
-`SimplexNodalFamily` supplies Modepy warp-and-blend triangle/tetrahedron nodes and
-orthonormal modal tabulation. `HybridReferenceFamily` supplies
+`SimplexNodalFamily` supplies native Warburton warp-and-blend
+triangle/tetrahedron nodes and orthonormal modal tabulation.
+`HybridReferenceFamily` supplies
 triangle-times-interval prism bases and a rational degree-one pyramid basis.
 Mixed three-dimensional faces use canonical polyhedral connectivity and
 two-sided conservative interface routes.

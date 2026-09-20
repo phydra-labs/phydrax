@@ -4,14 +4,13 @@
 
 from __future__ import annotations
 
-from math import comb, factorial
+from math import comb, factorial, sqrt
 from numbers import Integral
 from typing import Literal
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import modepy as mp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
@@ -512,6 +511,201 @@ def local_diagonal(
     return jnp.zeros((int(size),), dtype=matrices.dtype).at[dofs].add(diagonal)
 
 
+_ALPHA_OPT_2D = (
+    0.0,
+    0.0,
+    1.4152,
+    0.1001,
+    0.2751,
+    0.9800,
+    1.0999,
+    1.2832,
+    1.3648,
+    1.4773,
+    1.4959,
+    1.5743,
+    1.5770,
+    1.6223,
+    1.6258,
+)
+_ALPHA_OPT_3D = (
+    0.0,
+    0.0,
+    0.0,
+    0.1002,
+    1.1332,
+    1.5608,
+    1.3413,
+    1.2577,
+    1.1603,
+    1.10153,
+    0.6080,
+    0.4523,
+    0.8856,
+    0.8717,
+    0.9655,
+)
+_EQUILATERAL_VERTICES = {
+    2: np.asarray(
+        ((-1.0, -1.0 / sqrt(3.0)), (1.0, -1.0 / sqrt(3.0)), (0.0, 2.0 / sqrt(3.0)))
+    ),
+    3: np.asarray(
+        (
+            (-1.0, -1.0 / sqrt(3.0), -1.0 / sqrt(6.0)),
+            (1.0, -1.0 / sqrt(3.0), -1.0 / sqrt(6.0)),
+            (0.0, 2.0 / sqrt(3.0), -1.0 / sqrt(6.0)),
+            (0.0, 0.0, 3.0 / sqrt(6.0)),
+        )
+    ),
+}
+
+
+def _simplex_node_tuples(order: int, dimension: int, /) -> tuple[tuple[int, ...], ...]:
+    def generate(maximum: int, length: int):
+        if length == 0:
+            yield ()
+            return
+        for value in range(maximum + 1):
+            for remainder in generate(maximum - value, length - 1):
+                yield (*remainder, value)
+
+    return tuple(generate(order, dimension))
+
+
+def _unit_to_barycentric(unit: np.ndarray, /) -> np.ndarray:
+    tail = 0.5 * (unit + 1.0)
+    return np.vstack((1.0 - np.sum(tail, axis=0), tail))
+
+
+def _barycentric_to_equilateral(barycentric: np.ndarray, /) -> np.ndarray:
+    return _EQUILATERAL_VERTICES[len(barycentric) - 1].T @ barycentric
+
+
+def _equilateral_to_unit(equilateral: np.ndarray, /) -> np.ndarray:
+    dimension = len(equilateral)
+    if dimension == 2:
+        matrix = np.asarray(((1.0, -1.0 / sqrt(3.0)), (0.0, 2.0 / sqrt(3.0))))
+        offset = np.asarray((-1.0 / 3.0, -1.0 / 3.0))
+    elif dimension == 3:
+        matrix = np.asarray(
+            (
+                (1.0, -1.0 / sqrt(3.0), -1.0 / sqrt(6.0)),
+                (0.0, 2.0 / sqrt(3.0), -1.0 / sqrt(6.0)),
+                (0.0, 0.0, sqrt(6.0) / 2.0),
+            )
+        )
+        offset = np.asarray((-0.5, -0.5, -0.5))
+    else:
+        raise ValueError("Warp-and-blend nodes require dimension two or three.")
+    return matrix @ equilateral + offset[:, None]
+
+
+def _warp_factor(order: int, output_nodes: np.ndarray, /) -> np.ndarray:
+    lobatto = np.asarray(legendre_rule_data(order + 1, "lobatto").nodes)
+    equispaced = np.linspace(-1.0, 1.0, order + 1)
+    equispaced_vandermonde = np.polynomial.legendre.legvander(equispaced, order)
+    output_vandermonde = np.polynomial.legendre.legvander(output_nodes, order)
+    interpolation = np.linalg.solve(equispaced_vandermonde.T, output_vandermonde.T).T
+    warp = interpolation @ (lobatto - equispaced)
+    interior = (np.abs(output_nodes) < 1.0 - 1.0e-10).astype(np.float64)
+    scale = 1.0 - (interior * output_nodes) ** 2
+    return warp / scale + warp * (interior - 1.0)
+
+
+def _equilateral_shift_2d(
+    order: int, barycentric: np.ndarray, alpha: float, /
+) -> np.ndarray:
+    vertices = _EQUILATERAL_VERTICES[2]
+    result = np.zeros((2, barycentric.shape[1]), dtype=np.float64)
+    for first in range(3):
+        second, third = tuple(index for index in range(3) if index != first)
+        blend = 4.0 * barycentric[second] * barycentric[third]
+        warp_factor = _warp_factor(order, barycentric[second] - barycentric[third])
+        warp = blend * warp_factor * (1.0 + (alpha * barycentric[first]) ** 2)
+        tangent = vertices[second] - vertices[third]
+        tangent /= np.linalg.norm(tangent)
+        result += tangent[:, None] * warp[None, :]
+    return result
+
+
+def _warp_and_blend_nodes_2d(
+    order: int, node_tuples: tuple[tuple[int, ...], ...], /
+) -> np.ndarray:
+    alpha = _ALPHA_OPT_2D[order - 1] if order <= len(_ALPHA_OPT_2D) else 5.0 / 3.0
+    unit_nodes = (np.asarray(node_tuples, dtype=np.float64) / order * 2.0 - 1.0).T
+    barycentric = _unit_to_barycentric(unit_nodes)
+    equilateral = _barycentric_to_equilateral(barycentric)
+    return _equilateral_to_unit(
+        equilateral + _equilateral_shift_2d(order, barycentric, alpha)
+    )
+
+
+def _warp_and_blend_nodes_3d(
+    order: int, node_tuples: tuple[tuple[int, ...], ...], /
+) -> np.ndarray:
+    alpha = _ALPHA_OPT_3D[order - 1] if order <= len(_ALPHA_OPT_3D) else 1.0
+    unit_nodes = (np.asarray(node_tuples, dtype=np.float64) / order * 2.0 - 1.0).T
+    barycentric = _unit_to_barycentric(unit_nodes)
+    equilateral = _barycentric_to_equilateral(barycentric)
+    vertices = _EQUILATERAL_VERTICES[3]
+    shift = np.zeros_like(equilateral)
+    tolerance = 1.0e-8
+    for first, second, third, fourth, vertex_step in (
+        (0, 1, 2, 3, -1),
+        (1, 2, 3, 0, -1),
+        (2, 3, 0, 1, -1),
+        (3, 0, 1, 2, -1),
+    ):
+        vertex_two, vertex_three, vertex_four = (
+            (first + vertex_step * index) % 4 for index in range(1, 4)
+        )
+        tangent_one = vertices[vertex_three] - vertices[vertex_four]
+        tangent_one /= np.linalg.norm(tangent_one)
+        tangent_two = vertices[vertex_two] - vertices[vertex_three]
+        tangent_two -= np.dot(tangent_one, tangent_two) * tangent_one
+        tangent_two /= np.linalg.norm(tangent_two)
+
+        face_barycentric = barycentric[[second, third, fourth]]
+        warp_one, warp_two = _equilateral_shift_2d(order, face_barycentric, alpha)
+        first_barycentric = barycentric[first]
+        second_barycentric, third_barycentric, fourth_barycentric = face_barycentric
+        blend = second_barycentric * third_barycentric * fourth_barycentric
+        denominator = (
+            (second_barycentric + 0.5 * first_barycentric)
+            * (third_barycentric + 0.5 * first_barycentric)
+            * (fourth_barycentric + 0.5 * first_barycentric)
+        )
+        valid_denominator = denominator > tolerance
+        blend[valid_denominator] = (
+            (1.0 + (alpha * first_barycentric[valid_denominator]) ** 2)
+            * blend[valid_denominator]
+            / denominator[valid_denominator]
+        )
+        shift += (blend * warp_one)[None, :] * tangent_one[:, None]
+        shift += (blend * warp_two)[None, :] * tangent_two[:, None]
+
+        on_face = (first_barycentric < tolerance) & (
+            (second_barycentric > tolerance)
+            | (third_barycentric > tolerance)
+            | (fourth_barycentric > tolerance)
+        )
+        shift[:, on_face] = (
+            warp_one[on_face][None, :] * tangent_one[:, None]
+            + warp_two[on_face][None, :] * tangent_two[:, None]
+        )
+    return _equilateral_to_unit(equilateral + shift)
+
+
+def _warp_and_blend_nodes(
+    dimension: int, order: int, node_tuples: tuple[tuple[int, ...], ...], /
+) -> np.ndarray:
+    if dimension == 2:
+        return _warp_and_blend_nodes_2d(order, node_tuples)
+    if dimension == 3:
+        return _warp_and_blend_nodes_3d(order, node_tuples)
+    raise ValueError("Warp-and-blend nodes require dimension two or three.")
+
+
 class SimplexNodalFamily(StrictModule, NonTrainableState):
     """Warp-and-blend simplex nodes with an orthonormal modal tabulation."""
 
@@ -531,15 +725,12 @@ class SimplexNodalFamily(StrictModule, NonTrainableState):
             raise ValueError(
                 "Simplex nodal families require triangle/tetrahedron and p>=0."
             )
-        space = mp.PN(dimension, p)
-        node_tuples = tuple(tuple(index) for index in mp.node_tuples_for_space(space))
+        node_tuples = _simplex_node_tuples(p, dimension)
+        space_dimension = comb(p + dimension, dimension)
         if p == 0:
             nodes = np.full((1, dimension), 1.0 / (dimension + 1.0))
-            unit_nodes = (2.0 * nodes - 1.0).T
         else:
-            unit_nodes = np.asarray(
-                mp.warp_and_blend_nodes(dimension, p, node_tuples), dtype=np.float64
-            )
+            unit_nodes = _warp_and_blend_nodes(dimension, p, node_tuples)
             nodes = 0.5 * (unit_nodes.T + 1.0)
         barycentric_nodes = np.concatenate(
             (1.0 - np.sum(nodes, axis=1, keepdims=True), nodes),
@@ -560,7 +751,7 @@ class SimplexNodalFamily(StrictModule, NonTrainableState):
             barycentric_nodes[:, None, :] ** exponents[None, :, :],
             axis=-1,
         )
-        coefficients = np.linalg.solve(modal, np.eye(space.space_dim))
+        coefficients = np.linalg.solve(modal, np.eye(space_dimension))
         condition = float(np.linalg.cond(modal))
         barycentric = tuple((p - sum(index),) + tuple(index) for index in node_tuples)
         self.cell_kind = cell
@@ -574,7 +765,7 @@ class SimplexNodalFamily(StrictModule, NonTrainableState):
                 "kind": "simplex-warp-blend-nodal-family",
                 "cell": cell,
                 "order": p,
-                "node_source": f"modepy:{mp.__version__}",
+                "node_source": "phydrax:warburton-warp-blend",
                 "nodes": array_tree_fingerprint(nodes),
                 "condition_number": condition,
             }

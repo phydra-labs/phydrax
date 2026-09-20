@@ -5,7 +5,6 @@
 import jax
 import jax.numpy as jnp
 import numpy as np
-import trimesh
 
 import phydrax as phx
 
@@ -104,9 +103,8 @@ def test_3d_enforcement_gate_vanishes_on_sliver_facet():
             [2, 0, 3],
         ]
     )
-    mesh = trimesh.Trimesh(vertices=vertices, faces=faces, process=False)
     geom = phx.domain.GeometryDomain(
-        phx.geometry.mesh_region_from_source(mesh, recenter=False).compile()
+        phx.geometry.mesh_region_from_source((vertices, faces), recenter=False).compile()
     )
     gate = geom.make_enforcement_gate()
     facet_point = jnp.asarray(np.array([0.026, 0.957, 0.017]) @ vertices[[0, 1, 2]])

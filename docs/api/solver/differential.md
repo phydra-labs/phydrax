@@ -798,12 +798,11 @@ continuous kernel, or a covariance matvec:
 
 - `from_discrete_covariance` performs a dense weighted eigendecomposition and is
   intended for small matrices.
-- `from_kernel_covariance` uses Matfree pivoted Cholesky. It evaluates scalar
+- `from_kernel_covariance` uses native pivoted Cholesky. It evaluates scalar
   kernel entries on demand and stores \(O(nr)\) values rather than an
   \(n\times n\) covariance.
 - `from_covariance_operator` accepts a state-shaped covariance matvec and uses a
-  seeded Matfree randomized Nyström sketch. `oversampling` controls sketch
-  width.
+  seeded native randomized Nyström sketch. `oversampling` controls sketch width.
 
 Approximate constructors attach `SpatialNoiseApproximation` at
 `basis.approximation`. It records the method, requested and retained ranks,

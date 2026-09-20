@@ -26,8 +26,8 @@ SparseHessianMode: TypeAlias = Literal[
     "rev_over_rev",
 ]
 SparseDerivativeMode: TypeAlias = SparseJacobianMode | SparseHessianMode
-SparseDerivativeCompiler: TypeAlias = Literal["auto", "native", "asdex"]
-SparseColoringCompiler: TypeAlias = Literal["native", "asdex"]
+SparseDerivativeCompiler: TypeAlias = Literal["auto", "native"]
+SparseColoringCompiler: TypeAlias = Literal["native"]
 _JACOBIAN_MODES = ("fwd", "rev")
 _HESSIAN_MODES = ("fwd_over_rev", "rev_over_fwd", "rev_over_rev")
 
@@ -62,7 +62,7 @@ class SparseColoring(StrictModule, NonTrainableState):
             raise TypeError("pattern must be a SparsePattern.")
         if mode not in (*_JACOBIAN_MODES, *_HESSIAN_MODES):
             raise ValueError(f"Unknown sparse derivative mode {mode!r}.")
-        if compiler not in ("native", "asdex"):
+        if compiler != "native":
             raise ValueError(f"Unknown sparse coloring compiler {compiler!r}.")
 
         colors_host = _integer_vector("colors", colors)

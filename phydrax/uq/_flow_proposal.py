@@ -9,9 +9,9 @@ from typing import Any, NamedTuple
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from flowjax.distributions import AbstractDistribution
-from flowjax.train import fit_to_data
 from jaxtyping import Array
+
+from ..nn.flows import AbstractFlowDistribution, fit_flow_to_data
 
 
 class _ReplayBuffer(NamedTuple):
@@ -125,7 +125,7 @@ def _replay_data(replay: _ReplayBuffer) -> Array:
 
 def _fit_flow(
     key: Array,
-    flow: AbstractDistribution,
+    flow: AbstractFlowDistribution,
     data: Array,
     /,
     *,
@@ -134,7 +134,7 @@ def _fit_flow(
     max_patience: int,
     batch_size: int,
     validation_fraction: float,
-) -> tuple[AbstractDistribution, Array, Array]:
+) -> tuple[AbstractFlowDistribution, Array, Array]:
     samples = jnp.asarray(data)
     validation_count = round(float(validation_fraction) * samples.shape[0])
     training_count = samples.shape[0] - validation_count
@@ -142,7 +142,7 @@ def _fit_flow(
         raise ValueError(
             "Flow training data must produce non-empty train and validation splits."
         )
-    trained, losses = fit_to_data(
+    trained, training_loss, validation_loss = fit_flow_to_data(
         key,
         flow,
         samples,
@@ -150,12 +150,8 @@ def _fit_flow(
         max_epochs=int(max_epochs),
         max_patience=int(max_patience),
         batch_size=min(int(batch_size), training_count),
-        val_prop=float(validation_fraction),
-        return_best=True,
-        show_progress=False,
+        validation_fraction=float(validation_fraction),
     )
-    training_loss = jnp.asarray(losses["train"])
-    validation_loss = jnp.asarray(losses["val"])
     if not bool(jnp.all(jnp.isfinite(training_loss))) or not bool(
         jnp.all(jnp.isfinite(validation_loss))
     ):
@@ -218,7 +214,7 @@ def _run_flow_block(
     key: Array,
     position: Array,
     log_target: Array,
-    flow: AbstractDistribution,
+    flow: AbstractFlowDistribution,
     logdensity_fn: Any,
     /,
     *,
