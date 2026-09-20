@@ -5,13 +5,15 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 import meshio
 import numpy as np
 
-import phydrax.ein as ein
+from phydrax import ein
 
+from ..._external_resource import read_bounded_resource, ResourceLimits
 from ._mesh import TriangleMesh
 from ._regions import MeshRegion, PlanarMeshRegion
 from ._topology import TriangleTopology
@@ -157,9 +159,22 @@ def triangle_arrays(source: Any, /) -> tuple[np.ndarray, np.ndarray]:
     if isinstance(source, tuple) and len(source) == 2:
         return _canonical_triangle_arrays(source[0], source[1])
     if isinstance(source, (str, Path)):
-        return _canonical_triangle_arrays(
-            *_meshio_triangles(meshio.read(Path(source).expanduser()))
+        source_path = Path(source).expanduser().absolute()
+        resource = read_bounded_resource(
+            source_path.name,
+            trusted_root=source_path.parent,
+            limits=ResourceLimits(
+                1_000_000_000,
+                64,
+                50_000_000,
+                1024,
+                1024,
+            ),
         )
+        with TemporaryDirectory(prefix="phydrax-triangle-read-") as temporary:
+            staged = Path(temporary) / source_path.name
+            staged.write_bytes(resource.data)
+            return _canonical_triangle_arrays(*_meshio_triangles(meshio.read(staged)))
     raise TypeError(
         "Mesh input must be a path, meshio.Mesh, TriangleMesh, or (vertices, faces) pair."
     )

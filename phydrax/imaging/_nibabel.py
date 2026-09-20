@@ -9,11 +9,14 @@ from collections.abc import Callable
 from hashlib import new as new_digest
 from importlib import import_module, util
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Protocol, runtime_checkable
 
 import numpy as np
 
+from .._external_resource import read_bounded_resource, ResourceLimits
 from .._physical import SpatialCoordinateContract
+from .._publication import publish_bytes
 from ..measurement import AcquisitionIdentity, DerivationRecord, SampleTimeAxis
 from ..qualification import ReferenceArtifactManifest
 from ..units import METER, MICROMETER, MILLIMETER, MILLISECOND, SECOND
@@ -94,14 +97,15 @@ def _require_use(reference: ReferenceArtifactManifest, intended_use: str, /) -> 
     reference.require_rights(**requested[intended_use])
 
 
-def _verify_reference(path: Path, reference: ReferenceArtifactManifest, /) -> None:
-    if path.stat().st_size != reference.size_bytes:
+def _verify_reference(
+    payload: bytes,
+    reference: ReferenceArtifactManifest,
+    /,
+) -> None:
+    if len(payload) != reference.size_bytes:
         raise ValueError("Image source size does not match its reference manifest.")
-    digest = new_digest(reference.checksum_algorithm)
-    with path.open("rb") as stream:
-        while block := stream.read(1024 * 1024):
-            digest.update(block)
-    if digest.hexdigest() != reference.checksum:
+    digest = new_digest(reference.checksum_algorithm, payload).hexdigest()
+    if digest != reference.checksum:
         raise ValueError("Image source checksum does not match its reference manifest.")
 
 
@@ -125,16 +129,23 @@ class NibabelImageProvider:
         time_axis: SampleTimeAxis | None = None,
         acquisition: AcquisitionIdentity | None = None,
         conflict_tolerance: float = 1.0e-5,
+        trusted_root: str | Path | None = None,
     ) -> MedicalImageAsset:
         _require_use(reference, intended_use)
-        source = Path(path).resolve()
-        if not source.is_file():
-            raise FileNotFoundError(source)
-        _verify_reference(source, reference)
+        source = Path(path).expanduser().absolute()
+        root = source.parent if trusted_root is None else Path(trusted_root)
+        resource = read_bounded_resource(
+            source,
+            trusted_root=root,
+            limits=ResourceLimits(reference.size_bytes, 64, 1, 0, 0),
+        )
+        _verify_reference(resource.data, reference)
         backend = _backend()
-        image = backend.load(str(source))
-        if not isinstance(image, _Image):
-            raise TypeError("nibabel returned an unsupported image object.")
+        temporary_context = TemporaryDirectory(prefix="phydrax-image-read-")
+        temporary = temporary_context.__enter__()
+        staged_source = Path(temporary) / source.name
+        staged_source.write_bytes(resource.data)
+        image = backend.load(str(staged_source))
         spatial_unit, temporal_unit = image.header.get_xyzt_units()
         if spatial_unit not in _LENGTH_UNITS:
             raise ValueError(f"Unsupported image spatial unit {spatial_unit!r}.")
@@ -175,7 +186,7 @@ class NibabelImageProvider:
                 raise ValueError(
                     "Image header timing and supplied SampleTimeAxis disagree."
                 )
-        return MedicalImageAsset(
+        asset = MedicalImageAsset(
             asset_id,
             modality,
             values,
@@ -190,8 +201,17 @@ class NibabelImageProvider:
             metadata={"provider": "nibabel"},
             intended_use=intended_use,
         )
+        temporary_context.__exit__(None, None, None)
+        return asset
 
-    def write(self, asset: MedicalImageAsset, path: str | Path, /) -> Path:
+    def write(
+        self,
+        asset: MedicalImageAsset,
+        path: str | Path,
+        /,
+        *,
+        maximum_file_bytes: int = 4 * 1024 * 1024 * 1024,
+    ) -> Path:
         if not isinstance(asset, MedicalImageAsset):
             raise TypeError("asset must be MedicalImageAsset.")
         for reference in asset.references:
@@ -201,7 +221,6 @@ class NibabelImageProvider:
             target.suffix == ".gz" and not target.name.endswith(".nii.gz")
         ):
             raise ValueError("NIfTI export path must end in .nii or .nii.gz.")
-        target.parent.mkdir(parents=True, exist_ok=True)
         backend = _backend()
         affine = asset.spatial_affine.to_convention(ImageAxisConvention.RAS)
         image = backend.Nifti1Image(np.asarray(asset.values), np.asarray(affine.matrix))
@@ -234,14 +253,25 @@ class NibabelImageProvider:
                 zooms[3] = interval
                 image.header.set_zooms(tuple(zooms))
         image.header.set_xyzt_units(spatial_unit, temporal_unit)
-        backend.save(image, str(target))
-        restored = backend.load(str(target))
-        if not isinstance(restored, _Image):
-            raise TypeError("nibabel returned an unsupported image after export.")
-        if not np.array_equal(np.asanyarray(restored.dataobj), np.asarray(asset.values)):
-            raise RuntimeError("NIfTI export did not preserve image values.")
-        if not np.allclose(np.asarray(restored.affine), np.asarray(affine.matrix)):
-            raise RuntimeError("NIfTI export did not preserve the spatial affine.")
+        with TemporaryDirectory(prefix="phydrax-image-write-") as temporary:
+            staged_target = Path(temporary) / target.name
+            backend.save(image, str(staged_target))
+            restored = backend.load(str(staged_target))
+            if not isinstance(restored, _Image):
+                raise TypeError("nibabel returned an unsupported image after export.")
+            if not np.array_equal(
+                np.asanyarray(restored.dataobj), np.asarray(asset.values)
+            ):
+                raise RuntimeError("NIfTI export did not preserve image values.")
+            if not np.allclose(np.asarray(restored.affine), np.asarray(affine.matrix)):
+                raise RuntimeError("NIfTI export did not preserve the spatial affine.")
+            payload = staged_target.read_bytes()
+        publish_bytes(
+            target,
+            payload,
+            maximum_bytes=maximum_file_bytes,
+            mode="atomic_replace",
+        )
         return target
 
 

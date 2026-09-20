@@ -22,6 +22,7 @@ import optax
 
 from phydrax._strict import StrictModule
 
+from ..._external_resource import read_bounded_resource, ResourceLimits
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...domain import HyperRectangle, TimeInterval
 from ...dynamics import ContinuousSystem, StateLayout
@@ -656,11 +657,17 @@ def load_coordinate_model(
     require_coordinate_rights(
         (weight_rights,), commercial_use=commercial_use, export=export
     )
-    payload = Path(path).read_bytes()
+    source = Path(path).expanduser().absolute()
+    resource = read_bounded_resource(
+        source.name,
+        trusted_root=source.parent,
+        limits=ResourceLimits(weight_rights.size_bytes, 64, 1, 0, 0),
+    )
+    payload = resource.data
     digest = hashlib.new(weight_rights.checksum_algorithm, payload).hexdigest()
     if digest != weight_rights.checksum or len(payload) != weight_rights.size_bytes:
         raise ValueError("Weight bytes do not match their rights manifest.")
-    artifact = read_ml_artifact(path)
+    artifact = read_ml_artifact(source)
     model = artifact.model
     if (
         not isinstance(model, ConditionalCoordinateVelocity)

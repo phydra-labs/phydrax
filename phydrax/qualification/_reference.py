@@ -6,10 +6,21 @@ from __future__ import annotations
 
 import hashlib
 import math
-from collections.abc import Mapping, Sequence
+import os
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from pathlib import Path
 
 import equinox as eqx
 
+from .._external_resource import (
+    BoundedResource,
+    open_bounded_resource,
+    OpenedResource,
+    read_bounded_resource,
+    ResourceLimits,
+    ResourceReadError,
+)
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -290,4 +301,66 @@ class ReferenceArtifactManifest(StrictModule, NonTrainableState):
         return self.manifest_id
 
 
-__all__ = ["ReferenceArtifactManifest"]
+def read_reference_artifact(
+    path: str | os.PathLike[str],
+    manifest: ReferenceArtifactManifest,
+    /,
+    *,
+    trusted_root: str | os.PathLike[str] | None = None,
+) -> BoundedResource:
+    """Read and verify one exact reference artifact beneath a trusted root."""
+
+    if not isinstance(manifest, ReferenceArtifactManifest):
+        raise TypeError("manifest must be a ReferenceArtifactManifest.")
+    source = Path(path).expanduser().absolute()
+    root = source.parent if trusted_root is None else Path(trusted_root)
+    try:
+        resource = read_bounded_resource(
+            source,
+            trusted_root=root,
+            limits=ResourceLimits(manifest.size_bytes, 64, 1, 0, 0),
+        )
+    except ResourceReadError as error:
+        if error.reason == "limit":
+            raise ValueError("Reference artifact size mismatch.") from error
+        raise
+    manifest.verify_bytes(resource.data)
+    return resource
+
+
+@contextmanager
+def open_reference_artifact(
+    path: str | os.PathLike[str],
+    manifest: ReferenceArtifactManifest,
+    /,
+    *,
+    trusted_root: str | os.PathLike[str] | None = None,
+) -> Iterator[OpenedResource]:
+    """Open and verify one large seekable reference artifact without retaining it."""
+
+    if not isinstance(manifest, ReferenceArtifactManifest):
+        raise TypeError("manifest must be a ReferenceArtifactManifest.")
+    source = Path(path).expanduser().absolute()
+    root = source.parent if trusted_root is None else Path(trusted_root)
+    with open_bounded_resource(
+        source,
+        trusted_root=root,
+        limits=ResourceLimits(manifest.size_bytes, 64, 1, 0, 0),
+    ) as resource:
+        digest = hashlib.new(manifest.checksum_algorithm)
+        total = 0
+        resource.stream.seek(0)
+        while chunk := resource.stream.read(1024 * 1024):
+            total += len(chunk)
+            digest.update(chunk)
+        if total != manifest.size_bytes or digest.hexdigest() != manifest.checksum:
+            raise ValueError("Reference artifact checksum or byte size mismatch.")
+        resource.stream.seek(0)
+        yield resource
+
+
+__all__ = [
+    "ReferenceArtifactManifest",
+    "open_reference_artifact",
+    "read_reference_artifact",
+]

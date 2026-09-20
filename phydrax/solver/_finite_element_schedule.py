@@ -13,6 +13,11 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from .._array_archive import (
+    array_collection_digest,
+    array_payload_byte_count,
+    array_payload_digest,
+)
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -20,6 +25,12 @@ from ..equations import (
     MaterialSiteId,
     MaterialState,
     MaterialTransaction,
+)
+from ..lifecycle import (
+    CheckpointManifest,
+    CheckpointShard,
+    create as create_lifecycle_archive,
+    open as open_lifecycle_archive,
 )
 from ._finite_element_checkpoint import FiniteElementCheckpoint
 from ._schedule import TimeLaw
@@ -97,14 +108,13 @@ class FiniteElementAcceptedState(StrictModule, NonTrainableState):
         )
 
     def checkpoint(self, /) -> FiniteElementCheckpoint:
-        material_states = () if self.materials is None else self.materials.states
         return FiniteElementCheckpoint(
             self.prepared_id,
             self.compilation_id,
             self.time,
             self.step,
             self.fields,
-            material_states=material_states,
+            materials=self.materials,
         )
 
 
@@ -353,15 +363,12 @@ def write_finite_element_restart(
 ) -> None:
     if not isinstance(manifest, FiniteElementRestartManifest):
         raise TypeError("manifest must be FiniteElementRestartManifest.")
-    target = Path(path)
     material_states = (
         () if manifest.state.materials is None else manifest.state.materials.states
     )
     metadata = {
-        "manifest_id": manifest.manifest_id,
+        "kind": "finite-element-restart",
         "topology_id": manifest.state.topology_id,
-        "prepared_id": manifest.state.prepared_id,
-        "compilation_id": manifest.state.compilation_id,
         "step": manifest.state.step,
         "schedule_cursor": manifest.state.schedule_cursor,
         "state_version": manifest.state.state_version,
@@ -392,17 +399,53 @@ def write_finite_element_restart(
             for index, (_, value) in enumerate(manifest.integrator_state)
         },
     }
-    np.savez(target, metadata=np.asarray(json.dumps(metadata)), **arrays)
+    metadata_text = json.dumps(metadata, allow_nan=False, sort_keys=True)
+    shards = tuple(
+        CheckpointShard(
+            name,
+            array_payload_digest(value),
+            array_payload_byte_count(value),
+            (
+                manifest.state.topology_id,
+                manifest.state.prepared_id,
+                manifest.state.compilation_id,
+            ),
+            metadata={"finite_element_restart": metadata_text} if index == 0 else {},
+        )
+        for index, (name, value) in enumerate(sorted(arrays.items()))
+    )
+    lifecycle_manifest = CheckpointManifest(
+        manifest.manifest_id,
+        manifest.state.prepared_id,
+        array_collection_digest(arrays),
+        manifest.state.compilation_id,
+        shards,
+        complete=True,
+    )
+    create_lifecycle_archive(path, manifest=lifecycle_manifest, arrays=arrays)
 
 
 def read_finite_element_restart(
     path: str | Path,
     /,
 ) -> FiniteElementRestartManifest:
-    archive = np.load(Path(path), allow_pickle=False)
-    metadata = json.loads(str(archive["metadata"]))
+    archive = open_lifecycle_archive(path)
+    lifecycle_manifest = archive.manifest
+    if not isinstance(lifecycle_manifest, CheckpointManifest):
+        raise ValueError("Finite-element restart is not a lifecycle checkpoint.")
+    metadata_text = next(
+        (
+            dict(shard.metadata)["finite_element_restart"]
+            for shard in lifecycle_manifest.shards
+            if "finite_element_restart" in dict(shard.metadata)
+        ),
+        None,
+    )
+    if metadata_text is None:
+        raise ValueError("Finite-element restart metadata is missing.")
+    metadata = json.loads(metadata_text)
     fields = tuple(
-        archive[f"field_{index}"] for index in range(int(metadata["field_count"]))
+        archive.arrays[f"field_{index}"] for index in range(int(metadata["field_count"]))
     )
     material_states_: list[MaterialState] = []
     for index, entry in enumerate(metadata["materials"]):
@@ -417,7 +460,7 @@ def read_finite_element_restart(
             MaterialState(
                 MaterialSiteId(material_id),
                 model_id,
-                archive[f"material_{index}"],
+                archive.arrays[f"material_{index}"],
                 state_version=int(version),
             )
         )
@@ -425,21 +468,21 @@ def read_finite_element_restart(
     materials = None if not material_states else MaterialTransaction(material_states)
     state = FiniteElementAcceptedState(
         fields,
-        archive["time"],
+        archive.arrays["time"],
         int(metadata["step"]),
         metadata["topology_id"],
-        metadata["prepared_id"],
-        metadata["compilation_id"],
+        lifecycle_manifest.analysis_plan_id,
+        lifecycle_manifest.execution_plan_id,
         materials=materials,
         schedule_cursor=int(metadata["schedule_cursor"]),
         state_version=int(metadata["state_version"]),
     )
     auxiliary = tuple(
-        (name, archive[f"auxiliary_{index}"])
+        (name, archive.arrays[f"auxiliary_{index}"])
         for index, name in enumerate(metadata["auxiliary_names"])
     )
     integrator = tuple(
-        (name, archive[f"integrator_{index}"])
+        (name, archive.arrays[f"integrator_{index}"])
         for index, name in enumerate(metadata["integrator_names"])
     )
     manifest = FiniteElementRestartManifest(
@@ -447,7 +490,7 @@ def read_finite_element_restart(
         auxiliary_state=auxiliary,
         integrator_state=integrator,
     )
-    if manifest.manifest_id != metadata["manifest_id"]:
+    if manifest.manifest_id != lifecycle_manifest.checkpoint_id:
         raise ValueError("Finite-element restart manifest identity mismatch.")
     return manifest
 

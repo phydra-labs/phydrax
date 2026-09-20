@@ -30,6 +30,89 @@ the inspection contract.
 
 ::: phydrax.interchange.HostInspectionConversion
 
+## File resources and publication
+
+External path adapters use descriptor-relative resource admission. Small inputs use
+`BoundedResource`; large seekable inputs use `open_bounded_resource`; directory stores
+and multi-file products use `BoundedResourceSet`. External ZIP-compatible containers
+must pass `BoundedArchive` preflight before any member is decoded.
+
+Writers stage and validate their actual encoded output before publication.
+`PublicationReceipt` and `ResourceSetPublicationReceipt` carry byte-level evidence;
+scientific preservation and loss remain in `AdapterReport`.
+
+`format_capabilities()` is deterministic introspection, not extension-based dispatch.
+Ambiguous scientific formats require an explicit profile.
+
+::: phydrax.interchange.ResourceLimits
+
+---
+
+::: phydrax.interchange.ResourceManifest
+
+---
+
+::: phydrax.interchange.open_bounded_resource
+
+---
+
+::: phydrax.interchange.ResourceSetLimits
+
+---
+
+::: phydrax.interchange.ResourceSetManifest
+
+---
+
+::: phydrax.interchange.ArchiveLimits
+
+---
+
+::: phydrax.interchange.PublicationReceipt
+
+---
+
+::: phydrax.interchange.ResourceSetPublicationReceipt
+
+---
+
+::: phydrax.interchange.FormatCapability
+
+---
+
+::: phydrax.interchange.format_capabilities
+
+## Structured resource admission
+
+The shared text, finite JSON, XML, pickle-free NumPy, and HDF5 utilities enforce
+structural and allocation limits. They do not assign domain semantics.
+
+::: phydrax.interchange.decode_json_resource
+
+---
+
+::: phydrax.interchange.decode_xml_resource
+
+---
+
+::: phydrax.interchange.NumpyFormatLimits
+
+---
+
+::: phydrax.interchange.decode_npy_resource
+
+---
+
+::: phydrax.interchange.decode_npz_resource
+
+---
+
+::: phydrax.interchange.HDF5Limits
+
+---
+
+::: phydrax.interchange.inspect_hdf5_resource
+
 ## Laser-envelope HDF5 profile
 
 The bounded laser-envelope adapter implements one exact Cartesian temporal

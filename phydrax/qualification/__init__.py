@@ -104,7 +104,11 @@ from ._promotion import (
     PromotionRepository,
     PromotionState,
 )
-from ._reference import ReferenceArtifactManifest
+from ._reference import (
+    open_reference_artifact,
+    read_reference_artifact,
+    ReferenceArtifactManifest,
+)
 from ._registry import (
     CapabilityProfile,
     discover_profiles,
@@ -213,6 +217,8 @@ __all__ = [
     "QualificationEvidence",
     "QualificationMatrix",
     "ReferenceArtifactManifest",
+    "open_reference_artifact",
+    "read_reference_artifact",
     "RefinementCampaignEvidence",
     "ReleaseGateEvidence",
     "ReleaseIndex",

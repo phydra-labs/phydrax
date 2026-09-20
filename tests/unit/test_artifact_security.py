@@ -42,7 +42,6 @@ def _policy(root: Path, *, maximum_bytes: int = 32) -> ExternalArtifactPolicy:
         maximum_bytes=maximum_bytes,
         allowed_license_ids=("CC-BY-4.0",),
         allowed_suffixes=(".bin",),
-        read_chunk_bytes=3,
     )
 
 

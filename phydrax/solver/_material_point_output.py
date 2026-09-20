@@ -8,11 +8,14 @@ import json
 from collections import deque
 from importlib import import_module
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import equinox as eqx
 import numpy as np
 
 from .._fingerprint import canonical_fingerprint
+from .._mesh_file_profiles import resolve_mesh_file_profile
+from .._publication import publish_bytes
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.mpm import MPMRuntimeState
@@ -218,9 +221,12 @@ class MPMOutputPlan(StrictModule, NonTrainableState):
             + "</Grid></Domain></Xdmf>\n"
         )
         path = Path(self.xdmf_path)
-        temporary = path.with_suffix(path.suffix + ".tmp")
-        temporary.write_text(content)
-        temporary.replace(path)
+        publish_bytes(
+            path,
+            content.encode("utf-8"),
+            maximum_bytes=64 * 1024 * 1024,
+            mode="atomic_replace",
+        )
 
     def write_vtk_snapshot(self, path: str | Path, state: MPMRuntimeState, /):
         meshio = import_module("meshio")
@@ -237,8 +243,25 @@ class MPMOutputPlan(StrictModule, NonTrainableState):
             "body_id": np.asarray(state.body_ids),
             "velocity_field_slot": np.asarray(state.velocity_field_slots),
         }
-        meshio.write(Path(path), meshio.Mesh(points, cells, point_data=point_data))
-        return Path(path)
+        destination = Path(path).expanduser().absolute()
+        profile = resolve_mesh_file_profile(destination, None, direction="write")
+        if profile.carrier != "single-file":
+            raise ValueError("MPM VTK snapshot requires a single-file profile.")
+        mesh = meshio.Mesh(points, cells, point_data=point_data)
+        with TemporaryDirectory(prefix="phydrax-mpm-vtk-") as temporary:
+            staged = Path(temporary) / destination.name
+            meshio.write(staged, mesh, file_format=profile.meshio_format)
+            decoded = meshio.read(staged, file_format=profile.meshio_format)
+            if not np.array_equal(np.asarray(decoded.points), points):
+                raise ValueError("MPM VTK codec changed particle coordinates.")
+            payload = staged.read_bytes()
+        publish_bytes(
+            destination,
+            payload,
+            maximum_bytes=4 * 1024 * 1024 * 1024,
+            mode="atomic_replace",
+        )
+        return destination
 
 
 class MPMBoundedOutputBuffer:

@@ -4,8 +4,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from pathlib import Path
 
 import equinox as eqx
@@ -13,6 +11,12 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from ..._document_resource import decode_json_resource
+from ..._external_resource import (
+    bounded_resource_from_bytes,
+    read_bounded_resource,
+    ResourceLimits,
+)
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -94,6 +98,7 @@ def _require_payload_epoch(
 class PinnedArtifact(StrictModule, NonTrainableState):
     path: str = eqx.field(static=True)
     manifest: ArtifactManifest
+    data: bytes = eqx.field(static=True)
 
 
 class AstrodynamicsDataStore(StrictModule, NonTrainableState):
@@ -116,18 +121,24 @@ class AstrodynamicsDataStore(StrictModule, NonTrainableState):
     ) -> PinnedArtifact:
         if not isinstance(manifest, ArtifactManifest):
             raise TypeError("manifest must be an ArtifactManifest.")
-        path = (Path(self.root) / relative_path).resolve()
-        if Path(self.root) not in path.parents:
+        relative = Path(relative_path)
+        if relative.is_absolute() or not relative.parts or ".." in relative.parts:
             raise ValueError("Artifact path escapes the configured store.")
-        if not path.is_file():
-            raise ValueError("Pinned artifact is absent from the configured store.")
-        payload = path.read_bytes()
-        digest = hashlib.sha256(payload).hexdigest()
-        if digest != manifest.sha256 or len(payload) != manifest.byte_size:
+        resource = read_bounded_resource(
+            relative,
+            trusted_root=self.root,
+            limits=ResourceLimits(manifest.byte_size, 64, 1, 0, 0),
+        )
+        if (
+            resource.manifest.content_sha256 != manifest.sha256
+            or resource.manifest.size_bytes != manifest.byte_size
+        ):
             raise ValueError(
                 "Pinned artifact checksum or byte size does not match manifest."
             )
-        return PinnedArtifact(str(path), manifest)
+        if resource.manifest.source_path is None:
+            raise RuntimeError("Pinned artifact path identity is missing.")
+        return PinnedArtifact(resource.manifest.source_path, manifest, resource.data)
 
 
 class AstronomyCoefficientTable(StrictModule, NonTrainableState):
@@ -262,7 +273,15 @@ def _payload(
 ) -> tuple[dict[str, object], ArtifactManifest]:
     manifest = ASTRONOMY_ASSET_MANIFESTS[name]
     pinned = _store(store).resolve(name, manifest)
-    return json.loads(Path(pinned.path).read_text(encoding="utf-8")), manifest
+    resource = bounded_resource_from_bytes(
+        pinned.data,
+        limits=ResourceLimits(manifest.byte_size, 64, 100_000, 100_000, 0),
+        source_path=pinned.path,
+    )
+    payload = decode_json_resource(resource).value
+    if not isinstance(payload, dict):
+        raise TypeError("Bundled astronomy data must contain a JSON object.")
+    return payload, manifest
 
 
 def _provenance(

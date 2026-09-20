@@ -7,9 +7,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from hashlib import new as new_digest
 from importlib import import_module, util
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import numpy as np
 
@@ -17,7 +17,7 @@ from .._fingerprint import canonical_fingerprint
 from .._physical import SpatialCoordinateContract
 from ..geometry.analytic import RigidFrame
 from ..interchange import AdapterLoss, AdapterReport, AdapterStatus
-from ..qualification import ReferenceArtifactManifest
+from ..qualification import open_reference_artifact, ReferenceArtifactManifest
 from ..units import ONE
 from ._asset import DataOrigin, DataStage, DerivationRecord, MeasurementAsset
 from ._collection import (
@@ -128,17 +128,6 @@ class E57ScanCollection:
         )
 
 
-def _verify(path: Path, reference: ReferenceArtifactManifest) -> None:
-    if path.stat().st_size != reference.size_bytes:
-        raise ValueError("E57 size disagrees with the reference manifest.")
-    digest = new_digest(reference.checksum_algorithm)
-    with path.open("rb") as stream:
-        while block := stream.read(1024 * 1024):
-            digest.update(block)
-    if digest.hexdigest() != reference.checksum:
-        raise ValueError("E57 checksum disagrees with the reference manifest.")
-
-
 def _attribute(
     name: str, values: np.ndarray, support: PointSampleSupport, kind: ValueKind
 ) -> QuantityField:
@@ -179,12 +168,16 @@ class E57Provider:
         if reference.size_bytes > maximum_source_bytes:
             raise MemoryError("E57 source exceeds maximum_source_bytes.")
         reference.require_rights()
-        source = Path(path).resolve()
-        if not source.is_file():
-            raise FileNotFoundError(source)
-        _verify(source, reference)
+        source = Path(path).expanduser().absolute()
         backend = import_module("pye57")
-        document = backend.E57(str(source))
+        temporary_context = TemporaryDirectory(prefix="phydrax-e57-read-")
+        temporary = temporary_context.__enter__()
+        staged = Path(temporary) / source.name
+        with open_reference_artifact(source, reference) as resource:
+            with staged.open("wb") as output:
+                while chunk := resource.stream.read(1024 * 1024):
+                    output.write(chunk)
+        document = backend.E57(str(staged))
         records = []
         losses = []
         for scan_index in range(document.scan_count):
@@ -339,7 +332,9 @@ class E57Provider:
             assets,
             roles,
         )
-        return E57ScanCollection(collection, tuple(records), report)
+        result = E57ScanCollection(collection, tuple(records), report)
+        temporary_context.__exit__(None, None, None)
+        return result
 
 
 def _point_anchor(

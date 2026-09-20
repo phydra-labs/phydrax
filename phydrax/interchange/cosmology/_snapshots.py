@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from io import BytesIO
 from pathlib import Path
 from typing import Literal
 
@@ -15,11 +16,12 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 
+from ..._external_resource import BoundedResource
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...applications.cosmology._force_scalability import CosmologySnapshotProduct
 from ...artifacts import ScientificArtifactEnvelope
-from ...qualification import ReferenceArtifactManifest
+from ...qualification import read_reference_artifact, ReferenceArtifactManifest
 from .._report import AdapterLoss, AdapterReport, AdapterStatus
 
 
@@ -104,7 +106,7 @@ def _admit_path(
     training_use: bool,
     redistribution: bool,
     export: bool,
-) -> Path:
+) -> BoundedResource:
     if not isinstance(source, ReferenceArtifactManifest):
         raise TypeError("source must be ReferenceArtifactManifest.")
     if isinstance(maximum_source_bytes, bool) or int(maximum_source_bytes) <= 0:
@@ -115,13 +117,9 @@ def _admit_path(
         redistribution=redistribution,
         export=export,
     )
-    source_path = Path(path).resolve()
-    if not source_path.is_file():
-        raise FileNotFoundError(source_path)
-    if source_path.stat().st_size > int(maximum_source_bytes):
+    if source.size_bytes > int(maximum_source_bytes):
         raise MemoryError("Cosmology source exceeds maximum_source_bytes.")
-    source.verify_bytes(source_path.read_bytes())
-    return source_path
+    return read_reference_artifact(path, source)
 
 
 def _text(value: object, name: str, /) -> str:
@@ -192,7 +190,7 @@ def read_concept_snapshot(
     the target units named on the returned immutable import.
     """
 
-    source_path = _admit_path(
+    resource = _admit_path(
         path,
         source,
         maximum_source_bytes=maximum_source_bytes,
@@ -216,7 +214,7 @@ def read_concept_snapshot(
     if not length_unit or not mass_unit:
         raise ValueError("Target length and mass units must be explicit.")
     losses: list[AdapterLoss] = []
-    with h5py.File(source_path, "r") as handle:
+    with h5py.File(BytesIO(resource.data), "r") as handle:
         required_attributes = ("a", "boxsize", "unit time", "unit length", "unit mass")
         missing_attributes = tuple(
             name for name in required_attributes if name not in handle.attrs

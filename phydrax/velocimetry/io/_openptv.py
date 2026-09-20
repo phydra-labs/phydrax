@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -12,7 +13,11 @@ import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 
+from ..._document_resource import decode_text_resource
+from ..._external_resource import read_bounded_resource, ResourceLimits
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._host_io import open_regular_file
+from ..._publication import publish_bytes
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...interchange import (
@@ -615,7 +620,24 @@ def write_openptv_tracks(
 
 
 def _counted_table(path: Path, /, *, columns: int) -> tuple[int, np.ndarray]:
-    lines = path.read_text(encoding="utf-8").splitlines()
+    source = path.expanduser().absolute()
+    resource = read_bounded_resource(
+        source.name,
+        trusted_root=source.parent,
+        limits=ResourceLimits(
+            1024 * 1024 * 1024,
+            64,
+            100_000_000,
+            1024,
+            128,
+        ),
+    )
+    text = decode_text_resource(
+        resource,
+        encoding="utf-8",
+        max_line_bytes=1_048_576,
+    ).value
+    lines = text.splitlines()
     if not lines or len(lines[0].split()) != 1:
         raise AdapterError(
             AdapterStatus.MALFORMED_SOURCE, f"{path} lacks an exact count header."
@@ -648,14 +670,17 @@ def _counted_table(path: Path, /, *, columns: int) -> tuple[int, np.ndarray]:
 def _write_counted_table(
     path: Path, table: np.ndarray, /, *, fmt: tuple[str, ...]
 ) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
     header = str(table.shape[0])
-    if table.shape[0] == 0:
-        path.write_text(header + "\n", encoding="utf-8")
-        return
-    with path.open("w", encoding="utf-8") as stream:
-        stream.write(header + "\n")
+    stream = io.StringIO()
+    stream.write(header + "\n")
+    if table.shape[0] != 0:
         np.savetxt(stream, table, fmt=fmt, delimiter=" ")
+    publish_bytes(
+        path,
+        stream.getvalue().encode("utf-8"),
+        maximum_bytes=1024 * 1024 * 1024,
+        mode="atomic_replace",
+    )
 
 
 def _integers(values: np.ndarray, owner: str, /) -> np.ndarray:
@@ -668,7 +693,11 @@ def _integers(values: np.ndarray, owner: str, /) -> np.ndarray:
 
 
 def _file_id(path: Path, format_name: str, /) -> str:
-    return f"{format_name}:sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
+    digest = hashlib.sha256()
+    with open_regular_file(path) as stream:
+        while chunk := stream.read(1024 * 1024):
+            digest.update(chunk)
+    return f"{format_name}:sha256:{digest.hexdigest()}"
 
 
 __all__ = [

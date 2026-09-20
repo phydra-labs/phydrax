@@ -8,11 +8,14 @@ import hashlib
 import importlib
 import importlib.util
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any, Literal
 
 import numpy as np
 import scipy.io
 
+from ..._external_resource import read_bounded_resource, ResourceLimits
+from ..._publication import publish_bytes
 from ...interchange import (
     AdapterError,
     AdapterLoss,
@@ -38,18 +41,27 @@ def read_pivlab(
     y_axis: PIVlabYAxis,
     stage: PIVlabStage = "original",
     delta_t: float | None = None,
+    maximum_file_bytes: int = 4 * 1024 * 1024 * 1024,
 ) -> tuple[
     tuple[DenseDisplacementField2D | PhysicalPIVResult2D, ...],
     AdapterReport,
 ]:
     """Read supported PIVlab MAT or HDF5 variable layouts without MATLAB execution."""
-    source = Path(path)
+    source = Path(path).expanduser().absolute()
     if y_axis not in ("down", "up"):
         raise ValueError("y_axis must explicitly be 'down' or 'up'.")
     if stage not in ("original", "filtered", "smoothed"):
         raise ValueError("Unknown PIVlab stage.")
-    hdf5 = source.read_bytes()[:8] == _HDF5_SIGNATURE
-    variables = _read_hdf5_variables(source) if hdf5 else _read_mat_variables(source)
+    resource = read_bounded_resource(
+        source.name,
+        trusted_root=source.parent,
+        limits=ResourceLimits(maximum_file_bytes, 64, 100_000_000, 1_000_000, 1024),
+    )
+    hdf5 = resource.data[:8] == _HDF5_SIGNATURE
+    with TemporaryDirectory(prefix="phydrax-pivlab-read-") as temporary:
+        staged = Path(temporary) / source.name
+        staged.write_bytes(resource.data)
+        variables = _read_hdf5_variables(staged) if hdf5 else _read_mat_variables(staged)
     x_frames = _frames(variables, "x")
     y_frames = _frames(variables, "y")
     if stage == "original":
@@ -89,7 +101,10 @@ def read_pivlab(
             AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC,
             "Pixel-space PIVlab data require geometry_id.",
         )
-    source_id = _file_id(source, "pivlab-hdf5" if hdf5 else "pivlab-mat")
+    source_id = (
+        f"{'pivlab-hdf5' if hdf5 else 'pivlab-mat'}:"
+        f"sha256:{resource.manifest.content_sha256}"
+    )
     fields: list[DenseDisplacementField2D | PhysicalPIVResult2D] = []
     for index, (x, y, u, v, typevector) in enumerate(
         zip(x_frames, y_frames, u_frames, v_frames, type_frames, strict=True)
@@ -251,6 +266,7 @@ def write_pivlab(
     y_axis: PIVlabYAxis,
     hdf5: bool | None = None,
     lossless: bool = False,
+    maximum_file_bytes: int = 4 * 1024 * 1024 * 1024,
 ) -> AdapterReport:
     """Write the documented PIVlab field-variable layout with an explicit loss report."""
     if y_axis not in ("down", "up"):
@@ -315,12 +331,22 @@ def write_pivlab(
         "v_smoothed": v_values,
     }
     units = "[px] respectively [px/frame]" if pixel_fields else "[m] respectively [m/s]"
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    if use_hdf5:
-        _write_hdf5_variables(destination, variables, units=units)
-    else:
-        _write_mat_variables(destination, variables, units=units)
-    target_id = _file_id(destination, "pivlab-hdf5" if use_hdf5 else "pivlab-mat")
+    with TemporaryDirectory(prefix="phydrax-pivlab-write-") as temporary:
+        staged = Path(temporary) / destination.name
+        if use_hdf5:
+            _write_hdf5_variables(staged, variables, units=units)
+        else:
+            _write_mat_variables(staged, variables, units=units)
+        payload = staged.read_bytes()
+    receipt = publish_bytes(
+        destination,
+        payload,
+        maximum_bytes=maximum_file_bytes,
+        mode="atomic_replace",
+    )
+    target_id = (
+        f"{'pivlab-hdf5' if use_hdf5 else 'pivlab-mat'}:sha256:{receipt.content_sha256}"
+    )
     source_id = hashlib.sha256("|".join(source_ids).encode("utf-8")).hexdigest()
     losses = (
         AdapterLoss(
@@ -630,10 +656,6 @@ def _h5py():
             "PIVlab HDF5 interoperability requires optional dependency 'h5py'.",
         )
     return importlib.import_module("h5py")
-
-
-def _file_id(path: Path, format_name: str, /) -> str:
-    return f"{format_name}:sha256:{hashlib.sha256(path.read_bytes()).hexdigest()}"
 
 
 __all__ = [

@@ -12,12 +12,15 @@ from enum import Enum
 from importlib import import_module
 from importlib.util import find_spec
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 import numpy as np
 from numpy.typing import ArrayLike
 
+from ..._external_resource import read_bounded_resource, ResourceLimits
 from ..._physical import SpatialCoordinateContract
+from ..._publication import publish_bytes
 from ...units import (
     CENTIMETER,
     conversion_factor,
@@ -39,6 +42,7 @@ class SurfaceFileFormat(str, Enum):
 
     GMSH = "gmsh"
     VTK = "vtk"
+    VTU = "vtu"
     STL = "stl"
     OBJ = "obj"
     STEP = "step"
@@ -98,7 +102,7 @@ _LENGTH_UNITS = {
 _EXTENSION_FORMAT = {
     ".msh": SurfaceFileFormat.GMSH,
     ".vtk": SurfaceFileFormat.VTK,
-    ".vtu": SurfaceFileFormat.VTK,
+    ".vtu": SurfaceFileFormat.VTU,
     ".stl": SurfaceFileFormat.STL,
     ".obj": SurfaceFileFormat.OBJ,
     ".step": SurfaceFileFormat.STEP,
@@ -395,8 +399,8 @@ def _artifact_digest(path: Path, /) -> str:
 def _meshio_file_format(file_format: SurfaceFileFormat, path: Path, /) -> str:
     if file_format is SurfaceFileFormat.GMSH:
         return "gmsh"
-    if file_format is SurfaceFileFormat.VTK:
-        return "vtu" if path.suffix.lower() == ".vtu" else "vtk"
+    if file_format in (SurfaceFileFormat.VTK, SurfaceFileFormat.VTU):
+        return file_format.value
     return file_format.value
 
 
@@ -824,17 +828,39 @@ def import_surface(
 
     if not isinstance(policy, SurfaceImportPolicy):
         raise TypeError("policy must be SurfaceImportPolicy.")
-    source = Path(path).expanduser().resolve()
+    source = Path(path).expanduser().absolute()
     format_ = _resolve_format(source, file_format)
     if format_ in (SurfaceFileFormat.STEP, SurfaceFileFormat.IGES):
         _require_module("OCP", f"{format_.value} direct BRep import")
     else:
         _require_module("meshio", f"{format_.value} surface import")
-    _preflight_file(source, policy.maximum_file_bytes)
-    digest = _artifact_digest(source)
-    if format_ in (SurfaceFileFormat.STEP, SurfaceFileFormat.IGES):
-        return _import_cad_surface(source, format_, policy, digest)
-    return _import_meshio_surface(source, format_, policy, digest)
+    resource = read_bounded_resource(
+        source.name,
+        trusted_root=source.parent,
+        limits=ResourceLimits(
+            policy.maximum_file_bytes,
+            64,
+            policy.maximum_vertices + policy.maximum_cells,
+            policy.maximum_fields,
+            1024,
+        ),
+    )
+    with TemporaryDirectory(prefix="phydrax-surface-read-") as temporary:
+        staged = Path(temporary) / source.name
+        staged.write_bytes(resource.data)
+        if format_ in (SurfaceFileFormat.STEP, SurfaceFileFormat.IGES):
+            return _import_cad_surface(
+                staged,
+                format_,
+                policy,
+                resource.manifest.content_sha256,
+            )
+        return _import_meshio_surface(
+            staged,
+            format_,
+            policy,
+            resource.manifest.content_sha256,
+        )
 
 
 def _validate_export_fields(
@@ -977,7 +1003,11 @@ def export_surface(
         policy.maximum_fields,
     )
     loss_candidates = []
-    include_metadata = format_ in (SurfaceFileFormat.GMSH, SurfaceFileFormat.VTK)
+    include_metadata = format_ in (
+        SurfaceFileFormat.GMSH,
+        SurfaceFileFormat.VTK,
+        SurfaceFileFormat.VTU,
+    )
     if not include_metadata:
         loss_candidates.extend(
             (
@@ -1002,20 +1032,42 @@ def export_surface(
             f"Export payload has {payload_bytes} bytes, exceeding limit {policy.maximum_data_bytes}."
         )
     write_format = _meshio_file_format(format_, destination)
-    try:
-        if format_ is SurfaceFileFormat.GMSH:
-            meshio.write(destination, mesh, file_format="gmsh22", binary=policy.binary)
-        elif format_ in (SurfaceFileFormat.VTK, SurfaceFileFormat.STL):
-            meshio.write(
-                destination, mesh, file_format=write_format, binary=policy.binary
+    with TemporaryDirectory(prefix="phydrax-surface-write-") as temporary:
+        staged = Path(temporary) / destination.name
+        try:
+            if format_ is SurfaceFileFormat.GMSH:
+                meshio.write(staged, mesh, file_format="gmsh22", binary=policy.binary)
+            elif format_ in (
+                SurfaceFileFormat.VTK,
+                SurfaceFileFormat.VTU,
+                SurfaceFileFormat.STL,
+            ):
+                meshio.write(staged, mesh, file_format=write_format, binary=policy.binary)
+            else:
+                meshio.write(staged, mesh, file_format=write_format)
+        except meshio.WriteError as error:
+            raise SurfaceInteropError(
+                f"Provider could not write {format_.value} surface artifact {destination}."
+            ) from error
+        if staged.stat().st_size > policy.maximum_file_bytes:
+            raise SurfaceResourceLimitError("Surface export exceeds its file byte limit.")
+        decoded = meshio.read(staged, file_format=write_format)
+        _, decoded_faces = _triangle_blocks(decoded)
+        _, expected_faces = _triangle_blocks(mesh)
+        if not np.array_equal(
+            np.asarray(decoded.points), np.asarray(mesh.points)
+        ) or not np.array_equal(decoded_faces, expected_faces):
+            raise SurfaceDataCorruptionError(
+                "Surface codec changed coordinates or triangle connectivity."
             )
-        else:
-            meshio.write(destination, mesh, file_format=write_format)
-    except meshio.WriteError as error:
-        raise SurfaceInteropError(
-            f"Provider could not write {format_.value} surface artifact {destination}."
-        ) from error
-    digest = _artifact_digest(destination)
+        digest = _artifact_digest(staged)
+        encoded = staged.read_bytes()
+    publish_bytes(
+        destination,
+        encoded,
+        maximum_bytes=policy.maximum_file_bytes,
+        mode="atomic_replace",
+    )
     report = SurfaceInteropReport(
         operation="export",
         file_format=format_,

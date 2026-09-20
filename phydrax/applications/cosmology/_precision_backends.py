@@ -5,13 +5,13 @@
 from __future__ import annotations
 
 import hashlib
-import json
 from pathlib import Path
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 
+from ..._array_archive import read_array_archive, write_array_archive
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -243,7 +243,6 @@ def _save_products(path: Path, products: CosmologyModelResult, /) -> None:
     if any(scale.scale_id != product_scales[0].scale_id for scale in product_scales[1:]):
         raise ValueError("Linear-theory products have inconsistent scale identities.")
     arrays = {
-        "scale_json": np.asarray(json.dumps(product_scales[0].to_dict(), sort_keys=True)),
         "scale_factors": np.asarray(products.transfer.scale_factors),
         "wavenumbers": np.asarray(products.transfer.wavenumbers),
         "transfer_values": np.asarray(products.transfer.transfer_values),
@@ -259,10 +258,14 @@ def _save_products(path: Path, products: CosmologyModelResult, /) -> None:
                 "visibility": np.asarray(thermo.visibility),
             }
         )
-    temporary = path.with_suffix(".tmp")
-    with temporary.open("wb") as handle:
-        np.savez(handle, allow_pickle=False, **arrays)
-    temporary.replace(path)
+    write_array_archive(
+        path,
+        manifest={
+            "kind": "cosmology-linear-theory-cache",
+            "scale": product_scales[0].to_dict(),
+        },
+        arrays=arrays,
+    )
 
 
 def _load_products(
@@ -271,33 +274,32 @@ def _load_products(
     build: BackendBuildManifest,
     resources: LinearTheoryResourcePolicy,
 ) -> CosmologyModelResult:
-    with np.load(path, allow_pickle=False) as arrays:
-        scale_payload = json.loads(str(np.asarray(arrays["scale_json"]).item()))
-        if not isinstance(scale_payload, dict):
-            raise ValueError("Cached linear-theory scale metadata must be a mapping.")
-        scale = CosmologyScaleContract.from_dict(scale_payload)
-        if scale.scale_id != request.scale.scale_id:
-            raise ValueError(
-                "Cached linear-theory scale does not match the current request."
+    manifest, arrays = read_array_archive(path)
+    if manifest.get("kind") != "cosmology-linear-theory-cache" or not isinstance(
+        manifest.get("scale"), dict
+    ):
+        raise ValueError("Cached linear-theory metadata is invalid.")
+    scale = CosmologyScaleContract.from_dict(manifest["scale"])
+    if scale.scale_id != request.scale.scale_id:
+        raise ValueError("Cached linear-theory scale does not match the current request.")
+    scales = jnp.asarray(arrays["scale_factors"])
+    wavenumbers = jnp.asarray(arrays["wavenumbers"])
+    transfer_values = jnp.asarray(arrays["transfer_values"])
+    power_values = jnp.asarray(arrays["power_values"])
+    has_thermodynamics = bool(np.asarray(arrays["has_thermodynamics"]).item())
+    thermo_values = (
+        tuple(
+            jnp.asarray(arrays[name])
+            for name in (
+                "ionization_fraction",
+                "baryon_temperature",
+                "opacity_derivative",
+                "visibility",
             )
-        scales = jnp.asarray(arrays["scale_factors"])
-        wavenumbers = jnp.asarray(arrays["wavenumbers"])
-        transfer_values = jnp.asarray(arrays["transfer_values"])
-        power_values = jnp.asarray(arrays["power_values"])
-        has_thermodynamics = bool(np.asarray(arrays["has_thermodynamics"]).item())
-        thermo_values = (
-            tuple(
-                jnp.asarray(arrays[name])
-                for name in (
-                    "ionization_fraction",
-                    "baryon_temperature",
-                    "opacity_derivative",
-                    "visibility",
-                )
-            )
-            if has_thermodynamics
-            else None
         )
+        if has_thermodynamics
+        else None
+    )
     provenance = _provenance(request, build, resources)
     transfer = LinearTransferTable(
         scales,

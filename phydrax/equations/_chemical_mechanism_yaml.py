@@ -12,6 +12,8 @@ import jax.numpy as jnp
 import numpy as np
 import yaml
 
+from .._document_resource import decode_text_resource
+from .._external_resource import read_bounded_resource, ResourceLimits
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from ._chemical_components import ChemicalComponentCatalog
@@ -55,9 +57,26 @@ _ENERGY = {"J": 1.0, "kJ": 1000.0, "cal": 4.184, "kcal": 4184.0}
 _PRESSURE = {"Pa": 1.0, "kPa": 1000.0, "bar": 1.0e5, "atm": 101325.0}
 
 
-def load_chemical_mechanism_yaml(path: str | Path, /) -> ChemicalMechanismImportReport:
-    source = Path(path)
-    payload = yaml.safe_load(source.read_text(encoding="utf-8"))
+def load_chemical_mechanism_yaml(
+    path: str | Path,
+    /,
+    *,
+    trusted_root: str | Path | None = None,
+    maximum_file_bytes: int = 64 * 1024 * 1024,
+) -> ChemicalMechanismImportReport:
+    source = Path(path).expanduser().absolute()
+    root = source.parent if trusted_root is None else Path(trusted_root)
+    resource = read_bounded_resource(
+        source,
+        trusted_root=root,
+        limits=ResourceLimits(maximum_file_bytes, 64, 1_000_000, 1_000_000, 128),
+    )
+    text = decode_text_resource(
+        resource,
+        encoding="utf-8",
+        max_line_bytes=1_048_576,
+    ).value
+    payload = yaml.safe_load(text)
     if not isinstance(payload, Mapping):
         raise ValueError("Chemical mechanism YAML root must be a mapping.")
     units = _units(payload.get("units", {}))

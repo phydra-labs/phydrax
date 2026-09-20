@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from io import BytesIO
 from pathlib import Path
 
 import equinox as eqx
@@ -249,7 +250,7 @@ def read_hbt_herons_catalog(
         raise ValueError("maximum_particles_per_halo must be a positive integer.")
     halo_capacity = int(maximum_halos)
     particle_capacity = int(maximum_particles_per_halo)
-    source_path = _admit_path(
+    resource = _admit_path(
         path,
         source,
         maximum_source_bytes=maximum_source_bytes,
@@ -259,7 +260,7 @@ def read_hbt_herons_catalog(
         export=export,
     )
     losses: list[AdapterLoss] = []
-    with h5py.File(source_path, "r") as handle:
+    with h5py.File(BytesIO(resource.data), "r") as handle:
         if "Subhalos" not in handle:
             raise ValueError("HBT-HERONS SubSnap omits the Subhalos dataset.")
         records = np.asarray(handle["Subhalos"])

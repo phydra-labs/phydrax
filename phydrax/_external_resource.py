@@ -9,11 +9,13 @@ from __future__ import annotations
 import errno
 import hashlib
 import os
-import stat
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, replace
-from typing import Literal
+from typing import BinaryIO, Literal
 
 from ._fingerprint import canonical_fingerprint
+from ._host_io import open_regular_beneath, OpenedHostFile
 
 
 _ResourceFailure = Literal["policy", "malformed", "limit", "inconsistent"]
@@ -90,6 +92,14 @@ class BoundedResource:
     manifest: ResourceManifest
 
 
+@dataclass(frozen=True, slots=True)
+class OpenedResource:
+    """One admitted seekable resource valid for the surrounding context."""
+
+    stream: BinaryIO
+    manifest: ResourceManifest
+
+
 def bounded_resource_from_bytes(
     data: bytes,
     /,
@@ -132,97 +142,21 @@ def read_bounded_resource(
 ) -> BoundedResource:
     """Read one regular file by walking beneath a trusted directory descriptor."""
 
-    root_text, components = _resource_components(path, trusted_root, limits.max_depth)
-    descriptors: list[int] = []
-    directory_states: list[tuple[int, os.stat_result]] = []
     try:
-        root_descriptor = os.open(
-            root_text,
-            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
-        )
-        descriptors.append(root_descriptor)
-        root_status = os.fstat(root_descriptor)
-        if not stat.S_ISDIR(root_status.st_mode):
-            raise ResourceReadError(
-                "policy", "The trusted resource root must be a real directory."
-            )
-        directory_states.append((root_descriptor, root_status))
-        parent_descriptor = root_descriptor
-        for component in components[:-1]:
-            descriptor = os.open(
-                component,
-                os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC,
-                dir_fd=parent_descriptor,
-            )
-            descriptors.append(descriptor)
-            status = os.fstat(descriptor)
-            if not stat.S_ISDIR(status.st_mode):
-                raise ResourceReadError(
-                    "policy", "Resource path components must be real directories."
-                )
-            directory_states.append((descriptor, status))
-            parent_descriptor = descriptor
-        file_descriptor = os.open(
-            components[-1],
-            os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW | os.O_CLOEXEC,
-            dir_fd=parent_descriptor,
-        )
-        descriptors.append(file_descriptor)
-        before = os.fstat(file_descriptor)
-        if not stat.S_ISREG(before.st_mode):
-            raise ResourceReadError(
-                "policy", "The requested resource must be a regular file."
-            )
-        if before.st_size > limits.max_bytes:
-            raise ResourceReadError(
-                "limit",
-                f"Resource exceeds the configured {limits.max_bytes}-byte size limit.",
-            )
-        payload = bytearray()
-        while len(payload) <= limits.max_bytes:
-            chunk = os.read(
-                file_descriptor,
-                min(64 * 1024, limits.max_bytes + 1 - len(payload)),
-            )
-            if not chunk:
-                break
-            payload.extend(chunk)
-        if len(payload) > limits.max_bytes:
-            raise ResourceReadError(
-                "limit",
-                f"Resource exceeds the configured {limits.max_bytes}-byte size limit.",
-            )
-        after = os.fstat(file_descriptor)
-        if len(payload) != after.st_size or _stat_identity(before) != _stat_identity(
-            after
-        ):
-            raise ResourceReadError(
-                "inconsistent", "The resource changed while it was being read."
-            )
-        for descriptor, initial in directory_states:
-            if _directory_identity(initial) != _directory_identity(os.fstat(descriptor)):
-                raise ResourceReadError(
-                    "inconsistent", "A resource path component changed during the read."
-                )
-        data = bytes(payload)
-        source_path = os.path.join(root_text, *components)
-        manifest = _manifest(
-            source_kind="file",
-            source_path=source_path,
-            trusted_root=root_text,
-            relative_components=components,
-            data=data,
-            file_status=after,
-            root_status=root_status,
-            limits=limits,
-            observed_depth=0,
-            observed_nodes=0,
-            observed_attributes=0,
-            observed_losses=0,
-        )
-        return BoundedResource(data, manifest)
+        with open_regular_beneath(
+            path,
+            trusted_root=trusted_root,
+            maximum_depth=limits.max_depth,
+        ) as opened:
+            data, manifest = _read_opened_resource(opened, limits=limits, retain=True)
     except ResourceReadError:
         raise
+    except OverflowError as error:
+        raise ResourceReadError("limit", str(error)) from error
+    except ValueError as error:
+        raise ResourceReadError("policy", str(error)) from error
+    except RuntimeError as error:
+        raise ResourceReadError("inconsistent", str(error)) from error
     except OSError as error:
         reason: _ResourceFailure = (
             "policy" if error.errno in (errno.ELOOP, errno.ENOTDIR) else "malformed"
@@ -230,8 +164,104 @@ def read_bounded_resource(
         raise ResourceReadError(
             reason, "The requested resource could not be opened or read."
         ) from error
-    finally:
-        _close_descriptors(descriptors)
+    if data is None:
+        raise RuntimeError("Resident resource admission did not retain bytes.")
+    return BoundedResource(data, manifest)
+
+
+@contextmanager
+def open_bounded_resource(
+    path: str | os.PathLike[str],
+    /,
+    *,
+    trusted_root: str | os.PathLike[str],
+    limits: ResourceLimits,
+) -> Iterator[OpenedResource]:
+    """Open one admitted seekable resource without retaining its bytes in memory."""
+
+    try:
+        with open_regular_beneath(
+            path,
+            trusted_root=trusted_root,
+            maximum_depth=limits.max_depth,
+        ) as opened:
+            _, manifest = _read_opened_resource(opened, limits=limits, retain=False)
+            with opened.duplicate_stream() as stream:
+                stream.seek(0)
+                yield OpenedResource(stream, manifest)
+            opened.verify_stable()
+    except ResourceReadError:
+        raise
+    except OverflowError as error:
+        raise ResourceReadError("limit", str(error)) from error
+    except ValueError as error:
+        raise ResourceReadError("policy", str(error)) from error
+    except RuntimeError as error:
+        raise ResourceReadError("inconsistent", str(error)) from error
+    except OSError as error:
+        reason: _ResourceFailure = (
+            "policy" if error.errno in (errno.ELOOP, errno.ENOTDIR) else "malformed"
+        )
+        raise ResourceReadError(
+            reason, "The requested resource could not be opened or read."
+        ) from error
+
+
+def _read_opened_resource(
+    opened: OpenedHostFile,
+    /,
+    *,
+    limits: ResourceLimits,
+    retain: bool,
+) -> tuple[bytes | None, ResourceManifest]:
+    before = opened.file_status
+    if before.st_size > limits.max_bytes:
+        raise ResourceReadError(
+            "limit",
+            f"Resource exceeds the configured {limits.max_bytes}-byte size limit.",
+        )
+    opened.rewind()
+    digest = hashlib.sha256()
+    payload = bytearray() if retain else None
+    total = 0
+    while total <= limits.max_bytes:
+        chunk = os.read(
+            opened.descriptor,
+            min(64 * 1024, limits.max_bytes + 1 - total),
+        )
+        if not chunk:
+            break
+        total += len(chunk)
+        digest.update(chunk)
+        if payload is not None:
+            payload.extend(chunk)
+    if total > limits.max_bytes:
+        raise ResourceReadError(
+            "limit",
+            f"Resource exceeds the configured {limits.max_bytes}-byte size limit.",
+        )
+    after = opened.verify_stable()
+    if total != after.st_size:
+        raise ResourceReadError(
+            "inconsistent", "The resource changed while it was being read."
+        )
+    manifest = _manifest(
+        source_kind="file",
+        source_path=os.path.join(opened.root_path, *opened.components),
+        trusted_root=opened.root_path,
+        relative_components=opened.components,
+        data=None,
+        size_bytes=total,
+        content_sha256=digest.hexdigest(),
+        file_status=after,
+        root_status=opened.root_status,
+        limits=limits,
+        observed_depth=0,
+        observed_nodes=0,
+        observed_attributes=0,
+        observed_losses=0,
+    )
+    return None if payload is None else bytes(payload), manifest
 
 
 def account_bounded_resource(
@@ -283,74 +313,13 @@ def account_bounded_resource(
     return replace(resource, manifest=manifest)
 
 
-def _resource_components(
-    path: str | os.PathLike[str],
-    trusted_root: str | os.PathLike[str],
-    maximum_depth: int,
-    /,
-) -> tuple[str, tuple[str, ...]]:
-    path_text = os.fspath(path)
-    root_input = os.fspath(trusted_root)
-    if not isinstance(path_text, str) or not isinstance(root_input, str):
-        raise TypeError("Resource paths and trusted roots must be text paths.")
-    if _remote_location(path_text) or _remote_location(root_input):
-        raise ResourceReadError("policy", "Network resource locations are disabled.")
-    if "\x00" in path_text or "\x00" in root_input:
-        raise ResourceReadError("policy", "Resource paths cannot contain null bytes.")
-    root_text = os.path.abspath(os.path.expanduser(root_input))
-    expanded_path = os.path.expanduser(path_text)
-    raw_parts = tuple(part for part in expanded_path.split(os.sep) if part)
-    if ".." in raw_parts:
-        raise ResourceReadError("policy", "Resource traversal components are disabled.")
-    if os.path.isabs(expanded_path):
-        relative_text = os.path.relpath(expanded_path, root_text)
-    else:
-        relative_text = expanded_path
-    components = tuple(
-        part for part in relative_text.split(os.sep) if part and part != "."
-    )
-    if not components:
-        raise ResourceReadError("policy", "A resource file path is required.")
-    if any(part == ".." for part in components):
-        raise ResourceReadError("policy", "The resource path escapes its trusted root.")
-    if len(components) > maximum_depth:
-        raise ResourceReadError("limit", "Resource path nesting exceeds its depth limit.")
-    return root_text, components
-
-
-def _remote_location(value: str, /) -> bool:
-    return "://" in value or value.startswith(("//", "\\\\"))
-
-
-def _stat_identity(status: os.stat_result, /) -> tuple[int, ...]:
-    return (
-        int(status.st_dev),
-        int(status.st_ino),
-        int(status.st_mode),
-        int(status.st_size),
-        int(status.st_mtime_ns),
-        int(status.st_ctime_ns),
-    )
-
-
-def _directory_identity(status: os.stat_result, /) -> tuple[int, ...]:
-    return (
-        int(status.st_dev),
-        int(status.st_ino),
-        int(status.st_mode),
-        int(status.st_size),
-        int(status.st_mtime_ns),
-        int(status.st_ctime_ns),
-    )
-
-
 def _manifest(
     *,
     source_kind: Literal["memory", "file"],
     source_path: str | None,
     trusted_root: str | None,
     relative_components: tuple[str, ...],
-    data: bytes,
+    data: bytes | None,
     file_status: os.stat_result | None,
     root_status: os.stat_result | None,
     limits: ResourceLimits,
@@ -358,6 +327,8 @@ def _manifest(
     observed_nodes: int,
     observed_attributes: int,
     observed_losses: int,
+    size_bytes: int | None = None,
+    content_sha256: str | None = None,
     file_device: int | None = None,
     file_inode: int | None = None,
     file_mode: int | None = None,
@@ -373,7 +344,17 @@ def _manifest(
         root_device = int(root_status.st_dev)
         root_inode = int(root_status.st_ino)
         root_mode = int(root_status.st_mode)
-    digest = hashlib.sha256(data).hexdigest()
+    if data is not None:
+        size_bytes = len(data)
+        content_sha256 = hashlib.sha256(data).hexdigest()
+    if (
+        size_bytes is None
+        or size_bytes < 0
+        or content_sha256 is None
+        or len(content_sha256) != 64
+        or any(character not in "0123456789abcdef" for character in content_sha256)
+    ):
+        raise ValueError("Resource size and SHA-256 identity are invalid.")
     payload = {
         "kind": "bounded-resource-manifest",
         "source_kind": source_kind,
@@ -383,8 +364,8 @@ def _manifest(
         "trusted_root_inode": root_inode,
         "trusted_root_mode": root_mode,
         "relative_components": list(relative_components),
-        "size_bytes": len(data),
-        "content_sha256": digest,
+        "size_bytes": size_bytes,
+        "content_sha256": content_sha256,
         "file_device": file_device,
         "file_inode": file_inode,
         "file_mode": file_mode,
@@ -410,8 +391,8 @@ def _manifest(
         root_inode,
         root_mode,
         relative_components,
-        len(data),
-        digest,
+        size_bytes,
+        content_sha256,
         file_device,
         file_inode,
         file_mode,
@@ -424,20 +405,14 @@ def _manifest(
     )
 
 
-def _close_descriptors(descriptors: list[int], /) -> None:
-    for descriptor in reversed(descriptors):
-        try:
-            os.close(descriptor)
-        except OSError:
-            pass
-
-
 __all__ = [
     "BoundedResource",
+    "OpenedResource",
     "ResourceLimits",
     "ResourceManifest",
     "ResourceReadError",
     "account_bounded_resource",
     "bounded_resource_from_bytes",
+    "open_bounded_resource",
     "read_bounded_resource",
 ]

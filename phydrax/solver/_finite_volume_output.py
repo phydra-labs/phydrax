@@ -6,7 +6,6 @@ from __future__ import annotations
 
 import html
 import json
-import os
 from importlib import import_module
 from importlib.util import find_spec
 from pathlib import Path
@@ -18,6 +17,7 @@ from jaxtyping import ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._precision import PrecisionEvidenceEnvelope
+from .._publication import publish_bytes
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization.amr import PreparedDistributedBlockAMRHierarchy
@@ -51,9 +51,12 @@ def _h5py():
 
 
 def _atomic_text(path: Path, payload: str, /) -> None:
-    temporary = path.with_suffix(path.suffix + ".tmp")
-    temporary.write_text(payload)
-    os.replace(temporary, path)
+    publish_bytes(
+        path,
+        payload.encode("utf-8"),
+        maximum_bytes=256 * 1024 * 1024,
+        mode="atomic_replace",
+    )
 
 
 def _accepted_points(
