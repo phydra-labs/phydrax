@@ -110,10 +110,10 @@ from .geometric._orthogonal_point_cno import (
     OrthogonalPointTopology,
 )
 from .geometric._rigno import RIGNO
-from .probabilistic._flowjax_operator import (
+from .probabilistic._conditional_flow_operator import (
     conditional_coupling_flow_operator,
     ConditionalFlowFunctionOperator,
-    FlowJAXOperatorDistribution,
+    ConditionalFlowOperatorDistribution,
     OperatorBatchConditioner,
 )
 from .probabilistic._function_frame_flow import (
@@ -139,6 +139,7 @@ from .spectral._fno import (
     IFNOConvergence,
     MultiScaleSpectralConvND,
     SpectralConvND,
+    SpectralConvolutionResourcePolicy,
 )
 from .spectral._hofno import HOFNO
 from .spectral._laplace import LaplaceTemporalOperator
@@ -153,6 +154,7 @@ from .spectral._wavelet import (
     MultiwaveletOperator,
     WaveletDecodePolicy,
     WaveletNeuralOperator,
+    WaveletResourcePolicy,
 )
 
 
@@ -276,13 +278,14 @@ __all__ = [
     "ConditionalFunctionFrameFlowOperator",
     "FunctionFrameCoefficientFlowState",
     "FunctionFrameProjectedLogProb",
-    "FlowJAXOperatorDistribution",
+    "ConditionalFlowOperatorDistribution",
     "OperatorBatchConditioner",
     "AxialFactorizedFNO",
     "FNO",
     "IFNO",
     "IFNOConvergence",
     "MultiScaleSpectralConvND",
+    "SpectralConvolutionResourcePolicy",
     "SpectralConvND",
     "GAOT",
     "GeometryInformedFlower",
@@ -328,5 +331,6 @@ __all__ = [
     "UPT",
     "MultiwaveletOperator",
     "WaveletDecodePolicy",
+    "WaveletResourcePolicy",
     "WaveletNeuralOperator",
 ]

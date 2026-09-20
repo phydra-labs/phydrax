@@ -7,16 +7,63 @@
 from importlib import import_module
 
 from .. import _external_runtime as external_runtime
+from .._document_resource import (
+    decode_json_resource,
+    decode_text_resource,
+    decode_xml_resource,
+    DecodedJSON,
+    DecodedText,
+    DecodedXML,
+)
 from .._external_resource import (
     account_bounded_resource,
     bounded_resource_from_bytes,
     BoundedResource,
+    open_bounded_resource,
+    OpenedResource,
     read_bounded_resource,
     ResourceLimits,
     ResourceManifest,
     ResourceReadError,
 )
 from .._external_runtime import __all__ as _external_runtime_all
+from .._hdf5_resource import (
+    HDF5DatasetManifest,
+    HDF5Limits,
+    HDF5Manifest,
+    inspect_hdf5_resource,
+)
+from .._numpy_resource import (
+    decode_npy_resource,
+    decode_npz_resource,
+    DecodedNumpyArchive,
+    DecodedNumpyArray,
+    NumpyFormatLimits,
+)
+from .._publication import (
+    PublicationMode,
+    PublicationReceipt,
+    publish_bytes,
+    publish_file,
+    publish_resource_set,
+    PublishedMemberReceipt,
+    ResourceSetPublicationReceipt,
+)
+from .._resource_archive import (
+    admit_zip_resource,
+    ArchiveLimits,
+    ArchiveMemberManifest,
+    BoundedArchive,
+    read_zip_members,
+)
+from .._resource_set import (
+    BoundedResourceSet,
+    read_bounded_resource_set,
+    ResourceMemberManifest,
+    ResourceSetLimits,
+    ResourceSetManifest,
+    ResourceSetReadError,
+)
 from . import (
     dafoam,
     fmi,
@@ -41,6 +88,12 @@ from ._black_hole import (
     NeutralBlackHoleArtifact,
 )
 from ._borehole import BoreholeInterval, BoreholeTrajectory, PreparedBoreholeSampling
+from ._catalog import (
+    CarrierKind,
+    format_capabilities,
+    FormatCapability,
+    FormatDirection,
+)
 from ._coordinate_transform import (
     CoordinateTransformPlan,
     CoordinateTransformResult,
@@ -238,6 +291,45 @@ __all__ = [
     "account_bounded_resource",
     "bounded_resource_from_bytes",
     "read_bounded_resource",
+    "OpenedResource",
+    "open_bounded_resource",
+    "ArchiveLimits",
+    "ArchiveMemberManifest",
+    "BoundedArchive",
+    "admit_zip_resource",
+    "read_zip_members",
+    "BoundedResourceSet",
+    "ResourceMemberManifest",
+    "ResourceSetLimits",
+    "ResourceSetManifest",
+    "ResourceSetReadError",
+    "read_bounded_resource_set",
+    "PublicationMode",
+    "PublicationReceipt",
+    "PublishedMemberReceipt",
+    "ResourceSetPublicationReceipt",
+    "publish_bytes",
+    "publish_file",
+    "publish_resource_set",
+    "CarrierKind",
+    "FormatCapability",
+    "FormatDirection",
+    "format_capabilities",
+    "DecodedJSON",
+    "DecodedText",
+    "DecodedXML",
+    "decode_json_resource",
+    "decode_text_resource",
+    "decode_xml_resource",
+    "DecodedNumpyArchive",
+    "DecodedNumpyArray",
+    "NumpyFormatLimits",
+    "decode_npy_resource",
+    "decode_npz_resource",
+    "HDF5DatasetManifest",
+    "HDF5Limits",
+    "HDF5Manifest",
+    "inspect_hdf5_resource",
     "compose_adapter_reports",
     "negotiate_adapter",
     "decode_segy_bytes",

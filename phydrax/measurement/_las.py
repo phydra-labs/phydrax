@@ -6,32 +6,21 @@
 
 from __future__ import annotations
 
-from hashlib import new as new_digest
 from importlib import import_module, util
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import numpy as np
 
 from .._physical import SpatialCoordinateContract
 from ..interchange import AdapterLoss, AdapterReport, AdapterStatus
-from ..qualification import ReferenceArtifactManifest
+from ..qualification import open_reference_artifact, ReferenceArtifactManifest
 from ..units import ONE, SECOND
 from ._asset import DataOrigin, DataStage, DerivationRecord
 from ._field import QuantityField, SamplingSemantics, SpatialSamplingKind
 from ._quantity import QuantitySpec, ValueKind, ValueLayout
 from ._support import PointSampleSupport
 from .lidar import LidarPointProduct
-
-
-def _verify_reference(path: Path, reference: ReferenceArtifactManifest, /) -> None:
-    if path.stat().st_size != reference.size_bytes:
-        raise ValueError("LAS source size does not match its reference manifest.")
-    digest = new_digest(reference.checksum_algorithm)
-    with path.open("rb") as stream:
-        while block := stream.read(1024 * 1024):
-            digest.update(block)
-    if digest.hexdigest() != reference.checksum:
-        raise ValueError("LAS source checksum does not match its reference manifest.")
 
 
 def _quantity(name: str, kind: str, unit=ONE) -> QuantitySpec:
@@ -105,12 +94,17 @@ class LasPointProvider:
         if intended_use not in requested:
             raise ValueError("Unsupported intended_use.")
         reference.require_rights(**requested[intended_use])
-        source = Path(path).resolve()
-        if not source.is_file():
-            raise FileNotFoundError(source)
-        _verify_reference(source, reference)
+        source = Path(path).expanduser().absolute()
         backend = import_module("laspy")
-        las = backend.read(str(source))
+        with (
+            open_reference_artifact(source, reference) as resource,
+            TemporaryDirectory(prefix="phydrax-las-read-") as temporary,
+        ):
+            staged = Path(temporary) / source.name
+            with staged.open("wb") as output:
+                while chunk := resource.stream.read(1024 * 1024):
+                    output.write(chunk)
+            las = backend.read(str(staged))
         count = len(las.points)
         if count < 1 or count > int(maximum_points):
             raise MemoryError(

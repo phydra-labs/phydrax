@@ -207,7 +207,7 @@ def test_sparse_coordinate_operator_adjoint_respects_declared_pairings():
     )
 
 
-def test_sparse_plans_reuse_global_asdex_jacobian_and_hessian_patterns():
+def test_sparse_plans_reuse_global_structural_jacobian_and_hessian_patterns():
     space = ArraySpace((4,), dtype=jnp.float64)
     target = ArraySpace((3,), dtype=jnp.float64)
 
@@ -221,7 +221,7 @@ def test_sparse_plans_reuse_global_asdex_jacobian_and_hessian_patterns():
         first,
         source=space,
         target=target,
-        compiler="asdex",
+        compiler="auto",
     )
     first_operator = jacobian_plan.operator(first)
     second_operator = jacobian_plan.operator(second)
@@ -249,7 +249,7 @@ def test_sparse_plans_reuse_global_asdex_jacobian_and_hessian_patterns():
         energy,
         first,
         space=space,
-        compiler="asdex",
+        compiler="auto",
         contract=phx.sparse.SparseHessianContract("riesz"),
         structure=phx.sparse.SparsePattern.from_coo(
             [0, 0, 1, 1, 1, 2, 2, 2, 3, 3],

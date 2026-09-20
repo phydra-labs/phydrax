@@ -1,6 +1,5 @@
 import jax
 import jax.numpy as jnp
-from flowjax.bijections import Affine
 
 import phydrax as phx
 
@@ -13,8 +12,9 @@ target = phx.uq.CallableReducedPotential(
     (1,),
     "shifted-normal",
 )
-bijection = phx.uq.FlowJAXBijectionAdapter(
-    Affine(loc=jnp.asarray([2.0]), scale=jnp.asarray([0.5])),
+bijection = phx.uq.AffineFlowBijector(
+    jnp.asarray([2.0]),
+    jnp.asarray([0.5]),
     architecture_id="affine-targeted-map",
 )
 mapping = phx.uq.TargetedMapPlan(bijection, (1,), architecture_id="affine-targeted-map")

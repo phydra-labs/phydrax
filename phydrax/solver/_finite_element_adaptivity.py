@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
@@ -13,6 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from .._array_archive import read_array_archive, write_array_archive
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -349,57 +349,60 @@ def write_finite_element_hp_epoch(
             epoch.discretization.field_spaces[0].vector_space.structure().shape[1:]
         )
     metadata = {
+        "kind": "finite-element-hp-epoch",
         "cell_kind": epoch.topology.cell_kind,
         "topology_id": epoch.topology.topology_id,
         "field_name": field_name,
         "conformity": conformity,
         "component_shape": list(component_shape),
     }
-    np.savez(
-        Path(path),
-        metadata=np.asarray(json.dumps(metadata)),
-        cell_global_ids=np.asarray(epoch.topology.cell_global_ids),
-        allocated=np.asarray(epoch.topology.allocated),
-        active=np.asarray(epoch.topology.active),
-        cell_degrees=np.asarray(epoch.topology.cell_degrees),
-        root_cell_ids=np.asarray(epoch.topology.root_cell_ids),
-        path_codes=np.asarray(epoch.topology.path_codes),
-        levels=np.asarray(epoch.topology.levels),
-        parent_slots=np.asarray(epoch.topology.parent_slots),
-        child_slots=np.asarray(epoch.topology.child_slots),
-        child_valid=np.asarray(epoch.topology.child_valid),
-        cell_vertices=np.asarray(epoch.geometry.cell_vertices),
-        reference_lower=np.asarray(epoch.geometry.reference_lower),
-        reference_upper=np.asarray(epoch.geometry.reference_upper),
-        allow_pickle=False,
+    write_array_archive(
+        path,
+        manifest=metadata,
+        arrays={
+            "cell_global_ids": np.asarray(epoch.topology.cell_global_ids),
+            "allocated": np.asarray(epoch.topology.allocated),
+            "active": np.asarray(epoch.topology.active),
+            "cell_degrees": np.asarray(epoch.topology.cell_degrees),
+            "root_cell_ids": np.asarray(epoch.topology.root_cell_ids),
+            "path_codes": np.asarray(epoch.topology.path_codes),
+            "levels": np.asarray(epoch.topology.levels),
+            "parent_slots": np.asarray(epoch.topology.parent_slots),
+            "child_slots": np.asarray(epoch.topology.child_slots),
+            "child_valid": np.asarray(epoch.topology.child_valid),
+            "cell_vertices": np.asarray(epoch.geometry.cell_vertices),
+            "reference_lower": np.asarray(epoch.geometry.reference_lower),
+            "reference_upper": np.asarray(epoch.geometry.reference_upper),
+        },
     )
 
 
 def read_finite_element_hp_epoch(path: str | Path, /) -> FiniteElementHPEpoch:
     """Reconstruct one canonical hp epoch from `write_finite_element_hp_epoch`."""
 
-    with np.load(Path(path), allow_pickle=False) as archive:
-        metadata = json.loads(str(archive["metadata"]))
-        topology = FiniteElementHPTopology(
-            metadata["cell_kind"],
-            metadata["topology_id"],
-            archive["cell_global_ids"],
-            archive["allocated"],
-            archive["active"],
-            archive["cell_degrees"],
-            root_cell_ids=archive["root_cell_ids"],
-            path_codes=archive["path_codes"],
-            levels=archive["levels"],
-            parent_slots=archive["parent_slots"],
-            child_slots=archive["child_slots"],
-            child_valid=archive["child_valid"],
-        )
-        geometry = FiniteElementHPGeometry(
-            topology,
-            archive["cell_vertices"],
-            archive["reference_lower"],
-            archive["reference_upper"],
-        )
+    metadata, arrays = read_array_archive(path)
+    if metadata.get("kind") != "finite-element-hp-epoch":
+        raise ValueError("Archive is not a finite-element hp epoch.")
+    topology = FiniteElementHPTopology(
+        metadata["cell_kind"],
+        metadata["topology_id"],
+        arrays["cell_global_ids"],
+        arrays["allocated"],
+        arrays["active"],
+        arrays["cell_degrees"],
+        root_cell_ids=arrays["root_cell_ids"],
+        path_codes=arrays["path_codes"],
+        levels=arrays["levels"],
+        parent_slots=arrays["parent_slots"],
+        child_slots=arrays["child_slots"],
+        child_valid=arrays["child_valid"],
+    )
+    geometry = FiniteElementHPGeometry(
+        topology,
+        arrays["cell_vertices"],
+        arrays["reference_lower"],
+        arrays["reference_upper"],
+    )
     field_name = str(metadata["field_name"])
     if field_name:
         return prepare_finite_element_hp_epoch(

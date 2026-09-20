@@ -71,8 +71,6 @@ class CellListParticleNeighborhoodPlan(AbstractParticleNeighborhoodPlan):
             )
         if not isinstance(box, ParticleBox):
             raise TypeError("box must be a ParticleBox.")
-        if box.ambient_dimension not in (1, 2, 3):
-            raise ValueError("Cell-list neighborhoods support dimensions 1, 2, and 3.")
         key = DiscretizationKey(
             name,
             DiscretizationRole.AUXILIARY,
@@ -159,11 +157,7 @@ class PreparedCellListParticleNeighborhood(AbstractPreparedParticleNeighborhood)
                 "Multi-cell axes must cover the search radius in adjacent cells."
             )
         cell_count = prod(shape)
-        neighbor_offsets = np.asarray(
-            tuple(product((-1, 0, 1), repeat=particles.ambient_dimension)),
-            dtype=np.int32,
-        )
-        neighbor_cell_capacity = neighbor_offsets.shape[0]
+        neighbor_cell_capacity = 3**particles.ambient_dimension
         candidate_slots = (
             particles.capacity * neighbor_cell_capacity * plan.maximum_particles_per_cell
         )
@@ -172,6 +166,10 @@ class PreparedCellListParticleNeighborhood(AbstractPreparedParticleNeighborhood)
                 f"Cell-list relation requires {candidate_slots} candidate slots, "
                 f"exceeding maximum_candidate_slots={plan.maximum_candidate_slots}."
             )
+        neighbor_offsets = np.asarray(
+            tuple(product((-1, 0, 1), repeat=particles.ambient_dimension)),
+            dtype=np.int32,
+        )
         occupied_cell_capacity = min(particles.capacity, cell_count)
         key_groups = KeyGroupPlan(
             particles.capacity,

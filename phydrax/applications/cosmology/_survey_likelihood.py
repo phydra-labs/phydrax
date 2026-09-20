@@ -7,10 +7,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import equinox as eqx
-import h5py
 import jax
 import jax.numpy as jnp
-import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
@@ -25,6 +23,7 @@ from ._closure import (
     ScientificArtifactEnvelope,
     TheoryVector,
 )
+from ._hdf5_resources import read_cosmology_hdf5_arrays
 
 
 class SurveyReleaseManifest(StrictModule, NonTrainableState):
@@ -156,12 +155,21 @@ class SurveyReleaseProduct(StrictModule, NonTrainableState):
         window_dataset: str,
         precision_dataset: str,
         logdet_dataset: str,
+        trusted_root: str | Path | None = None,
+        maximum_file_bytes: int = 64 * 1024 * 1024 * 1024,
+        maximum_decoded_bytes: int = 64 * 1024 * 1024 * 1024,
     ) -> SurveyReleaseProduct:
-        with h5py.File(Path(path), "r") as handle:
-            data = np.asarray(handle[data_dataset])
-            window = np.asarray(handle[window_dataset])
-            precision = np.asarray(handle[precision_dataset])
-            logdet = np.asarray(handle[logdet_dataset])
+        arrays = read_cosmology_hdf5_arrays(
+            path,
+            (data_dataset, window_dataset, precision_dataset, logdet_dataset),
+            trusted_root=trusted_root,
+            maximum_file_bytes=maximum_file_bytes,
+            maximum_decoded_bytes=maximum_decoded_bytes,
+        )
+        data = arrays[data_dataset]
+        window = arrays[window_dataset]
+        precision = arrays[precision_dataset]
+        logdet = arrays[logdet_dataset]
         return cls(
             source_layout,
             observed_layout,

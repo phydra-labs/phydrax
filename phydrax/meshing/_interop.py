@@ -6,11 +6,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import meshio
 import numpy as np
 
+from .._external_resource import open_bounded_resource, ResourceLimits
+from .._mesh_file_profiles import resolve_mesh_file_profile
 from .._physical import SpatialCoordinateContract
+from .._publication import publish_bytes
 from ..discretization import (
     CellBlock,
     CellGeometrySpec,
@@ -58,6 +62,8 @@ class MeshInteropPolicy:
     maximum_vertices: int = 20_000_000
     maximum_cells: int = 50_000_000
 
+    file_profile: str | None = None
+
     def __post_init__(self):
         if not isinstance(self.coordinate_contract, SpatialCoordinateContract):
             raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
@@ -75,6 +81,8 @@ class MeshInteropPolicy:
                 or value <= 0
             ):
                 raise ValueError("Mesh interchange limits must be positive integers.")
+        if self.file_profile is not None and not str(self.file_profile).strip():
+            raise ValueError("file_profile must be non-empty when supplied.")
 
 
 @dataclass(frozen=True, slots=True)
@@ -212,12 +220,37 @@ def read_mesh_array_artifact(
     """Decode numeric meshio arrays; unsupported external semantics are explicit losses."""
     if not isinstance(policy, MeshInteropPolicy):
         raise TypeError("policy must be MeshInteropPolicy.")
-    source_path = Path(path).expanduser().resolve()
-    if not source_path.is_file():
-        raise FileNotFoundError(source_path)
-    if source_path.stat().st_size > policy.maximum_file_bytes:
-        raise ValueError("Mesh artifact exceeds maximum_file_bytes.")
-    source = meshio.read(source_path)
+    source_path = Path(path).expanduser().absolute()
+    profile = resolve_mesh_file_profile(
+        source_path,
+        policy.file_profile,
+        direction="read",
+    )
+    if profile.carrier != "single-file":
+        raise ValueError(
+            f"Mesh profile {profile.profile_id!r} requires a resource-set reader."
+        )
+    limits = ResourceLimits(
+        policy.maximum_file_bytes,
+        64,
+        policy.maximum_cells + policy.maximum_vertices,
+        policy.maximum_cells,
+        1024,
+    )
+    with (
+        open_bounded_resource(
+            source_path.name,
+            trusted_root=source_path.parent,
+            limits=limits,
+        ) as resource,
+        TemporaryDirectory(prefix="phydrax-mesh-read-") as temporary,
+    ):
+        staged = Path(temporary) / source_path.name
+        with staged.open("wb") as output:
+            while chunk := resource.stream.read(1024 * 1024):
+                output.write(chunk)
+        source = meshio.read(staged, file_format=profile.meshio_format)
+        source_manifest_id = resource.manifest.manifest_id
     if _decoded_bytes(source) > policy.maximum_data_bytes:
         raise ValueError("Decoded mesh artifact exceeds maximum_data_bytes.")
     points = np.asarray(source.points)
@@ -316,15 +349,15 @@ def read_mesh_array_artifact(
         point_ids,
         tuple(blocks),
         policy.coordinate_contract,
-        source_id=str(source_path),
-        source_format=source_path.suffix.lower() or "meshio",
+        source_id=source_manifest_id,
+        source_format=profile.profile_id,
         fields=tuple(fields),
     )
     _check_array_limits(artifact, policy)
     report = _report(
         artifact.source_format,
         "phydrax-mesh-arrays",
-        str(source_path),
+        source_manifest_id,
         artifact.artifact_id,
         losses,
         policy,
@@ -1066,7 +1099,16 @@ def export_cell_mesh(
         artifact, mesh.topological_dimension, losses
     )
     _require_permission(losses, policy)
-    destination = Path(path).expanduser().resolve()
+    destination = Path(path).expanduser().absolute()
+    profile = resolve_mesh_file_profile(
+        destination,
+        policy.file_profile,
+        direction="write",
+    )
+    if profile.carrier != "single-file":
+        raise ValueError(
+            f"Mesh profile {profile.profile_id!r} requires a resource-set writer."
+        )
     if artifact.points.shape[1] > 3:
         raise ValueError(
             "External meshio export supports at most three coordinate dimensions."
@@ -1090,14 +1132,21 @@ def export_cell_mesh(
     )
     if _decoded_bytes(target) > policy.maximum_data_bytes:
         raise ValueError("Mesh export exceeds maximum_data_bytes.")
-    # Some meshio formats create companion files, so retain the requested path.
-    # Every external export already requires explicit native-metadata loss permission.
-    meshio.write(destination, target)
-    if destination.stat().st_size > policy.maximum_file_bytes:
-        raise ValueError("Mesh export exceeds maximum_file_bytes.")
-    decoded = meshio.read(destination)
-    if _decoded_bytes(decoded) > policy.maximum_data_bytes:
-        raise ValueError("Decoded mesh export exceeds maximum_data_bytes.")
+    with TemporaryDirectory(prefix="phydrax-mesh-write-") as temporary:
+        staged = Path(temporary) / destination.name
+        meshio.write(staged, target, file_format=profile.meshio_format)
+        if staged.stat().st_size > policy.maximum_file_bytes:
+            raise ValueError("Mesh export exceeds maximum_file_bytes.")
+        decoded = meshio.read(staged, file_format=profile.meshio_format)
+        if _decoded_bytes(decoded) > policy.maximum_data_bytes:
+            raise ValueError("Decoded mesh export exceeds maximum_data_bytes.")
+        encoded = staged.read_bytes()
+    receipt = publish_bytes(
+        destination,
+        encoded,
+        maximum_bytes=policy.maximum_file_bytes,
+        mode="atomic_replace",
+    )
     written_losses = _written_array_losses(
         meshio.Mesh(
             artifact.points,
@@ -1115,9 +1164,9 @@ def export_cell_mesh(
     }
     report = _report(
         "phydrax-cell-mesh",
-        destination.suffix.lower() or "meshio",
+        profile.profile_id,
         mesh.mesh_id,
-        str(destination),
+        receipt.receipt_id,
         losses,
         policy,
         preserved=(name for name in preserved if name not in changed_names),

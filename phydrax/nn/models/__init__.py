@@ -19,11 +19,11 @@ from ._constrained_constitutive import (
     ReferenceConfiguration,
 )
 from ._feynmann import FeynmaNN
-from ._flowjax_process import (
+from ._flow_process import (
     conditional_coupling_flow_process,
-    FlowJAXProcessDistribution,
+    FlowProcessDistribution,
     IdentityCoefficientTransition,
-    LatentFlowJAXCoefficientProcess,
+    LatentFlowCoefficientProcess,
     StateTimeProcessConditioner,
 )
 from ._holomorphic import HolomorphicMLP
@@ -136,7 +136,7 @@ __all__ = [
     "EquinoxModel",
     "EquinoxStructuredModel",
     "FeynmaNN",
-    "FlowJAXProcessDistribution",
+    "FlowProcessDistribution",
     "FeatureNormPotential",
     "ExponentialSpectralEnvelope",
     "FunctionalStateDecoder",
@@ -155,7 +155,7 @@ __all__ = [
     "KANGridAdaptationReport",
     "LatentContractionModel",
     "LatentExecutionPolicy",
-    "LatentFlowJAXCoefficientProcess",
+    "LatentFlowCoefficientProcess",
     "LinearDifferentialTransform",
     "LinearRecurrentModel",
     "MLP",

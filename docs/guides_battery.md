@@ -210,6 +210,21 @@ execution is illustrated by the host-dispatched circuit ECM and SPMe examples.
 This is ordinary user composition with the generic optimization API, not a
 battery-specific protocol-design or current-control capability.
 
+## Spatial DFN development surface
+
+`SpatialBatteryCellPlan` maps one homogeneous prepared 1D DFN plan over fixed
+2D or 3D macro-site coordinates. A declared nonnegative current partition owns
+the local current densities. Local lane steps are vectorized, current balance is
+reported, and the complete macro state commits only when every lane succeeds.
+The reported terminal voltage is the current-weighted lane voltage and the lane
+voltage spread remains explicit evidence.
+
+This development surface does not solve current-collector conduction, tab
+contact, or a thermal macro field and is not part of the released thermal-ECM
+support tuple.
+
+::: phydrax.applications.battery.SpatialBatteryCellPlan
+
 ## Nonclaims
 
 This surface is a cell-level lumped model for the exact equations and support

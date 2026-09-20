@@ -78,17 +78,18 @@ def _persist_shape(shape, path: Path, contract: phx.SpatialCoordinateContract):
 
 
 def _cad_partition(count: int, destination: Path):
-    import build123d as bd
+    from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
+    from OCP.gp import gp_Pnt
 
     contract = _contract()
     region_names = tuple(f"region-{index}" for index in range(count))
     operands = []
     for index, name in enumerate(region_names):
-        shape = bd.Box(1.0, 1.0, 1.0).translate((float(index), 0.0, 0.0))
+        shape = BRepPrimAPI_MakeBox(gp_Pnt(float(index), 0.0, 0.0), 1.0, 1.0, 1.0).Shape()
         operands.append(
             phx.geometry.BRepPartitionOperand(
                 name,
-                _persist_shape(shape.wrapped, destination / f"{name}.brep", contract),
+                _persist_shape(shape, destination / f"{name}.brep", contract),
                 phx.geometry.BRepPartitionRole.REGION,
             )
         )

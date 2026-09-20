@@ -34,6 +34,24 @@ from phydrax.signal import (
 )
 
 
+class WaveletResourcePolicy(StrictModule):
+    """Static bounds for wavelet subbands and trainable storage."""
+
+    maximum_detail_bands: int = eqx.field(static=True)
+    maximum_parameter_bytes: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        maximum_detail_bands: int = 4096,
+        maximum_parameter_bytes: int = 1 << 30,
+    ):
+        if maximum_detail_bands <= 0 or maximum_parameter_bytes <= 0:
+            raise ValueError("Wavelet resource limits must be positive.")
+        self.maximum_detail_bands = maximum_detail_bands
+        self.maximum_parameter_bytes = maximum_parameter_bytes
+
+
 class _WaveletSubbandMixerND(StrictModule):
     """Learned channel maps over one fixed tensor-wavelet coefficient topology."""
 
@@ -366,6 +384,7 @@ class WaveletNeuralOperator(AbstractOperatorModel):
     in_size: int | Literal["scalar"]
     out_size: int | Literal["scalar"]
     decode_policy: WaveletDecodePolicy
+    resources: WaveletResourcePolicy = eqx.field(static=True)
 
     def __init__(
         self,
@@ -383,10 +402,14 @@ class WaveletNeuralOperator(AbstractOperatorModel):
         activation: Callable[[Array], Array] = jnn.gelu,
         key: Key[Array, ""] = DOC_KEY0,
         decode_policy: WaveletDecodePolicy | None = None,
+        resources: WaveletResourcePolicy | None = None,
     ):
         dimension = int(spatial_ndim)
-        if dimension not in (1, 2, 3):
-            raise ValueError("WaveletNeuralOperator spatial_ndim must be 1, 2, or 3.")
+        if dimension <= 0:
+            raise ValueError("WaveletNeuralOperator spatial_ndim must be positive.")
+        resource_policy = WaveletResourcePolicy() if resources is None else resources
+        if not isinstance(resource_policy, WaveletResourcePolicy):
+            raise TypeError("resources must be a WaveletResourcePolicy.")
         self.transform = DiscreteWaveletTransform(
             tuple(range(-dimension - 1, -1)),
             levels=levels,
@@ -405,10 +428,33 @@ class WaveletNeuralOperator(AbstractOperatorModel):
         self.decode_policy = (
             WaveletDecodePolicy() if decode_policy is None else decode_policy
         )
+        self.resources = resource_policy
         if not isinstance(self.decode_policy, WaveletDecodePolicy):
             raise TypeError("decode_policy must be WaveletDecodePolicy.")
         if min(self.in_channels, self.out_channels, self.width, self.depth) <= 0:
             raise ValueError("Wavelet operator dimensions must be positive.")
+        detail_bands = self.depth * self.transform.levels * self.transform.detail_count
+        if detail_bands > resource_policy.maximum_detail_bands:
+            raise ValueError(
+                "Wavelet operator exceeds maximum_detail_bands: "
+                f"required {detail_bands}, allowed {resource_policy.maximum_detail_bands}."
+            )
+        parameter_elements = (
+            self.in_channels * self.width
+            + self.depth
+            * (1 + self.transform.levels * self.transform.detail_count)
+            * self.width
+            * self.width
+            + self.depth * self.width * self.width
+            + self.width * self.out_channels
+        )
+        parameter_bytes = parameter_elements * np.dtype(np.float64).itemsize
+        if parameter_bytes > resource_policy.maximum_parameter_bytes:
+            raise ValueError(
+                "Wavelet operator exceeds maximum_parameter_bytes: "
+                f"required {parameter_bytes}, "
+                f"allowed {resource_policy.maximum_parameter_bytes}."
+            )
         keys = jr.split(key, 2 * self.depth + 2)
         self.lift = Linear(
             in_size=self.in_channels,
@@ -651,5 +697,6 @@ class MultiwaveletOperator(AbstractOperatorModel):
 __all__ = [
     "MultiwaveletOperator",
     "WaveletDecodePolicy",
+    "WaveletResourcePolicy",
     "WaveletNeuralOperator",
 ]

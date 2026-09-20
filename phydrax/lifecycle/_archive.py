@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import hashlib
+import io
 import json
 import math
 from collections.abc import Mapping, Sequence
@@ -27,6 +28,7 @@ from .._array_archive import (
 )
 from .._execution_plan import ExecutionPlan
 from .._fingerprint import canonical_fingerprint, canonical_json
+from .._publication import publish_bytes
 from ..diagnostics import Diagnostic, DiagnosticError
 from ..logging import emit
 from ._chunk_repository import (
@@ -786,8 +788,7 @@ def support_bundle(
 
 
 def _export_npz(query_: LifecycleQuery, destination: Path, /) -> Path:
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    arrays = {field.name: field.values for field in query_.fields}
+    arrays = {field.name: np.asarray(field.values) for field in query_.fields}
     metadata = {
         "archive_id": query_.archive.archive_id,
         "fields": [
@@ -799,10 +800,17 @@ def _export_npz(query_: LifecycleQuery, destination: Path, /) -> Path:
             for field in query_.fields
         ],
     }
+    buffer = io.BytesIO()
     np.savez(
-        destination,
+        buffer,
         metadata=np.asarray(json.dumps(metadata, sort_keys=True)),
         **arrays,
+    )
+    publish_bytes(
+        destination,
+        buffer.getvalue(),
+        maximum_bytes=16 * 1024 * 1024 * 1024,
+        mode="atomic_replace",
     )
     return destination
 

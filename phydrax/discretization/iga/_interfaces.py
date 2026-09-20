@@ -487,12 +487,12 @@ def certify_patch_interface(
     count = common.shape[0]
     left_indices = jnp.full((count,), interface.left_chart, dtype=jnp.int32)
     right_indices = jnp.full((count,), interface.right_chart, dtype=jnp.int32)
-    left_normal = np.asarray(
-        interface.left_atlas.frame(left_indices, left_reference).normal
-    )
-    right_normal = np.asarray(
-        interface.right_atlas.frame(right_indices, right_reference).normal
-    )
+    left_frame = interface.left_atlas.frame(left_indices, left_reference)
+    right_frame = interface.right_atlas.frame(right_indices, right_reference)
+    if not bool(jnp.all(left_frame.regular)) or not bool(jnp.all(right_frame.regular)):
+        raise ValueError("Patch interface chart frame is rank deficient.")
+    left_normal = np.asarray(left_frame.normal)
+    right_normal = np.asarray(right_frame.normal)
     opposition = -np.sum(left_normal * right_normal, axis=-1)
     minimum_opposition = float(np.min(opposition))
     if not np.isfinite(minimum_opposition) or minimum_opposition < 1.0 - orientation_tol:

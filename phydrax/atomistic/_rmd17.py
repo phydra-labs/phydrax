@@ -12,7 +12,9 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from .._external_resource import read_bounded_resource, ResourceLimits
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._numpy_resource import decode_npz_resource, NumpyFormatLimits
 from .._precision import real_precision_dtype_name
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -94,8 +96,10 @@ class RMD17Split(StrictModule, NonTrainableState):
     split_id: str = eqx.field(static=True)
 
 
-def _archive_value(archive: Any, names: tuple[str, ...], /) -> np.ndarray:
-    present = tuple(name for name in names if name in archive.files)
+def _archive_value(
+    archive: dict[str, np.ndarray], names: tuple[str, ...], /
+) -> np.ndarray:
+    present = tuple(name for name in names if name in archive)
     if len(present) != 1:
         raise ValueError(
             f"rMD17 archive must contain exactly one of {names!r}; found {present!r}."
@@ -123,26 +127,44 @@ def load_rmd17_npz(
     scale: AtomisticScaleContract | None = None,
     masses: ArrayLike | None = None,
     dtype: Any = "float64",
+    trusted_root: str | Path | None = None,
+    maximum_file_bytes: int = 2 * 1024 * 1024 * 1024,
 ) -> RMD17Dataset:
     """Load rMD17 and explicitly convert kcal/mol source energies to one-system energy."""
 
-    source = Path(path).expanduser().resolve()
-    if not source.is_file():
-        raise FileNotFoundError(f"Local rMD17 NPZ does not exist: {source}")
+    source = Path(path).expanduser().absolute()
     if source.suffix.lower() != ".npz":
         raise ValueError("rMD17 input must be a local .npz archive.")
+    root = source.parent if trusted_root is None else Path(trusted_root)
+    resource = read_bounded_resource(
+        source,
+        trusted_root=root,
+        limits=ResourceLimits(maximum_file_bytes, 64, 100_000_000, 1024, 128),
+    )
+    decoded = decode_npz_resource(
+        resource,
+        limits=NumpyFormatLimits(
+            max_container_bytes=maximum_file_bytes,
+            max_aggregate_bytes=4 * maximum_file_bytes,
+            max_array_bytes=maximum_file_bytes,
+            max_arrays=16,
+            max_rank=4,
+            max_axis_length=100_000_000,
+            max_array_elements=500_000_000,
+            max_total_elements=1_000_000_000,
+        ),
+    )
+    archive = decoded.arrays
     precision = real_precision_dtype_name(dtype)
-    archive = np.load(source, allow_pickle=False)
     numbers = _archive_value(archive, ("nuclear_charges", "atomic_numbers", "z", "Z"))
     positions = _archive_value(archive, ("coords", "positions", "R"))
     energies = _archive_value(archive, ("energies", "energy", "E"))
     forces = _archive_value(archive, ("forces", "force", "F"))
     sample_ids = (
         np.asarray(archive["old_indices"])
-        if "old_indices" in archive.files
+        if "old_indices" in archive
         else np.arange(positions.shape[0], dtype=np.int64)
     )
-    archive.close()
     if numbers.ndim != 1 or not np.issubdtype(numbers.dtype, np.integer):
         raise TypeError("rMD17 nuclear charges must be a rank-1 integer array.")
     numbers = numbers.astype(np.int32, copy=False)

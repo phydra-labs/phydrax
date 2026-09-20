@@ -6,17 +6,27 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from .._array_archive import (
+    array_collection_digest,
+    array_payload_byte_count,
+    array_payload_digest,
+)
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..equations import MaterialSiteId, MaterialState, MaterialTransaction
+from ..lifecycle import (
+    CheckpointManifest,
+    CheckpointShard,
+    create as create_lifecycle_archive,
+    open as open_lifecycle_archive,
+)
 
 
 class FiniteElementCheckpoint(StrictModule, NonTrainableState):
@@ -90,43 +100,55 @@ def write_finite_element_checkpoint(
 ) -> None:
     if not isinstance(checkpoint, FiniteElementCheckpoint):
         raise TypeError("checkpoint must be FiniteElementCheckpoint.")
+    material_states = () if checkpoint.materials is None else checkpoint.materials.states
     metadata = {
-        "prepared_id": checkpoint.prepared_id,
-        "compilation_id": checkpoint.compilation_id,
-        "time": float(checkpoint.time),
-        "step": checkpoint.step,
-        "checkpoint_id": checkpoint.checkpoint_id,
+        "kind": "finite-element-checkpoint",
         "field_count": len(checkpoint.field_state),
         "material_layout_id": (
             None if checkpoint.materials is None else checkpoint.materials.layout_id
         ),
         "material_payload_id": checkpoint.material_payload_id,
-        "materials": (
-            []
-            if checkpoint.materials is None
-            else [
-                {
-                    "site_key": state.site_id.key,
-                    "model_id": state.model_id,
-                    "state_version": state.state_version,
-                }
-                for state in checkpoint.materials.states
-            ]
-        ),
+        "materials": [
+            {
+                "site_key": state.site_id.key,
+                "model_id": state.model_id,
+                "state_version": state.state_version,
+            }
+            for state in material_states
+        ],
+        "step": checkpoint.step,
     }
-    arrays: dict[str, Any] = {
-        "metadata": np.asarray(json.dumps(metadata, sort_keys=True)),
-    }
-    arrays.update(
-        {
+    arrays: dict[str, object] = {
+        "time": np.asarray(checkpoint.time),
+        **{
             f"field_{index}": np.asarray(value)
             for index, value in enumerate(checkpoint.field_state)
-        }
+        },
+        **{
+            f"material_{index}": np.asarray(state.committed)
+            for index, state in enumerate(material_states)
+        },
+    }
+    metadata_text = json.dumps(metadata, allow_nan=False, sort_keys=True)
+    shards = tuple(
+        CheckpointShard(
+            name,
+            array_payload_digest(value),
+            array_payload_byte_count(value),
+            (checkpoint.prepared_id, checkpoint.compilation_id),
+            metadata={"finite_element": metadata_text} if index == 0 else {},
+        )
+        for index, (name, value) in enumerate(sorted(arrays.items()))
     )
-    if checkpoint.materials is not None:
-        for index, state in enumerate(checkpoint.materials.states):
-            arrays[f"material_{index}"] = np.asarray(state.committed)
-    np.savez(Path(path), **arrays)
+    manifest = CheckpointManifest(
+        checkpoint.checkpoint_id,
+        checkpoint.prepared_id,
+        array_collection_digest(arrays),
+        checkpoint.compilation_id,
+        shards,
+        complete=True,
+    )
+    create_lifecycle_archive(path, manifest=manifest, arrays=arrays)
 
 
 def read_finite_element_checkpoint(
@@ -136,48 +158,55 @@ def read_finite_element_checkpoint(
     prepared_id: str,
     compilation_id: str,
 ) -> FiniteElementCheckpoint:
-    with np.load(Path(path), allow_pickle=False) as archive:
-        metadata = json.loads(str(archive["metadata"]))
-        if (
-            metadata["prepared_id"] != prepared_id
-            or metadata["compilation_id"] != compilation_id
-        ):
-            raise ValueError(
-                "FE checkpoint does not match the requested compiled problem."
-            )
-        fields = tuple(
-            archive[f"field_{index}"] for index in range(int(metadata["field_count"]))
+    archive = open_lifecycle_archive(path)
+    manifest = archive.manifest
+    if not isinstance(manifest, CheckpointManifest):
+        raise ValueError("FE checkpoint is not a lifecycle checkpoint.")
+    if (
+        manifest.analysis_plan_id != prepared_id
+        or manifest.execution_plan_id != compilation_id
+    ):
+        raise ValueError("FE checkpoint does not match the requested compiled problem.")
+    metadata_text = next(
+        (
+            dict(shard.metadata)["finite_element"]
+            for shard in manifest.shards
+            if "finite_element" in dict(shard.metadata)
+        ),
+        None,
+    )
+    if metadata_text is None:
+        raise ValueError("FE checkpoint metadata is missing.")
+    metadata = json.loads(metadata_text)
+    fields = tuple(
+        archive.arrays[f"field_{index}"] for index in range(int(metadata["field_count"]))
+    )
+    material_states = tuple(
+        MaterialState(
+            MaterialSiteId(item["site_key"]),
+            item["model_id"],
+            archive.arrays[f"material_{index}"],
+            state_version=int(item["state_version"]),
         )
-        material_states = tuple(
-            MaterialState(
-                MaterialSiteId(item["site_key"]),
-                item["model_id"],
-                archive[f"material_{index}"],
-                state_version=int(item["state_version"]),
-            )
-            for index, item in enumerate(metadata["materials"])
-        )
-        materials = None if not material_states else MaterialTransaction(material_states)
-        if (
-            materials is not None
-            and materials.layout_id != metadata["material_layout_id"]
-        ):
-            raise ValueError("FE checkpoint material layout identity mismatch.")
-        if (
-            materials is not None
-            and materials.checkpoint_payload().payload_id
-            != metadata["material_payload_id"]
-        ):
-            raise ValueError("FE checkpoint material payload identity mismatch.")
+        for index, item in enumerate(metadata["materials"])
+    )
+    materials = None if not material_states else MaterialTransaction(material_states)
+    if materials is not None and materials.layout_id != metadata["material_layout_id"]:
+        raise ValueError("FE checkpoint material layout identity mismatch.")
+    if (
+        materials is not None
+        and materials.checkpoint_payload().payload_id != metadata["material_payload_id"]
+    ):
+        raise ValueError("FE checkpoint material payload identity mismatch.")
     checkpoint = FiniteElementCheckpoint(
         prepared_id,
         compilation_id,
-        metadata["time"],
+        archive.arrays["time"],
         int(metadata["step"]),
         fields,
         materials=materials,
     )
-    if checkpoint.checkpoint_id != metadata["checkpoint_id"]:
+    if checkpoint.checkpoint_id != manifest.checkpoint_id:
         raise ValueError("FE checkpoint content identity mismatch.")
     return checkpoint
 
@@ -197,7 +226,7 @@ def write_partitioned_finite_element_checkpoint(
     if partition < 0 or count <= 0 or partition >= count:
         raise ValueError("Partition checkpoint IDs are invalid.")
     root.mkdir(parents=True, exist_ok=True)
-    shard = root / f"part-{partition:06d}-of-{count:06d}.npz"
+    shard = root / f"part-{partition:06d}-of-{count:06d}.phx"
     write_finite_element_checkpoint(shard, checkpoint)
     return shard
 

@@ -95,7 +95,6 @@ LinearBackend: TypeAlias = Literal[
     "spineax-cudss",
     "native-krylov",
     "native-block-krylov",
-    "matfree",
     "lineax",
 ]
 
@@ -140,7 +139,6 @@ class LinearSolvePlan(StrictModule):
             "spineax-cudss",
             "native-krylov",
             "native-block-krylov",
-            "matfree",
             "lineax",
         ):
             raise ValueError("Unknown linear backend.")
@@ -711,8 +709,8 @@ def _auto_method(
             rejected.append(
                 "dense-svd: dense direct execution does not accept preconditioning"
             )
-        if _matfree_lsmr_eligible(problem, policy):
-            return LSMR(), "real-Euclidean Matfree LSMR envelope", tuple(rejected)
+        if _native_lsmr_eligible(problem, policy):
+            return LSMR(), "real-Euclidean native LSMR envelope", tuple(rejected)
         return (
             GeneralizedLSMR(),
             "pairing-aware generalized least-squares Krylov fallback",
@@ -1009,12 +1007,12 @@ def _validate_method(
             raise ValueError("GeneralizedLSMR requires an explicit adjoint capability.")
         return "native-krylov"
     if isinstance(method, LSMR):
-        if not _matfree_lsmr_eligible(problem, policy):
+        if not _native_lsmr_eligible(problem, policy):
             raise ValueError(
-                "Matfree LSMR requires real Euclidean spaces, no preconditioner, "
+                "Native LSMR requires real Euclidean spaces, no preconditioner, "
                 "and no weighted or explicit regularized residual."
             )
-        return "matfree"
+        return "native-krylov"
     if isinstance(method, ConjugateGradient):
         if not isinstance(problem, LinearSystem):
             raise TypeError("CG requires a LinearSystem.")
@@ -1078,14 +1076,14 @@ def _reject_algorithmic_lineax(policy: LinearSolvePolicy, /) -> None:
         )
 
 
-def _matfree_lsmr_eligible(
+def _native_lsmr_eligible(
     problem: AbstractLinearProblem,
     policy: LinearSolvePolicy,
     /,
 ) -> bool:
     if not isinstance(problem, (LeastSquaresProblem, MinimumNormProblem)):
         return False
-    if policy.preconditioning is not None or policy.differentiation.mode == "algorithmic":
+    if policy.preconditioning is not None:
         return False
     if not _is_real(problem.operator):
         return False
@@ -1410,7 +1408,6 @@ def _selected_estimate(
         "lineax",
         "native-krylov",
         "native-block-krylov",
-        "matfree",
     )
     if dense_direct:
         factorization_bytes = batch_count * _factorization_bytes(

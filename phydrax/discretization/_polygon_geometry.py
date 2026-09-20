@@ -16,64 +16,15 @@ import phydrax.ein as ein
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ..geometry._polygon import (
+    orientation as _orientation,
+    signed_area2 as _signed_area2,
+    validate_simple_polygon as _validate_simple_polygon,
+)
 
 
 def _cross_2d(left, right):
     return left[..., 0] * right[..., 1] - left[..., 1] * right[..., 0]
-
-
-def _signed_area2(points: np.ndarray, /) -> float:
-    return float(
-        np.sum(
-            points[:, 0] * np.roll(points[:, 1], -1)
-            - np.roll(points[:, 0], -1) * points[:, 1]
-        )
-    )
-
-
-def _orientation(a: np.ndarray, b: np.ndarray, c: np.ndarray, /) -> float:
-    return float((b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]))
-
-
-def _segments_intersect(a, b, c, d, tolerance: float, /) -> bool:
-    first = _orientation(a, b, c)
-    second = _orientation(a, b, d)
-    third = _orientation(c, d, a)
-    fourth = _orientation(c, d, b)
-    return (
-        (first > tolerance and second < -tolerance)
-        or (first < -tolerance and second > tolerance)
-    ) and (
-        (third > tolerance and fourth < -tolerance)
-        or (third < -tolerance and fourth > tolerance)
-    )
-
-
-def _validate_simple_polygon(points: np.ndarray, /) -> None:
-    count = points.shape[0]
-    scale = max(float(np.max(np.abs(points))), 1.0)
-    tolerance = 128.0 * np.finfo(np.float64).eps * scale * scale
-    if _signed_area2(points) <= tolerance:
-        raise ValueError("Polygon cells must be counter-clockwise with positive area.")
-    edges = np.roll(points, -1, axis=0) - points
-    if np.any(np.sum(edges * edges, axis=1) <= tolerance):
-        raise ValueError("Polygon cells cannot contain zero-length edges.")
-    for first in range(count):
-        first_next = (first + 1) % count
-        for second in range(first + 1, count):
-            second_next = (second + 1) % count
-            if first in (second, second_next) or first_next in (second, second_next):
-                continue
-            if _segments_intersect(
-                points[first],
-                points[first_next],
-                points[second],
-                points[second_next],
-                tolerance,
-            ):
-                raise ValueError(
-                    "Polygon cells must be simple and non-self-intersecting."
-                )
 
 
 def _remove_collinear(points: np.ndarray, indices: list[int], /) -> list[int]:

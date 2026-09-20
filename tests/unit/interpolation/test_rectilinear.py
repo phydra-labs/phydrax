@@ -4,8 +4,13 @@
 
 import jax
 import jax.numpy as jnp
+import pytest
 
-from phydrax._interpolation import apply_gather_stencil, rectilinear_stencil
+from phydrax._interpolation import (
+    apply_gather_stencil,
+    InterpolationResourcePolicy,
+    rectilinear_stencil,
+)
 
 
 def test_nonuniform_rectilinear_map_is_affine_exact_with_complex_payload():
@@ -121,3 +126,27 @@ def test_rectilinear_map_is_jittable_and_differentiable_inside_cells():
 
     assert jnp.allclose(evaluate(jnp.asarray(0.5)), -1.0)
     assert jnp.allclose(jax.grad(evaluate)(jnp.asarray(0.5)), 4.0)
+
+
+def test_four_dimensional_rectilinear_map_is_affine_exact_and_resource_bounded():
+    nodes = tuple(jnp.asarray((0.0, 1.0)) for _ in range(4))
+    mesh = jnp.meshgrid(*nodes, indexing="ij")
+    values = sum((axis + 1.0) * coordinate for axis, coordinate in enumerate(mesh))
+    query = jnp.asarray(((0.1, 0.2, 0.3, 0.4),))
+    stencil = rectilinear_stencil(
+        nodes,
+        query,
+        boundary=("clamp",) * 4,
+    )
+
+    assert jnp.allclose(
+        apply_gather_stencil(values.reshape((-1,)), stencil).values,
+        jnp.asarray((3.0,)),
+    )
+    with pytest.raises(ValueError, match="maximum_routes"):
+        rectilinear_stencil(
+            nodes,
+            query,
+            boundary=("clamp",) * 4,
+            resources=InterpolationResourcePolicy(maximum_routes=15),
+        )

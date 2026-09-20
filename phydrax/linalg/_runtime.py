@@ -871,7 +871,6 @@ def solve(
     if prepared.plan.backend in (
         "native-krylov",
         "native-block-krylov",
-        "matfree",
         "lineax",
     ):
         matvec_count_out = _restore_rhs_axes(

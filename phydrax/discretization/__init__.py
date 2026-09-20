@@ -246,7 +246,10 @@ from ._state_transfer import (
     TensorGridRestriction,
     TensorGridStateTransfer,
 )
-from ._structured_cochain import StructuredCochainBridge
+from ._structured_cochain import (
+    StructuredCochainBridge,
+    StructuredCochainResourcePolicy,
+)
 from ._support import DiscreteSupport
 from ._temporal import RealizedTemporalMesh, TemporalMesh, TemporalMeshRole
 from ._tensor import (
@@ -3243,6 +3246,7 @@ __all__ = [
     "scharfetter_gummel_flux",
     "stable_bernoulli",
     "StructuredCochainBridge",
+    "StructuredCochainResourcePolicy",
     "StructuredCoarsening",
     "StructuredMGCompatibility",
     "StructuredMGGauge",

@@ -5,7 +5,6 @@
 import jax
 import jax.numpy as jnp
 import numpy as np
-from flowjax.bijections import Affine
 
 import phydrax as phx
 
@@ -93,9 +92,10 @@ def test_exact_affine_map_produces_constant_generalized_work():
     assert jnp.max(evaluation.forward_roundtrip_residual) < 1.0e-12
 
 
-def test_flowjax_adapter_and_com_chart_roundtrip_exactly():
-    adapter = phx.uq.FlowJAXBijectionAdapter(
-        Affine(jnp.zeros((3,)), jnp.ones((3,))),
+def test_native_affine_flow_and_com_chart_roundtrip_exactly():
+    adapter = phx.uq.AffineFlowBijector(
+        jnp.zeros((3,)),
+        jnp.ones((3,)),
         architecture_id="identity-affine",
     )
     chart = phx.uq.CenterOfMassPreservingBijector(adapter, [1.0, 3.0])

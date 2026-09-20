@@ -4,6 +4,7 @@
 
 from ._expressions import Translation, Union
 from ._extended import (
+    AxisAlignedEllipsoid,
     Cone,
     Cylinder,
     Ellipse,
@@ -27,16 +28,18 @@ from ._operations import (
     Scaling,
     SharpCSG,
 )
-from ._primitives import Box, Circle, Cube, Sphere
+from ._primitives import Ball, Box, Circle, Cube, Orthotope, Sphere
 from ._superquadric import Superquadric
 from ._sweeps import Extrusion, Revolution
 
 
 __all__ = [
+    "AxisAlignedEllipsoid",
     "BlendCSG",
     "BlendDifference",
     "BlendIntersection",
     "BlendUnion",
+    "Ball",
     "Box",
     "Circle",
     "Cone",
@@ -48,6 +51,7 @@ __all__ = [
     "Extrusion",
     "Intersection",
     "Polygon",
+    "Orthotope",
     "Rectangle",
     "RigidFrame",
     "Revolution",

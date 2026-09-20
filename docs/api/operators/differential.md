@@ -49,6 +49,15 @@ See the guide for operator shape conventions and for the math behind surface and
 
 ::: phydrax.operators.curl
 
+`curl` remains the vector curl in three dimensions. Planar return shapes are
+explicit rather than dimension-dependent overloads:
+
+::: phydrax.operators.vector_curl_2d
+
+---
+
+::: phydrax.operators.scalar_curl_2d
+
 ---
 
 ::: phydrax.operators.hessian
@@ -465,6 +474,10 @@ pointwise field residual.
 
 ::: phydrax.operators.von_mises_stress
 
+`von_mises_stress` rejects dimensions outside two and three under its default
+embedded-3D convention. The separate `intrinsic` convention is required for a
+dimension-normalized mathematical equivalent stress.
+
 ---
 
 ::: phydrax.operators.hydrostatic_stress
@@ -504,6 +517,14 @@ nonfinite outputs rather than a clamped constitutive response.
 ---
 
 ::: phydrax.operators.svk_pk2_stress
+
+---
+
+::: phydrax.operators.LinearElasticityTensor
+
+---
+
+::: phydrax.operators.linear_elastic_stress
 
 ---
 

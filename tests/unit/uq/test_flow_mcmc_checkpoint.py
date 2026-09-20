@@ -36,7 +36,6 @@ def _config(**overrides):
         "num_global_steps": 1,
         "history_capacity_per_chain": 4,
         "flow_layers": 1,
-        "num_knots": 4,
         "nn_width": 8,
         "nn_depth": 1,
         "max_epochs": 1,
@@ -260,10 +259,10 @@ def test_flow_checkpoint_rejects_package_array_and_dtype_tampering(tmp_path):
             **common,
         )
 
-    def change_flowjax_version(manifest, members):
-        manifest["compatibility"]["settings"]["flowjax_version"] = "0.0.invalid"
+    def change_flow_architecture(manifest, members):
+        manifest["compatibility"]["settings"]["flow_architecture"] = "invalid"
 
-    _rewrite_checkpoint(checkpoint, change_flowjax_version)
+    _rewrite_checkpoint(checkpoint, change_flow_architecture)
     with pytest.raises(phx.uq.CheckpointCompatibilityError):
         resume()
     checkpoint.write_bytes(original)

@@ -172,7 +172,7 @@ def test_fatigue_and_rotordynamics_workflows_expose_physical_diagnostics():
     assert jnp.all(response.bearing_dissipation_w >= 0)
 
 
-def test_maxwell_and_pic_workflows_close_field_equations():
+def test_maxwell_workflow_closes_field_equations():
     maxwell = phx.electromagnetics.MaxwellFrequencySystem.create(
         jnp.asarray(((4.0,),)),
         jnp.asarray(((1.0,),)),
@@ -181,23 +181,6 @@ def test_maxwell_and_pic_workflows_close_field_equations():
     assert bool(maxwell.successful)
     assert maxwell.residual_norm < 1e-12
     assert maxwell.electric_energy_j > 0
-
-    pic = phx.plasma.ElectrostaticPIC1D(1.0, 16, 1.0)
-    state = phx.plasma.ElectrostaticPICState(
-        jnp.asarray((0.25, 0.75)),
-        jnp.zeros(2),
-        jnp.asarray(0.0),
-    )
-    step = pic.advance(
-        state,
-        jnp.asarray((1.0, -1.0)),
-        jnp.ones(2),
-        jnp.ones(2),
-        1e-3,
-    )
-    assert bool(step.successful)
-    assert jnp.isclose(step.neutralized_charge_residual_c, 0, atol=1e-12)
-    assert step.gauss_residual_norm_c_m < 1e-10
 
 
 def test_wind_and_marine_workflows_close_dynamic_residuals():

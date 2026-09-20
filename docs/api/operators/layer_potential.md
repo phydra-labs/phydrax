@@ -77,6 +77,44 @@ PDE-certificate and operator-approximation guarantee split.
 
 ::: phydrax.operators.HelmholtzCombinedField2D
 
+The following planar kernels provide bounded off-surface reconstruction. They
+do not silently claim singular self-quadrature or an exterior compatibility
+condition that has not been prepared.
+
+::: phydrax.operators.ModifiedHelmholtzLayerKernel2D
+
+---
+
+::: phydrax.operators.ModifiedHelmholtzLayerPotential2D
+
+---
+
+::: phydrax.operators.ElasticityLayerKernel2D
+
+---
+
+::: phydrax.operators.ElasticityLayerPotential2D
+
+---
+
+::: phydrax.operators.StokesLayerKernel2D
+
+---
+
+::: phydrax.operators.StokesLayerPotential2D
+
+---
+
+`PeriodicScalarSpectralKernel2D` is explicitly a finite reciprocal-lattice
+provider. Its cutoff, mode count, resonance margin, and outer-shell indicator
+remain visible evidence; it is not labeled an exact Ewald sum.
+
+::: phydrax.operators.PeriodicScalarSpectralKernel2D
+
+---
+
+::: phydrax.operators.PeriodicScalarLayerPotential2D
+
 ---
 
 ::: phydrax.solver.ExteriorHelmholtzDirichletResult2D

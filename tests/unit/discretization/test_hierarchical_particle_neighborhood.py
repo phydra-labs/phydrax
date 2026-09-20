@@ -140,3 +140,31 @@ def test_sparse_hierarchy_fails_closed_on_pair_and_cell_overflow():
             box,
             maximum_candidate_slots=1,
         ).prepare(particles)
+
+
+def test_hierarchical_neighborhood_supports_bounded_four_dimensional_routes():
+    particles = phx.discretization.ParticleSetPlan(
+        jnp.arange(3),
+        jnp.ones((3,)),
+        ambient_dimension=4,
+    ).prepare()
+    box = phx.discretization.ParticleBox(jnp.zeros((4,)), jnp.ones((4,)))
+    plan = phx.discretization.HierarchicalRadiusParticleNeighborhoodPlan(
+        jnp.full((3,), 0.2),
+        jnp.asarray((0.1, 0.3)),
+        3,
+        3,
+        box,
+    ).prepare(particles)
+    state = plan.build(
+        jnp.asarray(
+            (
+                (0.1, 0.1, 0.1, 0.1),
+                (0.2, 0.1, 0.1, 0.1),
+                (0.8, 0.8, 0.8, 0.8),
+            )
+        )
+    )
+
+    assert state.successful
+    assert _physical_pairs(state) == {(0, 1)}

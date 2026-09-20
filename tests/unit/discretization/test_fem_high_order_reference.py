@@ -402,7 +402,7 @@ def test_higher_order_simplex_integer_points_match_floating_tabulation():
     ("cell", "order"),
     (("triangle", 5), ("tetrahedron", 3)),
 )
-def test_modepy_simplex_family_and_prepared_reference_reproduce_polynomials(cell, order):
+def test_simplex_family_and_prepared_reference_reproduce_polynomials(cell, order):
     family = SimplexNodalFamily(cell, order)
     dimension = family.nodes.shape[1]
     nodal_values, _nodal_gradients = family.tabulate(family.nodes)

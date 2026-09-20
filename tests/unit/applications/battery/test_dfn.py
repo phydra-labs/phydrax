@@ -103,3 +103,29 @@ def test_series_pack_commits_cells_atomically_and_sums_voltage() -> None:
         2.0 * result.cell_results[0].evaluation.voltage_v,
     )
     assert all(cell_state.time_s == 1.0 for cell_state in result.state.cell_states)
+
+
+def test_spatial_dfn_lanes_commit_atomically_and_close_current_distribution():
+    local = phx.applications.battery.IsothermalDFNPlan(2, 2, 2, 3)
+    spatial = phx.applications.battery.SpatialBatteryCellPlan(
+        local,
+        _parameters(),
+        jnp.asarray(
+            (
+                (0.0, 0.0, 0.0),
+                (1.0, 0.0, 0.0),
+            )
+        ),
+        current_weights=jnp.asarray((0.25, 0.75)),
+    )
+    state = spatial.initialize(
+        electrolyte_concentration_mol_m3=1000.0,
+        negative_stoichiometry=0.8,
+        positive_stoichiometry=0.4,
+    )
+    result = spatial.step(state, 0.0, 1.0e-3)
+
+    assert bool(result.evidence.successful)
+    assert jnp.allclose(result.evidence.current_balance_defect_a_m2, 0.0)
+    assert jnp.allclose(result.evidence.voltage_spread_v, 0.0)
+    assert jnp.all(result.accepted_state.time_s == 1.0e-3)

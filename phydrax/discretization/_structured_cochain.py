@@ -20,6 +20,36 @@ from ._tensor_support import PreparedTensorGrid
 from ._topology import CellComplexTopology, EntitySet, OrientedIncidence
 
 
+class StructuredCochainResourcePolicy(StrictModule):
+    """Host-preparation limits for combinatorial cubical cochains."""
+
+    maximum_entities: int = eqx.field(static=True)
+    maximum_incidence_routes: int = eqx.field(static=True)
+    maximum_coordinate_values: int = eqx.field(static=True)
+    maximum_preparation_bytes: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        maximum_entities: int = 5_000_000,
+        maximum_incidence_routes: int = 20_000_000,
+        maximum_coordinate_values: int = 20_000_000,
+        maximum_preparation_bytes: int = 1 << 30,
+    ):
+        values = (
+            maximum_entities,
+            maximum_incidence_routes,
+            maximum_coordinate_values,
+            maximum_preparation_bytes,
+        )
+        if any(value <= 0 for value in values):
+            raise ValueError("Structured cochain resource limits must be positive.")
+        self.maximum_entities = maximum_entities
+        self.maximum_incidence_routes = maximum_incidence_routes
+        self.maximum_coordinate_values = maximum_coordinate_values
+        self.maximum_preparation_bytes = maximum_preparation_bytes
+
+
 class StructuredCochainBridge(StrictModule, NonTrainableState):
     """Cartesian tensor entities assembled into one oriented cubical cochain complex."""
 
@@ -30,19 +60,82 @@ class StructuredCochainBridge(StrictModule, NonTrainableState):
     orientation_offsets: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     directional_signs: tuple[tuple[Array, ...], ...]
     bridge_id: str = eqx.field(static=True)
+    resource_policy: StructuredCochainResourcePolicy = eqx.field(static=True)
+    entity_counts: tuple[int, ...] = eqx.field(static=True)
+    incidence_route_count: int = eqx.field(static=True)
+    preparation_bytes: int = eqx.field(static=True)
 
-    def __init__(self, grid: PreparedTensorGrid, /):
+    def __init__(
+        self,
+        grid: PreparedTensorGrid,
+        /,
+        *,
+        resources: StructuredCochainResourcePolicy | None = None,
+    ):
         if not isinstance(grid, PreparedTensorGrid):
             raise TypeError("Structured cochain bridge requires PreparedTensorGrid.")
+        resource_policy = (
+            StructuredCochainResourcePolicy() if resources is None else resources
+        )
+        if not isinstance(resource_policy, StructuredCochainResourcePolicy):
+            raise TypeError("resources must be a StructuredCochainResourcePolicy.")
         dimension = len(grid.shape)
-        if dimension not in (1, 2, 3):
-            raise ValueError(
-                "Structured cochain bridge supports dimensions one through three."
-            )
+        if dimension <= 0:
+            raise ValueError("Structured cochain dimension must be positive.")
         orientation_values = tuple(
             tuple(combinations(range(dimension), degree))
             for degree in range(dimension + 1)
         )
+        orientation_shape_values = tuple(
+            tuple(
+                tuple(
+                    grid.structured_axes[axis].interval_centers.size
+                    if axis in orientation
+                    else grid.structured_axes[axis].point_coordinates.size
+                    for axis in range(dimension)
+                )
+                for orientation in degree_orientations
+            )
+            for degree_orientations in orientation_values
+        )
+        entity_counts = tuple(
+            sum(int(np.prod(shape)) for shape in degree_shapes)
+            for degree_shapes in orientation_shape_values
+        )
+        total_entities = sum(entity_counts)
+        incidence_route_count = sum(
+            2 * degree * entity_counts[degree] for degree in range(1, dimension + 1)
+        )
+        coordinate_values = dimension * total_entities
+        preparation_bytes = (
+            coordinate_values * np.dtype(np.float64).itemsize
+            + total_entities * (3 * np.dtype(np.float64).itemsize + 1)
+            + incidence_route_count
+            * (2 * np.dtype(np.int32).itemsize + np.dtype(np.float64).itemsize)
+        )
+        if total_entities > resource_policy.maximum_entities:
+            raise ValueError(
+                "Structured cochain exceeds maximum_entities: "
+                f"required {total_entities}, allowed {resource_policy.maximum_entities}."
+            )
+        if incidence_route_count > resource_policy.maximum_incidence_routes:
+            raise ValueError(
+                "Structured cochain exceeds maximum_incidence_routes: "
+                f"required {incidence_route_count}, "
+                f"allowed {resource_policy.maximum_incidence_routes}."
+            )
+        if coordinate_values > resource_policy.maximum_coordinate_values:
+            raise ValueError(
+                "Structured cochain exceeds maximum_coordinate_values: "
+                f"required {coordinate_values}, "
+                f"allowed {resource_policy.maximum_coordinate_values}."
+            )
+        if preparation_bytes > resource_policy.maximum_preparation_bytes:
+            raise ValueError(
+                "Structured cochain exceeds maximum_preparation_bytes: "
+                f"required {preparation_bytes}, "
+                f"allowed {resource_policy.maximum_preparation_bytes}."
+            )
         shapes = []
         offsets = []
         entity_sets = []
@@ -216,6 +309,10 @@ class StructuredCochainBridge(StrictModule, NonTrainableState):
         self.orientation_shapes = tuple(shapes)
         self.orientation_offsets = tuple(offsets)
         self.directional_signs = tuple(directional_signs)
+        self.resource_policy = resource_policy
+        self.entity_counts = entity_counts
+        self.incidence_route_count = incidence_route_count
+        self.preparation_bytes = preparation_bytes
         self.bridge_id = canonical_fingerprint(
             {
                 "kind": "structured-cochain-bridge",

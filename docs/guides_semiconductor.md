@@ -284,34 +284,41 @@ numerical imaginary regulator as quantum transport.
 2. `EffectiveMass1D` plus `solve_schrodinger` provides orthonormal-cell
    confinement with explicit mass, area, transverse modes/degeneracy, selected
    native eigensolves, and a Sturm-certified omitted-population bound.
-3. `solve_schrodinger_poisson` uses the same cell projector to pull potential
+3. `EffectiveMassND` provides bounded 2D-or-higher uniform tensor-grid
+   confinement with heterogeneous scalar effective mass and homogeneous
+   Dirichlet exterior nodes. The initial ND route requires the complete declared
+   finite basis, so its finite-basis omitted population is exactly zero.
+   `QuantumPoissonND` shares that cell basis and owns a prepared native Dirichlet
+   solve. Neither class claims mesh convergence or open-reservoir transport.
+4. `solve_schrodinger_poisson` uses the same 1D cell projector to pull potential
    into the Hamiltonian and push occupied charge into Poisson.
-4. `CoherentDevice` binds a scalar nearest-neighbor Hamiltonian to two analytic
+5. `CoherentDevice` binds a scalar nearest-neighbor Hamiltonian to two analytic
    semi-infinite leads. `integrate_coherent` solves only selected Green columns,
    isolates true bound poles with explicit preparation, integrates the complete
    finite lead band, and gates current, energy, spectral-sum, quadrature,
    resonance, and numerical-broadening refinement.
-5. `solve_phonon_transport` is a specific local optical-phonon Fock SCBA on an
+6. `solve_phonon_transport` is a specific local optical-phonon Fock SCBA on an
    integer-shift energy grid. Retarded, lesser, and greater self-energies are
    iterated together; discrete particle, energy, causality, KMS, grid, and
    window gates are retained. It is not an arbitrary imaginary potential.
-6. `solve_quantum_transient` evolves the full one-body correlation of a finite,
+7. `solve_quantum_transient` evolves the full one-body correlation of a finite,
    refinable lead dilation. It retains initial-state preparation, switching
    work, return-time, memory-kernel, unitarity, particle, energy, and lead-size
    evidence. This is bounded coherent memory, not general interacting
    time-dependent NEGF.
-7. `coherent_low_frequency_noise` implements two-terminal coherent
+8. `coherent_low_frequency_noise` implements two-terminal coherent
    Landauer–Büttiker noise and checks equilibrium fluctuation–dissipation.
    `finite_frequency_quantum_response` uses connected-equilibrium Kubo response,
    explicit lead polarization, and capacitive Hartree screening with gauge,
    KCL, Ward, lead-size, adiabatic-rate, and recurrence gates. It does not claim
    an interacting vertex correction.
 
-The high-level quantum basis is one connected scalar orthogonal 1D chain with a
-finite declared transverse-mode list. Arbitrary atomistic, 3D, multiband, and
-nonorthogonal charge reconstruction are not claimed. `scalar_embedding` exposes
-the correct `E S − H` scalar cross-overlap primitive, but using it does not turn
-the orthogonal high-level backend into a generalized-basis solver.
+The coherent high-level quantum basis remains one connected scalar orthogonal
+1D chain with a finite declared transverse-mode list. Arbitrary atomistic,
+multiband, nonorthogonal, or multidimensional lead transport is not claimed.
+`scalar_embedding` exposes the correct `E S − H` scalar cross-overlap primitive,
+but using it does not turn the orthogonal high-level backend into a
+generalized-basis solver.
 
 `QuantumClassicalInterface` joins one electron quantum reservoir to one ohmic
 classical terminal through a common chemical energy and scalar voltage bracket.

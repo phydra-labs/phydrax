@@ -4,12 +4,10 @@
 
 from __future__ import annotations
 
-import math
 import os
-import zipfile
 from collections.abc import Mapping
+from dataclasses import replace
 from enum import StrEnum
-from pathlib import Path, PurePosixPath
 from typing import Any
 
 import equinox as eqx
@@ -21,12 +19,15 @@ from .._array_archive import (
     array_collection_digest,
     array_payload_byte_count,
     ArrayArchiveCorruptionError,
+    ArrayArchiveLimits,
+    DEFAULT_ARRAY_ARCHIVE_LIMITS,
     pack_array_tree,
     read_array_archive,
     unpack_array_tree,
     write_array_archive,
 )
 from .._fingerprint import canonical_fingerprint, canonical_json
+from .._host_io import open_regular_file
 from .._strict import StrictModule
 from .._tensor_network_precision import TensorNetworkPrecisionPolicy
 from .._trainable import NonTrainableState
@@ -357,133 +358,33 @@ def _check_array_bounds(
     return total_elements, total_payload
 
 
-def _canonical_member_name(name: str, /) -> bool:
-    path = PurePosixPath(name)
-    return bool(
-        name
-        and not name.startswith("/")
-        and "\\" not in name
-        and all(part not in ("", ".", "..") for part in path.parts)
-        and path.as_posix() == name
+def _array_archive_limits(
+    limits: TensorNetworkArchiveLimits,
+    /,
+) -> ArrayArchiveLimits:
+    return replace(
+        DEFAULT_ARRAY_ARCHIVE_LIMITS,
+        max_container_bytes=limits.maximum_archive_bytes,
+        max_aggregate_bytes=(
+            limits.maximum_total_array_bytes + limits.maximum_manifest_bytes
+        ),
+        max_member_bytes=limits.maximum_array_bytes,
+        max_manifest_bytes=limits.maximum_manifest_bytes,
+        max_members=limits.maximum_members,
+        max_central_directory_bytes=min(
+            limits.maximum_archive_bytes,
+            max(1_048_576, limits.maximum_members * 512),
+        ),
+        max_array_rank=limits.maximum_array_rank,
+        max_axis_length=limits.maximum_array_elements,
+        max_array_elements=limits.maximum_array_elements,
+        max_total_array_elements=limits.maximum_array_elements,
     )
 
 
-def _preflight_archive(
-    path: str | os.PathLike[str], limits: TensorNetworkArchiveLimits, /
-) -> tuple[int, int]:
-    source = Path(path)
-    try:
-        archive_bytes = source.stat().st_size
-        if archive_bytes > limits.maximum_archive_bytes:
-            raise TensorNetworkArchiveSecurityError("archive bytes exceed capacity")
-        with zipfile.ZipFile(source, mode="r") as archive:
-            members = archive.infolist()
-            if len(members) > limits.maximum_members:
-                raise TensorNetworkArchiveSecurityError(
-                    "archive member count exceeds capacity"
-                )
-            names = tuple(member.filename for member in members)
-            if len(names) != len(set(names)):
-                raise TensorNetworkArchiveCorruptionError(
-                    "archive contains duplicate members"
-                )
-            if any(not _canonical_member_name(name) for name in names):
-                raise TensorNetworkArchiveSecurityError(
-                    "archive contains a noncanonical or unsafe member path"
-                )
-            for member in members:
-                mode = member.external_attr >> 16
-                if mode & 0o170000 == 0o120000:
-                    raise TensorNetworkArchiveSecurityError(
-                        "archive symbolic-link members are prohibited"
-                    )
-                if member.flag_bits & 0x1:
-                    raise TensorNetworkArchiveSecurityError(
-                        "encrypted archive members are prohibited"
-                    )
-                if member.compress_type != zipfile.ZIP_STORED:
-                    raise TensorNetworkArchiveSecurityError(
-                        "compressed archive members are prohibited"
-                    )
-                if member.file_size != member.compress_size:
-                    raise TensorNetworkArchiveCorruptionError(
-                        "stored archive member sizes are inconsistent"
-                    )
-            manifests = tuple(
-                member for member in members if member.filename == "manifest.json"
-            )
-            if len(manifests) != 1:
-                raise TensorNetworkArchiveCorruptionError(
-                    "archive requires exactly one manifest"
-                )
-            if manifests[0].file_size > limits.maximum_manifest_bytes:
-                raise TensorNetworkArchiveSecurityError(
-                    "archive manifest bytes exceed capacity"
-                )
-            array_members = tuple(
-                member for member in members if member.filename != "manifest.json"
-            )
-            total_elements = 0
-            for member in array_members:
-                if member.file_size > limits.maximum_array_bytes:
-                    raise TensorNetworkArchiveSecurityError(
-                        "archive array member bytes exceed capacity"
-                    )
-                try:
-                    with archive.open(member, mode="r") as stream:
-                        version = np.lib.format.read_magic(stream)
-                        if version != (1, 0):
-                            raise TensorNetworkArchiveCorruptionError(
-                                "archive array header is not canonical NumPy format"
-                            )
-                        shape, _, dtype = np.lib.format.read_array_header_1_0(stream)
-                        header_bytes = stream.tell()
-                except TensorNetworkArchiveError:
-                    raise
-                except (EOFError, ValueError) as error:
-                    raise TensorNetworkArchiveCorruptionError(
-                        "archive array header is invalid"
-                    ) from error
-                dtype_ = np.dtype(dtype)
-                if dtype_.hasobject or dtype_.kind not in "biufc":
-                    raise TensorNetworkArchiveSecurityError(
-                        "archive array dtype is not numerical"
-                    )
-                if len(shape) > limits.maximum_array_rank:
-                    raise TensorNetworkArchiveSecurityError(
-                        "archive array rank exceeds capacity"
-                    )
-                if any(dimension < 0 for dimension in shape):
-                    raise TensorNetworkArchiveCorruptionError(
-                        "archive array shape contains a negative dimension"
-                    )
-                elements = math.prod(shape)
-                if elements > limits.maximum_array_elements:
-                    raise TensorNetworkArchiveSecurityError(
-                        "archive array elements exceed capacity"
-                    )
-                total_elements += elements
-                if total_elements > limits.maximum_array_elements:
-                    raise TensorNetworkArchiveSecurityError(
-                        "archive aggregate elements exceed capacity"
-                    )
-                if header_bytes + elements * dtype_.itemsize != member.file_size:
-                    raise TensorNetworkArchiveCorruptionError(
-                        "archive array header and payload sizes differ"
-                    )
-            total_member_bytes = sum(member.file_size for member in members)
-            if (
-                total_member_bytes
-                > limits.maximum_total_array_bytes + limits.maximum_manifest_bytes
-            ):
-                raise TensorNetworkArchiveSecurityError(
-                    "archive expanded bytes exceed capacity"
-                )
-            return archive_bytes, len(members)
-    except TensorNetworkArchiveError:
-        raise
-    except (FileNotFoundError, PermissionError, zipfile.BadZipFile, OSError) as error:
-        raise TensorNetworkArchiveCorruptionError("archive cannot be opened") from error
+def _archive_size(path: str | os.PathLike[str], /) -> int:
+    with open_regular_file(path) as stream:
+        return int(os.fstat(stream.fileno()).st_size)
 
 
 def _manifest_record(
@@ -598,11 +499,20 @@ def _load_validated_archive(
     dict[str, np.ndarray],
     TensorNetworkArchiveValidation,
 ]:
-    archive_bytes, member_count = _preflight_archive(path, limits)
+    archive_bytes_before = _archive_size(path)
     try:
-        manifest, arrays = read_array_archive(path)
+        manifest, arrays = read_array_archive(
+            path,
+            limits=_array_archive_limits(limits),
+        )
     except ArrayArchiveCorruptionError as error:
         raise TensorNetworkArchiveCorruptionError(str(error)) from error
+    archive_bytes = _archive_size(path)
+    if archive_bytes != archive_bytes_before:
+        raise TensorNetworkArchiveCorruptionError(
+            "archive size changed during validation"
+        )
+    member_count = len(arrays) + 1
     _check_array_bounds(arrays, limits)
     record = _manifest_record(manifest, arrays)
     validation = TensorNetworkArchiveValidation(
@@ -691,7 +601,12 @@ def write_tensor_network_archive(
     manifest = {**content, "artifact_id": artifact_id}
     if len(canonical_json(manifest).encode("utf-8")) > limits_.maximum_manifest_bytes:
         raise TensorNetworkArchiveSecurityError("archive manifest bytes exceed capacity")
-    write_array_archive(path, manifest=manifest, arrays=arrays)
+    write_array_archive(
+        path,
+        manifest=manifest,
+        arrays=arrays,
+        limits=_array_archive_limits(limits_),
+    )
     _, _, validation = _load_validated_archive(path, limits_)
     return validation
 

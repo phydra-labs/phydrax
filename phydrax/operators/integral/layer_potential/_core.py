@@ -340,6 +340,10 @@ class BoundaryPanelization2D(StrictModule, NonTrainableState):
             jnp.all(jnp.isfinite(physical_weights))
         ):
             raise ValueError("Boundary panelization geometry must be finite.")
+        if not bool(jnp.all(frame.regular)):
+            raise ValueError(
+                "Boundary panelization requires regular, rank-complete chart frames."
+            )
         if bool(jnp.any(physical_weights <= 0.0)):
             raise ValueError("Boundary panelization weights must be positive.")
         source_support_id = _boundary_support_id(atlas)

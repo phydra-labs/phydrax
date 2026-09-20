@@ -19,6 +19,7 @@ from ._core import (
     LayerPotentialTargetReport,
 )
 from ._displacement_discontinuity3d import __all__ as _displacement_discontinuity_all
+from ._elasticity2d import __all__ as _elasticity2d_all
 from ._elasticity3d import __all__ as _elasticity_all
 from ._evaluation import (
     evaluate_layer_potential,
@@ -59,6 +60,7 @@ from ._laplace3d import (
     LaplaceLayerPotential3D,
 )
 from ._maxwell3d import __all__ as _maxwell_all
+from ._modified_helmholtz2d import __all__ as _modified_helmholtz2d_all
 from ._modified_helmholtz3d import __all__ as _modified_helmholtz_all
 from ._periodic_core3d import __all__ as _periodic_core_all
 from ._periodic_free_surface3d import __all__ as _periodic_free_surface_all
@@ -68,6 +70,7 @@ from ._periodic_maxwell_boundary3d import __all__ as _periodic_maxwell_boundary_
 from ._periodic_modified_helmholtz3d import (
     __all__ as _periodic_modified_helmholtz_all,
 )
+from ._periodic_scalar2d import __all__ as _periodic_scalar2d_all
 from ._periodic_vector3d import __all__ as _periodic_vector_all
 from ._qbx2d import evaluate_qbx_2d, QBXEvaluation2D
 from ._qbx3d import evaluate_qbx_3d, QBXEvaluation3D
@@ -89,6 +92,7 @@ from ._scalar_formulations3d import __all__ as _scalar_formulations_all
 from ._scalar_interfaces3d import __all__ as _scalar_interfaces_all
 from ._scalar_screens3d import __all__ as _scalar_screens_all
 from ._scalar_trace import __all__ as _scalar_trace_all
+from ._stokes2d import __all__ as _stokes2d_all
 from ._stokes3d import __all__ as _stokes_all
 from ._surface3d import SurfacePanelization3D, SurfaceTargetReport3D
 from ._treecode2d import LaplaceTreecodeBackend2D, LaplaceTreecodeEvaluation2D
@@ -96,6 +100,7 @@ from ._treecode2d import LaplaceTreecodeBackend2D, LaplaceTreecodeEvaluation2D
 
 _FACADE_EXPORT_MODULES = (
     "._adaptive_boundary",
+    "._elasticity2d",
     "._displacement_discontinuity3d",
     "._elasticity3d",
     "._fast_provider",
@@ -103,6 +108,7 @@ _FACADE_EXPORT_MODULES = (
     "._free_surface_hydrodynamics3d",
     "._hierarchical3d",
     "._maxwell3d",
+    "._modified_helmholtz2d",
     "._modified_helmholtz3d",
     "._periodic_core3d",
     "._periodic_free_surface3d",
@@ -110,6 +116,7 @@ _FACADE_EXPORT_MODULES = (
     "._periodic_laplace3d",
     "._periodic_maxwell_boundary3d",
     "._periodic_modified_helmholtz3d",
+    "._periodic_scalar2d",
     "._periodic_vector3d",
     "._qualification",
     "._scalar_calderon3d",
@@ -118,6 +125,7 @@ _FACADE_EXPORT_MODULES = (
     "._scalar_interfaces3d",
     "._scalar_screens3d",
     "._scalar_trace",
+    "._stokes2d",
     "._stokes3d",
 )
 
@@ -194,18 +202,21 @@ __all__ += [
     for name in (
         *_adaptive_boundary_all,
         *_displacement_discontinuity_all,
+        *_elasticity2d_all,
         *_elasticity_all,
         *_fast_provider_all,
         *_hierarchical3d_all,
         *_free_surface_green_all,
         *_free_surface_hydrodynamics_all,
         *_maxwell_all,
+        *_modified_helmholtz2d_all,
         *_modified_helmholtz_all,
         *_periodic_core_all,
         *_periodic_free_surface_all,
         *_periodic_maxwell_boundary_all,
         *_periodic_helmholtz_all,
         *_periodic_laplace_all,
+        *_periodic_scalar2d_all,
         *_periodic_modified_helmholtz_all,
         *_qualification_all,
         *_scalar_conforming_all,
@@ -213,6 +224,7 @@ __all__ += [
         *_scalar_formulations_all,
         *_scalar_trace_all,
         *_stokes_all,
+        *_stokes2d_all,
     )
     if name not in __all__
 ]

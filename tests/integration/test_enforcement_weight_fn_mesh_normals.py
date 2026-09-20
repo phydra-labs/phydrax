@@ -13,9 +13,10 @@ from phydrax.enforcement._ansatz import _enforcement_weight_fn
 
 
 def test_enforcement_weight_fn_mesh_normals_jittable():
+    mesh = trimesh.creation.box(extents=(1.0, 1.0, 1.0))
     geom = phx.domain.GeometryDomain(
         phx.geometry.mesh_region_from_source(
-            trimesh.creation.box(extents=(1.0, 1.0, 1.0))
+            (np.asarray(mesh.vertices), np.asarray(mesh.faces))
         ).compile()
     )
 

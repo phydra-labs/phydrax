@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+import io
 from pathlib import Path
 from typing import Literal
 
@@ -338,11 +339,14 @@ def _approximation_loss(path: str, rationale: str, /) -> AdapterLoss:
     )
 
 
-def _load_ascii(path: Path, /) -> np.ndarray:
-    data = np.loadtxt(path, comments="#", ndmin=2)
-    if data.ndim != 2 or data.shape[0] < 1 or np.any(~np.isfinite(data)):
+def _load_ascii(data: bytes, /) -> np.ndarray:
+    try:
+        values = np.loadtxt(io.BytesIO(data), comments="#", ndmin=2)
+    except (UnicodeDecodeError, ValueError) as error:
+        raise ValueError("PINOCCHIO ASCII product is malformed.") from error
+    if values.ndim != 2 or values.shape[0] < 1 or np.any(~np.isfinite(values)):
         raise ValueError("PINOCCHIO ASCII product must contain finite numeric rows.")
-    return data
+    return values
 
 
 def read_pinocchio_catalog(
@@ -373,7 +377,7 @@ def read_pinocchio_catalog(
     if isinstance(maximum_halos, bool) or int(maximum_halos) <= 0:
         raise ValueError("maximum_halos must be a positive integer.")
     capacity = int(maximum_halos)
-    source_path = _admit_path(
+    resource = _admit_path(
         path,
         source,
         maximum_source_bytes=maximum_source_bytes,
@@ -382,7 +386,7 @@ def read_pinocchio_catalog(
         redistribution=redistribution,
         export=export,
     )
-    data = _load_ascii(source_path)
+    data = _load_ascii(resource.data)
     count = data.shape[0]
     if count > capacity:
         raise MemoryError("PINOCCHIO halo count exceeds maximum_halos.")
@@ -606,10 +610,14 @@ def read_pinocchio_catalog(
     )
 
 
-def _history_rows(path: Path, /) -> tuple[int, int, np.ndarray]:
+def _history_rows(data: bytes, /) -> tuple[int, int, np.ndarray]:
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as error:
+        raise ValueError("PINOCCHIO history must be valid UTF-8 text.") from error
     lines = tuple(
         line.strip()
-        for line in path.read_text(encoding="utf-8").splitlines()
+        for line in text.splitlines()
         if line.strip() and not line.lstrip().startswith("#")
     )
     if len(lines) < 2:
@@ -649,7 +657,7 @@ def read_pinocchio_lineage(
     if isinstance(maximum_branches, bool) or int(maximum_branches) <= 0:
         raise ValueError("maximum_branches must be a positive integer.")
     capacity = int(maximum_branches)
-    source_path = _admit_path(
+    resource = _admit_path(
         path,
         source,
         maximum_source_bytes=maximum_source_bytes,
@@ -658,7 +666,7 @@ def read_pinocchio_lineage(
         redistribution=redistribution,
         export=export,
     )
-    declared_trees, declared_branches, rows = _history_rows(source_path)
+    declared_trees, declared_branches, rows = _history_rows(resource.data)
     if declared_branches > capacity:
         raise MemoryError("PINOCCHIO history exceeds maximum_branches.")
     ids = rows[:, 0].astype(np.int64)

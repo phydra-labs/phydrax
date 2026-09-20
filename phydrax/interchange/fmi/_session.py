@@ -10,7 +10,6 @@ import math
 import re
 import uuid
 import xml.etree.ElementTree as ET
-import zipfile
 from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -24,8 +23,13 @@ from ..._external_runtime import (
     _limits,
     _require_optional,
 )
-from ..._external_worker import _archive_members, _DEFAULT_BYTES
+from ..._external_worker import _DEFAULT_BYTES
 from ..._fingerprint import canonical_fingerprint
+from ..._resource_archive import (
+    admit_zip_resource,
+    ArchiveLimits,
+    read_zip_members,
+)
 from ...artifacts import ScientificArtifactEnvelope
 
 
@@ -200,11 +204,23 @@ def inspect_fmu(
     )
     if resource.manifest.content_sha256 != sha256:
         raise ValueError("FMU archive SHA-256 does not match its required pin.")
-    with zipfile.ZipFile(io.BytesIO(resource.data)) as archive:
-        _archive_members(archive, max_unpacked_bytes, max_files)
-        if archive.getinfo("modelDescription.xml").file_size > 4 * 1024 * 1024:
-            raise ValueError("modelDescription.xml exceeds 4 MiB.")
-        return _xml_description(archive.read("modelDescription.xml"), sha256)
+    archive = admit_zip_resource(
+        resource,
+        limits=ArchiveLimits(
+            max_container_bytes=max_archive_bytes,
+            max_members=max_files,
+            max_member_bytes=max_unpacked_bytes,
+            max_total_uncompressed_bytes=max_unpacked_bytes,
+            max_name_bytes=4096,
+            max_depth=32,
+            max_compression_ratio=1000,
+        ),
+    )
+    members = read_zip_members(archive, ("modelDescription.xml",))
+    description = members["modelDescription.xml"]
+    if len(description) > 4 * 1024 * 1024:
+        raise ValueError("modelDescription.xml exceeds 4 MiB.")
+    return _xml_description(description, sha256)
 
 
 def _scalar_value(variable: FMIVariable, value: Any) -> Any:

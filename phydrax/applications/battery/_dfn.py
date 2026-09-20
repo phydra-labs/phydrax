@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -16,6 +17,7 @@ from jaxtyping import Array, ArrayLike
 import phydrax.linalg as la
 
 from ..._fingerprint import canonical_fingerprint
+from ..._strict import StrictModule
 from ...qualification import CapabilityProfile, SupportTuple
 
 
@@ -107,11 +109,19 @@ class DFNStepResult:
     minimum_concentration_mol_m3: Array
 
 
-class IsothermalDFNPlan:
+class IsothermalDFNPlan(StrictModule):
     """Small/medium isothermal DFN with explicit concentrations and implicit charge."""
 
     FARADAY = 96485.33212
     GAS_CONSTANT = 8.314462618
+
+    negative_cells: int = eqx.field(static=True)
+    separator_cells: int = eqx.field(static=True)
+    positive_cells: int = eqx.field(static=True)
+    radial_cells: int = eqx.field(static=True)
+    maximum_newton_steps: int = eqx.field(static=True)
+    residual_tolerance: float = eqx.field(static=True)
+    plan_id: str = eqx.field(static=True)
 
     def __init__(
         self,

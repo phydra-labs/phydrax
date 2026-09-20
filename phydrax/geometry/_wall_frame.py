@@ -60,7 +60,7 @@ class PlanarWallFramePlan(StrictModule, NonTrainableState):
         dimension = origin_.size
         if (
             origin_.ndim != 1
-            or dimension not in (2, 3)
+            or dimension < 2
             or normal.shape != origin_.shape
             or tangent.shape != (dimension - 1, dimension)
             or np.any(~np.isfinite(origin_))

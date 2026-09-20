@@ -8,12 +8,15 @@ import importlib
 import importlib.util
 from collections.abc import Callable, Sequence
 from pathlib import Path
+from tempfile import TemporaryDirectory
 from typing import Any
 
 import equinox as eqx
 import numpy as np
 
+from ..._external_resource import read_bounded_resource, ResourceLimits
 from ..._fingerprint import canonical_fingerprint
+from ..._numpy_resource import decode_npy_resource, decode_npz_resource, NumpyFormatLimits
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...imaging import ImagePlaneSupport
@@ -36,6 +39,9 @@ class LazyImageSequence2D(StrictModule, NonTrainableState):
     dtype: np.dtype = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
 
+    maximum_file_bytes: int = eqx.field(static=True)
+    maximum_decoded_bytes: int = eqx.field(static=True)
+
     def __init__(
         self,
         paths: Sequence[str | Path],
@@ -49,6 +55,8 @@ class LazyImageSequence2D(StrictModule, NonTrainableState):
         dtype: Any = np.float32,
         loader_id: str | None = None,
         source_id: str | None = None,
+        maximum_file_bytes: int = 2 * 1024 * 1024 * 1024,
+        maximum_decoded_bytes: int = 4 * 1024 * 1024 * 1024,
     ):
         paths_ = tuple(Path(path) for path in paths)
         if not paths_:
@@ -72,6 +80,10 @@ class LazyImageSequence2D(StrictModule, NonTrainableState):
         array_name_ = None if array_name is None else str(array_name).strip()
         if array_name is not None and not array_name_:
             raise ValueError("array_name must be non-empty or None.")
+        maximum_file = int(maximum_file_bytes)
+        maximum_decoded = int(maximum_decoded_bytes)
+        if maximum_file <= 0 or maximum_decoded <= 0:
+            raise ValueError("Image byte limits must be positive.")
         identifier = (
             canonical_fingerprint(
                 {
@@ -97,6 +109,8 @@ class LazyImageSequence2D(StrictModule, NonTrainableState):
         self.array_name = array_name_
         self.dtype = dtype_
         self.source_id = identifier
+        self.maximum_file_bytes = maximum_file
+        self.maximum_decoded_bytes = maximum_decoded
 
     def read(self, index: int, /) -> np.ndarray:
         """Materialize one scalar image without loading neighboring frames."""
@@ -105,7 +119,12 @@ class LazyImageSequence2D(StrictModule, NonTrainableState):
             raise IndexError("Lazy image index is outside sequence capacity.")
         path = self.paths[index_]
         value = (
-            _read_native_image(path, array_name=self.array_name)
+            _read_native_image(
+                path,
+                array_name=self.array_name,
+                maximum_file_bytes=self.maximum_file_bytes,
+                maximum_decoded_bytes=self.maximum_decoded_bytes,
+            )
             if self.loader is None
             else self.loader(path)
         )
@@ -203,39 +222,63 @@ class LazyImageSequence2D(StrictModule, NonTrainableState):
         return mask
 
 
-def _read_native_image(path: Path, /, *, array_name: str | None) -> np.ndarray:
-    suffix = path.suffix.lower()
+def _read_native_image(
+    path: Path,
+    /,
+    *,
+    array_name: str | None,
+    maximum_file_bytes: int,
+    maximum_decoded_bytes: int,
+) -> np.ndarray:
+    source = path.expanduser().absolute()
+    resource = read_bounded_resource(
+        source.name,
+        trusted_root=source.parent,
+        limits=ResourceLimits(maximum_file_bytes, 64, 100_000_000, 1024, 128),
+    )
+    suffix = source.suffix.lower()
+    numpy_limits = NumpyFormatLimits(
+        max_container_bytes=maximum_file_bytes,
+        max_aggregate_bytes=maximum_decoded_bytes,
+        max_array_bytes=maximum_decoded_bytes,
+        max_arrays=1024,
+        max_rank=8,
+        max_axis_length=100_000_000,
+        max_array_elements=maximum_decoded_bytes,
+        max_total_elements=maximum_decoded_bytes,
+    )
     if suffix == ".npy":
-        return np.load(path, allow_pickle=False, mmap_mode="r")
+        return decode_npy_resource(resource, limits=numpy_limits).value
     if suffix == ".npz":
-        archive = np.load(path, allow_pickle=False)
-        names = tuple(archive.files)
+        decoded = decode_npz_resource(
+            resource,
+            limits=numpy_limits,
+            expected_names=None if array_name is None else (array_name,),
+        ).arrays
         if array_name is None:
-            if len(names) != 1:
-                archive.close()
+            if len(decoded) != 1:
                 raise AdapterError(
                     AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC,
                     "NPZ image sources with multiple arrays require array_name.",
                 )
-            selected = names[0]
-        else:
-            selected = array_name
-            if selected not in names:
-                archive.close()
-                raise AdapterError(
-                    AdapterStatus.MALFORMED_SOURCE,
-                    f"NPZ image source does not contain array {selected!r}.",
-                )
-        value = np.array(archive[selected], copy=True)
-        archive.close()
-        return value
+            return next(iter(decoded.values()))
+        return decoded[array_name]
     if importlib.util.find_spec("imageio") is None:
         raise AdapterError(
             AdapterStatus.OPTIONAL_DEPENDENCY_UNAVAILABLE,
             "Reading non-NumPy image files requires optional dependency 'imageio'.",
         )
     imageio = importlib.import_module("imageio.canonical")
-    return np.asarray(imageio.imread(path))
+    with TemporaryDirectory(prefix="phydrax-image-sequence-") as temporary:
+        staged = Path(temporary) / source.name
+        staged.write_bytes(resource.data)
+        value = np.asarray(imageio.imread(staged))
+    if value.nbytes > maximum_decoded_bytes:
+        raise AdapterError(
+            AdapterStatus.INCONSISTENT_SOURCE,
+            "Decoded image exceeds maximum_decoded_bytes.",
+        )
+    return value
 
 
 __all__ = ["ImageLoader", "LazyImageSequence2D"]

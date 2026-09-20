@@ -19,6 +19,7 @@ from jaxtyping import Array
 import phydrax.ein as ein
 from phydrax._strict import StrictModule
 
+from ..._mass import EstimatedMass, scale_mass
 from ..._numerics._quadrature_rules import gauss_legendre_data
 from .._atlas import AbstractBoundaryMap, BoundaryAtlas
 from .._capabilities import (
@@ -445,28 +446,28 @@ class _RigidTransformKernel(GeometryKernel):
     def bounds(self, state, /):
         rotation, translation = self._parameters(state)
         bounds = self.child.bounds(state)
-        dimension = self.ambient_dimension
-        corners = jnp.stack(
-            tuple(
-                jnp.where(
-                    jnp.asarray(
-                        [(index >> axis) & 1 for axis in range(dimension)],
-                        dtype=jnp.bool_,
-                    ),
-                    bounds[1],
-                    bounds[0],
-                )
-                for index in range(1 << dimension)
+        center = 0.5 * (bounds[0] + bounds[1])
+        half_extent = 0.5 * (bounds[1] - bounds[0])
+        transformed_center = rotation @ center + translation
+        transformed_extent = jnp.abs(rotation) @ half_extent
+        return jnp.stack(
+            (
+                transformed_center - transformed_extent,
+                transformed_center + transformed_extent,
             )
         )
-        transformed = corners @ rotation.T + translation
-        return jnp.stack((jnp.min(transformed, axis=0), jnp.max(transformed, axis=0)))
 
     def measure(self, state, /):
         return self.child.measure(state)
 
     def boundary_measure(self, state, /):
         return self.child.boundary_measure(state)
+
+    def interior_mass(self, state, /):
+        return self.child.interior_mass(state)
+
+    def boundary_mass(self, state, /):
+        return self.child.boundary_mass(state)
 
     def sample_interior(self, state, num_points, /, *, key, plan=None):
         rotation, translation = self._parameters(state)
@@ -718,14 +719,17 @@ class _ScalingKernel(GeometryKernel):
         scale, _ = self._parameters(state)
         return self.child.measure(state) * jnp.prod(scale)
 
-    def boundary_measure(self, state, /):
+    def interior_mass(self, state, /):
         scale, _ = self._parameters(state)
-        if self.uniform:
-            return self.child.boundary_measure(state) * scale[0] ** (
-                self.intrinsic_dimension - 1
-            )
+        return scale_mass(
+            self.child.interior_mass(state),
+            jnp.prod(scale),
+            provenance="affine_volume_scale",
+        )
+
+    def _boundary_measure_rule(self, state, order):
         atlas = self.boundary_atlas(state)
-        rule = gauss_legendre_data(24)
+        rule = gauss_legendre_data(order)
         reference_axis = jnp.asarray(0.5 * (rule.nodes + 1.0))
         weights_axis = jnp.asarray(0.5 * rule.weights)
         if atlas.reference_dimension == 1:
@@ -741,6 +745,35 @@ class _ScalingKernel(GeometryKernel):
             reference = jnp.tile(cell_reference, (atlas.num_charts, 1))
             quadrature = jnp.tile(cell_weights, atlas.num_charts)
         return jnp.sum(atlas.jacobian(charts, reference) * quadrature)
+
+    def boundary_measure(self, state, /):
+        scale, _ = self._parameters(state)
+        if self.uniform:
+            return self.child.boundary_measure(state) * scale[0] ** (
+                self.intrinsic_dimension - 1
+            )
+        return self._boundary_measure_rule(state, 24)
+
+    def boundary_mass(self, state, /):
+        scale, _ = self._parameters(state)
+        if self.uniform:
+            return scale_mass(
+                self.child.boundary_mass(state),
+                scale[0] ** (self.intrinsic_dimension - 1),
+                provenance="uniform_boundary_scale",
+            )
+        low = self._boundary_measure_rule(state, 12)
+        high = self._boundary_measure_rule(state, 24)
+        reference_dimension = self.intrinsic_dimension - 1
+        evaluations = self.child.boundary_atlas(state).num_charts * (
+            12**reference_dimension + 24**reference_dimension
+        )
+        return EstimatedMass(
+            high,
+            jnp.abs(high - low),
+            evaluations=evaluations,
+            provenance="nonuniform_scaled_boundary_gauss_legendre",
+        )
 
     def sample_interior(self, state, num_points, /, *, key, plan=None):
         scale, center = self._parameters(state)
@@ -863,7 +896,8 @@ class _SharpCSGKernel(GeometryKernel):
         shared.difference_update(
             {
                 GeometryCapability.SIGNED_DISTANCE,
-                GeometryCapability.MEASURE,
+                GeometryCapability.INTERIOR_MEASURE,
+                GeometryCapability.BOUNDARY_MEASURE,
                 GeometryCapability.BOUNDARY_SAMPLING,
                 GeometryCapability.BOUNDARY_ATLAS,
             }

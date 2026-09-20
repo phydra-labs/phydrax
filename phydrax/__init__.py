@@ -82,7 +82,6 @@ from . import (
     phoresis,
     population_balance,
     process_systems,
-    plasma,
     sensing,
     rom,
     service,
@@ -159,6 +158,7 @@ from .interchange import cosmology as _cosmology_interchange  # noqa: F401
 
 # Explicit re-exports for star import
 __all__ = [
+
     "AbstractArrayModel",
     "AdmissibilityHeader",
     "AdmissibilityReason",
@@ -243,7 +243,6 @@ __all__ = [
     "particle_physics",
     "pgm",
     "phoresis",
-    "plasma",
     "population_balance",
     "precision",
     "privacy",

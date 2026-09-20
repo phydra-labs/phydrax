@@ -30,7 +30,8 @@ def test_circle_extrusion_is_an_exact_centered_cylinder():
     )
 
     assert compiled.field_certificate.is_signed_distance
-    assert compiled.has_capability(phx.geometry.GeometryCapability.MEASURE)
+    assert compiled.has_capability(phx.geometry.GeometryCapability.INTERIOR_MEASURE)
+    assert compiled.has_capability(phx.geometry.GeometryCapability.BOUNDARY_MEASURE)
     assert jnp.allclose(
         compiled.signed_distance(points),
         jnp.asarray([0.0, 0.0, -2.0, jnp.sqrt(2.0)]),
@@ -95,7 +96,7 @@ def test_offset_circle_revolution_is_an_exact_torus_field():
         atol=1.0e-6,
     )
     assert jnp.all(jnp.isfinite(eqx.filter_jit(compiled.boundary_normal)(points)))
-    with pytest.raises(NotImplementedError, match="does not provide measure"):
+    with pytest.raises(NotImplementedError, match="does not provide interior_measure"):
         _ = compiled.measure
 
 

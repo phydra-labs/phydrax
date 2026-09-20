@@ -2053,16 +2053,16 @@ floor and learns only the location and optional low-rank factors. The wrapper's
 `uncertainty_source` must describe what is sampled: use `process` for stochastic
 dynamics and `observation` for a sensor model.
 
-`ConditionalFlowFunctionOperator` uses a FlowJAX coupling flow for a non-Gaussian
-residual around any deterministic Phydrax operator. `OperatorBatchConditioner`
-concatenates named `FixedBranchEncoder` or `IntegralBranchEncoder` outputs. Its
-finite output event, shared query geometry, quadrature, and mask are
-constructor-fixed; this is a fixed-discretization transition density, not an
-arbitrary-query neural operator. Retain it only when held-out distributional
-metrics improve over the Gaussian baseline.
+`ConditionalFlowFunctionOperator` uses a native affine coupling flow for a
+non-Gaussian residual around any deterministic Phydrax operator.
+`OperatorBatchConditioner` concatenates named `FixedBranchEncoder` or
+`IntegralBranchEncoder` outputs. Its finite output event, shared query geometry,
+quadrature, and mask are constructor-fixed; this is a fixed-discretization
+transition density, not an arbitrary-query neural operator. Retain it only when
+held-out distributional metrics improve over the Gaussian baseline.
 
-`LatentFlowJAXCoefficientProcess` is the finite-dimensional process counterpart.
-It wraps a conditional FlowJAX residual law over a latent coefficient state.
+`LatentFlowCoefficientProcess` is the finite-dimensional process counterpart.
+It wraps a conditional native residual law over a latent coefficient state.
 `conditional_coupling_flow_process` supplies the standard current-state and
 time conditioner with an identity residual location. The class implements
 `AbstractMarginalTransitionLaw` only: it does not invent a pathwise driver or
@@ -2451,7 +2451,7 @@ The benchmark harness enforces the same source/query protocol across families.
 | `CoordinateConditionedOperator` | Any branch-encoder source geometry | Yes | NOMAD-style nonlinear coordinate decoding; one global function latent can bottleneck complex fields |
 | `InContextOperator` | Weighted demonstrations plus current source/query | Yes | Supervised function demonstrations; static prompt capacity and no bundled task-distribution pretraining |
 | `GaussianFunctionOperator` | Inherited from its base operator | Inherited | Coherent diagonal-plus-low-rank function distributions; calibration and geometry validity are not added by the wrapper |
-| `ConditionalFlowFunctionOperator` | Constructor-fixed tensor grid or point cloud with one shared mask | No | Conditional non-Gaussian complete-field density; finite FlowJAX event size forbids changed query geometry or resolution transfer |
+| `ConditionalFlowFunctionOperator` | Constructor-fixed tensor grid or point cloud with one shared mask | No | Conditional non-Gaussian complete-field density; finite native flow event size forbids changed query geometry or resolution transfer |
 | `PDEConditionEncoder` | Canonical PDE-IR token tree | Conditioning branch only | Structure-aware global equation conditioning; the downstream operator must consume it and no PDE is enforced automatically |
 | `Poseidon` | Constructor-fixed 2D tensor grid | No | Native scOT-style multiscale architecture; divisibility constraints and no bundled pretraining/checkpoint |
 | `DPOT` | Fixed 2D grid with history/forecast axes | No in space; fixed forecast axis | AFNO autoregression and denoising corruption; static horizon/shape and no bundled large-scale pretraining/checkpoint |

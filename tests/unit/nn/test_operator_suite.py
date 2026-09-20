@@ -324,6 +324,19 @@ def test_spectral_factorizations_have_finite_gradients(factorization):
     assert all(bool(jnp.all(jnp.isfinite(leaf))) for leaf in leaves)
 
 
+def test_spectral_convolution_refuses_signed_block_explosion_before_allocation():
+    with pytest.raises(ValueError, match="maximum_signed_blocks"):
+        phx.nn.operator.architectures.SpectralConvND(
+            in_channels=1,
+            out_channels=1,
+            n_modes=(1,) * 13,
+            resources=phx.nn.operator.architectures.SpectralConvolutionResourcePolicy(
+                maximum_signed_blocks=1024
+            ),
+            key=jr.key(37),
+        )
+
+
 def test_fno_native_batch_matches_vmap_and_resolution_independent_parameters():
     model = phx.nn.operator.architectures.FNO(
         n_modes=(4, 4),

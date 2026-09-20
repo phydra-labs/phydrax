@@ -7,15 +7,21 @@ from __future__ import annotations
 import json
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import equinox as eqx
 import jax.numpy as jnp
+import meshio
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from ..._array_archive import read_array_archive, write_array_archive
+from ..._external_resource import open_bounded_resource, ResourceLimits
 from ..._fingerprint import canonical_fingerprint
+from ..._mesh_file_profiles import resolve_mesh_file_profile
+from ..._publication import publish_bytes
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._cell_complex import PolyhedralConnectivity
@@ -45,22 +51,30 @@ class PersistentSemanticCache(StrictModule, NonTrainableState):
         identifier = str(semantic_id)
         if not identifier:
             raise ValueError("Semantic cache identity must be non-empty.")
-        path = Path(self.directory) / f"{identifier}.npz"
+        path = Path(self.directory) / f"{identifier}.phxcache"
         payload = {str(name): np.asarray(value) for name, value in arrays.items()}
-        payload["metadata"] = np.asarray(json.dumps(dict(metadata), sort_keys=True))
-        np.savez(path, allow_pickle=False, **payload)
+        write_array_archive(
+            path,
+            manifest={
+                "kind": "persistent-semantic-cache",
+                "semantic_id": identifier,
+                "metadata": dict(metadata),
+            },
+            arrays=payload,
+        )
         return path
 
     def load(self, semantic_id: str, /) -> tuple[dict[str, Array], dict[str, object]]:
-        path = Path(self.directory) / f"{semantic_id}.npz"
-        with np.load(path, allow_pickle=False) as archive:
-            metadata = json.loads(str(archive["metadata"]))
-            arrays = {
-                name: jnp.asarray(archive[name])
-                for name in archive.files
-                if name != "metadata"
-            }
-        return arrays, metadata
+        path = Path(self.directory) / f"{semantic_id}.phxcache"
+        manifest, payload = read_array_archive(path)
+        if (
+            manifest.get("kind") != "persistent-semantic-cache"
+            or manifest.get("semantic_id") != str(semantic_id)
+            or not isinstance(manifest.get("metadata"), dict)
+        ):
+            raise ValueError("Persistent semantic cache identity is invalid.")
+        arrays = {name: jnp.asarray(value) for name, value in payload.items()}
+        return arrays, dict(manifest["metadata"])
 
 
 class FusedMortarAction(StrictModule, NonTrainableState):
@@ -168,40 +182,48 @@ def write_adaptive_vtk(
     point_values: ArrayLike | None = None,
     /,
 ) -> None:
+
     mesh = epoch.mesh
     points = np.asarray(mesh.coordinates)
-    cells = np.concatenate(
-        tuple(np.asarray(block.vertices, dtype=np.int32) for block in mesh.blocks)
+    cell_types = {
+        "triangle": "triangle",
+        "quadrilateral": "quad",
+        "tetrahedron": "tetra",
+        "hexahedron": "hexahedron",
+    }
+    cells = [
+        (cell_types[block.cell_kind], np.asarray(block.vertices, dtype=np.int32))
+        for block in mesh.blocks
+    ]
+    point_data = {}
+    if point_values is not None:
+        values = np.asarray(point_values)
+        if values.shape not in ((points.shape[0],), (points.shape[0], 1)):
+            raise ValueError("Adaptive VTK point values must be scalar point data.")
+        point_data["field"] = values.reshape((points.shape[0],))
+    destination = Path(path).expanduser().absolute()
+    profile = resolve_mesh_file_profile(destination, None, direction="write")
+    if profile.profile_id not in {"vtk", "vtu"}:
+        raise ValueError("Adaptive VTK export requires .vtk or .vtu.")
+    target = meshio.Mesh(points, cells, point_data=point_data)
+    with TemporaryDirectory(prefix="phydrax-adaptive-vtk-") as temporary:
+        staged = Path(temporary) / destination.name
+        meshio.write(staged, target, file_format=profile.meshio_format)
+        decoded = meshio.read(staged, file_format=profile.meshio_format)
+        decoded_points = np.asarray(decoded.points)
+        if decoded_points.shape[1] > points.shape[1] and np.all(
+            decoded_points[:, points.shape[1] :] == 0
+        ):
+            decoded_points = decoded_points[:, : points.shape[1]]
+        if not np.array_equal(decoded_points, points):
+            raise ValueError("Adaptive VTK codec changed point coordinates.")
+        payload = staged.read_bytes()
+    publish_bytes(
+        destination,
+        payload,
+        maximum_bytes=4 * 1024 * 1024 * 1024,
+        mode="atomic_replace",
     )
-    cell_kind = epoch.topology.cell_kind
-    vtk_type = 9 if cell_kind == "quadrilateral" else 12
-    with Path(path).open("w") as stream:
-        stream.write(
-            "# vtk DataFile Version 3.0\nPhydrax adaptive hp\nASCII\nDATASET UNSTRUCTURED_GRID\n"
-        )
-        stream.write(f"POINTS {points.shape[0]} float\n")
-        padded = np.pad(points, ((0, 0), (0, max(0, 3 - points.shape[1]))))
-        for point in padded:
-            stream.write(" ".join(str(float(value)) for value in point[:3]) + "\n")
-        stream.write(f"CELLS {cells.shape[0]} {cells.size + cells.shape[0]}\n")
-        for cell in cells:
-            stream.write(
-                f"{cell.size} " + " ".join(str(int(value)) for value in cell) + "\n"
-            )
-        stream.write(
-            f"CELL_TYPES {cells.shape[0]}\n"
-            + "\n".join((str(vtk_type),) * cells.shape[0])
-            + "\n"
-        )
-        if point_values is not None:
-            values = np.asarray(point_values)
-            if values.shape[0] != points.shape[0]:
-                raise ValueError("VTK point values must match mesh points.")
-            stream.write(
-                f"POINT_DATA {points.shape[0]}\nSCALARS field float 1\nLOOKUP_TABLE default\n"
-            )
-            for value in values.reshape((values.shape[0], -1))[:, 0]:
-                stream.write(f"{float(value)}\n")
 
 
 def write_adaptive_xdmf(path: str | Path, epoch: FiniteElementHPEpoch, /) -> None:
@@ -225,7 +247,12 @@ def write_adaptive_xdmf(path: str | Path, epoch: FiniteElementHPEpoch, /) -> Non
         f'<DataItem Dimensions="{points.shape[0]} {points.shape[1]}" Format="XML">'
         f"{point_text}</DataItem></Geometry></Grid></Domain></Xdmf>\n"
     )
-    Path(path).write_text(content)
+    publish_bytes(
+        path,
+        content.encode("utf-8"),
+        maximum_bytes=4 * 1024 * 1024 * 1024,
+        mode="atomic_replace",
+    )
 
 
 def write_hp_forest(path: str | Path, epoch: FiniteElementHPEpoch, /) -> None:
@@ -242,7 +269,13 @@ def write_hp_forest(path: str | Path, epoch: FiniteElementHPEpoch, /) -> None:
         "levels": np.asarray(topology.levels).tolist(),
         "interface_ids": list(epoch.interfaces.interface_ids),
     }
-    Path(path).write_text(json.dumps(payload, indent=2) + "\n")
+    content = (json.dumps(payload, allow_nan=False, indent=2) + "\n").encode("utf-8")
+    publish_bytes(
+        path,
+        content,
+        maximum_bytes=4 * 1024 * 1024 * 1024,
+        mode="atomic_replace",
+    )
 
 
 def _canonical_source_metadata(
@@ -504,11 +537,43 @@ def _geometry_permutation(cell_type: str, cell_kind: str, order: int, /) -> np.n
     return reference_node_permutation(cell_type, target)
 
 
-def read_finite_element_mesh(path: str | Path, /) -> FiniteElementMeshImport:
-    import meshio
-
-    source_path = Path(path)
-    source = meshio.read(source_path)
+def read_finite_element_mesh(
+    path: str | Path,
+    /,
+    *,
+    trusted_root: str | Path | None = None,
+    maximum_file_bytes: int = 4 * 1024 * 1024 * 1024,
+    file_profile: str | None = None,
+) -> FiniteElementMeshImport:
+    source_path = Path(path).expanduser().absolute()
+    root = source_path.parent if trusted_root is None else Path(trusted_root)
+    profile = resolve_mesh_file_profile(
+        source_path,
+        file_profile,
+        direction="read",
+    )
+    if profile.carrier != "single-file":
+        raise ValueError("Finite-element mesh import requires a single-file profile.")
+    with (
+        open_bounded_resource(
+            source_path,
+            trusted_root=root,
+            limits=ResourceLimits(
+                maximum_file_bytes,
+                64,
+                100_000_000,
+                1_000_000,
+                1024,
+            ),
+        ) as resource,
+        TemporaryDirectory(prefix="phydrax-fe-mesh-read-") as temporary,
+    ):
+        staged = Path(temporary) / source_path.name
+        with staged.open("wb") as output:
+            while chunk := resource.stream.read(1024 * 1024):
+                output.write(chunk)
+        source = meshio.read(staged, file_format=profile.meshio_format)
+        source_manifest_id = resource.manifest.manifest_id
     volume_blocks = []
     for source_index, cell_block in enumerate(source.cells):
         if cell_block.type in MESHIO_CELL_TYPES:
@@ -689,6 +754,7 @@ def read_finite_element_mesh(path: str | Path, /) -> FiniteElementMeshImport:
         "point_data_names": tuple(sorted(str(value) for value in source.point_data)),
         "cell_data_names": tuple(sorted(str(value) for value in source.cell_data)),
     }
+    metadata["resource_manifest_id"] = source_manifest_id
     source_counts = {
         "points": points.shape[0],
         "volume_cells": source_volume_count,
@@ -715,7 +781,7 @@ def read_finite_element_mesh(path: str | Path, /) -> FiniteElementMeshImport:
         points.shape[0],
         volume_names=tuple(normalized_volumes),
         source_path=str(source_path),
-        source_format=source_path.suffix.lower().lstrip("."),
+        source_format=profile.profile_id,
         source_metadata=metadata,
         losses=losses,
         source_entity_counts=source_counts,

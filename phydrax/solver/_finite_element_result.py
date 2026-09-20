@@ -4,7 +4,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Sequence
 from pathlib import Path
 
@@ -13,10 +12,16 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from .._array_archive import array_payload_digest
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..equations import FiniteElementExecutionPolicy
+from ..lifecycle import (
+    create as create_lifecycle_archive,
+    open as open_lifecycle_archive,
+    ResultManifest,
+)
 
 
 class FiniteElementRunConfiguration(StrictModule, NonTrainableState):
@@ -180,13 +185,6 @@ class FiniteElementResult(StrictModule, NonTrainableState):
 def write_finite_element_result(path: str | Path, result: FiniteElementResult, /) -> None:
     if not isinstance(result, FiniteElementResult):
         raise TypeError("result must be FiniteElementResult.")
-    metadata = {
-        "field_names": list(result.field_names),
-        "prepared_id": result.prepared_id,
-        "compilation_id": result.compilation_id,
-        "result_id": result.result_id,
-        "status": result.diagnostics.status,
-    }
     arrays = {
         "time": np.asarray(result.time),
         **{
@@ -201,39 +199,55 @@ def write_finite_element_result(path: str | Path, result: FiniteElementResult, /
         "conservation_defect": np.asarray(result.diagnostics.conservation_defect),
         "energy_defect": np.asarray(result.diagnostics.energy_defect),
     }
-    np.savez(
-        Path(path),
-        metadata=np.asarray(json.dumps(metadata)),
-        allow_pickle=False,
-        **arrays,
+    run_id = canonical_fingerprint(
+        {
+            "kind": "finite-element-run",
+            "prepared_id": result.prepared_id,
+            "compilation_id": result.compilation_id,
+        }
     )
+    manifest = ResultManifest(
+        result.result_id,
+        run_id,
+        tuple(
+            (name, f"field_{index}", "1") for index, name in enumerate(result.field_names)
+        ),
+        {name: array_payload_digest(value) for name, value in arrays.items()},
+        sampled_semantics={
+            "prepared_id": result.prepared_id,
+            "compilation_id": result.compilation_id,
+            "status": result.diagnostics.status,
+        },
+    )
+    create_lifecycle_archive(path, manifest=manifest, arrays=arrays)
 
 
 def read_finite_element_result(path: str | Path, /) -> FiniteElementResult:
-    archive = np.load(Path(path), allow_pickle=False)
-    metadata = json.loads(str(archive["metadata"]))
+    archive = open_lifecycle_archive(path)
+    manifest = archive.manifest
+    if not isinstance(manifest, ResultManifest):
+        raise ValueError("Finite-element result is not a lifecycle result.")
+    metadata = dict(manifest.sampled_semantics)
     diagnostics = FiniteElementSolveDiagnostics(
-        archive["successful"],
-        archive["residual_norm"],
-        nonlinear_iterations=archive["nonlinear_iterations"],
-        linear_iterations=archive["linear_iterations"],
-        constraint_defect=archive["constraint_defect"],
-        conservation_defect=archive["conservation_defect"],
-        energy_defect=archive["energy_defect"],
+        archive.arrays["successful"],
+        archive.arrays["residual_norm"],
+        nonlinear_iterations=archive.arrays["nonlinear_iterations"],
+        linear_iterations=archive.arrays["linear_iterations"],
+        constraint_defect=archive.arrays["constraint_defect"],
+        conservation_defect=archive.arrays["conservation_defect"],
+        energy_defect=archive.arrays["energy_defect"],
         status=metadata["status"],
     )
-    fields = tuple(
-        archive[f"field_{index}"] for index in range(len(metadata["field_names"]))
-    )
+    fields = tuple(archive.arrays[payload] for _, payload, _ in manifest.fields)
     result = FiniteElementResult(
-        metadata["field_names"],
+        tuple(name for name, _, _ in manifest.fields),
         fields,
-        archive["time"],
+        archive.arrays["time"],
         metadata["prepared_id"],
         metadata["compilation_id"],
         diagnostics,
     )
-    if result.result_id != metadata["result_id"]:
+    if result.result_id != manifest.result_id:
         raise ValueError("Finite-element result identity mismatch.")
     return result
 

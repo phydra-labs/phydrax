@@ -115,7 +115,7 @@ higher-dimensional Gauss-law elimination are not claimed.
 
 ::: phydrax.applications.lattice_field.PeriodicSchwingerModel
 
-::: phydrax.applications.lattice_field.CompactU1GaugeModel2D
+::: phydrax.applications.lattice_field.CompactU1GaugeModel
 
 ::: phydrax.applications.lattice_field.GaugePreservingProductFormulaPlan
 

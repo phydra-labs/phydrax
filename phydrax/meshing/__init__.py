@@ -1,5 +1,11 @@
 """Native mesh construction, adaptation, certification, and provider contracts."""
 
+from .._mesh_file_profiles import (
+    mesh_file_profiles,
+    MeshCarrier as MeshFileCarrier,
+    MeshFileProfile,
+    resolve_mesh_file_profile,
+)
 from . import providers
 from ._adaptation import project_hp_lineage, refine_triangle_mesh
 from ._assembly import MeshAssembly, MeshCarrier, MeshCarrierKind, MeshPart
@@ -251,6 +257,8 @@ __all__ = [
     "MeshAttributeRole",
     "MeshLabel",
     "MeshInteropPolicy",
+    "MeshFileCarrier",
+    "MeshFileProfile",
     "MeshMetricField",
     "MeshOptimizationResult",
     "MeshPatch",
@@ -297,6 +305,8 @@ __all__ = [
     "ScopeResolutionReport",
     "normalize_mesh_metric",
     "optimize_cell_geometry_coordinates",
+    "mesh_file_profiles",
+    "resolve_mesh_file_profile",
     "optimize_cell_mesh",
     "project_hp_lineage",
     "SizeCombinationPolicy",

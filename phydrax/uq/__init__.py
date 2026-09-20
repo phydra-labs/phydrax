@@ -365,6 +365,7 @@ from ._fixed_lag import (
     FixedLagKalmanSmootherResult,
     FixedLagParticleSmootherResult,
 )
+from ._flow_bijector import AffineFlowBijector
 from ._flow_evidence import (
     estimate_flow_nuts_evidence,
     FlowNUTSEvidenceResult,
@@ -378,7 +379,6 @@ from ._flow_variational import (
     FlowVariationalFamily,
     FlowVariationalResult,
 )
-from ._flowjax_bijector import FlowJAXBijectionAdapter
 from ._forecast_comparison import (
     compare_forecasts,
     compare_loss_differentials,
@@ -1799,7 +1799,7 @@ __all__ = [
     "ExpBijector",
     "IdentityBijector",
     "SigmoidIntervalBijector",
-    "FlowJAXBijectionAdapter",
+    "AffineFlowBijector",
     "SimplexBijector",
     "ParameterSpace",
     "PosteriorProblem",

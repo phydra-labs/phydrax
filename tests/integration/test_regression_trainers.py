@@ -5,7 +5,6 @@
 import jax.numpy as jnp
 import jax.random as jr
 import optax
-from evosax import algorithms as evo_algos
 
 import phydrax as phx
 from phydrax.nn.models import MLP
@@ -69,28 +68,18 @@ def test_regression_2d_optax_scan():
     assert final_loss < init_loss
 
 
-def test_regression_2d_evosax():
+def test_regression_2d_native_evolution():
     solver = _make_regression_solver(seed=1)
     init_loss = solver.loss(key=jr.key(0))
-
-    params = solver.trainable_functions()
-
-    algo_name = "Open_ES"
-    algo_dict = vars(evo_algos)
-    candidates = [a for a in algo_dict.keys() if not a.startswith("_")]
-    s_lower = algo_name.replace("-", "_").lower()
-    match = None
-    for a in candidates:
-        if a.lower() == s_lower:
-            match = a
-            break
-    assert match is not None
-    AlgoCls = algo_dict[match]
-    algo = AlgoCls(population_size=32, solution=params)
+    algorithm = phx.optim.OpenEvolutionStrategy(
+        32,
+        initial_standard_deviation=0.2,
+        learning_rate=0.1,
+    )
 
     trained = solver.solve(
         num_iter=40,
-        optim=algo,
+        optim=algorithm,
         seed=0,
         jit=True,
         keep_best=True,

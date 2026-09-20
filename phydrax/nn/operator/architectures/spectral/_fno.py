@@ -7,6 +7,7 @@ from __future__ import annotations
 from abc import abstractmethod
 from collections.abc import Sequence
 from itertools import product
+from math import prod
 from string import ascii_lowercase
 from typing import cast, Literal
 
@@ -86,6 +87,24 @@ def _factor_rank(
     return max(1, value)
 
 
+class SpectralConvolutionResourcePolicy(StrictModule):
+    """Static bounds for signed spectral blocks and trainable storage."""
+
+    maximum_signed_blocks: int = eqx.field(static=True)
+    maximum_parameter_bytes: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        *,
+        maximum_signed_blocks: int = 4096,
+        maximum_parameter_bytes: int = 1 << 30,
+    ):
+        if maximum_signed_blocks <= 0 or maximum_parameter_bytes <= 0:
+            raise ValueError("Spectral-convolution resource limits must be positive.")
+        self.maximum_signed_blocks = maximum_signed_blocks
+        self.maximum_parameter_bytes = maximum_parameter_bytes
+
+
 class SpectralConvND(StrictModule):
     """Resolution-independent N-dimensional real Fourier convolution.
 
@@ -106,6 +125,7 @@ class SpectralConvND(StrictModule):
     factor_out: Array | None
     factor_modes: tuple[Array, ...]
     core: Array | None
+    resources: SpectralConvolutionResourcePolicy = eqx.field(static=True)
 
     def __init__(
         self,
@@ -116,6 +136,7 @@ class SpectralConvND(StrictModule):
         factorization: Factorization = "dense",
         rank: int | float = 0.5,
         key: Key[Array, ""] = DOC_KEY0,
+        resources: SpectralConvolutionResourcePolicy | None = None,
     ):
         self.in_channels = int(in_channels)
         self.out_channels = int(out_channels)
@@ -127,8 +148,45 @@ class SpectralConvND(StrictModule):
         if factorization not in ("dense", "cp", "tucker"):
             raise ValueError("factorization must be 'dense', 'cp', or 'tucker'.")
 
+        resource_policy = (
+            SpectralConvolutionResourcePolicy() if resources is None else resources
+        )
+        if not isinstance(resource_policy, SpectralConvolutionResourcePolicy):
+            raise TypeError("resources must be a SpectralConvolutionResourcePolicy.")
+        self.resources = resource_policy
         corners = 2 ** max(0, len(self.n_modes) - 1)
         self.rank = _factor_rank(rank, self.in_channels, self.out_channels, self.n_modes)
+        if corners > resource_policy.maximum_signed_blocks:
+            raise ValueError(
+                "Spectral convolution exceeds maximum_signed_blocks: "
+                f"required {corners}, allowed {resource_policy.maximum_signed_blocks}."
+            )
+        mode_count = prod(self.n_modes)
+        match factorization:
+            case "dense":
+                parameter_elements = (
+                    corners * self.in_channels * self.out_channels * mode_count
+                )
+            case "cp":
+                parameter_elements = (
+                    corners
+                    * self.rank
+                    * (self.in_channels + self.out_channels + sum(self.n_modes))
+                )
+            case "tucker":
+                parameter_elements = (
+                    self.rank * (self.in_channels + self.out_channels)
+                    + corners * self.rank * self.rank * mode_count
+                )
+            case _:
+                raise AssertionError("Validated spectral factorization is exhaustive.")
+        parameter_bytes = parameter_elements * 16
+        if parameter_bytes > resource_policy.maximum_parameter_bytes:
+            raise ValueError(
+                "Spectral convolution exceeds maximum_parameter_bytes: "
+                f"required {parameter_bytes}, "
+                f"allowed {resource_policy.maximum_parameter_bytes}."
+            )
         self.weight = None
         self.factor_in = None
         self.factor_out = None
@@ -1222,5 +1280,6 @@ __all__ = [
     "MultiScaleSpectralConvND",
     "SpectralConv1d",
     "SpectralConv2d",
+    "SpectralConvolutionResourcePolicy",
     "SpectralConvND",
 ]

@@ -121,7 +121,6 @@ def test_default_flow_supports_scalar_and_vector_events():
         jr.key(6),
         scalar_data,
         flow_layers=1,
-        num_knots=4,
         nn_width=8,
         nn_depth=1,
     )
@@ -129,7 +128,6 @@ def test_default_flow_supports_scalar_and_vector_events():
         jr.key(7),
         vector_data,
         flow_layers=1,
-        num_knots=4,
         nn_width=8,
         nn_depth=1,
     )
@@ -151,7 +149,6 @@ def test_flow_training_caps_oversized_batches_to_the_training_split():
         jr.key(10),
         data,
         flow_layers=1,
-        num_knots=4,
         nn_width=8,
         nn_depth=1,
     )

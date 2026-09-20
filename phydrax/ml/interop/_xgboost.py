@@ -19,6 +19,7 @@ from typing import Any
 
 import numpy as np
 
+from ..._external_resource import read_bounded_resource, ResourceLimits
 from .._schema import FeatureSchema, TargetSchema
 from ..tree import TreeEnsemble
 from ._contracts import (
@@ -347,6 +348,24 @@ def _native_array_checksum(arrays: tuple[tuple[str, np.ndarray], ...]) -> str:
     return hasher.hexdigest()
 
 
+def _read_model_path(path: Path, /) -> bytes:
+    source = path.expanduser().absolute()
+    try:
+        return read_bounded_resource(
+            source.name,
+            trusted_root=source.parent,
+            limits=ResourceLimits(
+                1024 * 1024 * 1024,
+                64,
+                10_000_000,
+                1_000_000,
+                1024,
+            ),
+        ).data
+    except (OSError, ValueError) as error:
+        raise ConversionError(f"Cannot read XGBoost artifact {source!s}.") from error
+
+
 def _load_source(source: Any) -> tuple[dict[str, Any], str, str]:
     if isinstance(source, Mapping):
         document = _normalize_json(source)
@@ -368,12 +387,7 @@ def _load_source(source: Any) -> tuple[dict[str, Any], str, str]:
                 raise UnsupportedConversionError(
                     "XGBoost saved-model paths must end in .json, .ubj, or .ubjson."
                 )
-            try:
-                raw = path.read_bytes()
-            except OSError as error:
-                raise ConversionError(
-                    f"Cannot read XGBoost artifact {path!s}."
-                ) from error
+            raw = _read_model_path(path)
     elif isinstance(source, os.PathLike):
         path = Path(source)
         suffix = path.suffix.lower()
@@ -385,10 +399,7 @@ def _load_source(source: Any) -> tuple[dict[str, Any], str, str]:
             raise UnsupportedConversionError(
                 "XGBoost saved-model paths must end in .json, .ubj, or .ubjson."
             )
-        try:
-            raw = path.read_bytes()
-        except OSError as error:
-            raise ConversionError(f"Cannot read XGBoost artifact {path!s}.") from error
+        raw = _read_model_path(path)
     elif type(source) is bytes:
         raw = source
     else:
@@ -1504,7 +1515,7 @@ def from_xgboost_artifact(source: Any, /) -> ConversionResult:
             "dart_weighted": dart_weighted,
             "dense_input_domain": "finite float32 values with NaN missing sentinels",
             "feature_types": feature_types,
-            "iteration_indptr": tuple(iteration_indptr),
+            "iteration_indptr": tuple(int(value) for value in iteration_indptr),
             "missing_routing": "NaN follows persisted default_left child",
             "num_class": num_class,
             "num_feature": num_feature,
@@ -1522,7 +1533,7 @@ def from_xgboost_artifact(source: Any, /) -> ConversionResult:
                 "sparse absence must be normalized to NaN before native prediction",
                 "prediction is fully native and never imports or calls XGBoost",
             ),
-            "tree_info": tuple(tree_info),
+            "tree_info": tuple(int(value) for value in tree_info),
             "tree_weights": weights_configuration,
             "vector_leaf": vector_leaf,
         },

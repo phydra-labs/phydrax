@@ -103,8 +103,8 @@ transpose, and conjugate-adjoint actions while preserving trailing payload
 dimensions. `SparseCoordinateOperator` binds the same route algebra to
 `phydrax.linalg` spaces and pairing-aware adjoints. Provider-neutral
 `SparsePattern`, `SparseColoring`, and `SparseDerivativePlan` artifacts support
-native compressed JAX evaluation. ASDEX supplies compile-time global detection
-and optimized coloring when a pattern is not already known.
+native global structural tracing, deterministic coloring, and compressed JAX
+evaluation.
 Dense and SciPy conversions remain explicit interoperability operations, not
 execution fallbacks. Sparse-grid
 quadrature, sparse Gaussian-process approximations, stochastic probes, and

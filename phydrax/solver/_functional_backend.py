@@ -8,9 +8,8 @@ from dataclasses import dataclass
 from typing import Any, Protocol, TYPE_CHECKING
 
 import optax
-from evosax.algorithms.distribution_based.base import DistributionBasedAlgorithm
-from evosax.algorithms.population_based.base import PopulationBasedAlgorithm
 
+from ..optim._evolution_strategy import AbstractDistributionEvolutionMethod
 from ..optim._iterative import (
     AbstractCompositeLeastSquaresMethod,
     AbstractLeastSquaresMethod,
@@ -19,7 +18,7 @@ from ..optim._iterative import (
 from ..optim._kfac._config import KFAC
 from ..optim._mirror_descent import AbstractMirrorOptimizer
 from ..optim._riemannian import AbstractRiemannianOptimizer
-from ._functional_evosax import _solve_evosax_distribution
+from ._functional_evolution import _solve_distribution_evolution
 from ._functional_gradient import solve_gradient
 from ._functional_run import FunctionalSolveConfig
 
@@ -80,8 +79,8 @@ class _GradientBackend:
 
 
 @dataclass(frozen=True, slots=True)
-class _EvosaxBackend:
-    algorithm: DistributionBasedAlgorithm
+class _EvolutionBackend:
+    algorithm: AbstractDistributionEvolutionMethod
 
     def run(
         self,
@@ -91,13 +90,13 @@ class _EvosaxBackend:
     ) -> "FunctionalSolver":
         if config.training is not None and config.training.update_alignment is not None:
             raise ValueError(
-                "Functional update alignment is unsupported by Evosax backends."
+                "Functional update alignment is unsupported by evolution backends."
             )
         if config.parameter_paths is not None:
             raise ValueError(
-                "Explicit parameter subspaces are unsupported by Evosax backends."
+                "Explicit parameter subspaces are unsupported by evolution backends."
             )
-        return _solve_evosax_distribution(
+        return _solve_distribution_evolution(
             solver,
             num_iter=config.num_iter,
             algo=self.algorithm,
@@ -165,26 +164,15 @@ def _resolve_backend(
     if isinstance(optimizer, str):
         raise TypeError(
             "optim must be an optimizer object (e.g. phydrax.optim.mirror_descent(...), "
-            "phydrax.optim.riemannian_sgd(...), optax.adam(...), optax.lbfgs(...), "
-            "or an evosax distribution-based algorithm instance), not a string."
+            "phydrax.optim.riemannian_sgd(...), phydrax.optim.OpenEvolutionStrategy(...), "
+            "optax.adam(...), or optax.lbfgs(...)), not a string."
         )
-    if isinstance(optimizer, PopulationBasedAlgorithm):
+    if isinstance(optimizer, AbstractDistributionEvolutionMethod):
         if evaluation_parameters is not None:
             raise ValueError(
                 "evaluation_parameters is supported only for Optax optimizers."
             )
-        raise NotImplementedError(
-            "FunctionalSolver does not accept Evosax population-based algorithms: "
-            "they require an explicit initial population and finite search-space "
-            "semantics. For bounded geometry design, use "
-            "DesignConstraintSystem.search(...)."
-        )
-    if isinstance(optimizer, DistributionBasedAlgorithm):
-        if evaluation_parameters is not None:
-            raise ValueError(
-                "evaluation_parameters is supported only for Optax optimizers."
-            )
-        return _EvosaxBackend(optimizer)
+        return _EvolutionBackend(optimizer)
     if isinstance(optimizer, KFAC):
         return _KFACBackend(optimizer)
     if isinstance(
@@ -201,9 +189,8 @@ def _resolve_backend(
     ):
         return _GradientBackend(optimizer)
     raise TypeError(
-        "optim must be a Phydrax iterative, mirror, or Riemannian optimizer, an "
-        "Optax transformation, a KFAC configuration, or an Evosax "
-        "distribution-based algorithm instance."
+        "optim must be a Phydrax iterative, mirror, Riemannian, or distribution "
+        "evolution method, an Optax transformation, or a KFAC configuration."
     )
 
 
@@ -236,10 +223,10 @@ def solve(
             "Target policies are supported only by functional gradient backends."
         )
     if (config.training is not None or config.resume) and isinstance(
-        backend, _EvosaxBackend
+        backend, _EvolutionBackend
     ):
         raise ValueError(
-            "Functional training plans and resume are unsupported by Evosax backends."
+            "Functional training plans and resume are unsupported by evolution backends."
         )
     if config.gradient_accumulation > 1:
         if not isinstance(backend, _GradientBackend):

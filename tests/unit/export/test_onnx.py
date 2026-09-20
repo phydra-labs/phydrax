@@ -4,6 +4,7 @@
 
 import sys
 import types
+from pathlib import Path
 from typing import Any
 
 import jax.numpy as jnp
@@ -29,6 +30,7 @@ class _FakeJax2Onnx:
                 "value": fn(sample),
             }
         )
+        Path(kwargs["output_path"]).write_bytes(b"fake-onnx-model")
         return kwargs["output_path"]
 
     def allclose(self, fn, path, *, inputs, rtol, atol, enable_double_precision):

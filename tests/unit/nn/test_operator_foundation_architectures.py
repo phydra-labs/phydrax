@@ -236,6 +236,33 @@ def test_wavelet_operators_reconstruct_and_execute_scalar_and_channel_fields():
     _assert_finite_model_gradient(mwt, lambda item: jnp.sum(item(scalar_batch) ** 2))
 
 
+def test_wavelet_operator_admits_bounded_four_dimensional_subbands():
+    model = phx.nn.operator.architectures.WaveletNeuralOperator(
+        4,
+        in_channels="scalar",
+        out_channels="scalar",
+        levels=1,
+        width=2,
+        depth=1,
+        key=jr.key(33),
+    )
+    assert model.transform.detail_count == 15
+
+    with pytest.raises(ValueError, match="maximum_detail_bands"):
+        phx.nn.operator.architectures.WaveletNeuralOperator(
+            4,
+            in_channels="scalar",
+            out_channels="scalar",
+            levels=1,
+            width=2,
+            depth=1,
+            resources=phx.nn.operator.architectures.WaveletResourcePolicy(
+                maximum_detail_bands=14
+            ),
+            key=jr.key(34),
+        )
+
+
 def test_wavelet_operators_reuse_one_model_across_resolutions():
     sizes = (17, 29)
     batches = tuple(

@@ -83,7 +83,6 @@ class FlowNUTSConfig(StrictModule):
     history_capacity_per_chain: int = eqx.field(static=True)
     history_thinning: int = eqx.field(static=True)
     flow_layers: int = eqx.field(static=True)
-    num_knots: int = eqx.field(static=True)
     nn_width: int = eqx.field(static=True)
     nn_depth: int = eqx.field(static=True)
     learning_rate: float = eqx.field(static=True)
@@ -104,7 +103,6 @@ class FlowNUTSConfig(StrictModule):
         history_capacity_per_chain: int = 1000,
         history_thinning: int = 1,
         flow_layers: int = 6,
-        num_knots: int = 8,
         nn_width: int = 64,
         nn_depth: int = 2,
         learning_rate: float = 5e-4,
@@ -122,7 +120,6 @@ class FlowNUTSConfig(StrictModule):
             "history_capacity_per_chain": history_capacity_per_chain,
             "history_thinning": history_thinning,
             "flow_layers": flow_layers,
-            "num_knots": num_knots,
             "nn_width": nn_width,
             "nn_depth": nn_depth,
             "max_epochs": max_epochs,
@@ -158,7 +155,6 @@ class FlowNUTSConfig(StrictModule):
         self.history_capacity_per_chain = normalized["history_capacity_per_chain"]
         self.history_thinning = normalized["history_thinning"]
         self.flow_layers = normalized["flow_layers"]
-        self.num_knots = normalized["num_knots"]
         self.nn_width = normalized["nn_width"]
         self.nn_depth = normalized["nn_depth"]
         self.learning_rate = rate
@@ -179,7 +175,6 @@ class FlowNUTSConfig(StrictModule):
             "history_capacity_per_chain": self.history_capacity_per_chain,
             "history_thinning": self.history_thinning,
             "flow_layers": self.flow_layers,
-            "num_knots": self.num_knots,
             "nn_width": self.nn_width,
             "nn_depth": self.nn_depth,
             "learning_rate": self.learning_rate,
@@ -511,7 +506,7 @@ def sample_flow_nuts(
         "dimension": dimension,
         "dtype": flat_reference.dtype.str,
         "config": flow_config.as_dict(),
-        "flowjax_version": importlib.metadata.version("flowjax"),
+        "flow_architecture": "native-affine-coupling",
         "optax_version": importlib.metadata.version("optax"),
         "root_key": [int(value) for value in jr.key_data(root_key).reshape(-1)],
     }
@@ -699,7 +694,6 @@ def sample_flow_nuts(
                 _fold_path(root_key, _FLOW_INITIALIZATION_TAG),
                 replay_data,
                 flow_layers=flow_config.flow_layers,
-                num_knots=flow_config.num_knots,
                 nn_width=flow_config.nn_width,
                 nn_depth=flow_config.nn_depth,
             )
@@ -1532,7 +1526,6 @@ def _read_flow_nuts_checkpoint(
         _fold_path(root_key, _FLOW_INITIALIZATION_TAG),
         dummy_data,
         flow_layers=config.flow_layers,
-        num_knots=config.num_knots,
         nn_width=config.nn_width,
         nn_depth=config.nn_depth,
     )
