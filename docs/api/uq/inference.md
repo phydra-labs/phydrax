@@ -1555,16 +1555,16 @@ family. It is scalable but cannot represent posterior correlation or disconnecte
 modes and commonly underestimates uncertainty.
 
 `fit_flow_variational` first obtains a mean-field approximation, initializes a
-FlowJAX spline distribution from its draws, and then optimizes the flow against the
-target density. This reverse-KL objective is distinct from the sample maximum-
-likelihood objective used by flow-assisted NUTS.
+native affine-coupling distribution from its draws, and then optimizes the flow
+against the target density. This reverse-KL objective is distinct from the
+sample maximum-likelihood objective used by flow-assisted NUTS.
 `ContinuousFlowLaw` is a different, solver-backed probability-law adapter. It is
 restricted to small full-dimensional real Euclidean events and computes exact
 state-Jacobian divergence. `estimate_continuous_flow_log_prob` uses keyed
-Hutchinson probes and reports their Monte Carlo error, but that estimate is not an
-exact normalized density and must not be used as an ordinary Metropolis acceptance
-target. FlowJAX remains the default finite-dimensional variational and proposal
-family.
+Hutchinson probes and reports their Monte Carlo error, but that estimate is not
+an exact normalized density and must not be used as an ordinary Metropolis
+acceptance target. Native finite-dimensional coupling flows own variational and
+proposal density semantics.
 
 
 Both results retain unconstrained and physical draws, target and family log

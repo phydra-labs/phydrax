@@ -4,10 +4,10 @@ A targeted map transports configurations between two normalized reduced-potentia
 measures while retaining the exact Jacobian contribution. Estimation remains in the
 existing FEP and BAR functions.
 
-`AbstractBijector` is the single invertible-array contract. `TargetedMapPlan` binds one
-shape-preserving bijector to an event shape and content-addressed architecture and
-parameter identities. `FlowJAXBijectionAdapter` accepts only unconditional FlowJAX
-bijections exposing exact forward and inverse log determinants.
+`AbstractBijector` is the single invertible-array contract. `TargetedMapPlan`
+binds one shape-preserving bijector to an event shape and content-addressed
+architecture and parameter identities. `AffineFlowBijector` supplies a native
+exact affine chart with forward, inverse, and log-determinant actions.
 
 For source configuration x and map M, `evaluate_targeted_work` computes
 

@@ -16,13 +16,13 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
-from sympy import Matrix
 
 from phydrax import ein
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ...algebraic import SparsePolynomialSystem
+from ...algebraic._exact_integer import exact_integer_rank
 from ...linalg import FactorizationPolicy, inverse as invert_matrix
 
 
@@ -884,7 +884,7 @@ def certify_calabi_yau_topology(
         residual = max(residual, int(np.max(np.abs(lower @ upper), initial=0)))
     chain_dimensions = [boundaries[0].shape[0]]
     chain_dimensions.extend(value.shape[1] for value in boundaries)
-    ranks = [Matrix(value.tolist()).rank() for value in boundaries]
+    ranks = [exact_integer_rank(value) for value in boundaries]
     betti = []
     for degree, dimension in enumerate(chain_dimensions):
         outgoing_rank = ranks[degree - 1] if degree > 0 else 0

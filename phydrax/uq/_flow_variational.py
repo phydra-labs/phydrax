@@ -13,11 +13,11 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
-from flowjax.distributions import AbstractDistribution
 from jax.flatten_util import ravel_pytree
 from jaxtyping import Array, PyTree
 
 from .._strict import StrictModule
+from ..nn.flows import AbstractFlowDistribution
 from ._flow_family import build_default_flow, validate_flow
 from ._posterior import PosteriorProblem
 from ._variational import (
@@ -35,9 +35,9 @@ _FLOW_OPTIMIZATION_TAG = 2
 
 
 class FlowVariationalFamily(AbstractVariationalFamily):
-    """FlowJAX distribution adapted to an unconstrained parameter PyTree."""
+    """Native flow distribution adapted to an unconstrained parameter PyTree."""
 
-    flow: AbstractDistribution
+    flow: AbstractFlowDistribution
     unravel: Callable[[Array], PyTree[Array]] = eqx.field(static=True)
     tree_definition: Any = eqx.field(static=True)
     event_shapes: tuple[tuple[int, ...], ...] = eqx.field(static=True)
@@ -46,12 +46,12 @@ class FlowVariationalFamily(AbstractVariationalFamily):
 
     def __init__(
         self,
-        flow: AbstractDistribution,
+        flow: AbstractFlowDistribution,
         reference: PyTree[Any],
         /,
     ):
-        if not isinstance(flow, AbstractDistribution):
-            raise TypeError("flow must be a FlowJAX AbstractDistribution.")
+        if not isinstance(flow, AbstractFlowDistribution):
+            raise TypeError("flow must be an AbstractFlowDistribution.")
         flat_reference, unravel = ravel_pytree(reference)
         if flat_reference.size < 1:
             raise ValueError("Flow variational coordinates cannot be empty.")
@@ -69,7 +69,7 @@ class FlowVariationalFamily(AbstractVariationalFamily):
 
     @property
     def family_id(self) -> str:
-        return "flowjax-spline"
+        return "native-coupling-flow"
 
     def _unflatten_samples(
         self,
@@ -145,7 +145,6 @@ class FlowVariationalConfig(StrictModule):
     optimization: VariationalConfig
     initialization_samples: int = eqx.field(static=True)
     flow_layers: int = eqx.field(static=True)
-    num_knots: int = eqx.field(static=True)
     nn_width: int = eqx.field(static=True)
     nn_depth: int = eqx.field(static=True)
 
@@ -156,7 +155,6 @@ class FlowVariationalConfig(StrictModule):
         optimization: VariationalConfig | None = None,
         initialization_samples: int = 512,
         flow_layers: int = 6,
-        num_knots: int = 8,
         nn_width: int = 64,
         nn_depth: int = 2,
     ):
@@ -172,7 +170,6 @@ class FlowVariationalConfig(StrictModule):
             (
                 initialization_samples,
                 flow_layers,
-                num_knots,
                 nn_width,
                 nn_depth,
             )
@@ -184,7 +181,6 @@ class FlowVariationalConfig(StrictModule):
         (
             self.initialization_samples,
             self.flow_layers,
-            self.num_knots,
             self.nn_width,
             self.nn_depth,
         ) = counts
@@ -195,7 +191,6 @@ class FlowVariationalConfig(StrictModule):
             "optimization": self.optimization.as_dict(),
             "initialization_samples": self.initialization_samples,
             "flow_layers": self.flow_layers,
-            "num_knots": self.num_knots,
             "nn_width": self.nn_width,
             "nn_depth": self.nn_depth,
         }
@@ -251,7 +246,7 @@ def fit_flow_variational(
     checkpoint_id: str | None = None,
     resume_from: str | Path | None = None,
 ) -> FlowVariationalResult:
-    """Fit an unconditional FlowJAX posterior by reverse KL."""
+    """Fit an unconditional native flow posterior by reverse KL."""
 
     if not isinstance(problem, PosteriorProblem):
         raise TypeError("problem must be a PosteriorProblem.")
@@ -285,7 +280,6 @@ def fit_flow_variational(
         jr.fold_in(key, _FLOW_INITIALIZATION_TAG),
         flat_initialization,
         flow_layers=config_.flow_layers,
-        num_knots=config_.num_knots,
         nn_width=config_.nn_width,
         nn_depth=config_.nn_depth,
     )
@@ -310,7 +304,7 @@ def fit_flow_variational(
         variational=fitted,
         initialization=initialized,
         config=config_,
-        approximation_id="reverse-kl/flowjax-spline",
+        approximation_id="reverse-kl/native-coupling-flow",
     )
 
 

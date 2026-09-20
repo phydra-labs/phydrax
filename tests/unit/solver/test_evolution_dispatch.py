@@ -7,7 +7,6 @@ from typing import cast
 import jax.numpy as jnp
 import jax.random as jr
 import pytest
-from evosax.algorithms import DifferentialEvolution, Open_ES
 
 import phydrax as phx
 from phydrax._training import TrainingIterationKind
@@ -46,21 +45,9 @@ def _scalar_training_solver() -> FunctionalSolver:
     return FunctionalSolver(functions={"u": field}, terms=(term,))
 
 
-def test_population_based_evosax_is_rejected_with_search_space_guidance():
-    algorithm = DifferentialEvolution(
-        population_size=4,
-        solution=jnp.zeros((2,)),
-    )
-
-    with pytest.raises(
-        NotImplementedError,
-        match=r"initial population.*DesignConstraintSystem\.search",
-    ):
-        solve(
-            _DUMMY_SOLVER,
-            optim=algorithm,
-            config=FunctionalSolveConfig(num_iter=1),
-        )
+def test_native_evolution_strategy_requires_antithetic_population():
+    with pytest.raises(ValueError, match="even integer"):
+        phx.optim.OpenEvolutionStrategy(3)
 
 
 def test_unrelated_optimizer_object_is_rejected_before_training():
@@ -72,11 +59,8 @@ def test_unrelated_optimizer_object_is_rejected_before_training():
         )
 
 
-def test_evaluation_parameters_remains_optax_only_for_evosax():
-    algorithm = Open_ES(
-        population_size=8,
-        solution=jnp.zeros((2,)),
-    )
+def test_evaluation_parameters_remains_optax_only_for_evolution():
+    algorithm = phx.optim.OpenEvolutionStrategy(8)
 
     with pytest.raises(ValueError, match="only for Optax"):
         solve(
@@ -89,22 +73,19 @@ def test_evaluation_parameters_remains_optax_only_for_evosax():
         )
 
 
-def test_distribution_based_evosax_delivers_cadenced_session_metrics():
+def test_distribution_evolution_delivers_cadenced_session_metrics():
     solver = _scalar_training_solver()
     events = []
     session = phx.execution.IterationSession(
-        "evosax-session",
+        "evolution-session",
         sinks=(
             phx.execution.CallableIterationSink(
                 events.append,
-                "capture-evosax-events",
+                "capture-evolution-events",
             ),
         ),
     )
-    algorithm = Open_ES(
-        population_size=4,
-        solution=solver.trainable_functions(),
-    )
+    algorithm = phx.optim.OpenEvolutionStrategy(4)
 
     solver.solve(
         num_iter=2,

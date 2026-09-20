@@ -123,10 +123,10 @@ transition, not `"epistemic"`; uncertainty in learned weights remains a separate
 posterior or ensemble axis.
 
 `ConditionalFlowFunctionOperator` wraps a deterministic location operator with a
-FlowJAX conditional residual flow. `OperatorBatchConditioner` builds its condition
-from named branch encoders. The output query geometry and mask are fixed when the
-flow is constructed because a finite FlowJAX event size is static. It supports
-loader-broadcast copies of that same geometry, not arbitrary-query or
+native conditional residual flow. `OperatorBatchConditioner` builds its
+condition from named branch encoders. The output query geometry and mask are
+fixed when the flow is constructed because its finite event size is static. It
+supports loader-broadcast copies of that same geometry, not arbitrary-query or
 resolution-transfer inference.
 
 `OperatorDistributionNLL` trains either implementation through `fit_operator`.

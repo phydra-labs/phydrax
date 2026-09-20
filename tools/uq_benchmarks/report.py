@@ -289,7 +289,6 @@ def collect_environment() -> dict[str, Any]:
                 "jax",
                 "equinox",
                 "blackjax",
-                "flowjax",
                 "optax",
                 "laplax",
             )

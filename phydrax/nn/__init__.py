@@ -14,6 +14,7 @@ Ownership is explicit:
 from . import (
     activations,
     atomistic,
+    flows,
     latent,
     layers,
     models,
@@ -28,6 +29,7 @@ from . import (
 __all__ = [
     "activations",
     "atomistic",
+    "flows",
     "latent",
     "layers",
     "neural_tangent",

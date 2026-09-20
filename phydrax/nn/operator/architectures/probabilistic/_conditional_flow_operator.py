@@ -14,11 +14,6 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
-from flowjax.distributions import (
-    AbstractDistribution as FlowJAXDistribution,
-    Normal as FlowJAXNormal,
-)
-from flowjax.flows import coupling_flow
 from jaxtyping import Array, Key
 
 from phydrax._doc import DOC_KEY0
@@ -27,6 +22,11 @@ from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
 from phydrax._uncertainty import UncertaintySource, validate_uncertainty_source
 from phydrax.nn._keys import EvalKey, split_eval_key
+from phydrax.nn.flows import (
+    AbstractFlowDistribution,
+    coupling_flow,
+    NormalFlowDistribution,
+)
 from phydrax.nn.operator.architectures.conditioning._deeponet import (
     AbstractBranchEncoder,
 )
@@ -145,11 +145,11 @@ def _query_mismatch(
     return mismatch
 
 
-class FlowJAXOperatorDistribution(AbstractOperatorDistribution):
-    """Conditional FlowJAX density over active entries of one fixed output field."""
+class ConditionalFlowOperatorDistribution(AbstractOperatorDistribution):
+    """Conditional native flow density over active entries of one fixed output field."""
 
     center: Array
-    flow: FlowJAXDistribution
+    flow: AbstractFlowDistribution
     condition: Array
     active_indices: Array
     query: FunctionSamples
@@ -162,7 +162,7 @@ class FlowJAXOperatorDistribution(AbstractOperatorDistribution):
         self,
         *,
         center: Array,
-        flow: FlowJAXDistribution,
+        flow: AbstractFlowDistribution,
         condition: Array,
         active_indices: Array,
         query: FunctionSamples,
@@ -171,35 +171,35 @@ class FlowJAXOperatorDistribution(AbstractOperatorDistribution):
         case_shape: tuple[int, ...],
         uncertainty_source: UncertaintySource,
     ):
-        if not isinstance(flow, FlowJAXDistribution):
-            raise TypeError("flow must be a FlowJAX AbstractDistribution.")
+        if not isinstance(flow, AbstractFlowDistribution):
+            raise TypeError("flow must be an AbstractFlowDistribution.")
         cases = tuple(case_shape)
         axes = tuple(str(axis) for axis in case_axes)
         expected = cases + query.sample_shape + output_spec.channel_shape
         center_array = jnp.asarray(center)
         if center_array.shape != expected:
             raise ValueError(
-                f"FlowJAX operator center must have shape {expected}; got {center_array.shape}."
+                f"Flow operator center must have shape {expected}; got {center_array.shape}."
             )
         indices = jnp.asarray(active_indices, dtype=jnp.int32)
         if indices.ndim != 1 or indices.shape[0] <= 0:
-            raise ValueError("FlowJAX active_indices must be a non-empty vector.")
+            raise ValueError("Flow active_indices must be a non-empty vector.")
         if tuple(flow.shape) != (indices.shape[0],):
             raise ValueError(
-                "FlowJAX event shape must equal the active fixed-query event size."
+                "Flow event shape must equal the active fixed-query event size."
             )
         cond_shape = tuple(flow.cond_shape) if flow.cond_shape is not None else None
         condition_array = jnp.asarray(condition)
         if cond_shape is None or len(cond_shape) != 1:
             raise ValueError(
-                "FlowJAX operator distributions must be conditionally vector-valued."
+                "Flow operator distributions must be conditionally vector-valued."
             )
         if condition_array.shape != cases + cond_shape:
             raise ValueError(
-                f"FlowJAX condition must have shape {cases + cond_shape}; got {condition_array.shape}."
+                f"Flow condition must have shape {cases + cond_shape}; got {condition_array.shape}."
             )
         if len(axes) != len(cases):
-            raise ValueError("FlowJAX case axes and case shape ranks differ.")
+            raise ValueError("Flow case axes and case shape ranks differ.")
         mask = query.mask_array(case_shape=cases)
         if output_spec.channels != "scalar":
             mask = jnp.broadcast_to(mask[..., None], expected)
@@ -213,7 +213,7 @@ class FlowJAXOperatorDistribution(AbstractOperatorDistribution):
         self.case_shape = cases
         self.uncertainty_source = validate_uncertainty_source(
             uncertainty_source,
-            owner="FlowJAXOperatorDistribution uncertainty_source",
+            owner="ConditionalFlowOperatorDistribution uncertainty_source",
         )
 
     @property
@@ -227,7 +227,7 @@ class FlowJAXOperatorDistribution(AbstractOperatorDistribution):
     ) -> Array:
         shape = tuple(sample_shape)
         if any(size <= 0 for size in shape):
-            raise ValueError("FlowJAX operator sample dimensions must be positive.")
+            raise ValueError("Flow operator sample dimensions must be positive.")
         cases = prod(self.case_shape) if self.case_shape else 1
         center = self.center.reshape((cases, self.event_size))[:, self.active_indices]
         condition = self.condition.reshape((cases, -1))
@@ -254,7 +254,7 @@ class FlowJAXOperatorDistribution(AbstractOperatorDistribution):
         target_array = jnp.asarray(target)
         if target_array.shape != self.center.shape:
             raise ValueError(
-                f"FlowJAX operator target must have shape {self.center.shape}; got {target_array.shape}."
+                f"Flow operator target must have shape {self.center.shape}; got {target_array.shape}."
             )
         cases = prod(self.case_shape) if self.case_shape else 1
         center = self.center.reshape((cases, self.event_size))[:, self.active_indices]
@@ -311,7 +311,7 @@ class ConditionalFlowFunctionOperator(AbstractProbabilisticOperatorModel):
 
     location_model: AbstractOperatorModel
     conditioner: OperatorBatchConditioner
-    flow: FlowJAXDistribution
+    flow: AbstractFlowDistribution
     _reference_query: _FixedReferenceQuery
     active_indices: Array
     reference_query_fingerprint: str
@@ -324,7 +324,7 @@ class ConditionalFlowFunctionOperator(AbstractProbabilisticOperatorModel):
         self,
         location_model: AbstractOperatorModel,
         conditioner: OperatorBatchConditioner,
-        flow: FlowJAXDistribution,
+        flow: AbstractFlowDistribution,
         reference_query: FunctionSamples,
         /,
         *,
@@ -334,16 +334,16 @@ class ConditionalFlowFunctionOperator(AbstractProbabilisticOperatorModel):
             raise TypeError("location_model must be a neural operator.")
         if not isinstance(conditioner, OperatorBatchConditioner):
             raise TypeError("conditioner must be an OperatorBatchConditioner.")
-        if not isinstance(flow, FlowJAXDistribution):
-            raise TypeError("flow must be a FlowJAX AbstractDistribution.")
+        if not isinstance(flow, AbstractFlowDistribution):
+            raise TypeError("flow must be an AbstractFlowDistribution.")
         if not isinstance(reference_query, FunctionSamples):
             raise TypeError("reference_query must be FunctionSamples.")
         if reference_query.geometry_case_shape:
-            raise ValueError("FlowJAX requires one query geometry shared by every case.")
-        if reference_query.topology is not None:
             raise ValueError(
-                "FlowJAX fixed-query operators do not support native topology."
+                "Native flow requires one query geometry shared by every case."
             )
+        if reference_query.topology is not None:
+            raise ValueError("Fixed-query flow operators do not support native topology.")
         output_spec = location_model.operator_output_specs["output"]
         mask = np.asarray(reference_query.mask_array(case_shape=()), dtype=np.bool_)
         if output_spec.channels != "scalar":
@@ -352,17 +352,11 @@ class ConditionalFlowFunctionOperator(AbstractProbabilisticOperatorModel):
             )
         active = np.flatnonzero(mask.reshape(-1))
         if active.size <= 0:
-            raise ValueError(
-                "FlowJAX reference queries require at least one active output."
-            )
+            raise ValueError("Flow reference queries require at least one active output.")
         if tuple(flow.shape) != (active.size,):
-            raise ValueError(
-                f"FlowJAX flow.shape must be {(active.size,)}; got {flow.shape}."
-            )
+            raise ValueError(f"Flow shape must be {(active.size,)}; got {flow.shape}.")
         if tuple(flow.cond_shape or ()) != (conditioner.condition_size,):
-            raise ValueError(
-                "FlowJAX flow.cond_shape must match conditioner.condition_size."
-            )
+            raise ValueError("Flow cond_shape must match conditioner.condition_size.")
         self.location_model = location_model
         self.conditioner = conditioner
         self.flow = flow
@@ -391,7 +385,7 @@ class ConditionalFlowFunctionOperator(AbstractProbabilisticOperatorModel):
         /,
         *,
         key: EvalKey = DOC_KEY0,
-    ) -> FlowJAXOperatorDistribution:
+    ) -> ConditionalFlowOperatorDistribution:
         if not isinstance(batch, OperatorBatch):
             raise TypeError("ConditionalFlowFunctionOperator requires an OperatorBatch.")
         location_key, condition_key = split_eval_key(key, 2)
@@ -410,7 +404,7 @@ class ConditionalFlowFunctionOperator(AbstractProbabilisticOperatorModel):
             "ConditionalFlowFunctionOperator requires its fixed reference query geometry.",
         )
         condition = self.conditioner(batch, key=condition_key)
-        return FlowJAXOperatorDistribution(
+        return ConditionalFlowOperatorDistribution(
             center=location,
             flow=self.flow,
             condition=condition,
@@ -436,7 +430,7 @@ def conditional_coupling_flow_operator(
     nn_depth: int = 1,
     invert: bool = True,
 ) -> ConditionalFlowFunctionOperator:
-    """Build a conditional FlowJAX coupling-flow operator on one fixed query."""
+    """Build a conditional native coupling-flow operator on one fixed query."""
     output_spec = location_model.operator_output_specs["output"]
     mask = np.asarray(reference_query.mask_array(case_shape=()), dtype=np.bool_)
     if output_spec.channels != "scalar":
@@ -448,9 +442,9 @@ def conditional_coupling_flow_operator(
         )
     if int(flow_layers) <= 0 or int(nn_width) <= 0 or int(nn_depth) <= 0:
         raise ValueError("Flow layers, width, and depth must be positive.")
-    base = FlowJAXNormal(
-        loc=jnp.zeros((event_size,), dtype=jnp.float64),
-        scale=jnp.ones((event_size,), dtype=jnp.float64),
+    base = NormalFlowDistribution(
+        jnp.zeros((event_size,), dtype=jnp.float64),
+        jnp.ones((event_size,), dtype=jnp.float64),
     )
     flow = coupling_flow(
         key,
@@ -472,7 +466,7 @@ def conditional_coupling_flow_operator(
 
 __all__ = [
     "ConditionalFlowFunctionOperator",
-    "FlowJAXOperatorDistribution",
+    "ConditionalFlowOperatorDistribution",
     "OperatorBatchConditioner",
     "conditional_coupling_flow_operator",
 ]

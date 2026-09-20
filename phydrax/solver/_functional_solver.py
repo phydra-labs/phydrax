@@ -12,7 +12,6 @@ from typing import Any
 import equinox as eqx
 import jax
 import optax
-from evosax.algorithms.distribution_based.base import DistributionBasedAlgorithm
 from jaxtyping import Array, Key
 
 from phydrax.domain import DomainFunction
@@ -44,6 +43,7 @@ from ..nn.parameters._low_rank import (
     contains_low_rank_updates,
     validate_low_rank_subspace,
 )
+from ..optim._evolution_strategy import AbstractDistributionEvolutionMethod
 from ..optim._kfac._config import KFAC
 from ..optim._mirror_descent import AbstractMirrorOptimizer
 from ..optim._riemannian import AbstractRiemannianOptimizer
@@ -428,7 +428,7 @@ class FunctionalSolver(StrictModule):
         num_iter: int,
         optim: optax.GradientTransformation
         | optax.GradientTransformationExtraArgs
-        | DistributionBasedAlgorithm
+        | AbstractDistributionEvolutionMethod
         | KFAC
         | AbstractMirrorOptimizer
         | AbstractRiemannianOptimizer
@@ -469,10 +469,9 @@ class FunctionalSolver(StrictModule):
           through direct dual-coordinate translations.
         - Phydrax Riemannian optimizers are accepted and update explicitly selected
           trainable leaves through their declared metrics and retractions.
-        - Evosax distribution-based algorithms are accepted.
-        - Evosax population-based algorithms require an explicit search-space contract
-          and are therefore rejected; bounded geometry design uses
-          `DesignConstraintSystem.search(...)`.
+        - Native distribution evolution methods are accepted.
+        - Population methods requiring an explicit finite search-space contract remain
+          owned by `DesignConstraintSystem.search(...)`.
         - `evaluation_parameters`, when provided, maps Optax optimizer state and raw
           training parameters to the parameter view used for diagnostics, model
           selection, and the returned solver. Mirror and Riemannian optimizers reject

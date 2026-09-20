@@ -27,6 +27,7 @@ from .._policies import (
     GeneralizedLSMR,
     GMRES,
     LinearSolveControl,
+    LSMR,
     MINRES,
     PCG,
     ProjectedPCG,
@@ -328,7 +329,7 @@ def solve_native_krylov(
                 iteration=inner_plan,
                 iteration_state=observed_state,
             )
-        if method_name == GeneralizedLSMR().name:
+        if method_name in (GeneralizedLSMR().name, LSMR().name):
             return _least_squares_solve(
                 problem,
                 target,
@@ -388,9 +389,9 @@ def solve_native_krylov(
         int(LinearSolveStatus.MAXIMUM_STEPS_REACHED),
         status,
     )
-    if method_name == GeneralizedLSMR().name:
+    if method_name in (GeneralizedLSMR().name, LSMR().name):
         selected_lsmr = (
-            method if isinstance(method, GeneralizedLSMR) else GeneralizedLSMR()
+            method if isinstance(method, (GeneralizedLSMR, LSMR)) else GeneralizedLSMR()
         )
         status = jnp.where(
             (~converged) & (condition >= selected_lsmr.condition_limit),
@@ -1366,7 +1367,9 @@ def _least_squares_solve(
         problem, rhs
     )
     selected = plan.policy.method
-    method = selected if isinstance(selected, GeneralizedLSMR) else GeneralizedLSMR()
+    method = (
+        selected if isinstance(selected, (GeneralizedLSMR, LSMR)) else GeneralizedLSMR()
+    )
     max_steps_ = structural_max_steps
     value, auxiliary, next_iteration_state = _lsmr_raw(
         action,

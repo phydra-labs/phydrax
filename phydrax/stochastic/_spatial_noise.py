@@ -15,8 +15,6 @@ import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
 from jaxtyping import Array, ArrayLike
-from matfree.low_rank import cholesky_partial_pivot
-from matfree.stochtrace import nystrom_eigh
 
 from .._precision import (
     precision_dtype_name,
@@ -31,6 +29,10 @@ from ..discretization._tensor import AbstractStrongFormDiscretization
 from ..discretization.spectral import (
     SphericalSpectralDiscretization,
     TensorSpectralDiscretization,
+)
+from ..linalg._low_rank_approximation import (
+    pivoted_cholesky_factor,
+    randomized_nystrom_factor,
 )
 
 
@@ -704,7 +706,7 @@ class SpatialNoiseBasis(StrictModule):
         tolerance: float = 1e-6,
         precision: SpatialNoisePrecisionPolicy | None = None,
     ) -> "SpatialNoiseBasis":
-        r"""Factor a kernel covariance with Matfree pivoted Cholesky.
+        r"""Factor a kernel covariance with native pivoted Cholesky.
 
         The kernel is queried only at scalar point pairs. The construction stores
         :math:`O(nr)` values and never materializes the :math:`n\times n` covariance.
@@ -774,16 +776,16 @@ class SpatialNoiseBasis(StrictModule):
                 raise ValueError("kernel must return one scalar for a pair of points.")
             return root[left_index] * value * root[right_index]
 
-        factorize = cholesky_partial_pivot(
+        cholesky = pivoted_cholesky_factor(
             matrix_element,
-            nrows=count,
+            size=count,
             rank=retained,
         )
-        weighted_cholesky, info = factorize()
-        success = bool(np.asarray(info["success"]))
+        weighted_cholesky = cholesky.factor
+        success = bool(np.asarray(cholesky.successful))
         if not success or np.any(~np.isfinite(np.asarray(weighted_cholesky))):
             raise ValueError(
-                "Matfree pivoted Cholesky could not reach the requested rank; "
+                "Native pivoted Cholesky could not reach the requested rank; "
                 "lower rank or use a strictly positive-definite kernel."
             )
 
@@ -847,7 +849,7 @@ class SpatialNoiseBasis(StrictModule):
         diagnostic_probes: int = 8,
         precision: SpatialNoisePrecisionPolicy | None = None,
     ) -> "SpatialNoiseBasis":
-        r"""Randomize a matrix-free covariance with Matfree Nyström.
+        r"""Randomize a matrix-free covariance with native Nyström.
 
         ``covariance_operator`` receives and returns point-value arrays. For
         tensor-spectral spaces this is ``discretization.physical_shape`` rather than
@@ -925,15 +927,17 @@ class SpatialNoiseBasis(StrictModule):
             dtype=precision_.construction_dtype,
         )
         omega, _ = jnp.linalg.qr(omega, mode="reduced")
-        nystrom = nystrom_eigh(
-            eigenvalues_rtol=float(
+        nystrom = randomized_nystrom_factor(
+            weighted_matvec,
+            omega,
+            eigenvalue_relative_tolerance=float(
                 max(
                     threshold,
                     np.finfo(np.dtype(precision_.construction_dtype)).eps,
                 )
             ),
         )
-        raw_factor, _, _ = nystrom(weighted_matvec, omega)
+        raw_factor = nystrom.factor
         eigenvalues, modes, weighted_factor = _factor_eigenpairs(
             raw_factor,
             weights_host,

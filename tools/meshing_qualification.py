@@ -507,12 +507,16 @@ def qualify_volume(
             surface, phx.meshing.VoroCrustOptions(1.0)
         )
     else:
-        import build123d as bd
+        from OCP.BRepPrimAPI import BRepPrimAPI_MakeBox
 
         with TemporaryDirectory(prefix="phydrax-gmsh-qualification-") as temporary:
-            path = Path(temporary) / "cube.step"
+            path = Path(temporary) / "cube.brep"
             coordinate_contract = _contract()
-            bd.export_step(bd.Box(1.0, 1.0, 1.0), path, unit=bd.Unit.MM)
+            phx.geometry.persist_occt_shape(
+                BRepPrimAPI_MakeBox(1.0, 1.0, 1.0).Shape(),
+                path,
+                coordinate_contract=coordinate_contract,
+            )
             source = phx.geometry.BRepSource(
                 phx.geometry.import_brep(
                     path,

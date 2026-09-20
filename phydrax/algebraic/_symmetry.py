@@ -8,12 +8,11 @@ from typing import Sequence, TYPE_CHECKING
 
 import equinox as eqx
 import numpy as np
-from sympy import Matrix, ZZ
-from sympy.matrices.normalforms import smith_normal_decomp
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ._exact_integer import smith_normal_decomposition, smith_rank
 
 
 if TYPE_CHECKING:
@@ -83,7 +82,7 @@ class ExponentLatticeScalingEvidence(StrictModule, NonTrainableState):
         self.torsion_orders = orders
         self.torsion_generators = torsion
         self.status = "exact_support_lattice"
-        self.backend = "sympy-smith-normal-decomposition"
+        self.backend = "phydrax-exact-smith-normal-decomposition"
         self.evidence_id = canonical_fingerprint(
             {
                 "kind": "exponent-lattice-scaling-evidence",
@@ -145,16 +144,12 @@ def analyze_exponent_lattice_scaling(
     variable_count = support.variable_count
     if not relations:
         rank = 0
-        right = Matrix.eye(variable_count)
+        right = np.eye(variable_count, dtype=object)
         diagonal: tuple[int, ...] = ()
     else:
-        smith, _, right = smith_normal_decomp(Matrix(relations), domain=ZZ)
-        diagonal = tuple(
-            abs(int(smith[index, index]))
-            for index in range(min(smith.rows, smith.cols))
-            if int(smith[index, index]) != 0
-        )
-        rank = len(diagonal)
+        smith, _, right = smith_normal_decomposition(relations)
+        rank = smith_rank(smith)
+        diagonal = tuple(abs(int(smith[index, index])) for index in range(rank))
     free_generators = tuple(
         tuple(int(right[row, column]) for row in range(variable_count))
         for column in range(rank, variable_count)

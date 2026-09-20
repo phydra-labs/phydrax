@@ -10,7 +10,7 @@ that return JAX-compatible arrays where possible.
 """
 
 from . import scalers
-from ._csv_reader import CSVReader
+from ._csv_reader import CSVReader, CSVReadPolicy
 from ._partitions import CasePartitionManifest, PartitionName
 from ._splits import (
     grouped_train_validation_test_split_indices,
@@ -33,6 +33,7 @@ __all__ = [
     "grouped_train_validation_test_split_indices",
     "AffineScaler",
     "CSVReader",
+    "CSVReadPolicy",
     "kfold_indices",
     "MaxAbsScaler",
     "MinMaxScaler",

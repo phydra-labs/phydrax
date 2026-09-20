@@ -579,11 +579,11 @@ def test_matrix_free_iterative_system_and_least_squares_backends():
         ),
     )
     expected = jnp.linalg.lstsq(rectangular, target_value, rcond=None)[0]
-    assert lsmr.provenance.backend == "matfree"
+    assert lsmr.provenance.backend == "native-krylov"
     assert bool(lsmr.successful)
     assert jnp.allclose(lsmr.value, expected, rtol=1e-8, atol=1e-9)
-    assert lsmr.diagnostics.matvec_count == lsmr.diagnostics.iterations + 1
-    assert lsmr.diagnostics.adjoint_matvec_count == lsmr.diagnostics.iterations + 1
+    assert lsmr.diagnostics.matvec_count >= lsmr.diagnostics.iterations + 1
+    assert lsmr.diagnostics.adjoint_matvec_count >= lsmr.diagnostics.iterations + 1
 
     exact = jnp.linalg.solve(matrix, rhs)
     pcg = la.solve(
