@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from functools import partial
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -523,6 +524,617 @@ def _read_prepared_checkpoint(
     return restored
 
 
+def _nested_slice_move(
+    evaluator: _Evaluator,
+    current: Array,
+    current_prior: Array,
+    current_likelihood: Array,
+    threshold: Array,
+    direction: Array,
+    width: float,
+    move_key: Array,
+    *,
+    plan: NestedSamplingPlan,
+    dtype: Any,
+) -> tuple[Array, Array, Array, int, int, bool]:
+    if not bool(jnp.any(direction != 0.0)):
+        return current, current_prior, current_likelihood, 0, 0, False
+    slice_key, allocation_key, bracket_key = jr.split(move_key, 3)
+    log_slice = current_prior + jnp.log(
+        jr.uniform(slice_key, (), minval=jnp.finfo(dtype).tiny, maxval=1.0)
+    )
+    offset = float(jr.uniform(bracket_key, (), minval=0.0, maxval=width))
+    left, right = -offset, width - offset
+    left_steps = int(
+        jr.randint(
+            allocation_key,
+            (),
+            minval=0,
+            maxval=plan.proposal.maximum_attempts + 1,
+        )
+    )
+    right_steps = plan.proposal.maximum_attempts - left_steps
+    attempts = 0
+    shrinkage = 0
+    for _ in range(left_steps):
+        candidate = current + left * direction
+        candidate_prior, candidate_likelihood = evaluator.one(candidate)
+        attempts += 1
+        member = bool(
+            jnp.isfinite(candidate_prior)
+            & (candidate_likelihood > threshold)
+            & (candidate_prior >= log_slice)
+        )
+        if evaluator.exhausted or evaluator.invalid or not member:
+            break
+        left -= width
+    for _ in range(right_steps):
+        candidate = current + right * direction
+        candidate_prior, candidate_likelihood = evaluator.one(candidate)
+        attempts += 1
+        member = bool(
+            jnp.isfinite(candidate_prior)
+            & (candidate_likelihood > threshold)
+            & (candidate_prior >= log_slice)
+        )
+        if evaluator.exhausted or evaluator.invalid or not member:
+            break
+        right += width
+    for attempt in range(plan.proposal.maximum_attempts):
+        proposal_key = derive_key(move_key, _PREPARED_BASE, attempt)
+        distance = float(jr.uniform(proposal_key, (), minval=left, maxval=right))
+        candidate = current + distance * direction
+        candidate_prior, candidate_likelihood = evaluator.one(candidate)
+        attempts += 1
+        if evaluator.exhausted or evaluator.invalid:
+            break
+        member = bool(
+            jnp.isfinite(candidate_prior)
+            & (candidate_likelihood > threshold)
+            & (candidate_prior >= log_slice)
+        )
+        if member:
+            moved = bool(jnp.any(candidate != current))
+            return (
+                candidate,
+                candidate_prior,
+                candidate_likelihood,
+                attempts,
+                shrinkage,
+                moved,
+            )
+        shrinkage += 1
+        if distance < 0.0:
+            left = distance
+        else:
+            right = distance
+    return current, current_prior, current_likelihood, attempts, shrinkage, False
+
+
+def _propose_nested(
+    current_state: PreparedNestedState,
+    threshold: Array,
+    *,
+    excluded_slot: int,
+    purpose: int,
+    capacity: Any,
+    dimension: int,
+    dtype: Any,
+    evaluate_one: Any,
+    layout: Any,
+    plan: NestedSamplingPlan,
+    sample_prior: Any,
+    slice_move: Any,
+    smooth_indices: Array,
+    validate_declared_coordinates: Any,
+) -> _ProposalOutcome:
+    counts: dict[str, int] = {}
+    evaluator = _Evaluator(
+        evaluate_one,
+        count=int(current_state.likelihood_evaluations),
+        limit=capacity.max_likelihood_evaluations,
+    )
+    proposal_state = _prepare_proposal_geometry(current_state, plan, layout)
+    active_indices = jnp.flatnonzero(
+        current_state.live_mask & (jnp.arange(capacity.max_live) != excluded_slot),
+        size=int(jnp.sum(current_state.live_mask)) - int(excluded_slot >= 0),
+    )
+    anchor_key = derive_key(
+        current_state.root_key,
+        _PREPARED_BASE,
+        int(current_state.step),
+        purpose,
+        0,
+    )
+    anchor_local = int(jr.randint(anchor_key, (), 0, active_indices.size))
+    anchor = int(active_indices[anchor_local])
+    position = current_state.live_positions[anchor]
+    log_prior = current_state.live_log_prior[anchor]
+    log_likelihood = current_state.live_log_likelihood[anchor]
+    lineage = current_state.live_lineage[anchor]
+    accepted_states: list[tuple[Array, Array, Array]] = []
+    total_attempts = 0
+    total_shrinkage = 0
+    failed = False
+
+    if layout.smooth:
+        active_values = current_state.live_positions[current_state.live_mask][
+            :, smooth_indices
+        ]
+        empirical_scale = float(jnp.mean(jnp.std(active_values, axis=0)))
+        width = plan.proposal.slice_scale * max(
+            empirical_scale,
+            plan.proposal.gradient_step_size,
+        )
+        if plan.proposal.base == "hit-and-run":
+            direction_key = derive_key(
+                current_state.root_key,
+                _PREPARED_BASE,
+                int(current_state.step),
+                purpose,
+                1,
+            )
+            smooth_direction = jr.normal(
+                direction_key, (len(layout.smooth),), dtype=dtype
+            )
+            norm = jnp.sqrt(jnp.sum(smooth_direction**2))
+            direction = (
+                jnp.zeros((dimension,), dtype=dtype)
+                .at[smooth_indices]
+                .set(smooth_direction / norm)
+            )
+            (
+                position,
+                log_prior,
+                log_likelihood,
+                attempts,
+                shrinkage,
+                moved,
+            ) = slice_move(
+                evaluator,
+                position,
+                log_prior,
+                log_likelihood,
+                threshold,
+                direction,
+                width,
+                derive_key(
+                    current_state.root_key,
+                    _PREPARED_BASE,
+                    int(current_state.step),
+                    purpose,
+                    2,
+                ),
+            )
+            counts["base_attempts"] = attempts
+            counts["base_acceptances"] = int(moved)
+            total_attempts += attempts
+            total_shrinkage += shrinkage
+            if moved:
+                accepted_states.append((position, log_prior, log_likelihood))
+        else:
+            for local, coordinate in enumerate(layout.smooth):
+                direction = jnp.zeros((dimension,), dtype=dtype).at[coordinate].set(1.0)
+                (
+                    position,
+                    log_prior,
+                    log_likelihood,
+                    attempts,
+                    shrinkage,
+                    moved,
+                ) = slice_move(
+                    evaluator,
+                    position,
+                    log_prior,
+                    log_likelihood,
+                    threshold,
+                    direction,
+                    width,
+                    derive_key(
+                        current_state.root_key,
+                        _PREPARED_BASE,
+                        int(current_state.step),
+                        purpose,
+                        10 + local,
+                    ),
+                )
+                counts["base_attempts"] = counts.get("base_attempts", 0) + attempts
+                counts["base_acceptances"] = counts.get("base_acceptances", 0) + int(
+                    moved
+                )
+                total_attempts += attempts
+                total_shrinkage += shrinkage
+                if moved:
+                    accepted_states.append((position, log_prior, log_likelihood))
+                if evaluator.exhausted or evaluator.invalid:
+                    break
+
+    if plan.proposal.ellipsoid and not evaluator.exhausted and not evaluator.invalid:
+        counts["ellipsoid_attempts"] = 1
+        if not bool(jnp.any(proposal_state.ellipsoid_active)):
+            failed = True
+        else:
+            bounds = EllipsoidalNestedBounds(
+                centers=proposal_state.ellipsoid_centers,
+                factors=proposal_state.ellipsoid_factors,
+                active=proposal_state.ellipsoid_active,
+                log_volumes=proposal_state.ellipsoid_log_volumes,
+                enlargement=plan.proposal.ellipsoid_enlargement,
+            )
+            ellipsoid_key = derive_key(
+                current_state.root_key,
+                _PREPARED_ELLIPSOID,
+                int(current_state.step),
+                purpose,
+            )
+            proposed_smooth, proposed_log_q = bounds.sample(ellipsoid_key)
+            current_log_q = jnp.log(
+                jnp.asarray(bounds.overlap_count(position[smooth_indices]), dtype=dtype)
+            ) - jsp.special.logsumexp(
+                jnp.where(bounds.active, bounds.log_volumes, -jnp.inf)
+            )
+            candidate = position.at[smooth_indices].set(proposed_smooth)
+            candidate_prior, candidate_likelihood = evaluator.one(candidate)
+            total_attempts += 1
+            valid = bool(
+                jnp.isfinite(candidate_prior) & (candidate_likelihood > threshold)
+            )
+            if not valid:
+                counts["contour_rejections"] = counts.get("contour_rejections", 0) + 1
+            if valid:
+                log_acceptance = (
+                    candidate_prior - log_prior + current_log_q - proposed_log_q
+                )
+                accept_key = derive_key(ellipsoid_key, _PREPARED_ELLIPSOID, 1)
+                accept = bool(
+                    jnp.log(
+                        jr.uniform(
+                            accept_key,
+                            (),
+                            minval=jnp.finfo(dtype).tiny,
+                            maxval=1.0,
+                        )
+                    )
+                    < jnp.minimum(log_acceptance, 0.0)
+                )
+                if accept:
+                    position, log_prior, log_likelihood = (
+                        candidate,
+                        candidate_prior,
+                        candidate_likelihood,
+                    )
+                    counts["ellipsoid_acceptances"] = 1
+                    accepted_states.append((position, log_prior, log_likelihood))
+
+    if plan.proposal.learned_flow and not evaluator.exhausted and not evaluator.invalid:
+        counts["flow_attempts"] = 1
+        if not bool(proposal_state.flow_active):
+            failed = True
+        else:
+            flow_key = derive_key(
+                current_state.root_key,
+                _PREPARED_FLOW,
+                int(current_state.step),
+                purpose,
+            )
+            noise_key, accept_key = jr.split(flow_key)
+            proposed_smooth = proposal_state.flow_mean + (
+                proposal_state.flow_factor
+                @ jr.normal(noise_key, (len(layout.smooth),), dtype=dtype)
+            )
+            proposed_log_q = _flow_log_density(proposed_smooth, proposal_state)
+            current_log_q = _flow_log_density(position[smooth_indices], proposal_state)
+            candidate = position.at[smooth_indices].set(proposed_smooth)
+            candidate_prior, candidate_likelihood = evaluator.one(candidate)
+            total_attempts += 1
+            valid = bool(
+                jnp.isfinite(candidate_prior) & (candidate_likelihood > threshold)
+            )
+            if not valid:
+                counts["contour_rejections"] = counts.get("contour_rejections", 0) + 1
+            if valid:
+                log_acceptance = (
+                    candidate_prior - log_prior + current_log_q - proposed_log_q
+                )
+                accept = bool(
+                    jnp.log(
+                        jr.uniform(
+                            accept_key,
+                            (),
+                            minval=jnp.finfo(dtype).tiny,
+                            maxval=1.0,
+                        )
+                    )
+                    < jnp.minimum(log_acceptance, 0.0)
+                )
+                if accept:
+                    position, log_prior, log_likelihood = (
+                        candidate,
+                        candidate_prior,
+                        candidate_likelihood,
+                    )
+                    counts["flow_acceptances"] = 1
+                    accepted_states.append((position, log_prior, log_likelihood))
+
+    if (
+        plan.proposal.gradient_guided
+        and not evaluator.exhausted
+        and not evaluator.invalid
+    ):
+        counts["gradient_attempts"] = 1
+        step_size = plan.proposal.gradient_step_size
+        barrier_scale = plan.proposal.gradient_barrier_scale
+
+        def guided(value):
+            prior_value, likelihood_value = evaluate_one(value)
+            barrier = jax.nn.log_sigmoid((likelihood_value - threshold) / barrier_scale)
+            return prior_value + barrier
+
+        if evaluator.count + 3 > evaluator.limit:
+            evaluator.exhausted = True
+        else:
+            evaluator.count += 1
+            gradient = jax.grad(guided)(position)
+            if not bool(jnp.all(jnp.isfinite(gradient[smooth_indices]))):
+                failed = True
+            else:
+                gradient_key = derive_key(
+                    current_state.root_key,
+                    _PREPARED_GRADIENT,
+                    int(current_state.step),
+                    purpose,
+                )
+                noise_key, accept_key = jr.split(gradient_key)
+                mean = (
+                    position[smooth_indices]
+                    + 0.5 * step_size**2 * gradient[smooth_indices]
+                )
+                proposed_smooth = mean + step_size * jr.normal(
+                    noise_key, (len(layout.smooth),), dtype=dtype
+                )
+                candidate = position.at[smooth_indices].set(proposed_smooth)
+                candidate_prior, candidate_likelihood = evaluator.one(candidate)
+                total_attempts += 1
+                valid = bool(
+                    jnp.isfinite(candidate_prior) & (candidate_likelihood > threshold)
+                )
+                if not valid:
+                    counts["contour_rejections"] = counts.get("contour_rejections", 0) + 1
+                else:
+                    evaluator.count += 1
+                    reverse_gradient = jax.grad(guided)(candidate)
+                    if not bool(jnp.all(jnp.isfinite(reverse_gradient[smooth_indices]))):
+                        failed = True
+                    else:
+                        reverse_mean = (
+                            proposed_smooth
+                            + 0.5 * step_size**2 * (reverse_gradient[smooth_indices])
+                        )
+                        forward_error = (proposed_smooth - mean) / step_size
+                        reverse_error = (
+                            position[smooth_indices] - reverse_mean
+                        ) / step_size
+                        log_q_reverse_minus_forward = -0.5 * (
+                            jnp.sum(reverse_error**2) - jnp.sum(forward_error**2)
+                        )
+                        log_acceptance = (
+                            candidate_prior - log_prior + log_q_reverse_minus_forward
+                        )
+                        accept = bool(
+                            jnp.log(
+                                jr.uniform(
+                                    accept_key,
+                                    (),
+                                    minval=jnp.finfo(dtype).tiny,
+                                    maxval=1.0,
+                                )
+                            )
+                            < jnp.minimum(log_acceptance, 0.0)
+                        )
+                        if accept:
+                            position, log_prior, log_likelihood = (
+                                candidate,
+                                candidate_prior,
+                                candidate_likelihood,
+                            )
+                            counts["gradient_acceptances"] = 1
+                            accepted_states.append((position, log_prior, log_likelihood))
+
+    if plan.proposal.discrete_gibbs and not evaluator.exhausted and not evaluator.invalid:
+        for local, (coordinate, support, masses) in enumerate(layout.finite):
+            counts["discrete_updates"] = counts.get("discrete_updates", 0) + 1
+            candidates: list[Array] = []
+            candidate_priors: list[Array] = []
+            candidate_likelihoods: list[Array] = []
+            for value in support:
+                candidate = position.at[coordinate].set(value)
+                candidate_prior, candidate_likelihood = evaluator.one(candidate)
+                total_attempts += 1
+                candidates.append(candidate)
+                candidate_priors.append(candidate_prior)
+                candidate_likelihoods.append(candidate_likelihood)
+                if evaluator.exhausted or evaluator.invalid:
+                    break
+            if evaluator.exhausted or evaluator.invalid:
+                break
+            prior_values = jnp.stack(candidate_priors)
+            likelihood_values = jnp.stack(candidate_likelihoods)
+            conditional_offsets = prior_values - jnp.log(masses)
+            if not bool(
+                jnp.allclose(
+                    conditional_offsets,
+                    conditional_offsets[0],
+                    rtol=1e-5,
+                    atol=1e-6,
+                )
+            ):
+                failed = True
+                break
+            valid = jnp.isfinite(prior_values) & (likelihood_values > threshold)
+            if not bool(jnp.any(valid)):
+                failed = True
+                break
+            gibbs_key = derive_key(
+                current_state.root_key,
+                _PREPARED_DISCRETE,
+                int(current_state.step),
+                purpose,
+                local,
+            )
+            selected = int(
+                jr.categorical(
+                    gibbs_key,
+                    jnp.where(valid, jnp.log(masses), -jnp.inf),
+                )
+            )
+            candidate = candidates[selected]
+            moved = bool(candidate[coordinate] != position[coordinate])
+            position = candidate
+            log_prior = prior_values[selected]
+            log_likelihood = likelihood_values[selected]
+            if moved:
+                counts["discrete_moves"] = counts.get("discrete_moves", 0) + 1
+                accepted_states.append((position, log_prior, log_likelihood))
+
+    if plan.proposal.periodic_slice and not evaluator.exhausted and not evaluator.invalid:
+        for local, (coordinate, topology) in enumerate(layout.periodic):
+            counts["periodic_updates"] = counts.get("periodic_updates", 0) + 1
+            periodic_key = derive_key(
+                current_state.root_key,
+                _PREPARED_PERIODIC,
+                int(current_state.step),
+                purpose,
+                local,
+            )
+            slice_key = derive_key(periodic_key, _PREPARED_PERIODIC, 0x51)
+            log_slice = log_prior + jnp.log(
+                jr.uniform(
+                    slice_key,
+                    (),
+                    minval=jnp.finfo(dtype).tiny,
+                    maxval=1.0,
+                )
+            )
+            left = -0.5 * topology.period
+            right = 0.5 * topology.period
+            origin_value = position[coordinate]
+            moved = False
+            for attempt in range(plan.proposal.maximum_attempts):
+                proposal_key = derive_key(periodic_key, _PREPARED_PERIODIC, attempt)
+                displacement = float(
+                    jr.uniform(proposal_key, (), minval=left, maxval=right)
+                )
+                raw = origin_value + displacement
+                wrapped = topology.wrap(raw)
+                shortest_displacement = float(
+                    topology.displacement(origin_value, wrapped)
+                )
+                counts["wrap_crossings"] = counts.get("wrap_crossings", 0) + int(
+                    raw < topology.origin or raw >= topology.origin + topology.period
+                )
+                candidate = position.at[coordinate].set(wrapped)
+                candidate_prior, candidate_likelihood = evaluator.one(candidate)
+                total_attempts += 1
+                if evaluator.exhausted or evaluator.invalid:
+                    break
+                valid = bool(
+                    jnp.isfinite(candidate_prior)
+                    & (candidate_likelihood > threshold)
+                    & (candidate_prior >= log_slice)
+                )
+                if valid:
+                    moved = bool(wrapped != origin_value)
+                    position, log_prior, log_likelihood = (
+                        candidate,
+                        candidate_prior,
+                        candidate_likelihood,
+                    )
+                    if moved:
+                        counts["periodic_moves"] = counts.get("periodic_moves", 0) + 1
+                        accepted_states.append((position, log_prior, log_likelihood))
+                    break
+                total_shrinkage += 1
+                if shortest_displacement < 0.0:
+                    left = shortest_displacement
+                else:
+                    right = shortest_displacement
+
+    moved_any = bool(jnp.any(position != current_state.live_positions[anchor]))
+    if (
+        (failed or not moved_any)
+        and plan.proposal.rejection_fallback
+        and not evaluator.exhausted
+        and not evaluator.invalid
+    ):
+        fallback_found = False
+        for attempt in range(plan.proposal.maximum_attempts):
+            if evaluator.count >= evaluator.limit:
+                evaluator.exhausted = True
+                break
+            candidate = sample_prior(
+                derive_key(
+                    current_state.root_key,
+                    _PREPARED_FALLBACK,
+                    int(current_state.step),
+                    purpose,
+                    attempt,
+                ),
+                1,
+            )[0]
+            validate_declared_coordinates(candidate[None, :])
+            candidate_prior, candidate_likelihood = evaluator.one(candidate)
+            counts["fallback_draws"] = counts.get("fallback_draws", 0) + 1
+            total_attempts += 1
+            if evaluator.invalid:
+                break
+            if bool(jnp.isfinite(candidate_prior) & (candidate_likelihood > threshold)):
+                position, log_prior, log_likelihood = (
+                    candidate,
+                    candidate_prior,
+                    candidate_likelihood,
+                )
+                accepted_states.append((position, log_prior, log_likelihood))
+                counts["fallback_acceptances"] = counts.get("fallback_acceptances", 0) + 1
+                fallback_found = True
+                failed = False
+                moved_any = True
+                break
+            counts["contour_rejections"] = counts.get("contour_rejections", 0) + 1
+        if not fallback_found:
+            failed = True
+
+    phantom = current_state.phantom
+    if plan.proposal.phantom_recycling and len(accepted_states) > 1:
+        for candidate, _candidate_prior, candidate_likelihood in accepted_states[:-1]:
+            phantom = phantom.add(
+                candidate,
+                log_likelihood=candidate_likelihood,
+                birth_log_likelihood=threshold,
+                proposal_epoch=current_state.step,
+                ancestry=lineage,
+            )
+            counts["phantom_creations"] = counts.get("phantom_creations", 0) + 1
+    if failed:
+        counts["proposal_failures"] = counts.get("proposal_failures", 0) + 1
+    adaptation = _increment_adaptation(current_state.adaptation, counts)
+    return _ProposalOutcome(
+        position=position,
+        log_prior=log_prior,
+        log_likelihood=log_likelihood,
+        lineage=lineage,
+        phantom=phantom,
+        proposal=proposal_state,
+        adaptation=adaptation,
+        attempts=total_attempts,
+        likelihood_evaluations=evaluator.count,
+        shrinkage=total_shrinkage,
+        moved=moved_any,
+        budget_exhausted=evaluator.exhausted,
+        invalid_likelihood=evaluator.invalid,
+        failed=failed,
+    )
+
+
 def execute_prepared_nested(
     problem,
     plan: NestedSamplingPlan,
@@ -752,631 +1364,20 @@ def execute_prepared_nested(
             Path(resume_from), template, compatibility=compatibility
         )
 
-    def slice_move(
-        evaluator: _Evaluator,
-        current: Array,
-        current_prior: Array,
-        current_likelihood: Array,
-        threshold: Array,
-        direction: Array,
-        width: float,
-        move_key: Array,
-    ) -> tuple[Array, Array, Array, int, int, bool]:
-        if not bool(jnp.any(direction != 0.0)):
-            return current, current_prior, current_likelihood, 0, 0, False
-        slice_key, allocation_key, bracket_key = jr.split(move_key, 3)
-        log_slice = current_prior + jnp.log(
-            jr.uniform(slice_key, (), minval=jnp.finfo(dtype).tiny, maxval=1.0)
-        )
-        offset = float(jr.uniform(bracket_key, (), minval=0.0, maxval=width))
-        left, right = -offset, width - offset
-        left_steps = int(
-            jr.randint(
-                allocation_key,
-                (),
-                minval=0,
-                maxval=plan.proposal.maximum_attempts + 1,
-            )
-        )
-        right_steps = plan.proposal.maximum_attempts - left_steps
-        attempts = 0
-        shrinkage = 0
-        for _ in range(left_steps):
-            candidate = current + left * direction
-            candidate_prior, candidate_likelihood = evaluator.one(candidate)
-            attempts += 1
-            member = bool(
-                jnp.isfinite(candidate_prior)
-                & (candidate_likelihood > threshold)
-                & (candidate_prior >= log_slice)
-            )
-            if evaluator.exhausted or evaluator.invalid or not member:
-                break
-            left -= width
-        for _ in range(right_steps):
-            candidate = current + right * direction
-            candidate_prior, candidate_likelihood = evaluator.one(candidate)
-            attempts += 1
-            member = bool(
-                jnp.isfinite(candidate_prior)
-                & (candidate_likelihood > threshold)
-                & (candidate_prior >= log_slice)
-            )
-            if evaluator.exhausted or evaluator.invalid or not member:
-                break
-            right += width
-        for attempt in range(plan.proposal.maximum_attempts):
-            proposal_key = derive_key(move_key, _PREPARED_BASE, attempt)
-            distance = float(jr.uniform(proposal_key, (), minval=left, maxval=right))
-            candidate = current + distance * direction
-            candidate_prior, candidate_likelihood = evaluator.one(candidate)
-            attempts += 1
-            if evaluator.exhausted or evaluator.invalid:
-                break
-            member = bool(
-                jnp.isfinite(candidate_prior)
-                & (candidate_likelihood > threshold)
-                & (candidate_prior >= log_slice)
-            )
-            if member:
-                moved = bool(jnp.any(candidate != current))
-                return (
-                    candidate,
-                    candidate_prior,
-                    candidate_likelihood,
-                    attempts,
-                    shrinkage,
-                    moved,
-                )
-            shrinkage += 1
-            if distance < 0.0:
-                left = distance
-            else:
-                right = distance
-        return current, current_prior, current_likelihood, attempts, shrinkage, False
-
-    def propose(
-        current_state: PreparedNestedState,
-        threshold: Array,
-        *,
-        excluded_slot: int,
-        purpose: int,
-    ) -> _ProposalOutcome:
-        counts: dict[str, int] = {}
-        evaluator = _Evaluator(
-            evaluate_one,
-            count=int(current_state.likelihood_evaluations),
-            limit=capacity.max_likelihood_evaluations,
-        )
-        proposal_state = _prepare_proposal_geometry(current_state, plan, layout)
-        active_indices = jnp.flatnonzero(
-            current_state.live_mask & (jnp.arange(capacity.max_live) != excluded_slot),
-            size=int(jnp.sum(current_state.live_mask)) - int(excluded_slot >= 0),
-        )
-        anchor_key = derive_key(
-            current_state.root_key,
-            _PREPARED_BASE,
-            int(current_state.step),
-            purpose,
-            0,
-        )
-        anchor_local = int(jr.randint(anchor_key, (), 0, active_indices.size))
-        anchor = int(active_indices[anchor_local])
-        position = current_state.live_positions[anchor]
-        log_prior = current_state.live_log_prior[anchor]
-        log_likelihood = current_state.live_log_likelihood[anchor]
-        lineage = current_state.live_lineage[anchor]
-        accepted_states: list[tuple[Array, Array, Array]] = []
-        total_attempts = 0
-        total_shrinkage = 0
-        failed = False
-
-        if layout.smooth:
-            active_values = current_state.live_positions[current_state.live_mask][
-                :, smooth_indices
-            ]
-            empirical_scale = float(jnp.mean(jnp.std(active_values, axis=0)))
-            width = plan.proposal.slice_scale * max(
-                empirical_scale,
-                plan.proposal.gradient_step_size,
-            )
-            if plan.proposal.base == "hit-and-run":
-                direction_key = derive_key(
-                    current_state.root_key,
-                    _PREPARED_BASE,
-                    int(current_state.step),
-                    purpose,
-                    1,
-                )
-                smooth_direction = jr.normal(
-                    direction_key, (len(layout.smooth),), dtype=dtype
-                )
-                norm = jnp.sqrt(jnp.sum(smooth_direction**2))
-                direction = (
-                    jnp.zeros((dimension,), dtype=dtype)
-                    .at[smooth_indices]
-                    .set(smooth_direction / norm)
-                )
-                (
-                    position,
-                    log_prior,
-                    log_likelihood,
-                    attempts,
-                    shrinkage,
-                    moved,
-                ) = slice_move(
-                    evaluator,
-                    position,
-                    log_prior,
-                    log_likelihood,
-                    threshold,
-                    direction,
-                    width,
-                    derive_key(
-                        current_state.root_key,
-                        _PREPARED_BASE,
-                        int(current_state.step),
-                        purpose,
-                        2,
-                    ),
-                )
-                counts["base_attempts"] = attempts
-                counts["base_acceptances"] = int(moved)
-                total_attempts += attempts
-                total_shrinkage += shrinkage
-                if moved:
-                    accepted_states.append((position, log_prior, log_likelihood))
-            else:
-                for local, coordinate in enumerate(layout.smooth):
-                    direction = (
-                        jnp.zeros((dimension,), dtype=dtype).at[coordinate].set(1.0)
-                    )
-                    (
-                        position,
-                        log_prior,
-                        log_likelihood,
-                        attempts,
-                        shrinkage,
-                        moved,
-                    ) = slice_move(
-                        evaluator,
-                        position,
-                        log_prior,
-                        log_likelihood,
-                        threshold,
-                        direction,
-                        width,
-                        derive_key(
-                            current_state.root_key,
-                            _PREPARED_BASE,
-                            int(current_state.step),
-                            purpose,
-                            10 + local,
-                        ),
-                    )
-                    counts["base_attempts"] = counts.get("base_attempts", 0) + attempts
-                    counts["base_acceptances"] = counts.get("base_acceptances", 0) + int(
-                        moved
-                    )
-                    total_attempts += attempts
-                    total_shrinkage += shrinkage
-                    if moved:
-                        accepted_states.append((position, log_prior, log_likelihood))
-                    if evaluator.exhausted or evaluator.invalid:
-                        break
-
-        if plan.proposal.ellipsoid and not evaluator.exhausted and not evaluator.invalid:
-            counts["ellipsoid_attempts"] = 1
-            if not bool(jnp.any(proposal_state.ellipsoid_active)):
-                failed = True
-            else:
-                bounds = EllipsoidalNestedBounds(
-                    centers=proposal_state.ellipsoid_centers,
-                    factors=proposal_state.ellipsoid_factors,
-                    active=proposal_state.ellipsoid_active,
-                    log_volumes=proposal_state.ellipsoid_log_volumes,
-                    enlargement=plan.proposal.ellipsoid_enlargement,
-                )
-                ellipsoid_key = derive_key(
-                    current_state.root_key,
-                    _PREPARED_ELLIPSOID,
-                    int(current_state.step),
-                    purpose,
-                )
-                proposed_smooth, proposed_log_q = bounds.sample(ellipsoid_key)
-                current_log_q = jnp.log(
-                    jnp.asarray(
-                        bounds.overlap_count(position[smooth_indices]), dtype=dtype
-                    )
-                ) - jsp.special.logsumexp(
-                    jnp.where(bounds.active, bounds.log_volumes, -jnp.inf)
-                )
-                candidate = position.at[smooth_indices].set(proposed_smooth)
-                candidate_prior, candidate_likelihood = evaluator.one(candidate)
-                total_attempts += 1
-                valid = bool(
-                    jnp.isfinite(candidate_prior) & (candidate_likelihood > threshold)
-                )
-                if not valid:
-                    counts["contour_rejections"] = counts.get("contour_rejections", 0) + 1
-                if valid:
-                    log_acceptance = (
-                        candidate_prior - log_prior + current_log_q - proposed_log_q
-                    )
-                    accept_key = derive_key(ellipsoid_key, _PREPARED_ELLIPSOID, 1)
-                    accept = bool(
-                        jnp.log(
-                            jr.uniform(
-                                accept_key,
-                                (),
-                                minval=jnp.finfo(dtype).tiny,
-                                maxval=1.0,
-                            )
-                        )
-                        < jnp.minimum(log_acceptance, 0.0)
-                    )
-                    if accept:
-                        position, log_prior, log_likelihood = (
-                            candidate,
-                            candidate_prior,
-                            candidate_likelihood,
-                        )
-                        counts["ellipsoid_acceptances"] = 1
-                        accepted_states.append((position, log_prior, log_likelihood))
-
-        if (
-            plan.proposal.learned_flow
-            and not evaluator.exhausted
-            and not evaluator.invalid
-        ):
-            counts["flow_attempts"] = 1
-            if not bool(proposal_state.flow_active):
-                failed = True
-            else:
-                flow_key = derive_key(
-                    current_state.root_key,
-                    _PREPARED_FLOW,
-                    int(current_state.step),
-                    purpose,
-                )
-                noise_key, accept_key = jr.split(flow_key)
-                proposed_smooth = proposal_state.flow_mean + (
-                    proposal_state.flow_factor
-                    @ jr.normal(noise_key, (len(layout.smooth),), dtype=dtype)
-                )
-                proposed_log_q = _flow_log_density(proposed_smooth, proposal_state)
-                current_log_q = _flow_log_density(
-                    position[smooth_indices], proposal_state
-                )
-                candidate = position.at[smooth_indices].set(proposed_smooth)
-                candidate_prior, candidate_likelihood = evaluator.one(candidate)
-                total_attempts += 1
-                valid = bool(
-                    jnp.isfinite(candidate_prior) & (candidate_likelihood > threshold)
-                )
-                if not valid:
-                    counts["contour_rejections"] = counts.get("contour_rejections", 0) + 1
-                if valid:
-                    log_acceptance = (
-                        candidate_prior - log_prior + current_log_q - proposed_log_q
-                    )
-                    accept = bool(
-                        jnp.log(
-                            jr.uniform(
-                                accept_key,
-                                (),
-                                minval=jnp.finfo(dtype).tiny,
-                                maxval=1.0,
-                            )
-                        )
-                        < jnp.minimum(log_acceptance, 0.0)
-                    )
-                    if accept:
-                        position, log_prior, log_likelihood = (
-                            candidate,
-                            candidate_prior,
-                            candidate_likelihood,
-                        )
-                        counts["flow_acceptances"] = 1
-                        accepted_states.append((position, log_prior, log_likelihood))
-
-        if (
-            plan.proposal.gradient_guided
-            and not evaluator.exhausted
-            and not evaluator.invalid
-        ):
-            counts["gradient_attempts"] = 1
-            step_size = plan.proposal.gradient_step_size
-            barrier_scale = plan.proposal.gradient_barrier_scale
-
-            def guided(value):
-                prior_value, likelihood_value = evaluate_one(value)
-                barrier = jax.nn.log_sigmoid(
-                    (likelihood_value - threshold) / barrier_scale
-                )
-                return prior_value + barrier
-
-            if evaluator.count + 3 > evaluator.limit:
-                evaluator.exhausted = True
-            else:
-                evaluator.count += 1
-                gradient = jax.grad(guided)(position)
-                if not bool(jnp.all(jnp.isfinite(gradient[smooth_indices]))):
-                    failed = True
-                else:
-                    gradient_key = derive_key(
-                        current_state.root_key,
-                        _PREPARED_GRADIENT,
-                        int(current_state.step),
-                        purpose,
-                    )
-                    noise_key, accept_key = jr.split(gradient_key)
-                    mean = (
-                        position[smooth_indices]
-                        + 0.5 * step_size**2 * gradient[smooth_indices]
-                    )
-                    proposed_smooth = mean + step_size * jr.normal(
-                        noise_key, (len(layout.smooth),), dtype=dtype
-                    )
-                    candidate = position.at[smooth_indices].set(proposed_smooth)
-                    candidate_prior, candidate_likelihood = evaluator.one(candidate)
-                    total_attempts += 1
-                    valid = bool(
-                        jnp.isfinite(candidate_prior) & (candidate_likelihood > threshold)
-                    )
-                    if not valid:
-                        counts["contour_rejections"] = (
-                            counts.get("contour_rejections", 0) + 1
-                        )
-                    else:
-                        evaluator.count += 1
-                        reverse_gradient = jax.grad(guided)(candidate)
-                        if not bool(
-                            jnp.all(jnp.isfinite(reverse_gradient[smooth_indices]))
-                        ):
-                            failed = True
-                        else:
-                            reverse_mean = (
-                                proposed_smooth
-                                + 0.5 * step_size**2 * (reverse_gradient[smooth_indices])
-                            )
-                            forward_error = (proposed_smooth - mean) / step_size
-                            reverse_error = (
-                                position[smooth_indices] - reverse_mean
-                            ) / step_size
-                            log_q_reverse_minus_forward = -0.5 * (
-                                jnp.sum(reverse_error**2) - jnp.sum(forward_error**2)
-                            )
-                            log_acceptance = (
-                                candidate_prior - log_prior + log_q_reverse_minus_forward
-                            )
-                            accept = bool(
-                                jnp.log(
-                                    jr.uniform(
-                                        accept_key,
-                                        (),
-                                        minval=jnp.finfo(dtype).tiny,
-                                        maxval=1.0,
-                                    )
-                                )
-                                < jnp.minimum(log_acceptance, 0.0)
-                            )
-                            if accept:
-                                position, log_prior, log_likelihood = (
-                                    candidate,
-                                    candidate_prior,
-                                    candidate_likelihood,
-                                )
-                                counts["gradient_acceptances"] = 1
-                                accepted_states.append(
-                                    (position, log_prior, log_likelihood)
-                                )
-
-        if (
-            plan.proposal.discrete_gibbs
-            and not evaluator.exhausted
-            and not evaluator.invalid
-        ):
-            for local, (coordinate, support, masses) in enumerate(layout.finite):
-                counts["discrete_updates"] = counts.get("discrete_updates", 0) + 1
-                candidates: list[Array] = []
-                candidate_priors: list[Array] = []
-                candidate_likelihoods: list[Array] = []
-                for value in support:
-                    candidate = position.at[coordinate].set(value)
-                    candidate_prior, candidate_likelihood = evaluator.one(candidate)
-                    total_attempts += 1
-                    candidates.append(candidate)
-                    candidate_priors.append(candidate_prior)
-                    candidate_likelihoods.append(candidate_likelihood)
-                    if evaluator.exhausted or evaluator.invalid:
-                        break
-                if evaluator.exhausted or evaluator.invalid:
-                    break
-                prior_values = jnp.stack(candidate_priors)
-                likelihood_values = jnp.stack(candidate_likelihoods)
-                conditional_offsets = prior_values - jnp.log(masses)
-                if not bool(
-                    jnp.allclose(
-                        conditional_offsets,
-                        conditional_offsets[0],
-                        rtol=1e-5,
-                        atol=1e-6,
-                    )
-                ):
-                    failed = True
-                    break
-                valid = jnp.isfinite(prior_values) & (likelihood_values > threshold)
-                if not bool(jnp.any(valid)):
-                    failed = True
-                    break
-                gibbs_key = derive_key(
-                    current_state.root_key,
-                    _PREPARED_DISCRETE,
-                    int(current_state.step),
-                    purpose,
-                    local,
-                )
-                selected = int(
-                    jr.categorical(
-                        gibbs_key,
-                        jnp.where(valid, jnp.log(masses), -jnp.inf),
-                    )
-                )
-                candidate = candidates[selected]
-                moved = bool(candidate[coordinate] != position[coordinate])
-                position = candidate
-                log_prior = prior_values[selected]
-                log_likelihood = likelihood_values[selected]
-                if moved:
-                    counts["discrete_moves"] = counts.get("discrete_moves", 0) + 1
-                    accepted_states.append((position, log_prior, log_likelihood))
-
-        if (
-            plan.proposal.periodic_slice
-            and not evaluator.exhausted
-            and not evaluator.invalid
-        ):
-            for local, (coordinate, topology) in enumerate(layout.periodic):
-                counts["periodic_updates"] = counts.get("periodic_updates", 0) + 1
-                periodic_key = derive_key(
-                    current_state.root_key,
-                    _PREPARED_PERIODIC,
-                    int(current_state.step),
-                    purpose,
-                    local,
-                )
-                slice_key = derive_key(periodic_key, _PREPARED_PERIODIC, 0x51)
-                log_slice = log_prior + jnp.log(
-                    jr.uniform(
-                        slice_key,
-                        (),
-                        minval=jnp.finfo(dtype).tiny,
-                        maxval=1.0,
-                    )
-                )
-                left = -0.5 * topology.period
-                right = 0.5 * topology.period
-                origin_value = position[coordinate]
-                moved = False
-                for attempt in range(plan.proposal.maximum_attempts):
-                    proposal_key = derive_key(periodic_key, _PREPARED_PERIODIC, attempt)
-                    displacement = float(
-                        jr.uniform(proposal_key, (), minval=left, maxval=right)
-                    )
-                    raw = origin_value + displacement
-                    wrapped = topology.wrap(raw)
-                    shortest_displacement = float(
-                        topology.displacement(origin_value, wrapped)
-                    )
-                    counts["wrap_crossings"] = counts.get("wrap_crossings", 0) + int(
-                        raw < topology.origin or raw >= topology.origin + topology.period
-                    )
-                    candidate = position.at[coordinate].set(wrapped)
-                    candidate_prior, candidate_likelihood = evaluator.one(candidate)
-                    total_attempts += 1
-                    if evaluator.exhausted or evaluator.invalid:
-                        break
-                    valid = bool(
-                        jnp.isfinite(candidate_prior)
-                        & (candidate_likelihood > threshold)
-                        & (candidate_prior >= log_slice)
-                    )
-                    if valid:
-                        moved = bool(wrapped != origin_value)
-                        position, log_prior, log_likelihood = (
-                            candidate,
-                            candidate_prior,
-                            candidate_likelihood,
-                        )
-                        if moved:
-                            counts["periodic_moves"] = counts.get("periodic_moves", 0) + 1
-                            accepted_states.append((position, log_prior, log_likelihood))
-                        break
-                    total_shrinkage += 1
-                    if shortest_displacement < 0.0:
-                        left = shortest_displacement
-                    else:
-                        right = shortest_displacement
-
-        moved_any = bool(jnp.any(position != current_state.live_positions[anchor]))
-        if (
-            (failed or not moved_any)
-            and plan.proposal.rejection_fallback
-            and not evaluator.exhausted
-            and not evaluator.invalid
-        ):
-            fallback_found = False
-            for attempt in range(plan.proposal.maximum_attempts):
-                if evaluator.count >= evaluator.limit:
-                    evaluator.exhausted = True
-                    break
-                candidate = sample_prior(
-                    derive_key(
-                        current_state.root_key,
-                        _PREPARED_FALLBACK,
-                        int(current_state.step),
-                        purpose,
-                        attempt,
-                    ),
-                    1,
-                )[0]
-                validate_declared_coordinates(candidate[None, :])
-                candidate_prior, candidate_likelihood = evaluator.one(candidate)
-                counts["fallback_draws"] = counts.get("fallback_draws", 0) + 1
-                total_attempts += 1
-                if evaluator.invalid:
-                    break
-                if bool(
-                    jnp.isfinite(candidate_prior) & (candidate_likelihood > threshold)
-                ):
-                    position, log_prior, log_likelihood = (
-                        candidate,
-                        candidate_prior,
-                        candidate_likelihood,
-                    )
-                    accepted_states.append((position, log_prior, log_likelihood))
-                    counts["fallback_acceptances"] = (
-                        counts.get("fallback_acceptances", 0) + 1
-                    )
-                    fallback_found = True
-                    failed = False
-                    moved_any = True
-                    break
-                counts["contour_rejections"] = counts.get("contour_rejections", 0) + 1
-            if not fallback_found:
-                failed = True
-
-        phantom = current_state.phantom
-        if plan.proposal.phantom_recycling and len(accepted_states) > 1:
-            for candidate, _candidate_prior, candidate_likelihood in accepted_states[:-1]:
-                phantom = phantom.add(
-                    candidate,
-                    log_likelihood=candidate_likelihood,
-                    birth_log_likelihood=threshold,
-                    proposal_epoch=current_state.step,
-                    ancestry=lineage,
-                )
-                counts["phantom_creations"] = counts.get("phantom_creations", 0) + 1
-        if failed:
-            counts["proposal_failures"] = counts.get("proposal_failures", 0) + 1
-        adaptation = _increment_adaptation(current_state.adaptation, counts)
-        return _ProposalOutcome(
-            position=position,
-            log_prior=log_prior,
-            log_likelihood=log_likelihood,
-            lineage=lineage,
-            phantom=phantom,
-            proposal=proposal_state,
-            adaptation=adaptation,
-            attempts=total_attempts,
-            likelihood_evaluations=evaluator.count,
-            shrinkage=total_shrinkage,
-            moved=moved_any,
-            budget_exhausted=evaluator.exhausted,
-            invalid_likelihood=evaluator.invalid,
-            failed=failed,
-        )
+    slice_move = partial(_nested_slice_move, plan=plan, dtype=dtype)
+    propose = partial(
+        _propose_nested,
+        capacity=capacity,
+        dimension=dimension,
+        dtype=dtype,
+        evaluate_one=evaluate_one,
+        layout=layout,
+        plan=plan,
+        sample_prior=sample_prior,
+        slice_move=slice_move,
+        smooth_indices=smooth_indices,
+        validate_declared_coordinates=validate_declared_coordinates,
+    )
 
     while not bool(state.finished):
         dead_count = int(state.dead_count)

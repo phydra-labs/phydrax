@@ -515,22 +515,16 @@ def _time_descriptor(
     }
 
 
-def from_cf_dataset(
+def _resolve_cf_selection(
     dataset: Any,
-    /,
-    *,
     bindings: Mapping[str, Any],
-    limits: ResourceLimits = DEFAULT_GEOPHYSICAL_DATA_LIMITS,
-    materialize_lazy: bool = False,
-    purpose: str = "initialization",
-    required_semantics: Sequence[str] = (),
-    provenance: Mapping[str, Any] | None = None,
-) -> tuple[GeophysicalData, AdapterReport]:
-    """Import selected bound variables and their complete supported CF dependency closure.
-
-    External formats are transformed initialization/samples, never exact restarts.
-    Missing values stay masked; sums remain accumulations, never implicit rates.
-    """
+    limits: ResourceLimits,
+    materialize_lazy: bool,
+    purpose: str,
+    required_semantics: Sequence[str],
+    xr: Any,
+    /,
+) -> set[str]:
     xr = _require("xarray")
     if not isinstance(dataset, xr.Dataset):
         raise TypeError("dataset must be an xarray.Dataset.")
@@ -628,6 +622,15 @@ def from_cf_dataset(
         and not materialize_lazy
     ):
         _fail("Lazy CF data requires explicit materialize_lazy=True and finite limits.")
+    return selected
+
+
+def _decode_cf_variables(
+    dataset: Any,
+    bindings: Mapping[str, Any],
+    selected: set[str],
+    /,
+):
     variables, arrays, losses = {}, {}, []
     for name in sorted(selected):
         var = dataset[name]
@@ -707,6 +710,15 @@ def from_cf_dataset(
             "valid_payload": mask,
         }
         arrays[payload], arrays[mask] = values, valid
+    return variables, arrays, losses
+
+
+def _convert_cf_bounds(
+    bindings: Mapping[str, Any],
+    variables: dict[str, Any],
+    arrays: dict[str, np.ndarray],
+    /,
+) -> None:
     converted_bounds = set()
     for name, binding in bindings.items():
         parent = variables[name]
@@ -732,6 +744,18 @@ def from_cf_dataset(
             )
             bound["dims"] = parent["dims"] + [bound["dims"][-1]]
             bound["attrs"]["units"] = binding.quantity.unit.symbol
+
+
+def _build_cf_descriptor(
+    dataset: Any,
+    bindings: Mapping[str, Any],
+    selected: set[str],
+    variables: dict[str, Any],
+    arrays: dict[str, np.ndarray],
+    purpose: str,
+    provenance: Mapping[str, Any] | None,
+    /,
+) -> dict[str, Any]:
     desc = {
         "kind": "geophysical-data",
         "purpose": purpose,
@@ -803,6 +827,46 @@ def from_cf_dataset(
                 "support_id": temporal.support_id,
             },
         }
+    return desc
+
+
+def from_cf_dataset(
+    dataset: Any,
+    /,
+    *,
+    bindings: Mapping[str, Any],
+    limits: ResourceLimits = DEFAULT_GEOPHYSICAL_DATA_LIMITS,
+    materialize_lazy: bool = False,
+    purpose: str = "initialization",
+    required_semantics: Sequence[str] = (),
+    provenance: Mapping[str, Any] | None = None,
+) -> tuple[GeophysicalData, AdapterReport]:
+    """Import selected bound variables and their complete supported CF dependency closure.
+
+    External formats are transformed initialization/samples, never exact restarts.
+    Missing values stay masked; sums remain accumulations, never implicit rates.
+    """
+    xr = _require("xarray")
+    selected = _resolve_cf_selection(
+        dataset,
+        bindings,
+        limits,
+        materialize_lazy,
+        purpose,
+        required_semantics,
+        xr,
+    )
+    variables, arrays, losses = _decode_cf_variables(dataset, bindings, selected)
+    _convert_cf_bounds(bindings, variables, arrays)
+    desc = _build_cf_descriptor(
+        dataset,
+        bindings,
+        selected,
+        variables,
+        arrays,
+        purpose,
+        provenance,
+    )
     if len(losses) > limits.max_losses:
         raise ResourceReadError("limit", "CF conversion loss count exceeds max_losses.")
     data = GeophysicalData(desc, arrays)

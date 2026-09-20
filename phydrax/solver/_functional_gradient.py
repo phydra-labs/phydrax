@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import time
 from contextlib import nullcontext
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
@@ -38,7 +38,7 @@ from .._training_objective import (
     _ObjectiveAccumulator,
     _ObjectiveContribution,
 )
-from .._tree_math import tree_inner, tree_negative, tree_norm, tree_where
+from .._tree_math import tree_negative, tree_where
 from ..logging import is_enabled as _logging_enabled
 from ..nn.parameters import ParameterSubspace
 from ..nn.parameters._low_rank import validate_low_rank_subspace
@@ -59,7 +59,7 @@ from ..optim._riemannian import (
 )
 from ..optim._scalar import ScalarIterativeState
 from ..optim._update_alignment import (
-    ConflictFreeUpdateResult,
+    _alignment_conflicts,
     ConflictFreeUpdateStatistics,
     project_conflict_free_direction,
 )
@@ -107,53 +107,25 @@ if TYPE_CHECKING:
     from ._functional_solver import FunctionalSolver
 
 
-def solve_gradient(
-    self: "FunctionalSolver",
-    *,
-    num_iter: int,
-    optim: AbstractCompositeLeastSquaresMethod
-    | AbstractLeastSquaresMethod
-    | AbstractScalarIterativeMethod
-    | AbstractMirrorOptimizer
-    | AbstractRiemannianOptimizer
-    | optax.GradientTransformation
-    | optax.GradientTransformationExtraArgs
-    | Any = optax.rprop(1e-3),
-    evaluation_parameters: EvaluationParametersFn | None = None,
-    parameter_paths: tuple[str, ...] | None = None,
-    parameter_shapes: tuple[tuple[int, ...], ...] = (),
-    parameter_dtypes: tuple[str, ...] = (),
-    parameter_alias_groups: tuple[tuple[str, ...], ...] = (),
-    seed: int = 0,
-    jit: bool = True,
-    keep_best: bool = True,
-    log_every: int = 0,
-    log_terms: bool = True,
-    session: IterationSession | None = None,
-    session_every: int = 1,
-    tensorboard_log_dir: str | Path | None = None,
-    tensorboard_every: int | None = None,
-    tensorboard_flush_every: int = 10,
-    profile_adaptive: bool = False,
-    train_term_sample_size: int | None = None,
-    gradient_accumulation: int = 1,
-    precision: FunctionalPrecisionPolicy | None = None,
-    training: FunctionalTrainingPlan | None = None,
-    resume: bool = False,
-    accepted_update_hook: Any = None,
-    target_policy: DelayedTargetPolicy
-    | ExponentialMovingAverageTargetPolicy
-    | None = None,
-) -> "FunctionalSolver":
-    accumulation_steps = int(gradient_accumulation)
-    if accumulation_steps <= 0:
-        raise ValueError("gradient_accumulation must be positive.")
-    session_every_ = int(session_every)
-    if session_every_ <= 0:
-        raise ValueError("session_every must be positive.")
-    if num_iter == 0:
-        return self
+@dataclass(frozen=True, slots=True)
+class _FunctionalOptimizerRoute:
+    line_search: optax.GradientTransformationExtraArgs | None
+    standard: optax.GradientTransformation | None
+    composite: AbstractCompositeLeastSquaresMethod | None
+    iterative: AbstractScalarIterativeMethod | None
+    least_squares: AbstractLeastSquaresMethod | None
+    mirror: AbstractMirrorOptimizer | None
+    riemannian: AbstractRiemannianOptimizer | None
+    label: str
 
+
+def _resolve_functional_optimizer(
+    optim: Any,
+    evaluation_parameters: EvaluationParametersFn | None,
+    parameter_paths: tuple[str, ...] | None,
+    precision: FunctionalPrecisionPolicy | None,
+    /,
+) -> _FunctionalOptimizerRoute:
     if isinstance(optim, str):
         raise TypeError(
             "optim must be a Phydrax mirror or Riemannian optimizer, or an Optax transformation, not a string."
@@ -215,6 +187,76 @@ def solve_gradient(
         if _opt_riemannian is not None
         else "optax"
     )
+    return _FunctionalOptimizerRoute(
+        _opt_linesearch,
+        _opt_standard,
+        _opt_composite,
+        _opt_iterative,
+        _opt_least_squares,
+        _opt_mirror,
+        _opt_riemannian,
+        optimizer_label,
+    )
+
+
+def solve_gradient(
+    self: "FunctionalSolver",
+    *,
+    num_iter: int,
+    optim: AbstractCompositeLeastSquaresMethod
+    | AbstractLeastSquaresMethod
+    | AbstractScalarIterativeMethod
+    | AbstractMirrorOptimizer
+    | AbstractRiemannianOptimizer
+    | optax.GradientTransformation
+    | optax.GradientTransformationExtraArgs
+    | Any = optax.rprop(1e-3),
+    evaluation_parameters: EvaluationParametersFn | None = None,
+    parameter_paths: tuple[str, ...] | None = None,
+    parameter_shapes: tuple[tuple[int, ...], ...] = (),
+    parameter_dtypes: tuple[str, ...] = (),
+    parameter_alias_groups: tuple[tuple[str, ...], ...] = (),
+    seed: int = 0,
+    jit: bool = True,
+    keep_best: bool = True,
+    log_every: int = 0,
+    log_terms: bool = True,
+    session: IterationSession | None = None,
+    session_every: int = 1,
+    tensorboard_log_dir: str | Path | None = None,
+    tensorboard_every: int | None = None,
+    tensorboard_flush_every: int = 10,
+    profile_adaptive: bool = False,
+    train_term_sample_size: int | None = None,
+    gradient_accumulation: int = 1,
+    precision: FunctionalPrecisionPolicy | None = None,
+    training: FunctionalTrainingPlan | None = None,
+    resume: bool = False,
+    accepted_update_hook: Any = None,
+    target_policy: DelayedTargetPolicy
+    | ExponentialMovingAverageTargetPolicy
+    | None = None,
+) -> "FunctionalSolver":
+    accumulation_steps = int(gradient_accumulation)
+    if accumulation_steps <= 0:
+        raise ValueError("gradient_accumulation must be positive.")
+    session_every_ = int(session_every)
+    if session_every_ <= 0:
+        raise ValueError("session_every must be positive.")
+    if num_iter == 0:
+        return self
+
+    route = _resolve_functional_optimizer(
+        optim, evaluation_parameters, parameter_paths, precision
+    )
+    _opt_linesearch = route.line_search
+    _opt_standard = route.standard
+    _opt_composite = route.composite
+    _opt_iterative = route.iterative
+    _opt_least_squares = route.least_squares
+    _opt_mirror = route.mirror
+    _opt_riemannian = route.riemannian
+    optimizer_label = route.label
 
     tb_ctx = (
         _TensorBoardLogger(tensorboard_log_dir)
@@ -508,51 +550,6 @@ def solve_gradient(
                 )
             return (loss_value, flat_values), gradient, component_gradients
 
-        def _constructed_direction_conflict(
-            gradients,
-            direction,
-            alignment: ConflictFreeUpdateResult,
-        ):
-            direction_norm = tree_norm(direction)
-            effective = alignment.active & ~alignment.stationary
-            safe_norms = jnp.where(
-                effective,
-                alignment.gradient_norms,
-                jnp.ones_like(alignment.gradient_norms),
-            )
-            safe_direction_norm = jnp.where(direction_norm > 0.0, direction_norm, 1.0)
-            cosines = jnp.stack(
-                tuple(
-                    tree_inner(gradient, direction)
-                    / (safe_norms[index] * safe_direction_norm)
-                    for index, gradient in enumerate(gradients)
-                )
-            )
-            count = len(gradients)
-            tolerance = jnp.maximum(
-                jnp.asarray(
-                    update_alignment.feasibility_tolerance,
-                    dtype=cosines.dtype,
-                ),
-                jnp.asarray(float(8 * count), dtype=cosines.dtype)
-                * jnp.finfo(cosines.dtype).eps,
-            )
-            return jnp.any(effective & (cosines < -tolerance)), tolerance
-
-        def _gradient_conflict(
-            alignment: ConflictFreeUpdateResult,
-            tolerance,
-        ):
-            effective = alignment.active & ~alignment.stationary
-            pairs = (
-                effective[:, None]
-                & effective[None, :]
-                & jnp.tril(
-                    jnp.ones_like(alignment.gradient_cosine_matrix, dtype=jnp.bool_), -1
-                )
-            )
-            return jnp.any(pairs & (alignment.gradient_cosine_matrix < -tolerance))
-
         is_composite = _opt_composite is not None
         is_least_squares = _opt_least_squares is not None
         is_iterative = _opt_iterative is not None
@@ -844,14 +841,11 @@ def solve_gradient(
                     ),
                     updates,
                 )
-                constructed_conflict, tolerance = _constructed_direction_conflict(
+                gradient_conflict, constructed_conflict = _alignment_conflicts(
                     component_gradients,
                     grads,
                     alignment_result,
-                )
-                gradient_conflict = _gradient_conflict(
-                    alignment_result,
-                    tolerance,
+                    update_alignment,
                 )
             params_ = eqx.apply_updates(params_, updates)
             return (

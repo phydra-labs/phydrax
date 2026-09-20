@@ -490,6 +490,47 @@ def update_training_selection(
     )
 
 
+def _update_validation_selection(
+    progress: TrainingProgress,
+    value: float,
+    /,
+    *,
+    step: int,
+    mode: SelectionMode,
+    minimum_delta: float,
+    relative_minimum_delta: float,
+    patience: int | None,
+) -> tuple[TrainingProgress, bool]:
+    current = float(value)
+    previous = progress.best_value
+    strict_better = previous is None or (
+        current < previous if mode == "min" else current > previous
+    )
+    required = (
+        float(minimum_delta)
+        if previous is None
+        else max(
+            float(minimum_delta),
+            float(relative_minimum_delta) * max(abs(previous), 1e-12),
+        )
+    )
+    meaningful = previous is None or (
+        current < previous - required if mode == "min" else current > previous + required
+    )
+    stale = 0 if meaningful else progress.stale_validations + 1
+    stopped = patience is not None and stale >= int(patience)
+    return (
+        replace(
+            progress,
+            best_value=current if strict_better else previous,
+            best_step=int(step) if strict_better else progress.best_step,
+            stale_validations=stale,
+            stopped_early=stopped,
+        ),
+        strict_better,
+    )
+
+
 class TrainingController:
     """Shared host lifecycle for PRNG, progress, selection, and typed events."""
 

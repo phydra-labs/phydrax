@@ -1061,6 +1061,276 @@ class DomainComponent(StrictModule):
 
         return PointBatch(points=frozendict(points), structure=structure)
 
+    def _materialize_grid_label(
+        self,
+        lbl: str,
+        *,
+        coord_separable: Any,
+        sampler: str,
+        fixed_labels: tuple[str, ...],
+        coord_label_set: set[str],
+        dense_structure_out: Any,
+        label_to_block_index: dict[str, int],
+        label_to_idx: dict[str, int],
+        coord_key_by_label: dict[str, Any],
+        dense_keys_for_blocks: tuple[Any, ...],
+        coord_axes_by_label: dict[str, Any],
+        coord_mask_by_label: dict[str, Any],
+        coord_geometry_weight_by_label: dict[str, Any],
+        coord_geometry_order_by_label: dict[str, Any],
+        axis_discretization_by_axis: dict[str, Any],
+        points: dict[str, Any],
+        num_points_by_block: tuple[int, ...],
+        dense_sampler: str,
+    ) -> None:
+        comp = self.spec.selection_for(lbl)
+        factor = self.domain.factor(lbl)
+
+        if lbl in fixed_labels:
+            if isinstance(factor, AbstractScalarDomain):
+                if isinstance(comp, FixedStart):
+                    val = factor.fixed("start")
+                elif isinstance(comp, FixedEnd):
+                    val = factor.fixed("end")
+                else:
+                    assert isinstance(comp, Fixed)
+                    val = jnp.asarray(comp.value, dtype=jnp.float64).reshape(())
+                points[lbl] = _as_field(
+                    jnp.asarray(val, dtype=jnp.float64).reshape(()), dims=()
+                )
+                return
+
+            if isinstance(factor, AbstractGeometry):
+                assert isinstance(comp, Fixed)
+                val = jnp.asarray(comp.value, dtype=jnp.float64).reshape(
+                    (factor.spatial_dim,)
+                )
+                points[lbl] = _as_field(val, dims=(None,))
+                return
+
+            raise TypeError(f"Unsupported domain factor type {type(factor).__name__}.")
+
+        if lbl in coord_label_set:
+            if isinstance(factor, AbstractGeometry):
+                var_dim = int(factor.spatial_dim)
+            elif isinstance(factor, AbstractScalarDomain):
+                var_dim = 1
+            else:
+                raise TypeError(
+                    "coord_separable requires a geometry/scalar label; got "
+                    f"{lbl!r} with factor {type(factor).__name__}."
+                )
+            if not isinstance(comp, Interior):
+                raise ValueError(
+                    "coord_separable currently supports only Interior() components; "
+                    f"got {type(comp).__name__} for {lbl!r}."
+                )
+
+            n_spec = coord_separable[lbl]
+            where_fn = self.where.get(lbl)
+
+            axis_specs: tuple[AbstractAxisSpec, ...] | None = None
+            counts: tuple[int, ...] | None = None
+
+            if isinstance(n_spec, TensorGridPlan):
+                axis_specs = n_spec.axes
+            elif isinstance(n_spec, AbstractAxisSpec):
+                axis_specs = (n_spec,) * var_dim
+            elif isinstance(n_spec, int):
+                counts = (int(n_spec),) * var_dim
+            else:
+                seq = tuple(n_spec)
+                if not seq:
+                    raise ValueError(f"coord_separable[{lbl!r}] must be non-empty.")
+                axis_specs_candidate = tuple(
+                    s for s in seq if isinstance(s, AbstractAxisSpec)
+                )
+                if len(axis_specs_candidate) == len(seq):
+                    axis_specs = axis_specs_candidate
+                else:
+                    counts_candidate = tuple(int(n) for n in seq if isinstance(n, int))
+                    if len(counts_candidate) == len(seq):
+                        counts = counts_candidate
+                    else:
+                        raise TypeError(
+                            f"coord_separable[{lbl!r}] must be int, Sequence[int], "
+                            "AbstractAxisSpec, Sequence[AbstractAxisSpec], or TensorGridPlan."
+                        )
+
+            geometry_weight_arr: Array | None = None
+            geometry_order = 0
+            if isinstance(factor, AbstractGeometry):
+                if axis_specs is not None:
+                    if len(axis_specs) != var_dim:
+                        raise ValueError(
+                            f"coord_separable[{lbl!r}] must have length {var_dim}."
+                        )
+                    bounds = jnp.asarray(factor.mesh_bounds, dtype=jnp.float64)
+                    coords = []
+                    for i, spec in enumerate(axis_specs):
+                        disc = spec.materialize(bounds[0, i], bounds[1, i])
+                        coords.append(disc.nodes)
+                        axis_name = _axis_name_for_coord(lbl, i)
+                        axis_discretization_by_axis[axis_name] = disc
+
+                    coords_tuple = tuple(coords)
+                    mask_arr = sdf_mask_from_adf(factor.adf, coords_tuple)
+                    if isinstance(n_spec, TensorGridPlan) and n_spec.cut_cell_order > 0:
+                        base_weights: list[Array] = []
+                        for i, coord in enumerate(coords_tuple):
+                            axis_name = _axis_name_for_coord(lbl, i)
+                            disc = axis_discretization_by_axis[axis_name]
+                            if disc.quad_weights is not None:
+                                base_weights.append(
+                                    jnp.asarray(disc.quad_weights, dtype=jnp.float64)
+                                )
+                            else:
+                                length = bounds[1, i] - bounds[0, i]
+                                base_weights.append(
+                                    jnp.full(
+                                        coord.shape,
+                                        length / float(coord.shape[0]),
+                                        dtype=jnp.float64,
+                                    )
+                                )
+                        geometry_order = n_spec.cut_cell_order
+                        geometry_weight_arr = cut_cell_geometry_weight_from_adf(
+                            factor.adf,
+                            coords_tuple,
+                            bounds,
+                            tuple(base_weights),
+                            mask_arr,
+                            factor.volume,
+                            order=geometry_order,
+                        )
+                    if where_fn is not None:
+                        grid = broadcasted_grid(coords_tuple)
+                        pts = grid.reshape((-1, var_dim))
+                        where_mask = jax.vmap(where_fn)(pts).reshape(grid.shape[:-1])
+                        mask_arr = mask_arr & jnp.asarray(where_mask, dtype=jnp.bool_)
+
+                    coords_out = coords_tuple
+                    mask = mask_arr
+                else:
+                    assert counts is not None
+                    if len(counts) != var_dim:
+                        raise ValueError(
+                            f"coord_separable[{lbl!r}] must have length {var_dim}."
+                        )
+                    coords_out, mask = factor._sample_interior_separable(
+                        counts,
+                        sampler=sampler,
+                        where=where_fn,
+                        key=coord_key_by_label[lbl],
+                    )
+            else:
+                assert isinstance(factor, AbstractScalarDomain)
+                if axis_specs is not None:
+                    if len(axis_specs) != 1:
+                        raise ValueError(f"coord_separable[{lbl!r}] must have length 1.")
+                    start = jnp.asarray(factor.fixed("start"), dtype=jnp.float64).reshape(
+                        ()
+                    )
+                    end = jnp.asarray(factor.fixed("end"), dtype=jnp.float64).reshape(())
+                    disc = axis_specs[0].materialize(start, end)
+                    coord = jnp.asarray(disc.nodes, dtype=jnp.float64).reshape((-1,))
+                    axis_name = _axis_name_for_coord(lbl, 0)
+                    axis_discretization_by_axis[axis_name] = disc
+                else:
+                    assert counts is not None
+                    if len(counts) != 1:
+                        raise ValueError(f"coord_separable[{lbl!r}] must have length 1.")
+                    coord = jnp.asarray(
+                        _sample_scalar(
+                            factor,
+                            comp,
+                            int(counts[0]),
+                            sampler=sampler,
+                            key=coord_key_by_label[lbl],
+                        ),
+                        dtype=jnp.float64,
+                    ).reshape((-1,))
+                if where_fn is not None:
+                    mask = jnp.asarray(
+                        jax.vmap(where_fn)(coord), dtype=jnp.bool_
+                    ).reshape((-1,))
+                else:
+                    mask = jnp.ones((coord.shape[0],), dtype=jnp.bool_)
+                coords_out = (coord,)
+
+            if len(coords_out) != var_dim:
+                raise ValueError(
+                    f"{type(factor).__name__}._sample_interior_separable returned "
+                    f"{len(coords_out)} coordinate arrays; expected {var_dim}."
+                )
+
+            coord_axes: list[jax.Array] = []
+            for c in coords_out:
+                arr = jnp.asarray(c, dtype=jnp.float64)
+                if arr.ndim == 2 and arr.shape[1] == 1:
+                    arr = arr.reshape((-1,))
+                if arr.ndim != 1:
+                    raise ValueError(
+                        f"coord-separable coordinate arrays must be 1D; got shape {arr.shape} for label {lbl!r}."
+                    )
+                coord_axes.append(arr)
+
+            axis_names = tuple(
+                _axis_name_for_coord(lbl, i) for i in range(len(coord_axes))
+            )
+            points[lbl] = tuple(
+                cx.AxisArray(arr, dims=(ax,))
+                for arr, ax in zip(coord_axes, axis_names, strict=True)
+            )
+            coord_axes_by_label[lbl] = axis_names
+
+            mask_arr = jnp.asarray(mask, dtype=jnp.bool_)
+            coord_mask_by_label[lbl] = cx.AxisArray(mask_arr, dims=axis_names)
+            if geometry_weight_arr is not None:
+                coord_geometry_weight_by_label[lbl] = cx.AxisArray(
+                    geometry_weight_arr,
+                    dims=axis_names,
+                )
+                coord_geometry_order_by_label[lbl] = geometry_order
+            return
+
+        axis = dense_structure_out.axis_for(lbl)
+        if axis is None:
+            raise ValueError(f"Missing sampling axis for non-fixed label {lbl!r}.")
+        bi = label_to_block_index[lbl]
+        n = num_points_by_block[bi]
+
+        if isinstance(factor, AbstractGeometry):
+            k = jr.fold_in(dense_keys_for_blocks[bi], label_to_idx[lbl])
+            arr = _sample_geometry(factor, comp, n, sampler=dense_sampler, key=k)
+            if arr.ndim == 1:
+                arr = arr.reshape((-1, 1))
+            points[lbl] = _as_field(arr, dims=(axis, None))
+            return
+
+        if isinstance(factor, AbstractScalarDomain):
+            k = jr.fold_in(dense_keys_for_blocks[bi], label_to_idx[lbl])
+            arr = _sample_scalar(factor, comp, n, sampler=dense_sampler, key=k).reshape(
+                (-1,)
+            )
+            points[lbl] = _as_field(arr, dims=(axis,))
+            return
+
+        if isinstance(factor, (DatasetDomain, RaggedSeriesDatasetDomain)):
+            k = jr.fold_in(dense_keys_for_blocks[bi], label_to_idx[lbl])
+            samples = factor.sample(n, sampler=dense_sampler, key=k)
+
+            def _to_field(v):
+                arr = jnp.asarray(v)
+                if arr.ndim == 0:
+                    raise ValueError("Dataset samples must have a leading sample axis.")
+                return _as_field(arr, dims=(axis,) + (None,) * (arr.ndim - 1))
+
+            points[lbl] = jax.tree_util.tree_map(_to_field, samples)
+            return
+
+        raise TypeError(f"Unsupported domain factor type {type(factor).__name__}.")
+
     def _sample_grid(
         self,
         sampling: GridSampling,
@@ -1172,268 +1442,26 @@ class DomainComponent(StrictModule):
         }
 
         for lbl in self.domain.labels:
-            comp = self.spec.selection_for(lbl)
-            factor = self.domain.factor(lbl)
-
-            if lbl in fixed_labels:
-                if isinstance(factor, AbstractScalarDomain):
-                    if isinstance(comp, FixedStart):
-                        val = factor.fixed("start")
-                    elif isinstance(comp, FixedEnd):
-                        val = factor.fixed("end")
-                    else:
-                        assert isinstance(comp, Fixed)
-                        val = jnp.asarray(comp.value, dtype=jnp.float64).reshape(())
-                    points[lbl] = _as_field(
-                        jnp.asarray(val, dtype=jnp.float64).reshape(()), dims=()
-                    )
-                    continue
-
-                if isinstance(factor, AbstractGeometry):
-                    assert isinstance(comp, Fixed)
-                    val = jnp.asarray(comp.value, dtype=jnp.float64).reshape(
-                        (factor.spatial_dim,)
-                    )
-                    points[lbl] = _as_field(val, dims=(None,))
-                    continue
-
-                raise TypeError(
-                    f"Unsupported domain factor type {type(factor).__name__}."
-                )
-
-            if lbl in coord_label_set:
-                if isinstance(factor, AbstractGeometry):
-                    var_dim = int(factor.spatial_dim)
-                elif isinstance(factor, AbstractScalarDomain):
-                    var_dim = 1
-                else:
-                    raise TypeError(
-                        "coord_separable requires a geometry/scalar label; got "
-                        f"{lbl!r} with factor {type(factor).__name__}."
-                    )
-                if not isinstance(comp, Interior):
-                    raise ValueError(
-                        "coord_separable currently supports only Interior() components; "
-                        f"got {type(comp).__name__} for {lbl!r}."
-                    )
-
-                n_spec = coord_separable[lbl]
-                where_fn = self.where.get(lbl)
-
-                axis_specs: tuple[AbstractAxisSpec, ...] | None = None
-                counts: tuple[int, ...] | None = None
-
-                if isinstance(n_spec, TensorGridPlan):
-                    axis_specs = n_spec.axes
-                elif isinstance(n_spec, AbstractAxisSpec):
-                    axis_specs = (n_spec,) * var_dim
-                elif isinstance(n_spec, int):
-                    counts = (int(n_spec),) * var_dim
-                else:
-                    seq = tuple(n_spec)
-                    if not seq:
-                        raise ValueError(f"coord_separable[{lbl!r}] must be non-empty.")
-                    axis_specs_candidate = tuple(
-                        s for s in seq if isinstance(s, AbstractAxisSpec)
-                    )
-                    if len(axis_specs_candidate) == len(seq):
-                        axis_specs = axis_specs_candidate
-                    else:
-                        counts_candidate = tuple(
-                            int(n) for n in seq if isinstance(n, int)
-                        )
-                        if len(counts_candidate) == len(seq):
-                            counts = counts_candidate
-                        else:
-                            raise TypeError(
-                                f"coord_separable[{lbl!r}] must be int, Sequence[int], "
-                                "AbstractAxisSpec, Sequence[AbstractAxisSpec], or TensorGridPlan."
-                            )
-
-                geometry_weight_arr: Array | None = None
-                geometry_order = 0
-                if isinstance(factor, AbstractGeometry):
-                    if axis_specs is not None:
-                        if len(axis_specs) != var_dim:
-                            raise ValueError(
-                                f"coord_separable[{lbl!r}] must have length {var_dim}."
-                            )
-                        bounds = jnp.asarray(factor.mesh_bounds, dtype=jnp.float64)
-                        coords = []
-                        for i, spec in enumerate(axis_specs):
-                            disc = spec.materialize(bounds[0, i], bounds[1, i])
-                            coords.append(disc.nodes)
-                            axis_name = _axis_name_for_coord(lbl, i)
-                            axis_discretization_by_axis[axis_name] = disc
-
-                        coords_tuple = tuple(coords)
-                        mask_arr = sdf_mask_from_adf(factor.adf, coords_tuple)
-                        if (
-                            isinstance(n_spec, TensorGridPlan)
-                            and n_spec.cut_cell_order > 0
-                        ):
-                            base_weights: list[Array] = []
-                            for i, coord in enumerate(coords_tuple):
-                                axis_name = _axis_name_for_coord(lbl, i)
-                                disc = axis_discretization_by_axis[axis_name]
-                                if disc.quad_weights is not None:
-                                    base_weights.append(
-                                        jnp.asarray(disc.quad_weights, dtype=jnp.float64)
-                                    )
-                                else:
-                                    length = bounds[1, i] - bounds[0, i]
-                                    base_weights.append(
-                                        jnp.full(
-                                            coord.shape,
-                                            length / float(coord.shape[0]),
-                                            dtype=jnp.float64,
-                                        )
-                                    )
-                            geometry_order = n_spec.cut_cell_order
-                            geometry_weight_arr = cut_cell_geometry_weight_from_adf(
-                                factor.adf,
-                                coords_tuple,
-                                bounds,
-                                tuple(base_weights),
-                                mask_arr,
-                                factor.volume,
-                                order=geometry_order,
-                            )
-                        if where_fn is not None:
-                            grid = broadcasted_grid(coords_tuple)
-                            pts = grid.reshape((-1, var_dim))
-                            where_mask = jax.vmap(where_fn)(pts).reshape(grid.shape[:-1])
-                            mask_arr = mask_arr & jnp.asarray(where_mask, dtype=jnp.bool_)
-
-                        coords_out = coords_tuple
-                        mask = mask_arr
-                    else:
-                        assert counts is not None
-                        if len(counts) != var_dim:
-                            raise ValueError(
-                                f"coord_separable[{lbl!r}] must have length {var_dim}."
-                            )
-                        coords_out, mask = factor._sample_interior_separable(
-                            counts,
-                            sampler=sampler,
-                            where=where_fn,
-                            key=coord_key_by_label[lbl],
-                        )
-                else:
-                    assert isinstance(factor, AbstractScalarDomain)
-                    if axis_specs is not None:
-                        if len(axis_specs) != 1:
-                            raise ValueError(
-                                f"coord_separable[{lbl!r}] must have length 1."
-                            )
-                        start = jnp.asarray(
-                            factor.fixed("start"), dtype=jnp.float64
-                        ).reshape(())
-                        end = jnp.asarray(factor.fixed("end"), dtype=jnp.float64).reshape(
-                            ()
-                        )
-                        disc = axis_specs[0].materialize(start, end)
-                        coord = jnp.asarray(disc.nodes, dtype=jnp.float64).reshape((-1,))
-                        axis_name = _axis_name_for_coord(lbl, 0)
-                        axis_discretization_by_axis[axis_name] = disc
-                    else:
-                        assert counts is not None
-                        if len(counts) != 1:
-                            raise ValueError(
-                                f"coord_separable[{lbl!r}] must have length 1."
-                            )
-                        coord = jnp.asarray(
-                            _sample_scalar(
-                                factor,
-                                comp,
-                                int(counts[0]),
-                                sampler=sampler,
-                                key=coord_key_by_label[lbl],
-                            ),
-                            dtype=jnp.float64,
-                        ).reshape((-1,))
-                    if where_fn is not None:
-                        mask = jnp.asarray(
-                            jax.vmap(where_fn)(coord), dtype=jnp.bool_
-                        ).reshape((-1,))
-                    else:
-                        mask = jnp.ones((coord.shape[0],), dtype=jnp.bool_)
-                    coords_out = (coord,)
-
-                if len(coords_out) != var_dim:
-                    raise ValueError(
-                        f"{type(factor).__name__}._sample_interior_separable returned "
-                        f"{len(coords_out)} coordinate arrays; expected {var_dim}."
-                    )
-
-                coord_axes: list[jax.Array] = []
-                for c in coords_out:
-                    arr = jnp.asarray(c, dtype=jnp.float64)
-                    if arr.ndim == 2 and arr.shape[1] == 1:
-                        arr = arr.reshape((-1,))
-                    if arr.ndim != 1:
-                        raise ValueError(
-                            f"coord-separable coordinate arrays must be 1D; got shape {arr.shape} for label {lbl!r}."
-                        )
-                    coord_axes.append(arr)
-
-                axis_names = tuple(
-                    _axis_name_for_coord(lbl, i) for i in range(len(coord_axes))
-                )
-                points[lbl] = tuple(
-                    cx.AxisArray(arr, dims=(ax,))
-                    for arr, ax in zip(coord_axes, axis_names, strict=True)
-                )
-                coord_axes_by_label[lbl] = axis_names
-
-                mask_arr = jnp.asarray(mask, dtype=jnp.bool_)
-                coord_mask_by_label[lbl] = cx.AxisArray(mask_arr, dims=axis_names)
-                if geometry_weight_arr is not None:
-                    coord_geometry_weight_by_label[lbl] = cx.AxisArray(
-                        geometry_weight_arr,
-                        dims=axis_names,
-                    )
-                    coord_geometry_order_by_label[lbl] = geometry_order
-                continue
-
-            axis = dense_structure_out.axis_for(lbl)
-            if axis is None:
-                raise ValueError(f"Missing sampling axis for non-fixed label {lbl!r}.")
-            bi = label_to_block_index[lbl]
-            n = num_points_by_block[bi]
-
-            if isinstance(factor, AbstractGeometry):
-                k = jr.fold_in(dense_keys_for_blocks[bi], label_to_idx[lbl])
-                arr = _sample_geometry(factor, comp, n, sampler=dense_sampler, key=k)
-                if arr.ndim == 1:
-                    arr = arr.reshape((-1, 1))
-                points[lbl] = _as_field(arr, dims=(axis, None))
-                continue
-
-            if isinstance(factor, AbstractScalarDomain):
-                k = jr.fold_in(dense_keys_for_blocks[bi], label_to_idx[lbl])
-                arr = _sample_scalar(
-                    factor, comp, n, sampler=dense_sampler, key=k
-                ).reshape((-1,))
-                points[lbl] = _as_field(arr, dims=(axis,))
-                continue
-
-            if isinstance(factor, (DatasetDomain, RaggedSeriesDatasetDomain)):
-                k = jr.fold_in(dense_keys_for_blocks[bi], label_to_idx[lbl])
-                samples = factor.sample(n, sampler=dense_sampler, key=k)
-
-                def _to_field(v):
-                    arr = jnp.asarray(v)
-                    if arr.ndim == 0:
-                        raise ValueError(
-                            "Dataset samples must have a leading sample axis."
-                        )
-                    return _as_field(arr, dims=(axis,) + (None,) * (arr.ndim - 1))
-
-                points[lbl] = jax.tree_util.tree_map(_to_field, samples)
-                continue
-
-            raise TypeError(f"Unsupported domain factor type {type(factor).__name__}.")
+            self._materialize_grid_label(
+                lbl,
+                coord_separable=coord_separable,
+                sampler=sampler,
+                fixed_labels=fixed_labels,
+                coord_label_set=coord_label_set,
+                dense_structure_out=dense_structure_out,
+                label_to_block_index=label_to_block_index,
+                label_to_idx=label_to_idx,
+                coord_key_by_label=coord_key_by_label,
+                dense_keys_for_blocks=dense_keys_for_blocks,
+                coord_axes_by_label=coord_axes_by_label,
+                coord_mask_by_label=coord_mask_by_label,
+                coord_geometry_weight_by_label=coord_geometry_weight_by_label,
+                coord_geometry_order_by_label=coord_geometry_order_by_label,
+                axis_discretization_by_axis=axis_discretization_by_axis,
+                points=points,
+                num_points_by_block=num_points_by_block,
+                dense_sampler=dense_sampler,
+            )
 
         return GridBatch(
             points=frozendict(points),

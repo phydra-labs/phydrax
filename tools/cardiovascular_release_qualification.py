@@ -21,6 +21,7 @@ import subprocess
 import tomllib
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import Any
 
 from phydrax.applications.cardiovascular._commercial import (
     CardiovascularArtifactKind,
@@ -296,6 +297,92 @@ def _write_json(path: Path, record: Mapping[str, object], /) -> dict[str, object
     }
 
 
+def _collect_distribution_package_records(
+    raw_records: list[Any],
+    root: Path,
+    package_items: list[dict[str, Any]],
+    blockers: list[str],
+    /,
+) -> None:
+    for record_index, record in enumerate(raw_records):
+        if not isinstance(record, Mapping):
+            blockers.append(f"dependency-lock:package-record-invalid:{record_index}")
+            continue
+        name = str(record.get("name", "")).strip()
+        version = str(record.get("version", "")).strip()
+        if not name or not version:
+            blockers.append(f"dependency-lock:package-identity-missing:{record_index}")
+            continue
+        source = _source_uri(record.get("source"), root)
+        if source is None:
+            blockers.append(f"dependency-metadata:{name}@{version}:source-unresolved")
+
+        archives: list[tuple[str, Mapping[str, object]]] = []
+        sdist = record.get("sdist")
+        if sdist is not None:
+            if isinstance(sdist, Mapping):
+                archives.append(("sdist", sdist))
+            else:
+                blockers.append(
+                    f"dependency-metadata:{name}@{version}:sdist-record-invalid"
+                )
+        wheels = record.get("wheels", [])
+        if not isinstance(wheels, list):
+            blockers.append(f"dependency-metadata:{name}@{version}:wheels-invalid")
+            wheels = ()
+        for wheel_index, wheel in enumerate(wheels):
+            if isinstance(wheel, Mapping):
+                archives.append((f"wheel-{wheel_index}", wheel))
+            else:
+                blockers.append(
+                    f"dependency-metadata:{name}@{version}:wheel-record-invalid:{wheel_index}"
+                )
+
+        archive_hashes: list[str] = []
+        archive_urls: list[str] = []
+        for archive_kind, archive in archives:
+            digest = _sha256_value(archive.get("hash"))
+            url = archive.get("url")
+            if digest is None:
+                blockers.append(
+                    f"dependency-metadata:{name}@{version}:{archive_kind}-hash-unresolved"
+                )
+            else:
+                archive_hashes.append(digest)
+            if not _is_asserted(url):
+                blockers.append(
+                    f"dependency-metadata:{name}@{version}:{archive_kind}-source-unresolved"
+                )
+            else:
+                archive_urls.append(str(url))
+
+        markers = record.get("resolution-markers", ())
+        identity = json.dumps(
+            {
+                "name": name,
+                "version": version,
+                "source": source,
+                "resolution_markers": markers,
+                "record_index": record_index,
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        identity_digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
+        package_items.append(
+            {
+                "name": name,
+                "version": version,
+                "source": source,
+                "download": archive_urls[0] if archive_urls else source,
+                "hashes": tuple(sorted(set(archive_hashes))),
+                "record": record,
+                "spdx_id": f"SPDXRef-Package-{identity_digest[:24]}",
+                "bom_ref": f"urn:phydrax:uv-lock:{identity_digest}",
+            }
+        )
+
+
 def build_cardiovascular_release_artifacts(
     repository_root: Path | str,
     output_directory: Path | str,
@@ -501,83 +588,7 @@ def build_cardiovascular_release_artifacts(
     if not isinstance(raw_records, list):
         blockers.append("dependency-lock:package-table-invalid")
         raw_records = []
-    for record_index, record in enumerate(raw_records):
-        if not isinstance(record, Mapping):
-            blockers.append(f"dependency-lock:package-record-invalid:{record_index}")
-            continue
-        name = str(record.get("name", "")).strip()
-        version = str(record.get("version", "")).strip()
-        if not name or not version:
-            blockers.append(f"dependency-lock:package-identity-missing:{record_index}")
-            continue
-        source = _source_uri(record.get("source"), root)
-        if source is None:
-            blockers.append(f"dependency-metadata:{name}@{version}:source-unresolved")
-
-        archives: list[tuple[str, Mapping[str, object]]] = []
-        sdist = record.get("sdist")
-        if sdist is not None:
-            if isinstance(sdist, Mapping):
-                archives.append(("sdist", sdist))
-            else:
-                blockers.append(
-                    f"dependency-metadata:{name}@{version}:sdist-record-invalid"
-                )
-        wheels = record.get("wheels", [])
-        if not isinstance(wheels, list):
-            blockers.append(f"dependency-metadata:{name}@{version}:wheels-invalid")
-            wheels = ()
-        for wheel_index, wheel in enumerate(wheels):
-            if isinstance(wheel, Mapping):
-                archives.append((f"wheel-{wheel_index}", wheel))
-            else:
-                blockers.append(
-                    f"dependency-metadata:{name}@{version}:wheel-record-invalid:{wheel_index}"
-                )
-
-        archive_hashes: list[str] = []
-        archive_urls: list[str] = []
-        for archive_kind, archive in archives:
-            digest = _sha256_value(archive.get("hash"))
-            url = archive.get("url")
-            if digest is None:
-                blockers.append(
-                    f"dependency-metadata:{name}@{version}:{archive_kind}-hash-unresolved"
-                )
-            else:
-                archive_hashes.append(digest)
-            if not _is_asserted(url):
-                blockers.append(
-                    f"dependency-metadata:{name}@{version}:{archive_kind}-source-unresolved"
-                )
-            else:
-                archive_urls.append(str(url))
-
-        markers = record.get("resolution-markers", ())
-        identity = json.dumps(
-            {
-                "name": name,
-                "version": version,
-                "source": source,
-                "resolution_markers": markers,
-                "record_index": record_index,
-            },
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        identity_digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()
-        package_items.append(
-            {
-                "name": name,
-                "version": version,
-                "source": source,
-                "download": archive_urls[0] if archive_urls else source,
-                "hashes": tuple(sorted(set(archive_hashes))),
-                "record": record,
-                "spdx_id": f"SPDXRef-Package-{identity_digest[:24]}",
-                "bom_ref": f"urn:phydrax:uv-lock:{identity_digest}",
-            }
-        )
+    _collect_distribution_package_records(raw_records, root, package_items, blockers)
     package_items.sort(
         key=lambda item: (
             str(item["name"]).lower(),

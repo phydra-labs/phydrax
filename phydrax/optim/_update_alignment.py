@@ -266,6 +266,45 @@ class ConflictFreeUpdateStatistics(StrictModule):
         return self.metric_correction_norm_sum / denominator
 
 
+def _alignment_conflicts(
+    gradients: Sequence[PyTree[Array]],
+    direction: PyTree[Array],
+    alignment: ConflictFreeUpdateResult,
+    policy: ConflictFreeUpdatePolicy,
+    /,
+) -> tuple[Array, Array]:
+    direction_norm = tree_norm(direction)
+    effective = alignment.active & ~alignment.stationary
+    safe_norms = jnp.where(
+        effective,
+        alignment.gradient_norms,
+        jnp.ones_like(alignment.gradient_norms),
+    )
+    safe_direction_norm = jnp.where(direction_norm > 0.0, direction_norm, 1.0)
+    cosines = jnp.stack(
+        tuple(
+            tree_inner(gradient, direction) / (safe_norms[index] * safe_direction_norm)
+            for index, gradient in enumerate(gradients)
+        )
+    )
+    count = len(gradients)
+    tolerance = jnp.maximum(
+        jnp.asarray(policy.feasibility_tolerance, dtype=cosines.dtype),
+        jnp.asarray(float(8 * count), dtype=cosines.dtype) * jnp.finfo(cosines.dtype).eps,
+    )
+    constructed_conflict = jnp.any(effective & (cosines < -tolerance))
+    pairs = (
+        effective[:, None]
+        & effective[None, :]
+        & jnp.tril(
+            jnp.ones_like(alignment.gradient_cosine_matrix, dtype=jnp.bool_),
+            -1,
+        )
+    )
+    gradient_conflict = jnp.any(pairs & (alignment.gradient_cosine_matrix < -tolerance))
+    return gradient_conflict, constructed_conflict
+
+
 def _validate_congruent(
     reference: PyTree[Array],
     values: Sequence[PyTree[Array]],

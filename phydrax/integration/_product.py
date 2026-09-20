@@ -233,6 +233,281 @@ def _replicate_count(groups: tuple[tuple[tuple[str, ...], Any], ...], /) -> int:
     return 1 if not counts else counts.pop()
 
 
+def _materialize_product_factor(
+    component: ComponentTarget,
+    labels: tuple[str, ...],
+    factor_plan: Any,
+    structure: SampleLayout,
+    reduction_axes: tuple[str, ...],
+    key: Any,
+    replica: int,
+    points: dict[str, Any],
+    weights_by_axis: dict[str, cx.AxisArray],
+    deterministic_axes: list[str],
+    /,
+) -> None:
+    factors = tuple(_unwrap(component.domain.factor(label)) for label in labels)
+    endpoint_factors = (
+        tuple(
+            factor
+            for factor, rule in zip(
+                factors,
+                factor_plan.axis_rules,
+                strict=False,
+            )
+            if rule == "clenshaw-curtis"
+        )
+        if isinstance(factor_plan, SparseGridPlan)
+        else factors
+    )
+    endpoint_inclusive = isinstance(factor_plan, SparseGridPlan) or (
+        isinstance(factor_plan, FixedQuadraturePlan)
+        and isinstance(factor_plan.rule, (ClenshawCurtisRule, TanhSinhRule))
+    )
+    if endpoint_inclusive and any(
+        isinstance(factor, ProbabilityDomain)
+        and getattr(factor.distribution, "support", None) is None
+        for factor in endpoint_factors
+    ):
+        raise ValueError(
+            "Endpoint-inclusive product rules require bounded probability support."
+        )
+    if isinstance(factor_plan, FixedQuadraturePlan):
+        if isinstance(factor_plan.rule, GaussianCubatureRule):
+            rule = factor_plan.rule
+            if len(labels) != rule.dimension:
+                raise ValueError(
+                    "Gaussian cubature dimension must match its product labels."
+                )
+            axis = structure.axis_for(labels[0])
+            if axis is None:
+                raise RuntimeError("Gaussian cubature product factor has no axis.")
+            for column, (label, factor) in enumerate(zip(labels, factors, strict=True)):
+                if not isinstance(factor, ProbabilityDomain):
+                    raise TypeError(
+                        "Gaussian cubature product factors must be probability domains."
+                    )
+                transport = factor.reference_transport
+                if transport.reference_measure != "standard-normal":
+                    raise ValueError(
+                        "Gaussian cubature product factors require standard-normal reference transports."
+                    )
+                points[label] = cx.AxisArray(
+                    transport.from_reference(rule.prepared.points[:, column]),
+                    dims=(axis,),
+                )
+            weights_by_axis[axis] = cx.AxisArray(rule.prepared.weights, dims=(axis,))
+            if axis in reduction_axes and axis not in deterministic_axes:
+                deterministic_axes.append(axis)
+            return
+        if isinstance(factor_plan.rule, CubatureRule):
+            if len(labels) != 1 or not isinstance(factors[0], AbstractGeometry):
+                raise TypeError(
+                    "Native cubature product factors require one geometry label."
+                )
+            label = labels[0]
+            axis = structure.axis_for(label)
+            if axis is None:
+                raise RuntimeError("Cubature product factor has no axis.")
+            mapped, weights = _cubature_factor_data(
+                factors[0],
+                component.spec.selection_for(label),
+                factor_plan.rule,
+            )
+            points[label] = cx.AxisArray(mapped, dims=(axis, None))
+            weights_by_axis[axis] = cx.AxisArray(weights, dims=(axis,))
+            if axis in reduction_axes and axis not in deterministic_axes:
+                deterministic_axes.append(axis)
+            return
+        for label, factor in zip(labels, factors, strict=True):
+            axis = structure.axis_for(label)
+            if axis is None:
+                raise RuntimeError("Fixed product factor has no axis.")
+            mapped, weights = _scalar_interior_rule_data(factor, factor_plan.rule)
+            points[label] = cx.AxisArray(jnp.asarray(mapped), dims=(axis,))
+            weights_by_axis[axis] = cx.AxisArray(jnp.asarray(weights), dims=(axis,))
+            if axis in reduction_axes and axis not in deterministic_axes:
+                deterministic_axes.append(axis)
+        return
+    if isinstance(factor_plan, SparseGridPlan):
+        if factor_plan.dimension != len(labels):
+            raise ValueError("Sparse-grid factor dimension must match its label group.")
+        for label, factor, rule in zip(
+            labels,
+            factors,
+            factor_plan.axis_rules,
+            strict=True,
+        ):
+            _validate_sparse_factor(factor, rule, label)
+        nodes, raw_weights = _smolyak_rule(
+            factor_plan.dimension,
+            factor_plan.level,
+            factor_plan.anisotropy,
+            factor_plan.axis_rules,
+        )
+        axis = structure.axis_for(labels[0])
+        if axis is None:
+            raise RuntimeError("Sparse-grid product factor has no axis.")
+        scale = jnp.asarray(1.0)
+        for column, (label, factor, rule) in enumerate(
+            zip(
+                labels,
+                factors,
+                factor_plan.axis_rules,
+                strict=True,
+            )
+        ):
+            mapped, local_scale = _map_sparse_canonical(
+                factor,
+                jnp.asarray(nodes[:, column]),
+                rule,
+                label,
+            )
+            points[label] = cx.AxisArray(jnp.asarray(mapped), dims=(axis,))
+            scale = scale * local_scale
+        weights_by_axis[axis] = cx.AxisArray(
+            scale * jnp.asarray(raw_weights), dims=(axis,)
+        )
+        if axis in reduction_axes and axis not in deterministic_axes:
+            deterministic_axes.append(axis)
+        return
+    design = factor_plan.design
+    count = factor_plan.num_samples
+    transports = tuple(
+        reference_transport(factor, component.spec.selection_for(label))
+        for label, factor in zip(labels, factors, strict=True)
+    )
+    unsupported_labels = tuple(
+        label
+        for label, transport in zip(labels, transports, strict=True)
+        if transport is None
+    )
+    if unsupported_labels:
+        raise TypeError(
+            "Product stochastic plans require exact target-measure reference "
+            f"transports; unsupported labels={unsupported_labels!r}."
+        )
+    reference_dimension = sum(
+        transport.reference_dimension for transport in transports if transport is not None
+    )
+    base_design = design.base if isinstance(design, AntitheticDesign) else design
+    name = design_name(base_design)
+    address = SampleAddress(
+        "integration",
+        "product-group",
+        target=labels,
+        role=name,
+    )
+    design_key = derive_key(key, address, replica)
+    if isinstance(design, AntitheticDesign):
+        if count % 2:
+            raise ValueError("Antithetic product factors require even num_samples.")
+        pair_count = count // 2
+        first = materialize_design(
+            base_design,
+            count=pair_count,
+            dimension=reference_dimension,
+            key=design_key,
+        )
+        second = (
+            1.0 - first
+            if design.involution is None
+            else jnp.asarray(design.involution(first), dtype=jnp.float64)
+        )
+        if second.shape != first.shape:
+            raise ValueError("Antithetic involution must preserve the design shape.")
+        unit = jnp.concatenate((first, second), axis=0)
+    else:
+        unit = materialize_design(
+            design,
+            count=count,
+            dimension=reference_dimension,
+            key=design_key,
+        )
+    axis = structure.axis_for(labels[0])
+    if axis is None:
+        raise RuntimeError("Stochastic product factor has no axis.")
+    offset = 0
+    for label, transport in zip(labels, transports, strict=True):
+        if transport is None:
+            raise RuntimeError("Validated reference transport is unavailable.")
+        next_offset = offset + transport.reference_dimension
+        mapped = transport.map(unit[:, offset:next_offset])
+
+        def _sample_field(value):
+            array = jnp.asarray(value)
+            return cx.AxisArray(
+                array,
+                dims=(axis,) + (None,) * (array.ndim - 1),
+            )
+
+        points[label] = jax.tree_util.tree_map(_sample_field, mapped)
+        offset = next_offset
+    group_mass = _block_measure(component, labels)
+    weights_by_axis[axis] = cx.AxisArray(
+        jnp.full((count,), group_mass / float(count)), dims=(axis,)
+    )
+
+
+def _materialize_product_replica(
+    component: ComponentTarget,
+    groups: tuple[tuple[tuple[str, ...], Any], ...],
+    fixed_labels: frozenset[str],
+    structure: SampleLayout,
+    reduction_axes: tuple[str, ...],
+    key: Any,
+    replica: int,
+    deterministic_axes: list[str],
+    /,
+) -> PointIntegrationBatch:
+    points: dict[str, Any] = {}
+    weights_by_axis: dict[str, cx.AxisArray] = {}
+    for label in fixed_labels:
+        points[label] = _fixed_field(
+            component.domain.factor(label), component.spec.selection_for(label)
+        )
+    for labels, factor_plan in groups:
+        _materialize_product_factor(
+            component,
+            labels,
+            factor_plan,
+            structure,
+            reduction_axes,
+            key,
+            replica,
+            points,
+            weights_by_axis,
+            deterministic_axes,
+        )
+    batches: list[PointIntegrationBatch] = []
+    total_weight = cx.AxisArray(jnp.asarray(1.0), dims=())
+    axis_names = structure.axis_names
+    if axis_names is None:
+        raise RuntimeError("Product structure is not canonicalized.")
+    for block, axis in zip(structure.blocks, axis_names, strict=True):
+        if axis not in reduction_axes:
+            continue
+        total_weight = total_weight * weights_by_axis[axis]
+    mass = total_weight
+    for axis in reduction_axes:
+        mass = sum_over(mass, axis)
+    target_mass = jnp.asarray(mass.data)
+    point_batch = PointBatch(
+        frozendict({label: points[label] for label in component.domain.labels}),
+        structure,
+    )
+    batches.append(
+        PointIntegrationBatch(
+            point_batch,
+            total_weight,
+            axes=reduction_axes,
+            target_mass=target_mass,
+            provenance="product",
+        )
+    )
+    return batches[0]
+
+
 def materialize_product(
     target: ComponentTarget | DensityTarget,
     plan: ProductIntegrationPlan,
@@ -304,253 +579,16 @@ def materialize_product(
     deterministic_axes: list[str] = []
     factor_plans = tuple(factor_plan for _, factor_plan in groups)
     for replica in range(replicas):
-        points: dict[str, Any] = {}
-        weights_by_axis: dict[str, cx.AxisArray] = {}
-        for label in fixed_labels:
-            points[label] = _fixed_field(
-                component.domain.factor(label), component.spec.selection_for(label)
-            )
-        for group_index, (labels, factor_plan) in enumerate(groups):
-            factors = tuple(_unwrap(component.domain.factor(label)) for label in labels)
-            endpoint_factors = (
-                tuple(
-                    factor
-                    for factor, rule in zip(
-                        factors,
-                        factor_plan.axis_rules,
-                        strict=False,
-                    )
-                    if rule == "clenshaw-curtis"
-                )
-                if isinstance(factor_plan, SparseGridPlan)
-                else factors
-            )
-            endpoint_inclusive = isinstance(factor_plan, SparseGridPlan) or (
-                isinstance(factor_plan, FixedQuadraturePlan)
-                and isinstance(factor_plan.rule, (ClenshawCurtisRule, TanhSinhRule))
-            )
-            if endpoint_inclusive and any(
-                isinstance(factor, ProbabilityDomain)
-                and getattr(factor.distribution, "support", None) is None
-                for factor in endpoint_factors
-            ):
-                raise ValueError(
-                    "Endpoint-inclusive product rules require bounded probability support."
-                )
-            if isinstance(factor_plan, FixedQuadraturePlan):
-                if isinstance(factor_plan.rule, GaussianCubatureRule):
-                    rule = factor_plan.rule
-                    if len(labels) != rule.dimension:
-                        raise ValueError(
-                            "Gaussian cubature dimension must match its product labels."
-                        )
-                    axis = structure.axis_for(labels[0])
-                    if axis is None:
-                        raise RuntimeError(
-                            "Gaussian cubature product factor has no axis."
-                        )
-                    for column, (label, factor) in enumerate(
-                        zip(labels, factors, strict=True)
-                    ):
-                        if not isinstance(factor, ProbabilityDomain):
-                            raise TypeError(
-                                "Gaussian cubature product factors must be probability domains."
-                            )
-                        transport = factor.reference_transport
-                        if transport.reference_measure != "standard-normal":
-                            raise ValueError(
-                                "Gaussian cubature product factors require standard-normal reference transports."
-                            )
-                        points[label] = cx.AxisArray(
-                            transport.from_reference(rule.prepared.points[:, column]),
-                            dims=(axis,),
-                        )
-                    weights_by_axis[axis] = cx.AxisArray(
-                        rule.prepared.weights, dims=(axis,)
-                    )
-                    if axis in reduction_axes and axis not in deterministic_axes:
-                        deterministic_axes.append(axis)
-                    continue
-                if isinstance(factor_plan.rule, CubatureRule):
-                    if len(labels) != 1 or not isinstance(factors[0], AbstractGeometry):
-                        raise TypeError(
-                            "Native cubature product factors require one geometry label."
-                        )
-                    label = labels[0]
-                    axis = structure.axis_for(label)
-                    if axis is None:
-                        raise RuntimeError("Cubature product factor has no axis.")
-                    mapped, weights = _cubature_factor_data(
-                        factors[0],
-                        component.spec.selection_for(label),
-                        factor_plan.rule,
-                    )
-                    points[label] = cx.AxisArray(mapped, dims=(axis, None))
-                    weights_by_axis[axis] = cx.AxisArray(weights, dims=(axis,))
-                    if axis in reduction_axes and axis not in deterministic_axes:
-                        deterministic_axes.append(axis)
-                    continue
-                for label, factor in zip(labels, factors, strict=True):
-                    axis = structure.axis_for(label)
-                    if axis is None:
-                        raise RuntimeError("Fixed product factor has no axis.")
-                    mapped, weights = _scalar_interior_rule_data(factor, factor_plan.rule)
-                    points[label] = cx.AxisArray(jnp.asarray(mapped), dims=(axis,))
-                    weights_by_axis[axis] = cx.AxisArray(
-                        jnp.asarray(weights), dims=(axis,)
-                    )
-                    if axis in reduction_axes and axis not in deterministic_axes:
-                        deterministic_axes.append(axis)
-                continue
-            if isinstance(factor_plan, SparseGridPlan):
-                if factor_plan.dimension != len(labels):
-                    raise ValueError(
-                        "Sparse-grid factor dimension must match its label group."
-                    )
-                for label, factor, rule in zip(
-                    labels,
-                    factors,
-                    factor_plan.axis_rules,
-                    strict=True,
-                ):
-                    _validate_sparse_factor(factor, rule, label)
-                nodes, raw_weights = _smolyak_rule(
-                    factor_plan.dimension,
-                    factor_plan.level,
-                    factor_plan.anisotropy,
-                    factor_plan.axis_rules,
-                )
-                axis = structure.axis_for(labels[0])
-                if axis is None:
-                    raise RuntimeError("Sparse-grid product factor has no axis.")
-                scale = jnp.asarray(1.0)
-                for column, (label, factor, rule) in enumerate(
-                    zip(
-                        labels,
-                        factors,
-                        factor_plan.axis_rules,
-                        strict=True,
-                    )
-                ):
-                    mapped, local_scale = _map_sparse_canonical(
-                        factor,
-                        jnp.asarray(nodes[:, column]),
-                        rule,
-                        label,
-                    )
-                    points[label] = cx.AxisArray(jnp.asarray(mapped), dims=(axis,))
-                    scale = scale * local_scale
-                weights_by_axis[axis] = cx.AxisArray(
-                    scale * jnp.asarray(raw_weights), dims=(axis,)
-                )
-                if axis in reduction_axes and axis not in deterministic_axes:
-                    deterministic_axes.append(axis)
-                continue
-            design = factor_plan.design
-            count = factor_plan.num_samples
-            transports = tuple(
-                reference_transport(factor, component.spec.selection_for(label))
-                for label, factor in zip(labels, factors, strict=True)
-            )
-            unsupported_labels = tuple(
-                label
-                for label, transport in zip(labels, transports, strict=True)
-                if transport is None
-            )
-            if unsupported_labels:
-                raise TypeError(
-                    "Product stochastic plans require exact target-measure reference "
-                    f"transports; unsupported labels={unsupported_labels!r}."
-                )
-            reference_dimension = sum(
-                transport.reference_dimension
-                for transport in transports
-                if transport is not None
-            )
-            base_design = design.base if isinstance(design, AntitheticDesign) else design
-            name = design_name(base_design)
-            address = SampleAddress(
-                "integration",
-                "product-group",
-                target=labels,
-                role=name,
-            )
-            design_key = derive_key(key, address, replica)
-            if isinstance(design, AntitheticDesign):
-                if count % 2:
-                    raise ValueError(
-                        "Antithetic product factors require even num_samples."
-                    )
-                pair_count = count // 2
-                first = materialize_design(
-                    base_design,
-                    count=pair_count,
-                    dimension=reference_dimension,
-                    key=design_key,
-                )
-                second = (
-                    1.0 - first
-                    if design.involution is None
-                    else jnp.asarray(design.involution(first), dtype=jnp.float64)
-                )
-                if second.shape != first.shape:
-                    raise ValueError(
-                        "Antithetic involution must preserve the design shape."
-                    )
-                unit = jnp.concatenate((first, second), axis=0)
-            else:
-                unit = materialize_design(
-                    design,
-                    count=count,
-                    dimension=reference_dimension,
-                    key=design_key,
-                )
-            axis = structure.axis_for(labels[0])
-            if axis is None:
-                raise RuntimeError("Stochastic product factor has no axis.")
-            offset = 0
-            for label, transport in zip(labels, transports, strict=True):
-                if transport is None:
-                    raise RuntimeError("Validated reference transport is unavailable.")
-                next_offset = offset + transport.reference_dimension
-                mapped = transport.map(unit[:, offset:next_offset])
-
-                def _sample_field(value):
-                    array = jnp.asarray(value)
-                    return cx.AxisArray(
-                        array,
-                        dims=(axis,) + (None,) * (array.ndim - 1),
-                    )
-
-                points[label] = jax.tree_util.tree_map(_sample_field, mapped)
-                offset = next_offset
-            group_mass = _block_measure(component, labels)
-            weights_by_axis[axis] = cx.AxisArray(
-                jnp.full((count,), group_mass / float(count)), dims=(axis,)
-            )
-        total_weight = cx.AxisArray(jnp.asarray(1.0), dims=())
-        axis_names = structure.axis_names
-        if axis_names is None:
-            raise RuntimeError("Product structure is not canonicalized.")
-        for block, axis in zip(structure.blocks, axis_names, strict=True):
-            if axis not in reduction_axes:
-                continue
-            total_weight = total_weight * weights_by_axis[axis]
-        mass = total_weight
-        for axis in reduction_axes:
-            mass = sum_over(mass, axis)
-        target_mass = jnp.asarray(mass.data)
-        point_batch = PointBatch(
-            frozendict({label: points[label] for label in component.domain.labels}),
-            structure,
-        )
         batches.append(
-            PointIntegrationBatch(
-                point_batch,
-                total_weight,
-                axes=reduction_axes,
-                target_mass=target_mass,
-                provenance="product",
+            _materialize_product_replica(
+                component,
+                groups,
+                fixed_labels,
+                structure,
+                reduction_axes,
+                key,
+                replica,
+                deterministic_axes,
             )
         )
     randomized_qmc = replicas > 1

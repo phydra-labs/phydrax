@@ -1159,35 +1159,21 @@ def _deterministic_delay_terms(
     return drift
 
 
-def solve_diffrax_delay(
-    problem: DelayDifferentialProblem | NeutralDelayProblem,
-    /,
+def _validate_whole_delay_controls(
+    problem,
     *,
-    save_times: ArrayLike,
-    realization: WienerRealization | None = None,
-    solver: Any | None = None,
-    stepsize_controller: Any | None = None,
-    adjoint: Any | None = None,
-    dt0: ArrayLike | None = None,
-    event: Any | None = None,
-    rtol: float = 1e-6,
-    atol: float = 1e-8,
-    dense: bool = False,
-    history_mode: DelayHistoryMode = "full",
-    history_capacity: int | None = None,
-    history_margin: int = 2,
-    max_steps: int | None = 4096,
-    initial_discontinuities: ArrayLike | Sequence[float] | None = None,
-    discontinuity_depth: int | None = None,
-    max_discontinuities: int = 8192,
-    root_rtol: float = 1e-10,
-    root_atol: float = 1e-12,
-    max_root_iterations: int = 64,
-    throw: bool = False,
-    complex_state_policy: DiffraxComplexStatePolicy | None = None,
-    state_coordinates: AbstractRealCoordinateMap | None = None,
-) -> MemoryEquationSolution:
-    """Solve a declared delay differential equation through Diffrax."""
+    dense: bool,
+    history_mode: str,
+    max_steps: int | None,
+    history_capacity: int | None,
+    history_margin: int,
+    max_discontinuities: int,
+    root_rtol: float,
+    root_atol: float,
+    max_root_iterations: int,
+    complex_state_policy,
+    state_coordinates,
+):
     if not isinstance(problem, (DelayDifferentialProblem, NeutralDelayProblem)):
         raise TypeError(
             "solve_diffrax_delay requires a DelayDifferentialProblem or NeutralDelayProblem."
@@ -1236,6 +1222,87 @@ def solve_diffrax_delay(
         or max_root_iterations <= 0
     ):
         raise ValueError("max_root_iterations must be a positive integer.")
+    return state_adapter
+
+
+def _prepare_deterministic_delay_execution(
+    problem,
+    realization,
+    solver,
+    discontinuity_depth,
+    history_mode: str,
+    /,
+):
+    if realization is not None:
+        raise ValueError(
+            "Deterministic delay problems do not accept a WienerRealization."
+        )
+
+    if problem.neutral and discontinuity_depth is not None:
+        raise ValueError(
+            "Neutral delay solves propagate discontinuities through the full horizon; discontinuity_depth must be None."
+        )
+
+    if isinstance(problem, NeutralDelayProblem):
+        selected_solver = dfx.Euler() if solver is None else solver
+        if type(selected_solver) is not dfx.Euler:
+            raise ValueError(
+                "NeutralDelayProblem execution currently requires diffrax.Euler."
+            )
+    else:
+        selected_solver = _resolved_delay_solver(problem, solver)
+    execution_plan = compile_delay_execution_plan(
+        problem,
+        selected_solver,
+        execution="whole",
+        history_mode=history_mode,
+    )
+    return selected_solver, execution_plan
+
+
+def solve_diffrax_delay(
+    problem: DelayDifferentialProblem | NeutralDelayProblem,
+    /,
+    *,
+    save_times: ArrayLike,
+    realization: WienerRealization | None = None,
+    solver: Any | None = None,
+    stepsize_controller: Any | None = None,
+    adjoint: Any | None = None,
+    dt0: ArrayLike | None = None,
+    event: Any | None = None,
+    rtol: float = 1e-6,
+    atol: float = 1e-8,
+    dense: bool = False,
+    history_mode: DelayHistoryMode = "full",
+    history_capacity: int | None = None,
+    history_margin: int = 2,
+    max_steps: int | None = 4096,
+    initial_discontinuities: ArrayLike | Sequence[float] | None = None,
+    discontinuity_depth: int | None = None,
+    max_discontinuities: int = 8192,
+    root_rtol: float = 1e-10,
+    root_atol: float = 1e-12,
+    max_root_iterations: int = 64,
+    throw: bool = False,
+    complex_state_policy: DiffraxComplexStatePolicy | None = None,
+    state_coordinates: AbstractRealCoordinateMap | None = None,
+) -> MemoryEquationSolution:
+    """Solve a declared delay differential equation through Diffrax."""
+    state_adapter = _validate_whole_delay_controls(
+        problem,
+        dense=dense,
+        history_mode=history_mode,
+        max_steps=max_steps,
+        history_capacity=history_capacity,
+        history_margin=history_margin,
+        max_discontinuities=max_discontinuities,
+        root_rtol=root_rtol,
+        root_atol=root_atol,
+        max_root_iterations=max_root_iterations,
+        complex_state_policy=complex_state_policy,
+        state_coordinates=state_coordinates,
+    )
     if problem.stochastic:
         assert isinstance(problem, DelayDifferentialProblem)
         from ._diffrax_delay_stochastic import _solve_diffrax_delay_stochastic
@@ -1262,29 +1329,8 @@ def solve_diffrax_delay(
             throw=throw,
             state_adapter=state_adapter,
         )
-    if realization is not None:
-        raise ValueError(
-            "Deterministic delay problems do not accept a WienerRealization."
-        )
-
-    if problem.neutral and discontinuity_depth is not None:
-        raise ValueError(
-            "Neutral delay solves propagate discontinuities through the full horizon; discontinuity_depth must be None."
-        )
-
-    if isinstance(problem, NeutralDelayProblem):
-        selected_solver = dfx.Euler() if solver is None else solver
-        if type(selected_solver) is not dfx.Euler:
-            raise ValueError(
-                "NeutralDelayProblem execution currently requires diffrax.Euler."
-            )
-    else:
-        selected_solver = _resolved_delay_solver(problem, solver)
-    execution_plan = compile_delay_execution_plan(
-        problem,
-        selected_solver,
-        execution="whole",
-        history_mode=history_mode,
+    selected_solver, execution_plan = _prepare_deterministic_delay_execution(
+        problem, realization, solver, discontinuity_depth, history_mode
     )
     stage_time_extent = execution_plan.stage_time_extent
 

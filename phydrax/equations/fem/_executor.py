@@ -1203,6 +1203,697 @@ def _exterior_functional_value(
     return result
 
 
+def _accumulate_finite_element_workset(
+    form: FiniteElementForm,
+    discretization: AbstractPreparedLocalDiscretization,
+    workset,
+    state_by_field: dict[str, Array],
+    residual_by_field: dict[str, Array],
+    accumulation: str,
+    context: FiniteElementExecutionContext,
+    block_names: tuple[str, ...],
+    cell_offsets: np.ndarray,
+    /,
+) -> None:
+    if workset.local_region is not None:
+        for raw_action_index in workset.action_index_values:
+            action = form.actions[raw_action_index]
+            if isinstance(action, LocalFunctionalAction):
+                _value, blocks = _prepared_local_functional_value_and_residual(
+                    action,
+                    discretization,
+                    workset,
+                    state_by_field,
+                    context,
+                    with_residual=True,
+                )
+            else:
+                output_field, dofs, local = _prepared_local_volume_residual(
+                    action,
+                    discretization,
+                    workset,
+                    state_by_field,
+                    context,
+                )
+                blocks = ((output_field, dofs, local),)
+            for output_field, dofs, local in blocks:
+                residual_by_field[output_field] = _scatter_local(
+                    residual_by_field[output_field],
+                    dofs,
+                    local,
+                    accumulation,
+                )
+        return
+    if not isinstance(discretization, FiniteElementDiscretization):
+        raise ValueError("Facet and legacy volume worksets require finite elements.")
+    block_index = block_names.index(workset.signature.block_name)
+    block = discretization.mesh.blocks[block_index]
+    work_cells = jnp.asarray(workset.owner_cells, dtype=jnp.int32)
+    local_cells = work_cells - int(cell_offsets[block_index])
+    gathers = dict(workset.gathers)
+    for raw_action_index in workset.action_index_values:
+        action = form.actions[raw_action_index]
+        if isinstance(action, LocalFunctionalAction):
+            domain = (
+                _action_domain(action, discretization)
+                if len(discretization.mesh.blocks) == 1
+                else _workset_domain(
+                    action,
+                    discretization,
+                    workset.entity_index_values,
+                )
+            )
+            if domain.kind == "cell":
+                _accumulate_cell_functional_residual(
+                    discretization,
+                    state_by_field,
+                    residual_by_field,
+                    action,
+                    workset,
+                    block_index,
+                    local_cells,
+                    context,
+                    accumulation,
+                )
+            elif domain.kind == "exterior_facet":
+                _exterior_functional_value(
+                    discretization,
+                    state_by_field,
+                    action,
+                    workset,
+                    domain,
+                    context,
+                    residual_by_field=residual_by_field,
+                    accumulation=accumulation,
+                )
+            else:
+                raise ValueError("Unsupported functional integration domain.")
+            continue
+        output_field = _action_output_fields(action)[0]
+        output_state = state_by_field[output_field]
+        output_field_index = discretization._field_index(output_field)
+        output_dof_map = discretization.dof_maps[output_field_index]
+        output_residual = residual_by_field[output_field]
+        domain = (
+            _action_domain(action, discretization)
+            if len(discretization.mesh.blocks) == 1
+            else _workset_domain(
+                action,
+                discretization,
+                workset.entity_index_values,
+            )
+        )
+        if isinstance(action, PreparedOperatorAction):
+            if len(discretization.mesh.blocks) != 1:
+                raise ValueError(
+                    "Prepared global operator actions require one mesh block."
+                )
+            image = action.operator.mv(output_state.reshape((-1,))).reshape(
+                output_state.shape
+            )
+            residual_by_field[output_field] = output_residual + image
+            continue
+        if isinstance(action, SIPGFacetAction):
+            residual_by_field[output_field] = output_residual + _sipg_facet_residual(
+                discretization,
+                output_field_index,
+                output_state,
+                action,
+                domain,
+                context,
+                accumulation,
+            )
+            continue
+        if isinstance(action, BoundaryLoadAction):
+            load = (
+                _prepared_tensor_boundary_load(
+                    discretization,
+                    output_field_index,
+                    output_state,
+                    action,
+                    workset,
+                    context,
+                    accumulation,
+                )
+                if workset.reference is not None
+                else _boundary_load(
+                    discretization,
+                    output_field_index,
+                    action,
+                    domain,
+                    context,
+                )
+            )
+            residual_by_field[output_field] = output_residual - load
+            continue
+        if isinstance(action, ExteriorFacetAction):
+            facet_residual = (
+                _prepared_tensor_facet_residual(
+                    discretization,
+                    state_by_field,
+                    output_field,
+                    action,
+                    workset,
+                    context,
+                    accumulation,
+                )
+                if workset.reference is not None
+                else _exterior_facet_residual(
+                    discretization,
+                    output_field_index,
+                    output_state,
+                    action,
+                    workset,
+                    domain,
+                    context,
+                    accumulation,
+                )
+            )
+            residual_by_field[output_field] = output_residual + facet_residual
+            continue
+        if isinstance(action, InteriorFacetAction):
+            if workset.mortar is not None:
+                if action.input_field_names != (output_field,):
+                    raise ValueError("Cross-field mortar facets are not yet supported.")
+                facet_residual = _mortar_facet_residual(
+                    output_state,
+                    action,
+                    workset,
+                    context,
+                )
+            elif workset.reference is not None:
+                facet_residual = _prepared_tensor_facet_residual(
+                    discretization,
+                    state_by_field,
+                    output_field,
+                    action,
+                    workset,
+                    context,
+                    accumulation,
+                )
+            else:
+                if action.input_field_names != (output_field,):
+                    raise ValueError(
+                        "Cross-field legacy facets require prepared references."
+                    )
+                facet_residual = _interior_facet_residual(
+                    discretization,
+                    output_field_index,
+                    output_state,
+                    action,
+                    workset,
+                    domain,
+                    context,
+                    accumulation,
+                )
+            residual_by_field[output_field] = output_residual + facet_residual
+            continue
+        rule = _action_rule(action, block.name, block.cell_kind)
+        rule_data = _reference_rule_data(rule)
+        reference = workset.reference
+        if reference is None:
+            output_geometry = discretization.evaluate_block_geometry(
+                output_field,
+                block_index,
+                context.runtime.coordinates,
+                rule_data.points,
+                rule_data.weights,
+            )
+            physical_points = output_geometry.physical_points[local_cells]
+            physical_gradients = output_geometry.physical_gradients[local_cells]
+            physical_weights = output_geometry.physical_weights[local_cells]
+            basis_values = output_geometry.basis_values
+            if basis_values.ndim > 2:
+                basis_values = basis_values[local_cells]
+            metric = None
+        else:
+            metric = _cell_metric(
+                discretization,
+                block_index,
+                local_cells,
+                reference,
+                context.runtime.coordinates,
+            )
+            physical_points = metric.physical_points
+            factorized_without_test_gradients = workset.signature.local_kernel in (
+                "sum_factorized",
+                "collocated",
+            ) and isinstance(
+                action,
+                (
+                    DiffusionAction,
+                    TensorDiffusionAction,
+                    MassAction,
+                    SourceAction,
+                    CellEnergyAction,
+                    PairwiseVolumeFluxAction,
+                ),
+            )
+            physical_gradients = (
+                None
+                if factorized_without_test_gradients
+                else metric.physical_gradients(reference.basis_gradients)
+            )
+            physical_weights = metric.weighted_measure
+            basis_values = reference.basis_values
+        reference_points = (
+            rule_data.points if reference is None else reference.volume_rule.points
+        )
+        dofs = gathers[output_field]
+        local_state = output_state[dofs]
+        output_orientation = output_dof_map.orientations[block_index][local_cells]
+        local_state = local_state * output_orientation.reshape(
+            output_orientation.shape + (1,) * (local_state.ndim - output_orientation.ndim)
+        )
+        if isinstance(action, PairwiseVolumeFluxAction):
+            if reference is None or metric is None:
+                raise ValueError(
+                    "Pairwise volume flux requires a prepared tensor reference."
+                )
+            local = _pairwise_volume_residual(
+                action,
+                local_state,
+                local_cells,
+                reference,
+                metric,
+                context,
+            )
+        elif isinstance(action, TensorDiffusionAction):
+            if local_state.ndim != 2:
+                raise ValueError(
+                    "TensorDiffusionAction requires a scalar finite-element field."
+                )
+            values = _cell_coefficient_values(
+                action.diffusivity,
+                discretization,
+                block_index,
+                workset,
+                gathers,
+                physical_points,
+                reference_points,
+                context,
+                work_cells,
+                value_shape=None,
+            )
+            dimension = physical_points.shape[-1]
+            tensor = action.physical_tensor(
+                values,
+                dimension,
+                leading_shape=physical_points.shape[:-1],
+            )
+            if (
+                workset.signature.local_kernel in ("sum_factorized", "collocated")
+                and reference is not None
+                and reference.tensor_tabulation is not None
+                and metric is not None
+            ):
+                plan = SumFactorizationPlan(reference.tensor_tabulation)
+                reference_gradient = _tensor_gradient(plan, local_state)
+                qshape = plan.tabulation.evaluation_shape
+                inverse_jacobian = metric.inverse_jacobian.reshape(
+                    (local_state.shape[0])
+                    + qshape
+                    + (plan.tabulation.dimension, dimension)
+                )
+                tensor_grid = tensor.reshape(
+                    (local_state.shape[0]) + qshape + (dimension, dimension)
+                )
+                weighted_measure = metric.weighted_measure.reshape(
+                    (local_state.shape[0]) + qshape
+                )
+                reference_tensor = ein.contract(
+                    "...rd,...de,...se,...->...rs",
+                    inverse_jacobian,
+                    tensor_grid,
+                    inverse_jacobian,
+                    weighted_measure,
+                )
+                reference_flux = ein.contract(
+                    "...rs,...s->...r", reference_tensor, reference_gradient
+                )
+                local = _tensor_gradient_transpose(plan, reference_flux, ())
+            else:
+                field_gradient = ein.contract(
+                    "cqid,ci->cqd", physical_gradients, local_state
+                )
+                local = ein.contract(
+                    "cq,cqid,cqde,cqe->ci",
+                    physical_weights,
+                    physical_gradients,
+                    tensor,
+                    field_gradient,
+                )
+        elif isinstance(action, DiffusionAction):
+            values = _cell_coefficient_values(
+                action.diffusivity,
+                discretization,
+                block_index,
+                workset,
+                gathers,
+                physical_points,
+                reference_points,
+                context,
+                work_cells,
+            )
+            if (
+                workset.signature.local_kernel in ("sum_factorized", "collocated")
+                and reference is not None
+                and reference.tensor_tabulation is not None
+                and metric is not None
+            ):
+                plan = SumFactorizationPlan(reference.tensor_tabulation)
+                component_shape = local_state.shape[2:]
+                reference_gradient = _tensor_gradient(plan, local_state)
+                qshape = plan.tabulation.evaluation_shape
+                weighted_metric = metric.weighted_metric.reshape(
+                    (local_state.shape[0],)
+                    + qshape
+                    + (1,) * len(component_shape)
+                    + (plan.tabulation.dimension, plan.tabulation.dimension)
+                )
+                flux = ein.contract(
+                    "...ab,...b->...a", weighted_metric, reference_gradient
+                )
+                coefficient_grid = values.reshape(
+                    (local_state.shape[0],) + qshape + (1,) * (len(component_shape) + 1)
+                )
+                local = _tensor_gradient_transpose(
+                    plan,
+                    coefficient_grid * flux,
+                    component_shape,
+                )
+            else:
+                field_gradient = ein.contract(
+                    "cqid,ci...->cqd...",
+                    physical_gradients,
+                    local_state,
+                )
+                local = ein.contract(
+                    "cq,cq,cqid,cqd...->ci...",
+                    physical_weights,
+                    values,
+                    physical_gradients,
+                    field_gradient,
+                )
+        elif isinstance(action, MassAction):
+            if basis_values.ndim != 2:
+                raise ValueError("Built-in mass terms require a scalar reference basis.")
+            values = _cell_coefficient_values(
+                action.coefficient,
+                discretization,
+                block_index,
+                workset,
+                gathers,
+                physical_points,
+                reference_points,
+                context,
+                work_cells,
+            )
+            if (
+                workset.signature.local_kernel in ("sum_factorized", "collocated")
+                and reference is not None
+                and reference.tensor_tabulation is not None
+                and metric is not None
+            ):
+                plan = SumFactorizationPlan(reference.tensor_tabulation)
+                component_shape = local_state.shape[2:]
+                qshape = plan.tabulation.evaluation_shape
+                field_value = _tensor_forward(plan, local_state)
+                weight = (metric.weighted_measure * values).reshape(
+                    (local_state.shape[0],) + qshape + (1,) * len(component_shape)
+                )
+                local = _tensor_transpose(
+                    plan,
+                    weight * field_value,
+                    component_shape,
+                )
+            else:
+                field_value = ein.contract(
+                    "qi,ci...->cq...",
+                    basis_values,
+                    local_state,
+                )
+                local = ein.contract(
+                    "cq,cq,qi,cq...->ci...",
+                    physical_weights,
+                    values,
+                    basis_values,
+                    field_value,
+                )
+        elif isinstance(action, SourceAction):
+            if basis_values.ndim != 2:
+                raise ValueError(
+                    "Built-in source terms require a scalar reference basis."
+                )
+            component_shape = output_state.shape[1:]
+            values = _cell_coefficient_values(
+                action.source,
+                discretization,
+                block_index,
+                workset,
+                gathers,
+                physical_points,
+                reference_points,
+                context,
+                work_cells,
+                value_shape=component_shape,
+            )
+            if (
+                workset.signature.local_kernel in ("sum_factorized", "collocated")
+                and reference is not None
+                and reference.tensor_tabulation is not None
+                and metric is not None
+            ):
+                plan = SumFactorizationPlan(reference.tensor_tabulation)
+                qshape = plan.tabulation.evaluation_shape
+                weight = metric.weighted_measure.reshape(
+                    (local_state.shape[0],) + qshape + (1,) * len(component_shape)
+                )
+                values_grid = values.reshape(
+                    (local_state.shape[0],) + qshape + component_shape
+                )
+                local = -_tensor_transpose(
+                    plan,
+                    weight * values_grid,
+                    component_shape,
+                )
+            else:
+                local = -ein.contract(
+                    "cq,cq...,qi->ci...",
+                    physical_weights,
+                    values,
+                    basis_values,
+                )
+        elif isinstance(action, CellResidualAction):
+            input_values = []
+            input_gradients = []
+            for input_field in action.input_fields:
+                input_field_index = discretization._field_index(input_field)
+                input_dof_map = discretization.dof_maps[input_field_index]
+                input_geometry = discretization.evaluate_block_geometry(
+                    input_field,
+                    block_index,
+                    context.runtime.coordinates,
+                    rule_data.points,
+                    rule_data.weights,
+                )
+                input_dofs = gathers[input_field]
+                local_input = state_by_field[input_field][input_dofs]
+                input_orientation = input_dof_map.orientations[block_index][local_cells]
+                local_input = local_input * input_orientation.reshape(
+                    input_orientation.shape
+                    + (1,) * (local_input.ndim - input_orientation.ndim)
+                )
+                input_basis = input_geometry.basis_values
+                input_physical_gradients = input_geometry.physical_gradients[local_cells]
+                if input_basis.ndim == 2:
+                    input_values.append(
+                        ein.contract(
+                            "qi,ci...->cq...",
+                            input_basis,
+                            local_input,
+                        )
+                    )
+                    input_gradients.append(
+                        ein.contract(
+                            "cqid,ci...->cqd...",
+                            input_physical_gradients,
+                            local_input,
+                        )
+                    )
+                else:
+                    input_values.append(
+                        ein.contract(
+                            "cqiv,ci->cqv",
+                            input_basis[local_cells],
+                            local_input,
+                        )
+                    )
+                    input_gradients.append(
+                        ein.contract(
+                            "cqivd,ci->cqvd",
+                            input_physical_gradients,
+                            local_input,
+                        )
+                    )
+            local = jnp.asarray(
+                action.kernel(
+                    tuple(input_values),
+                    tuple(input_gradients),
+                    physical_points,
+                    physical_weights,
+                    basis_values,
+                    physical_gradients,
+                    context,
+                )
+            )
+            if local.shape != local_state.shape:
+                raise ValueError(
+                    "Cell residual kernel must return one local test residual "
+                    "per selected cell and output-field DOF."
+                )
+        elif isinstance(action, CellEnergyAction):
+            if (
+                workset.signature.local_kernel in ("sum_factorized", "collocated")
+                and reference is not None
+                and reference.tensor_tabulation is not None
+                and metric is not None
+            ):
+                plan = SumFactorizationPlan(reference.tensor_tabulation)
+                qshape = plan.tabulation.evaluation_shape
+                component_shape = local_state.shape[2:]
+                inverse_jacobian = metric.inverse_jacobian.reshape(
+                    (local_state.shape[0],)
+                    + qshape
+                    + (1,) * len(component_shape)
+                    + (
+                        plan.tabulation.dimension,
+                        metric.physical_points.shape[-1],
+                    )
+                )
+
+                def energy(local_coefficients):
+                    values_grid = _tensor_forward(plan, local_coefficients)
+                    reference_gradient = _tensor_gradient(plan, local_coefficients)
+                    physical_gradient = ein.contract(
+                        "...r,...rd->...d",
+                        reference_gradient,
+                        inverse_jacobian,
+                    )
+                    physical_gradient = jnp.moveaxis(
+                        physical_gradient,
+                        -1,
+                        1 + plan.tabulation.dimension,
+                    )
+                    values_ = values_grid.reshape(
+                        (local_state.shape[0], -1) + component_shape
+                    )
+                    gradients_ = physical_gradient.reshape(
+                        (
+                            local_state.shape[0],
+                            -1,
+                            metric.physical_points.shape[-1],
+                        )
+                        + component_shape
+                    )
+                    density = jnp.asarray(
+                        action.density(
+                            values_,
+                            gradients_,
+                            physical_points,
+                            context,
+                        )
+                    )
+                    if density.shape != physical_weights.shape:
+                        raise ValueError(
+                            "Cell energy density must return one scalar per selected quadrature point."
+                        )
+                    return jnp.sum(density * physical_weights)
+
+            else:
+
+                def energy(local_coefficients):
+                    if basis_values.ndim == 2:
+                        values_ = ein.contract(
+                            "qi,ci...->cq...",
+                            basis_values,
+                            local_coefficients,
+                        )
+                        gradients_ = ein.contract(
+                            "cqid,ci...->cqd...",
+                            physical_gradients,
+                            local_coefficients,
+                        )
+                    else:
+                        values_ = ein.contract(
+                            "cqiv,ci->cqv",
+                            basis_values,
+                            local_coefficients,
+                        )
+                        gradients_ = ein.contract(
+                            "cqivd,ci->cqvd",
+                            physical_gradients,
+                            local_coefficients,
+                        )
+                    density = jnp.asarray(
+                        action.density(
+                            values_,
+                            gradients_,
+                            physical_points,
+                            context,
+                        )
+                    )
+                    if density.shape != physical_weights.shape:
+                        raise ValueError(
+                            "Cell energy density must return one scalar per selected quadrature point."
+                        )
+                    return jnp.sum(density * physical_weights)
+
+            local = jax.grad(energy)(local_state)
+        elif isinstance(action, CellBilinearAction):
+            matrix = jnp.asarray(
+                action.kernel(
+                    physical_points,
+                    physical_weights,
+                    basis_values,
+                    physical_gradients,
+                    context,
+                )
+            )
+            expected_prefix = (
+                local_state.shape[0],
+                local_state.shape[1],
+                local_state.shape[1],
+            )
+            if matrix.shape != expected_prefix:
+                raise ValueError(
+                    "Cell bilinear kernel must return shape (cells, local_dofs, local_dofs)."
+                )
+            local = ein.contract(
+                "cij,cj...->ci...",
+                matrix,
+                local_state,
+            )
+        else:
+            raise TypeError("Unsupported finite-element term.")
+        local = jnp.where(
+            jnp.asarray(workset.valid).reshape(
+                (local.shape[0],) + (1,) * (local.ndim - 1)
+            ),
+            local,
+            0.0,
+        )
+        local = local * output_orientation.reshape(
+            output_orientation.shape + (1,) * (local.ndim - output_orientation.ndim)
+        )
+        residual_by_field[output_field] = _scatter_local(
+            output_residual,
+            dofs,
+            local,
+            accumulation,
+        )
+
+
 def _full_residual(
     form: FiniteElementForm,
     discretization: AbstractPreparedLocalDiscretization,
@@ -1237,694 +1928,17 @@ def _full_residual(
         block_names = ()
         cell_offsets = np.empty((0,), dtype=np.int32)
     for workset in workset_program.worksets:
-        if workset.local_region is not None:
-            for raw_action_index in workset.action_index_values:
-                action = form.actions[raw_action_index]
-                if isinstance(action, LocalFunctionalAction):
-                    _value, blocks = _prepared_local_functional_value_and_residual(
-                        action,
-                        discretization,
-                        workset,
-                        state_by_field,
-                        context,
-                        with_residual=True,
-                    )
-                else:
-                    output_field, dofs, local = _prepared_local_volume_residual(
-                        action,
-                        discretization,
-                        workset,
-                        state_by_field,
-                        context,
-                    )
-                    blocks = ((output_field, dofs, local),)
-                for output_field, dofs, local in blocks:
-                    residual_by_field[output_field] = _scatter_local(
-                        residual_by_field[output_field],
-                        dofs,
-                        local,
-                        accumulation,
-                    )
-            continue
-        if not isinstance(discretization, FiniteElementDiscretization):
-            raise ValueError("Facet and legacy volume worksets require finite elements.")
-        block_index = block_names.index(workset.signature.block_name)
-        block = discretization.mesh.blocks[block_index]
-        work_cells = jnp.asarray(workset.owner_cells, dtype=jnp.int32)
-        local_cells = work_cells - int(cell_offsets[block_index])
-        gathers = dict(workset.gathers)
-        for raw_action_index in workset.action_index_values:
-            action = form.actions[raw_action_index]
-            if isinstance(action, LocalFunctionalAction):
-                domain = (
-                    _action_domain(action, discretization)
-                    if len(discretization.mesh.blocks) == 1
-                    else _workset_domain(
-                        action,
-                        discretization,
-                        workset.entity_index_values,
-                    )
-                )
-                if domain.kind == "cell":
-                    _accumulate_cell_functional_residual(
-                        discretization,
-                        state_by_field,
-                        residual_by_field,
-                        action,
-                        workset,
-                        block_index,
-                        local_cells,
-                        context,
-                        accumulation,
-                    )
-                elif domain.kind == "exterior_facet":
-                    _exterior_functional_value(
-                        discretization,
-                        state_by_field,
-                        action,
-                        workset,
-                        domain,
-                        context,
-                        residual_by_field=residual_by_field,
-                        accumulation=accumulation,
-                    )
-                else:
-                    raise ValueError("Unsupported functional integration domain.")
-                continue
-            output_field = _action_output_fields(action)[0]
-            output_state = state_by_field[output_field]
-            output_field_index = discretization._field_index(output_field)
-            output_dof_map = discretization.dof_maps[output_field_index]
-            output_residual = residual_by_field[output_field]
-            domain = (
-                _action_domain(action, discretization)
-                if len(discretization.mesh.blocks) == 1
-                else _workset_domain(
-                    action,
-                    discretization,
-                    workset.entity_index_values,
-                )
-            )
-            if isinstance(action, PreparedOperatorAction):
-                if len(discretization.mesh.blocks) != 1:
-                    raise ValueError(
-                        "Prepared global operator actions require one mesh block."
-                    )
-                image = action.operator.mv(output_state.reshape((-1,))).reshape(
-                    output_state.shape
-                )
-                residual_by_field[output_field] = output_residual + image
-                continue
-            if isinstance(action, SIPGFacetAction):
-                residual_by_field[output_field] = output_residual + _sipg_facet_residual(
-                    discretization,
-                    output_field_index,
-                    output_state,
-                    action,
-                    domain,
-                    context,
-                    accumulation,
-                )
-                continue
-            if isinstance(action, BoundaryLoadAction):
-                load = (
-                    _prepared_tensor_boundary_load(
-                        discretization,
-                        output_field_index,
-                        output_state,
-                        action,
-                        workset,
-                        context,
-                        accumulation,
-                    )
-                    if workset.reference is not None
-                    else _boundary_load(
-                        discretization,
-                        output_field_index,
-                        action,
-                        domain,
-                        context,
-                    )
-                )
-                residual_by_field[output_field] = output_residual - load
-                continue
-            if isinstance(action, ExteriorFacetAction):
-                facet_residual = (
-                    _prepared_tensor_facet_residual(
-                        discretization,
-                        state_by_field,
-                        output_field,
-                        action,
-                        workset,
-                        context,
-                        accumulation,
-                    )
-                    if workset.reference is not None
-                    else _exterior_facet_residual(
-                        discretization,
-                        output_field_index,
-                        output_state,
-                        action,
-                        workset,
-                        domain,
-                        context,
-                        accumulation,
-                    )
-                )
-                residual_by_field[output_field] = output_residual + facet_residual
-                continue
-            if isinstance(action, InteriorFacetAction):
-                if workset.mortar is not None:
-                    if action.input_field_names != (output_field,):
-                        raise ValueError(
-                            "Cross-field mortar facets are not yet supported."
-                        )
-                    facet_residual = _mortar_facet_residual(
-                        output_state,
-                        action,
-                        workset,
-                        context,
-                    )
-                elif workset.reference is not None:
-                    facet_residual = _prepared_tensor_facet_residual(
-                        discretization,
-                        state_by_field,
-                        output_field,
-                        action,
-                        workset,
-                        context,
-                        accumulation,
-                    )
-                else:
-                    if action.input_field_names != (output_field,):
-                        raise ValueError(
-                            "Cross-field legacy facets require prepared references."
-                        )
-                    facet_residual = _interior_facet_residual(
-                        discretization,
-                        output_field_index,
-                        output_state,
-                        action,
-                        workset,
-                        domain,
-                        context,
-                        accumulation,
-                    )
-                residual_by_field[output_field] = output_residual + facet_residual
-                continue
-            rule = _action_rule(action, block.name, block.cell_kind)
-            rule_data = _reference_rule_data(rule)
-            reference = workset.reference
-            if reference is None:
-                output_geometry = discretization.evaluate_block_geometry(
-                    output_field,
-                    block_index,
-                    context.runtime.coordinates,
-                    rule_data.points,
-                    rule_data.weights,
-                )
-                physical_points = output_geometry.physical_points[local_cells]
-                physical_gradients = output_geometry.physical_gradients[local_cells]
-                physical_weights = output_geometry.physical_weights[local_cells]
-                basis_values = output_geometry.basis_values
-                if basis_values.ndim > 2:
-                    basis_values = basis_values[local_cells]
-                metric = None
-            else:
-                metric = _cell_metric(
-                    discretization,
-                    block_index,
-                    local_cells,
-                    reference,
-                    context.runtime.coordinates,
-                )
-                physical_points = metric.physical_points
-                factorized_without_test_gradients = workset.signature.local_kernel in (
-                    "sum_factorized",
-                    "collocated",
-                ) and isinstance(
-                    action,
-                    (
-                        DiffusionAction,
-                        TensorDiffusionAction,
-                        MassAction,
-                        SourceAction,
-                        CellEnergyAction,
-                        PairwiseVolumeFluxAction,
-                    ),
-                )
-                physical_gradients = (
-                    None
-                    if factorized_without_test_gradients
-                    else metric.physical_gradients(reference.basis_gradients)
-                )
-                physical_weights = metric.weighted_measure
-                basis_values = reference.basis_values
-            reference_points = (
-                rule_data.points if reference is None else reference.volume_rule.points
-            )
-            dofs = gathers[output_field]
-            local_state = output_state[dofs]
-            output_orientation = output_dof_map.orientations[block_index][local_cells]
-            local_state = local_state * output_orientation.reshape(
-                output_orientation.shape
-                + (1,) * (local_state.ndim - output_orientation.ndim)
-            )
-            if isinstance(action, PairwiseVolumeFluxAction):
-                if reference is None or metric is None:
-                    raise ValueError(
-                        "Pairwise volume flux requires a prepared tensor reference."
-                    )
-                local = _pairwise_volume_residual(
-                    action,
-                    local_state,
-                    local_cells,
-                    reference,
-                    metric,
-                    context,
-                )
-            elif isinstance(action, TensorDiffusionAction):
-                if local_state.ndim != 2:
-                    raise ValueError(
-                        "TensorDiffusionAction requires a scalar finite-element field."
-                    )
-                values = _cell_coefficient_values(
-                    action.diffusivity,
-                    discretization,
-                    block_index,
-                    workset,
-                    gathers,
-                    physical_points,
-                    reference_points,
-                    context,
-                    work_cells,
-                    value_shape=None,
-                )
-                dimension = physical_points.shape[-1]
-                tensor = action.physical_tensor(
-                    values,
-                    dimension,
-                    leading_shape=physical_points.shape[:-1],
-                )
-                if (
-                    workset.signature.local_kernel in ("sum_factorized", "collocated")
-                    and reference is not None
-                    and reference.tensor_tabulation is not None
-                    and metric is not None
-                ):
-                    plan = SumFactorizationPlan(reference.tensor_tabulation)
-                    reference_gradient = _tensor_gradient(plan, local_state)
-                    qshape = plan.tabulation.evaluation_shape
-                    inverse_jacobian = metric.inverse_jacobian.reshape(
-                        (local_state.shape[0])
-                        + qshape
-                        + (plan.tabulation.dimension, dimension)
-                    )
-                    tensor_grid = tensor.reshape(
-                        (local_state.shape[0]) + qshape + (dimension, dimension)
-                    )
-                    weighted_measure = metric.weighted_measure.reshape(
-                        (local_state.shape[0]) + qshape
-                    )
-                    reference_tensor = ein.contract(
-                        "...rd,...de,...se,...->...rs",
-                        inverse_jacobian,
-                        tensor_grid,
-                        inverse_jacobian,
-                        weighted_measure,
-                    )
-                    reference_flux = ein.contract(
-                        "...rs,...s->...r", reference_tensor, reference_gradient
-                    )
-                    local = _tensor_gradient_transpose(plan, reference_flux, ())
-                else:
-                    field_gradient = ein.contract(
-                        "cqid,ci->cqd", physical_gradients, local_state
-                    )
-                    local = ein.contract(
-                        "cq,cqid,cqde,cqe->ci",
-                        physical_weights,
-                        physical_gradients,
-                        tensor,
-                        field_gradient,
-                    )
-            elif isinstance(action, DiffusionAction):
-                values = _cell_coefficient_values(
-                    action.diffusivity,
-                    discretization,
-                    block_index,
-                    workset,
-                    gathers,
-                    physical_points,
-                    reference_points,
-                    context,
-                    work_cells,
-                )
-                if (
-                    workset.signature.local_kernel in ("sum_factorized", "collocated")
-                    and reference is not None
-                    and reference.tensor_tabulation is not None
-                    and metric is not None
-                ):
-                    plan = SumFactorizationPlan(reference.tensor_tabulation)
-                    component_shape = local_state.shape[2:]
-                    reference_gradient = _tensor_gradient(plan, local_state)
-                    qshape = plan.tabulation.evaluation_shape
-                    weighted_metric = metric.weighted_metric.reshape(
-                        (local_state.shape[0],)
-                        + qshape
-                        + (1,) * len(component_shape)
-                        + (plan.tabulation.dimension, plan.tabulation.dimension)
-                    )
-                    flux = ein.contract(
-                        "...ab,...b->...a", weighted_metric, reference_gradient
-                    )
-                    coefficient_grid = values.reshape(
-                        (local_state.shape[0],)
-                        + qshape
-                        + (1,) * (len(component_shape) + 1)
-                    )
-                    local = _tensor_gradient_transpose(
-                        plan,
-                        coefficient_grid * flux,
-                        component_shape,
-                    )
-                else:
-                    field_gradient = ein.contract(
-                        "cqid,ci...->cqd...",
-                        physical_gradients,
-                        local_state,
-                    )
-                    local = ein.contract(
-                        "cq,cq,cqid,cqd...->ci...",
-                        physical_weights,
-                        values,
-                        physical_gradients,
-                        field_gradient,
-                    )
-            elif isinstance(action, MassAction):
-                if basis_values.ndim != 2:
-                    raise ValueError(
-                        "Built-in mass terms require a scalar reference basis."
-                    )
-                values = _cell_coefficient_values(
-                    action.coefficient,
-                    discretization,
-                    block_index,
-                    workset,
-                    gathers,
-                    physical_points,
-                    reference_points,
-                    context,
-                    work_cells,
-                )
-                if (
-                    workset.signature.local_kernel in ("sum_factorized", "collocated")
-                    and reference is not None
-                    and reference.tensor_tabulation is not None
-                    and metric is not None
-                ):
-                    plan = SumFactorizationPlan(reference.tensor_tabulation)
-                    component_shape = local_state.shape[2:]
-                    qshape = plan.tabulation.evaluation_shape
-                    field_value = _tensor_forward(plan, local_state)
-                    weight = (metric.weighted_measure * values).reshape(
-                        (local_state.shape[0],) + qshape + (1,) * len(component_shape)
-                    )
-                    local = _tensor_transpose(
-                        plan,
-                        weight * field_value,
-                        component_shape,
-                    )
-                else:
-                    field_value = ein.contract(
-                        "qi,ci...->cq...",
-                        basis_values,
-                        local_state,
-                    )
-                    local = ein.contract(
-                        "cq,cq,qi,cq...->ci...",
-                        physical_weights,
-                        values,
-                        basis_values,
-                        field_value,
-                    )
-            elif isinstance(action, SourceAction):
-                if basis_values.ndim != 2:
-                    raise ValueError(
-                        "Built-in source terms require a scalar reference basis."
-                    )
-                component_shape = output_state.shape[1:]
-                values = _cell_coefficient_values(
-                    action.source,
-                    discretization,
-                    block_index,
-                    workset,
-                    gathers,
-                    physical_points,
-                    reference_points,
-                    context,
-                    work_cells,
-                    value_shape=component_shape,
-                )
-                if (
-                    workset.signature.local_kernel in ("sum_factorized", "collocated")
-                    and reference is not None
-                    and reference.tensor_tabulation is not None
-                    and metric is not None
-                ):
-                    plan = SumFactorizationPlan(reference.tensor_tabulation)
-                    qshape = plan.tabulation.evaluation_shape
-                    weight = metric.weighted_measure.reshape(
-                        (local_state.shape[0],) + qshape + (1,) * len(component_shape)
-                    )
-                    values_grid = values.reshape(
-                        (local_state.shape[0],) + qshape + component_shape
-                    )
-                    local = -_tensor_transpose(
-                        plan,
-                        weight * values_grid,
-                        component_shape,
-                    )
-                else:
-                    local = -ein.contract(
-                        "cq,cq...,qi->ci...",
-                        physical_weights,
-                        values,
-                        basis_values,
-                    )
-            elif isinstance(action, CellResidualAction):
-                input_values = []
-                input_gradients = []
-                for input_field in action.input_fields:
-                    input_field_index = discretization._field_index(input_field)
-                    input_dof_map = discretization.dof_maps[input_field_index]
-                    input_geometry = discretization.evaluate_block_geometry(
-                        input_field,
-                        block_index,
-                        context.runtime.coordinates,
-                        rule_data.points,
-                        rule_data.weights,
-                    )
-                    input_dofs = gathers[input_field]
-                    local_input = state_by_field[input_field][input_dofs]
-                    input_orientation = input_dof_map.orientations[block_index][
-                        local_cells
-                    ]
-                    local_input = local_input * input_orientation.reshape(
-                        input_orientation.shape
-                        + (1,) * (local_input.ndim - input_orientation.ndim)
-                    )
-                    input_basis = input_geometry.basis_values
-                    input_physical_gradients = input_geometry.physical_gradients[
-                        local_cells
-                    ]
-                    if input_basis.ndim == 2:
-                        input_values.append(
-                            ein.contract(
-                                "qi,ci...->cq...",
-                                input_basis,
-                                local_input,
-                            )
-                        )
-                        input_gradients.append(
-                            ein.contract(
-                                "cqid,ci...->cqd...",
-                                input_physical_gradients,
-                                local_input,
-                            )
-                        )
-                    else:
-                        input_values.append(
-                            ein.contract(
-                                "cqiv,ci->cqv",
-                                input_basis[local_cells],
-                                local_input,
-                            )
-                        )
-                        input_gradients.append(
-                            ein.contract(
-                                "cqivd,ci->cqvd",
-                                input_physical_gradients,
-                                local_input,
-                            )
-                        )
-                local = jnp.asarray(
-                    action.kernel(
-                        tuple(input_values),
-                        tuple(input_gradients),
-                        physical_points,
-                        physical_weights,
-                        basis_values,
-                        physical_gradients,
-                        context,
-                    )
-                )
-                if local.shape != local_state.shape:
-                    raise ValueError(
-                        "Cell residual kernel must return one local test residual "
-                        "per selected cell and output-field DOF."
-                    )
-            elif isinstance(action, CellEnergyAction):
-                if (
-                    workset.signature.local_kernel in ("sum_factorized", "collocated")
-                    and reference is not None
-                    and reference.tensor_tabulation is not None
-                    and metric is not None
-                ):
-                    plan = SumFactorizationPlan(reference.tensor_tabulation)
-                    qshape = plan.tabulation.evaluation_shape
-                    component_shape = local_state.shape[2:]
-                    inverse_jacobian = metric.inverse_jacobian.reshape(
-                        (local_state.shape[0],)
-                        + qshape
-                        + (1,) * len(component_shape)
-                        + (
-                            plan.tabulation.dimension,
-                            metric.physical_points.shape[-1],
-                        )
-                    )
-
-                    def energy(local_coefficients):
-                        values_grid = _tensor_forward(plan, local_coefficients)
-                        reference_gradient = _tensor_gradient(plan, local_coefficients)
-                        physical_gradient = ein.contract(
-                            "...r,...rd->...d",
-                            reference_gradient,
-                            inverse_jacobian,
-                        )
-                        physical_gradient = jnp.moveaxis(
-                            physical_gradient,
-                            -1,
-                            1 + plan.tabulation.dimension,
-                        )
-                        values_ = values_grid.reshape(
-                            (local_state.shape[0], -1) + component_shape
-                        )
-                        gradients_ = physical_gradient.reshape(
-                            (
-                                local_state.shape[0],
-                                -1,
-                                metric.physical_points.shape[-1],
-                            )
-                            + component_shape
-                        )
-                        density = jnp.asarray(
-                            action.density(
-                                values_,
-                                gradients_,
-                                physical_points,
-                                context,
-                            )
-                        )
-                        if density.shape != physical_weights.shape:
-                            raise ValueError(
-                                "Cell energy density must return one scalar per selected quadrature point."
-                            )
-                        return jnp.sum(density * physical_weights)
-
-                else:
-
-                    def energy(local_coefficients):
-                        if basis_values.ndim == 2:
-                            values_ = ein.contract(
-                                "qi,ci...->cq...",
-                                basis_values,
-                                local_coefficients,
-                            )
-                            gradients_ = ein.contract(
-                                "cqid,ci...->cqd...",
-                                physical_gradients,
-                                local_coefficients,
-                            )
-                        else:
-                            values_ = ein.contract(
-                                "cqiv,ci->cqv",
-                                basis_values,
-                                local_coefficients,
-                            )
-                            gradients_ = ein.contract(
-                                "cqivd,ci->cqvd",
-                                physical_gradients,
-                                local_coefficients,
-                            )
-                        density = jnp.asarray(
-                            action.density(
-                                values_,
-                                gradients_,
-                                physical_points,
-                                context,
-                            )
-                        )
-                        if density.shape != physical_weights.shape:
-                            raise ValueError(
-                                "Cell energy density must return one scalar per selected quadrature point."
-                            )
-                        return jnp.sum(density * physical_weights)
-
-                local = jax.grad(energy)(local_state)
-            elif isinstance(action, CellBilinearAction):
-                matrix = jnp.asarray(
-                    action.kernel(
-                        physical_points,
-                        physical_weights,
-                        basis_values,
-                        physical_gradients,
-                        context,
-                    )
-                )
-                expected_prefix = (
-                    local_state.shape[0],
-                    local_state.shape[1],
-                    local_state.shape[1],
-                )
-                if matrix.shape != expected_prefix:
-                    raise ValueError(
-                        "Cell bilinear kernel must return shape (cells, local_dofs, local_dofs)."
-                    )
-                local = ein.contract(
-                    "cij,cj...->ci...",
-                    matrix,
-                    local_state,
-                )
-            else:
-                raise TypeError("Unsupported finite-element term.")
-            local = jnp.where(
-                jnp.asarray(workset.valid).reshape(
-                    (local.shape[0],) + (1,) * (local.ndim - 1)
-                ),
-                local,
-                0.0,
-            )
-            local = local * output_orientation.reshape(
-                output_orientation.shape + (1,) * (local.ndim - output_orientation.ndim)
-            )
-            residual_by_field[output_field] = _scatter_local(
-                output_residual,
-                dofs,
-                local,
-                accumulation,
-            )
+        _accumulate_finite_element_workset(
+            form,
+            discretization,
+            workset,
+            state_by_field,
+            residual_by_field,
+            accumulation,
+            context,
+            block_names,
+            cell_offsets,
+        )
     residuals = tuple(
         DualSpace(
             discretization.field_spaces[discretization._field_index(name)].vector_space

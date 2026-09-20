@@ -469,23 +469,12 @@ def _issue(
     return OperatorCompatibilityIssue(code, message, location)
 
 
-def validate_operator_contract(
-    contract: ConfiguredOperatorContract,
-    batch: OperatorBatch,
+def _validate_configured_operator_fields(
+    configured_fields: Sequence[Any],
+    fields: Sequence[Any],
+    issues: list[OperatorCompatibilityIssue],
     /,
-    *,
-    problem: OperatorProblemSpec | None = None,
-    training_evidence: OperatorTrainingEvidence | None = None,
-    fields: Sequence[Any] = (),
-    configured_fields: Sequence[Any] = (),
-) -> OperatorCompatibilityReport:
-    """Validate a runtime batch and explicit physical requirements without guessing."""
-
-    if not isinstance(batch, OperatorBatch):
-        raise TypeError("Operator contract validation requires an OperatorBatch.")
-    capability = contract.capabilities
-    physical = OperatorProblemSpec() if problem is None else problem
-    issues: list[OperatorCompatibilityIssue] = []
+) -> tuple[Any, ...]:
     configured = tuple(configured_fields)
     supplied = tuple(fields)
     if configured and supplied and supplied != configured:
@@ -502,6 +491,15 @@ def validate_operator_contract(
                         expected.name,
                     )
                 )
+    return supplied
+
+
+def _operator_sources(
+    batch: OperatorBatch,
+    capability: OperatorCapabilitySpec,
+    issues: list[OperatorCompatibilityIssue],
+    /,
+) -> tuple[tuple[str, FunctionSamples], ...]:
     all_sources = tuple(batch.inputs.items())
     source_by_name = dict(all_sources)
     for name in capability.global_condition_sources:
@@ -540,7 +538,16 @@ def validate_operator_contract(
                 "queries",
             )
         )
+    return sources
 
+
+def _validate_operator_samples(
+    batch: OperatorBatch,
+    capability: OperatorCapabilitySpec,
+    sources: tuple[tuple[str, FunctionSamples], ...],
+    issues: list[OperatorCompatibilityIssue],
+    /,
+) -> None:
     all_samples = sources + tuple(
         (f"query:{name}", samples) for name, samples in batch.queries.items()
     )
@@ -688,6 +695,16 @@ def validate_operator_contract(
                         )
                     )
 
+
+def _validate_operator_relation(
+    batch: OperatorBatch,
+    capability: OperatorCapabilitySpec,
+    physical: OperatorProblemSpec,
+    problem: OperatorProblemSpec | None,
+    sources: tuple[tuple[str, FunctionSamples], ...],
+    issues: list[OperatorCompatibilityIssue],
+    /,
+) -> None:
     inferred_relation: OperatorSourceQueryRelation = "independent"
     if sources and all(
         _same_geometry(source, query)
@@ -731,6 +748,14 @@ def validate_operator_contract(
             )
         )
 
+
+def _validate_operator_fields(
+    batch: OperatorBatch,
+    capability: OperatorCapabilitySpec,
+    supplied: tuple[Any, ...],
+    issues: list[OperatorCompatibilityIssue],
+    /,
+) -> None:
     cochain_fingerprints: set[str] = set()
     for field in supplied:
         if capability.requires_structured_tensors and field.tensor_layout is None:
@@ -849,6 +874,14 @@ def validate_operator_contract(
                 "topology",
             )
         )
+
+
+def _validate_operator_problem(
+    capability: OperatorCapabilitySpec,
+    physical: OperatorProblemSpec,
+    issues: list[OperatorCompatibilityIssue],
+    /,
+) -> None:
     if physical.symmetry_group is not None and physical.symmetry_group not in (
         capability.symmetry_groups
     ):
@@ -887,6 +920,13 @@ def validate_operator_contract(
             )
         )
 
+
+def _validate_operator_training(
+    contract: ConfiguredOperatorContract,
+    training_evidence: OperatorTrainingEvidence | None,
+    issues: list[OperatorCompatibilityIssue],
+    /,
+) -> None:
     requirement = contract.training
     if requirement.pretrained_weights_required and (
         training_evidence is None or not training_evidence.checkpoint_id.strip()
@@ -919,6 +959,31 @@ def validate_operator_contract(
             )
         )
 
+
+def validate_operator_contract(
+    contract: ConfiguredOperatorContract,
+    batch: OperatorBatch,
+    /,
+    *,
+    problem: OperatorProblemSpec | None = None,
+    training_evidence: OperatorTrainingEvidence | None = None,
+    fields: Sequence[Any] = (),
+    configured_fields: Sequence[Any] = (),
+) -> OperatorCompatibilityReport:
+    """Validate a runtime batch and explicit physical requirements without guessing."""
+
+    if not isinstance(batch, OperatorBatch):
+        raise TypeError("Operator contract validation requires an OperatorBatch.")
+    capability = contract.capabilities
+    physical = OperatorProblemSpec() if problem is None else problem
+    issues: list[OperatorCompatibilityIssue] = []
+    supplied = _validate_configured_operator_fields(configured_fields, fields, issues)
+    sources = _operator_sources(batch, capability, issues)
+    _validate_operator_samples(batch, capability, sources, issues)
+    _validate_operator_relation(batch, capability, physical, problem, sources, issues)
+    _validate_operator_fields(batch, capability, supplied, issues)
+    _validate_operator_problem(capability, physical, issues)
+    _validate_operator_training(contract, training_evidence, issues)
     return OperatorCompatibilityReport(
         architecture=contract.architecture,
         configuration=contract.configuration,

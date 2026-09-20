@@ -10,6 +10,7 @@ import argparse
 import importlib
 import json
 from pathlib import Path
+from typing import Any
 
 from phydrax.qualification import (
     application_promotion_portfolios,
@@ -36,6 +37,68 @@ def _resolve_symbol(symbol: str, /) -> object:
             value = getattr(value, name)
         return value
     raise ModuleNotFoundError(symbol)
+
+
+def _validate_closure_matrices(
+    root: Path,
+    matrices: Any,
+    public_paths: set[str],
+    source_ids: set[str],
+    retained_evidence_ids: set[str],
+    retained_provider_ids: set[str],
+    errors: list[str],
+    /,
+) -> None:
+    for matrix in matrices:
+        for requirement in matrix.requirements:
+            for path in (
+                *requirement.required_benchmarks,
+                *requirement.required_documents,
+            ):
+                if not (root / path).is_file():
+                    errors.append(f"missing-closure-path:{matrix.family}:{path}")
+            for symbol in requirement.required_public_symbols:
+                if symbol not in public_paths:
+                    errors.append(f"noncanonical-closure-symbol:{matrix.family}:{symbol}")
+                try:
+                    _resolve_symbol(symbol)
+                except (AttributeError, ModuleNotFoundError) as error:
+                    errors.append(
+                        f"missing-closure-symbol:{matrix.family}:{symbol}:{type(error).__name__}"
+                    )
+            for source_id in set(requirement.source_ids).difference(source_ids):
+                errors.append(f"missing-closure-source:{matrix.family}:{source_id}")
+        for resolution in matrix.resolutions:
+            for evidence_id in set(resolution.evidence_ids).difference(
+                retained_evidence_ids
+            ):
+                errors.append(f"missing-retained-evidence:{matrix.family}:{evidence_id}")
+            for provider_id in set(resolution.provider_ids).difference(
+                retained_provider_ids
+            ):
+                errors.append(f"missing-retained-provider:{matrix.family}:{provider_id}")
+
+
+def _validate_capability_declarations(
+    root: Path,
+    catalog: CapabilityCatalog,
+    public_paths: set[str],
+    errors: list[str],
+    /,
+) -> None:
+    for declaration in catalog.declarations:
+        for path in (*declaration.documentation, *declaration.examples):
+            if not (root / path).is_file():
+                errors.append(f"missing-path:{declaration.capability}:{path}")
+        for symbol in declaration.public_symbols:
+            if symbol not in public_paths:
+                errors.append(f"noncanonical-symbol:{declaration.capability}:{symbol}")
+            try:
+                _resolve_symbol(symbol)
+            except (AttributeError, ModuleNotFoundError) as error:
+                errors.append(
+                    f"missing-symbol:{declaration.capability}:{symbol}:{type(error).__name__}"
+                )
 
 
 def capability_consistency_errors(
@@ -86,34 +149,15 @@ def capability_consistency_errors(
                 if isinstance(provider_id, str):
                     retained_provider_ids.add(provider_id)
     source_ids = {source.source_id for source in ledger.sources}
-    for matrix in matrices:
-        for requirement in matrix.requirements:
-            for path in (
-                *requirement.required_benchmarks,
-                *requirement.required_documents,
-            ):
-                if not (root / path).is_file():
-                    errors.append(f"missing-closure-path:{matrix.family}:{path}")
-            for symbol in requirement.required_public_symbols:
-                if symbol not in public_paths:
-                    errors.append(f"noncanonical-closure-symbol:{matrix.family}:{symbol}")
-                try:
-                    _resolve_symbol(symbol)
-                except (AttributeError, ModuleNotFoundError) as error:
-                    errors.append(
-                        f"missing-closure-symbol:{matrix.family}:{symbol}:{type(error).__name__}"
-                    )
-            for source_id in set(requirement.source_ids).difference(source_ids):
-                errors.append(f"missing-closure-source:{matrix.family}:{source_id}")
-        for resolution in matrix.resolutions:
-            for evidence_id in set(resolution.evidence_ids).difference(
-                retained_evidence_ids
-            ):
-                errors.append(f"missing-retained-evidence:{matrix.family}:{evidence_id}")
-            for provider_id in set(resolution.provider_ids).difference(
-                retained_provider_ids
-            ):
-                errors.append(f"missing-retained-provider:{matrix.family}:{provider_id}")
+    _validate_closure_matrices(
+        root,
+        matrices,
+        public_paths,
+        source_ids,
+        retained_evidence_ids,
+        retained_provider_ids,
+        errors,
+    )
     inventory_path = root / inventory
     if not inventory_path.is_file():
         errors.append(f"missing-generated-inventory:{inventory.as_posix()}")
@@ -157,19 +201,7 @@ def capability_consistency_errors(
             errors.append(f"missing-generated-sources:{sources.as_posix()}")
         elif json.loads(source_path.read_text(encoding="utf-8")) != expected_sources:
             errors.append("generated-source-ledger-drift")
-    for declaration in catalog.declarations:
-        for path in (*declaration.documentation, *declaration.examples):
-            if not (root / path).is_file():
-                errors.append(f"missing-path:{declaration.capability}:{path}")
-        for symbol in declaration.public_symbols:
-            if symbol not in public_paths:
-                errors.append(f"noncanonical-symbol:{declaration.capability}:{symbol}")
-            try:
-                _resolve_symbol(symbol)
-            except (AttributeError, ModuleNotFoundError) as error:
-                errors.append(
-                    f"missing-symbol:{declaration.capability}:{symbol}:{type(error).__name__}"
-                )
+    _validate_capability_declarations(root, catalog, public_paths, errors)
     return tuple(sorted(errors))
 
 

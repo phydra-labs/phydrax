@@ -768,6 +768,239 @@ def _cell_components(
     return tuple(tuple(groups[key]) for key in sorted(groups))
 
 
+def _finalize_cut_complex(
+    plan: MultivaluedCutCellPlan,
+    hierarchy: CanonicalPatchHierarchy,
+    leaf_cells: list[Any],
+    global_points: list[Any],
+    global_vertex: Any,
+    component_faces: list[Any],
+    component_levels: list[int],
+    component_coordinates: list[Any],
+    component_slots: list[int],
+    component_volumes: list[float],
+    component_centers: list[Any],
+    component_tetrahedra: list[Any],
+    component_fractions: list[float],
+    component_shells: list[Any],
+    regular_cells: int,
+    covered_cells: int,
+    cut_cells: int,
+    multivalued_cells: int,
+    minimum_margin: float,
+    volume_defects: list[float],
+    /,
+) -> MultivaluedCutCellComplex:
+    self = plan
+    if not component_faces:
+        raise ValueError("Cut-cell hierarchy contains no active fluid component.")
+    cell_ids = np.arange(len(component_faces), dtype=np.int64)
+    mesh = CellMesh.from_polyhedra(
+        np.stack(global_points),
+        component_faces,
+        cell_global_ids=cell_ids,
+        numeric_version="block-amr-cut-complex",
+    )
+    mesh_ids = np.asarray(mesh.connectivity.cell_global_ids, dtype=np.int64)
+    component_order = mesh_ids.astype(np.int64, copy=False)
+    inverse_order = np.empty_like(component_order)
+    inverse_order[component_order] = np.arange(component_order.size)
+    ordered_component_tetrahedra = tuple(
+        tuple(component_tetrahedra[int(index)]) for index in component_order
+    )
+
+    face_incidents: dict[tuple[tuple[Any, ...], ...], list[tuple[int, _Face]]] = {}
+    for component, shell in enumerate(component_shells):
+        for face in shell:
+            face_incidents.setdefault(_fragment_face_key(face), []).append(
+                (int(inverse_order[component]), face)
+            )
+    face_records: list[tuple[int, int, _Face]] = []
+    for key in sorted(face_incidents, key=repr):
+        incidents = face_incidents[key]
+        if len(incidents) == 1:
+            owner, face = incidents[0]
+            if face.kind == _FACE_INTERNAL:
+                raise ValueError("Unpaired internal face remains in cut complex.")
+            face_records.append((owner, -1, face))
+        elif len(incidents) == 2:
+            (first_owner, first_face), (second_owner, second_face) = incidents
+            if first_owner == second_owner:
+                raise ValueError("One cut component repeats a global face.")
+            if first_owner < second_owner:
+                face_records.append((first_owner, second_owner, first_face))
+            else:
+                face_records.append((second_owner, first_owner, second_face))
+        else:
+            raise ValueError("Cut-complex face has more than two incident components.")
+    face_offsets = np.asarray(mesh.connectivity.face_vertex_offsets, dtype=np.int32)
+    face_vertices = np.asarray(mesh.connectivity.face_vertex_values, dtype=np.int32)
+    mesh_face_lookup = {
+        tuple(
+            sorted(
+                int(value)
+                for value in face_vertices[
+                    int(face_offsets[index]) : int(face_offsets[index + 1])
+                ]
+            )
+        ): index
+        for index in range(mesh.connectivity.face_count)
+    }
+    face_mesh_records = []
+    for _, _, face in face_records:
+        key = tuple(sorted(global_vertex(vertex) for vertex in face.vertices))
+        if key not in mesh_face_lookup:
+            raise RuntimeError("Cut-complex face is absent from its canonical mesh.")
+        face_mesh_records.append(mesh_face_lookup[key])
+
+    active_component_count = len(component_faces)
+    component_capacity = len(leaf_cells) * self.resources.maximum_components_per_cell
+    face_capacity = len(leaf_cells) * (
+        6 * self.resources.maximum_apertures_per_face
+        + self.resources.maximum_embedded_faces_per_cell
+    )
+    if active_component_count > component_capacity:
+        raise ValueError("Cut-complex component capacity is exceeded.")
+    if len(face_records) > face_capacity:
+        raise ValueError("Cut-complex face capacity is exceeded.")
+
+    component_active = np.zeros((component_capacity,), dtype=np.bool_)
+    component_active[:active_component_count] = True
+    component_levels_array = np.full((component_capacity,), -1, dtype=np.int32)
+    component_coordinates_array = np.full((component_capacity, 3), -1, dtype=np.int32)
+    component_slots_array = np.full((component_capacity,), -1, dtype=np.int32)
+    component_volumes_array = np.zeros((component_capacity,), dtype=np.float64)
+    component_centers_array = np.zeros((component_capacity, 3), dtype=np.float64)
+    component_fractions_array = np.zeros((component_capacity,), dtype=np.float64)
+    component_levels_array[:active_component_count] = np.asarray(component_levels)[
+        component_order
+    ]
+    component_coordinates_array[:active_component_count] = np.asarray(
+        component_coordinates
+    )[component_order]
+    component_slots_array[:active_component_count] = np.asarray(component_slots)[
+        component_order
+    ]
+    component_volumes_array[:active_component_count] = np.asarray(component_volumes)[
+        component_order
+    ]
+    component_centers_array[:active_component_count] = np.asarray(component_centers)[
+        component_order
+    ]
+    component_fractions_array[:active_component_count] = np.asarray(component_fractions)[
+        component_order
+    ]
+
+    face_active = np.zeros((face_capacity,), dtype=np.bool_)
+    face_owner = np.zeros((face_capacity,), dtype=np.int32)
+    face_neighbor = np.full((face_capacity,), -1, dtype=np.int32)
+    face_kind = np.zeros((face_capacity,), dtype=np.int32)
+    face_tag = np.full((face_capacity,), -1, dtype=np.int32)
+    face_axis = np.full((face_capacity,), -1, dtype=np.int32)
+    face_side = np.full((face_capacity,), -1, dtype=np.int32)
+    face_mesh_index = np.full((face_capacity,), -1, dtype=np.int32)
+    face_centers = np.zeros((face_capacity, 3), dtype=np.float64)
+    face_area = np.zeros((face_capacity, 3), dtype=np.float64)
+    face_measure = np.zeros((face_capacity,), dtype=np.float64)
+    closure = np.zeros((active_component_count, 3), dtype=np.float64)
+    embedded_counts: dict[tuple[int, tuple[int, ...]], int] = {}
+    aperture_counts: dict[tuple[int, tuple[int, ...], int, int], int] = {}
+    for index, (owner, neighbor, face) in enumerate(face_records):
+        points = np.stack([vertex.point for vertex in face.vertices])
+        area = _polygon_area_vector(face.vertices)
+        center = np.mean(points, axis=0)
+        measure = float(np.linalg.norm(area))
+        if not np.isfinite(measure) or measure <= self.predicate_tolerance:
+            raise ValueError("Cut-complex face has unresolved measure.")
+        if neighbor >= 0:
+            direction = component_centers_array[neighbor] - component_centers_array[owner]
+            if float(np.dot(area, direction)) < 0.0:
+                area = -area
+        else:
+            direction = center - component_centers_array[owner]
+            if float(np.dot(area, direction)) < 0.0:
+                area = -area
+        face_mesh_index[index] = face_mesh_records[index]
+        face_active[index] = True
+        face_owner[index] = owner
+        face_neighbor[index] = neighbor
+        face_kind[index] = face.kind if neighbor < 0 else _FACE_INTERNAL
+        face_tag[index] = face.body_tag
+        face_axis[index] = face.axis
+        face_side[index] = face.side
+        face_centers[index] = center
+        face_area[index] = area
+        face_measure[index] = measure
+        closure[owner] += area
+        if neighbor >= 0:
+            closure[neighbor] -= area
+        owner_key = (
+            int(component_levels_array[owner]),
+            tuple(component_coordinates_array[owner]),
+        )
+        if face.kind == _FACE_EMBEDDED:
+            embedded_counts[owner_key] = embedded_counts.get(owner_key, 0) + 1
+        elif face.kind == _FACE_PHYSICAL:
+            aperture_key = owner_key + (face.axis, face.side)
+            aperture_counts[aperture_key] = aperture_counts.get(aperture_key, 0) + 1
+    if (
+        embedded_counts
+        and max(embedded_counts.values()) > self.resources.maximum_embedded_faces_per_cell
+    ):
+        raise ValueError("Cut cell exceeds maximum_embedded_faces_per_cell.")
+    if (
+        aperture_counts
+        and max(aperture_counts.values()) > self.resources.maximum_apertures_per_face
+    ):
+        raise ValueError("Cut face exceeds maximum_apertures_per_face.")
+    closure_defect = np.linalg.norm(closure, axis=1)
+    geometry_scale = max(1.0, float(np.max(face_measure[: len(face_records)])))
+    closure_tolerance = 512.0 * np.finfo(np.float64).eps * geometry_scale
+    evidence = MultivaluedCutCellEvidence(
+        leaf_cell_count=len(leaf_cells),
+        regular_cell_count=regular_cells,
+        covered_cell_count=covered_cells,
+        cut_cell_count=cut_cells,
+        multivalued_cell_count=multivalued_cells,
+        component_count=active_component_count,
+        face_count=len(face_records),
+        maximum_components_in_cell=max(component_slots, default=-1) + 1,
+        minimum_predicate_margin=(
+            0.0 if not np.isfinite(minimum_margin) else minimum_margin
+        ),
+        maximum_volume_closure_defect=max(volume_defects, default=0.0),
+        maximum_face_closure_defect=float(np.max(closure_defect, initial=0.0)),
+        tolerance=closure_tolerance,
+    )
+    if not evidence.valid:
+        raise ValueError("Cut-cell volume or face closure certification failed.")
+    return MultivaluedCutCellComplex(
+        hierarchy=hierarchy,
+        mesh=mesh,
+        component_active=component_active,
+        component_levels=component_levels_array,
+        component_cell_coordinates=component_coordinates_array,
+        component_slots=component_slots_array,
+        component_volumes=component_volumes_array,
+        component_centers=component_centers_array,
+        component_volume_fractions=component_fractions_array,
+        face_active=face_active,
+        face_owner_components=face_owner,
+        face_neighbor_components=face_neighbor,
+        face_kinds=face_kind,
+        face_mesh_indices=face_mesh_index,
+        face_body_tags=face_tag,
+        face_axes=face_axis,
+        face_sides=face_side,
+        face_centers=face_centers,
+        face_area_vectors=face_area,
+        face_measures=face_measure,
+        evidence=evidence,
+        component_tetrahedra=ordered_component_tetrahedra,
+        body_set_id=self.bodies.body_set_id,
+    )
+
+
 class MultivaluedCutCellPlan(StrictModule, NonTrainableState):
     """Prepare a bounded 3-D piecewise-linear multivalued cut complex."""
 
@@ -1132,217 +1365,27 @@ class MultivaluedCutCellPlan(StrictModule, NonTrainableState):
                 component_tetrahedra.append(tetrahedra)
                 component_shells.append(tuple(shell))
 
-        if not component_faces:
-            raise ValueError("Cut-cell hierarchy contains no active fluid component.")
-        cell_ids = np.arange(len(component_faces), dtype=np.int64)
-        mesh = CellMesh.from_polyhedra(
-            np.stack(global_points),
+        return _finalize_cut_complex(
+            self,
+            hierarchy,
+            leaf_cells,
+            global_points,
+            global_vertex,
             component_faces,
-            cell_global_ids=cell_ids,
-            numeric_version="block-amr-cut-complex",
-        )
-        mesh_ids = np.asarray(mesh.connectivity.cell_global_ids, dtype=np.int64)
-        component_order = mesh_ids.astype(np.int64, copy=False)
-        inverse_order = np.empty_like(component_order)
-        inverse_order[component_order] = np.arange(component_order.size)
-        ordered_component_tetrahedra = tuple(
-            tuple(component_tetrahedra[int(index)]) for index in component_order
-        )
-
-        face_incidents: dict[tuple[tuple[Any, ...], ...], list[tuple[int, _Face]]] = {}
-        for component, shell in enumerate(component_shells):
-            for face in shell:
-                face_incidents.setdefault(_fragment_face_key(face), []).append(
-                    (int(inverse_order[component]), face)
-                )
-        face_records: list[tuple[int, int, _Face]] = []
-        for key in sorted(face_incidents, key=repr):
-            incidents = face_incidents[key]
-            if len(incidents) == 1:
-                owner, face = incidents[0]
-                if face.kind == _FACE_INTERNAL:
-                    raise ValueError("Unpaired internal face remains in cut complex.")
-                face_records.append((owner, -1, face))
-            elif len(incidents) == 2:
-                (first_owner, first_face), (second_owner, second_face) = incidents
-                if first_owner == second_owner:
-                    raise ValueError("One cut component repeats a global face.")
-                if first_owner < second_owner:
-                    face_records.append((first_owner, second_owner, first_face))
-                else:
-                    face_records.append((second_owner, first_owner, second_face))
-            else:
-                raise ValueError(
-                    "Cut-complex face has more than two incident components."
-                )
-        face_offsets = np.asarray(mesh.connectivity.face_vertex_offsets, dtype=np.int32)
-        face_vertices = np.asarray(mesh.connectivity.face_vertex_values, dtype=np.int32)
-        mesh_face_lookup = {
-            tuple(
-                sorted(
-                    int(value)
-                    for value in face_vertices[
-                        int(face_offsets[index]) : int(face_offsets[index + 1])
-                    ]
-                )
-            ): index
-            for index in range(mesh.connectivity.face_count)
-        }
-        face_mesh_records = []
-        for _, _, face in face_records:
-            key = tuple(sorted(global_vertex(vertex) for vertex in face.vertices))
-            if key not in mesh_face_lookup:
-                raise RuntimeError("Cut-complex face is absent from its canonical mesh.")
-            face_mesh_records.append(mesh_face_lookup[key])
-
-        active_component_count = len(component_faces)
-        component_capacity = len(leaf_cells) * self.resources.maximum_components_per_cell
-        face_capacity = len(leaf_cells) * (
-            6 * self.resources.maximum_apertures_per_face
-            + self.resources.maximum_embedded_faces_per_cell
-        )
-        if active_component_count > component_capacity:
-            raise ValueError("Cut-complex component capacity is exceeded.")
-        if len(face_records) > face_capacity:
-            raise ValueError("Cut-complex face capacity is exceeded.")
-
-        component_active = np.zeros((component_capacity,), dtype=np.bool_)
-        component_active[:active_component_count] = True
-        component_levels_array = np.full((component_capacity,), -1, dtype=np.int32)
-        component_coordinates_array = np.full((component_capacity, 3), -1, dtype=np.int32)
-        component_slots_array = np.full((component_capacity,), -1, dtype=np.int32)
-        component_volumes_array = np.zeros((component_capacity,), dtype=np.float64)
-        component_centers_array = np.zeros((component_capacity, 3), dtype=np.float64)
-        component_fractions_array = np.zeros((component_capacity,), dtype=np.float64)
-        component_levels_array[:active_component_count] = np.asarray(component_levels)[
-            component_order
-        ]
-        component_coordinates_array[:active_component_count] = np.asarray(
-            component_coordinates
-        )[component_order]
-        component_slots_array[:active_component_count] = np.asarray(component_slots)[
-            component_order
-        ]
-        component_volumes_array[:active_component_count] = np.asarray(component_volumes)[
-            component_order
-        ]
-        component_centers_array[:active_component_count] = np.asarray(component_centers)[
-            component_order
-        ]
-        component_fractions_array[:active_component_count] = np.asarray(
-            component_fractions
-        )[component_order]
-
-        face_active = np.zeros((face_capacity,), dtype=np.bool_)
-        face_owner = np.zeros((face_capacity,), dtype=np.int32)
-        face_neighbor = np.full((face_capacity,), -1, dtype=np.int32)
-        face_kind = np.zeros((face_capacity,), dtype=np.int32)
-        face_tag = np.full((face_capacity,), -1, dtype=np.int32)
-        face_axis = np.full((face_capacity,), -1, dtype=np.int32)
-        face_side = np.full((face_capacity,), -1, dtype=np.int32)
-        face_mesh_index = np.full((face_capacity,), -1, dtype=np.int32)
-        face_centers = np.zeros((face_capacity, 3), dtype=np.float64)
-        face_area = np.zeros((face_capacity, 3), dtype=np.float64)
-        face_measure = np.zeros((face_capacity,), dtype=np.float64)
-        closure = np.zeros((active_component_count, 3), dtype=np.float64)
-        embedded_counts: dict[tuple[int, tuple[int, ...]], int] = {}
-        aperture_counts: dict[tuple[int, tuple[int, ...], int, int], int] = {}
-        for index, (owner, neighbor, face) in enumerate(face_records):
-            points = np.stack([vertex.point for vertex in face.vertices])
-            area = _polygon_area_vector(face.vertices)
-            center = np.mean(points, axis=0)
-            measure = float(np.linalg.norm(area))
-            if not np.isfinite(measure) or measure <= self.predicate_tolerance:
-                raise ValueError("Cut-complex face has unresolved measure.")
-            if neighbor >= 0:
-                direction = (
-                    component_centers_array[neighbor] - component_centers_array[owner]
-                )
-                if float(np.dot(area, direction)) < 0.0:
-                    area = -area
-            else:
-                direction = center - component_centers_array[owner]
-                if float(np.dot(area, direction)) < 0.0:
-                    area = -area
-            face_mesh_index[index] = face_mesh_records[index]
-            face_active[index] = True
-            face_owner[index] = owner
-            face_neighbor[index] = neighbor
-            face_kind[index] = face.kind if neighbor < 0 else _FACE_INTERNAL
-            face_tag[index] = face.body_tag
-            face_axis[index] = face.axis
-            face_side[index] = face.side
-            face_centers[index] = center
-            face_area[index] = area
-            face_measure[index] = measure
-            closure[owner] += area
-            if neighbor >= 0:
-                closure[neighbor] -= area
-            owner_key = (
-                int(component_levels_array[owner]),
-                tuple(component_coordinates_array[owner]),
-            )
-            if face.kind == _FACE_EMBEDDED:
-                embedded_counts[owner_key] = embedded_counts.get(owner_key, 0) + 1
-            elif face.kind == _FACE_PHYSICAL:
-                aperture_key = owner_key + (face.axis, face.side)
-                aperture_counts[aperture_key] = aperture_counts.get(aperture_key, 0) + 1
-        if (
-            embedded_counts
-            and max(embedded_counts.values())
-            > self.resources.maximum_embedded_faces_per_cell
-        ):
-            raise ValueError("Cut cell exceeds maximum_embedded_faces_per_cell.")
-        if (
-            aperture_counts
-            and max(aperture_counts.values()) > self.resources.maximum_apertures_per_face
-        ):
-            raise ValueError("Cut face exceeds maximum_apertures_per_face.")
-        closure_defect = np.linalg.norm(closure, axis=1)
-        geometry_scale = max(1.0, float(np.max(face_measure[: len(face_records)])))
-        closure_tolerance = 512.0 * np.finfo(np.float64).eps * geometry_scale
-        evidence = MultivaluedCutCellEvidence(
-            leaf_cell_count=len(leaf_cells),
-            regular_cell_count=regular_cells,
-            covered_cell_count=covered_cells,
-            cut_cell_count=cut_cells,
-            multivalued_cell_count=multivalued_cells,
-            component_count=active_component_count,
-            face_count=len(face_records),
-            maximum_components_in_cell=max(component_slots, default=-1) + 1,
-            minimum_predicate_margin=(
-                0.0 if not np.isfinite(minimum_margin) else minimum_margin
-            ),
-            maximum_volume_closure_defect=max(volume_defects, default=0.0),
-            maximum_face_closure_defect=float(np.max(closure_defect, initial=0.0)),
-            tolerance=closure_tolerance,
-        )
-        if not evidence.valid:
-            raise ValueError("Cut-cell volume or face closure certification failed.")
-        return MultivaluedCutCellComplex(
-            hierarchy=hierarchy,
-            mesh=mesh,
-            component_active=component_active,
-            component_levels=component_levels_array,
-            component_cell_coordinates=component_coordinates_array,
-            component_slots=component_slots_array,
-            component_volumes=component_volumes_array,
-            component_centers=component_centers_array,
-            component_volume_fractions=component_fractions_array,
-            face_active=face_active,
-            face_owner_components=face_owner,
-            face_neighbor_components=face_neighbor,
-            face_kinds=face_kind,
-            face_mesh_indices=face_mesh_index,
-            face_body_tags=face_tag,
-            face_axes=face_axis,
-            face_sides=face_side,
-            face_centers=face_centers,
-            face_area_vectors=face_area,
-            face_measures=face_measure,
-            evidence=evidence,
-            component_tetrahedra=ordered_component_tetrahedra,
-            body_set_id=self.bodies.body_set_id,
+            component_levels,
+            component_coordinates,
+            component_slots,
+            component_volumes,
+            component_centers,
+            component_tetrahedra,
+            component_fractions,
+            component_shells,
+            regular_cells,
+            covered_cells,
+            cut_cells,
+            multivalued_cells,
+            minimum_margin,
+            volume_defects,
         )
 
 

@@ -317,7 +317,10 @@ def _coordinate_data(value):
     return value.data if isinstance(value, cx.Field) else value
 
 
-def _adapt_result(result, arrays, fields, trees):
+_UNSUPPORTED_RESULT = object()
+
+
+def _adapt_population_result(result, arrays, fields, trees):
     if isinstance(result, PosteriorReweightingResult):
         _put_tree(trees, arrays, "samples", result.target.samples)
         log_weights = _coordinate_data(result.target.log_weights)
@@ -506,6 +509,10 @@ def _adapt_result(result, arrays, fields, trees):
             },
             (),
         )
+    return _UNSUPPORTED_RESULT
+
+
+def _adapt_state_space_result(result, arrays, fields, trees):
     if isinstance(result, BellmanFilterResult):
         metadata = _put_bellman_filter_result(result, arrays, fields, prefix="")
         return "bellman_filter", metadata, ("problem",)
@@ -671,7 +678,10 @@ def _adapt_result(result, arrays, fields, trees):
         metadata["smoother_execution_method"] = result.execution_method
         metadata["smoother_covariance_form"] = result.covariance_form
         return "kalman_smoother", metadata, ()
+    return _UNSUPPORTED_RESULT
 
+
+def _adapt_particle_result(result, arrays, fields, trees):
     if isinstance(result, ParticleSmootherResult):
         for name, value in (
             ("particles", result.particles),
@@ -934,7 +944,10 @@ def _adapt_result(result, arrays, fields, trees):
         )
         metadata["pseudoinverse_tolerance"] = result.pseudoinverse_tolerance
         return "ensemble_smoother", metadata, ("filter_result.problem",)
+    return _UNSUPPORTED_RESULT
 
+
+def _adapt_stochastic_result(result, arrays, fields, trees):
     if isinstance(result, JumpBSDEEvaluation):
         metadata = _put_bsde_evaluation(result.base, arrays, fields, prefix="base.")
         for name, value in (
@@ -1274,7 +1287,10 @@ def _adapt_result(result, arrays, fields, trees):
             "config": result.config.as_dict(),
         }
         return "variational", metadata, ("problem", "family.static")
+    return _UNSUPPORTED_RESULT
 
+
+def _adapt_chain_result(result, arrays, fields, trees):
     if isinstance(result, FlowNUTSResult):
         mcmc = result.mcmc
         _put_tree(trees, arrays, "samples", result.samples)
@@ -1489,7 +1505,10 @@ def _adapt_result(result, arrays, fields, trees):
         for name in fields:
             metadata.pop(name, None)
         return "mcmc_convergence_report", metadata, ()
+    return _UNSUPPORTED_RESULT
 
+
+def _adapt_mode_result(result, arrays, fields, trees):
     if isinstance(result, MAPCandidateSearchResult):
         if result.position is not None:
             _put_tree(trees, arrays, "position", result.position)
@@ -1656,7 +1675,10 @@ def _adapt_result(result, arrays, fields, trees):
             metadata,
             ("problem", "scale_mv", "covariance_mv", "whitening"),
         )
+    return _UNSUPPORTED_RESULT
 
+
+def _adapt_approximation_result(result, arrays, fields, trees):
     if isinstance(result, NestedSamplingResult):
         for name in ("samples", "unconstrained_samples"):
             _put_tree(trees, arrays, name, getattr(result, name))
@@ -1825,7 +1847,22 @@ def _adapt_result(result, arrays, fields, trees):
             },
             (),
         )
+    return _UNSUPPORTED_RESULT
 
+
+def _adapt_result(result, arrays, fields, trees):
+    for adapter in (
+        _adapt_population_result,
+        _adapt_state_space_result,
+        _adapt_particle_result,
+        _adapt_stochastic_result,
+        _adapt_chain_result,
+        _adapt_mode_result,
+        _adapt_approximation_result,
+    ):
+        adapted = adapter(result, arrays, fields, trees)
+        if adapted is not _UNSUPPORTED_RESULT:
+            return adapted
     raise TypeError(
         f"Unsupported UQ result type for export: {type(result).__module__}.{type(result).__qualname__}."
     )
