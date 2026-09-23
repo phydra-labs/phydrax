@@ -4,7 +4,7 @@ This page is generated from `phydrax.qualification` declarations. It is an
 inventory, not a release index. Only a trusted signed release index can
 authorize a released support tuple.
 
-Catalog ID: `43e73de78a9b4219a332334e3d9fc63e0ef7d763aabf519924c4f37a29729de4`
+Catalog ID: `edd1efe539519f3b0b597adff1bf086ee195a72be869de4e26711cf87423cca6`
 
 ## Dispositions
 
@@ -12,7 +12,7 @@ Catalog ID: `43e73de78a9b4219a332334e3d9fc63e0ef7d763aabf519924c4f37a29729de4`
 | --- | ---: |
 | released | 0 |
 | candidate | 201 |
-| research | 165 |
+| research | 166 |
 | internal | 5 |
 | retired | 0 |
 
@@ -202,6 +202,7 @@ Catalog ID: `43e73de78a9b4219a332334e3d9fc63e0ef7d763aabf519924c4f37a29729de4`
 | `functional-rg.fermionic-fermi-surface-patch` | `phydrax.applications` | candidate | candidate | 1 |
 | `fuzzy-space.two-particle-sphere` | `phydrax.applications.fuzzy_space` | candidate | candidate | 1 |
 | `interfacial-transport.bulk-surface` | `phydrax.interfacial_transport` | candidate | implementation-qualified-candidate | 1 |
+| `kinetic.compressible-entropic` | `phydrax.discretization` | research | research-production-closure | 0 |
 | `magnetic-resonance.epr.exact-single-crystal` | `phydrax.applications.magnetic_resonance` | candidate | candidate | 1 |
 | `magnetic-resonance.musr.exact-static-site` | `phydrax.applications.magnetic_resonance` | candidate | candidate | 1 |
 | `magnetic-resonance.nmr.exact-single-crystal` | `phydrax.applications.magnetic_resonance` | candidate | candidate | 1 |

@@ -431,6 +431,35 @@ def _research_platform_declarations() -> tuple[CapabilityDeclaration, ...]:
     )
 
 
+def _compressible_kinetic_declarations() -> tuple[CapabilityDeclaration, ...]:
+    return (
+        CapabilityDeclaration(
+            "kinetic.compressible-entropic",
+            "phydrax.discretization",
+            CapabilityDisposition.RESEARCH,
+            domain_maturity="research-production-closure",
+            public_symbols=(
+                "phydrax.discretization.PositiveCompressibleKineticPlan",
+                "phydrax.discretization.FullRangeQuasiEquilibriumPlan",
+                "phydrax.discretization.FilteredD3Q33Plan",
+                "phydrax.discretization.CompressibleKineticRuntimePlan",
+                "phydrax.discretization.guided_d3q39_plan",
+                "phydrax.discretization.entropic_d3q343_plan",
+            ),
+            documentation=("docs/guides_lattice_boltzmann.md",),
+            intended_uses=(
+                "bounded-compressible-kinetic-research",
+                "explicit-support-production-qualification",
+            ),
+            nonclaims=(
+                "no-universal-mach-or-stability-claim",
+                "no-blanket-release-across-model-mesh-physics-products",
+                "entropy-stabilization-is-not-turbulence-closure",
+            ),
+        ),
+    )
+
+
 def _privacy_declarations() -> tuple[CapabilityDeclaration, ...]:
     support = tuple(
         SupportTuple(
@@ -554,6 +583,7 @@ def builtin_capability_catalog() -> CapabilityCatalog:
         *_operator_declarations(),
         *_rom_declarations(),
         *_research_platform_declarations(),
+        *_compressible_kinetic_declarations(),
         *_privacy_declarations(),
         *qualified_omniphysics_declarations(),
         *_application_declarations(),

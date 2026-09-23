@@ -725,3 +725,25 @@ contracts. The generated thresholds enclose roots of a finite 1224-term
 majorant and do not claim certification of the unbounded series tail. Adapted
 source and generated data remain subject to the BSD-3-Clause terms reproduced
 in LICENSES/EXPAX-BSD-3-CLAUSE.txt. No upstream runtime dependency is bundled.
+
+Compressible entropic lattice-kinetic design study
+The compressible guided-equilibrium, quasi-equilibrium, entropy-root, KBC,
+filtered-moment, shifted-frame, semi-Lagrangian, and predictive-AMR design study
+considered DKrasauskas/shockFLOW at commit
+34f9bfdb1250012bc053daef40ce7043e452c860 (MIT Python interface and
+proprietary binary), DKrasauskas/shockFLOW-examples at commit
+86c5535c4ae844f118a54ccf2a8e9ecf53f90647 (no detected license),
+LordOfBunnies/University-of-Cincinnati-Lattice-Boltzmann-Solver at commit
+441d68863de51ac7ad3ee7214a5d04916055dec4 (GPLv3 authorization),
+abhimanyu232/LBM_KBC_Blunt_Body at commit
+05f9117b02467134854af2e2e168d507aa0f098d (no detected license), and
+gtauzin/metaLBM at commit 07291e085962f50848489fd36ece46ce412bdbb5
+(MIT), together with the cited Frapolli--Chikatamarla--Karlin, Latt et al.,
+Gillissen et al., Ansumali et al., Dorschner et al., and KBC publications.
+Phydrax independently implements its finite-support equilibrium, safeguarded
+entropy roots, KBC variants, D3Q39/D3Q343/D3Q33 rules, transport, frame
+remapping, adaptivity, multiphysics, lifecycle, deployment, qualification, and
+service contracts. No proprietary binary was inspected. No GPL or unlicensed
+source, tests, fixtures, assets, configuration vocabulary, output, shader, or
+executable is copied, translated, linked, imported, bundled, or redistributed.
+No external runtime dependency is bundled.

@@ -479,3 +479,60 @@ device. JAX `NamedSharding` supplies the actual fixed multi-device execution rou
 the record and envelope alone do not launch hosts or prove multi-host scaling. A
 topology-changing restart requires an explicit topology-restart relation rather than an
 implicit redistribution.
+
+## Compressible entropic production closure
+
+The compressible discrete-velocity surface provides three scientifically distinct
+three-dimensional routes:
+
+- `guided_d3q39_plan`: positive 13-moment guided equilibrium with one particle
+  population and an optional internal-energy population;
+- `entropic_d3q343_plan`: the V7 tensor-product reference route with safeguarded
+  entropy relaxation;
+- `FilteredD3Q33Plan`: monatomic thermal MRT with filtering restricted to fifteen
+  nonconserved second- and third-order moments.
+
+`FullRangeQuasiEquilibriumPlan` selects heat-flux slow moments for `Pr <= 1` and
+stress slow moments for `Pr > 1`. The selected family, beta values, slow-moment
+defect, positivity, and conserved defect remain in the result evidence.
+
+`KineticEntropyRootPlan` owns exact Newton/bisection, certified asymptotic, and
+declared hybrid roots. A hybrid route reports whether it used the approximation.
+It never converts a failed root into alpha two. `KBCCollisionPlan` exposes KBC
+variants A through D and quadratic, exact, or hybrid stabilizer policies.
+
+`IntegerLatticeTransportPlan` performs exact pull streaming on periodic Cartesian
+grids. `KineticVelocityPartitionPlan` partitions the population axis for distributed
+D3Q343 execution. `IntegerKineticFramePlan` and `remap_kinetic_frame` preserve
+declared guided moments between integral frames. `AdaptiveGaugePlan` supplies the
+separate continuous velocity/temperature gauge contract; it does not claim exact
+streaming.
+
+Production states checkpoint populations, equilibrium duals, stabilizer history,
+frame state, parity, and clock together. `CompressibleKineticRuntimePlan` rejects
+the whole candidate step when collision or transport evidence fails.
+
+The execution surface includes bounded worksets, explicit storage layouts,
+block-scaled narrow storage, AMR transfer, predictive refinement, mapped-grid
+metrics, moving-geometry transactions, species transport, source lifting,
+turbulent/effective transport, radiation/ablation exchange, spectral diagnostics,
+IREE collision export, VTK accepted-state output, and bounded rendering artifacts.
+
+`save_compressible_kinetic_iree` defaults to portable VMVX and requires a
+float32 rule/state pair, for example `guided_d3q39_plan(dtype=np.float32)`.
+Other IREE backends require an explicit `IREEExportPolicy` and retain their own
+qualified dtype envelope.
+
+
+These are exact support tuples, not one blanket method claim. In particular:
+
+- entropy/Knudsen stabilization is not an LES or RANS model;
+- D3Q343 requires an explicit resource and population-partition plan;
+- D3Q33 initially supports monatomic `gamma = 5/3`;
+- narrow storage always computes and accumulates in a wider declared dtype;
+- packed foreign boundary rasters are read-only interchange inputs;
+- visualization and video products are never restart state.
+
+Run `tools/compressible_kinetic_qualification.py` for the executable invariant
+campaign and `tools/compressible_kinetic_benchmarks.py` for lowering, compilation,
+warmed throughput, and logical state-memory evidence.

@@ -161,6 +161,9 @@ iree = [
   "iree-base-compiler==3.11.0",
   "iree-base-runtime==3.11.0",
 ]
+kinetic-interop = [
+  "PyYAML>=6.0,<7",
+]
 layout-interop = [
   "gdstk>=0.9.62,<0.10",
 ]

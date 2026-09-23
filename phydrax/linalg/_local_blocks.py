@@ -47,6 +47,13 @@ class LocalBlockFactorization(StrictModule):
         self.block_size = factors.shape[1]
 
 
+class LocalBlockSolveResult(StrictModule):
+    """Per-block solution and failure evidence for one local factorization."""
+
+    value: Array
+    failed_blocks: Array
+
+
 def prepare_local_block_factorization(
     blocks: ArrayLike,
     /,
@@ -118,12 +125,12 @@ def prepare_local_block_factorization(
     )
 
 
-def solve_local_blocks(
+def solve_local_blocks_detailed(
     factorization: LocalBlockFactorization,
     right_hand_side: ArrayLike,
     /,
-) -> tuple[Array, Array]:
-    """Apply one local factorization and return the solution and failure flag."""
+) -> LocalBlockSolveResult:
+    """Apply one factorization while retaining independent block failures."""
     if not isinstance(factorization, LocalBlockFactorization):
         raise TypeError("factorization must be a LocalBlockFactorization.")
     rhs = jnp.asarray(right_hand_side)
@@ -154,14 +161,41 @@ def solve_local_blocks(
         )
         solution = transformed_solution / factorization.metric_sqrt[:, :, None]
 
-    failed = jnp.any(factorization.failed_blocks) | jnp.any(~jnp.isfinite(solution))
-    solution = jnp.where(failed, jnp.zeros((), dtype=solution.dtype), solution)
-    return solution.reshape(expected_prefix + trailing_shape), failed
+    failed_blocks = factorization.failed_blocks | jnp.any(
+        ~jnp.isfinite(solution), axis=(1, 2)
+    )
+    solution = jnp.where(
+        failed_blocks[:, None, None],
+        jnp.zeros((), dtype=solution.dtype),
+        solution,
+    )
+    return LocalBlockSolveResult(
+        value=solution.reshape(expected_prefix + trailing_shape),
+        failed_blocks=failed_blocks,
+    )
+
+
+def solve_local_blocks(
+    factorization: LocalBlockFactorization,
+    right_hand_side: ArrayLike,
+    /,
+) -> tuple[Array, Array]:
+    """Apply one local factorization and return the solution and failure flag."""
+    detailed = solve_local_blocks_detailed(factorization, right_hand_side)
+    failed = jnp.any(detailed.failed_blocks)
+    solution = jnp.where(
+        failed,
+        jnp.zeros((), dtype=detailed.value.dtype),
+        detailed.value,
+    )
+    return solution, failed
 
 
 __all__ = [
     "LocalBlockFactorization",
     "LocalBlockFactorizationKind",
+    "LocalBlockSolveResult",
     "prepare_local_block_factorization",
     "solve_local_blocks",
+    "solve_local_blocks_detailed",
 ]

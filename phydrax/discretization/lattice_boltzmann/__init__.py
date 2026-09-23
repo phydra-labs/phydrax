@@ -3,6 +3,12 @@
 #
 # ruff: noqa: F401
 
+from .._kinetic_entropy import (
+    KineticEntropyRootEvidence,
+    KineticEntropyRootPlan,
+    KineticEntropyRootResult,
+    solve_kinetic_entropy_root,
+)
 from ._aa import (
     AALatticeBoltzmannAddressing,
     AALatticeBoltzmannCheckpoint,
@@ -47,6 +53,8 @@ from ._collision import (
     CumulantCollisionPlan,
     EntropicCollisionPlan,
     KBCCollisionPlan,
+    KBCStabilizerKind,
+    KBCVariant,
     LatticeBoltzmannCollisionDiagnostics,
     LatticeBoltzmannCollisionPlan,
     LatticeBoltzmannCollisionResult,

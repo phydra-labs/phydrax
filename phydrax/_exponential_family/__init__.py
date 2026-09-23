@@ -38,6 +38,13 @@ from ._elementary import (
     NormalFamily,
     PoissonFamily,
 )
+from ._finite_support import (
+    FiniteSupportExponentialFamily,
+    FiniteSupportNaturalSolvePlan,
+    FiniteSupportSolveEvidence,
+    FiniteSupportSolveResult,
+    solve_finite_support_mean,
+)
 from ._gamma import GammaFamily
 from ._multivariate_normal import MultivariateNormalFamily
 
@@ -75,4 +82,9 @@ __all__ = [
     "PoissonFamily",
     "StatisticBatch",
     "exponential_family_status_name",
+    "FiniteSupportExponentialFamily",
+    "FiniteSupportNaturalSolvePlan",
+    "FiniteSupportSolveEvidence",
+    "FiniteSupportSolveResult",
+    "solve_finite_support_mean",
 ]

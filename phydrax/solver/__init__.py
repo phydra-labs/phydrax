@@ -269,6 +269,11 @@ from ._compatible_systems import (
     CompatibleVariableDensityProjection,
     IncompressibleProjectionResult,
 )
+from ._compressible_kinetic import CompressibleKineticFixedStepMethod
+from ._compressible_kinetic_output import (
+    CompressibleKineticVTKResult,
+    write_compressible_kinetic_vti,
+)
 from ._conservation_temporal import (
     ConservationIMEXMethod,
     ConservationIMEXResult,
@@ -3562,6 +3567,9 @@ __all__ = [
     "FiniteVolumeConservativeContentState",
     "apply_stage_rate_euler_update",
     "FiniteVolumeOutputPlan",
+    "CompressibleKineticFixedStepMethod",
+    "CompressibleKineticVTKResult",
+    "write_compressible_kinetic_vti",
     "AdaptiveFiniteVolumeRolloutPlan",
     "FiniteVolumeGradientReport",
     "FiniteVolumeReplayMode",

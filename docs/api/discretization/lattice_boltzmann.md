@@ -521,6 +521,26 @@ compressible total-energy or solid-mechanics model.
         - IntegerVelocityFrameShiftPlan
         - PreparedFixedPartitionHybridRuntime
         - DynamicHybridOwnershipPlan
+        - CompressibleVelocityRule
+        - PositiveCompressibleKineticPlan
+        - FullRangeQuasiEquilibriumPlan
+        - FilteredD3Q33Plan
+        - IntegerLatticeTransportPlan
+        - KineticVelocityPartitionPlan
+        - IntegerKineticFramePlan
+        - AdaptiveGaugePlan
+        - CompressibleKineticRuntimePlan
+        - CompressibleKineticPrecisionPolicy
+        - KineticAMRTransferPlan
+        - PredictiveKineticRefinementPlan
+        - MappedKineticGridPlan
+        - MovingKineticGeometryPlan
+        - KineticSpeciesTransportPlan
+        - KineticEffectiveTransportPlan
+        - KineticRadiationAblationPlan
+        - KineticSpectralAnalysisPlan
+        - guided_d3q39_plan
+        - entropic_d3q343_plan
 
 ---
 
@@ -533,6 +553,10 @@ compressible total-energy or solid-mechanics model.
 ---
 
 ::: phydrax.solver.OracleSmoothCompressibleD2V17FixedStepMethod
+
+---
+
+::: phydrax.solver.CompressibleKineticFixedStepMethod
 
 ---
 
@@ -561,3 +585,7 @@ compressible total-energy or solid-mechanics model.
 ---
 
 ::: phydrax.export.DiscreteVelocityIREEExportBundle
+
+---
+
+::: phydrax.export.save_compressible_kinetic_iree

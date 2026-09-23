@@ -30,6 +30,7 @@ from ._complex_training import (
     RNGInterchangeState,
     write_complex_training_checkpoint,
 )
+from ._compressible_kinetic_iree import save_compressible_kinetic_iree
 from ._discrete_velocity_iree import (
     discrete_velocity_iree_availability,
     DiscreteVelocityIREEContract,
@@ -126,6 +127,7 @@ __all__ = [
     "prepare_lattice_boltzmann_iree_contract",
     "prepare_discrete_velocity_iree_contract",
     "save_discrete_velocity_iree",
+    "save_compressible_kinetic_iree",
     "save_lattice_boltzmann_iree",
     "import_complex_parameters",
     "OnnxExportResult",

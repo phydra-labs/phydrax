@@ -4,6 +4,13 @@
 
 """Differentiable state-to-measurement rendering operators."""
 
+from ._kinetic_video import KineticVideoPlan
+from ._kinetic_volume import (
+    KineticVolumeProjection,
+    KineticVolumeRenderEvidence,
+    KineticVolumeRenderPlan,
+    KineticVolumeRenderResult,
+)
 from ._lidar import LidarRenderResult, LidarSurfacePlan, PreparedLidarSurface
 from ._lidar_waveform import (
     AtmosphericLidarPlan,
@@ -74,6 +81,11 @@ __all__ = [
     "RASTER_INACTIVE",
     "RASTER_INVALID",
     "RASTER_SUPPORT_OVERFLOW",
+    "KineticVideoPlan",
+    "KineticVolumeProjection",
+    "KineticVolumeRenderEvidence",
+    "KineticVolumeRenderPlan",
+    "KineticVolumeRenderResult",
     "RenderEvidence",
     "SpecularLidarMultipathPlan",
     "SurfaceImagePlan",
