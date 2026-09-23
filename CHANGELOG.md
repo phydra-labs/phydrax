@@ -40,9 +40,30 @@
   typed method/operator/plan provenance. Affine, activation, and semilinear
   exponential updates share one augmented action rather than constructing
   independent exponential and phi projections.
-
+- Blockwise model bindings now declare their output layout
+  (`dependency_axes`, `dependency_subset`, or `axis_array`). Output axes come
+  from that declaration, the vmap schedule, or coordinate dependencies; array
+  sizes only validate a declaration and never establish axis identity.
+- Domain-backed integration targets accept a `DomainFunction` or a constant.
+  A raw callable now raises `TypeError` naming `domain.Function(*labels)(f)`;
+  raw-callable engines (mapped, breakpoint, external, adaptive callable) keep
+  their callable interface.
+- Callable identities in residual relaxation, cochain residuals,
+  astrodynamics and GR events, Maxwell sources, probabilistic ODE drifts,
+  variational Monte Carlo, and robot environments use the canonical
+  callable payload. Opaque callables require explicit semantic and numeric
+  identifiers; `repr`, source-location, and type-name identities are removed.
+- Triangle and unstructured finite-volume methods accept any
+  arbitrary-normal numerical flux; moving and overset unstructured routes
+  require the new `AbstractArbitraryNormalALENumericalFluxPlan`.
 
 ### Fixed
+- Mapped finite-volume dynamics and wave-propagation plans now refuse a face
+  closure at preparation instead of silently ignoring it.
+- DEM and reactive checkpointed replay VJPs invalidate the returned cotangent
+  when the replay does not match; the primal and replay evidence are kept.
+- Implicit root differentiation checks the nonlinear method's capability even
+  when explicit tangent and adjoint policies are supplied.
 - Hardened the quantum Hall, compressible kinetic, and scaled-Taylor additions:
   scientific owner identities and charge rosters now fail closed, transport and
   SCBA retain native solve status, finite-support means require convex-support

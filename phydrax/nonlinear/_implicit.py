@@ -77,6 +77,10 @@ class ImplicitRootDerivativePolicy(StrictModule):
         """Resolve tangent and adjoint policies against one nonlinear method."""
         if not isinstance(method, AbstractNonlinearMethod):
             raise TypeError("method must be an AbstractNonlinearMethod.")
+        if not method.capabilities.implicit_differentiation:
+            raise ValueError(
+                "The nonlinear method does not support implicit root differentiation."
+            )
         tangent = self.tangent_linear_policy
         if tangent is None:
             if not isinstance(method, (NewtonKrylov, NewtonTrustRegion)):

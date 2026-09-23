@@ -1,6 +1,7 @@
 import jax.numpy as jnp
 import jax.random as jr
 import optax
+import pytest
 
 import phydrax as phx
 from phydrax._trainable import partition_trainable
@@ -20,6 +21,41 @@ def _fixed_term(domain, field_name, operator, *, points, label, blocks=None):
         blocks=blocks,
         label=label,
     )
+
+
+def _identity_map(value):
+    return value
+
+
+def _negated_map(value):
+    return -value
+
+
+def test_relaxation_map_identity_is_content_addressed_or_declared():
+    first_plain = phx.solver.ResidualRelaxationMap("u", _identity_map)
+    assert (
+        phx.solver.ResidualRelaxationMap("u", _identity_map).map_id == first_plain.map_id
+    )
+    assert phx.solver.ResidualRelaxationMap("u", _negated_map).map_id != (
+        first_plain.map_id
+    )
+
+    with pytest.raises(TypeError, match="explicit semantic_id and numeric_id"):
+        phx.solver.ResidualRelaxationMap("u", lambda value: value)
+
+    identity = phx.solver.ResidualRelaxationMap(
+        "u",
+        lambda value: value,
+        operator_semantic_id="identity-map",
+        operator_numeric_id="identity-map",
+    )
+    negation = phx.solver.ResidualRelaxationMap(
+        "u",
+        lambda value: -value,
+        operator_semantic_id="negation-map",
+        operator_numeric_id="negation-map",
+    )
+    assert identity.map_id != negation.map_id
 
 
 def test_pseudo_transient_root_uses_explicit_relaxation_map():
@@ -44,7 +80,12 @@ def test_pseudo_transient_root_uses_explicit_relaxation_map():
     )
     policy = phx.solver.PseudoTransientPolicy(
         0,
-        phx.solver.ResidualRelaxationMap("u", lambda value: value),
+        phx.solver.ResidualRelaxationMap(
+            "u",
+            lambda value: value,
+            operator_semantic_id="identity-map",
+            operator_numeric_id="identity-map",
+        ),
         inverse_step=3.0,
         freshness="experimental_fixed",
     )
@@ -83,7 +124,8 @@ def test_gauss_newton_uses_pseudo_transient_residual_roots():
                 phx.solver.ResidualRelaxationMap(
                     "u",
                     lambda value: value,
-                    map_id="identity",
+                    operator_semantic_id="identity-map",
+                    operator_numeric_id="identity-map",
                 ),
                 freshness="experimental_fixed",
             ),
@@ -251,7 +293,8 @@ def test_stateful_transforms_tolerate_unselected_sampled_terms():
         phx.solver.ResidualRelaxationMap(
             "u",
             lambda value: value,
-            map_id="identity-u",
+            operator_semantic_id="identity-map",
+            operator_numeric_id="identity-map",
         ),
         freshness="experimental_fixed",
     )

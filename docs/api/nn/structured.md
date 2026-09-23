@@ -11,7 +11,9 @@ Models that exploit product-domain structure via low-rank factorization.
       Supported topology modes are `grouped`, `flat`, `best_effort_flat`, and `strict_flat`.
     - `SeparableMLP`, `SeparableModifiedMLP`, `SeparableKAN`, and
       `SeparableFeynmaNN` declare a blockwise flat `ModelBinding`; callers bind
-      them with `Domain.Model(...)` without execution-mode flags.
+      them with `Domain.Model(...)` without execution-mode flags. These bindings
+      use the default `output_layout="dependency_axes"`: outputs start with every
+      dependency batch axis, and a mismatched leading shape raises `ValueError`.
     - `LatentContractionModel` declares an axis binding when explicit
       `factor_inputs` are present and a structured blockwise binding otherwise.
       `LatentExecutionPolicy` governs grouped, flat, and fallback planning; the

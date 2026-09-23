@@ -1,3 +1,6 @@
+import functools
+from collections.abc import Callable
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -5,6 +8,7 @@ import pytest
 
 from phydrax._array_tree import ArrayPyTreeSchema
 from phydrax._identity import ExecutableSignature, NumericRevision, SemanticProvenance
+from phydrax._strict import StrictModule
 from phydrax.applications.robotics._environment import (
     AbstractRobotEnvironmentWrapper,
     AbstractRobotTask,
@@ -154,6 +158,11 @@ def _initial_state(key):
     return jnp.zeros((2,))
 
 
+def _unit_initial_state(key):
+    del key
+    return jnp.ones((2,))
+
+
 def _bounded_transition(
     context: DiscreteStepContext,
     state,
@@ -181,6 +190,67 @@ def _projected_transition(context, state, action, args):
     )
 
 
+class _GainTransition(StrictModule):
+    gain: jax.Array
+
+    def __init__(self, gain):
+        self.gain = jnp.asarray(gain)
+
+    def __call__(self, context, state, action, args):
+        del context, args
+        accepted = state.at[0].add(self.gain * action[0])
+        return DiscreteTransitionResult(
+            accepted,
+            accepted,
+            jnp.asarray(True),
+            jnp.asarray(0, dtype=jnp.int32),
+        )
+
+
+def _halve(value):
+    return 0.5 * value
+
+
+def _double(value):
+    return 2.0 * value
+
+
+class _ShapedWrapper(AbstractRobotEnvironmentWrapper):
+    shaping: Callable
+    wrapper_id: str = eqx.field(static=True)
+    action_repeat: int = eqx.field(static=True)
+    horizon: int | None = eqx.field(static=True)
+    auto_reset: bool = eqx.field(static=True)
+
+    def __init__(self, shaping):
+        self.shaping = shaping
+        self.wrapper_id = "shaped-wrapper"
+        self.action_repeat = 1
+        self.horizon = None
+        self.auto_reset = False
+
+    def initialize(self, plant_state, task_state, key, /):
+        del plant_state, task_state, key
+        return jnp.ones((1,))
+
+    def transition(
+        self,
+        context,
+        wrapper_state,
+        plant_state,
+        task_state,
+        observation,
+        terminated,
+        key,
+        /,
+    ):
+        del context, plant_state, task_state, observation, terminated, key
+        return RobotEnvironmentWrapperTransition(
+            self.shaping(wrapper_state),
+            jnp.asarray(False),
+        )
+
+
 def _environment(
     *,
     threshold=100.0,
@@ -191,8 +261,9 @@ def _environment(
     state_layout=None,
     input_layout=None,
     system_id="bounded-plant",
-    initializer_id="zero-initializer",
+    initializer=_initial_state,
     environment_id=None,
+    **callable_ids,
 ):
     system = DiscreteSystem(
         transition,
@@ -203,7 +274,7 @@ def _environment(
     )
     return prepare_array_robot_environment(
         system,
-        _initial_state,
+        initializer,
         _ThresholdTask(threshold),
         (
             _EpisodeWrapper(
@@ -212,7 +283,7 @@ def _environment(
                 auto_reset=auto_reset,
             ),
         ),
-        initializer_id=initializer_id,
+        **callable_ids,
         reset_fallback=jnp.zeros((2,)),
         parameter_values=jnp.asarray(1.0),
         environment_id=environment_id,
@@ -344,7 +415,7 @@ def test_environment_provenance_binds_all_plant_identities_and_task_content():
     changed_task = _environment(threshold=2.0, environment_id=display_id)
     changed_initializer = _environment(
         threshold=1.0,
-        initializer_id="different-initializer",
+        initializer=_unit_initial_state,
         environment_id=display_id,
     )
     reset = baseline.reset(jax.random.key(40))
@@ -364,6 +435,101 @@ def test_environment_provenance_binds_all_plant_identities_and_task_content():
     )
     with pytest.raises(ValueError, match="provenance"):
         changed_task.step(reset.state, jnp.asarray([0.25]))
+
+
+def test_opaque_environment_callables_without_declared_ids_are_refused():
+    def closure_transition(context, state, action, args):
+        return _bounded_transition(context, state, action, args)
+
+    with pytest.raises(TypeError, match="Opaque callables"):
+        _environment(initializer=lambda key: jnp.zeros((2,)))
+    with pytest.raises(TypeError, match="Opaque callables"):
+        _environment(initializer=functools.partial(_initial_state))
+    with pytest.raises(TypeError, match="Opaque callables"):
+        _environment(transition=closure_transition)
+    with pytest.raises(TypeError, match="Opaque callables"):
+        _environment(
+            initializer=lambda key: jnp.zeros((2,)),
+            initializer_semantic_id="zero-initializer",
+        )
+
+    baseline = _environment()
+    with pytest.raises(TypeError, match="Opaque callables"):
+        PreparedRobotEnvironment(
+            baseline.plant,
+            baseline.parameters,
+            baseline.task,
+            (_ShapedWrapper(lambda value: 0.5 * value),),
+            step_size=1.0,
+        )
+
+
+def test_distinct_opaque_initializers_bind_their_declared_identities():
+    first = _environment(
+        initializer=lambda key: jnp.zeros((2,)),
+        initializer_semantic_id="zero-initializer",
+        initializer_numeric_id="zero-initializer:rev-1",
+    )
+    second = _environment(
+        initializer=lambda key: jnp.zeros((2,)),
+        initializer_semantic_id="other-initializer",
+        initializer_numeric_id="other-initializer:rev-1",
+    )
+    revised = _environment(
+        initializer=lambda key: jnp.zeros((2,)),
+        initializer_semantic_id="zero-initializer",
+        initializer_numeric_id="zero-initializer:rev-2",
+    )
+
+    assert first.provenance_id != second.provenance_id
+    assert (
+        first.plant.semantic_provenance.semantic_id
+        != second.plant.semantic_provenance.semantic_id
+    )
+    assert (
+        revised.plant.semantic_provenance.semantic_id
+        == first.plant.semantic_provenance.semantic_id
+    )
+    assert (
+        revised.plant.numeric_revision.revision_id
+        != first.plant.numeric_revision.revision_id
+    )
+
+
+def test_strict_module_transition_is_content_addressed():
+    slow = _environment(transition=_GainTransition(1.0))
+    fast = _environment(transition=_GainTransition(2.0))
+
+    assert (
+        slow.plant.semantic_provenance.semantic_id
+        == fast.plant.semantic_provenance.semantic_id
+    )
+    assert slow.plant.numeric_revision.revision_id != (
+        fast.plant.numeric_revision.revision_id
+    )
+    assert slow.provenance_id != fast.provenance_id
+    with pytest.raises(ValueError, match="StrictModule"):
+        _environment(
+            transition=_GainTransition(1.0),
+            transition_semantic_id="gain",
+            transition_numeric_id="gain:rev-1",
+        )
+
+
+def test_wrapper_callable_fields_bind_function_content():
+    baseline = _environment()
+
+    def prepared(shaping):
+        return PreparedRobotEnvironment(
+            baseline.plant,
+            baseline.parameters,
+            baseline.task,
+            (_ShapedWrapper(shaping),),
+            step_size=1.0,
+        )
+
+    assert prepared(_halve).provenance_id == prepared(_halve).provenance_id
+    assert prepared(_halve).provenance_id != prepared(_double).provenance_id
 
 
 class _BatchedTask(AbstractRobotTask):

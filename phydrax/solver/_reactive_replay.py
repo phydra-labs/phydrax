@@ -12,6 +12,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Array
 
+from .._admissibility import guard_derivative_validity
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -161,19 +162,25 @@ def checkpointed_reactive_vjp(
     forward = checkpointed_reactive_rollout(
         step_function, initial_state, step_count, checkpoint
     )
+    replayed = checkpointed_reactive_rollout(
+        step_function, initial_state, step_count, checkpoint
+    )
+    replay_matched = reactive_replay_matches(forward.replay, replayed.replay)
 
     def terminal(state):
         result = checkpointed_reactive_rollout(
             step_function, state, step_count, checkpoint
         )
-        return loss(result.final_state)
+        return guard_derivative_validity(
+            loss(result.final_state),
+            replay_matched,
+            dependencies=state,
+            failure="status",
+            message="Reactive replay diverged from the forward rollout.",
+        )
 
     primal, pullback = jax.vjp(terminal, initial_state)
     state_cotangent = pullback(jnp.asarray(cotangent, dtype=primal.dtype))[0]
-    replayed = checkpointed_reactive_rollout(
-        step_function, initial_state, step_count, checkpoint
-    )
-    replay_matched = reactive_replay_matches(forward.replay, replayed.replay)
     return ReactiveCheckpointVJPResult(
         primal,
         state_cotangent,

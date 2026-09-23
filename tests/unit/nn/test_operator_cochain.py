@@ -536,6 +536,49 @@ def test_multi_field_training_and_checkpoint_resume_are_exact(tmp_path):
     )
 
 
+def _plain_source_residual(graph, fields, *, key):
+    del graph, key
+    return {"residual": fields["u"] - 0.1 * fields["forcing"]}
+
+
+def _plain_scaled_residual(graph, fields, *, key):
+    del graph, key
+    return {"residual": fields["u"] - 0.2 * fields["forcing"]}
+
+
+def test_cochain_residual_program_identity_uses_canonical_callable_payload():
+    zero_spec = phx.discretization.CochainFieldSpec(
+        0,
+        cell_orientation="invariant",
+        sampling="point_value",
+    )
+
+    def program(residual_fn, **ids):
+        return phx.graph.CochainResidualProgram(
+            inputs={"u": zero_spec, "forcing": zero_spec},
+            outputs={"residual": zero_spec},
+            residual_fn=residual_fn,
+            **ids,
+        )
+
+    plain = program(_plain_source_residual)
+    assert plain.fingerprint == program(_plain_source_residual).fingerprint
+    assert plain.fingerprint != program(_plain_scaled_residual).fingerprint
+
+    first = lambda graph, fields, *, key: {"residual": fields["u"]}
+    second = lambda graph, fields, *, key: {"residual": -fields["u"]}
+    for opaque in (first, second):
+        with pytest.raises(TypeError, match="explicit semantic_id and numeric_id"):
+            program(opaque)
+    declared_first = program(
+        first, residual_semantic_id="identity", residual_numeric_id="identity"
+    )
+    declared_second = program(
+        second, residual_semantic_id="negation", residual_numeric_id="negation"
+    )
+    assert declared_first.fingerprint != declared_second.fingerprint
+
+
 def _source_matching_program(*, identity="tests.cochain.source_matching"):
     zero_spec = phx.discretization.CochainFieldSpec(
         0,
@@ -551,7 +594,8 @@ def _source_matching_program(*, identity="tests.cochain.source_matching"):
         inputs={"u": zero_spec, "forcing": zero_spec},
         outputs={"residual": zero_spec},
         residual_fn=residual,
-        identity=identity,
+        residual_semantic_id=identity,
+        residual_numeric_id=identity,
     )
 
 

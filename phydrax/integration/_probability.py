@@ -10,7 +10,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, Key
 
 import phydrax.axes as cx
-from phydrax.domain import DomainFunction, PointBatch, ProbabilityDomain, SampleLayout
+from phydrax.domain import PointBatch, SampleLayout
 
 from .._doc import DOC_KEY0
 from .._frozendict import frozendict
@@ -24,7 +24,7 @@ from ._lowering import _scalar_interior_rule_data, sum_over
 from ._plans import FixedQuadraturePlan
 from ._precision import IntegrationPrecisionPolicy
 from ._status import IntegrationStatus
-from ._targets import DensityTarget, ProbabilityTarget
+from ._targets import as_target_domain_function, DensityTarget, ProbabilityTarget
 
 
 def materialize_fixed_probability(
@@ -56,12 +56,6 @@ def materialize_fixed_probability(
     )
 
 
-def _as_function(value: Any, probability: ProbabilityDomain, /) -> DomainFunction:
-    if isinstance(value, DomainFunction):
-        return value
-    return DomainFunction(domain=probability, deps=(), func=value)
-
-
 def integrate_fixed_probability(
     integrand: Any,
     target: ProbabilityTarget | DensityTarget,
@@ -80,14 +74,14 @@ def integrate_fixed_probability(
     base = target.base if isinstance(target, DensityTarget) else target
     if not isinstance(base, ProbabilityTarget):
         raise TypeError("Probability quadrature requires a ProbabilityTarget base.")
-    function = _as_function(integrand, base.probability)
+    function = as_target_domain_function(integrand, base.probability)
     values = function(batch.points, key=key, **callback_kwargs)
     if not isinstance(values, cx.AxisArray):
         raise TypeError("Probability integrands must evaluate to phydrax.axes.AxisArray.")
     values = cx.AxisArray(precision_.evaluation(values.data), dims=values.dims)
     weights = batch.weights
     if isinstance(target, DensityTarget):
-        log_density = _as_function(target.log_density, base.probability)
+        log_density = as_target_domain_function(target.log_density, base.probability)
         log_values = log_density(batch.points, key=key, **callback_kwargs)
         log_data = precision_.evaluation(log_values.data)
         weights = weights * cx.AxisArray(jnp.exp(log_data), dims=log_values.dims)

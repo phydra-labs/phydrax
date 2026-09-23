@@ -315,6 +315,27 @@ def test_adaptive_cubature_normalizes_component_means_on_nonunit_domains():
     assert estimate.error_kind == "ratio-embedded-cubature-indicator"
 
 
+def test_adaptive_cubature_domain_targets_require_declared_domain_functions():
+    x = phx.domain.ScalarInterval(0.0, 2.0, label="x")
+    y = phx.domain.ScalarInterval(0.0, 3.0, label="y")
+    domain = phx.domain.ProductDomain(x, y)
+    plan = phx.integration.AdaptiveCubaturePlan(
+        phx.integration.GenzMalikRule(2, 9),
+        absolute_tolerance=1e-10,
+        max_cells=8,
+        throw=False,
+    )
+
+    def undeclared(x=jnp.asarray(2.0), *, key=None):
+        del key
+        return x
+
+    with pytest.raises(TypeError, match=r"domain\.Function\(\*labels\)\(callable\)"):
+        phx.integration.integrate(
+            undeclared, phx.integration.over(domain.component()), plan
+        )
+
+
 def test_adaptive_cubature_rejects_partial_coupled_axes():
     x = phx.domain.ScalarInterval(0.0, 1.0, label="x")
     y = phx.domain.ScalarInterval(0.0, 1.0, label="y")

@@ -47,7 +47,7 @@ from ._lowering import component_factor_fields, sum_over
 from ._plans import AdaptiveQuadraturePlan
 from ._precision import IntegrationPrecisionPolicy
 from ._status import IntegrationStatus
-from ._targets import ComponentTarget, DensityTarget
+from ._targets import as_target_domain_function, ComponentTarget, DensityTarget
 
 
 def _unwrap(factor: Any, /) -> Any:
@@ -197,12 +197,6 @@ class DomainAdaptiveIntegrand(StrictModule):
         return jnp.asarray(self.field(coordinate).data)
 
 
-def _as_domain_function(value: Any, component: DomainComponent, /) -> DomainFunction:
-    if isinstance(value, DomainFunction):
-        return value
-    return DomainFunction(domain=component.domain, deps=(), func=value)
-
-
 def _run_adaptive_raw(
     integrand: Any,
     component: DomainComponent,
@@ -219,9 +213,11 @@ def _run_adaptive_raw(
     axis = structure.axis_for(variable_)
     if axis is None:
         raise RuntimeError("Adaptive variable has no integration axis.")
-    function = _as_domain_function(integrand, component)
+    function = as_target_domain_function(integrand, component.domain)
     density_function = (
-        None if log_density is None else _as_domain_function(log_density, component)
+        None
+        if log_density is None
+        else as_target_domain_function(log_density, component.domain)
     )
     callback = DomainAdaptiveIntegrand(
         integrand=function,

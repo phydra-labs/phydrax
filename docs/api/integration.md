@@ -21,6 +21,13 @@ estimate = phx.integration.integrate(
 )
 ```
 
+Domain-backed targets (`over`, `mean_over`, `expectation`, and `density` or
+`normalized_density` over them) accept a support-compatible `DomainFunction` or a constant
+array. A bare callable raises `TypeError`; wrap it as
+`domain.Function(*labels)(callable)` with explicitly declared dependencies.
+External raw-sample measures, mapped targets, multilevel samplers, and the
+callable adaptive engines keep their raw-callable ABIs.
+
 Randomized plans require `key=`; deterministic plans reject it. Use
 `materialize(...)` followed by repeated `reduce(...)` calls when multiple
 integrands must share exactly the same nodes or random design.

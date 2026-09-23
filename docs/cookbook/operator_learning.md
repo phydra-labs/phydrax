@@ -1179,7 +1179,8 @@ darcy_program = phx.graph.CochainResidualProgram(
         "mass": zero_form,
     },
     residual_fn=mixed_darcy_residual,
-    identity="cookbook.operator.mixed_darcy",
+    residual_semantic_id="cookbook.operator.mixed_darcy",
+    residual_numeric_id="cookbook.operator.mixed_darcy",
 )
 residual_inputs = {
     "pressure": phx.nn.operator.training.CochainResidualInput("prediction", "pressure"),

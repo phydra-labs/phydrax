@@ -14,9 +14,24 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._identity import callable_payload
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..discretization import StructuredCochainBridge
+
+
+def _envelope_identity(
+    envelope: Callable[[Array, Any], ArrayLike] | None,
+    semantic_id: str | None,
+    numeric_id: str | None,
+    /,
+) -> tuple[str | None, str | None]:
+    if envelope is None:
+        if semantic_id is not None or numeric_id is not None:
+            raise ValueError("Envelope semantic and numeric IDs require an envelope.")
+        return None, None
+    payload = callable_payload(envelope, semantic_id=semantic_id, numeric_id=numeric_id)
+    return payload["semantic_content_id"], payload["numeric_content_id"]
 
 
 class MaxwellSourceForcing(StrictModule):
@@ -39,7 +54,12 @@ class AbstractMaxwellSourcePlan(StrictModule):
 
 
 class PreparedMaxwellSource(StrictModule):
-    """Sparse prepared source with harmonic time dependence and dynamic control."""
+    """Sparse prepared source with harmonic time dependence and dynamic control.
+
+    ``envelope_semantic_content_id`` and ``envelope_numeric_content_id`` are the
+    resolved ``callable_payload`` identities of ``envelope``; they are ``None``
+    exactly when ``envelope`` is ``None``.
+    """
 
     electric_indices: Array
     electric_profile: Array
@@ -52,6 +72,8 @@ class PreparedMaxwellSource(StrictModule):
     amplitude: Array
     control_key: str | None = eqx.field(static=True)
     envelope: Callable[[Array, Any], ArrayLike] | None = eqx.field(static=True)
+    envelope_semantic_content_id: str | None = eqx.field(static=True)
+    envelope_numeric_content_id: str | None = eqx.field(static=True)
     magnetic_closedness_preserving: bool = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
@@ -69,6 +91,8 @@ class PreparedMaxwellSource(StrictModule):
         amplitude: ArrayLike,
         control_key: str | None,
         envelope: Callable[[Array, Any], ArrayLike] | None,
+        envelope_semantic_content_id: str | None,
+        envelope_numeric_content_id: str | None,
         magnetic_closedness_preserving: bool,
         source_id: str,
         layout_id: str,
@@ -106,6 +130,12 @@ class PreparedMaxwellSource(StrictModule):
             raise ValueError("Source control_key must be nonempty when supplied.")
         if envelope is not None and not callable(envelope):
             raise TypeError("Source envelope must be callable or None.")
+        envelope_ids = (envelope_semantic_content_id, envelope_numeric_content_id)
+        if envelope is None:
+            if envelope_ids != (None, None):
+                raise ValueError("Envelope content IDs require an envelope.")
+        elif any(not isinstance(value, str) or not value for value in envelope_ids):
+            raise ValueError("A source envelope requires nonempty content IDs.")
         self.electric_indices = e_indices
         self.electric_profile = e_profile
         self.magnetic_indices = m_indices
@@ -117,6 +147,8 @@ class PreparedMaxwellSource(StrictModule):
         self.amplitude = amplitude_
         self.control_key = None if control_key is None else str(control_key)
         self.envelope = envelope
+        self.envelope_semantic_content_id = envelope_semantic_content_id
+        self.envelope_numeric_content_id = envelope_numeric_content_id
         self.magnetic_closedness_preserving = bool(magnetic_closedness_preserving)
         self.prepared_id = canonical_fingerprint(
             {
@@ -125,6 +157,7 @@ class PreparedMaxwellSource(StrictModule):
                 "layout": layout_id,
                 "electric_indices": array_tree_fingerprint(e_indices),
                 "magnetic_indices": array_tree_fingerprint(m_indices),
+                "envelope": None if envelope is None else list(envelope_ids),
             }
         )
 
@@ -164,7 +197,16 @@ class PreparedMaxwellSource(StrictModule):
 
 
 class MaxwellElectricCurrentSourcePlan(AbstractMaxwellSourcePlan, NonTrainableState):
-    """Sparse electric-current source with a prepared spatial profile."""
+    """Sparse electric-current source with a prepared spatial profile.
+
+    Without ``envelope`` the source is harmonic in ``angular_frequency`` and
+    ``phase``. An ``envelope(time, args)`` replaces that temporal factor and is
+    identified through ``callable_payload``: StrictModule and module-level plain
+    function envelopes are content-addressed, while lambdas, closures, methods,
+    partials, and foreign callable objects require both ``envelope_semantic_id``
+    and ``envelope_numeric_id``. Only the semantic identity enters the fixed-step
+    refresh signature, so a changed numeric identity remains refreshable.
+    """
 
     indices: Array
     profile: Array
@@ -173,6 +215,8 @@ class MaxwellElectricCurrentSourcePlan(AbstractMaxwellSourcePlan, NonTrainableSt
     amplitude: Array
     control_key: str | None = eqx.field(static=True)
     envelope: Callable[[Array, Any], ArrayLike] | None = eqx.field(static=True)
+    envelope_semantic_content_id: str | None = eqx.field(static=True)
+    envelope_numeric_content_id: str | None = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
 
     def __init__(
@@ -186,11 +230,16 @@ class MaxwellElectricCurrentSourcePlan(AbstractMaxwellSourcePlan, NonTrainableSt
         amplitude: ArrayLike = 1.0,
         control_key: str | None = None,
         envelope: Callable[[Array, Any], ArrayLike] | None = None,
+        envelope_semantic_id: str | None = None,
+        envelope_numeric_id: str | None = None,
     ):
         indices_ = jnp.asarray(indices, dtype=jnp.int32)
         profile_ = jnp.asarray(profile)
         if indices_.ndim != 1 or profile_.shape != indices_.shape:
             raise ValueError("Electric source indices/profile must be aligned vectors.")
+        semantic, numeric = _envelope_identity(
+            envelope, envelope_semantic_id, envelope_numeric_id
+        )
         self.indices = indices_
         self.profile = profile_
         self.angular_frequency = jnp.asarray(angular_frequency)
@@ -198,13 +247,15 @@ class MaxwellElectricCurrentSourcePlan(AbstractMaxwellSourcePlan, NonTrainableSt
         self.amplitude = jnp.asarray(amplitude)
         self.control_key = control_key
         self.envelope = envelope
+        self.envelope_semantic_content_id = semantic
+        self.envelope_numeric_content_id = numeric
         self.source_id = canonical_fingerprint(
             {
                 "kind": "maxwell-electric-current-source-plan",
                 "indices": array_tree_fingerprint(indices_),
                 "profile": array_tree_fingerprint(profile_),
                 "control_key": control_key,
-                "envelope": None if envelope is None else repr(envelope),
+                "envelope": None if envelope is None else [semantic, numeric],
             }
         )
 
@@ -225,6 +276,8 @@ class MaxwellElectricCurrentSourcePlan(AbstractMaxwellSourcePlan, NonTrainableSt
             amplitude=self.amplitude,
             control_key=self.control_key,
             envelope=self.envelope,
+            envelope_semantic_content_id=self.envelope_semantic_content_id,
+            envelope_numeric_content_id=self.envelope_numeric_content_id,
             magnetic_closedness_preserving=True,
             source_id=self.source_id,
             layout_id=layout.layout_id,
@@ -232,7 +285,13 @@ class MaxwellElectricCurrentSourcePlan(AbstractMaxwellSourcePlan, NonTrainableSt
 
 
 class MaxwellPairedCurrentSourcePlan(AbstractMaxwellSourcePlan, NonTrainableState):
-    """Prepared paired J/M source used by discrete Huygens and mode launches."""
+    """Prepared paired J/M source used by discrete Huygens and mode launches.
+
+    ``envelope`` follows :class:`MaxwellElectricCurrentSourcePlan`: opaque
+    envelopes require ``envelope_semantic_id`` and ``envelope_numeric_id``. An
+    explicit ``source_id`` is a caller-owned source identity; the prepared source
+    identity still binds the envelope.
+    """
 
     electric_indices: Array
     electric_profile: Array
@@ -243,6 +302,8 @@ class MaxwellPairedCurrentSourcePlan(AbstractMaxwellSourcePlan, NonTrainableStat
     amplitude: Array
     control_key: str | None = eqx.field(static=True)
     envelope: Callable[[Array, Any], ArrayLike] | None = eqx.field(static=True)
+    envelope_semantic_content_id: str | None = eqx.field(static=True)
+    envelope_numeric_content_id: str | None = eqx.field(static=True)
     magnetic_closedness_preserving: bool = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
 
@@ -259,6 +320,8 @@ class MaxwellPairedCurrentSourcePlan(AbstractMaxwellSourcePlan, NonTrainableStat
         amplitude: ArrayLike = 1.0,
         control_key: str | None = None,
         envelope: Callable[[Array, Any], ArrayLike] | None = None,
+        envelope_semantic_id: str | None = None,
+        envelope_numeric_id: str | None = None,
         magnetic_closedness_preserving: bool = False,
         source_id: str | None = None,
     ):
@@ -270,6 +333,9 @@ class MaxwellPairedCurrentSourcePlan(AbstractMaxwellSourcePlan, NonTrainableStat
             raise ValueError("Paired source indices must be vectors.")
         if e_profile.shape != e_indices.shape or m_profile.shape != m_indices.shape:
             raise ValueError("Paired source profiles must align with their indices.")
+        semantic, numeric = _envelope_identity(
+            envelope, envelope_semantic_id, envelope_numeric_id
+        )
         identifier = source_id or canonical_fingerprint(
             {
                 "kind": "maxwell-paired-current-source-plan",
@@ -277,6 +343,7 @@ class MaxwellPairedCurrentSourcePlan(AbstractMaxwellSourcePlan, NonTrainableStat
                 "electric_profile": array_tree_fingerprint(e_profile),
                 "magnetic_indices": array_tree_fingerprint(m_indices),
                 "magnetic_profile": array_tree_fingerprint(m_profile),
+                "envelope": None if envelope is None else [semantic, numeric],
             }
         )
         self.electric_indices = e_indices
@@ -288,6 +355,8 @@ class MaxwellPairedCurrentSourcePlan(AbstractMaxwellSourcePlan, NonTrainableStat
         self.amplitude = jnp.asarray(amplitude)
         self.control_key = control_key
         self.envelope = envelope
+        self.envelope_semantic_content_id = semantic
+        self.envelope_numeric_content_id = numeric
         self.magnetic_closedness_preserving = bool(magnetic_closedness_preserving)
         self.source_id = identifier
 
@@ -307,6 +376,8 @@ class MaxwellPairedCurrentSourcePlan(AbstractMaxwellSourcePlan, NonTrainableStat
             amplitude=self.amplitude,
             control_key=self.control_key,
             envelope=self.envelope,
+            envelope_semantic_content_id=self.envelope_semantic_content_id,
+            envelope_numeric_content_id=self.envelope_numeric_content_id,
             magnetic_closedness_preserving=self.magnetic_closedness_preserving,
             source_id=self.source_id,
             layout_id=layout.layout_id,

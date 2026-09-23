@@ -367,6 +367,57 @@ def test_rolling_smooth_sensitivity_and_checkpoint_replay_are_operational():
     assert smooth.diagnostics(0.0, smooth_state).successful
 
 
+def _inexact_leaves(tree):
+    return [leaf for leaf in jax.tree.leaves(tree) if eqx.is_inexact_array(leaf)]
+
+
+def test_checkpointed_dem_vjp_guards_cotangent_on_replay_mismatch(monkeypatch):
+    from phydrax.discretization.particle import _dem_replay
+
+    compiled = _compile(phx.discretization.LinearSpringDashpotNormalPlan(1.0e4))
+    state = compiled.initialize_state(
+        0.0,
+        jnp.asarray([[0.0, 0.0], [0.95, 0.0]]),
+        jnp.asarray([[0.1, 0.0], [-0.1, 0.0]]),
+    )
+
+    def loss(final_state):
+        return jnp.sum(final_state.kinematics.position**2)
+
+    def vjp():
+        return phx.discretization.checkpointed_dem_vjp(
+            loss,
+            compiled.dynamics,
+            state,
+            jnp.asarray(1.0),
+            t0=0.0,
+            step_size=1.0e-5,
+            step_count=2,
+            checkpoint=phx.discretization.DEMCheckpointPolicy(1),
+        )
+
+    matched = vjp()
+    assert matched.replay_matched
+    assert jnp.isfinite(matched.primal)
+    assert all(
+        jnp.all(jnp.isfinite(leaf))
+        for leaf in _inexact_leaves(matched.initial_state_cotangent)
+    )
+    assert jnp.any(matched.initial_state_cotangent.kinematics.position != 0.0)
+
+    monkeypatch.setattr(
+        _dem_replay, "dem_replay_matches", lambda left, right: jnp.asarray(False)
+    )
+    mismatched = vjp()
+    assert not mismatched.replay_matched
+    assert mismatched.primal == matched.primal
+    assert jax.tree.all(jax.tree.map(jnp.array_equal, mismatched.replay, matched.replay))
+    assert all(
+        jnp.all(jnp.isnan(leaf))
+        for leaf in _inexact_leaves(mismatched.initial_state_cotangent)
+    )
+
+
 def test_moving_servo_curvature_dmt_and_plastic_models():
     geometry = phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()
 

@@ -13,11 +13,35 @@ import pytest
 import phydrax as phx
 
 
+def _scaled_state(time, state, parameter):
+    return parameter * state
+
+
+def _linear_state(time, state, args):
+    return args @ state
+
+
+def _diagonal_state(time, state, args):
+    return args * state
+
+
+def _zero_drift(time, state, args):
+    return jnp.zeros_like(state)
+
+
+def _parameter_drift(time, state, parameter):
+    return jnp.broadcast_to(parameter, state.shape)
+
+
+def _negated_state(time, state, args):
+    return -state
+
+
 def _exponential_problem(rate=0.7, *, t0=0.0, t1=1.0, initial=None):
     if initial is None:
         initial = jnp.asarray([1.0])
     return phx.solver.DifferentialProblem(
-        lambda time, state, parameter: parameter * state,
+        _scaled_state,
         initial,
         t0=t0,
         t1=t1,
@@ -52,7 +76,7 @@ def test_integrated_wiener_methods_converge_on_smooth_scalar_ode(update):
 def test_higher_order_prior_converges_on_coupled_vector_ode():
     matrix = jnp.asarray([[0.0, 1.0], [-1.0, 0.0]])
     problem = phx.solver.DifferentialProblem(
-        lambda time, state, args: args @ state,
+        _linear_state,
         jnp.asarray([1.0, 0.0]),
         t0=0.0,
         t1=1.0,
@@ -80,7 +104,7 @@ def test_higher_order_prior_converges_on_coupled_vector_ode():
 
 def test_work_precision_is_sane_against_canonical_diffrax_solution():
     problem = phx.solver.DifferentialProblem(
-        lambda time, state, parameter: parameter * state,
+        _scaled_state,
         jnp.asarray([1.0]),
         t0=0.0,
         t1=2.0,
@@ -165,7 +189,7 @@ def test_stiffness_and_step_exhaustion_have_explicit_status_codes():
 def test_dense_and_block_diagonal_factors_agree_for_separable_vector_system():
     rates = jnp.asarray([0.4, -0.2, 0.1])
     problem = phx.solver.DifferentialProblem(
-        lambda time, state, args: args * state,
+        _diagonal_state,
         jnp.asarray([1.0, 2.0, -1.0]),
         t0=0.0,
         t1=1.0,
@@ -294,6 +318,54 @@ def test_checkpoint_resume_replays_fixed_steps_deterministically():
     assert jnp.array_equal(full.diffusion_scale, resumed.diffusion_scale)
 
 
+def test_checkpoint_binds_declared_identity_of_opaque_drift():
+    method = phx.solver.ProbabilisticODEMethod(num_steps=4)
+    decay = lambda time, state, rate: -rate * state
+    growth = lambda time, state, rate: rate * state
+
+    def problem(drift, *, t0, t1, initial):
+        return phx.solver.DifferentialProblem(
+            drift, initial, t0=t0, t1=t1, args=jnp.asarray(0.5)
+        )
+
+    with pytest.raises(TypeError, match="explicit semantic_id and numeric_id"):
+        phx.solver.solve_probabilistic_ode(
+            problem(decay, t0=0.0, t1=0.5, initial=jnp.asarray([1.0])),
+            save_times=jnp.asarray([0.5]),
+            method=method,
+            step_size=0.125,
+        )
+
+    first = phx.solver.solve_probabilistic_ode(
+        problem(decay, t0=0.0, t1=0.5, initial=jnp.asarray([1.0])),
+        save_times=jnp.asarray([0.5]),
+        method=method,
+        step_size=0.125,
+        drift_semantic_id="linear-rate-law",
+        drift_numeric_id="decay",
+    )
+    resumed = problem(decay, t0=0.5, t1=1.0, initial=first.means[-1])
+    phx.solver.solve_probabilistic_ode(
+        resumed,
+        save_times=jnp.asarray([1.0]),
+        method=method,
+        step_size=0.125,
+        checkpoint=first.checkpoint,
+        drift_semantic_id="linear-rate-law",
+        drift_numeric_id="decay",
+    )
+    with pytest.raises(ValueError, match="does not belong"):
+        phx.solver.solve_probabilistic_ode(
+            problem(growth, t0=0.5, t1=1.0, initial=first.means[-1]),
+            save_times=jnp.asarray([1.0]),
+            method=method,
+            step_size=0.125,
+            checkpoint=first.checkpoint,
+            drift_semantic_id="linear-rate-law",
+            drift_numeric_id="growth",
+        )
+
+
 def test_solver_is_jittable_and_differentiable_in_model_parameters():
     method = phx.solver.ProbabilisticODEMethod(num_steps=12)
 
@@ -320,7 +392,7 @@ def test_midpoint_iwp_covariance_uses_filter_or_conditional_bridge(
     factorization, smoothing, unit_variance
 ):
     problem = phx.solver.DifferentialProblem(
-        lambda time, state, args: jnp.zeros_like(state),
+        _zero_drift,
         jnp.asarray([0.0]),
         t0=0.0,
         t1=1.0,
@@ -359,7 +431,7 @@ def test_parameter_covariance_is_one_fixed_random_parameter(factorization):
     times = jnp.asarray([0.5, 2.0])
     expected = parameter_variance * times**2
     problem = phx.solver.DifferentialProblem(
-        lambda time, state, parameter: jnp.broadcast_to(parameter, state.shape),
+        _parameter_drift,
         jnp.asarray([0.0]),
         t0=0.0,
         t1=2.0,
@@ -400,7 +472,7 @@ def test_parameter_covariance_is_one_fixed_random_parameter(factorization):
 )
 def test_generated_method_id_rejects_resume_critical_mismatch(changed_method):
     first_problem = phx.solver.DifferentialProblem(
-        lambda time, state, args: jnp.zeros_like(state),
+        _zero_drift,
         jnp.asarray([0.0]),
         t0=0.0,
         t1=0.5,
@@ -435,7 +507,7 @@ def test_generated_method_id_rejects_resume_critical_mismatch(changed_method):
 
 def test_dense_matrix_free_output_retains_no_covariance_matrix():
     problem = phx.solver.DifferentialProblem(
-        lambda time, state, args: -state,
+        _negated_state,
         jnp.asarray([1.0, -2.0]),
         t0=0.0,
         t1=1.0,
@@ -480,7 +552,7 @@ def test_adaptive_work_count_includes_pilot_and_production(update, evaluations_p
 
 def test_block_dense_output_checks_guard_before_materialization():
     problem = phx.solver.DifferentialProblem(
-        lambda time, state, args: jnp.zeros_like(state),
+        _zero_drift,
         jnp.zeros((3,)),
         t0=0.0,
         t1=1.0,
@@ -505,7 +577,7 @@ def test_quasi_likelihood_includes_innovation_normalization(
     factorization, observation_variance
 ):
     problem = phx.solver.DifferentialProblem(
-        lambda time, state, args: jnp.zeros_like(state),
+        _zero_drift,
         jnp.asarray([0.0]),
         t0=0.0,
         t1=1.0,

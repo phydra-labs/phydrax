@@ -83,8 +83,17 @@ class _ConstCallable(StrictModule, NonTrainableState):
         self.value = jnp.asarray(value)
 
     def __call__(self, *args, key=None, **kwargs):
-        del args, key, kwargs
-        return self.value
+        del key, kwargs
+        # Coordinate tuples carry grid axes that every pointwise evaluator returns.
+        grid_shape = tuple(
+            int(jnp.size(coordinate))
+            for arg in args
+            if isinstance(arg, tuple)
+            for coordinate in arg
+        )
+        if not grid_shape:
+            return self.value
+        return jnp.broadcast_to(self.value, grid_shape + self.value.shape)
 
 
 class _TrainableConstCallable(StrictModule):
@@ -436,8 +445,11 @@ class DomainFunction(StrictModule):
     - If `func` is array-like, it is treated as a constant function on $\Omega$.
     - If `func` is callable, Phydrax passes randomness through a keyword-only `key`
       argument (when provided by downstream sampling/solvers).
-    - Evaluation returns a `phydrax.axes.AxisArray` whose named axes are inferred from the
-      sampling structure (paired blocks and/or coord-separable axes).
+    - Evaluation returns a `phydrax.axes.AxisArray` whose named axes are assigned from
+      the sampling structure (paired blocks and/or coord-separable axes), never from
+      array sizes. A callable `func` that receives coordinate tuples from a
+      `GridBatch` must return one leading axis per coordinate, in dependency order;
+      wrap point-only callables in `PointwiseEvaluator`.
     """
 
     domain: Domain

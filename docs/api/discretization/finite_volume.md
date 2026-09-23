@@ -98,6 +98,10 @@
 
 ## Numerical fluxes and waves
 
+::: phydrax.discretization.AbstractArbitraryNormalALENumericalFluxPlan
+
+---
+
 ::: phydrax.discretization.RusanovFluxPlan
 
 ---

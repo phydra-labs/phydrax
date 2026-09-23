@@ -12,7 +12,15 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 import phydrax.axes as cx
-from phydrax.domain import ComponentSum, DomainComponent, ProbabilityDomain
+from phydrax.domain import (
+    ComponentSum,
+    Domain,
+    DomainComponent,
+    DomainFunction,
+    JointFactor,
+    ProbabilityDomain,
+)
+from phydrax.domain._function import _domain_has_tracer
 
 from .._frozendict import frozendict
 from .._strict import StrictModule
@@ -559,6 +567,42 @@ def mapped(
         mask=mask,
         target_mass=target_mass,
     )
+
+
+def _same_dependency_support(source: JointFactor, target: JointFactor, /) -> bool:
+    if source is target:
+        return True
+    if _domain_has_tracer(source) or _domain_has_tracer(target):
+        return source.schema_compatible(target)
+    return source.same_support(target)
+
+
+def as_target_domain_function(value: Any, domain: Domain, /) -> DomainFunction:
+    """Return the canonical ``DomainFunction`` integrand for a domain-backed target.
+
+    A ``DomainFunction`` is accepted when every dependency label is owned by a
+    factor of ``domain`` with the same support. Non-callable values become
+    zero-dependency constants. Any other callable is rejected because its
+    coordinate dependencies are undeclared.
+    """
+    if isinstance(value, DomainFunction):
+        for label in value.deps:
+            if label not in domain.labels or not _same_dependency_support(
+                value.domain.factor(label), domain.factor(label)
+            ):
+                raise ValueError(
+                    f"Integrand dependency {label!r} is not supported by the target "
+                    f"domain with labels {domain.labels!r}."
+                )
+        return value
+    if callable(value):
+        raise TypeError(
+            "Domain-backed integration targets require DomainFunction integrands; "
+            "declare the coordinate dependencies explicitly with "
+            f"domain.Function(*labels)(callable), where labels are drawn from "
+            f"{domain.labels!r}."
+        )
+    return DomainFunction(domain=domain, deps=(), func=value)
 
 
 __all__ = [

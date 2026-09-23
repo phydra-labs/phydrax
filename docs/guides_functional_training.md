@@ -100,11 +100,21 @@ For residual block `r_j`, pseudo-transient training uses
 `ResidualRelaxationMap` explicitly declares the state-to-residual map `M`.
 This is required for constrained, mixed, overdetermined, and gauge systems where
 a residual cannot be inferred from a similarly named field.
+The map identity is formed with the canonical callable payload: StrictModule
+operators and plain module-level functions are identified by content, while
+opaque operators (lambdas, closures, methods, partials) must declare
+`operator_semantic_id` and `operator_numeric_id`; omitting them raises
+`TypeError`.
 
 ```python
 pseudo = phx.solver.PseudoTransientPolicy(
     0,
-    phx.solver.ResidualRelaxationMap("u", lambda u: u),
+    phx.solver.ResidualRelaxationMap(
+        "u",
+        lambda u: u,
+        operator_semantic_id="identity-map",
+        operator_numeric_id="identity-map",
+    ),
     adaptation=phx.solver.PseudoTransientAdaptation(
         start=2,
         every=1000,

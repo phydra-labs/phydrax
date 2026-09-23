@@ -393,7 +393,14 @@ optional auto-reset. They do not mutate the plant or hide task termination.
 Environment construction derives semantic `provenance_id` from the plant
 transition identity and step constraints, state/input layouts, initializer
 identity, task and wrapper configuration, array fingerprints, repetition and
-horizon policy, and PRNG representation. Runtime states carry both that
+horizon policy, and PRNG representation. Callables are identified by content:
+StrictModule callables by their fields and plain module-level functions by
+their code and static defaults. Lambdas, closures, methods, partials, and other
+opaque callables are refused unless their owner declares both identities;
+`prepare_array_robot_environment` accepts `transition_semantic_id`/
+`transition_numeric_id` and `initializer_semantic_id`/`initializer_numeric_id`
+for this purpose. Semantic identities enter the plant semantic provenance and
+numeric identities its numeric revision. Runtime states carry both that
 provenance and `environment_id`; `step` rejects a state from a different
 semantic environment even if its arrays have compatible shapes.
 

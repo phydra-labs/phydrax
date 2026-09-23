@@ -147,7 +147,8 @@ def test_functional_ntk_keeps_physical_and_surrogate_views_distinct():
                 phx.solver.ResidualRelaxationMap(
                     "u",
                     lambda value: value,
-                    map_id="identity",
+                    operator_semantic_id="identity-map",
+                    operator_numeric_id="identity-map",
                 ),
                 freshness="experimental_fixed",
             ),

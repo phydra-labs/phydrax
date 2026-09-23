@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import functools
+
 import equinox as eqx
 import jax.numpy as jnp
 import pytest
@@ -28,6 +30,70 @@ class _AffineCallable(StrictModule):
 
     def __call__(self, value):
         return self.weight * value if self.enabled else value
+
+
+class _ActivatedCallable(StrictModule):
+    activation: object = eqx.field(static=True)
+
+    def __init__(self, activation, /):
+        self.activation = activation
+
+    def __call__(self, value):
+        return self.activation(value)
+
+
+def _square(value, *, scale=1.0):
+    return scale * value * value
+
+
+def _cube(value, *, scale=1.0):
+    return scale * value * value * value
+
+
+_module_lambda = lambda value: value
+
+
+def test_plain_function_payload_is_content_addressed():
+    payload = callable_payload(_square)
+
+    assert callable_payload(_square) == payload
+    assert (
+        callable_payload(_cube)["semantic_content_id"] != (payload["semantic_content_id"])
+    )
+    nested = strict_module_payload(_ActivatedCallable(_square))
+    assert nested == strict_module_payload(_ActivatedCallable(_square))
+    assert (
+        nested["semantic_content_id"]
+        != (strict_module_payload(_ActivatedCallable(_cube))["semantic_content_id"])
+    )
+
+
+def test_distinct_lambdas_never_share_an_identity():
+    first = lambda value: value + 1.0
+    second = lambda value: value + 2.0
+
+    for opaque in (first, second, _module_lambda):
+        with pytest.raises(TypeError, match="explicit semantic_id and numeric_id"):
+            callable_payload(opaque)
+        with pytest.raises(TypeError, match="requires explicit semantic and numeric"):
+            strict_module_payload(_ActivatedCallable(opaque))
+    first_payload = callable_payload(first, semantic_id="shift", numeric_id="one")
+    second_payload = callable_payload(second, semantic_id="shift", numeric_id="two")
+    assert first_payload["numeric_content_id"] != second_payload["numeric_content_id"]
+
+
+def test_opaque_callables_without_ids_are_refused():
+    opaque_callables = (
+        functools.partial(_square, scale=2.0),
+        _AffineCallable([1.0]).__call__,
+        jnp.sin,
+        _AffineCallable,
+    )
+    for opaque in opaque_callables:
+        with pytest.raises(TypeError, match="explicit semantic_id and numeric_id"):
+            callable_payload(opaque)
+    with pytest.raises(TypeError, match="explicit semantic_id and numeric_id"):
+        callable_payload(_square, semantic_id="square-law")
 
 
 def test_strict_module_payload_separates_semantics_from_numeric_realization():

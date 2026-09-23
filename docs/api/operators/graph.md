@@ -373,8 +373,11 @@ same sparse kernels as the array-level functions above.
 `CochainResidualProgram` declares named input/output cochain schemas around one
 full-complex residual callable. The same program can be bound to a
 `phydrax.terms.CochainResidualTerm` for fixed-complex PINNs or operator training.
-Its fingerprint includes the explicit callable identity and every field
-semantic.
+Its fingerprint includes the canonical callable identity and every field
+semantic: StrictModule and plain module-level residual functions are identified
+by content, while opaque callables (closures, lambdas, methods, partials) must
+declare `residual_semantic_id` and `residual_numeric_id`; omitting them raises
+`TypeError`.
 
 `cochain_metric_reduce` first reduces each nonempty graph segment and then
 averages segments. `graph_mean` is an arithmetic cell mean, `metric_mean` is a

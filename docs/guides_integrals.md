@@ -71,6 +71,15 @@ value = estimate.value
 assert estimate.successful
 ```
 
+Component, probability, and density targets evaluate integrands at labeled domain
+points, so the integrand must be a `DomainFunction` whose dependencies are supported
+by the target domain with the same factor support. Arrays and other non-callable
+values are integrated as zero-dependency constants. A bare Python callable is
+rejected with `TypeError`; declare its dependencies explicitly with
+`domain.Function(*labels)(callable)`. Phydrax never infers dependency labels from a
+callable signature. External sample arrays, mapped targets, multilevel samplers,
+and the `adaptive_*_callable` engines keep their documented raw-callable ABIs.
+
 Fixed plans support interval rules such as `GaussLegendreRule`,
 `GaussKronrodRule`, `ClenshawCurtisRule`, and `TanhSinhRule`. A deterministic fixed
 rule reports no statistical uncertainty. `error_estimate is None` is deliberate.
@@ -212,7 +221,8 @@ the preferred common-random-number pattern for comparisons and parameter sweeps.
 form.
 
 An integrand may itself be any nonempty PyTree of `DomainFunction`, callable, or
-array leaves. Reduction preserves that container structure and every leaf dtype in
+array leaves; each callable leaf must satisfy the target's integrand contract above.
+Reduction preserves that container structure and every leaf dtype in
 `estimate.value`; method diagnostics are returned with the same leaf structure.
 
 ## Calibrate a reusable finite realization

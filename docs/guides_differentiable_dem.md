@@ -10,7 +10,9 @@ A sharp branchwise derivative is the JVP/VJP of the executed fixed-step program 
 
 ## Replay and checkpointing
 
-`checkpointed_dem_rollout` rematerializes fixed scan blocks in reverse AD and records acceptance, rejection reasons, route digest, active/sliding counts, and cache epoch. A replay mismatch invalidates the VJP.
+`checkpointed_dem_rollout` rematerializes fixed scan blocks in reverse AD and records acceptance, rejection reasons, route digest, active/sliding counts, and cache epoch.
+
+`checkpointed_dem_vjp` compares a forward rollout with an independent replay before it takes the pullback. The differentiated terminal map carries that comparison as a derivative-validity guard, so a replay mismatch poisons the returned `initial_state_cotangent` itself with NaN in every inexact leaf. The primal loss, the forward `replay` record, and the `replay_matched` evidence remain intact for inspection; a mismatch never yields a finite but unverified cotangent.
 
 ## Smooth surrogate mode
 

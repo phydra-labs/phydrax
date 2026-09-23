@@ -1,5 +1,6 @@
 import jax.numpy as jnp
 import jax.random as jr
+import pytest
 
 import phydrax as phx
 import phydrax.axes as cx
@@ -41,6 +42,24 @@ def test_prepared_linear_reduction_is_linear_and_refresh_stable():
     refreshed = phx.integration.refresh_linear_reduction(prepared, realization)
     assert refreshed.numeric_version == prepared.numeric_version
     assert refreshed.realization_id == prepared.realization_id
+
+
+def test_prepared_linear_reduction_requires_declared_domain_functions():
+    domain = phx.domain.ScalarInterval(0.0, 1.0, label="x")
+    realization = phx.integration.materialize(
+        phx.integration.over(domain.component()),
+        phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(8)),
+    )
+    prepared = phx.integration.prepare_linear_reduction(realization)
+
+    def square(x=jnp.asarray(2.0), *, key=None):
+        del key
+        return x**2
+
+    with pytest.raises(TypeError, match=r"domain\.Function\(\*labels\)\(callable\)"):
+        prepared.apply(square)
+    declared = prepared.apply(domain.Function("x")(square))
+    assert jnp.allclose(declared.data, 1.0 / 3.0, atol=1e-10)
 
 
 def test_prepared_replicated_qmc_averages_coefficient_actions():

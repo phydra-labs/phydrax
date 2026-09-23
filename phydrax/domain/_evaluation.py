@@ -16,6 +16,7 @@ from jaxtyping import Array, Key, PyTree
 import phydrax.axes as cx
 
 from .._doc import DOC_KEY0
+from .._model import ModelBinding
 from .._strict import StrictModule
 from ._structure import GridBatch, PointBatch
 
@@ -266,26 +267,47 @@ def _validate_domain_points(
         )
 
 
-def _mapped_axis_prefix(
+def _declared_leading_axes(
     values: Array,
-    axes: Sequence[str],
+    axes: tuple[str, ...],
     points: Mapping[str, PyTree[Any]],
     /,
-) -> tuple[str, ...]:
-    used: list[str] = []
-    shape_index = 0
-    started = False
-    for axis in axes:
-        if shape_index >= values.ndim:
-            break
-        if values.shape[shape_index] == _axis_size(points, axis):
-            used.append(axis)
-            shape_index += 1
-            started = True
-            continue
-        if started:
-            break
-    return tuple(used)
+    *,
+    source: str,
+) -> cx.AxisArray:
+    expected = tuple(_axis_size(points, axis) for axis in axes)
+    if tuple(values.shape[: len(axes)]) != expected:
+        raise ValueError(
+            f"{source} returned shape {tuple(values.shape)}, but its declared "
+            f"leading axes {axes!r} require leading shape {expected}."
+        )
+    return cx.AxisArray(values, dims=axes + (None,) * (values.ndim - len(axes)))
+
+
+def _declared_axis_array(
+    field: Any,
+    axes: tuple[str, ...],
+    points: Mapping[str, PyTree[Any]],
+    /,
+) -> cx.AxisArray:
+    if not isinstance(field, cx.AxisArray):
+        raise TypeError(
+            "ModelBinding output_layout='axis_array' requires the model to return "
+            "a phydrax.axes.AxisArray."
+        )
+    for name, size in field.named_shape.items():
+        if name not in axes:
+            raise ValueError(
+                f"Blockwise AxisArray output names axis {name!r}; named dims must be "
+                f"dependency batch axes {axes!r}, and model channels must be None."
+            )
+        expected = _axis_size(points, name)
+        if size != expected:
+            raise ValueError(
+                f"Blockwise AxisArray output axis {name!r} has size {size}; the "
+                f"batch axis has size {expected}."
+            )
+    return field
 
 
 def complete_batch_axes(
@@ -345,18 +367,23 @@ def try_blockwise_evaluation(
     evaluator: Callable[..., Any],
     deps: tuple[str, ...],
     batch: Any,
+    binding: ModelBinding,
     /,
     *,
     key: Key[Array, ""] = DOC_KEY0,
     **kwargs: Any,
 ) -> tuple[cx.AxisArray | None, str | None]:
-    """Try one model call over independent batch axes without point materialization."""
+    """Try one model call over independent batch axes without point materialization.
+
+    Output axes come only from `binding.output_layout`; raw arrays must carry the
+    declared leading batch axes exactly.
+    """
     if not deps:
         return None, "blockwise model execution requires non-empty dependencies."
 
     points, structure, dense_structure, coord_axes_by_label = _batch_parts(batch)
     args: list[Any] = []
-    axis_order: list[str] = []
+    axes_by_dep: dict[str, tuple[str, ...]] = {}
 
     if dense_structure is None:
         if structure is None:
@@ -373,7 +400,7 @@ def try_blockwise_evaluation(
             if isinstance(arg, tuple):
                 return None, f"dependency {dep!r} unexpectedly has grid-axis values."
             args.append(arg)
-            axis_order.append(axis)
+            axes_by_dep[dep] = (axis,)
     else:
         if dense_structure.axis_names is None:
             return None, "GridBatch.dense_structure must be canonicalized."
@@ -388,7 +415,7 @@ def try_blockwise_evaluation(
                 if not isinstance(arg, tuple):
                     return None, f"dependency {dep!r} requires grid-axis tuple values."
                 args.append(arg)
-                axis_order.extend(dep_axes)
+                axes_by_dep[dep] = tuple(dep_axes)
                 continue
             axis = _singleton_axis_for_label(dense_structure, dep)
             if axis is None:
@@ -396,15 +423,34 @@ def try_blockwise_evaluation(
             if isinstance(arg, tuple):
                 return None, f"dependency {dep!r} unexpectedly has grid-axis values."
             args.append(arg)
-            axis_order.append(axis)
+            axes_by_dep[dep] = (axis,)
 
-    axes = _dedupe_axes(axis_order)
-    values = jnp.asarray(evaluator(*args, key=key, **kwargs))
-    used_axes = _mapped_axis_prefix(values, axes, points)
+    dependency_axes = _dedupe_axes(
+        tuple(axis for dep in deps for axis in axes_by_dep[dep])
+    )
+    result = evaluator(*args, key=key, **kwargs)
+    match binding.output_layout:
+        case "dependency_axes":
+            declared_axes = dependency_axes
+        case "dependency_subset":
+            declared_axes = _dedupe_axes(
+                tuple(
+                    axis for label in binding.output_labels for axis in axes_by_dep[label]
+                )
+            )
+        case "axis_array":
+            return _declared_axis_array(result, dependency_axes, points), None
+    if isinstance(result, cx.AxisArray):
+        raise TypeError(
+            "A blockwise model returned a phydrax.axes.AxisArray; declare "
+            "ModelBinding output_layout='axis_array' to supply explicit dims."
+        )
     return (
-        cx.AxisArray(
-            values,
-            dims=used_axes + (None,) * (values.ndim - len(used_axes)),
+        _declared_leading_axes(
+            jnp.asarray(result),
+            declared_axes,
+            points,
+            source=f"Blockwise model with output_layout={binding.output_layout!r}",
         ),
         None,
     )
@@ -453,14 +499,16 @@ def evaluate_pointwise_callable(
                 )
             values = jnp.asarray(mapped(*dep_values))
 
-        axis_order = [axis for axis in mapped_axes if axis is not None]
+        declared_axes = tuple(axis for axis in mapped_axes if axis is not None)
         if coord_axes_by_label is not None:
-            for dep in deps:
-                axis_order.extend(coord_axes_by_label.get(dep, ()))
-        used_axes = _mapped_axis_prefix(values, axis_order, points_map)
-        out = cx.AxisArray(
+            declared_axes += tuple(
+                axis for dep in deps for axis in coord_axes_by_label.get(dep, ())
+            )
+        out = _declared_leading_axes(
             values,
-            dims=used_axes + (None,) * (values.ndim - len(used_axes)),
+            declared_axes,
+            points_map,
+            source="Pointwise evaluation on a GridBatch",
         )
         return complete_batch_axes(out, points, domain_labels)
 

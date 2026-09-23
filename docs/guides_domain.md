@@ -285,6 +285,40 @@ callable may receive the keyword-only randomness key declared by its
 `ModelBinding` (or an explicit binding for a plain callable). Evaluation never
 switches protocol because of hidden call-time flags.
 
+Output axes are declared, never inferred from array sizes. Pointwise evaluation
+gets batch axes from its mapping schedule, and coordinate grids get them from the
+coordinate axes declared for each dependency. A blockwise model declares its
+output layout on its `ModelBinding`:
+
+- `output_layout="dependency_axes"` (default): the raw output starts with the batch
+  axes of every dependency, in dependency order; trailing axes are channels.
+- `output_layout="dependency_subset", output_labels=(...)`: the raw output starts
+  with the batch axes of exactly those labels, in that order; the model reduced
+  every other dependency axis, and the result is broadcast back over it.
+- `output_layout="axis_array"`: the model returns a `phydrax.axes.AxisArray`
+  whose `None` dims are channels and whose named dims are dependency batch axes.
+
+A raw output whose leading shape differs from its declaration raises
+`ValueError`, even when another axis happens to have the same size.
+
+```python
+binding = phx.domain.ModelBinding.blockwise(
+    "structured",
+    pass_key=False,
+    output_layout="dependency_subset",
+    output_labels=("x",),
+)
+
+
+@domain.Model("x", "t", binding=binding)
+def u_mean_in_t(inputs):
+    x, t = inputs
+    return x[:, 0] * jnp.mean(t)  # batch axis of x only
+```
+
+Reduced layouts describe whole dependency blocks, so they require singleton
+sampling blocks; pointwise evaluation of such a model raises `ValueError`.
+
 
 
 ## Components: interior, boundary, and fixed slices

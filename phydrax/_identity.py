@@ -8,7 +8,9 @@ import base64
 import dataclasses
 import enum
 import hashlib
+import sys
 from collections.abc import Mapping, Sequence
+from types import CodeType, FunctionType
 from typing import Any
 
 import equinox as eqx
@@ -134,11 +136,73 @@ def _static_payload(value: Any, path: str, /) -> Any:
                 for index, item in enumerate(value)
             ],
         }
+    if _is_plain_function(value):
+        return _function_payload(value, path)
     if callable(value):
         raise TypeError(
             f"Opaque callable {path} requires explicit semantic and numeric IDs."
         )
     raise TypeError(f"Identity field {path} has unsupported type {type(value).__name__}.")
+
+
+def _is_plain_function(value: Any, /) -> bool:
+    """Return whether ``value`` is a stateless function importable by its name.
+
+    Closures, lambdas, nested functions, methods, and rebound names are opaque:
+    their behavior is not determined by module, name, and code alone.
+    """
+    if not isinstance(value, FunctionType) or value.__closure__ is not None:
+        return False
+    if value.__qualname__ != value.__name__:
+        return False
+    module = sys.modules.get(value.__module__)
+    return module is not None and vars(module).get(value.__name__) is value
+
+
+def _code_constant_payload(value: Any, path: str, /) -> Any:
+    if isinstance(value, CodeType):
+        return _code_payload(value, path)
+    if isinstance(value, tuple):
+        return {
+            "kind": "tuple",
+            "items": [_code_constant_payload(item, path) for item in value],
+        }
+    if isinstance(value, frozenset):
+        items = [_code_constant_payload(item, path) for item in value]
+        return {"kind": "frozenset", "items": sorted(items, key=canonical_json)}
+    return _static_payload(value, path)
+
+
+def _code_payload(code: CodeType, path: str, /) -> dict[str, Any]:
+    # File names and line tables are excluded so identity follows behavior,
+    # not source position.
+    return {
+        "bytecode": code.co_code.hex(),
+        "constants": [
+            _code_constant_payload(value, f"{path}.constants") for value in code.co_consts
+        ],
+        "names": list(code.co_names),
+        "variables": list(code.co_varnames),
+        "free_variables": list(code.co_freevars),
+        "cell_variables": list(code.co_cellvars),
+        "argument_count": code.co_argcount,
+        "positional_only_count": code.co_posonlyargcount,
+        "keyword_only_count": code.co_kwonlyargcount,
+        "flags": code.co_flags,
+    }
+
+
+def _function_payload(value: FunctionType, path: str, /) -> dict[str, Any]:
+    return {
+        "kind": "function",
+        "module": value.__module__,
+        "qualname": value.__qualname__,
+        "code": canonical_fingerprint(_code_payload(value.__code__, f"{path}.code")),
+        "defaults": _static_payload(value.__defaults__, f"{path}.defaults"),
+        "keyword_defaults": _static_payload(
+            value.__kwdefaults__, f"{path}.keyword_defaults"
+        ),
+    }
 
 
 def _static_module_payload(module: StrictModule, path: str, /) -> dict[str, Any]:
@@ -243,6 +307,8 @@ def _dynamic_payload(value: Any, path: str, /) -> tuple[Any, Any]:
             {"kind": kind, "items": semantic_items},
             {"kind": kind, "items": numeric_items},
         )
+    if _is_plain_function(value):
+        return _function_payload(value, path), None
     if callable(value):
         raise TypeError(
             f"Opaque callable {path} requires explicit semantic and numeric IDs."
@@ -287,8 +353,12 @@ def callable_payload(
 ) -> dict[str, Any]:
     """Identify a callable without falling back to its Python class or name.
 
-    Callable StrictModules are content-addressed from their fields. Other
-    callables are opaque and therefore require both identities explicitly.
+    Callable StrictModules are content-addressed from their fields. A plain
+    stateless function (module-level, importable by its name, without closure
+    cells) is content-addressed from its module, name, position-independent
+    code, and static defaults unless the caller declares both identities. Every
+    other callable (closure, lambda, nested function, method, partial, or
+    foreign callable object) is opaque and requires both identities explicitly.
     """
     if not callable(value):
         raise TypeError("callable_payload requires a callable value.")
@@ -298,6 +368,23 @@ def callable_payload(
                 "Content-addressed StrictModule callables do not accept ID overrides."
             )
         return strict_module_payload(value)
+    if semantic_id is None and numeric_id is None and _is_plain_function(value):
+        semantic = _function_payload(value, "callable")
+        semantic_content_id = canonical_fingerprint(
+            {"kind": "function-semantic-content", "payload": semantic}
+        )
+        return {
+            "semantic_payload": semantic,
+            "numeric_payload": None,
+            "semantic_content_id": semantic_content_id,
+            "numeric_content_id": canonical_fingerprint(
+                {
+                    "kind": "function-numeric-content",
+                    "semantic_content_id": semantic_content_id,
+                    "payload": None,
+                }
+            ),
+        }
     if semantic_id is None or numeric_id is None:
         raise TypeError(
             "Opaque callables require explicit semantic_id and numeric_id values."

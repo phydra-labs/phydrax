@@ -78,6 +78,7 @@ from ._product import integrate_product, materialize_product
 from ._sparse_grid import integrate_sparse_grid, materialize_sparse_grid
 from ._status import IntegrationStatus
 from ._targets import (
+    as_target_domain_function,
     ComponentTarget,
     DensityTarget,
     DiscreteMeasureTarget,
@@ -519,7 +520,6 @@ def reduce(
     tree_estimate = _reduce_integrand_tree(integrand, realization, kwargs)
     if tree_estimate is not None:
         return _attach_precision(tree_estimate, realization)
-    integrand = _evaluation_integrand(integrand, realization.precision)
 
     def finish(estimate: IntegrationEstimate, /) -> IntegrationEstimate:
         transformed = _attach_transformations(estimate, realization)
@@ -531,7 +531,7 @@ def reduce(
     if isinstance(target, WeightedSampleTarget):
         return finish(
             integrate_weighted_samples(
-                integrand,
+                _evaluation_integrand(integrand, realization.precision),
                 target,
                 realization.batch,
                 key=key,
@@ -543,7 +543,7 @@ def reduce(
     if isinstance(target, DiscreteMeasureTarget):
         return finish(
             integrate_discrete_measure(
-                integrand,
+                _evaluation_integrand(integrand, realization.precision),
                 target,
                 realization.batch,
                 key=key,
@@ -555,7 +555,13 @@ def reduce(
     if isinstance(plan, MultilevelMonteCarloPlan):
         if not isinstance(target, MultilevelTarget):
             raise TypeError("MultilevelMonteCarloPlan requires a multilevel target.")
-        return finish(integrate_multilevel(integrand, realization.batch, **kwargs))
+        return finish(
+            integrate_multilevel(
+                _evaluation_integrand(integrand, realization.precision),
+                realization.batch,
+                **kwargs,
+            )
+        )
     base = _base_target(target)
     if plan is None and isinstance(base, ComponentTarget):
         if isinstance(target, DensityTarget):
@@ -715,6 +721,8 @@ def reduce(
         normalized = isinstance(plan.estimator, SelfNormalizedEstimator) or (
             isinstance(target, DensityTarget) and target.normalized
         )
+        if callable(integrand):
+            integrand = as_target_domain_function(integrand, base.probability)
         weighted_target = WeightedSampleTarget(
             realization.batch.samples,
             realization.batch.log_weights,
@@ -725,7 +733,7 @@ def reduce(
         )
         return finish(
             integrate_weighted_samples(
-                integrand,
+                _evaluation_integrand(integrand, realization.precision),
                 weighted_target,
                 realization.batch,
                 normalized=normalized,
@@ -749,7 +757,7 @@ def reduce(
     if isinstance(plan, CellQuadraturePlan):
         return finish(
             integrate_mapped(
-                integrand,
+                _evaluation_integrand(integrand, realization.precision),
                 target,
                 realization.batch,
                 key=key,

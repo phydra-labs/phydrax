@@ -29,7 +29,7 @@ from ._batches import (
     SeparableIntegrationBatch,
 )
 from ._external import _as_weight_field
-from ._fixed import _as_domain_function, _batch_weight, _target_reduction_weights
+from ._fixed import _batch_weight, _target_reduction_weights
 from ._lowering import sum_over
 from ._mapped import _mapped_values
 from ._plans import (
@@ -43,6 +43,7 @@ from ._precision import IntegrationPrecisionPolicy
 from ._product import ProductIntegrationRealization
 from ._sparse_grid import SparseGridRealization
 from ._targets import (
+    as_target_domain_function,
     ComponentTarget,
     DensityTarget,
     DiscreteMeasureTarget,
@@ -929,14 +930,13 @@ def _evaluate_named(
     base = _base_target(target)
     if isinstance(base, ComponentTarget):
         component = _component_for_index(base, index)
-        return _as_domain_function(function, component)(batch.points, key=key, **kwargs)
-    if isinstance(base, ProbabilityTarget):
-        domain_function = (
-            function
-            if isinstance(function, DomainFunction)
-            else DomainFunction(domain=base.probability, deps=(), func=function)
+        return as_target_domain_function(function, component.domain)(
+            batch.points, key=key, **kwargs
         )
-        return domain_function(batch.points, key=key, **kwargs)
+    if isinstance(base, ProbabilityTarget):
+        return as_target_domain_function(function, base.probability)(
+            batch.points, key=key, **kwargs
+        )
     if isinstance(target, DiscreteMeasureTarget):
         if isinstance(batch.points, PointBatch):
             if isinstance(function, DomainFunction):

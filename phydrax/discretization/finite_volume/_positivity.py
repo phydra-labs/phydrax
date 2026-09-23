@@ -19,6 +19,7 @@ from ._mapped import MappedFiniteVolumeDiscretization
 from ._riemann import (
     _NORMAL_ALE_CONTRACT,
     _normal_ale_inputs,
+    AbstractArbitraryNormalALENumericalFluxPlan,
     AbstractNumericalFluxPlan,
     NumericalFluxResult,
 )
@@ -28,7 +29,7 @@ from ._triangle_fv import TriangleFiniteVolumeDiscretization
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
 
 
-class EinfeldtHLLFluxPlan(AbstractNumericalFluxPlan):
+class EinfeldtHLLFluxPlan(AbstractArbitraryNormalALENumericalFluxPlan):
     """Monotone HLL fallback with Roe-enlarged Einfeldt signal bounds."""
 
     def __init__(self):

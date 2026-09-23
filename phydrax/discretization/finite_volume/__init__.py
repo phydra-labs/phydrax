@@ -353,6 +353,7 @@ from ._reconstruction import (
     VanLeerLimiter,
 )
 from ._riemann import (
+    AbstractArbitraryNormalALENumericalFluxPlan,
     AbstractArbitraryNormalNumericalFluxPlan,
     AbstractNumericalFluxPlan,
     AbstractSymmetricTwoPointFluxPlan,
@@ -667,6 +668,7 @@ __all__ = [
     "AbstractConservationBoundary",
     "BoundaryTraceResult",
     "evaluate_conservation_boundary",
+    "AbstractArbitraryNormalALENumericalFluxPlan",
     "AbstractArbitraryNormalNumericalFluxPlan",
     "AbstractNumericalFluxPlan",
     "AbstractSymmetricTwoPointFluxPlan",

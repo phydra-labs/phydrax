@@ -53,14 +53,13 @@ from ._physical_boundaries import (
     SupersonicInflowBoundary,
     SupersonicOutflowBoundary,
 )
-from ._positivity import EinfeldtHLLFluxPlan
 from ._precision import FiniteVolumePrecisionPolicy
 from ._reconstruction import PiecewiseConstantReconstruction
 from ._riemann import (
+    AbstractArbitraryNormalALENumericalFluxPlan,
+    AbstractArbitraryNormalNumericalFluxPlan,
     AbstractNumericalFluxPlan,
-    HLLCFluxPlan,
-    HLLFluxPlan,
-    RusanovFluxPlan,
+    NumericalFluxResult,
 )
 from ._small_cell import ConservativeSmallCellRedistributionPlan
 from ._unstructured import UnstructuredFiniteVolumeDiscretization
@@ -123,17 +122,14 @@ class UnstructuredFiniteVolumeMethodPlan(StrictModule, NonTrainableState):
     """Reconstruction and normal numerical flux for unstructured cells."""
 
     reconstruction: PiecewiseConstantReconstruction | PreparedUnstructuredReconstruction
-    interface_solver: RusanovFluxPlan | HLLFluxPlan | HLLCFluxPlan | EinfeldtHLLFluxPlan
+    interface_solver: AbstractArbitraryNormalNumericalFluxPlan
     method_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         reconstruction: PiecewiseConstantReconstruction
         | PreparedUnstructuredReconstruction,
-        interface_solver: RusanovFluxPlan
-        | HLLFluxPlan
-        | HLLCFluxPlan
-        | EinfeldtHLLFluxPlan,
+        interface_solver: AbstractArbitraryNormalNumericalFluxPlan,
         /,
     ):
         if not isinstance(
@@ -147,11 +143,10 @@ class UnstructuredFiniteVolumeMethodPlan(StrictModule, NonTrainableState):
             raise TypeError(
                 "Unstructured FV reconstruction must be piecewise constant or prepared cell-polynomial."
             )
-        if not isinstance(
-            interface_solver,
-            (RusanovFluxPlan, HLLFluxPlan, HLLCFluxPlan, EinfeldtHLLFluxPlan),
-        ):
-            raise TypeError("Unstructured FV supports Rusanov, HLL, or HLLC flux.")
+        if not isinstance(interface_solver, AbstractArbitraryNormalNumericalFluxPlan):
+            raise TypeError(
+                "Unstructured FV requires an arbitrary-normal numerical flux."
+            )
         reconstruction_id = (
             reconstruction.plan_id
             if isinstance(reconstruction, PiecewiseConstantReconstruction)
@@ -293,6 +288,17 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                     "piecewise constant or stage-refreshable degree-one WLSQ "
                     f"(coupling={coupling_.prepared_id}, method={method.method_id})."
                 )
+        if (
+            coupling_.motion is not None or coupling_.overset is not None
+        ) and not isinstance(
+            method.interface_solver, AbstractArbitraryNormalALENumericalFluxPlan
+        ):
+            raise ValueError(
+                "Moving and overset unstructured finite-volume routes require an "
+                "arbitrary-normal ALE numerical flux "
+                f"(coupling={coupling_.prepared_id}, method={method.method_id}, "
+                f"flux={type(method.interface_solver).__name__})."
+            )
         if source is not None and not callable(source):
             raise TypeError("source must be callable or None.")
         source_identifier = None if source_id is None else str(source_id)
@@ -592,6 +598,24 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
             precision=self.precision,
             coupling=self.coupling,
         )
+
+    def _stage_normal_flux(
+        self,
+        left: Array,
+        right: Array,
+        normal: Array,
+        grid_normal_velocity: Array,
+        args: Any,
+        /,
+    ) -> NumericalFluxResult:
+        solver = self.method.interface_solver
+        if isinstance(solver, AbstractArbitraryNormalALENumericalFluxPlan):
+            return solver.normal_ale_face_flux(
+                self.system, left, right, normal, grid_normal_velocity, args
+            )
+        # Preparation admits stationary-only fluxes only without motion or
+        # overset coupling, where every stage grid-normal velocity is zero.
+        return solver.normal_face_flux(self.system, left, right, normal, args)
 
     def _stage_route_active(
         self,
@@ -1134,8 +1158,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                 / self.precision.reconstruction(sliding.right_measures)[:, None, None]
             )
 
-        normal_flux = self.method.interface_solver.normal_ale_face_flux(
-            self.system,
+        normal_flux = self._stage_normal_flux(
             self.precision.flux(receptor_interior),
             self.precision.flux(donor_trace),
             self.precision.flux(normals_array),
@@ -1414,8 +1437,7 @@ class PreparedUnstructuredFiniteVolumeDynamics(StrictModule):
                         "Moving stage geometry must provide grid-normal velocity."
                     )
                 grid_velocity = jnp.zeros_like(geometry_block.quadrature_weights)
-            result = self.method.interface_solver.normal_ale_face_flux(
-                self.system,
+            result = self._stage_normal_flux(
                 self.precision.flux(left),
                 self.precision.flux(right),
                 self.precision.flux(normal),

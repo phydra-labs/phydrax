@@ -376,8 +376,11 @@ caller can retain one symbolic linear template while refreshing runtime
 parameters. `ImplicitRootDerivativePolicy` may select different tangent and
 adjoint `LinearSolvePolicy` values; the adjoint defaults to the tangent policy,
 and Newton methods supply their primal linear policy when no tangent policy is
-declared. Singular or incompatible derivative systems fail through certified
-derivative solves instead of returning an unverified gradient.
+declared. The primal method must declare
+`capabilities.implicit_differentiation`; explicit tangent and adjoint policies do
+not admit a method that declares it unsupported. Singular or incompatible derivative
+systems fail through certified derivative solves instead of returning an unverified
+gradient.
 
 ## Causal nonlinear recurrence
 

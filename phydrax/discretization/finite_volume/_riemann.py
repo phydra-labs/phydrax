@@ -117,6 +117,30 @@ class AbstractArbitraryNormalNumericalFluxPlan(AbstractNumericalFluxPlan):
         raise NotImplementedError
 
 
+class AbstractArbitraryNormalALENumericalFluxPlan(
+    AbstractArbitraryNormalNumericalFluxPlan
+):
+    """Typed capability for arbitrary-normal fluxes on moving faces.
+
+    ``normal_ale_face_flux`` returns the physical normal flux minus the grid
+    transport ``grid_normal_velocity * state`` with relative signal bounds.
+    ``grid_normal_velocity`` must exactly match the face batch shape.
+    """
+
+    @abc.abstractmethod
+    def normal_ale_face_flux(
+        self,
+        system: Any,
+        left: Array,
+        right: Array,
+        normal: Array,
+        grid_normal_velocity: Array,
+        args: Any = None,
+        /,
+    ) -> NumericalFluxResult:
+        raise NotImplementedError
+
+
 class AbstractSymmetricTwoPointFluxPlan(AbstractArbitraryNormalNumericalFluxPlan):
     """Symmetric consistent flux reusable in interface and volume methods."""
 
@@ -136,7 +160,7 @@ class AbstractSymmetricTwoPointFluxPlan(AbstractArbitraryNormalNumericalFluxPlan
         raise NotImplementedError
 
 
-class RusanovFluxPlan(AbstractArbitraryNormalNumericalFluxPlan):
+class RusanovFluxPlan(AbstractArbitraryNormalALENumericalFluxPlan):
     """Local Lax–Friedrichs flux with optional smooth wave-speed magnitude."""
 
     smooth_epsilon: float = eqx.field(static=True)
@@ -230,7 +254,7 @@ class RusanovFluxPlan(AbstractArbitraryNormalNumericalFluxPlan):
         return NumericalFluxResult(flux, speed)
 
 
-class HLLFluxPlan(AbstractArbitraryNormalNumericalFluxPlan):
+class HLLFluxPlan(AbstractArbitraryNormalALENumericalFluxPlan):
     """Two-wave Harten–Lax–van Leer numerical flux."""
 
     def __init__(self):
@@ -337,7 +361,7 @@ class HLLFluxPlan(AbstractArbitraryNormalNumericalFluxPlan):
         return NumericalFluxResult(flux, jnp.maximum(jnp.abs(lower), jnp.abs(upper)))
 
 
-class HLLCFluxPlan(AbstractArbitraryNormalNumericalFluxPlan):
+class HLLCFluxPlan(AbstractArbitraryNormalALENumericalFluxPlan):
     """Contact-resolving HLLC flux for Euler-compatible state layouts."""
 
     def __init__(self):
@@ -1311,6 +1335,7 @@ class EntropyStableEulerFluxPlan(AbstractArbitraryNormalNumericalFluxPlan):
 
 
 __all__ = [
+    "AbstractArbitraryNormalALENumericalFluxPlan",
     "AbstractArbitraryNormalNumericalFluxPlan",
     "AbstractNumericalFluxPlan",
     "AbstractSymmetricTwoPointFluxPlan",

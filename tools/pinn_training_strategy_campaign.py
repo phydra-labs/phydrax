@@ -155,7 +155,12 @@ def _training_plan(strategy: str):
         pseudo = (
             phx.solver.PseudoTransientPolicy(
                 0,
-                phx.solver.ResidualRelaxationMap("u", lambda value: value),
+                phx.solver.ResidualRelaxationMap(
+                    "u",
+                    lambda value: value,
+                    operator_semantic_id="identity-map",
+                    operator_numeric_id="identity-map",
+                ),
                 adaptation=phx.solver.PseudoTransientAdaptation(
                     start=2,
                     every=10,

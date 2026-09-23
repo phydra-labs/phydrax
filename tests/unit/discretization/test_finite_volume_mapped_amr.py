@@ -5,6 +5,7 @@
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -88,6 +89,34 @@ def test_warped_mapped_geometry_preserves_constant_flux_divergence():
     residual = compiled(jnp.asarray(0.0), jnp.ones(mapped.state_shape))
     np.testing.assert_allclose(residual, 0.0, atol=2e-11)
     assert jnp.all(mapped.cell_volumes > 0.0)
+
+
+def test_mapped_geometry_refuses_face_closure_before_execution():
+    reference = phx.discretization.FiniteVolumePlan(_grid((6, 5))).prepare()
+    mapped = phx.discretization.MappedFiniteVolumePlan(
+        reference, lambda point: point, mapping_id="identity"
+    ).prepare()
+    pair = phx.discretization.FiniteVolumeBoundaryPair(
+        phx.discretization.ExtrapolationBoundary(),
+        phx.discretization.ExtrapolationBoundary(),
+    )
+    problem = phx.equations.ConservationProblemIR(
+        "mapped-closure",
+        "state",
+        _scalar_system(2),
+        phx.discretization.FiniteVolumeBoundarySet(("x", "y"), (pair, pair)),
+    )
+    method = phx.discretization.FiniteVolumeMethodPlan(
+        phx.discretization.PiecewiseConstantReconstruction(),
+        phx.discretization.RusanovFluxPlan(),
+        closure=phx.discretization.ConservativeFaceClosurePlan(
+            lambda system, left, right, baseline, axis, args: 0.1 * (right - left),
+            closure_id="mapped-jump-correction",
+        ),
+    )
+
+    with pytest.raises(ValueError, match="Cartesian-axis-only"):
+        phx.equations.compile_conservation_problem(problem, mapped, method)
 
 
 def test_conforming_multiblock_interface_uses_one_conservative_flux():

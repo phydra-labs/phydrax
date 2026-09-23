@@ -1,6 +1,6 @@
 {
   "kind": "public-api-manifest",
-  "manifest_id": "9dd6dbdfcea4a5716e6cb94452433a6d6f80cf3310c019c95d62273651ab4a0b",
+  "manifest_id": "5c893753aff04c91d490fd8a6118e2ed77fdbe87a3a5dc22015038dec20ac2c9",
   "modules": {
     "phydrax": [
       "phydrax.AbstractArrayModel",
@@ -11416,6 +11416,7 @@
       "phydrax.discretization.AMREntityTransferReport",
       "phydrax.discretization.APICGatherResult",
       "phydrax.discretization.APICTransferPlan",
+      "phydrax.discretization.AbstractArbitraryNormalALENumericalFluxPlan",
       "phydrax.discretization.AbstractArbitraryNormalNumericalFluxPlan",
       "phydrax.discretization.AbstractAxisSpec",
       "phydrax.discretization.AbstractConservationBoundary",
@@ -14945,6 +14946,7 @@
     "phydrax.discretization.finite_volume": [
       "phydrax.discretization.finite_volume.ALEBoundaryContext",
       "phydrax.discretization.finite_volume.ALEGeometryConsistencyPolicy",
+      "phydrax.discretization.finite_volume.AbstractArbitraryNormalALENumericalFluxPlan",
       "phydrax.discretization.finite_volume.AbstractArbitraryNormalNumericalFluxPlan",
       "phydrax.discretization.finite_volume.AbstractConservationBoundary",
       "phydrax.discretization.finite_volume.AbstractFaceReconstructionPlan",

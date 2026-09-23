@@ -15,6 +15,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key, PyTree
 
 from .._fingerprint import canonical_fingerprint
+from .._identity import callable_payload
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from .._training import TargetParameterState, TrainingProgress
@@ -34,25 +35,13 @@ BalanceMethod = Literal["gradient_norm", "ntk_trace"]
 CausalGateSignal = Literal["physical", "surrogate"]
 
 
-def _callable_identity(value: Callable[..., Any], /) -> str:
-    module = getattr(value, "__module__", type(value).__module__)
-    qualname = getattr(value, "__qualname__", type(value).__qualname__)
-    identity = f"{module}.{qualname}"
-    code = getattr(value, "__code__", None)
-    if code is None:
-        return identity
-    implementation = canonical_fingerprint(
-        {
-            "bytecode": code.co_code.hex(),
-            "constants": repr(code.co_consts),
-            "names": code.co_names,
-        }
-    )
-    return f"{identity}:{code.co_firstlineno}:{implementation}"
-
-
 class ResidualRelaxationMap(StrictModule, NonTrainableState):
-    """Map named physical fields into one residual's pseudo-time codomain."""
+    """Map named physical fields into one residual's pseudo-time codomain.
+
+    StrictModule operators and plain module-level functions are identified by
+    content. Opaque operators (lambdas, closures, methods, partials) require
+    ``operator_semantic_id`` and ``operator_numeric_id``.
+    """
 
     operator: Callable[..., DomainFunction] = eqx.field(static=True)
     fields: tuple[str, ...] = eqx.field(static=True)
@@ -66,7 +55,8 @@ class ResidualRelaxationMap(StrictModule, NonTrainableState):
         /,
         *,
         blocks: ResidualBlockLayout | None = None,
-        map_id: str | None = None,
+        operator_semantic_id: str | None = None,
+        operator_numeric_id: str | None = None,
     ):
         fields_ = (str(fields),) if isinstance(fields, str) else tuple(map(str, fields))
         if not fields_ or any(not field for field in fields_):
@@ -77,24 +67,25 @@ class ResidualRelaxationMap(StrictModule, NonTrainableState):
             raise TypeError("Relaxation operator must be callable.")
         if blocks is not None and not isinstance(blocks, ResidualBlockLayout):
             raise TypeError("blocks must be a ResidualBlockLayout or None.")
-        identifier = (
-            canonical_fingerprint(
-                {
-                    "kind": "residual-relaxation-map",
-                    "fields": fields_,
-                    "operator": _callable_identity(operator),
-                    "blocks": None if blocks is None else blocks.layout_id,
-                }
-            )
-            if map_id is None
-            else str(map_id)
+        operator_identity = callable_payload(
+            operator,
+            semantic_id=operator_semantic_id,
+            numeric_id=operator_numeric_id,
         )
-        if not identifier:
-            raise ValueError("map_id must be non-empty.")
         self.operator = operator
         self.fields = fields_
         self.blocks = blocks
-        self.map_id = identifier
+        self.map_id = canonical_fingerprint(
+            {
+                "kind": "residual-relaxation-map",
+                "fields": fields_,
+                "operator": {
+                    "semantic": operator_identity["semantic_content_id"],
+                    "numeric": operator_identity["numeric_content_id"],
+                },
+                "blocks": None if blocks is None else blocks.layout_id,
+            }
+        )
 
     def field(self, functions: Mapping[str, DomainFunction], /) -> DomainFunction:
         missing = tuple(name for name in self.fields if name not in functions)

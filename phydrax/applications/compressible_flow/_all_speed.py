@@ -14,7 +14,7 @@ from ..._fingerprint import canonical_fingerprint
 from ..._trainable import NonTrainableState
 from ...discretization.finite_volume._riemann import (
     _normal_ale_inputs,
-    AbstractArbitraryNormalNumericalFluxPlan,
+    AbstractArbitraryNormalALENumericalFluxPlan,
     HLLFluxPlan,
     NumericalFluxResult,
 )
@@ -59,7 +59,7 @@ def _hll_flux(
     return NumericalFluxResult(flux, jnp.asarray(stability_speed))
 
 
-class AllSpeedHLLFluxPlan(AbstractArbitraryNormalNumericalFluxPlan, NonTrainableState):
+class AllSpeedHLLFluxPlan(AbstractArbitraryNormalALENumericalFluxPlan, NonTrainableState):
     """HLL flux whose acoustic dissipation follows one explicit all-speed policy."""
 
     policy: AllSpeedCompressiblePolicy
@@ -185,7 +185,7 @@ class AllSpeedHLLFluxPlan(AbstractArbitraryNormalNumericalFluxPlan, NonTrainable
 
 
 class ShockAwareAllSpeedFluxPlan(
-    AbstractArbitraryNormalNumericalFluxPlan, NonTrainableState
+    AbstractArbitraryNormalALENumericalFluxPlan, NonTrainableState
 ):
     """All-speed primary flux with explicit pressure-sensor generic-HLL dispatch."""
 

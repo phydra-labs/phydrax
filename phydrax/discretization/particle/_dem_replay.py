@@ -13,6 +13,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array
 
+from ..._admissibility import guard_derivative_validity
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -194,6 +195,16 @@ def checkpointed_dem_vjp(
         checkpoint=checkpoint,
         args=args,
     )
+    replayed = checkpointed_dem_rollout(
+        dynamics,
+        initial_state,
+        t0=t0,
+        step_size=step_size,
+        step_count=step_count,
+        checkpoint=checkpoint,
+        args=args,
+    )
+    replay_matched = dem_replay_matches(forward.replay, replayed.replay)
 
     def terminal(state):
         result = checkpointed_dem_rollout(
@@ -205,24 +216,21 @@ def checkpointed_dem_vjp(
             checkpoint=checkpoint,
             args=args,
         )
-        return loss(result.final_state)
+        return guard_derivative_validity(
+            loss(result.final_state),
+            replay_matched,
+            dependencies=state,
+            failure="status",
+            message="DEM replay diverged from the forward rollout.",
+        )
 
     primal, pullback = jax.vjp(terminal, initial_state)
     initial_cotangent = pullback(jnp.asarray(cotangent, dtype=primal.dtype))[0]
-    replayed = checkpointed_dem_rollout(
-        dynamics,
-        initial_state,
-        t0=t0,
-        step_size=step_size,
-        step_count=step_count,
-        checkpoint=checkpoint,
-        args=args,
-    )
     return DEMCheckpointVJPResult(
         primal,
         initial_cotangent,
         forward.replay,
-        dem_replay_matches(forward.replay, replayed.replay),
+        replay_matched,
     )
 
 

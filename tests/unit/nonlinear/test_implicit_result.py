@@ -231,13 +231,52 @@ def test_implicit_root_derivative_policy_defaults_adjoint_to_tangent():
 def test_implicit_root_requires_tangent_policy_for_non_newton_method():
     problem = nl.NonlinearSystemProblem(
         lambda state, target: state**2 - target,
-        problem_id="implicit-fixed-point-policy",
-    )
-    method = nl.NonlinearRichardson(
-        nl.FunctionNonlinearUpdate(lambda state, target: target / state)
+        problem_id="implicit-quasi-newton-policy",
     )
 
     with pytest.raises(ValueError, match="tangent linear policy is required"):
+        nl.implicit_root_result(
+            problem,
+            jnp.asarray(1.0),
+            method=nl.Broyden(),
+            termination=_termination(),
+            args=jnp.asarray(2.0),
+        )
+
+
+@pytest.mark.parametrize(
+    "method",
+    (
+        nl.NonlinearRichardson(
+            nl.FunctionNonlinearUpdate(lambda state, target: target / state)
+        ),
+        nl.NonlinearGMRES(
+            nl.FunctionNonlinearUpdate(lambda state, target: target / state)
+        ),
+    ),
+)
+def test_implicit_root_refuses_method_without_implicit_capability(method):
+    problem = nl.NonlinearSystemProblem(
+        lambda state, target: state**2 - target,
+        problem_id="implicit-unsupported-method",
+    )
+    dense = la.LinearSolvePolicy(la.DenseLU())
+    policy = nl.ImplicitRootDerivativePolicy(
+        tangent_linear_policy=dense,
+        adjoint_linear_policy=dense,
+    )
+
+    assert not method.capabilities.implicit_differentiation
+    with pytest.raises(ValueError, match="does not support implicit root"):
+        nl.implicit_root_result(
+            problem,
+            jnp.asarray(1.0),
+            method=method,
+            termination=_termination(),
+            derivative_policy=policy,
+            args=jnp.asarray(2.0),
+        )
+    with pytest.raises(ValueError, match="does not support implicit root"):
         nl.implicit_root_result(
             problem,
             jnp.asarray(1.0),

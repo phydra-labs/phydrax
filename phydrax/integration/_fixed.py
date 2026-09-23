@@ -11,7 +11,7 @@ import jax.random as jr
 from jaxtyping import Array, Key
 
 import phydrax.axes as cx
-from phydrax.domain import ComponentSum, DomainComponent, DomainFunction
+from phydrax.domain import ComponentSum, DomainComponent
 
 from .._doc import DOC_KEY0
 from ._batches import PointIntegrationBatch, SeparableIntegrationBatch
@@ -23,7 +23,12 @@ from ._estimates import (
 from ._lowering import _component_base_mass, component_factor_fields, sum_over
 from ._precision import IntegrationPrecisionPolicy
 from ._status import IntegrationStatus
-from ._targets import ComponentTarget, DensityTarget, ProbabilityTarget
+from ._targets import (
+    as_target_domain_function,
+    ComponentTarget,
+    DensityTarget,
+    ProbabilityTarget,
+)
 
 
 def _batch_weight(
@@ -151,12 +156,6 @@ def _component_reduction_weights(
     return weight / denominator
 
 
-def _as_domain_function(value: Any, component: DomainComponent, /) -> DomainFunction:
-    if isinstance(value, DomainFunction):
-        return value
-    return DomainFunction(domain=component.domain, deps=(), func=value)
-
-
 def _target_reduction_weights(
     target: ComponentTarget | ProbabilityTarget | DensityTarget,
     batch: PointIntegrationBatch
@@ -220,27 +219,16 @@ def _target_reduction_weights(
     for index, (term_batch, base_weight, term_key) in enumerate(
         zip(batches, base_weights, keys, strict=True)
     ):
-        if isinstance(base, ComponentTarget):
-            log_density = _as_domain_function(target.log_density, components[index])(
-                term_batch.points,
-                key=term_key,
-                **kwargs,
-            )
-        else:
-            density_function = (
-                target.log_density
-                if isinstance(target.log_density, DomainFunction)
-                else DomainFunction(
-                    domain=base.probability,
-                    deps=(),
-                    func=target.log_density,
-                )
-            )
-            log_density = density_function(
-                term_batch.points,
-                key=term_key,
-                **kwargs,
-            )
+        domain = (
+            components[index].domain
+            if isinstance(base, ComponentTarget)
+            else base.probability
+        )
+        log_density = as_target_domain_function(target.log_density, domain)(
+            term_batch.points,
+            key=term_key,
+            **kwargs,
+        )
         if not isinstance(log_density, cx.AxisArray):
             raise TypeError(
                 "Integration log density must return a phydrax.axes.AxisArray."
@@ -288,7 +276,7 @@ def _component_moments(
     precision: IntegrationPrecisionPolicy,
 ) -> tuple[cx.AxisArray, cx.AxisArray, cx.AxisArray, Array]:
     points = batch.points
-    function = _as_domain_function(integrand, component)
+    function = as_target_domain_function(integrand, component.domain)
     values = function(points, key=key, **kwargs)
     if not isinstance(values, cx.AxisArray):
         raise TypeError(
@@ -304,7 +292,7 @@ def _component_moments(
     )
     weight = base_weight
     if log_density is not None:
-        log_density_function = _as_domain_function(log_density, component)
+        log_density_function = as_target_domain_function(log_density, component.domain)
         log_values = log_density_function(points, key=key, **kwargs)
         if not isinstance(log_values, cx.AxisArray):
             raise TypeError("log_density must evaluate to phydrax.axes.AxisArray.")

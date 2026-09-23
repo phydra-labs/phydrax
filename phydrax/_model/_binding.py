@@ -12,17 +12,37 @@ import jax.numpy as jnp
 
 ModelInputMode: TypeAlias = Literal["flat", "structured"]
 ModelBatchMode: TypeAlias = Literal["pointwise", "blockwise", "axis"]
+BlockwiseOutputLayout: TypeAlias = Literal[
+    "dependency_axes", "dependency_subset", "axis_array"
+]
 
 
 @dataclass(frozen=True, slots=True)
 class ModelBinding:
-    """Explicit contract for packing and invoking a model on domain coordinates."""
+    """Explicit contract for packing and invoking a model on domain coordinates.
+
+    `output_layout` declares how a blockwise model's output axes relate to the
+    batch axes of its dependencies:
+
+    - `"dependency_axes"`: a raw array whose leading axes are the batch axes of
+      every dependency, in dependency order; remaining axes are unbound channels.
+    - `"dependency_subset"`: a raw array whose leading axes are the batch axes of
+      exactly `output_labels`, in that order; the model reduced every other
+      dependency axis.
+    - `"axis_array"`: a `phydrax.axes.AxisArray` whose named dims are dependency
+      batch axes and whose `None` dims are unbound channels.
+
+    Raw outputs are checked against the declared leading shape; shape agreement
+    never assigns axis identity on its own.
+    """
 
     input_mode: ModelInputMode = "flat"
     batch_mode: ModelBatchMode = "pointwise"
     pass_key: bool = True
     pass_iter: bool = False
     warn_on_fallback: bool = False
+    output_layout: BlockwiseOutputLayout = "dependency_axes"
+    output_labels: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if self.input_mode not in ("flat", "structured"):
@@ -30,6 +50,30 @@ class ModelBinding:
         if self.batch_mode not in ("pointwise", "blockwise", "axis"):
             raise ValueError(
                 "ModelBinding.batch_mode must be 'pointwise', 'blockwise', or 'axis'."
+            )
+        if not isinstance(self.output_labels, tuple) or any(
+            not isinstance(label, str) for label in self.output_labels
+        ):
+            raise TypeError("ModelBinding.output_labels must be a tuple of labels.")
+        match self.output_layout:
+            case "dependency_axes" | "axis_array":
+                if self.output_labels:
+                    raise ValueError(
+                        "ModelBinding.output_labels require "
+                        "output_layout='dependency_subset'."
+                    )
+            case "dependency_subset":
+                if len(set(self.output_labels)) != len(self.output_labels):
+                    raise ValueError("ModelBinding.output_labels must be unique.")
+            case _:
+                raise ValueError(
+                    "ModelBinding.output_layout must be 'dependency_axes', "
+                    "'dependency_subset', or 'axis_array'."
+                )
+        if self.batch_mode != "blockwise" and self.output_layout != "dependency_axes":
+            raise ValueError(
+                "ModelBinding.output_layout other than 'dependency_axes' requires "
+                "batch_mode='blockwise'."
             )
 
     def pack_point(self, args: tuple[Any, ...], /) -> Any:
@@ -122,6 +166,8 @@ class ModelBinding:
         pass_key: bool = True,
         pass_iter: bool = False,
         warn_on_fallback: bool = False,
+        output_layout: BlockwiseOutputLayout = "dependency_axes",
+        output_labels: tuple[str, ...] = (),
     ) -> "ModelBinding":
         return cls(
             input_mode=input_mode,
@@ -129,6 +175,8 @@ class ModelBinding:
             pass_key=pass_key,
             pass_iter=pass_iter,
             warn_on_fallback=warn_on_fallback,
+            output_layout=output_layout,
+            output_labels=output_labels,
         )
 
     @classmethod
@@ -164,4 +212,9 @@ class ModelBinding:
         return model(x, **call_kwargs)
 
 
-__all__ = ["ModelBatchMode", "ModelBinding", "ModelInputMode"]
+__all__ = [
+    "BlockwiseOutputLayout",
+    "ModelBatchMode",
+    "ModelBinding",
+    "ModelInputMode",
+]

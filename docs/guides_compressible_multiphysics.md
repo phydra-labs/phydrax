@@ -182,6 +182,11 @@ uncorrected monotone fallback.
 Cell-face closures are rejected for constrained MHD until a closure also supplies a
 compatible edge-electromotive correction.
 
+The closure ABI is Cartesian-axis only and applies to numerical-flux interface
+solvers. `FiniteVolumeMethodPlan` rejects a closure combined with a wave-propagation
+plan, whose residual would not apply it, and structured dynamics preparation rejects a
+closure on mapped geometry.
+
 ## Differentiability boundary
 
 The fixed discrete program is differentiable. Hard limiter decisions, HLL/HLLD wave

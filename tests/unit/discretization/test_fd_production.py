@@ -24,6 +24,11 @@ def _cell_grid(shape):
     ).prepare(jnp.asarray([[0.0] * dimension, [1.0] * dimension]))
 
 
+def _cosine_envelope(time, args):
+    del args
+    return jnp.cos(time)
+
+
 def test_portable_fd_checkpoint_roundtrips_fields_auxiliary_and_identity(tmp_path):
     plan = phx.discretization.FDCheckpointPlan(
         ("grid-id", "operator-id"),
@@ -238,7 +243,7 @@ def test_prepared_maxwell_preserves_constraints_and_material_gradients():
     source = phx.solver.maxwell.MaxwellElectricCurrentSourcePlan(
         jnp.arange(degree_one),
         current,
-        envelope=lambda time, args: jnp.cos(time),
+        envelope=_cosine_envelope,
         control_key="amplitude",
     )
     maxwell = phx.solver.CompatibleMaxwellPlan(

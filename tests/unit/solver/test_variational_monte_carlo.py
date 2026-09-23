@@ -1,3 +1,5 @@
+from collections.abc import Callable
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -32,6 +34,34 @@ class _StaticTableModel(eqx.Module):
             self.parameters[index] + self.offset,
             1.0 + 0.0j,
         )
+
+
+class _ActivatedTableModel(eqx.Module):
+    parameters: jax.Array
+    activation: Callable[[jax.Array], jax.Array] = eqx.field(static=True)
+
+    def __call__(self, configuration):
+        bits = (configuration > 0).astype(jnp.int32)
+        index = 2 * bits[0] + bits[1]
+        return phx.operators.LogAmplitude(
+            self.activation(self.parameters[index]),
+            1.0 + 0.0j,
+        )
+
+
+def _identity_activation(value):
+    return value
+
+
+def _halved_activation(value):
+    return 0.5 * value
+
+
+def _scaled_activation(scale):
+    def activation(value):
+        return scale * value
+
+    return activation
 
 
 def _operator():
@@ -482,6 +512,52 @@ def test_vmc_checkpoint_rejects_changed_static_model_configuration(tmp_path):
             changed,
             policy,
         )
+
+
+def test_vmc_checkpoint_identifies_model_callables_by_content(tmp_path):
+    parameters = jnp.asarray([0.2, -0.1, 0.1, -0.2])
+    common = (_operator(), _kernel(), _initial_configurations())
+    policy = phx.solver.VariationalMonteCarloPolicy(
+        num_iterations=0,
+        draws_per_iteration=2,
+        final_evaluation_draws=2,
+        final_chain_diagnostics=False,
+    )
+
+    def problem(activation):
+        return phx.solver.VariationalMonteCarloProblem(
+            _ActivatedTableModel(parameters, activation),
+            *common,
+            problem_id="callable-model-checkpoint",
+        )
+
+    original = problem(_identity_activation)
+    checkpoint = tmp_path / "callable-model-vmc.zip"
+    phx.solver.write_variational_monte_carlo_checkpoint(
+        checkpoint, original, policy, original.initial_state(key=jr.key(31))
+    )
+    restored = phx.solver.read_variational_monte_carlo_checkpoint(
+        checkpoint, problem(_identity_activation), policy
+    )
+    assert int(restored.iteration) == 0
+    with pytest.raises(phx.uq.CheckpointCompatibilityError):
+        phx.solver.read_variational_monte_carlo_checkpoint(
+            checkpoint, problem(_halved_activation), policy
+        )
+
+    for opaque in (_scaled_activation(1.0), lambda value: value):
+        opaque_problem = problem(opaque)
+        with pytest.raises(TypeError, match="Opaque callables"):
+            phx.solver.write_variational_monte_carlo_checkpoint(
+                tmp_path / "opaque-model-vmc.zip",
+                opaque_problem,
+                policy,
+                opaque_problem.initial_state(key=jr.key(31)),
+            )
+        with pytest.raises(TypeError, match="Opaque callables"):
+            phx.solver.read_variational_monte_carlo_checkpoint(
+                checkpoint, opaque_problem, policy
+            )
 
 
 def test_incremental_vmc_checkpoint_rebuilds_cache_and_resumes_exactly(tmp_path):

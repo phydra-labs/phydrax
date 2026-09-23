@@ -9,7 +9,6 @@ import os
 from collections.abc import Callable, Mapping
 from math import isfinite
 from pathlib import Path
-from types import FunctionType
 from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
@@ -22,6 +21,7 @@ from jaxtyping import Array, Key
 import phydrax.axes as cx
 
 from .._fingerprint import array_tree_signature, canonical_fingerprint
+from .._identity import callable_payload
 from .._sampling import (
     FullMarkovTarget,
     IncrementalMarkovTarget,
@@ -681,23 +681,6 @@ def _model_static_payload(value: Any, path: str = "model", /) -> Any:
         return {"kind": "complex", "real": value.real, "imag": value.imag}
     if isinstance(value, np.dtype):
         return {"kind": "dtype", "value": value.str}
-    if isinstance(value, FunctionType):
-        closure = (
-            ()
-            if value.__closure__ is None
-            else tuple(
-                _model_static_payload(cell.cell_contents, f"{path}.closure[{index}]")
-                for index, cell in enumerate(value.__closure__)
-            )
-        )
-        return {
-            "kind": "function",
-            "module": value.__module__,
-            "qualname": value.__qualname__,
-            "bytecode": value.__code__.co_code.hex(),
-            "defaults": _model_static_payload(value.__defaults__, f"{path}.defaults"),
-            "closure": closure,
-        }
     if isinstance(value, type):
         return {
             "kind": "type",
@@ -726,6 +709,11 @@ def _model_static_payload(value: Any, path: str = "model", /) -> Any:
                 )
                 for field in dataclasses.fields(value)
             },
+        }
+    if callable(value):
+        return {
+            "kind": "callable",
+            "semantic_content_id": callable_payload(value)["semantic_content_id"],
         }
     raise TypeError(
         f"{path} contains unsupported static checkpoint identity type "

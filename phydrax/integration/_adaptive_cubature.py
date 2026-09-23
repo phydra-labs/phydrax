@@ -47,7 +47,7 @@ from ._plans import AdaptiveCubaturePlan, AdaptiveTrianglePlan
 from ._precision import IntegrationPrecisionPolicy
 from ._rules import CubatureRule
 from ._status import IntegrationStatus
-from ._targets import ComponentTarget, DensityTarget
+from ._targets import as_target_domain_function, ComponentTarget, DensityTarget
 
 
 class _ProductCubatureIntegrand(StrictModule):
@@ -226,12 +226,6 @@ def _reference_breakpoints(
     if position != plan.dimension:
         raise RuntimeError("Adaptive cubature breakpoint layout is inconsistent.")
     return tuple(result)
-
-
-def _as_domain_function(value: Any, component: DomainComponent, /) -> DomainFunction:
-    if isinstance(value, DomainFunction):
-        return value
-    return DomainFunction(domain=component.domain, deps=(), func=value)
 
 
 _ROUNDOFF_FACTOR = 50.0
@@ -965,14 +959,16 @@ def _run_product(
         }
     )
     callback = _ProductCubatureIntegrand(
-        integrand=_as_domain_function(integrand, component),
+        integrand=as_target_domain_function(integrand, component.domain),
         component=component,
         fixed_points=fixed,
         varying=varying,
         structure=structure,
         axis=axis,
         log_density=(
-            None if log_density is None else _as_domain_function(log_density, component)
+            None
+            if log_density is None
+            else as_target_domain_function(log_density, component.domain)
         ),
         key=key,
         kwargs=frozendict(kwargs),

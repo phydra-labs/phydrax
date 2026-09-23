@@ -49,7 +49,7 @@ Accepted-window ledgers distinguish boundary heat, contact heat, radiation, cont
 
 ## Replay, inverse problems, and UQ
 
-`checkpointed_reactive_cfd_dem_rollout` records route digests and rematerializes accepted blocks for reverse differentiation. `reactive_cfd_dem_vjp` requires deterministic replay. `evaluate_reactive_parameter_ensemble` retains invalid-member rates rather than dropping failed worlds.
+`checkpointed_reactive_rollout` records route digests and rematerializes accepted blocks for reverse differentiation. `checkpointed_reactive_vjp` requires deterministic replay: it compares the forward rollout with an independent replay before the pullback, and a mismatch poisons the returned `initial_state_cotangent` with NaN while the primal loss, forward `replay` record, and `replay_matched` evidence stay intact. `evaluate_reactive_parameter_ensemble` retains invalid-member rates rather than dropping failed worlds.
 
 ## Scope
 

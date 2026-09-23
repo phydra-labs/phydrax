@@ -5,7 +5,6 @@
 from __future__ import annotations
 
 from math import factorial, isfinite, prod
-from types import FunctionType
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
@@ -18,7 +17,7 @@ import phydrax.ein as ein
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._frozendict import frozendict
-from .._identity import strict_module_payload
+from .._identity import callable_payload
 from .._strict import StrictModule
 from ..uq._gaussian_factor import gaussian_factor_from_covariance, GaussianFactor
 from ._differential import DifferentialProblem
@@ -49,49 +48,6 @@ _NUMERICAL = 0
 _PROCESS = 1
 _OBSERVATION = 2
 _INITIAL_CONDITION = 3
-
-
-def _probabilistic_drift_id(drift: Any, /) -> str:
-    if isinstance(drift, StrictModule):
-        return strict_module_payload(drift)["numeric_content_id"]
-    if isinstance(drift, FunctionType):
-        closure = (
-            ()
-            if drift.__closure__ is None
-            else tuple(cell.cell_contents for cell in drift.__closure__)
-        )
-        static_closure = tuple(
-            value
-            if value is None or isinstance(value, (bool, int, float, str))
-            else {
-                "type": f"{type(value).__module__}.{type(value).__qualname__}",
-                "arrays": array_tree_fingerprint(value),
-            }
-            for value in closure
-        )
-        constants = tuple(
-            value
-            for value in drift.__code__.co_consts
-            if value is None or isinstance(value, (bool, int, float, str))
-        )
-        return canonical_fingerprint(
-            {
-                "kind": "probabilistic-ode-drift",
-                "module": drift.__module__,
-                "qualname": drift.__qualname__,
-                "bytecode": drift.__code__.co_code.hex(),
-                "constants": constants,
-                "closure": static_closure,
-                "defaults": array_tree_fingerprint(drift.__defaults__),
-            }
-        )
-    return canonical_fingerprint(
-        {
-            "kind": "probabilistic-ode-callable",
-            "type": f"{type(drift).__module__}.{type(drift).__qualname__}",
-            "arrays": array_tree_fingerprint(drift),
-        }
-    )
 
 
 _PARAMETER = 4
@@ -1372,6 +1328,8 @@ def solve_probabilistic_ode(
     observation_covariance: ArrayLike | None = None,
     parameter_covariance: ArrayLike | None = None,
     checkpoint: _ProbabilisticODECheckpoint | None = None,
+    drift_semantic_id: str | None = None,
+    drift_numeric_id: str | None = None,
 ) -> ProbabilisticODESolution:
     """Solve a deterministic ``DifferentialProblem`` by Gaussian ODE filtering.
 
@@ -1379,9 +1337,19 @@ def solve_probabilistic_ode(
     IWP diffusion, process discrepancy, residual observation noise, initial
     condition uncertainty, and parameter uncertainty remain separate covariance
     components through filtering and Rauch--Tung--Striebel smoothing.
+
+    The checkpoint compatibility identity binds the drift through the canonical
+    callable payload: StrictModule drifts and plain module-level functions are
+    identified by content, while opaque drifts (lambdas, closures, methods,
+    partials) require ``drift_semantic_id`` and ``drift_numeric_id``.
     """
     if not isinstance(problem, DifferentialProblem):
         raise TypeError("problem must be a DifferentialProblem.")
+    drift_identity = callable_payload(
+        problem.drift,
+        semantic_id=drift_semantic_id,
+        numeric_id=drift_numeric_id,
+    )
     if problem.stochastic:
         raise ValueError(
             "Probabilistic ODE integration requires a deterministic problem; "
@@ -1481,7 +1449,10 @@ def solve_probabilistic_ode(
         {
             "kind": "probabilistic-ode-checkpoint",
             "problem": problem.problem_id,
-            "dynamics": _probabilistic_drift_id(problem.drift),
+            "dynamics": {
+                "semantic": drift_identity["semantic_content_id"],
+                "numeric": drift_identity["numeric_content_id"],
+            },
             "arguments": array_tree_fingerprint(problem.args),
             "argument_structure": str(jax.tree.structure(problem.args)),
             "covariances": array_tree_fingerprint(

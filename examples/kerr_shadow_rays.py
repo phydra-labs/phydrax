@@ -46,7 +46,10 @@ def main() -> None:
     events = astro.GRRayEventSurfaces(
         capture_margin=lambda affine, point, tangent: point[1] - capture_radius,
         escape_margin=lambda affine, point, tangent: escape_radius - point[1],
-        event_id="kerr-shadow-capture-or-escape",
+        capture_margin_semantic_id="kerr-shadow:outer-horizon-capture",
+        capture_margin_numeric_id=f"kerr-shadow:capture-radius={capture_radius!r}",
+        escape_margin_semantic_id="kerr-shadow:radial-escape",
+        escape_margin_numeric_id=f"kerr-shadow:escape-radius={escape_radius!r}",
     )
     plan = astro.GRRayPlan.from_screen(
         metric,

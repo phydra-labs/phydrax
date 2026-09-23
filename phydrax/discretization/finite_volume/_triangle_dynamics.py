@@ -32,14 +32,11 @@ from ._physical_boundaries import (
     SupersonicInflowBoundary,
     SupersonicOutflowBoundary,
 )
-from ._positivity import EinfeldtHLLFluxPlan
 from ._precision import FiniteVolumePrecisionPolicy
 from ._reconstruction import PiecewiseConstantReconstruction
 from ._riemann import (
+    AbstractArbitraryNormalNumericalFluxPlan,
     AbstractNumericalFluxPlan,
-    HLLCFluxPlan,
-    HLLFluxPlan,
-    RusanovFluxPlan,
 )
 from ._triangle_fv import TriangleFiniteVolumeDiscretization
 from ._triangle_polynomial import TriangleKExactReconstructionPlan
@@ -101,7 +98,7 @@ class TriangleFiniteVolumeMethodPlan(StrictModule, NonTrainableState):
         | TriangleMUSCLReconstructionPlan
         | TriangleKExactReconstructionPlan
     )
-    interface_solver: RusanovFluxPlan | HLLFluxPlan | HLLCFluxPlan | EinfeldtHLLFluxPlan
+    interface_solver: AbstractArbitraryNormalNumericalFluxPlan
     viscous: TriangleViscousFluxPlan | None
     method_id: str = eqx.field(static=True)
 
@@ -112,9 +109,7 @@ class TriangleFiniteVolumeMethodPlan(StrictModule, NonTrainableState):
             | TriangleMUSCLReconstructionPlan
             | TriangleKExactReconstructionPlan
         ),
-        interface_solver: (
-            RusanovFluxPlan | HLLFluxPlan | HLLCFluxPlan | EinfeldtHLLFluxPlan
-        ),
+        interface_solver: AbstractArbitraryNormalNumericalFluxPlan,
         /,
         *,
         viscous: TriangleViscousFluxPlan | None = None,
@@ -130,16 +125,8 @@ class TriangleFiniteVolumeMethodPlan(StrictModule, NonTrainableState):
             raise TypeError(
                 "Triangle FV reconstruction must be piecewise constant, MUSCL, or k-exact."
             )
-        if not isinstance(
-            interface_solver,
-            (
-                RusanovFluxPlan,
-                HLLFluxPlan,
-                HLLCFluxPlan,
-                EinfeldtHLLFluxPlan,
-            ),
-        ):
-            raise TypeError("Triangle FV supports Rusanov, HLL, or HLLC flux.")
+        if not isinstance(interface_solver, AbstractArbitraryNormalNumericalFluxPlan):
+            raise TypeError("Triangle FV requires an arbitrary-normal numerical flux.")
         if viscous is not None and not isinstance(viscous, TriangleViscousFluxPlan):
             raise TypeError("viscous must be TriangleViscousFluxPlan or None.")
         self.reconstruction = reconstruction

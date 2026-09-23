@@ -466,3 +466,184 @@ def test_coord_separable_laplacian_uses_fwdfwd_path(monkeypatch):
     batch = domain.component().sample(phx.domain.GridSampling({"x": 17}), key=jr.key(111))
     out = jnp.asarray(lap(batch).data)
     assert jnp.allclose(out, 2.0, atol=1e-6)
+
+
+def _cube_batch():
+    domain = (
+        phx.domain.ScalarInterval(0.0, 1.0, label="a")
+        @ phx.domain.ScalarInterval(1.0, 2.0, label="b")
+        @ phx.domain.ScalarInterval(2.0, 3.0, label="c")
+    )
+    layout = SampleLayout((("a",), ("b",), ("c",)))
+    batch = domain.component().sample(
+        phx.domain.PointSampling((3, 3, 3), layout=layout), key=jr.key(7)
+    )
+    axes = tuple(batch.structure.axis_for(label) for label in ("a", "b", "c"))
+    values = tuple(
+        jnp.asarray(batch.points[label].data).reshape((3,)) for label in ("a", "b", "c")
+    )
+    return domain, batch, axes, values
+
+
+def _blockwise(**layout):
+    return phx.domain.ModelBinding.blockwise("structured", pass_key=False, **layout)
+
+
+def test_blockwise_equal_extents_keep_dependency_axes_and_channels():
+    domain, batch, axes, (a, b, c) = _cube_batch()
+
+    def model(x):
+        xa, xb, xc = x
+        grid = xa[:, None, None] + 10.0 * xb[None, :, None] + 100.0 * xc[None, None, :]
+        return jnp.stack((grid, 2.0 * grid, 3.0 * grid), axis=-1)
+
+    out = domain.Model("a", "b", "c", binding=_blockwise())(model)(batch)
+
+    assert out.dims == (*axes, None)
+    grid = a[:, None, None] + 10.0 * b[None, :, None] + 100.0 * c[None, None, :]
+    expected = jnp.stack((grid, 2.0 * grid, 3.0 * grid), axis=-1)
+    assert jnp.allclose(jnp.asarray(out.data), expected)
+
+
+def test_blockwise_feature_width_equal_to_extent_is_not_a_batch_axis():
+    domain, batch, axes, (a, b, c) = _cube_batch()
+
+    def summary(x):
+        xa, xb, xc = x
+        return jnp.stack((jnp.sum(xa), jnp.sum(xb), jnp.sum(xc)))
+
+    with pytest.raises(ValueError, match="declared leading axes"):
+        domain.Model("a", "b", "c", binding=_blockwise())(summary)(batch)
+
+    reduced = domain.Model(
+        "a", "b", "c", binding=_blockwise(output_layout="dependency_subset")
+    )(summary)(batch)
+    assert reduced.dims == (*axes, None)
+    expected = jnp.stack((jnp.sum(a), jnp.sum(b), jnp.sum(c)))
+    assert jnp.allclose(
+        jnp.asarray(reduced.data), jnp.broadcast_to(expected, (3, 3, 3, 3))
+    )
+
+
+def test_blockwise_scalar_reduction_broadcasts_over_every_dependency_axis():
+    domain, batch, axes, (a, b, c) = _cube_batch()
+
+    def total(x):
+        xa, xb, xc = x
+        return jnp.sum(xa) + jnp.sum(xb) * jnp.sum(xc)
+
+    out = domain.Model(
+        "a", "b", "c", binding=_blockwise(output_layout="dependency_subset")
+    )(total)(batch)
+
+    assert out.dims == axes
+    expected = jnp.sum(a) + jnp.sum(b) * jnp.sum(c)
+    assert jnp.allclose(jnp.asarray(out.data), jnp.full((3, 3, 3), expected))
+
+
+def test_blockwise_subset_layout_assigns_reduced_axes_by_declaration():
+    domain, batch, axes, (a, b, c) = _cube_batch()
+
+    def reduce_b(x):
+        xa, xb, xc = x
+        return xc[:, None] * jnp.sum(xb) + xa[None, :]
+
+    out = domain.Model(
+        "a",
+        "b",
+        "c",
+        binding=_blockwise(output_layout="dependency_subset", output_labels=("c", "a")),
+    )(reduce_b)(batch)
+
+    assert out.dims == axes
+    expected_ac = a[:, None] + c[None, :] * jnp.sum(b)
+    assert jnp.allclose(
+        jnp.asarray(out.data), jnp.broadcast_to(expected_ac[:, None, :], (3, 3, 3))
+    )
+
+
+def test_blockwise_rank_mismatch_raises_instead_of_matching_sizes():
+    domain, batch, _, _ = _cube_batch()
+
+    def drop_c(x):
+        xa, xb, _ = x
+        return xa[:, None] * xb[None, :]
+
+    u = domain.Model("a", "b", "c", binding=_blockwise())(drop_c)
+    with pytest.raises(ValueError, match="declared leading axes"):
+        u(batch)
+
+    subset = domain.Model(
+        "a",
+        "b",
+        "c",
+        binding=_blockwise(
+            output_layout="dependency_subset", output_labels=("a", "b", "c")
+        ),
+    )(drop_c)
+    with pytest.raises(ValueError, match="declared leading axes"):
+        subset(batch)
+
+
+def test_blockwise_axis_array_output_preserves_explicit_unbound_channel():
+    domain, batch, axes, (a, b, c) = _cube_batch()
+
+    def channels(x):
+        xa, xb, xc = x
+        return phx.axes.AxisArray(
+            jnp.stack((jnp.mean(xa), jnp.mean(xb), jnp.mean(xc))), dims=(None,)
+        )
+
+    out = domain.Model("a", "b", "c", binding=_blockwise(output_layout="axis_array"))(
+        channels
+    )(batch)
+
+    assert out.dims == (*axes, None)
+    expected = jnp.stack((jnp.mean(a), jnp.mean(b), jnp.mean(c)))
+    assert jnp.allclose(jnp.asarray(out.data), jnp.broadcast_to(expected, (3, 3, 3, 3)))
+
+    with pytest.raises(TypeError, match="output_layout='axis_array'"):
+        domain.Model("a", "b", "c", binding=_blockwise())(channels)(batch)
+
+    def foreign_axis(x):
+        return phx.axes.AxisArray(jnp.zeros((3,)), dims=("channel",))
+
+    with pytest.raises(ValueError, match="named dims must be dependency batch axes"):
+        domain.Model("a", "b", "c", binding=_blockwise(output_layout="axis_array"))(
+            foreign_axis
+        )(batch)
+
+
+def test_blockwise_output_layout_declarations_are_validated():
+    with pytest.raises(ValueError, match="output_layout"):
+        _blockwise(output_layout="inferred")
+    with pytest.raises(ValueError, match="dependency_subset"):
+        _blockwise(output_labels=("a",))
+    with pytest.raises(ValueError, match="unique"):
+        _blockwise(output_layout="dependency_subset", output_labels=("a", "a"))
+    with pytest.raises(ValueError, match="blockwise"):
+        phx.domain.ModelBinding(output_layout="axis_array")
+
+    domain, batch, _, _ = _cube_batch()
+    with pytest.raises(ValueError, match="not model dependencies"):
+        domain.Model(
+            "a",
+            "b",
+            binding=_blockwise(output_layout="dependency_subset", output_labels=("c",)),
+        )(lambda x: x[0])
+
+
+def test_reduced_blockwise_layout_refuses_pointwise_evaluation():
+    domain, _, _, _ = _cube_batch()
+    u = domain.Model("a", "b", binding=_blockwise(output_layout="dependency_subset"))(
+        lambda x: jnp.sum(x[0]) + jnp.sum(x[1])
+    )
+    paired = domain.component().sample(
+        phx.domain.PointSampling(4, layout=SampleLayout((("a", "b", "c"),))),
+        key=jr.key(3),
+    )
+
+    with pytest.raises(ValueError, match="pointwise evaluation is undefined"):
+        u(paired)
+    with pytest.raises(ValueError, match="pointwise evaluation is undefined"):
+        u.func(jnp.asarray(0.5), jnp.asarray(1.5))

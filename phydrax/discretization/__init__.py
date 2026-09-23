@@ -752,6 +752,7 @@ from .finite_difference import (
     write_fd_checkpoint,
 )
 from .finite_volume import (
+    AbstractArbitraryNormalALENumericalFluxPlan,
     AbstractArbitraryNormalNumericalFluxPlan,
     AbstractConservationBoundary,
     AbstractFaceReconstructionPlan,
@@ -2858,6 +2859,7 @@ __all__ = [
     "evaluate_conservation_boundary",
     "dsmc",
     "ALEBoundaryContext",
+    "AbstractArbitraryNormalALENumericalFluxPlan",
     "AbstractArbitraryNormalNumericalFluxPlan",
     "AbstractNumericalFluxPlan",
     "AbstractSymmetricTwoPointFluxPlan",

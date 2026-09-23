@@ -48,6 +48,12 @@ class ConcatenatedModelEvaluator(StrictModule, BatchEvaluator):
             raise TypeError("Domain models require an explicit ModelBinding.")
         if binding.batch_mode == "axis" and not isinstance(model, AxisModelEvaluator):
             raise TypeError("Axis-batch model bindings require an AxisModelEvaluator.")
+        undeclared = tuple(label for label in binding.output_labels if label not in deps)
+        if undeclared:
+            raise ValueError(
+                f"ModelBinding.output_labels {undeclared!r} are not model dependencies "
+                f"{tuple(deps)!r}."
+            )
         self.raw_model = model
         self.domain_labels = tuple(domain_labels)
         self.deps = tuple(deps)
@@ -63,6 +69,14 @@ class ConcatenatedModelEvaluator(StrictModule, BatchEvaluator):
                 fallback="generic_model_evaluation",
             )
             warnings.warn(message, UserWarning, stacklevel=3)
+
+    def _require_pointwise_semantics(self, reason: str, /) -> None:
+        if self.binding.output_layout != "dependency_axes":
+            raise ValueError(
+                "ModelBinding output_layout="
+                f"{self.binding.output_layout!r} defines outputs over whole "
+                "dependency blocks, so pointwise evaluation is undefined: " + reason
+            )
 
     def _call_model(self, x: Any, /, *, key=None, iter_=None, **kwargs: Any):
         return self.binding.call(
@@ -113,6 +127,7 @@ class ConcatenatedModelEvaluator(StrictModule, BatchEvaluator):
                 self._call_blockwise,
                 self.deps,
                 batch,
+                self.binding,
                 key=key,
                 iter_=iter_,
                 **kwargs,
@@ -120,6 +135,7 @@ class ConcatenatedModelEvaluator(StrictModule, BatchEvaluator):
             if out is not None:
                 return complete_batch_axes(out, batch, self.domain_labels)
             if reason is not None:
+                self._require_pointwise_semantics(reason)
                 self.emit_auto_fallback_warning(
                     "Falling back to pointwise evaluation for DomainFunction model: "
                     + reason
@@ -151,6 +167,7 @@ class ConcatenatedModelEvaluator(StrictModule, BatchEvaluator):
         raise TypeError("Model callable does not support axis-batch execution.")
 
     def __call__(self, *args: Any, key=None, iter_=None, **kwargs: Any):
+        self._require_pointwise_semantics("the model was called on coordinate points.")
         if not args:
             raise ValueError("Model callable requires at least one positional input.")
 

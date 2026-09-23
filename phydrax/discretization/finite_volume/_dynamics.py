@@ -192,6 +192,13 @@ class FiniteVolumeMethodPlan(StrictModule, NonTrainableState):
             raise TypeError("viscous must be ViscousFluxPlan or None.")
         if closure is not None and not isinstance(closure, ConservativeFaceClosurePlan):
             raise TypeError("closure must be ConservativeFaceClosurePlan or None.")
+        if closure is not None and isinstance(
+            interface_solver, AbstractWavePropagationPlan
+        ):
+            raise ValueError(
+                "Learned face closures require a numerical-flux interface solver; "
+                "wave-propagation residuals do not apply closures."
+            )
         differentiability_ = validate_differentiability_policy(differentiability)
         if isinstance(interface_solver, AbstractNumericalFluxPlan):
             interface_id = interface_solver.flux_id
@@ -363,6 +370,14 @@ class PreparedFiniteVolumeDynamics(StrictModule):
             raise TypeError("discretization must be prepared finite-volume geometry.")
         if not isinstance(method, FiniteVolumeMethodPlan):
             raise TypeError("method must be a FiniteVolumeMethodPlan.")
+        if (
+            isinstance(discretization, MappedFiniteVolumeDiscretization)
+            and method.closure is not None
+        ):
+            raise ValueError(
+                "Learned face closures use a Cartesian-axis-only ABI; mapped "
+                "finite-volume geometry is not supported yet."
+            )
         if not isinstance(boundaries, FiniteVolumeBoundarySet):
             raise TypeError("boundaries must be a FiniteVolumeBoundarySet.")
         if boundaries.axis_names != discretization.grid.axis_names:

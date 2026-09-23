@@ -139,6 +139,15 @@ requires a characteristic system, and positivity limiting requires an admissibil
 predicate. Entropy-conservative/stable interface residuals use an explicit
 `ConvexEntropyPair`; the pair must target the same conservation system.
 
+Triangle and unstructured meshes accept any `AbstractArbitraryNormalNumericalFluxPlan`,
+which supplies `normal_face_flux` on physical unit normals (Rusanov, HLL, HLLC,
+Einfeldt-HLL, the entropy-stable fluxes, and the all-speed fluxes). Moving and overset
+unstructured routes need `AbstractArbitraryNormalALENumericalFluxPlan`, whose
+`normal_ale_face_flux` subtracts grid transport and uses relative signal bounds;
+Rusanov, HLL, HLLC, Einfeldt-HLL, `AllSpeedHLLFluxPlan`, and
+`ShockAwareAllSpeedFluxPlan` implement it. The entropy-stable fluxes are
+stationary-only and are refused for moving routes when the dynamics are prepared.
+
 Wave propagation is a separate interface family, not an optional extension of a flux
 result:
 
@@ -530,6 +539,10 @@ Generic mapped conservative-state execution currently accepts Rusanov or HLL flu
 which evaluate the physical normal flux against mapped unit normals, and remains
 stationary. Time-dependent fixed-connectivity geometry is deliberately separate under
 the MAC-specific `MACALEGeometryPlan` described above.
+
+`ConservativeFaceClosurePlan` corrections use a Cartesian-axis ABI, so preparing
+mapped dynamics with a nonempty `FiniteVolumeMethodPlan.closure` raises `ValueError`;
+mapped closures are not supported yet.
 
 ## Multiblock and adaptive grids
 

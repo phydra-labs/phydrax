@@ -258,6 +258,39 @@ def test_astrodynamics_event_ids_include_guard_and_reset_parameters():
     assert reference.hybrid.plan_id != different_reset.hybrid.plan_id
 
 
+def test_astrodynamics_event_opaque_callables_require_declared_identity():
+    context = _context()
+    reset = astro.ImpulsiveVelocityReset((0.0, 0.01, 0.0))
+    inner = lambda time, state, args: jnp.sum(state[:3] ** 2) - 7000.0**2
+    outer = lambda time, state, args: jnp.sum(state[:3] ** 2) - 7100.0**2
+
+    def make(guard, **ids):
+        return astro.AstrodynamicsEventPlan(
+            guard,
+            reset,
+            _event_vector_field,
+            _event_vector_field,
+            context,
+            event_kind="radius-crossing",
+            **ids,
+        )
+
+    for guard in (inner, outer):
+        with pytest.raises(TypeError, match="explicit semantic_id and numeric_id"):
+            make(guard)
+    with pytest.raises(TypeError, match="explicit semantic_id and numeric_id"):
+        make(inner, guard_semantic_id="radius-crossing")
+
+    declared_inner = make(
+        inner, guard_semantic_id="squared-radius", guard_numeric_id="7000km"
+    )
+    declared_outer = make(
+        outer, guard_semantic_id="squared-radius", guard_numeric_id="7100km"
+    )
+    assert declared_inner.event_id != declared_outer.event_id
+    assert declared_inner.hybrid.plan_id != declared_outer.hybrid.plan_id
+
+
 def test_bundled_astronomy_assets_are_typed_bounded_and_offline():
     context = _context()
     gravity_context = astro.AstrodynamicsContext(

@@ -476,7 +476,11 @@ Resume only from `solution.checkpoint`, with the same method ID,
 factorization, state shape, and explicit nominal `step_size`; the resumed
 problem must start at the checkpoint time. Adaptive solves do not resume
 through this fixed-step checkpoint route. Provenance mismatches fail rather
-than restart or reinterpret a checkpoint.
+than restart or reinterpret a checkpoint. The checkpoint binds the drift through
+the canonical callable payload: StrictModule drifts and plain module-level
+functions are identified by content, while opaque drifts (lambdas, closures,
+methods, partials) require `drift_semantic_id` and `drift_numeric_id`; omitting
+them raises `TypeError`.
 
 ::: phydrax.solver.ProbabilisticODEMethod
 

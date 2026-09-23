@@ -18,7 +18,6 @@ from phydrax.domain import (
     AbstractScalarDomain,
     Boundary,
     ComponentSum,
-    DomainFunction,
     Fixed,
     FixedEnd,
     FixedStart,
@@ -72,7 +71,7 @@ from ._rules import (
 )
 from ._sparse_grid import _smolyak_rule
 from ._status import IntegrationStatus
-from ._targets import ComponentTarget, DensityTarget
+from ._targets import as_target_domain_function, ComponentTarget, DensityTarget
 
 
 class ProductIntegrationRealization(StrictModule):
@@ -612,12 +611,6 @@ def materialize_product(
     )
 
 
-def _as_function(value: Any, component: Any, /) -> DomainFunction:
-    if isinstance(value, DomainFunction):
-        return value
-    return DomainFunction(domain=component.domain, deps=(), func=value)
-
-
 def _reduce_stochastic_product(
     integrand: Any,
     target: ComponentTarget | DensityTarget,
@@ -636,7 +629,7 @@ def _reduce_stochastic_product(
     component = base.component
     if isinstance(component, ComponentSum):
         raise TypeError("Product component unions are unsupported.")
-    function = _as_function(integrand, component)
+    function = as_target_domain_function(integrand, component.domain)
     values = function(batch.points, key=key, **kwargs)
     if not isinstance(values, cx.AxisArray):
         raise TypeError("Product integrands must evaluate to phydrax.axes.AxisArray.")
@@ -654,7 +647,7 @@ def _reduce_stochastic_product(
     )
     weight = base_weight
     if isinstance(target, DensityTarget):
-        density_function = _as_function(target.log_density, component)
+        density_function = as_target_domain_function(target.log_density, component.domain)
         log_density = density_function(batch.points, key=key, **kwargs)
         log_data = precision.evaluation(log_density.data)
         weight = weight * cx.AxisArray(jnp.exp(log_data), dims=log_density.dims)
