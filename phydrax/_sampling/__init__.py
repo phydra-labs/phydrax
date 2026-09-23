@@ -50,6 +50,8 @@ from ._proposals import (
     SingleCoordinateGaussianProposal,
     SingleCoordinatePeriodicProposal,
     SingleCoordinateProposalPayload,
+    SingleElectronSphereProposal,
+    SphereElectronProposalPayload,
 )
 from ._targets import (
     FullMarkovTarget,
@@ -117,6 +119,8 @@ __all__ = [
     "PreparedHamiltonianKernel",
     "ProposalMove",
     "SingleCoordinateGaussianProposal",
+    "SingleElectronSphereProposal",
+    "SphereElectronProposalPayload",
     "SingleCoordinatePeriodicProposal",
     "SingleCoordinateProposalPayload",
     "RobbinsMonroScalePolicy",

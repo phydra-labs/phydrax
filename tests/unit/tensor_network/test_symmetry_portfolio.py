@@ -1,8 +1,8 @@
 import jax.numpy as jnp
 import pytest
 
+from phydrax.operators.quantum import AbelianGroup
 from phydrax.tensor_network._abelian import (
-    AbelianGroup,
     AbelianLeg,
     AbelianTensor,
     AbelianTensorLayout,

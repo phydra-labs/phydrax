@@ -7,6 +7,7 @@
 from importlib import import_module
 
 from . import gaussian, lattice
+from ._abelian_charge import AbelianCharge, AbelianGroup
 from ._algebra import (
     anticommutator,
     commutator,
@@ -123,6 +124,7 @@ from ._local import (
     LocalOperatorStatus,
 )
 from ._magnetism import __all__ as _magnetism_all
+from ._many_body_topology import many_body_twist_chern, ManyBodyTwistChernResult
 from ._mode_reduction import (
     compare_mode_resolutions,
     ModeReductionCostEstimate,
@@ -137,6 +139,11 @@ from ._mode_reduction import (
     prepare_mode_reduction,
     PreparedModeReduction,
     refresh_mode_reduction,
+)
+from ._monopole_sphere import (
+    MonopoleKineticPolicy,
+    MonopoleSphereCoulombHamiltonian,
+    uniform_sphere_electron_walkers,
 )
 from ._nonmarkovianity import (
     analyze_dynamical_map_series,
@@ -176,6 +183,11 @@ from ._parameterized import (
     QuantumProgramTemplate,
 )
 from ._periodic_electronic import __all__ as _periodic_electronic_all
+from ._periodic_lead import (
+    PeriodicLeadEmbeddingResult,
+    PeriodicPrincipalLayerLeadPlan,
+    prepare_periodic_lead_embedding,
+)
 from ._propagation import (
     apply_local_kraus_to_density,
     apply_local_operator_to_state,
@@ -267,6 +279,8 @@ __all__ = [
     *_thermal_green_all,
     "AbstractLocalQuantumOperator",
     "AbstractDiscreteQuantumOperator",
+    "AbelianCharge",
+    "AbelianGroup",
     "AmplitudeRatio",
     "HamiltonianAction",
     "HilbertRegisterLayout",
@@ -313,8 +327,11 @@ __all__ = [
     "hermiticity_residual",
     "lindblad_dissipator",
     "LocalOperatorEstimate",
+    "ManyBodyTwistChernResult",
     "LocalOperatorStatus",
     "LocalKrausChannelOperation",
+    "MonopoleKineticPolicy",
+    "MonopoleSphereCoulombHamiltonian",
     "LocalObservable",
     "LocalUnitaryOperation",
     "LogAmplitude",
@@ -325,6 +342,8 @@ __all__ = [
     "ModeReductionPolicy",
     "ModeReductionProblem",
     "ModeResolutionPolicy",
+    "PeriodicLeadEmbeddingResult",
+    "PeriodicPrincipalLayerLeadPlan",
     "ModeResolutionReport",
     "NamedModeOperator",
     "BasisStateSubspace",
@@ -333,6 +352,7 @@ __all__ = [
     "QuantumSubspaceEvidence",
     "basis_state_subspace",
     "embed_quantum_subspace",
+    "many_body_twist_chern",
     "project_quantum_operator",
     "restrict_quantum_subspace",
     "PreparedModeReduction",
@@ -345,6 +365,7 @@ __all__ = [
     "quantum_bracket",
     "observable_variance",
     "purity",
+    "prepare_periodic_lead_embedding",
     "partial_trace",
     "local_density_expectation",
     "local_state_expectation",
@@ -356,6 +377,7 @@ __all__ = [
     "SymmetryProjectedAmplitude",
     "tensor_product",
     "trace_distance",
+    "uniform_sphere_electron_walkers",
     "unit_trace_residual",
     "von_neumann_residual",
     "von_neumann_entropy",

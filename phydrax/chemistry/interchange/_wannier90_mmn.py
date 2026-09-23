@@ -17,9 +17,12 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization._reciprocal import PreparedReciprocalConnectivity
-from ...operators.periodic._family import PeriodicResourceError
+from ...operators.periodic import (
+    PeriodicBandManifold,
+    PeriodicOverlapBundle,
+    PeriodicResourceError,
+)
 from ..periodic._source import PeriodicSourceContext
-from ..periodic._topology import PeriodicBandManifold, PeriodicOverlapBundle
 
 
 _INTEGER = re.compile(r"[+-]?\d+")

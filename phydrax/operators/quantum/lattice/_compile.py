@@ -16,7 +16,7 @@ from jaxtyping import Array
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
 from ._model import LocalOperatorPlan, QuantumLatticeSpecification, QuantumLatticeTerm
-from ._sector import SectorChargeMap
+from ._sector import FixedAbelianChargeBasis, SectorChargeMap
 
 
 class QuantumLatticeResourcePolicy(StrictModule):
@@ -310,15 +310,34 @@ def certify_charge_map(
             "Sector coordinate layout does not match the lattice specification."
         )
     labels = prepared.specification.charge_labels
-    if charge_map.charge_label not in labels:
-        raise ValueError("Sector charge label is absent from the lattice specification.")
-    expected = np.asarray(
-        [
-            charge_map.charge_delta if label == charge_map.charge_label else 0
-            for label in labels
-        ],
-        dtype=np.int32,
-    )
+    if isinstance(charge_map.source, FixedAbelianChargeBasis):
+        if not isinstance(charge_map.target, FixedAbelianChargeBasis):
+            raise TypeError("Abelian source sectors require an Abelian target sector.")
+        if charge_map.source.group.group_id != charge_map.target.group.group_id:
+            raise ValueError("Abelian source and target charge groups differ.")
+        if any(label not in labels for label in charge_map.source.charge_labels):
+            raise ValueError("An Abelian sector charge label is absent from the lattice.")
+        deltas = charge_map.source.group.subtract(
+            charge_map.target.target_charges,
+            charge_map.source.target_charges,
+        )
+        delta_by_label = dict(
+            zip(charge_map.source.charge_labels, deltas, strict=True)
+        )
+        expected = np.asarray(
+            [delta_by_label.get(label, 0) for label in labels],
+            dtype=np.int32,
+        )
+    else:
+        if charge_map.charge_label not in labels:
+            raise ValueError("Sector charge label is absent from the lattice specification.")
+        expected = np.asarray(
+            [
+                charge_map.charge_delta if label == charge_map.charge_label else 0
+                for label in labels
+            ],
+            dtype=np.int32,
+        )
     observed = np.asarray(
         [
             [dict(monomial.charge_delta).get(label, 0) for label in labels]

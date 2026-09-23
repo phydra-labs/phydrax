@@ -1109,6 +1109,12 @@ from ._jump_hitting import (
     JumpFirstHit,
 )
 from ._kdk import KDKCoefficients, KDKCompletion, KDKProposal, KDKTransactionPlan
+from ._keldysh_scba import (
+    KeldyshSCBAPolicy,
+    KeldyshSCBAProblem,
+    KeldyshSCBAResult,
+    solve_keldysh_scba,
+)
 from ._laplace_capacitance import (
     advance_laplace_capacitance_3d,
     differentiate_laplace_capacitance_coordinates_3d,
@@ -1615,6 +1621,16 @@ from ._multirate import (
     MultiratePartitionedRK,
     PartitionedDifferentialProblem,
     solve_multirate,
+)
+from ._multiterminal_transport import (
+    MultiTerminalCoherentProblem,
+    MultiTerminalCoherentResult,
+    PeriodicLeadContactPlan,
+    solve_dephasing_probes,
+    solve_multiterminal_coherent,
+    solve_voltage_probes,
+    TransportProbePlan,
+    TransportProbeResult,
 )
 from ._nematic import (
     MACNematicCouplingEvaluation,
@@ -3730,6 +3746,18 @@ __all__ = [
     "TDVPMode",
     "VariationalTDVPPolicy",
     "VariationalTDVPResult",
+    "KeldyshSCBAProblem",
+    "KeldyshSCBAPolicy",
+    "KeldyshSCBAResult",
+    "solve_keldysh_scba",
+    "MultiTerminalCoherentProblem",
+    "MultiTerminalCoherentResult",
+    "PeriodicLeadContactPlan",
+    "TransportProbePlan",
+    "TransportProbeResult",
+    "solve_dephasing_probes",
+    "solve_multiterminal_coherent",
+    "solve_voltage_probes",
     "evaluate_variational_monte_carlo",
     "read_variational_monte_carlo_checkpoint",
     "solve_variational_monte_carlo",

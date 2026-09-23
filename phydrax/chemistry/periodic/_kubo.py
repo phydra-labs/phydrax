@@ -19,6 +19,8 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
+from phydrax.operators.periodic import PeriodicSpectrumResult
+
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -27,7 +29,6 @@ from ...ein import contract
 from ...linalg import HermitianSpectrum
 from ...units import conversion_factor, derived_unit, JOULE, METER, SECOND
 from ._observables import PeriodicVelocityResult
-from ._spectrum import PeriodicSpectrumResult
 
 
 _BOLTZMANN_CONSTANT_SI = 1.380649e-23

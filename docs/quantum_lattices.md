@@ -106,6 +106,20 @@ Targets are selected by importing their owner:
 
 The LocalHamiltonian target admits each bounded local support matrix before constructing it. The MPO target inserts Jordan--Wigner parity strings using the specification's mode order and admits its exact bond/tensor storage before construction. The VMC target exposes `H[current, connected]`; it conjugates the compiler's outgoing `H[connected, current]` values only after requiring a self-adjoint sector operator.
 
+## Joint integral-charge sectors
+
+`FixedAbelianChargeBasis` ranks and unranks local configurations at one exact
+vector of conserved integral or modular charges without enumerating the ambient
+product space. The dynamic program works directly in the declared product of
+U(1) and cyclic charge groups; public charge labels, targets, and local vectors
+remain explicit. Quantum Hall sphere sectors use particle number and twice-Lz,
+while torus sectors additionally use modular magnetic momentum.
+
+`lower_quantum_lattice_to_abelian_mpo` derives virtual charge sectors from each
+compiled monomial's prefix charge and constructs an exact Abelian MPO. It
+refuses monomials that mix local charge changes or have a nonzero total charge
+change.
+
 ## Periodic one-particle bridge
 
 `periodic_finite_to_fermion_lattice` accepts only a typed `PeriodicFiniteRealization`, an exact `FermionModeOrder`, realization labels equal to that order, and a mandatory `FermionInteractionPlan`. An empty interaction tuple is an explicit noninteracting statement and still requires units and provenance. The bridge coalesces sparse one-particle entries, verifies Hermiticity, and creates CAR terms. It never infers interactions, sectors, spin order, or a tensor-network/VMC target from a one-particle matrix.

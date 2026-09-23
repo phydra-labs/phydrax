@@ -16,6 +16,7 @@ from jaxtyping import Array, ArrayLike
 
 from ...._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ...._strict import StrictModule
+from .._abelian_charge import AbelianGroup
 from .._fermionic_fock import FermionModeOrder
 
 
@@ -113,12 +114,12 @@ class _FixedChargeCoordinateBasis(AbstractSectorBasis):
             raise ValueError("Sector site IDs must be unique and non-empty.")
         if len(charges) != len(sites) or any(not values for values in charges):
             raise ValueError("One nonempty local charge list is required per site.")
-        if any(tuple(sorted(set(values))) != values for values in charges):
-            raise ValueError("Local charges must be unique and strictly increasing.")
+        if any(len(set(values)) != len(values) for values in charges):
+            raise ValueError("Local charges must be unique within each site.")
         if not charge_label:
             raise ValueError("quantum_number_label must be non-empty.")
-        minimum = sum(values[0] for values in charges)
-        maximum = sum(values[-1] for values in charges)
+        minimum = sum(min(values) for values in charges)
+        maximum = sum(max(values) for values in charges)
         if not minimum <= target <= maximum:
             raise ValueError("The requested sector is outside the local charge range.")
         table_host, offset = _suffix_count_table(charges)
@@ -274,6 +275,274 @@ def _suffix_count_table(
     return table, offset
 
 
+class FixedAbelianChargeBasis(AbstractSectorBasis):
+    """Direct local-state basis at one mixed integral/modular Abelian charge."""
+
+    group: AbelianGroup = eqx.field(static=True)
+    charge_labels: tuple[str, ...] = eqx.field(static=True)
+    target_charges: tuple[int, ...] = eqx.field(static=True)
+    local_charge_vectors: tuple[tuple[tuple[int, ...], ...], ...] = eqx.field(static=True)
+    state_charges: Array
+    suffix_counts: Array
+    remaining_transitions: Array
+    valid_local_states: Array
+    charge_minima: tuple[int, ...] = eqx.field(static=True)
+    charge_widths: tuple[int, ...] = eqx.field(static=True)
+    maximum_local_dimension: int = eqx.field(static=True)
+
+    def __init__(
+        self,
+        site_ids: Sequence[str],
+        local_charge_vectors: Sequence[Sequence[Sequence[int]]],
+        charge_labels: Sequence[str],
+        target_charges: Sequence[int],
+        group: AbelianGroup,
+        /,
+        *,
+        resources: SectorBasisResourcePolicy,
+    ):
+        sites = tuple(str(value) for value in site_ids)
+        labels = tuple(str(value) for value in charge_labels)
+        vectors = tuple(
+            tuple(tuple(int(charge) for charge in state) for state in site)
+            for site in local_charge_vectors
+        )
+        if not isinstance(group, AbelianGroup):
+            raise TypeError("group must be AbelianGroup.")
+        if not isinstance(resources, SectorBasisResourcePolicy):
+            raise TypeError("resources must be SectorBasisResourcePolicy.")
+        if (
+            not sites
+            or any(not value for value in sites)
+            or len(set(sites)) != len(sites)
+            or not labels
+            or any(not value for value in labels)
+            or len(set(labels)) != len(labels)
+            or len(labels) != len(group.components)
+            or len(vectors) != len(sites)
+            or any(not site for site in vectors)
+        ):
+            raise ValueError(
+                "Abelian basis sites, labels, vectors, or group are invalid."
+            )
+        if any(len(state) != len(labels) for site in vectors for state in site):
+            raise ValueError("Every local charge vector must match charge_labels.")
+        normalized_vectors = tuple(
+            tuple(group.normalize(state) for state in site) for site in vectors
+        )
+        targets = group.normalize(target_charges)
+        minima = []
+        widths = []
+        for axis, modulus in enumerate(group.components):
+            if modulus is None:
+                minimum = min(
+                    0,
+                    sum(
+                        min(state[axis] for state in site) for site in normalized_vectors
+                    ),
+                )
+                maximum = max(
+                    0,
+                    sum(
+                        max(state[axis] for state in site) for site in normalized_vectors
+                    ),
+                )
+                minima.append(minimum)
+                widths.append(maximum - minimum + 1)
+                if targets[axis] < minimum or targets[axis] > maximum:
+                    raise ValueError(
+                        "The requested integral charge is outside its local range."
+                    )
+            else:
+                minima.append(0)
+                widths.append(modulus)
+        total_states = int(np.prod(widths, dtype=np.int64))
+        maximum_local = max(map(len, normalized_vectors))
+        state_charges = np.zeros((len(sites), maximum_local, len(labels)), dtype=np.int32)
+        valid_local = np.zeros((len(sites), maximum_local), dtype=np.bool_)
+        for site, local in enumerate(normalized_vectors):
+            state_charges[site, : len(local)] = np.asarray(local, dtype=np.int32)
+            valid_local[site, : len(local)] = True
+
+        def decode(index):
+            digits = np.unravel_index(index, tuple(widths))
+            return tuple(
+                digit + minimum for digit, minimum in zip(digits, minima, strict=True)
+            )
+
+        def encode(charge):
+            digits = []
+            for value, minimum, width, modulus in zip(
+                charge, minima, widths, group.components, strict=True
+            ):
+                normalized = value if modulus is None else value % modulus
+                digit = normalized - minimum
+                if digit < 0 or digit >= width:
+                    return -1
+                digits.append(digit)
+            return int(np.ravel_multi_index(tuple(digits), tuple(widths)))
+
+        charge_grid = tuple(decode(index) for index in range(total_states))
+        transitions = np.full(
+            (len(sites), total_states, maximum_local), -1, dtype=np.int32
+        )
+        for site, local in enumerate(normalized_vectors):
+            for remaining_index, remaining in enumerate(charge_grid):
+                for state_index, local_charge in enumerate(local):
+                    next_charge = tuple(
+                        left - right
+                        for left, right in zip(remaining, local_charge, strict=True)
+                    )
+                    transitions[site, remaining_index, state_index] = encode(next_charge)
+        counts = np.zeros((len(sites) + 1, total_states), dtype=np.int64)
+        zero_index = encode(group.zero)
+        counts[-1, zero_index] = 1
+        for site in range(len(sites) - 1, -1, -1):
+            for remaining_index in range(total_states):
+                total = 0
+                for state_index in range(len(normalized_vectors[site])):
+                    next_index = transitions[site, remaining_index, state_index]
+                    if next_index >= 0:
+                        total += int(counts[site + 1, next_index])
+                if total > np.iinfo(np.int64).max:
+                    raise OverflowError(
+                        "Sector dimension exceeds signed 64-bit counting."
+                    )
+                counts[site, remaining_index] = total
+        target_index = encode(targets)
+        dimension = int(counts[0, target_index])
+        if dimension < 1:
+            raise ValueError("The requested Abelian charge sector is empty.")
+        if dimension > resources.maximum_dimension:
+            raise ValueError(
+                f"Sector dimension {dimension} exceeds admitted maximum_dimension "
+                f"{resources.maximum_dimension}."
+            )
+        if dimension >= np.iinfo(np.int32).max:
+            raise OverflowError("Direct sector ranks require signed 32-bit indices.")
+        required = (
+            state_charges.nbytes + valid_local.nbytes + transitions.nbytes + counts.nbytes
+        )
+        if required > resources.maximum_table_bytes:
+            raise ValueError(
+                f"Direct Abelian sector tables require {required} bytes, exceeding "
+                f"maximum_table_bytes {resources.maximum_table_bytes}."
+            )
+        self.group = group
+        self.charge_labels = labels
+        self.target_charges = targets
+        self.local_charge_vectors = normalized_vectors
+        self.state_charges = jnp.asarray(state_charges)
+        self.suffix_counts = jnp.asarray(counts, dtype=jnp.int64)
+        self.remaining_transitions = jnp.asarray(transitions)
+        self.valid_local_states = jnp.asarray(valid_local)
+        self.charge_minima = tuple(minima)
+        self.charge_widths = tuple(widths)
+        self.maximum_local_dimension = maximum_local
+        self.site_ids = sites
+        self.site_dimensions = tuple(len(value) for value in normalized_vectors)
+        self.quantum_number_label = "abelian:" + ",".join(labels)
+        self.quantum_number = target_index
+        self.dimension = dimension
+        self.resources = resources
+        self.basis_id = canonical_fingerprint(
+            {
+                "kind": "fixed-abelian-charge-basis",
+                "sites": sites,
+                "labels": labels,
+                "group": group.group_id,
+                "targets": targets,
+                "vectors": normalized_vectors,
+                "resources": resources.policy_id,
+                "table": array_tree_fingerprint(counts),
+            }
+        )
+
+    def _coordinate_array(self, coordinate: ArrayLike, /) -> Array:
+        values = jnp.asarray(coordinate)
+        if not jnp.issubdtype(values.dtype, jnp.integer):
+            raise TypeError("Sector coordinates must use an integer dtype.")
+        return values.astype(jnp.int32)
+
+    def coordinate(self, index: int | Array, /) -> Array:
+        raw = jnp.asarray(index)
+        if not jnp.issubdtype(raw.dtype, jnp.integer) or raw.shape != ():
+            raise TypeError("A sector basis index must be one integer scalar.")
+        rank = eqx.error_if(
+            raw.astype(jnp.int64),
+            (raw < 0) | (raw >= self.dimension),
+            "Sector basis index is out of range.",
+        )
+        return self._coordinate_unchecked(rank)
+
+    def _coordinate_unchecked(self, rank: Array, /) -> Array:
+        remaining = jnp.asarray(self.quantum_number, dtype=jnp.int32)
+        coordinate = jnp.zeros((len(self.site_ids),), dtype=jnp.int32)
+        local_indices = jnp.arange(self.maximum_local_dimension)
+        for site, dimension in enumerate(self.site_dimensions):
+            transitions = self.remaining_transitions[site, remaining]
+            safe = jnp.maximum(transitions, 0)
+            counts = jnp.where(
+                (transitions >= 0) & (local_indices < dimension),
+                self.suffix_counts[site + 1, safe],
+                0,
+            )
+            cumulative = jnp.cumsum(counts)
+            selected = jnp.argmax(rank < cumulative).astype(jnp.int32)
+            previous = jnp.where(selected == 0, 0, cumulative[selected - 1])
+            rank = rank - previous
+            remaining = transitions[selected]
+            coordinate = coordinate.at[site].set(selected)
+        return coordinate
+
+    def contains(self, coordinate: ArrayLike, /) -> Array:
+        values = self._coordinate_array(coordinate)
+        if values.shape != (len(self.site_ids),):
+            raise ValueError("Sector coordinates must provide one local state per site.")
+        return self._contains_unchecked(values)
+
+    def _contains_unchecked(self, coordinate: Array, /) -> Array:
+        dimensions = jnp.asarray(self.site_dimensions, dtype=jnp.int32)
+        valid = jnp.all((coordinate >= 0) & (coordinate < dimensions))
+        safe = jnp.clip(coordinate, 0, dimensions - 1)
+        charges = self.state_charges[jnp.arange(len(self.site_ids)), safe]
+        total = jnp.sum(charges, axis=0)
+        moduli = jnp.asarray(
+            tuple(0 if value is None else value for value in self.group.components),
+            dtype=jnp.int32,
+        )
+        normalized = jnp.where(moduli == 0, total, jnp.mod(total, jnp.maximum(moduli, 1)))
+        return valid & jnp.all(normalized == jnp.asarray(self.target_charges))
+
+    def rank(self, coordinate: ArrayLike, /) -> Array:
+        values = self._coordinate_array(coordinate)
+        if values.shape != (len(self.site_ids),):
+            raise ValueError("Sector coordinates must provide one local state per site.")
+        values = eqx.error_if(
+            values, ~self._contains_unchecked(values), "Coordinate is outside the sector."
+        )
+        return self._rank_unchecked(values)
+
+    def _rank_unchecked(self, coordinate: Array, /) -> Array:
+        rank = jnp.asarray(0, dtype=jnp.int64)
+        remaining = jnp.asarray(self.quantum_number, dtype=jnp.int32)
+        local_indices = jnp.arange(self.maximum_local_dimension)
+        for site, dimension in enumerate(self.site_dimensions):
+            selected = coordinate[site]
+            transitions = self.remaining_transitions[site, remaining]
+            safe = jnp.maximum(transitions, 0)
+            counts = jnp.where(
+                (transitions >= 0)
+                & (local_indices < dimension)
+                & (local_indices < selected),
+                self.suffix_counts[site + 1, safe],
+                0,
+            )
+            rank = rank + jnp.sum(counts)
+            remaining = transitions[selected]
+        return rank.astype(jnp.int32)
+
+
 class FixedCardinalityFermionBasis(_FixedChargeCoordinateBasis):
     """Binary occupations of an explicit FermionModeOrder at fixed cardinality."""
 
@@ -421,6 +690,7 @@ class SectorChargeMap(StrictModule):
 __all__ = [
     "AbstractSectorBasis",
     "FixedBosonNumberBasis",
+    "FixedAbelianChargeBasis",
     "FixedCardinalityFermionBasis",
     "FixedSpinProjectionBasis",
     "SectorBasisResourcePolicy",

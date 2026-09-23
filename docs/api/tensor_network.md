@@ -89,7 +89,7 @@ precision, approximation, resource, physicality, persistence, and maturity contr
 
 ## Symmetry and statistics
 
-::: phydrax.tensor_network.AbelianGroup
+::: phydrax.operators.quantum.AbelianGroup
 
 ::: phydrax.tensor_network.AbelianContractionPlan
 

@@ -19,10 +19,19 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization._reciprocal import ReciprocalMeshPlan
 from ...ein import contract
-from ...operators.periodic._family import PeriodicResourceError
-from ...units import conversion_factor, derived_unit, JOULE, METER, SECOND, UnitDefinition
-from ._orbital_model import PreparedPeriodicOrbitalPencil
-from ._spectrum import PeriodicSpectrumResult
+from ...operators.periodic import (
+    PeriodicResourceError,
+    PeriodicSpectrumResult,
+    PreparedPeriodicOrbitalPencil,
+)
+from ...units import (
+    conversion_factor,
+    derived_unit,
+    JOULE,
+    METER,
+    SECOND,
+    UnitDefinition,
+)
 
 
 _HBAR_JOULE_SECOND = 1.054_571_817e-34

@@ -8,11 +8,6 @@ from phydrax.chemistry.periodic._magnetism import (
     SpinOrbitCouplingPlan,
     SpinResolvedBandObservablePlan,
 )
-from phydrax.chemistry.periodic._orbital_model import (
-    PeriodicBlochGauge,
-    PeriodicOrbitalBasisPlan,
-    PeriodicOrbitalPencilPlan,
-)
 from phydrax.chemistry.periodic._superconductivity import (
     BdGChernPlan,
     evaluate_bdg_chern,
@@ -20,13 +15,18 @@ from phydrax.chemistry.periodic._superconductivity import (
     solve_superconducting_mean_field,
     SuperconductingMeanFieldPlan,
 )
-from phydrax.chemistry.periodic._topology import PeriodicChernRefinementEvidence
 from phydrax.discretization import PeriodicCell
 from phydrax.discretization._reciprocal import (
     ReciprocalConnectivityPlan,
     ReciprocalMeshPlan,
 )
 from phydrax.nonlinear import NonlinearTermination
+from phydrax.operators.periodic import (
+    PeriodicBlochGauge,
+    PeriodicChernRefinementEvidence,
+    PeriodicOrbitalBasisPlan,
+    PeriodicOrbitalPencilPlan,
+)
 from phydrax.operators.periodic._family import (
     PeriodicTranslationFamilyPlan,
     PeriodicTranslationFamilyState,

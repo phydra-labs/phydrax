@@ -138,7 +138,7 @@ Per-sector retained ranks, the selected-mode mask, and global discarded squared
 weight remain explicit. Charge-breaking gates are rejected rather than
 projected. Fermionic grading and non-Abelian fusion are not claimed.
 
-::: phydrax.tensor_network.AbelianGroup
+::: phydrax.operators.quantum.AbelianGroup
 
 ::: phydrax.tensor_network.AbelianMatrixProductState
 

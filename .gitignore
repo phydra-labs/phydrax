@@ -42,6 +42,7 @@ site/
 _gitignore/
 benchmarks/*
 !benchmarks/omniphysics_production_qualification.py
+!benchmarks/quantum_hall.py
 benchmarks/advanced_solvers/**/__pycache__/
 benchmarks/advanced_solvers/**/*.pyc
 !tests/fixtures/flexodeal_0698e3d/qp_data.backup.qp.csv

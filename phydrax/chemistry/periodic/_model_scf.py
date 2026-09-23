@@ -26,9 +26,10 @@ from ...linalg.eigen import (
     EigenSolvePolicy,
     GeneralizedEigenproblem,
 )
+from ...operators.periodic import PreparedPeriodicOrbitalPencil
 from ...units import UnitDefinition
 from .._state import PeriodicElectronicSectorPlan
-from ._orbital_model import PeriodicHubbardMeanFieldPlan, PreparedPeriodicOrbitalPencil
+from ._orbital_model import PeriodicHubbardMeanFieldPlan
 
 
 class PeriodicSCFResult(StrictModule, NonTrainableState):

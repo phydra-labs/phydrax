@@ -296,9 +296,24 @@ def apply_abelian_two_site_gate(
         row_routes, column_routes, u, singular_values, vh = decomposition
         sector_capacity = middle.capacities[middle_sector]
         sector_mask = selected[cursor_spectrum : cursor_spectrum + sector_capacity]
-        retained_per_sector.append(jnp.sum(sector_mask.astype(jnp.int32)))
-        u = u * sector_mask[None, :]
-        weighted = (singular_values * sector_mask)[:, None] * vh
+        active_count = jnp.sum(sector_mask.astype(jnp.int32))
+        retained_per_sector.append(active_count)
+        selected_indices = jnp.nonzero(
+            sector_mask,
+            size=sector_capacity,
+            fill_value=0,
+        )[0]
+        active_prefix = jnp.arange(sector_capacity) < active_count
+        u = jnp.where(
+            active_prefix[None, :],
+            u[:, selected_indices],
+            0.0,
+        )
+        weighted = jnp.where(
+            active_prefix[:, None],
+            (singular_values[selected_indices])[:, None] * vh[selected_indices],
+            0.0,
+        )
         cursor = 0
         for left_sector, physical_sector, size in row_routes:
             key = (left_sector, physical_sector, middle_sector)
@@ -342,6 +357,23 @@ def apply_abelian_two_site_gate(
     right_layout = AbelianTensorLayout(
         tuple(right_legs), total_charge=right_tensor.layout.total_charge
     )
+
+    def zero_inactive(layout, blocks):
+        output = []
+        for block, shape, sector in zip(
+            blocks, layout.block_shapes, layout.sectors, strict=True
+        ):
+            mask = jnp.asarray(True)
+            for axis, (leg, ordinal) in enumerate(zip(layout.legs, sector, strict=True)):
+                axis_mask = jnp.arange(shape[axis]) < leg.active_degeneracies[ordinal]
+                reshape = [1] * len(shape)
+                reshape[axis] = shape[axis]
+                mask = mask & axis_mask.reshape(tuple(reshape))
+            output.append(jnp.where(mask, block, 0.0))
+        return tuple(output)
+
+    left_blocks = zero_inactive(left_layout, left_blocks)
+    right_blocks = zero_inactive(right_layout, right_blocks)
     new_left = AbelianTensor(left_layout, tuple(left_blocks), precision=precision)
     new_right = AbelianTensor(right_layout, tuple(right_blocks), precision=precision)
     tensors = list(state.tensors)

@@ -19,8 +19,8 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...discretization._reciprocal import PreparedReciprocalConnectivity
-from ...operators.periodic._family import PeriodicResourceError
-from ._orbital_model import PreparedPeriodicOrbitalPencil
+from ._family import PeriodicResourceError
+from ._orbital import PreparedPeriodicOrbitalPencil
 from ._spectrum import PeriodicSpectrumResult
 
 
