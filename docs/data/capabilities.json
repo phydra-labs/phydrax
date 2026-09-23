@@ -1,5 +1,5 @@
 {
-  "catalog_id": "43e73de78a9b4219a332334e3d9fc63e0ef7d763aabf519924c4f37a29729de4",
+  "catalog_id": "edd1efe539519f3b0b597adff1bf086ee195a72be869de4e26711cf87423cca6",
   "declarations": [
     {
       "capability": "acoustics.vibroacoustic",
@@ -7723,6 +7723,38 @@
       ],
       "public_symbols": [
         "phydrax.interfacial_transport.CoupledBulkSurfaceTransport"
+      ]
+    },
+    {
+      "capability": "kinetic.compressible-entropic",
+      "declaration_id": "b519cdb696f709274550533744098dc5e10877db9f182019d8545910dfd2a1e7",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [
+        "docs/guides_lattice_boltzmann.md"
+      ],
+      "domain_maturity": "research-production-closure",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-compressible-kinetic-research",
+        "explicit-support-production-qualification"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "entropy-stabilization-is-not-turbulence-closure",
+        "no-blanket-release-across-model-mesh-physics-products",
+        "no-universal-mach-or-stability-claim"
+      ],
+      "owner": "phydrax.discretization",
+      "profiles": [],
+      "public_symbols": [
+        "phydrax.discretization.CompressibleKineticRuntimePlan",
+        "phydrax.discretization.FilteredD3Q33Plan",
+        "phydrax.discretization.FullRangeQuasiEquilibriumPlan",
+        "phydrax.discretization.PositiveCompressibleKineticPlan",
+        "phydrax.discretization.entropic_d3q343_plan",
+        "phydrax.discretization.guided_d3q39_plan"
       ]
     },
     {

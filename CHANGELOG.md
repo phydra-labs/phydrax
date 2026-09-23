@@ -7,6 +7,13 @@
   operator-only plan/prepare/refresh reuse, fixed-capacity differentiable
   execution, explicit norm and truncation evidence, and matrix-free augmented
   exponential/phi combinations for affine and semilinear evolution.
+- Added a three-dimensional compressible kinetic production surface with
+  positive guided D3Q39, entropic D3Q343, filtered thermal D3Q33, full-range
+  quasi-equilibrium Prandtl closure, safeguarded entropy roots, explicit KBC
+  variants, integral-frame remapping, population-axis partitioning, bounded
+  worksets and storage policies, AMR/mapped/moving-geometry contracts,
+  species/radiation/ablation coupling, checkpoints, IREE export, VTK output,
+  and bounded rendering/video adapters.
 
 ### Changed
 - Public API inventory now follows canonical access paths rather than private

@@ -207,8 +207,10 @@ from ._linearizations import (
 from ._local_blocks import (
     LocalBlockFactorization,
     LocalBlockFactorizationKind,
+    LocalBlockSolveResult,
     prepare_local_block_factorization,
     solve_local_blocks,
+    solve_local_blocks_detailed,
 )
 from ._local_elimination import LocalEliminationPlan, LocalEliminationResult
 from ._low_rank_boundary import LowRankBoundaryCorrectionPlan
@@ -703,8 +705,10 @@ from .krylov import (
 __all__ = [
     "LocalBlockFactorization",
     "LocalBlockFactorizationKind",
+    "LocalBlockSolveResult",
     "prepare_local_block_factorization",
     "solve_local_blocks",
+    "solve_local_blocks_detailed",
     "LocalEliminationPlan",
     "LocalEliminationResult",
     "ConstraintMap",

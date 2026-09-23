@@ -94,6 +94,12 @@ from ._catalog import (
     FormatCapability,
     FormatDirection,
 )
+from ._compressible_kinetic import (
+    CompressibleKineticCaseIR,
+    import_packed_kinetic_boundary,
+    LegacyKineticBoundaryImport,
+    read_compressible_kinetic_yaml,
+)
 from ._coordinate_transform import (
     CoordinateTransformPlan,
     CoordinateTransformResult,
@@ -397,5 +403,9 @@ __all__ = [
     "map_visibility_artifact",
     "map_waveform_artifact",
     "NeutralBlackHoleArtifact",
+    "CompressibleKineticCaseIR",
+    "LegacyKineticBoundaryImport",
+    "import_packed_kinetic_boundary",
+    "read_compressible_kinetic_yaml",
 ]
 __all__ += [name for name in _external_runtime_all if name not in __all__]

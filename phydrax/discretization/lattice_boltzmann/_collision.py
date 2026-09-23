@@ -4,7 +4,7 @@
 
 from __future__ import annotations
 
-from typing import TypeAlias
+from typing import Literal, TypeAlias
 
 import equinox as eqx
 import jax
@@ -17,6 +17,10 @@ import phydrax.ein as ein
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from .._kinetic_entropy import (
+    KineticEntropyRootPlan,
+    solve_kinetic_entropy_root,
+)
 from ._lattice import LatticeBoltzmannVelocitySet
 from ._moments import (
     central_moments,
@@ -192,37 +196,82 @@ class CumulantCollisionPlan(StrictModule, NonTrainableState):
         )
 
 
+KBCVariant = Literal["a", "b", "c", "d"]
+KBCStabilizerKind = Literal["quadratic", "exact", "hybrid"]
+
+
 class KBCCollisionPlan(StrictModule, NonTrainableState):
     basis: MomentBasisPlan
+    root: KineticEntropyRootPlan
+    variant: KBCVariant = eqx.field(static=True)
+    stabilizer: KBCStabilizerKind = eqx.field(static=True)
     collision_id: str = eqx.field(static=True)
     family: str = "kbc"
 
-    def __init__(self, basis: MomentBasisPlan | None = None, /):
-        selected = MomentBasisPlan() if basis is None else basis
-        self.basis = selected
+    def __init__(
+        self,
+        basis: MomentBasisPlan | None = None,
+        /,
+        *,
+        variant: KBCVariant = "b",
+        stabilizer: KBCStabilizerKind = "quadratic",
+        root: KineticEntropyRootPlan | None = None,
+    ):
+        if variant not in ("a", "b", "c", "d"):
+            raise ValueError(f"Unknown KBC variant {variant!r}.")
+        if stabilizer not in ("quadratic", "exact", "hybrid"):
+            raise ValueError(f"Unknown KBC stabilizer {stabilizer!r}.")
+        selected_basis = MomentBasisPlan() if basis is None else basis
+        selected_root = KineticEntropyRootPlan() if root is None else root
+        if not isinstance(selected_basis, MomentBasisPlan):
+            raise TypeError("basis must be a MomentBasisPlan.")
+        if not isinstance(selected_root, KineticEntropyRootPlan):
+            raise TypeError("root must be a KineticEntropyRootPlan.")
+        self.basis = selected_basis
+        self.root = selected_root
+        self.variant = variant
+        self.stabilizer = stabilizer
         self.collision_id = canonical_fingerprint(
-            {"kind": "lattice-boltzmann-collision-kbc", "basis": selected.plan_id}
+            {
+                "kind": "lattice-boltzmann-collision-kbc",
+                "basis": selected_basis.plan_id,
+                "variant": variant,
+                "stabilizer": stabilizer,
+                "root": selected_root.plan_id,
+            }
         )
 
 
 class EntropicCollisionPlan(StrictModule, NonTrainableState):
-    iterations: int = eqx.field(static=True)
-    tolerance: float = eqx.field(static=True)
+    root: KineticEntropyRootPlan
     collision_id: str = eqx.field(static=True)
     family: str = "entropic"
 
-    def __init__(self, /, *, iterations: int = 12, tolerance: float = 1.0e-11):
-        count = int(iterations)
-        tol = float(tolerance)
-        if count < 2 or not np.isfinite(tol) or tol <= 0.0:
-            raise ValueError("Entropic iterations and tolerance are invalid.")
-        self.iterations = count
-        self.tolerance = tol
+    def __init__(
+        self,
+        root: KineticEntropyRootPlan | None = None,
+        /,
+        *,
+        iterations: int = 24,
+        tolerance: float = 1.0e-11,
+        strategy: str = "exact",
+    ):
+        selected = (
+            KineticEntropyRootPlan(
+                strategy=strategy,
+                maximum_steps=iterations,
+                residual_tolerance=tolerance,
+            )
+            if root is None
+            else root
+        )
+        if not isinstance(selected, KineticEntropyRootPlan):
+            raise TypeError("root must be a KineticEntropyRootPlan.")
+        self.root = selected
         self.collision_id = canonical_fingerprint(
             {
                 "kind": "lattice-boltzmann-collision-entropic",
-                "iterations": count,
-                "tolerance": tol,
+                "root": selected.plan_id,
             }
         )
 
@@ -481,31 +530,187 @@ def _entropic_candidate(
     weights: Array,
     beta: Array,
     plan: EntropicCollisionPlan,
-) -> tuple[Array, Array, Array]:
-    delta = equilibrium - populations
-    negative = delta < 0.0
-    upper = jnp.min(jnp.where(negative, -populations / delta, jnp.inf), axis=-1)
-    upper = jnp.minimum(upper * (1.0 - 16.0 * jnp.finfo(populations.dtype).eps), 4.0)
-    entropy0 = _entropy(populations, weights)
-
-    def iteration(_, alpha):
-        trial = populations + alpha[..., None] * delta
-        safe = jnp.maximum(trial, jnp.finfo(populations.dtype).tiny)
-        residual = jnp.sum(safe * jnp.log(safe / weights), axis=-1) - entropy0
-        derivative = jnp.sum(delta * (jnp.log(safe / weights) + 1.0), axis=-1)
-        newton = alpha - residual / jnp.where(jnp.abs(derivative) > 0.0, derivative, 1.0)
-        return jnp.clip(newton, 1.0, upper)
-
-    alpha = jax.lax.fori_loop(
-        0,
-        plan.iterations,
-        iteration,
-        jnp.minimum(jnp.asarray(2.0, populations.dtype), upper),
+) -> tuple[Array, Array, Array, Array, Array]:
+    root = solve_kinetic_entropy_root(
+        plan.root,
+        populations,
+        equilibrium - populations,
+        base_measure=weights,
     )
-    pre_relaxed = populations + alpha[..., None] * delta
-    candidate = populations + beta[..., None] * (pre_relaxed - populations)
-    residual = jnp.abs(_entropy(pre_relaxed, weights) - entropy0)
-    return candidate, alpha, residual
+    candidate = populations + beta[..., None] * (root.mirror_populations - populations)
+    evidence = root.evidence
+    return (
+        candidate,
+        evidence.alpha,
+        evidence.residual,
+        evidence.iterations,
+        evidence.successful,
+    )
+
+
+def _kbc_components(
+    populations: Array,
+    equilibrium: Array,
+    velocity: Array,
+    velocity_set: LatticeBoltzmannVelocitySet,
+    basis: PreparedMomentBasis,
+    precision: LatticeBoltzmannPrecisionPolicy,
+    variant: KBCVariant,
+    /,
+) -> tuple[Array, Array]:
+    nonequilibrium_moments = central_moments(
+        populations, velocity, velocity_set, basis, precision
+    ) - central_moments(equilibrium, velocity, velocity_set, basis, precision)
+    exponents = np.asarray(basis.exponents, dtype=np.int32)
+    degrees = np.sum(exponents, axis=1)
+    include_third = variant in ("c", "d")
+    selected = jnp.where(
+        jnp.asarray(
+            (degrees == 2) | ((degrees == 3) & include_third),
+            dtype=jnp.bool_,
+        ),
+        nonequilibrium_moments,
+        0.0,
+    )
+    if variant in ("a", "c"):
+        diagonal_indices = tuple(
+            index
+            for index, exponent in enumerate(basis.exponents)
+            if sum(exponent) == 2 and max(exponent) == 2
+        )
+        if len(diagonal_indices) != velocity_set.dimension:
+            raise RuntimeError("KBC moment basis lacks the diagonal stress modes.")
+        trace = jnp.mean(selected[..., jnp.asarray(diagonal_indices)], axis=-1)
+        for index in diagonal_indices:
+            selected = selected.at[..., index].add(-trace)
+    shear = populations_from_central_moments(
+        selected,
+        velocity,
+        basis,
+        precision,
+    )
+    higher = populations - equilibrium - shear
+    return shear, higher
+
+
+def _kbc_candidate(
+    populations: Array,
+    equilibrium: Array,
+    raw_force_source: Array,
+    beta: Array,
+    shear: Array,
+    higher: Array,
+    weights: Array,
+    plan: KBCCollisionPlan,
+    /,
+) -> tuple[Array, Array, Array, Array, Array]:
+    safe_equilibrium = jnp.maximum(equilibrium, jnp.finfo(populations.dtype).tiny)
+    denominator = jnp.sum(higher**2 / safe_equilibrium, axis=-1)
+    numerator = jnp.sum(shear * higher / safe_equilibrium, axis=-1)
+    quadratic_gamma = jnp.where(
+        denominator > 0.0,
+        1.0 / beta - (2.0 - 1.0 / beta) * numerator / denominator,
+        2.0,
+    )
+    base = populations - 2.0 * beta[..., None] * shear
+    direction = -beta[..., None] * higher
+    inactive = denominator <= (
+        32.0
+        * jnp.finfo(populations.dtype).eps
+        * jnp.maximum(jnp.max(populations, axis=-1), 1.0)
+    )
+
+    def derivative_at(gamma: Array) -> Array:
+        candidate = base + gamma[..., None] * direction
+        safe = jnp.where(candidate > 0.0, candidate, 1.0)
+        return jnp.sum(
+            direction * (jnp.log(safe / weights) + 1.0),
+            axis=-1,
+        )
+
+    approximate = base + quadratic_gamma[..., None] * direction
+    approximate_residual = jnp.abs(derivative_at(quadratic_gamma))
+    approximate_valid = (
+        jnp.all(jnp.isfinite(approximate), axis=-1)
+        & (jnp.min(approximate, axis=-1) > 0.0)
+        & jnp.isfinite(approximate_residual)
+        & (approximate_residual <= plan.root.approximation_tolerance)
+    )
+    if plan.stabilizer == "quadratic":
+        gamma = quadratic_gamma
+        residual = approximate_residual
+        successful = approximate_valid | inactive
+        iterations = jnp.zeros(gamma.shape, dtype=jnp.int32)
+    else:
+        ratios = jnp.where(direction < 0.0, -base / direction, jnp.inf)
+        upper = jnp.minimum(
+            jnp.min(ratios, axis=-1) * (1.0 - plan.root.positivity_margin),
+            plan.root.maximum_root,
+        )
+        lower = jnp.zeros_like(upper)
+        lower_value = derivative_at(lower)
+        upper_value = derivative_at(upper)
+        bracketed = (
+            jnp.all(jnp.isfinite(base), axis=-1)
+            & (jnp.min(base, axis=-1) > 0.0)
+            & (upper > 0.0)
+            & jnp.isfinite(lower_value)
+            & jnp.isfinite(upper_value)
+            & (lower_value <= 0.0)
+            & (upper_value >= 0.0)
+        )
+        use_approximation = (plan.stabilizer == "hybrid") & approximate_valid
+        active = bracketed & ~use_approximation & ~inactive
+        current = jnp.minimum(jnp.maximum(quadratic_gamma, lower), upper)
+        counts = jnp.zeros(current.shape, dtype=jnp.int32)
+
+        def iteration(_, state):
+            value, lo, hi, current_active, step_counts = state
+            function = derivative_at(value)
+            candidate_populations = base + value[..., None] * direction
+            safe = jnp.where(candidate_populations > 0.0, candidate_populations, 1.0)
+            derivative = jnp.sum(direction * direction / safe, axis=-1)
+            next_lo = jnp.where(current_active & (function <= 0.0), value, lo)
+            next_hi = jnp.where(current_active & (function > 0.0), value, hi)
+            newton = value - function / jnp.where(derivative > 0.0, derivative, 1.0)
+            use_newton = (
+                current_active
+                & jnp.isfinite(newton)
+                & (derivative > 0.0)
+                & (newton > next_lo)
+                & (newton < next_hi)
+            )
+            proposed = jnp.where(use_newton, newton, 0.5 * (next_lo + next_hi))
+            converged = current_active & (
+                jnp.abs(derivative_at(proposed)) <= plan.root.residual_tolerance
+            )
+            return (
+                jnp.where(current_active, proposed, value),
+                next_lo,
+                next_hi,
+                current_active & ~converged,
+                step_counts + current_active.astype(jnp.int32),
+            )
+
+        exact_gamma, _, _, _, exact_iterations = jax.lax.fori_loop(
+            0,
+            plan.root.maximum_steps,
+            iteration,
+            (current, lower, upper, active, counts),
+        )
+        gamma = jnp.where(use_approximation, quadratic_gamma, exact_gamma)
+        gamma = jnp.where(inactive, 2.0, gamma)
+        residual = jnp.abs(derivative_at(gamma))
+        exact_success = bracketed & (residual <= plan.root.residual_tolerance)
+        successful = inactive | use_approximation | exact_success
+        iterations = jnp.where(use_approximation | inactive, 0, exact_iterations)
+
+    candidate = base + gamma[..., None] * direction
+    candidate = candidate + (1.0 - beta[..., None]) * raw_force_source
+    successful &= jnp.all(jnp.isfinite(candidate), axis=-1) & (
+        jnp.min(candidate, axis=-1) > 0.0
+    )
+    return candidate, gamma, residual, iterations, successful
 
 
 def _collision_diagnostics(
@@ -587,6 +792,7 @@ def collide_detailed(
     stabilization = jnp.asarray(1.0, dtype=populations.dtype)
     iterations = jnp.asarray(0, dtype=jnp.int32)
     root_residual = jnp.asarray(0.0, dtype=populations.dtype)
+    root_successful = jnp.asarray(True)
     smagorinsky_values = None
 
     if isinstance(plan, BGKCollisionPlan):
@@ -693,33 +899,45 @@ def collide_detailed(
             central_moments_from_cumulants(relaxed, basis), velocity, basis, precision
         )
     elif isinstance(plan, KBCCollisionPlan):
-        regular = regularized_nonequilibrium(
-            populations, equilibrium, velocity_set, precision
-        )
-        higher = populations - equilibrium - regular
-        denominator = jnp.sum(
-            higher**2 / jnp.maximum(equilibrium, jnp.finfo(populations.dtype).tiny),
-            axis=-1,
-        )
-        numerator = jnp.sum(
-            regular
-            * higher
-            / jnp.maximum(equilibrium, jnp.finfo(populations.dtype).tiny),
-            axis=-1,
+        basis = prepared.basis
+        if basis is None:
+            raise RuntimeError("Prepared KBC collision lacks a moment basis.")
+        shear, higher = _kbc_components(
+            populations,
+            equilibrium,
+            velocity,
+            velocity_set,
+            basis,
+            precision,
+            plan.variant,
         )
         beta = 0.5 * rate
-        gamma = jnp.where(
-            denominator > 0.0,
-            1.0 / beta - (2.0 - 1.0 / beta) * numerator / denominator,
-            2.0,
+        (
+            candidate,
+            gamma,
+            root_residual,
+            iterations,
+            root_successful,
+        ) = _kbc_candidate(
+            populations,
+            equilibrium,
+            raw_force_source,
+            beta,
+            shear,
+            higher,
+            jnp.asarray(velocity_set.weights, dtype=populations.dtype),
+            plan,
         )
         stabilization = gamma
-        candidate = populations - beta[..., None] * (
-            2.0 * regular + gamma[..., None] * higher
-        )
     else:
         beta = 0.5 * rate
-        candidate, alpha, root_residual = _entropic_candidate(
+        (
+            candidate,
+            alpha,
+            root_residual,
+            iterations,
+            root_successful,
+        ) = _entropic_candidate(
             populations,
             equilibrium,
             jnp.asarray(velocity_set.weights, dtype=populations.dtype),
@@ -727,7 +945,6 @@ def collide_detailed(
             plan,
         )
         stabilization = alpha
-        iterations = jnp.asarray(plan.iterations, dtype=jnp.int32)
 
     candidate = precision.population(candidate)
     diagnostics = _collision_diagnostics(
@@ -747,9 +964,16 @@ def collide_detailed(
         else jnp.asarray(True)
     )
     root_tolerance = (
-        plan.tolerance if isinstance(plan, EntropicCollisionPlan) else jnp.inf
+        plan.root.residual_tolerance
+        if isinstance(plan, EntropicCollisionPlan)
+        else jnp.inf
     )
-    successful = finite & positivity & jnp.all(root_residual <= root_tolerance)
+    successful = (
+        finite
+        & positivity
+        & jnp.all(root_successful)
+        & jnp.all(root_residual <= root_tolerance)
+    )
     smagorinsky_evidence = None
     if smagorinsky_values is not None:
         (
@@ -791,7 +1015,9 @@ def collide_detailed(
             density_lower_bound_exclusive=True,
             filter_width_in_lattice_units=1.0,
         )
-    accepted = precision.population(jnp.where(successful, candidate, populations))
+    accepted = precision.population(
+        jnp.where(successful[..., None], candidate, populations)
+    )
     return LatticeBoltzmannCollisionResult(
         candidate, accepted, successful, diagnostics, smagorinsky_evidence
     )
@@ -803,6 +1029,8 @@ __all__ = [
     "CumulantCollisionPlan",
     "EntropicCollisionPlan",
     "KBCCollisionPlan",
+    "KBCStabilizerKind",
+    "KBCVariant",
     "LatticeBoltzmannCollisionDiagnostics",
     "LatticeBoltzmannCollisionPlan",
     "LatticeBoltzmannCollisionResult",

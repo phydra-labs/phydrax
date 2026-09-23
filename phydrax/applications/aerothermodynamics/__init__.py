@@ -8,6 +8,12 @@ from ._contracts import (
     AerothermodynamicResourceCaps,
     AerothermodynamicSupportTuple,
 )
+from ._kinetic import (
+    KineticAerothermodynamicEvidence,
+    KineticAerothermodynamicPlan,
+    KineticAerothermodynamicResult,
+    KineticAerothermodynamicState,
+)
 from ._production import (
     AerothermodynamicProductionPlan,
     AerothermodynamicProfile,
@@ -49,6 +55,10 @@ __all__ = [
     "FixedContinuumDSMCProfile",
     "IonizedContinuumProfile",
     "RadiatingContinuumProfile",
+    "KineticAerothermodynamicEvidence",
+    "KineticAerothermodynamicPlan",
+    "KineticAerothermodynamicResult",
+    "KineticAerothermodynamicState",
     "RarefiedDSMCProfile",
     "ReactingPlasmaWallExchange",
     "ReactingPlasmaWallPlan",
