@@ -11,6 +11,7 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import jax.random as jr
 from jaxtyping import Array, Key
 
 import phydrax.axes as cx
@@ -36,6 +37,7 @@ from ._plans import (
     AdaptiveQuadraturePlan,
     AdaptiveSparseGridPlan,
     AdaptiveTrianglePlan,
+    QuasiMonteCarloPlan,
 )
 from ._precision import IntegrationPrecisionPolicy
 from ._product import ProductIntegrationRealization
@@ -172,6 +174,7 @@ class PreparedLinearReduction(StrictModule, NonTrainableState):
     schema: LinearReductionSchema = eqx.field(static=True)
     provenance: str = eqx.field(static=True)
     realization_id: str = eqx.field(static=True)
+    batch_key_policy: str = eqx.field(static=True)
 
     @property
     def batch(self) -> _FixedBatch | tuple[_FixedBatch, ...]:
@@ -198,23 +201,35 @@ class PreparedLinearReduction(StrictModule, NonTrainableState):
         key: Key[Array, ""] = DOC_KEY0,
         **kwargs: Any,
     ) -> Any:
-        """Evaluate fixed points with the caller key and contract stored coefficients."""
+        """Evaluate fixed points with semantically independent per-batch keys."""
+        base = _base_target(self.target)
+        additive_components = isinstance(base, ComponentTarget) and isinstance(
+            base.component, ComponentSum
+        )
+        if self.batch_key_policy == "shared":
+            keys = (key,)
+        elif self.batch_key_policy == "split":
+            keys = tuple(jr.split(key, len(self.batches)))
+        elif self.batch_key_policy == "fold-in":
+            keys = tuple(jr.fold_in(key, index) for index in range(len(self.batches)))
+        else:
+            raise RuntimeError("Prepared linear reduction has an invalid key policy.")
         outputs = tuple(
             _apply_batch(
                 function,
                 self.target,
                 batch,
                 coefficient,
-                index=index,
+                index=index if additive_components else 0,
                 reduced_axes=self.schema.reduced_axes,
                 retained_axes=self.schema.retained_axes,
                 retained_shape=self.schema.retained_shape,
-                key=key,
+                key=batch_key,
                 kwargs=kwargs,
                 precision=self.precision,
             )
-            for index, (batch, coefficient) in enumerate(
-                zip(self.batches, self.coefficient_fields, strict=True)
+            for index, (batch, coefficient, batch_key) in enumerate(
+                zip(self.batches, self.coefficient_fields, keys, strict=True)
             )
         )
         result = outputs[0]
@@ -350,6 +365,7 @@ def _base_coefficients(
     reduced_axes: tuple[str, ...],
     key: Key[Array, ""],
     kwargs: dict[str, Any],
+    replica_key_policy: str | None = None,
 ) -> tuple[cx.AxisArray, ...]:
     if isinstance(_base_target(target), MappedTarget):
         if len(batches) != 1 or not isinstance(batches[0], MappedIntegrationBatch):
@@ -377,6 +393,26 @@ def _base_coefficients(
         )
     if any(isinstance(batch, MappedIntegrationBatch) for batch in batches):
         raise TypeError("Component and probability targets require named fixed batches.")
+    if replica_key_policy is not None:
+        if replica_key_policy == "split":
+            replica_keys = tuple(jr.split(key, len(batches)))
+        elif replica_key_policy == "fold-in":
+            replica_keys = tuple(jr.fold_in(key, index) for index in range(len(batches)))
+        else:
+            raise RuntimeError("Unknown replicated coefficient key policy.")
+        replica_coefficients = []
+        for batch, replica_key in zip(batches, replica_keys, strict=True):
+            coefficient = _target_reduction_weights(
+                target,
+                batch,
+                key=replica_key,
+                kwargs=kwargs,
+                reduction_axes=reduced_axes,
+            )
+            if isinstance(coefficient, tuple):
+                raise RuntimeError("One replicated batch produced additive coefficients.")
+            replica_coefficients.append(coefficient / float(len(batches)))
+        return tuple(replica_coefficients)
     batch_argument: Any = batches[0] if len(batches) == 1 else batches
     coefficients = _target_reduction_weights(
         target,
@@ -653,6 +689,27 @@ def _realization_id(
     )
 
 
+def _batch_key_policy(
+    realization: IntegrationRealization,
+    batches: tuple[_FixedBatch, ...],
+    /,
+) -> str:
+    if len(batches) == 1:
+        return "shared"
+    if isinstance(realization.batch, ProductIntegrationRealization):
+        if not realization.batch.randomized_qmc:
+            raise ValueError(
+                "Multiple product batches require randomized-QMC provenance."
+            )
+        return "fold-in"
+    if isinstance(realization.plan, QuasiMonteCarloPlan):
+        return "split"
+    base = _base_target(realization.target)
+    if isinstance(base, ComponentTarget) and isinstance(base.component, ComponentSum):
+        return "split"
+    raise ValueError("Multiple fixed batches require additive or replicated provenance.")
+
+
 def _prepare_linear_reduction(
     realization: IntegrationRealization,
     /,
@@ -667,6 +724,16 @@ def _prepare_linear_reduction(
         raise TypeError("realization must be an IntegrationRealization.")
     batches = _fixed_batches(realization)
     active_axes = _active_axes(batches)
+    batch_key_policy = _batch_key_policy(realization, batches)
+    replica_key_policy = (
+        batch_key_policy
+        if len(batches) > 1
+        and (
+            isinstance(realization.batch, ProductIntegrationRealization)
+            or isinstance(realization.plan, QuasiMonteCarloPlan)
+        )
+        else None
+    )
     requested_retained = tuple(retained_axes)
     retained_active = frozenset(requested_retained) & frozenset(active_axes)
     reduced_axes = tuple(axis for axis in active_axes if axis not in retained_active)
@@ -678,6 +745,7 @@ def _prepare_linear_reduction(
         reduced_axes=reduced_axes,
         key=key,
         kwargs=kwargs,
+        replica_key_policy=replica_key_policy,
     )
     weights = _extra_weights(weight, base_coefficients)
     coefficients = _cast_coefficients(
@@ -748,6 +816,7 @@ def _prepare_linear_reduction(
         schema=schema,
         provenance=f"{exactness}:{source_provenance}",
         realization_id=realization_id,
+        batch_key_policy=batch_key_policy,
     )
 
 

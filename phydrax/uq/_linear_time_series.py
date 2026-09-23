@@ -161,6 +161,10 @@ class ARIMAModel(StrictModule):
         for _ in range(self.d):
             levels.append(levels[-1][1:] - levels[-1][:-1])
         transformed = levels[-1]
+        if transformed.shape[0] < max(self.p, self.q):
+            raise ValueError(
+                "Differenced history must contain at least max(p, q) lag entries."
+            )
         residual_history = (
             jnp.zeros_like(transformed)
             if innovations is None
@@ -973,13 +977,9 @@ def fit_vecm(
         ~finite,
         TIME_SERIES_NONFINITE,
         jnp.where(
-            count <= design.shape[-1],
+            ~cointegration.valid,
             TIME_SERIES_INSUFFICIENT,
-            jnp.where(
-                (float(ridge) == 0.0) & (least_squares.rank < design.shape[-1]),
-                TIME_SERIES_RANK_DEFICIENT,
-                TIME_SERIES_SUCCESS,
-            ),
+            least_squares.status,
         ),
     ).astype(jnp.int32)
     return VECMFit(

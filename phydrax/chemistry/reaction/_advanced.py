@@ -146,6 +146,10 @@ class InternalCoordinateOptimizationPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Internal optimization requires a force surface for the same system."
             )
+        if surface.units.unit_system_id != system.units.unit_system_id:
+            raise ValueError(
+                "Internal optimization surface and system unit identities differ."
+            )
         if coordinates.atom_count != system.particle_ids.size:
             raise ValueError("Internal-coordinate atom capacity differs from the system.")
         if not isinstance(kind, InternalOptimizationKind):
@@ -343,6 +347,8 @@ class DimerSaddleRefinementPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Dimer refinement requires a force surface for the same system."
             )
+        if surface.units.unit_system_id != system.units.unit_system_id:
+            raise ValueError("Dimer surface and system unit identities differ.")
         values = tuple(
             float(value)
             for value in (
@@ -522,28 +528,37 @@ class ReactionNetworkResult(StrictModule, NonTrainableState):
 
 class ReactionNetworkPlan(StrictModule, NonTrainableState):
     generator: Array
+    conservation_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, rate_matrix: ArrayLike, /, *, conservation_tolerance=1.0e-12):
-        rates = jnp.asarray(rate_matrix)
+        rates_host = np.asarray(rate_matrix)
+        tolerance = float(conservation_tolerance)
         if (
-            rates.ndim != 2
-            or rates.shape[0] != rates.shape[1]
-            or bool(jnp.any(rates < 0.0))
-            or bool(jnp.any(jnp.diag(rates) != 0.0))
+            rates_host.ndim != 2
+            or rates_host.shape[0] != rates_host.shape[1]
+            or not np.issubdtype(rates_host.dtype, np.floating)
+            or np.any(~np.isfinite(rates_host))
+            or np.any(rates_host < 0.0)
+            or np.any(np.diag(rates_host) != 0.0)
+            or not isfinite(tolerance)
+            or tolerance < 0.0
         ):
             raise ValueError(
-                "Reaction rate matrix must be square, non-negative, and zero-diagonal."
+                "Reaction rates must be a finite real non-negative square zero-diagonal matrix with a finite non-negative tolerance."
             )
+        rates = jnp.asarray(rates_host)
         generator = rates.T - jnp.diag(jnp.sum(rates, axis=1))
         residual = jnp.max(jnp.abs(jnp.sum(generator, axis=0)), initial=0.0)
-        if bool(residual > float(conservation_tolerance)):
+        if bool(residual > tolerance):
             raise ValueError("Reaction generator does not conserve total population.")
         self.generator = generator
+        self.conservation_tolerance = tolerance
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "reaction-network-plan",
-                "rate_matrix": array_tree_fingerprint(np.asarray(rates)),
+                "rate_matrix": array_tree_fingerprint(rates_host),
+                "conservation_tolerance": tolerance.hex(),
             }
         )
 
@@ -574,8 +589,8 @@ class ReactionNetworkPlan(StrictModule, NonTrainableState):
         positivity = jnp.maximum(0.0, -jnp.min(populations))
         successful = (
             jnp.all(jnp.isfinite(populations))
-            & (conservation <= 1.0e-10)
-            & (positivity <= 1.0e-12)
+            & (conservation <= self.conservation_tolerance)
+            & (positivity <= self.conservation_tolerance)
         )
         return ReactionNetworkResult(
             times_,

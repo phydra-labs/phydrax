@@ -721,3 +721,273 @@ def test_solver_graduation_and_regression_gates():
     )
     assert bool(graduation.production_ready)
     assert bool(regression.passed)
+
+
+def test_root_polyalgorithm_replans_when_newton_policies_change():
+    result = nl.RootPolyalgorithm(
+        (
+            nl.NewtonKrylov(),
+            nl.NewtonTrustRegion(
+                linear_policy=phx.linalg.LinearSolvePolicy(phx.linalg.DenseLU())
+            ),
+        )
+    ).solve(
+        nl.NonlinearSystemProblem(lambda state, args: jnp.ones_like(state)),
+        jnp.zeros(2),
+        termination=nl.NonlinearTermination(
+            absolute_residual=0.0,
+            relative_residual=0.0,
+            maximum_steps=4,
+            maximum_evaluations=20,
+            maximum_linear_iterations=20,
+        ),
+    )
+
+    assert len(result.attempts) == 2
+    assert "prepared-handoffs=0" in result.provenance.notes
+    assert int(result.attempts[1].work.jacobian_preparations) >= 1
+
+
+def test_picard_and_sensitivity_require_physical_problem_validity():
+    problem = nl.NonlinearSystemProblem(
+        lambda state, target: state - target,
+        validity=lambda state, residual, auxiliary, target: jnp.all(state < target),
+        problem_id="validity-rejected-root",
+    )
+    termination = nl.NonlinearTermination(
+        absolute_residual=1e-10,
+        relative_residual=0.0,
+        maximum_steps=4,
+        maximum_evaluations=8,
+    )
+
+    picard = nl.PicardIteration(lambda residual: residual).solve(
+        problem,
+        jnp.asarray([0.0]),
+        args=jnp.asarray([1.0]),
+        termination=termination,
+    )
+    sensitivity = nl.root_solution_jvp(
+        problem,
+        jnp.asarray([1.0]),
+        jnp.asarray([1.0]),
+        jnp.ones(1),
+    )
+
+    assert not bool(picard.successful)
+    assert sensitivity.evidence.status == int(nl.SensitivityStatus.PRIMAL_FAILED)
+    assert not bool(sensitivity.evidence.primal_valid)
+    assert jnp.all(jnp.isnan(sensitivity.value))
+
+
+def test_picard_certification_uses_declared_residual_geometry():
+    residual_space = phx.linalg.ArraySpace(
+        (1,),
+        dtype=jnp.float64,
+        pairing=phx.linalg.DiagonalPairing(jnp.asarray([10_000.0])),
+    )
+    problem = nl.NonlinearSystemProblem(
+        lambda state, target: state - target,
+        residual_space=residual_space,
+        problem_id="weighted-picard-residual",
+    )
+    result = nl.PicardIteration(lambda residual: 0.01 * residual).solve(
+        problem,
+        jnp.asarray([0.0], dtype=jnp.float64),
+        args=jnp.asarray([1.0], dtype=jnp.float64),
+        termination=nl.NonlinearTermination(
+            absolute_residual=1.0,
+            relative_residual=0.0,
+            maximum_steps=1,
+        ),
+    )
+
+    assert not bool(result.successful)
+    assert float(result.diagnostics.initial_residual_norm) == pytest.approx(100.0)
+    assert float(result.diagnostics.final_residual_norm) == pytest.approx(100.0)
+
+
+def test_steffensen_exit_reuses_cached_mapping_under_evaluation_limit():
+    calls = 0
+
+    def mapping(state, args):
+        nonlocal calls
+        calls += 1
+        return state + 1.0
+
+    result = nl.SteffensenIteration().solve(
+        nl.FixedPointProblem(mapping),
+        jnp.zeros(1),
+        termination=nl.NonlinearTermination(
+            absolute_residual=0.0,
+            relative_residual=0.0,
+            maximum_steps=5,
+            maximum_evaluations=1,
+        ),
+    )
+
+    assert calls == 1
+    assert int(result.status) == int(nl.NonlinearStatus.MAXIMUM_EVALUATIONS_REACHED)
+    assert int(result.diagnostics.residual_evaluations) == 1
+
+
+@pytest.mark.parametrize("method", (nl.Broyden(), nl.Chord()))
+def test_quasi_newton_reserves_final_certification_evaluation(method):
+    result = method.solve(
+        nl.NonlinearSystemProblem(lambda state, target: state - target),
+        jnp.asarray([0.0]),
+        args=jnp.asarray([2.0]),
+        termination=nl.NonlinearTermination(
+            absolute_residual=0.0,
+            relative_residual=0.0,
+            maximum_steps=5,
+            maximum_evaluations=2,
+        ),
+    )
+
+    assert int(result.status) == int(nl.NonlinearStatus.MAXIMUM_EVALUATIONS_REACHED)
+    assert int(result.diagnostics.residual_evaluations) == 2
+    assert jnp.array_equal(result.state, jnp.asarray([0.0]))
+
+
+def test_safeguarded_derivative_root_reserves_certification_budget():
+    calls = 0
+
+    def residual(value, target):
+        nonlocal calls
+        calls += 1
+        return value * value - target
+
+    problem = nl.ScalarRootProblem(residual, bracket=(0.0, 2.0))
+    result = nl.scalar_root(
+        problem,
+        method=nl.SafeguardedNewton(),
+        termination=nl.NonlinearTermination(
+            maximum_steps=10,
+            maximum_evaluations=3,
+        ),
+        args=2.0,
+    )
+
+    assert calls == 3
+    assert int(result.status) == int(nl.NonlinearStatus.MAXIMUM_EVALUATIONS_REACHED)
+    assert int(result.nonlinear_result.diagnostics.residual_evaluations) == 3
+
+    calls = 0
+    with pytest.raises(ValueError, match="at least three"):
+        nl.scalar_root(
+            problem,
+            method=nl.SafeguardedNewton(),
+            termination=nl.NonlinearTermination(maximum_evaluations=2),
+            args=2.0,
+        )
+    assert calls == 0
+
+
+def test_vector_halley_enforces_residual_and_linear_work_limits():
+    problem = nl.NonlinearSystemProblem(lambda state, target: state * state - target)
+    evaluation_limited = nl.VectorHalley().solve(
+        problem,
+        jnp.ones(2),
+        args=jnp.asarray([4.0, 9.0]),
+        termination=nl.NonlinearTermination(
+            maximum_steps=10,
+            maximum_evaluations=1,
+        ),
+    )
+    linear_limited = nl.VectorHalley().solve(
+        problem,
+        jnp.ones(2),
+        args=jnp.asarray([4.0, 9.0]),
+        termination=nl.NonlinearTermination(
+            maximum_steps=10,
+            maximum_evaluations=10,
+            maximum_linear_iterations=1,
+        ),
+    )
+
+    assert evaluation_limited.status == int(
+        nl.NonlinearStatus.MAXIMUM_EVALUATIONS_REACHED
+    )
+    assert int(evaluation_limited.diagnostics.residual_evaluations) == 1
+    assert linear_limited.status == int(
+        nl.NonlinearStatus.MAXIMUM_LINEAR_ITERATIONS_REACHED
+    )
+    assert int(linear_limited.diagnostics.linear_iterations) == 0
+
+
+def test_small_root_damping_floor_controls_trials_and_integer_guesses_fail_early():
+    kernel = nl.SmallRootKernel(
+        lambda state, target: state * state - target,
+        minimum_damping=1.0,
+        maximum_steps=1,
+    )
+    result = kernel.solve(jnp.asarray([[0.1]]), jnp.asarray([[2.0]]))
+
+    assert int(result.residual_evaluations[0]) == 2
+    assert int(result.accepted_steps[0]) == 0
+    assert jnp.array_equal(result.state, jnp.asarray([[0.1]]))
+
+    with pytest.raises(TypeError, match="inexact dtype"):
+        nl.LocalRootPlan(plan_id="integer-scalar").solve(
+            lambda value: value - 1,
+            jnp.asarray(0, dtype=jnp.int32),
+        )
+    with pytest.raises(TypeError, match="inexact dtype"):
+        nl.VectorLocalRootPlan(1, plan_id="integer-vector").solve(
+            lambda value: value - 1,
+            jnp.asarray([0], dtype=jnp.int32),
+        )
+
+
+def test_newton_direction_refuses_zero_budget_before_linear_solve():
+    problem = nl.NonlinearSystemProblem(lambda state, args: state - 1.0)
+    model = nl.RootLinearModelPolicy().prepare(problem, jnp.zeros(2), None)
+    result = nl.NewtonDirectionPolicy().compute(
+        model,
+        nl.NonlinearWorkBudget(
+            linear_solves=0,
+            linear_iterations=0,
+        ),
+    )
+
+    assert result.status == int(nl.DirectionStatus.BUDGET_EXHAUSTED)
+    assert int(result.work.linear_solves) == 0
+    assert int(result.work.linear_iterations) == 0
+    assert jnp.array_equal(result.direction, jnp.zeros(2))
+
+
+def test_mixed_precision_reserves_physical_certification_evaluations():
+    calls = 0
+
+    def residual(state, target):
+        nonlocal calls
+        calls += 1
+        return state - target
+
+    execution = nl.MixedPrecisionRootExecution()
+    problem = nl.NonlinearSystemProblem(residual)
+    result = execution.solve(
+        problem,
+        jnp.asarray([0.0]),
+        nl.NewtonKrylov(),
+        nl.NonlinearTermination(
+            maximum_steps=4,
+            maximum_evaluations=4,
+        ),
+        args=jnp.asarray([2.0]),
+    )
+
+    assert bool(result.successful)
+    assert int(result.diagnostics.residual_evaluations) == 4
+
+    calls = 0
+    with pytest.raises(ValueError, match="at least three"):
+        execution.solve(
+            problem,
+            jnp.asarray([0.0]),
+            nl.NewtonKrylov(),
+            nl.NonlinearTermination(maximum_evaluations=2),
+            args=jnp.asarray([2.0]),
+        )
+    assert calls == 0

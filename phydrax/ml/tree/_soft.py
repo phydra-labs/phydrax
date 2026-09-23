@@ -14,7 +14,7 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
-from ..._model import AbstractArrayModel
+from ..._model import AbstractArrayModel, ModelBinding
 from .._batch import MLBatch
 from .._contracts import (
     AbstractRecipe,
@@ -130,6 +130,7 @@ class _AbstractSoftTree(AbstractArrayModel):
     depth: int = eqx.field(static=True)
     in_size: int = eqx.field(static=True)
     out_size: int | tuple[int, ...] | Literal["scalar"] = eqx.field(static=True)
+    _input_binding: ModelBinding = eqx.field(static=True)  # ty: ignore[invalid-attribute-override]
 
     def __init__(
         self,
@@ -230,6 +231,11 @@ class _AbstractSoftTree(AbstractArrayModel):
         self.depth = depth
         self.in_size = feature_count
         self.out_size = out_size_
+        self._input_binding = (
+            ModelBinding.blockwise("flat", pass_key=False)
+            if self.case_shape
+            else ModelBinding.pointwise("flat", pass_key=False)
+        )
 
     @property
     def class_schema(self) -> TargetSchema:
@@ -376,6 +382,22 @@ class _AbstractSoftTree(AbstractArrayModel):
             max_steps=self.depth + 1,
             capacity_exhausted=False,
         )
+
+    def decision_function(self, x: Any, /) -> Array:
+        return self.predict_raw(x)
+
+    def predict_proba(self, x: Any, /) -> Array:
+        prediction = self(x)
+        if self.objective_transform == "sigmoid":
+            return jnp.stack((1.0 - prediction, prediction), axis=-1)
+        if self.objective_transform == "softmax":
+            return prediction
+        raise ValueError(
+            "Class probabilities require a probabilistic classification objective."
+        )
+
+    def predict(self, x: Any, /) -> Array:
+        return self.predict_labels(x)
 
     def predict_labels(self, x: Any, /, *, threshold: float = 0.5) -> Array:
         """Return nondifferentiable class indices from smooth class probabilities."""

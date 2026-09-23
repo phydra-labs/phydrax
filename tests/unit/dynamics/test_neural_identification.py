@@ -1,3 +1,5 @@
+import json
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -7,6 +9,7 @@ import pytest
 
 import phydrax as phx
 from phydrax._model import AbstractArrayModel, ModelBinding
+from phydrax.dynamics.identification import _neural_checkpoint
 from phydrax.dynamics.identification._neural import _objective_contributions
 from phydrax.dynamics.identification._neural_windows import _NeuralWindowSource
 
@@ -470,6 +473,59 @@ def test_checkpoint_resume_is_exact_and_rejects_objective_mismatch(tmp_path):
             checkpoint_path=checkpoint,
             resume=True,
             **common,
+        )
+
+
+def test_neural_checkpoint_rejects_path_traversal_and_replacement(tmp_path, monkeypatch):
+    checkpoint = tmp_path / "checkpoint-admission"
+    model = _ScaledStep(1.0)
+    optimizer_state = jnp.asarray([2.0])
+    _neural_checkpoint._save_neural_training_checkpoint(
+        checkpoint,
+        model,
+        optimizer_state,
+        step=0,
+        key=jr.key(3),
+        metadata={},
+    )
+    manifest_path = checkpoint / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["state_file"] = "../outside.eqx"
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="canonical basename"):
+        _neural_checkpoint._load_neural_training_checkpoint(
+            checkpoint,
+            model,
+            optimizer_state,
+        )
+
+    _neural_checkpoint._save_neural_training_checkpoint(
+        checkpoint,
+        model,
+        optimizer_state,
+        step=0,
+        key=jr.key(3),
+        metadata={},
+    )
+    manifest = json.loads(manifest_path.read_text())
+    state_path = checkpoint / manifest["state_file"]
+    original_deserialise = _neural_checkpoint.eqx.tree_deserialise_leaves
+
+    def replace_after_open(stream, template):
+        state_path.unlink()
+        state_path.write_bytes(b"replacement")
+        return original_deserialise(stream, template)
+
+    monkeypatch.setattr(
+        _neural_checkpoint.eqx,
+        "tree_deserialise_leaves",
+        replace_after_open,
+    )
+    with pytest.raises(ValueError, match="unsafe or changed"):
+        _neural_checkpoint._load_neural_training_checkpoint(
+            checkpoint,
+            model,
+            optimizer_state,
         )
 
 

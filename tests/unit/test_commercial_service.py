@@ -8,21 +8,30 @@ import base64
 import hashlib
 import hmac
 import json
+import os
 import platform
+import sys
 import threading
+import time
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 from phydrax.execution import ExecutionPlan, ResourceRequest
-from phydrax.lifecycle import AnalysisPlan
+from phydrax.lifecycle import AnalysisPlan, CheckpointManifest, CheckpointShard
 from phydrax.lifecycle._provenance import (
     create_build_provenance,
     digest_paths,
     generate_spdx_sbom,
     InstalledPackage,
     spdx_json,
+)
+from phydrax.lifecycle._repository import (
+    HPCFilesystemProfile,
+    POSIXArtifactRepository,
+    POSIXRepositoryPolicy,
 )
 from phydrax.lifecycle._resolved_run import ResolvedRunSpec
 from phydrax.qualification._evidence import SupportDependency
@@ -41,6 +50,7 @@ from phydrax.service._contracts import (
     IntegrityError,
     JobState,
     JobSubmission,
+    ProfileUnavailable,
     ProviderResult,
     ResourceNotFound,
     TenantQuota,
@@ -79,6 +89,7 @@ from phydrax.service._schedulers import (
     SchedulerState,
     SlurmJobSpec,
     SlurmScheduler,
+    SubprocessCommandExecutor,
 )
 from phydrax.service._security import (
     Ed25519Signer,
@@ -97,6 +108,50 @@ class _Clock:
 
     def now(self) -> int:
         return self.value
+
+
+class _ServiceValidator:
+    def validate(self, token: str, /) -> ValidatedPrincipal:
+        return ValidatedPrincipal(
+            "subject",
+            token,
+            "issuer",
+            "audience",
+            "client",
+            f"token-{token}",
+            frozenset(
+                {
+                    "service:artifact:fetch",
+                    "service:artifact:grant",
+                    "service:artifact:write",
+                    "service:cancel",
+                    "service:execute",
+                    "service:restart",
+                    "service:status",
+                    "service:submit",
+                    "service:usage",
+                }
+            ),
+            0,
+            100,
+        )
+
+
+def _service_submission(request_id: str) -> JobSubmission:
+    return JobSubmission(
+        AnalysisPlan(
+            "analysis",
+            "provider-plan",
+            "discretization",
+            ("layout",),
+        ),
+        ExecutionPlan("execution", "cpu", "float64", "direct"),
+        "revision",
+        "profile",
+        {"problem": "durable"},
+        ResourceRequest(1, 1024),
+        request_id=request_id,
+    )
 
 
 class _Executor:
@@ -169,6 +224,78 @@ def test_transaction_rollback_outbox_idempotency_audit_and_quota_recovery():
     assert store.reconcile_quota("tenant", ()).active_jobs == 0
 
 
+def test_sqlite_store_rejects_symlink_database_path(tmp_path):
+    target = tmp_path / "target.sqlite"
+    target.touch()
+    link = tmp_path / "service.sqlite"
+    link.symlink_to(target)
+    with pytest.raises(ValueError, match="symbolic link"):
+        SQLiteServiceStore(link)
+
+
+def test_sqlite_store_detects_final_path_swap_during_connect(tmp_path, monkeypatch):
+    import phydrax.service._durability as durability
+
+    path = tmp_path / "service.sqlite"
+    target = tmp_path / "target.sqlite"
+    target.touch()
+    real_connect = durability.sqlite3.connect
+
+    def swapping_connect(value, *args, **kwargs):
+        path.rename(tmp_path / "admitted.sqlite")
+        path.symlink_to(target)
+        return real_connect(value, *args, **kwargs)
+
+    monkeypatch.setattr(durability.sqlite3, "connect", swapping_connect)
+    with pytest.raises(ValueError, match="changed during connection"):
+        SQLiteServiceStore(path)
+
+
+def test_sqlite_store_detects_parent_swap_during_connect(tmp_path, monkeypatch):
+    import phydrax.service._durability as durability
+
+    parent = tmp_path / "database"
+    parent.mkdir()
+    path = parent / "service.sqlite"
+    target = tmp_path / "target.sqlite"
+    target.touch()
+    real_connect = durability.sqlite3.connect
+
+    def swapping_connect(value, *args, **kwargs):
+        parent.rename(tmp_path / "admitted-database")
+        parent.mkdir()
+        path.symlink_to(target)
+        return real_connect(value, *args, **kwargs)
+
+    monkeypatch.setattr(durability.sqlite3, "connect", swapping_connect)
+    with pytest.raises(ValueError, match="changed during connection"):
+        SQLiteServiceStore(path)
+
+
+def test_sqlite_connection_remains_bound_through_swap_and_restore(tmp_path, monkeypatch):
+    import phydrax.service._durability as durability
+
+    path = tmp_path / "service.sqlite"
+    target = tmp_path / "target.sqlite"
+    target.touch()
+    admitted = tmp_path / "admitted.sqlite"
+    real_connect = durability.sqlite3.connect
+
+    def swapping_connect(value, *args, **kwargs):
+        path.rename(admitted)
+        path.symlink_to(target)
+        connection = real_connect(value, *args, **kwargs)
+        path.unlink()
+        admitted.rename(path)
+        return connection
+
+    monkeypatch.setattr(durability.sqlite3, "connect", swapping_connect)
+    store = SQLiteServiceStore(path)
+    store.close()
+    assert path.stat().st_size > 0
+    assert target.stat().st_size == 0
+
+
 def test_outbox_dispatcher_releases_failures_for_durable_retry():
     store = SQLiteServiceStore()
     with store.transaction() as transaction:
@@ -185,9 +312,20 @@ def test_outbox_dispatcher_releases_failures_for_durable_retry():
         )
     attempts = 0
 
-    def handler(message: OutboxMessage) -> None:
+    def handler(message: OutboxMessage, transaction) -> None:
         nonlocal attempts
         attempts += 1
+        transaction.enqueue(
+            OutboxMessage(
+                "effect",
+                message.tenant_id,
+                "effect",
+                message.idempotency_key,
+                {"source_message_id": message.message_id},
+                10,
+                10,
+            )
+        )
         if attempts == 1:
             raise RuntimeError("transient")
 
@@ -195,6 +333,8 @@ def test_outbox_dispatcher_releases_failures_for_durable_retry():
     assert dispatcher.dispatch_once("worker", 10).failed_message_ids == ("message",)
     assert dispatcher.dispatch_once("worker", 39).delivered_message_ids == ()
     assert dispatcher.dispatch_once("worker", 40).delivered_message_ids == ("message",)
+    effects = store.claim_outbox("effect-worker", 41)
+    assert tuple(message.message_id for message in effects) == ("effect",)
 
 
 def test_durable_request_id_rejects_conflicting_payload():
@@ -217,11 +357,79 @@ def test_durable_request_id_rejects_conflicting_payload():
             1,
             1,
         )
+    for field_name in ("token", "api_key", "session", "cookie", "secret_value"):
+        with pytest.raises(ValueError, match="credential"):
+            DurableJobRecord(
+                f"secret-{field_name}",
+                "tenant",
+                "",
+                "2" * 64,
+                JobState.QUEUED,
+                1,
+                {field_name: "must-not-persist"},
+                1,
+                1,
+            )
+    with pytest.raises(ValueError, match="credential"):
+        DurableJobRecord(
+            "opaque-secret",
+            "tenant",
+            "",
+            "2" * 64,
+            JobState.QUEUED,
+            1,
+            {"value": "Q" * 44},
+            1,
+            1,
+        )
     with store.transaction() as transaction:
         transaction.insert_job(first)
     with pytest.raises(IntegrityError, match="idempotency"):
         with store.transaction() as transaction:
             transaction.insert_job(conflict)
+
+
+def test_scheduler_timeout_kills_descendants_that_ignore_sigterm(tmp_path):
+    child_pid_path = tmp_path / "child.pid"
+    child_code = (
+        "import signal,time;signal.signal(signal.SIGTERM, signal.SIG_IGN);time.sleep(60)"
+    )
+    parent_code = (
+        "import subprocess,sys,time;"
+        f"child=subprocess.Popen([sys.executable,'-c',{child_code!r}]);"
+        f"open({str(child_pid_path)!r},'w').write(str(child.pid));"
+        "time.sleep(60)"
+    )
+    executor = SubprocessCommandExecutor(
+        timeout_seconds=0.5,
+        maximum_response_bytes=1024,
+    )
+    with pytest.raises(TimeoutError, match="timeout"):
+        executor.run((sys.executable, "-c", parent_code))
+    child_pid = int(child_pid_path.read_text())
+    for _ in range(100):
+        try:
+            os.kill(child_pid, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.01)
+    else:
+        pytest.fail("Scheduler timeout left a descendant process running.")
+
+
+def test_scheduler_command_executor_bounds_response_before_decode():
+    executor = SubprocessCommandExecutor(
+        timeout_seconds=5.0,
+        maximum_response_bytes=16,
+    )
+    with pytest.raises(IntegrityError, match="byte limit"):
+        executor.run(
+            (
+                sys.executable,
+                "-c",
+                "import sys; sys.stdout.buffer.write(b'x' * 17)",
+            )
+        )
 
 
 def test_slurm_uses_argv_and_maps_machine_state():
@@ -293,6 +501,23 @@ def test_slurm_ranked_job_uses_one_safe_srun_step() -> None:
     assert "'; rm -rf /'" in decoded
 
 
+def test_slurm_idempotency_binds_the_complete_submission():
+    executor = _Executor([CommandResult(0, "42\n", "")])
+    ledger = SQLiteServiceStore()
+    scheduler = SlurmScheduler(executor, ledger=ledger)
+    original = SlurmJobSpec(
+        "/safe/worker",
+        ("argument",),
+        "request",
+        "first-name",
+        ResourceRequest(1, 1024),
+    )
+    assert scheduler.submit(original) == "42"
+    with pytest.raises(IntegrityError, match="different request"):
+        scheduler.submit(replace(original, job_name="different-name"))
+    assert len(executor.argv) == 1
+
+
 class _KubernetesTransport:
     def __init__(self):
         self.requests: list[tuple[str, str, dict[str, str], bytes | None]] = []
@@ -301,6 +526,19 @@ class _KubernetesTransport:
     def request(self, method, url, /, *, headers, body=None):
         self.requests.append((method, url, dict(headers), body))
         return self.responses.pop(0)
+
+
+def test_kubernetes_rejects_oversized_transport_responses_before_json_decode():
+    transport = _KubernetesTransport()
+    transport.responses.append(HTTPResponse(200, {}, b"x" * 9))
+    scheduler = KubernetesScheduler(
+        "https://cluster.example",
+        "credential",
+        transport,
+        maximum_response_bytes=8,
+    )
+    with pytest.raises(IntegrityError, match="byte limit"):
+        scheduler.status("tenant", "job")
 
 
 def test_kubernetes_idempotency_authentication_and_resource_version():
@@ -469,6 +707,13 @@ def test_mtls_san_expiry_and_issuer_policy():
         policy.validate(wrong_san, 20)
 
 
+def test_hmac_signing_key_repr_does_not_disclose_secret():
+    secret = b"not-for-logs-" + b"x" * 32
+    rendered = repr(HMACSigningKey("key", secret))
+    assert secret.hex() not in rendered
+    assert repr(secret) not in rendered
+
+
 def test_ed25519_sign_verify_rotate_and_revoke():
     pytest.importorskip("cryptography")
     signer = Ed25519Signer("one", b"1" * 32)
@@ -476,10 +721,15 @@ def test_ed25519_sign_verify_rotate_and_revoke():
     envelope = signer.sign(b"payload", purpose="release", signed_at=10)
     trust = SigningTrustStore()
     trust.trust(SigningKeyTrustRecord("one", "Ed25519", 0, 100), verifier)
-    trust.verify(b"payload", envelope, at_time=20)
+    trust.verify(b"payload", envelope, expected_purpose="release", at_time=20)
     trust.revoke("one", 21)
     with pytest.raises(IntegrityError, match="revoked"):
-        trust.verify(b"payload", envelope, at_time=22)
+        trust.verify(
+            b"payload",
+            envelope,
+            expected_purpose="release",
+            at_time=22,
+        )
 
 
 def test_injected_kms_sign_and_verify():
@@ -494,7 +744,13 @@ def test_injected_kms_sign_and_verify():
     envelope = KMSSigner("kms-key", "injected-test", kms).sign(
         b"payload", purpose="audit", signed_at=1
     )
-    KMSVerifier("kms-key", "injected-test", kms).verify(b"payload", envelope)
+    KMSVerifier("kms-key", "injected-test", kms).verify(
+        b"payload", envelope, expected_purpose="audit"
+    )
+    with pytest.raises(IntegrityError, match="purpose"):
+        KMSVerifier("kms-key", "injected-test", kms).verify(
+            b"payload", envelope, expected_purpose="release"
+        )
 
 
 def test_short_lived_scoped_secrets_and_redaction():
@@ -551,6 +807,32 @@ def test_support_bundle_is_allowlisted_redacted_and_privacy_bounded():
     assert (
         "unknown" not in bundle.sections and "unlisted" not in bundle.sections["runtime"]
     )
+
+
+def test_provenance_hash_holds_ancestor_descriptors_during_replacement(
+    tmp_path, monkeypatch
+):
+    import phydrax.lifecycle._provenance as provenance
+
+    root = tmp_path / "root"
+    source = root / "source"
+    outside = tmp_path / "outside"
+    source.mkdir(parents=True)
+    outside.mkdir()
+    (source / "input.txt").write_text("trusted")
+    (outside / "input.txt").write_text("substituted")
+    expected = digest_paths(root, ("source/input.txt",))
+    real_open = provenance.open_regular_beneath
+
+    @contextmanager
+    def swapping_open(*args, **kwargs):
+        with real_open(*args, **kwargs) as opened:
+            source.rename(root / "held-source")
+            source.symlink_to(outside, target_is_directory=True)
+            yield opened
+
+    monkeypatch.setattr(provenance, "open_regular_beneath", swapping_open)
+    assert digest_paths(root, ("source/input.txt",)) == expected
 
 
 def test_host_telemetry_is_explicit_structured_and_logged_by_identity(
@@ -838,6 +1120,256 @@ def test_execution_heartbeat_and_attempt_fence_reject_stale_completion():
     assert durable.state is JobState.SUCCEEDED
 
 
+def test_durable_service_restart_rehydrates_results_and_idempotency(tmp_path):
+    path = tmp_path / "service.sqlite"
+    quota = {"tenant": TenantQuota(2, 2, 4096, 0, 1024)}
+    first_store = SQLiteServiceStore(path)
+    first = InProcessReferenceService(
+        _ServiceValidator(),
+        ScopeTenantAuthorizer(),
+        quota,
+        clock=_Clock(10),
+        durable_store=first_store,
+    )
+    first.register_provider(
+        "profile",
+        lambda submission, context: ProviderResult(("result",), ("provider-diagnostic",)),
+        support_tuple_id="provider-tuple",
+    )
+    submission = _service_submission("restart-request")
+    queued = first.submit("tenant", submission)
+    completed = first.execute("tenant", queued.job_id)
+    assert completed.run_record.result_ids == ("result",)
+    first_store.close()
+
+    second_store = SQLiteServiceStore(path)
+    restarted = InProcessReferenceService(
+        _ServiceValidator(),
+        ScopeTenantAuthorizer(),
+        quota,
+        clock=_Clock(10),
+        durable_store=second_store,
+    )
+    restarted.register_provider(
+        "profile",
+        lambda submission, context: ProviderResult(("unexpected",)),
+        support_tuple_id="provider-tuple",
+    )
+
+    restored = restarted.status("tenant", queued.job_id)
+    assert restored.state is JobState.SUCCEEDED
+    assert restored.run_record.result_ids == ("result",)
+    assert restored.run_record.diagnostic_ids == ("provider-diagnostic",)
+    assert restarted.submit("tenant", submission).job_id == queued.job_id
+
+
+def test_provider_failure_preserves_exact_exception_status_and_message():
+    service = InProcessReferenceService(
+        _ServiceValidator(),
+        ScopeTenantAuthorizer(),
+        {"tenant": TenantQuota(1, 1, 1024, 0, 1024)},
+        clock=_Clock(10),
+    )
+
+    def provider(submission, context):
+        del submission, context
+        raise ProfileUnavailable("provider refused exact problem identity")
+
+    service.register_provider("profile", provider, support_tuple_id="provider-tuple")
+    failed = service.execute(
+        "tenant",
+        service.submit("tenant", _service_submission("failed-request")).job_id,
+    )
+
+    assert failed.state is JobState.FAILED
+    assert failed.failure is not None
+    assert failed.failure.code == "ProfileUnavailable"
+    assert (
+        failed.failure.exception_type == "phydrax.service._contracts.ProfileUnavailable"
+    )
+    assert failed.failure.message == "provider refused exact problem identity"
+
+
+def test_checkpoint_callback_requires_repository_commit_and_survives_restart(tmp_path):
+    profile = HPCFilesystemProfile(
+        "service-checkpoint",
+        "local-posix",
+        atomic_rename_same_filesystem=True,
+        file_fsync=True,
+        directory_fsync=True,
+        advisory_locking=True,
+        attempt_private_staging=True,
+    )
+    repository = POSIXArtifactRepository(
+        tmp_path / "repository",
+        POSIXRepositoryPolicy(
+            profile,
+            maximum_chunk_bytes=1024,
+            maximum_metadata_bytes=64 * 1024,
+        ),
+    )
+    payload = b"durable-checkpoint"
+    checkpoint = CheckpointManifest(
+        "checkpoint",
+        "analysis",
+        "revision",
+        "execution",
+        (
+            CheckpointShard(
+                "state",
+                hashlib.sha256(payload).hexdigest(),
+                len(payload),
+            ),
+        ),
+        complete=True,
+    )
+    transaction = repository.begin("checkpoint", "provider", started_at=1)
+    chunk = repository.write_chunk(transaction, "state", 0, 0, payload)
+    repository.commit(
+        transaction,
+        (chunk,),
+        metadata={"checkpoint_manifest_id": checkpoint.manifest_id},
+        committed_at=1,
+    )
+    child_payload = b"durable-child-checkpoint"
+    child = CheckpointManifest(
+        "checkpoint-child",
+        "analysis",
+        "revision",
+        "execution",
+        (
+            CheckpointShard(
+                "state",
+                hashlib.sha256(child_payload).hexdigest(),
+                len(child_payload),
+            ),
+        ),
+        complete=True,
+        parent_checkpoint_id=checkpoint.checkpoint_id,
+        parent_manifest_id=checkpoint.manifest_id,
+    )
+    child_transaction = repository.begin(child.checkpoint_id, "provider", started_at=2)
+    child_chunk = repository.write_chunk(child_transaction, "state", 0, 0, child_payload)
+    repository.commit(
+        child_transaction,
+        (child_chunk,),
+        metadata={"checkpoint_manifest_id": child.manifest_id},
+        committed_at=2,
+    )
+    second_root = CheckpointManifest(
+        "checkpoint-second-root",
+        "analysis",
+        "revision",
+        "execution",
+        checkpoint.shards,
+        complete=True,
+    )
+    store_path = tmp_path / "checkpoint-service.sqlite"
+    artifact_signing_secret = b"a" * 32
+    store = SQLiteServiceStore(store_path)
+    service = InProcessReferenceService(
+        _ServiceValidator(),
+        ScopeTenantAuthorizer(),
+        {"tenant": TenantQuota(1, 1, 1024, 0, 1024)},
+        clock=_Clock(10),
+        durable_store=store,
+        repository=repository,
+        artifact_signing_secret=artifact_signing_secret,
+    )
+
+    def provider(submission, context):
+        del submission
+        assert context.checkpoint(checkpoint) == checkpoint.checkpoint_id
+        assert context.checkpoint(checkpoint) == checkpoint.checkpoint_id
+        with pytest.raises(IntegrityError, match="parent presence"):
+            context.checkpoint(second_root)
+        assert context.checkpoint(child) == child.checkpoint_id
+        return ProviderResult(("result",))
+
+    service.register_provider("profile", provider, support_tuple_id="provider-tuple")
+    completed = service.execute(
+        "tenant",
+        service.submit("tenant", _service_submission("checkpoint-request")).job_id,
+    )
+    assert completed.checkpoint_ids == ("checkpoint", "checkpoint-child")
+    artifact_content = b"restart-artifact"
+    artifact_rights = ArtifactRights.unrestricted(
+        "scientific-restart-artifact",
+        hashlib.sha256(artifact_content).hexdigest(),
+        len(artifact_content),
+        rights_id="rights",
+        use_policy_id="use",
+        license_id="license",
+        source_uri="https://example.invalid/restart-artifact",
+        attribution_id="attribution",
+    )
+    artifact_descriptor = service.store_artifact(
+        "tenant",
+        completed.job_id,
+        artifact_content,
+        scientific_artifact_id="scientific-restart-artifact",
+        media_type="application/octet-stream",
+        rights=artifact_rights,
+    )
+    store.close()
+
+    restarted_store = SQLiteServiceStore(store_path)
+    restarted = InProcessReferenceService(
+        _ServiceValidator(),
+        ScopeTenantAuthorizer(),
+        {"tenant": TenantQuota(1, 1, 1024, 0, 1024)},
+        clock=_Clock(10),
+        durable_store=restarted_store,
+        repository=repository,
+        artifact_signing_secret=artifact_signing_secret,
+    )
+    restarted.register_provider(
+        "profile",
+        lambda submission, context: ProviderResult(("unexpected",)),
+        support_tuple_id="provider-tuple",
+    )
+    restored = restarted.status("tenant", completed.job_id)
+    assert restored.checkpoint_ids == ("checkpoint", "checkpoint-child")
+    assert restored.artifact_ids == (artifact_descriptor.artifact_id,)
+    restarted_grant = restarted.grant_artifact("tenant", artifact_descriptor.artifact_id)
+    assert restarted.fetch_artifact("tenant", restarted_grant).content == artifact_content
+
+
+def test_failed_durable_transition_leaves_memory_and_store_unchanged(monkeypatch):
+    import phydrax.service._durability as durability
+
+    store = SQLiteServiceStore()
+    service = InProcessReferenceService(
+        _ServiceValidator(),
+        ScopeTenantAuthorizer(),
+        {"tenant": TenantQuota(1, 1, 1024, 0, 1024)},
+        clock=_Clock(10),
+        durable_store=store,
+    )
+    service.register_provider(
+        "profile",
+        lambda submission, context: ProviderResult(("result",)),
+        support_tuple_id="provider-tuple",
+    )
+    queued = service.submit("tenant", _service_submission("atomic-request"))
+    with store.transaction() as transaction:
+        before = transaction.get_job("tenant", queued.job_id)
+    assert before is not None
+
+    def fail_update(self, record, /, *, expected_version):
+        del self, record, expected_version
+        raise RuntimeError("commit failure")
+
+    monkeypatch.setattr(durability._SQLiteTransaction, "update_job", fail_update)
+    with pytest.raises(RuntimeError, match="commit failure"):
+        service.cancel("tenant", queued.job_id)
+
+    assert service.status("tenant", queued.job_id).state is JobState.QUEUED
+    with store.transaction() as transaction:
+        after = transaction.get_job("tenant", queued.job_id)
+    assert after == before
+
+
 def test_bearer_token_resource_limits_precede_validators_and_crypto():
     class IngressValidator:
         called = False
@@ -939,6 +1471,10 @@ def test_artifact_rights_remain_bound_and_gate_grant_and_fetch():
         clock=_Clock(10),
         artifact_signing_secret=b"s" * 32,
     )
+    with pytest.raises(IntegrityError, match="must be a string"):
+        service.fetch_artifact("token", None)  # type: ignore[arg-type]
+    with pytest.raises(IntegrityError, match="encoded-byte limit"):
+        service.fetch_artifact("token", "00" * 3_000)
     service.register_provider(
         "profile", lambda submission, context: ProviderResult(("result",))
     )

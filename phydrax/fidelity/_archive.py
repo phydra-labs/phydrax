@@ -50,6 +50,10 @@ def write_fidelity_dataset(
         )
     evaluations = []
     for index, evaluation in enumerate(dataset.evaluations):
+        if evaluation.result is not None:
+            raise ValueError(
+                "Fidelity evaluation result payloads are runtime-only and cannot be archived."
+            )
         observable = pack_array_tree(
             f"evaluation/{index}/observable",
             evaluation.observable,
@@ -96,6 +100,10 @@ def read_fidelity_dataset(
 
     if not isinstance(template, FidelityDataset):
         raise TypeError("template must be a FidelityDataset.")
+    if any(evaluation.result is not None for evaluation in template.evaluations):
+        raise ValueError(
+            "Fidelity archive templates must not contain runtime-only result payloads."
+        )
     manifest, arrays = read_array_archive(path)
     expected = {
         "kind",

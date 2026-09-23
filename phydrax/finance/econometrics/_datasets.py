@@ -48,9 +48,9 @@ class PointInTimePanelDefinition(StrictModule):
             raise ValueError("quote_keys must be ordered by key_id.")
         if not isinstance(analysis_time, FinancialTimestamp):
             raise TypeError("analysis_time must be a FinancialTimestamp.")
-        capacity_ = int(capacity)
-        if capacity_ < 1:
-            raise ValueError("capacity must be positive.")
+        if isinstance(capacity, bool) or not isinstance(capacity, int) or capacity < 1:
+            raise ValueError("capacity must be a positive integer.")
+        capacity_ = capacity
         if clock not in ("event", "published", "received", "available"):
             raise ValueError("clock must name one of the four preserved clocks.")
         self.quote_keys = keys
@@ -84,6 +84,7 @@ class PreparedPointInTimePanel(StrictModule):
 
     values: Array
     valid_mask: Array
+    overflow: Array
     event_times_ns: Array
     published_times_ns: Array
     received_times_ns: Array
@@ -330,6 +331,9 @@ def prepare_point_in_time_panel(
                 <= int(timestamp.available_ns)
                 <= int(definition.analysis_time.available_ns)
             )
+        if overflow[series]:
+            values[series] = 0.0
+            valid[series] = False
         observation_ids.append(tuple(ids))
         vintage_ids.append(tuple(vintages))
     prepared_id = canonical_fingerprint(
@@ -338,11 +342,13 @@ def prepare_point_in_time_panel(
             "resolved": resolved.resolved_id,
             "observation_ids": observation_ids,
             "capacity": capacity,
+            "overflow": overflow.tolist(),
         }
     )
     prepared = PreparedPointInTimePanel(
         values=jnp.asarray(values),
         valid_mask=jnp.asarray(valid),
+        overflow=jnp.asarray(overflow),
         event_times_ns=jnp.asarray(event),
         published_times_ns=jnp.asarray(published),
         received_times_ns=jnp.asarray(received),
@@ -394,6 +400,7 @@ def replay_market_data(
         replayed.prepared_id == prepared.prepared_id
         and replayed.observation_ids == prepared.observation_ids
         and bool(jnp.array_equal(replayed.valid_mask, prepared.valid_mask))
+        and bool(jnp.array_equal(replayed.overflow, prepared.overflow))
         and bool(jnp.array_equal(replayed.values, prepared.values))
         and bool(
             jnp.array_equal(replayed.available_times_ns, prepared.available_times_ns)

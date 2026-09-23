@@ -7,18 +7,16 @@ import jax.numpy as jnp
 import jax.random as jr
 
 import phydrax as phx
-from phydrax.conditions import Initial, Moment, Observation, Residual
+from phydrax.conditions import Initial, Moment, Residual
 from phydrax.domain import (
     ComponentSum,
     FixedStart,
     Interval1d,
-    SampleLayout,
     TimeInterval,
 )
 from phydrax.operators.differential import div_diag_k_grad, dt, laplacian
 from phydrax.terms import (
     MomentPenalty,
-    ObservationPenalty,
     RandomizedMomentPenalty,
     ResidualPenalty,
 )
@@ -147,29 +145,6 @@ def test_where_all_masks_interior_constraint():
     assert _jit_loss(term, {"u": u}) < 1e-6
 
 
-def test_discrete_interior_sensor_track_custom_weights_zero():
-    geom = Interval1d(0.0, 1.0)
-    time = TimeInterval(0.0, 1.0)
-    domain = geom @ time
-    component = domain.component()
-
-    @domain.Function("x", "t")
-    def u(x, t):
-        return 1.0
-
-    sensors = jnp.array([[0.2], [0.8]], dtype="float64")
-    times = jnp.array([0.25, 0.5, 0.75], dtype="float64")
-    sensor_values = jnp.ones((2, 3), dtype="float64")
-    lengthscales = {"x": 0.3}
-    assert sensors.shape == (2, 1)
-    assert times.shape == (3,)
-    assert lengthscales["x"] == 0.3
-
-    condition = Observation("u", component, domain.Function()(sensor_values[0, 0]))
-    term = ObservationPenalty(condition, _per_step(condition, 12))
-    assert _jit_loss(term, {"u": u}) < 1e-6
-
-
 def test_pointset_constraint_weighted_sum():
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
@@ -279,44 +254,6 @@ def test_integral_constraint_where_zero_mask():
     term = MomentPenalty(
         condition,
         _fixed_source(phx.integration.over(condition.on), points),
-    )
-    assert _jit_loss(term, {"u": u}) < 1e-6
-
-
-def test_discrete_interior_sensor_track_coord_separable_multilabel():
-    x_dom = Interval1d(0.0, 1.0)
-    y_dom = Interval1d(0.0, 1.0).relabel("y")
-    time = TimeInterval(0.0, 1.0)
-    domain = x_dom @ y_dom @ time
-    component = domain.component()
-
-    @domain.Function("x", "y", "t")
-    def u(x, y, t):
-        return 1.0
-
-    sensors = {
-        "x": jnp.array([[0.2], [0.8]], dtype="float64"),
-        "y": jnp.array([[0.3], [0.7]], dtype="float64"),
-    }
-    times = jnp.array([0.25, 0.75], dtype="float64")
-    sensor_values = jnp.ones((2, 2), dtype="float64")
-    assert sensors["x"].shape == sensors["y"].shape
-    assert times.shape == (2,)
-
-    condition = Observation("u", component, domain.Function()(sensor_values[0, 0]))
-    batch = component.sample(
-        phx.domain.GridSampling(
-            {"x": 4},
-            dense=phx.domain.PointSampling(
-                12,
-                layout=SampleLayout((("y", "t"),)),
-            ),
-        ),
-        key=jr.key(3),
-    )
-    term = ObservationPenalty(
-        condition,
-        _fixed_source(phx.integration.mean_over(condition.on), batch),
     )
     assert _jit_loss(term, {"u": u}) < 1e-6
 

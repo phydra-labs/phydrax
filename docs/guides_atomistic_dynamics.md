@@ -175,15 +175,16 @@ coordinates. `PlanarWallProfileObserverPlan` accumulates fixed-group number, mas
 charge, tangential velocity, and peculiar-velocity temperature profiles.
 `MultiOriginCorrelationObserverPlan` retains a bounded origin ring and reports MSD
 and VACF tensors, origin counts, and covariance without storing a full trajectory.
-`DrivenSlipFitPlan` fits an explicitly selected bulk linear region and
-extrapolates to both exact wall planes. Degenerate shear, empty bins, and
-nonfinite regression covariance make the fit ineligible.
-`WallForceCorrelationPlan` accepts only an explicitly identified exact
-tangential wall-force channel and reports Green--Kubo friction with sampling
-covariance. A total-system force is not accepted as an implicit wall force.
-`DiffusionTensorFitPlan` requires an explicit lag window, minimum independent
-origins, finite covariance, nonnegative diagonal diffusion, and split-window
-stationarity.
+`DrivenSlipFitPlan.evaluate` fits an explicitly selected bulk linear region and
+extrapolates to both exact wall planes. `DiffusionTensorFitPlan.evaluate` requires an
+explicit lag window, minimum independent origins, finite covariance, nonnegative
+diagonal diffusion, and split-window stationarity. Both evaluations require the
+exact `support_id`, `system_id`, `force_field_id`, and `rollout_id` that own their
+observations. `WallForceCorrelationPlan` binds the same provenance identities at
+construction and accepts only an explicitly identified exact tangential wall-force
+channel. It reports Green--Kubo friction with sampling covariance; a total-system
+force is not accepted as an implicit wall force. Degenerate shear, empty bins, or
+nonfinite regression covariance make the corresponding fit ineligible.
 
 Admitted fits can become immutable `AtomisticNanoflowClosureArtifact` values with
 exact units, temperature/composition/confinement support, wall identities, force

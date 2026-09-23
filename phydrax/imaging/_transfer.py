@@ -55,6 +55,7 @@ class TransferEvidence(StrictModule):
 
 class ImageTransferResult(StrictModule):
     values: Array
+    valid: Array
     evidence: TransferEvidence
     transfer_id: str = eqx.field(static=True)
 
@@ -165,7 +166,7 @@ class ConservativeVoxelCellTransfer(StrictModule):
             self.cell_measures.shape + (1,) * len(payload)
         )
         evidence = self.evidence(values, cell)
-        return ImageTransferResult(cell, evidence, self.transfer_id)
+        return ImageTransferResult(cell, evidence.covered, evidence, self.transfer_id)
 
     def dual_pullback(self, cell_dual: ArrayLike, /) -> Array:
         dual = jnp.asarray(cell_dual)
@@ -294,7 +295,12 @@ class PreparedImageToP1Projection(StrictModule):
             finite,
             successful,
         )
-        return ImageTransferResult(result, evidence, self.projection_id)
+        return ImageTransferResult(
+            result,
+            jnp.broadcast_to(successful, (self.vertex_count,)),
+            evidence,
+            self.projection_id,
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -421,12 +427,14 @@ class TensorImageTransferPlan:
             rotations = np.broadcast_to(rotations, expected).copy()
         if rotations.shape != expected or not np.all(np.isfinite(rotations)):
             raise ValueError(f"reorientation must have shape {expected} or (3, 3).")
-        u, _, vh = np.linalg.svd(rotations)
-        orthogonal = u @ vh
-        if np.any(np.linalg.det(orthogonal) <= 0.0):
-            raise ValueError("Tensor reorientation must preserve orientation.")
+        gram = rotations @ np.swapaxes(rotations, -1, -2)
+        tolerance = 128.0 * np.finfo(rotations.dtype).eps
+        if not np.allclose(gram, np.eye(3), atol=tolerance, rtol=0.0):
+            raise ValueError("Tensor reorientation must be orthogonal.")
+        if np.any(np.linalg.det(rotations) <= 0.0):
+            raise ValueError("Tensor reorientation must be a proper rotation.")
         object.__setattr__(self, "query_points", points)
-        object.__setattr__(self, "reorientation", orthogonal)
+        object.__setattr__(self, "reorientation", rotations)
         object.__setattr__(
             self,
             "plan_id",
@@ -435,7 +443,7 @@ class TensorImageTransferPlan:
                     "kind": "tensor-image-transfer",
                     "image": self.image.tensor_image_id,
                     "points": array_tree_fingerprint(points),
-                    "rotation": array_tree_fingerprint(orthogonal),
+                    "rotation": array_tree_fingerprint(rotations),
                     "target_frame": target_frame,
                     "interpolation": self.interpolation.value,
                 }
@@ -495,7 +503,9 @@ class TensorImageTransferPlan:
             & finite
             & (minimum >= self.image.minimum_eigenvalue),
         )
-        return ImageTransferResult(jnp.asarray(symmetric), evidence, self.plan_id)
+        return ImageTransferResult(
+            jnp.asarray(symmetric), sampled.evidence.support, evidence, self.plan_id
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -555,7 +565,9 @@ class ProbabilityImageTransferPlan:
             & (partition_residual <= 1.0e-10)
             & jnp.all(normalized >= 0.0),
         )
-        return ImageTransferResult(normalized, evidence, self.plan_id)
+        return ImageTransferResult(
+            normalized, sampled.evidence.support, evidence, self.plan_id
+        )
 
 
 @dataclass(frozen=True, slots=True)
@@ -589,12 +601,14 @@ class LabelImageTransferPlan:
         shape = np.asarray(self.labels.asset.values.shape[:3])
         support = np.all((rounded >= 0) & (rounded < shape), axis=-1)
         clipped = np.clip(rounded, 0, shape - 1)
-        values = np.asarray(self.labels.asset.values)[tuple(np.moveaxis(clipped, -1, 0))]
+        sampled_values = np.asarray(self.labels.asset.values)[
+            tuple(np.moveaxis(clipped, -1, 0))
+        ]
         valid = np.asarray(self.labels.asset.valid_mask)[
             tuple(np.moveaxis(clipped, -1, 0))
         ]
         covered = support & valid
-        finite = np.all(np.isfinite(values[covered]))
+        finite = np.all(np.isfinite(sampled_values[covered]))
         fraction = np.mean(covered) if covered.size else 0.0
         zero = jnp.asarray(0.0)
         evidence = TransferEvidence(
@@ -607,7 +621,10 @@ class LabelImageTransferPlan:
             jnp.asarray(finite),
             jnp.asarray(finite and bool(np.all(covered))),
         )
-        return ImageTransferResult(jnp.asarray(values), evidence, self.plan_id)
+        values = np.where(covered, sampled_values, 0)
+        return ImageTransferResult(
+            jnp.asarray(values), jnp.asarray(covered), evidence, self.plan_id
+        )
 
 
 __all__ = [

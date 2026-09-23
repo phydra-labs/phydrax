@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import json
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -11,6 +13,7 @@ import optax
 import pytest
 
 import phydrax as phx
+import phydrax.solver.functional_decomposition._export as decomposition_export
 
 
 def _fixed_penalty(condition, count=8):
@@ -302,7 +305,7 @@ def test_arbitrary_hierarchy_trains_ordered_nonlinear_corrections():
     assert float(result.solver.loss(key=jr.key(7))) < float(base.loss(key=jr.key(7)))
 
 
-def test_sharding_hybrid_and_deployment_roundtrip(tmp_path):
+def test_sharding_hybrid_and_deployment_roundtrip(tmp_path, monkeypatch):
     problem = _pou_problem()
     family = problem.family
     plan = phx.solver.FunctionalDecompositionShardingPlan(family.cover)
@@ -321,6 +324,21 @@ def test_sharding_hybrid_and_deployment_roundtrip(tmp_path):
     )
 
     phx.solver.save_decomposition_artifact(tmp_path / "deployment", artifact)
+    checkpoint_directory = tmp_path / "deployment"
+    state_path = next(checkpoint_directory.glob("state-*.eqx"))
+    deserialize = decomposition_export.eqx.tree_deserialise_leaves
+
+    def replace_path_after_open(state_stream, *args, **kwargs):
+        replacement = checkpoint_directory / "replacement.eqx"
+        replacement.write_bytes(b"replacement")
+        replacement.replace(state_path)
+        return deserialize(state_stream, *args, **kwargs)
+
+    monkeypatch.setattr(
+        decomposition_export.eqx,
+        "tree_deserialise_leaves",
+        replace_path_after_open,
+    )
     restored = phx.solver.load_decomposition_artifact(
         tmp_path / "deployment",
         artifact,
@@ -329,6 +347,20 @@ def test_sharding_hybrid_and_deployment_roundtrip(tmp_path):
     assert sharded.evidence.verified
     assert eqx.tree_equal(restored.family.fields, artifact.family.fields)
     assert restored.artifact_id == artifact.artifact_id
+    phx.solver.save_decomposition_artifact(checkpoint_directory, artifact)
+    manifest_path = checkpoint_directory / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["state_file"] = f"../{manifest['state_file']}"
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="canonical basename"):
+        phx.solver.load_decomposition_artifact(checkpoint_directory, artifact)
+
+    phx.solver.save_decomposition_artifact(checkpoint_directory, artifact)
+    manifest = json.loads(manifest_path.read_text())
+    manifest["state_sha256"] = "not-a-checksum"
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="checksum is invalid"):
+        phx.solver.load_decomposition_artifact(checkpoint_directory, artifact)
 
 
 def test_generalized_trace_aitken_and_bounded_asynchronous_schedule():

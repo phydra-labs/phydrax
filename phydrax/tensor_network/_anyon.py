@@ -800,8 +800,7 @@ class AnyonicTensor(StrictModule):
                 "blocks": tuple(
                     {
                         "charges": block.charges,
-                        "shape": tuple(block.data.shape),
-                        "dtype": str(block.data.dtype),
+                        "value": array_tree_fingerprint(block.data),
                     }
                     for block in blocks_
                 ),

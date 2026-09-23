@@ -4,7 +4,8 @@
 
 from __future__ import annotations
 
-from math import prod
+from math import isfinite, prod
+from numbers import Integral
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -35,11 +36,26 @@ class BoundaryMPSPolicy(StrictModule):
         maximum_tensor_elements: int = 100_000_000,
         maximum_workspace_bytes: int = 2**31,
     ):
+        if any(
+            not isinstance(value, Integral) or isinstance(value, bool)
+            for value in (
+                maximum_bond_dimension,
+                maximum_tensor_elements,
+                maximum_workspace_bytes,
+            )
+        ):
+            raise TypeError("Boundary-MPS dimensions and budgets must be integers.")
         bond = int(maximum_bond_dimension)
         cutoff = float(singular_value_cutoff)
         tensor_elements = int(maximum_tensor_elements)
         workspace = int(maximum_workspace_bytes)
-        if bond < 1 or cutoff < 0.0 or tensor_elements < 1 or workspace < 1:
+        if (
+            bond < 1
+            or not isfinite(cutoff)
+            or cutoff < 0.0
+            or tensor_elements < 1
+            or workspace < 1
+        ):
             raise ValueError(
                 "Boundary-MPS policy values are outside their finite positive ranges."
             )

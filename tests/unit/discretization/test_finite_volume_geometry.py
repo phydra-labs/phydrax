@@ -182,13 +182,47 @@ def test_diffuse_sdf_ramp_is_honestly_unqualified():
         del time, args
         return points[..., 0] - 0.35
 
-    diffuse = MACDiffuseSDFGeometryPlan(
+    plan = MACDiffuseSDFGeometryPlan(
         operators,
         plane,
         lambda points, time, args: jnp.zeros_like(points),
         field_id="diffuse-plane",
         interface_width=0.1,
-    ).evaluate(0.0)
+    )
+    diffuse = plan.evaluate(0.0)
 
     assert diffuse.successful
     assert not isinstance(diffuse, QualifiedSharpGeometry)
+
+
+def test_diffuse_sdf_refresh_requires_matching_plan_and_positive_paired_step():
+    discretization = phx.discretization.FiniteVolumePlan(_cell_grid((4, 4))).prepare()
+    operators = phx.discretization.MACOperatorPlan(discretization).prepare()
+
+    def plane(points, time, args):
+        del time, args
+        return points[..., 0] - 0.35
+
+    velocity = lambda points, time, args: jnp.zeros_like(points)
+    first = MACDiffuseSDFGeometryPlan(
+        operators,
+        plane,
+        velocity,
+        field_id="first-diffuse-plane",
+        interface_width=0.1,
+    )
+    second = MACDiffuseSDFGeometryPlan(
+        operators,
+        plane,
+        velocity,
+        field_id="second-diffuse-plane",
+        interface_width=0.1,
+    )
+    previous = first.evaluate(0.0)
+
+    with pytest.raises(ValueError, match="supplied together"):
+        first.evaluate(0.1, previous=previous)
+    with pytest.raises(ValueError, match="another plan"):
+        second.evaluate(0.1, previous=previous, step_size=0.1)
+    with pytest.raises(Exception, match="finite and positive"):
+        first.evaluate(0.1, previous=previous, step_size=0.0)

@@ -508,6 +508,23 @@ def _evaluate_unstructured_particle_transport(
     boundary,
 ):
     _validate_boundary(boundary, batch, state.internal_energy.dtype)
+    boundary_valid = (
+        jnp.all(jnp.isfinite(boundary.temperature) & (boundary.temperature > 0.0))
+        & jnp.all(
+            jnp.isfinite(boundary.heat_transfer_coefficient)
+            & (boundary.heat_transfer_coefficient >= 0.0)
+        )
+        & jnp.all(
+            jnp.isfinite(boundary.species_concentration)
+            & (boundary.species_concentration >= 0.0)
+        )
+        & jnp.all(
+            jnp.isfinite(boundary.mass_transfer_coefficient)
+            & (boundary.mass_transfer_coefficient >= 0.0)
+        )
+        & jnp.all(jnp.isfinite(boundary.prescribed_heat_rate))
+        & jnp.all(jnp.isfinite(boundary.prescribed_species_rate))
+    )
     active_cells = jnp.broadcast_to(
         state.active[:, None], (batch.particle_count, batch.cell_capacity)
     )
@@ -655,6 +672,7 @@ def _evaluate_unstructured_particle_transport(
     successful = (
         metrics.successful
         & thermodynamics.successful
+        & boundary_valid
         & jnp.all(jnp.isfinite(energy_rate))
         & jnp.all(jnp.isfinite(species_rate))
         & (

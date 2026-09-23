@@ -61,26 +61,40 @@ class FinanceRecordBatch(StrictModule, NonTrainableState):
         *,
         primary_key: Sequence[str],
         context: Mapping[str, Any] | None = None,
+        columns: Sequence[str] | None = None,
     ):
         kind = _text(record_kind, "record_kind")
         if not isinstance(records, Sequence) or isinstance(records, (str, bytes)):
             raise TypeError("records must be a sequence of mappings.")
         values = tuple(records)
-        if not values or any(not isinstance(record, Mapping) for record in values):
-            raise TypeError("records must contain at least one mapping.")
-        columns = tuple(sorted(_text(str(name), "column name") for name in values[0]))
-        if not columns or any(set(record) != set(columns) for record in values):
-            raise ValueError(
-                "Every finance record must contain the same non-empty columns."
+        if any(not isinstance(record, Mapping) for record in values):
+            raise TypeError("records must contain only mappings.")
+        if values:
+            inferred = tuple(
+                sorted(_text(str(name), "column name") for name in values[0])
             )
+            if not inferred or any(set(record) != set(inferred) for record in values):
+                raise ValueError(
+                    "Every finance record must contain the same non-empty columns."
+                )
+            if (
+                columns is not None
+                and tuple(sorted(_names(columns, "columns"))) != inferred
+            ):
+                raise ValueError("Declared columns do not match finance records.")
+            columns_ = inferred
+        else:
+            if columns is None:
+                raise ValueError("Empty finance records require explicit columns.")
+            columns_ = tuple(sorted(_names(columns, "columns")))
         key = _names(primary_key, "primary_key")
-        if not set(key).issubset(columns):
+        if not set(key).issubset(columns_):
             raise ValueError("Every primary-key field must be a record column.")
         encoded = tuple(
-            tuple(canonical_json(record[column]) for column in columns)
+            tuple(canonical_json(record[column]) for column in columns_)
             for record in values
         )
-        indices = tuple(columns.index(name) for name in key)
+        indices = tuple(columns_.index(name) for name in key)
         encoded = tuple(
             sorted(
                 encoded,
@@ -96,13 +110,13 @@ class FinanceRecordBatch(StrictModule, NonTrainableState):
         content = {
             "kind": "finance-record-batch",
             "record_kind": kind,
-            "columns": list(columns),
+            "columns": list(columns_),
             "primary_key": list(key),
             "rows": [list(row) for row in encoded],
             "context": json.loads(context_json),
         }
         self.record_kind = kind
-        self.columns = columns
+        self.columns = columns_
         self.primary_key = key
         self.encoded_rows = encoded
         self.context_json = context_json
@@ -193,6 +207,7 @@ class FinanceRecordBatch(StrictModule, NonTrainableState):
             decoded,
             primary_key=tuple(str(item) for item in primary_key),
             context=context,
+            columns=column_names,
         )
         if value.columns != column_names or record["batch_id"] != value.batch_id:
             raise ValueError("Serialized finance record batch identity is invalid.")

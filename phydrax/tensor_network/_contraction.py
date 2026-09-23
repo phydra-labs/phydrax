@@ -7,7 +7,8 @@ from __future__ import annotations
 from collections import OrderedDict
 from collections.abc import Sequence
 from math import prod
-from time import monotonic
+from multiprocessing import get_context
+from numbers import Integral
 
 import equinox as eqx
 import jax
@@ -15,7 +16,7 @@ import jax.numpy as jnp
 import opt_einsum as oe
 from jaxtyping import Array, ArrayLike
 
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._precision import precision_itemsize, PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
@@ -61,6 +62,10 @@ class ContractionResourcePolicy(StrictModule):
                 maximum_schedule_steps,
             )
         )
+        if any(
+            not isinstance(value, Integral) or isinstance(value, bool) for value in values
+        ):
+            raise TypeError("Contraction resource limits must be integers.")
         if any(value < 1 for value in values):
             raise ValueError("Contraction resource limits must be positive.")
         self.maximum_operand_elements = values[0]
@@ -86,6 +91,10 @@ class ContractionPlannerPolicy(StrictModule):
         maximum_search_states: int = 250_000,
         maximum_planning_seconds: float = 30.0,
     ):
+        if not isinstance(maximum_search_states, Integral) or isinstance(
+            maximum_search_states, bool
+        ):
+            raise TypeError("maximum_search_states must be an integer.")
         states = int(maximum_search_states)
         seconds = float(maximum_planning_seconds)
         if states < 1 or not 0.0 < seconds < float("inf"):
@@ -133,6 +142,7 @@ class PreparedContraction(StrictModule):
     operands: tuple[Array, ...]
     numeric_version: Array
     prepared_id: str = eqx.field(static=True)
+    operand_id: str = eqx.field(static=True)
 
 
 class ContractionExecutionEvidence(StrictModule):
@@ -166,6 +176,8 @@ class ContractionPlanCache(NonTrainableState):
     """Caller-owned, capacity-bounded host cache; no process-global cache exists."""
 
     def __init__(self, capacity: int = 32, /):
+        if not isinstance(capacity, Integral) or isinstance(capacity, bool):
+            raise TypeError("Contraction plan cache capacity must be an integer.")
         capacity_ = int(capacity)
         if capacity_ < 1:
             raise ValueError("Contraction plan cache capacity must be positive.")
@@ -190,6 +202,59 @@ class ContractionPlanCache(NonTrainableState):
 
     def __len__(self) -> int:
         return len(self._plans)
+
+
+def _bounded_contract_path_worker(connection, equation, shapes, optimizer) -> None:
+    try:
+        path, information = oe.contract_path(
+            equation,
+            *shapes,
+            shapes=True,
+            optimize=optimizer,
+        )
+        connection.send(
+            (
+                tuple(tuple(int(index) for index in step) for step in path),
+                int(information.opt_cost),
+                None,
+            )
+        )
+    except BaseException as error:
+        connection.send((None, None, f"{type(error).__name__}: {error}"))
+    finally:
+        connection.close()
+
+
+def _bounded_contract_path(
+    equation: str,
+    shapes: tuple[tuple[int, ...], ...],
+    optimizer: str,
+    timeout: float,
+    /,
+) -> tuple[tuple[tuple[int, ...], ...], int]:
+    context = get_context("spawn")
+    receiver, sender = context.Pipe(duplex=False)
+    process = context.Process(
+        target=_bounded_contract_path_worker,
+        args=(sender, equation, shapes, optimizer),
+    )
+    process.start()
+    sender.close()
+    process.join(timeout)
+    if process.is_alive():
+        process.terminate()
+        process.join()
+        receiver.close()
+        raise TimeoutError("Contraction planning exceeded maximum_planning_seconds.")
+    if not receiver.poll():
+        exitcode = process.exitcode
+        receiver.close()
+        raise RuntimeError(f"Contraction planner worker exited with code {exitcode}.")
+    path, flops, error = receiver.recv()
+    receiver.close()
+    if error is not None:
+        raise RuntimeError(f"Contraction planner failed: {error}")
+    return path, flops
 
 
 def _equation(structure: ContractionStructure, /) -> str:
@@ -255,6 +320,10 @@ def plan_contraction(
     if optimizer not in ("greedy", "optimal"):
         raise ValueError("optimizer must be 'greedy' or 'optimal'.")
     dtype_ = jnp.dtype(dtype).name
+    precision_probe = jnp.empty((), dtype=dtype_)
+    contraction_probe = precision_.contraction(precision_probe)
+    contraction_dtype = str(contraction_probe.dtype)
+    output_dtype = str(precision_.output(contraction_probe).dtype)
     key = _plan_cache_key(structure, resources_, planner_, precision_, optimizer, dtype_)
     if cache is not None:
         cached = cache.lookup(key)
@@ -277,20 +346,26 @@ def plan_contraction(
         )
 
     equation = _equation(structure)
-    started = monotonic()
-    path, information = oe.contract_path(
-        equation, *shapes, shapes=True, optimize=optimizer
+    path_, planner_flops = _bounded_contract_path(
+        equation,
+        shapes,
+        optimizer,
+        planner_.maximum_planning_seconds,
     )
-    elapsed = monotonic() - started
-    if elapsed > planner_.maximum_planning_seconds:
-        raise TimeoutError("Contraction planning exceeded maximum_planning_seconds.")
-    path_ = tuple(tuple(step) for step in path)
-    schedule = build_contraction_schedule(structure, path_, dtype=dtype_)
+    if path_ and len(path_[-1]) == 1:
+        path_ = path_[:-1]
+    schedule = build_contraction_schedule(
+        structure,
+        path_,
+        dtype=contraction_dtype,
+    )
     largest = max(
         (step.output_elements for step in schedule.steps), default=output_elements
     )
-    flops = max(int(information.opt_cost), schedule.total_estimated_flops)
-    workspace_bytes = schedule.peak_live_bytes
+    flops = max(planner_flops, schedule.total_estimated_flops)
+    storage_operand_bytes = operand_elements * precision_itemsize(dtype_)
+    output_bytes = output_elements * precision_itemsize(output_dtype)
+    workspace_bytes = storage_operand_bytes + schedule.peak_live_bytes + output_bytes
     if len(schedule.steps) > resources_.maximum_schedule_steps:
         raise MemoryError("Contraction path exceeds maximum_schedule_steps.")
     if largest > resources_.maximum_intermediate_elements:
@@ -305,7 +380,7 @@ def plan_contraction(
         largest,
         workspace_bytes,
         schedule.peak_live_elements,
-        schedule.peak_live_bytes,
+        workspace_bytes,
         flops,
         search_bound,
     )
@@ -362,14 +437,27 @@ def prepare_contraction(
     if not isinstance(plan, ContractionPlan):
         raise TypeError("plan must be ContractionPlan.")
     arrays = _validate_operands(plan, operands)
+    operand_id = canonical_fingerprint(
+        {
+            "kind": "contraction-operands",
+            "plan": plan.plan_id,
+            "values": array_tree_fingerprint(arrays),
+        }
+    )
     prepared_id = canonical_fingerprint(
-        {"kind": "prepared-contraction", "plan": plan.plan_id}
+        {
+            "kind": "prepared-contraction",
+            "plan": plan.plan_id,
+            "operands": operand_id,
+            "numeric_version": 0,
+        }
     )
     return PreparedContraction(
         plan,
         arrays,
         jnp.asarray(0, dtype=jnp.int32),
         prepared_id,
+        operand_id,
     )
 
 
@@ -381,11 +469,28 @@ def refresh_contraction(
     if not isinstance(prepared, PreparedContraction):
         raise TypeError("prepared must be PreparedContraction.")
     arrays = _validate_operands(prepared.plan, operands)
+    version = prepared.numeric_version + 1
+    operand_id = canonical_fingerprint(
+        {
+            "kind": "contraction-operands",
+            "plan": prepared.plan.plan_id,
+            "values": array_tree_fingerprint(arrays),
+        }
+    )
+    prepared_id = canonical_fingerprint(
+        {
+            "kind": "prepared-contraction",
+            "plan": prepared.plan.plan_id,
+            "operands": operand_id,
+            "numeric_version": int(version),
+        }
+    )
     return PreparedContraction(
         prepared.plan,
         arrays,
-        prepared.numeric_version + 1,
-        prepared.prepared_id,
+        version,
+        prepared_id,
+        operand_id,
     )
 
 
@@ -431,6 +536,8 @@ def _execution_evidence(
             "kind": "contraction-replay",
             "schedule": plan.schedule.schedule_id,
             "prepared": prepared.prepared_id,
+            "operands": prepared.operand_id,
+            "numeric_version": int(prepared.numeric_version),
         }
     )
     return ContractionExecutionEvidence(
@@ -444,7 +551,7 @@ def _execution_evidence(
         replay_id,
         True,
         plan.claim,
-        plan.schedule.peak_live_bytes,
+        plan.cost.peak_live_bytes,
         prepared.numeric_version,
     )
 
@@ -473,11 +580,15 @@ def execute_contraction_reverse(
     if rematerialization not in ("store", "rematerialize"):
         raise ValueError("rematerialization must be 'store' or 'rematerialize'.")
     plan = prepared.plan
+    contraction_probe = plan.precision.contraction(
+        jnp.empty((), dtype=prepared.operands[0].dtype)
+    )
+    output_probe = plan.precision.output(contraction_probe)
     operand_bytes = sum(
-        operand.size * precision_itemsize(str(operand.dtype))
+        operand.size * precision_itemsize(str(contraction_probe.dtype))
         for operand in prepared.operands
     )
-    output_bytes = plan.cost.output_elements * precision_itemsize(plan.dtype)
+    output_bytes = plan.cost.output_elements * precision_itemsize(str(output_probe.dtype))
     reverse = reverse_schedule_evidence(
         plan.schedule,
         rematerialization=rematerialization,

@@ -22,9 +22,10 @@ from ...stochastic import (
     measure_changed_target,
 )
 from ..contracts._credit import DefaultEventState
-from ..core import Currency, FinanceEvidenceBinding
+from ..core import Currency, FinanceDate, FinanceEvidenceBinding
 from ._collateral import (
     CloseoutConvention,
+    CloseoutIdentityBinding,
     CloseoutPath,
     CollateralPath,
     evolve_collateral,
@@ -168,6 +169,62 @@ class PathWeighting(StrictModule):
         return 1.0 / jnp.sum(self.weights**2)
 
 
+class DiscountFactorPath(StrictModule):
+    """Discount factors bound to their exact curve, law, currency, and time grid."""
+
+    times: Array
+    values: Array
+    currency: Currency = eqx.field(static=True)
+    valuation_date: FinanceDate = eqx.field(static=True)
+    curve_id: str = eqx.field(static=True)
+    pricing_law_id: str = eqx.field(static=True)
+    path_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        times: ArrayLike,
+        values: ArrayLike,
+        currency: Currency,
+        valuation_date: FinanceDate,
+        /,
+        *,
+        curve_id: str,
+        pricing_law_id: str,
+    ):
+        nodes = _time_grid(times)
+        discounts = jnp.asarray(values, dtype=jnp.float64)
+        if discounts.ndim not in (1, 2) or discounts.shape[-1] != nodes.shape[0]:
+            raise ValueError("discount factors must have shape (time,) or (path, time).")
+        discounts = eqx.error_if(
+            discounts,
+            jnp.any(~jnp.isfinite(discounts) | (discounts <= 0.0)),
+            "Discount factors must be finite and positive.",
+        )
+        if not isinstance(currency, Currency):
+            raise TypeError("currency must be a Currency.")
+        if not isinstance(valuation_date, FinanceDate):
+            raise TypeError("valuation_date must be a FinanceDate.")
+        curve = _identifier(curve_id, "curve_id")
+        law = _identifier(pricing_law_id, "pricing_law_id")
+        self.times = nodes
+        self.values = discounts
+        self.currency = currency
+        self.valuation_date = valuation_date
+        self.curve_id = curve
+        self.pricing_law_id = law
+        self.path_id = canonical_fingerprint(
+            {
+                "kind": "finance-discount-factor-path",
+                "times": np.asarray(nodes).tolist(),
+                "values": np.asarray(discounts).tolist(),
+                "currency": currency.currency_id,
+                "valuation_date": valuation_date.ordinal,
+                "curve": curve,
+                "pricing_law": law,
+            }
+        )
+
+
 class WrongWayRiskLink(StrictModule):
     """Audited joint-law link; correlation is never inferred from path values."""
 
@@ -226,6 +283,7 @@ class ExposureSimulationPlan(StrictModule):
     netting_set: NettingSet
     collateral: PreparedCollateralAgreement
     closeout: CloseoutConvention
+    closeout_binding: CloseoutIdentityBinding
     default_dependence: DefaultDependence = eqx.field(static=True)
     wrong_way_risk: WrongWayRiskLink | None = eqx.field(static=True)
     counterparty_default_law_id: str = eqx.field(static=True)
@@ -239,6 +297,7 @@ class ExposureSimulationPlan(StrictModule):
         netting_set: NettingSet,
         collateral: PreparedCollateralAgreement,
         closeout: CloseoutConvention,
+        closeout_binding: CloseoutIdentityBinding,
         /,
         *,
         default_dependence: DefaultDependence,
@@ -255,6 +314,10 @@ class ExposureSimulationPlan(StrictModule):
             raise TypeError("collateral must be a PreparedCollateralAgreement.")
         if not isinstance(closeout, CloseoutConvention):
             raise TypeError("closeout must be a CloseoutConvention.")
+        if not isinstance(closeout_binding, CloseoutIdentityBinding):
+            raise TypeError("closeout_binding must be a CloseoutIdentityBinding.")
+        if closeout_binding.netting_set_id != netting_set.netting_set_id:
+            raise ValueError("Closeout binding and netting set identities differ.")
         if collateral.agreement.netting_set_id != netting_set.netting_set_id:
             raise ValueError("Collateral agreement and netting set identities differ.")
         if (
@@ -272,6 +335,12 @@ class ExposureSimulationPlan(StrictModule):
         counterparty_id = _identifier(
             counterparty_default_law_id, "counterparty_default_law_id"
         )
+        own_id = _identifier(own_default_law_id, "own_default_law_id")
+        if (
+            closeout_binding.counterparty_law_id != counterparty_id
+            or closeout_binding.own_law_id != own_id
+        ):
+            raise ValueError("Closeout binding and exposure default laws differ.")
         if wrong_way_risk is not None:
             if wrong_way_risk.exposure_law_id != pricing_id:
                 raise ValueError("WWR exposure law differs from the plan pricing law.")
@@ -280,10 +349,11 @@ class ExposureSimulationPlan(StrictModule):
         self.netting_set = netting_set
         self.collateral = collateral
         self.closeout = closeout
+        self.closeout_binding = closeout_binding
         self.default_dependence = default_dependence
         self.wrong_way_risk = wrong_way_risk
         self.counterparty_default_law_id = counterparty_id
-        self.own_default_law_id = _identifier(own_default_law_id, "own_default_law_id")
+        self.own_default_law_id = own_id
         self.pricing_law_id = pricing_id
         self.discount_curve_id = _identifier(discount_curve_id, "discount_curve_id")
         self.plan_id = _identifier(plan_id, "plan_id")
@@ -421,7 +491,7 @@ def simulate_exposure(
     trade_values: PathwiseTradeValues,
     counterparty_default: DefaultEventState,
     own_default: DefaultEventState,
-    discount_factors: ArrayLike,
+    discount_factors: DiscountFactorPath,
     weighting: PathWeighting,
     /,
     *,
@@ -436,6 +506,8 @@ def simulate_exposure(
         raise TypeError("trade_values must be PathwiseTradeValues.")
     if not isinstance(weighting, PathWeighting):
         raise TypeError("weighting must be a PathWeighting.")
+    if not isinstance(discount_factors, DiscountFactorPath):
+        raise TypeError("discount_factors must be a DiscountFactorPath.")
     if trade_values.pricing_law_id != plan.pricing_law_id:
         raise ValueError("Trade-value pricing law differs from the exposure plan.")
     if (
@@ -475,6 +547,15 @@ def simulate_exposure(
             raise ValueError(
                 "Wrong-way exposure requires weighting from the plan's WWR link."
             )
+        if wrong_way_result.source_weighting_id != weighting.weighting_id:
+            raise ValueError(
+                "Wrong-way exposure weighting does not derive from the supplied source weighting."
+            )
+        if (
+            wrong_way_result.weighting.independence_labels
+            != weighting.independence_labels
+        ):
+            raise ValueError("Wrong-way exposure path labels do not match.")
         active_weighting = wrong_way_result.weighting
     else:
         if wrong_way_result is not None:
@@ -494,16 +575,25 @@ def simulate_exposure(
         raise ValueError(
             "Independent exposure requires distinct market/default couplings."
         )
-    discounts = jnp.asarray(discount_factors, dtype=jnp.float64)
+    if discount_factors.curve_id != plan.discount_curve_id:
+        raise ValueError("Discount factors do not use the exposure plan curve.")
+    if discount_factors.pricing_law_id != plan.pricing_law_id:
+        raise ValueError("Discount factors do not use the exposure pricing law.")
+    if (
+        discount_factors.currency.currency_id
+        != plan.netting_set.base_currency.currency_id
+    ):
+        raise ValueError("Discount factors use the wrong currency.")
+    if not np.array_equal(
+        np.asarray(jax.device_get(discount_factors.times)),
+        np.asarray(jax.device_get(trade_values.times)),
+    ):
+        raise ValueError("Discount-factor and exposure time grids differ.")
+    discounts = discount_factors.values
     if discounts.shape == (time_count,):
         discounts = jnp.broadcast_to(discounts, (path_count, time_count))
     if discounts.shape != (path_count, time_count):
-        raise ValueError("discount_factors must have shape (time,) or (path, time).")
-    discounts = eqx.error_if(
-        discounts,
-        jnp.any(~jnp.isfinite(discounts) | (discounts <= 0.0)),
-        "Discount factors must be finite and positive.",
-    )
+        raise ValueError("Discount-factor path count does not match exposure paths.")
 
     # The order below is intentional and externally observable.
     netted = net_trade_values(trade_values.values, plan.netting_set)
@@ -518,6 +608,7 @@ def simulate_exposure(
         collateral,
         plan.collateral.agreement,
         plan.closeout,
+        plan.closeout_binding,
         counterparty_default,
         own_default,
         replacement_values=replacement_values,
@@ -690,6 +781,7 @@ def exposure_evidence(
 
 __all__ = [
     "DefaultDependence",
+    "DiscountFactorPath",
     "ExposureEvidence",
     "ExposureProfile",
     "ExposureSimulationPlan",

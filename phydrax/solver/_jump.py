@@ -68,10 +68,13 @@ def _time_interval(
     end = jnp.asarray(t1, dtype=jnp.float64)
     if start.shape != () or end.shape != ():
         raise ValueError("Jump solve time bounds must be scalar.")
-    if bool(~(jnp.isfinite(start) & jnp.isfinite(end) & (end > start))):
-        raise ValueError("Jump solve requires finite bounds with t1 > t0.")
-    if bool((start < support[0]) | (end > support[1])):
-        raise ValueError("Jump solve interval must lie within realization support.")
+    valid = jnp.isfinite(start) & jnp.isfinite(end) & (end > start)
+    start = eqx.error_if(start, ~valid, "Jump solve requires finite bounds with t1 > t0.")
+    end = eqx.error_if(
+        end,
+        (start < support[0]) | (end > support[1]),
+        "Jump solve interval must lie within realization support.",
+    )
     return start, end
 
 
@@ -79,10 +82,16 @@ def _query_times(values: ArrayLike, /, *, t0: Array, t1: Array) -> Array:
     times = jnp.asarray(values, dtype=jnp.float64)
     if times.ndim != 1 or times.shape[0] <= 0:
         raise ValueError("save_times must be a non-empty vector.")
-    if bool(jnp.any(~jnp.isfinite(times))) or bool(jnp.any(jnp.diff(times) <= 0.0)):
-        raise ValueError("save_times must be finite and strictly increasing.")
-    if bool((times[0] < t0) | (times[-1] > t1)):
-        raise ValueError("save_times must lie within the solve interval.")
+    times = eqx.error_if(
+        times,
+        jnp.any(~jnp.isfinite(times)) | jnp.any(jnp.diff(times) <= 0.0),
+        "save_times must be finite and strictly increasing.",
+    )
+    times = eqx.error_if(
+        times,
+        (times[0] < t0) | (times[-1] > t1),
+        "save_times must lie within the solve interval.",
+    )
     return times
 
 
@@ -92,8 +101,11 @@ def _initial_state(process: AbstractJumpProcess, value: ArrayLike, /) -> Array:
         raise ValueError(
             f"initial_state must have shape {process.state_shape}; got {state.shape}."
         )
-    if bool(jnp.any(~jnp.isfinite(state))):
-        raise ValueError("initial_state must be finite.")
+    state = eqx.error_if(
+        state,
+        jnp.any(~jnp.isfinite(state)),
+        "initial_state must be finite.",
+    )
     return state
 
 
@@ -1150,6 +1162,7 @@ def _record_deterministic_event(
     state_after: Array,
     guard_residual: Array,
     transversality: Array,
+    saltation_valid: Array,
     determinant_sign: Array,
     log_abs_determinant: Array,
     log_jacobian_valid: Array,
@@ -1183,7 +1196,7 @@ def _record_deterministic_event(
             jnp.where(write, transversality, tape.transversality[safe_slot])
         ),
         tape.saltation_valid.at[safe_slot].set(
-            jnp.where(write, True, tape.saltation_valid[safe_slot])
+            jnp.where(write, saltation_valid, tape.saltation_valid[safe_slot])
         ),
         tape.determinant_signs.at[safe_slot].set(
             jnp.where(write, determinant_sign, tape.determinant_signs[safe_slot])
@@ -1545,6 +1558,7 @@ def _hybrid_one(
                         dtype=jnp.int32,
                     )
                     winner_transversality = jnp.asarray(0.0, dtype=save_times.dtype)
+                    winner_saltation_valid = jnp.asarray(False)
                     winner_determinant_sign = jnp.asarray(1.0, dtype=save_times.dtype)
                     winner_log_abs_determinant = jnp.asarray(0.0, dtype=save_times.dtype)
                     winner_log_jacobian_valid = jnp.asarray(False)
@@ -1647,6 +1661,11 @@ def _hybrid_one(
                             choose,
                             localized.transversality,
                             winner_transversality,
+                        )
+                        winner_saltation_valid = jnp.where(
+                            choose,
+                            localized.successful,
+                            winner_saltation_valid,
                         )
                         winner_determinant_sign = jnp.where(
                             choose,
@@ -1860,6 +1879,7 @@ def _hybrid_one(
                         reset_state,
                         guard_residual,
                         winner_transversality,
+                        winner_saltation_valid,
                         winner_determinant_sign,
                         winner_log_abs_determinant,
                         winner_log_jacobian_valid,

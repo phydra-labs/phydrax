@@ -3,6 +3,7 @@
 #
 
 import jax.numpy as jnp
+import pytest
 
 import phydrax as phx
 
@@ -110,3 +111,76 @@ def test_homogeneous_hypersurface_patch_residue_and_measure():
     )
     assert bool(integral.valid)
     assert jnp.allclose(integral.normalized_value, 1.0)
+
+
+def test_density_manifolds_preserve_product_batch_semantics():
+    bures = phx.metrix.BuresDensityManifold(2)
+    densities = jnp.stack(
+        (
+            0.5 * jnp.eye(2, dtype=jnp.complex128),
+            jnp.diag(jnp.asarray([0.7, 0.3], dtype=jnp.complex128)),
+        )
+    )
+    tangents = jnp.asarray(
+        (
+            ((0.1, 0.05j), (-0.05j, -0.1)),
+            ((-0.2, 0.03j), (-0.03j, 0.2)),
+        ),
+        dtype=jnp.complex128,
+    )
+
+    batched_inner = bures.inner(densities, tangents, tangents)
+    individual_inner = sum(
+        bures.inner(density, tangent, tangent)
+        for density, tangent in zip(densities, tangents, strict=True)
+    )
+    retracted = bures.retract(densities, 0.01 * tangents)
+
+    assert jnp.asarray(bures.contains(densities)).shape == ()
+    assert bures.contains(densities)
+    assert jnp.asarray(bures.constraint_residual(densities)).shape == ()
+    assert jnp.allclose(batched_inner, individual_inner)
+    assert retracted.shape == densities.shape
+    assert bures.contains(retracted)
+
+    fixed_rank = phx.metrix.FixedRankDensityManifold(2, 1)
+    factors = jnp.asarray(
+        (
+            ((1.0 + 0.0j,), (0.0j,)),
+            ((0.0j,), (1.0 + 0.0j,)),
+        )
+    )
+    ambient = jnp.asarray(
+        (
+            ((0.2 + 0.1j,), (0.3 - 0.2j,)),
+            ((-0.4 + 0.2j,), (0.1 + 0.3j,)),
+        )
+    )
+    projected = fixed_rank.project_tangent(factors, ambient)
+    radial = jnp.sum(jnp.real(jnp.conj(factors) * projected), axis=(-2, -1))
+    updated = fixed_rank.retract(factors, 0.01 * projected)
+
+    assert fixed_rank.contains(factors)
+    assert jnp.allclose(radial, 0.0, atol=1e-10)
+    assert jnp.allclose(
+        jnp.sum(jnp.abs(updated) ** 2, axis=(-2, -1)),
+        1.0,
+    )
+
+
+@pytest.mark.parametrize("hbar", [0.0, -1.0, float("nan")])
+def test_bosonic_gaussian_constructors_reject_invalid_hbar(hbar):
+    with pytest.raises(ValueError, match="hbar"):
+        phx.metrix.BosonicGaussianState(
+            jnp.zeros((2,)),
+            jnp.eye(2),
+            hbar=hbar,
+        )
+    with pytest.raises(ValueError, match="hbar"):
+        phx.metrix.BosonicGaussianChannel(
+            jnp.eye(2),
+            jnp.eye(2),
+            jnp.zeros((2,)),
+            channel_id="invalid-hbar",
+            hbar=hbar,
+        )

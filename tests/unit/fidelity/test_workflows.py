@@ -92,6 +92,31 @@ def test_fidelity_hierarchy_dataset_split_and_archive(tmp_path):
     assert restored.dataset_id == dataset.dataset_id
     assert len(restored.paired("low", "high")) == 6
 
+    first = dataset.evaluations[0]
+    with_result = phx.fidelity.FidelityEvaluation(
+        first.observable,
+        case_id=first.case_id,
+        pair_id=first.pair_id,
+        level_id=first.level_id,
+        evaluator_id=first.evaluator_id,
+        valid=first.valid,
+        cost=first.cost,
+        cost_unit=first.cost_unit,
+        result={"diagnostic": jnp.asarray(1.0)},
+        artifact_id=first.artifact_id,
+        evidence_ids=first.evidence_ids,
+    )
+    runtime_dataset = phx.fidelity.FidelityDataset(
+        dataset.hierarchy,
+        dataset.cases,
+        (with_result, *dataset.evaluations[1:]),
+    )
+    with pytest.raises(ValueError, match="runtime-only"):
+        phx.fidelity.write_fidelity_dataset(
+            tmp_path / "runtime-result.phx",
+            runtime_dataset,
+        )
+
 
 def test_fidelity_hierarchy_rejects_ambiguous_and_disconnected_models():
     hierarchy = _hierarchy()

@@ -585,15 +585,18 @@ def gauge_update_sweeps(
                                 jnp.abs(log_target_ratio) <= 2e-5,
                                 jnp.asarray(True),
                             )
-                            links = links.at[edge].set(jnp.where(accepted, proposed, old))
-                            member = _group_contains(
+                            proposed_member = _group_contains(
                                 prepared.small_group_linalg,
                                 prepared.group,
-                                links[edge : edge + 1],
+                                proposed[None],
+                            )
+                            committed = accepted & exact_correction & proposed_member
+                            links = links.at[edge].set(
+                                jnp.where(committed, proposed, old)
                             )
                             exhausted = (~accepted) & ~jnp.asarray(overrelax)
                             status = jnp.where(
-                                ~member,
+                                ~proposed_member,
                                 GaugeUpdateStatus.GROUP_MEMBERSHIP_FAILURE,
                                 jnp.where(
                                     ~exact_correction,
@@ -608,12 +611,12 @@ def gauge_update_sweeps(
                             records.append(
                                 (
                                     jnp.asarray(edge, dtype=jnp.int32),
-                                    accepted,
+                                    committed,
                                     log_proposal_ratio,
                                     log_target_ratio,
                                     used,
                                     exhausted,
-                                    member,
+                                    proposed_member,
                                     exact_correction,
                                     status,
                                 )

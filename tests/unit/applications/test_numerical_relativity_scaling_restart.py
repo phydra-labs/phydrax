@@ -52,7 +52,7 @@ from phydrax.discretization import (
     UniformCellAxisSpec,
 )
 from phydrax.discretization.amr import FluxRegister
-from phydrax.lifecycle import ProcessCheckpointPublication
+from phydrax.lifecycle import CheckpointManifest, ProcessCheckpointPublication
 from phydrax.lifecycle._repository import (
     HPCFilesystemProfile,
     POSIXArtifactRepository,
@@ -529,6 +529,77 @@ def test_distributed_restart_requires_committed_rank_and_reconstructs_typed_stat
         restarted.checkpoint.runtime_args["damping"],
         runtime_args["damping"],
     )
+    child_template = NumericalRelativityRestartState.from_z4c(
+        template_runtime,
+        topology_id="topology",
+        topology_epoch=4,
+    )
+    child_state = NumericalRelativityRestartState.from_z4c(
+        runtime,
+        topology_id="topology",
+        topology_epoch=4,
+    )
+    child_plan = NumericalRelativityCheckpointPlan(
+        "z4c",
+        "runtime",
+        "grid",
+        "topology",
+        analysis_plan_id="analysis",
+        numeric_revision_id="revision",
+        execution_plan_id="execution",
+        topology_epoch=4,
+        state_template=child_template,
+    )
+    wrong_parent = CheckpointManifest(
+        manifest.checkpoint_id,
+        manifest.analysis_plan_id,
+        "another-revision",
+        manifest.execution_plan_id,
+        manifest.shards,
+        complete=True,
+    )
+    with pytest.raises(ValueError, match="lifecycle ownership"):
+        publish_distributed_numerical_relativity_checkpoint(
+            repository,
+            child_plan,
+            child_state,
+            writer_id="child-writer",
+            parent_manifest=wrong_parent,
+        )
+    child_publication = publish_distributed_numerical_relativity_checkpoint(
+        repository,
+        child_plan,
+        child_state,
+        writer_id="child-writer",
+        parent_manifest=manifest,
+    )
+    child_metadata = dict(child_publication.artifact_manifest.metadata)
+    assert child_metadata["analysis_plan_id"] == child_plan.analysis_plan_id
+    assert child_metadata["numeric_revision_id"] == child_plan.numeric_revision_id
+    child_manifest = assemble_distributed_numerical_relativity_checkpoint(
+        repository,
+        child_plan,
+        (child_publication,),
+        expected_process_count=1,
+        parent_manifest=manifest,
+    )
+    assert child_manifest.parent_checkpoint_id == manifest.checkpoint_id
+    assert child_manifest.parent_manifest_id == manifest.manifest_id
+    with pytest.raises(ValueError, match="exact parent"):
+        restore_distributed_numerical_relativity_checkpoint(
+            repository,
+            child_manifest,
+            child_plan,
+            child_template,
+        )
+    child_restart = restore_distributed_numerical_relativity_checkpoint(
+        repository,
+        child_manifest,
+        child_plan,
+        child_template,
+        parent_manifest=manifest,
+    )
+    assert child_restart.checkpoint.state.state_id == child_state.state_id
 
     substituted_runtime = Z4cRuntimeState(
         flat_z4c_state((2, 2, 2), grid_id="other-grid"),

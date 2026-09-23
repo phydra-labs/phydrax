@@ -9,9 +9,10 @@ import numpy as np
 import pytest
 
 from phydrax.finance.contracts._credit import DefaultEventState
-from phydrax.finance.core import Currency
+from phydrax.finance.core import Currency, FinanceDate
 from phydrax.finance.exposure._collateral import (
     CloseoutConvention,
+    CloseoutIdentityBinding,
     collateral_target,
     CollateralAgreement,
     evolve_collateral,
@@ -20,6 +21,7 @@ from phydrax.finance.exposure._collateral import (
 )
 from phydrax.finance.exposure._pathwise import (
     aggregate_exposure,
+    DiscountFactorPath,
     ExposureProfile,
     ExposureSimulationPlan,
     link_wrong_way_risk,
@@ -79,6 +81,33 @@ def _closeout():
     )
 
 
+def _binding(cp_law, own_law, *, cp_coupling=None):
+    return CloseoutIdentityBinding(
+        netting_set_id="netting",
+        counterparty_reference_entity_id=f"entity-{cp_law}",
+        counterparty_law_id=cp_law,
+        counterparty_realization_id=f"realization-{cp_law}",
+        counterparty_coupling_id=(
+            f"coupling-{cp_law}" if cp_coupling is None else cp_coupling
+        ),
+        own_reference_entity_id=f"entity-{own_law}",
+        own_law_id=own_law,
+        own_realization_id=f"realization-{own_law}",
+        own_coupling_id=f"coupling-{own_law}",
+    )
+
+
+def _discount(times, currency, law_id):
+    return DiscountFactorPath(
+        times,
+        jnp.ones_like(times),
+        currency,
+        FinanceDate.from_ymd(2026, 1, 1),
+        curve_id="usd-discount",
+        pricing_law_id=law_id,
+    )
+
+
 def test_collateral_threshold_mta_and_lag_boundaries_are_exact():
     currency = Currency("USD", 2)
     agreement = _agreement(currency, threshold=10.0, mta=5.0)
@@ -114,6 +143,7 @@ def test_grid_boundary_default_is_closed_out_after_mpor_before_positive_part():
         netting,
         prepare_collateral_agreement(agreement, times),
         _closeout(),
+        _binding("cp-Q", "own-Q"),
         default_dependence="independent",
         wrong_way_risk=None,
         counterparty_default_law_id="cp-Q",
@@ -146,7 +176,7 @@ def test_grid_boundary_default_is_closed_out_after_mpor_before_positive_part():
         values,
         _defaults([1.0], [True], law_id="cp-Q"),
         _defaults([0.0], [False], law_id="own-Q"),
-        jnp.ones((4,)),
+        _discount(times, currency, "rates-Q"),
         weighting,
     )
     # Netting occurs first (18 + 2 = 20), collateral is zero, and the exact
@@ -199,6 +229,7 @@ def test_invalid_path_weights_are_rejected_and_explicit_wwr_changes_exposure():
         netting,
         prepared,
         _closeout(),
+        _binding("credit-Q", "own-Q"),
         default_dependence="independent",
         wrong_way_risk=None,
         counterparty_default_law_id="credit-Q",
@@ -221,7 +252,7 @@ def test_invalid_path_weights_are_rejected_and_explicit_wwr_changes_exposure():
             values,
             cp,
             own,
-            jnp.ones((2,)),
+            _discount(times, currency, "rates-Q"),
             weighting,
         )
     )
@@ -242,6 +273,7 @@ def test_invalid_path_weights_are_rejected_and_explicit_wwr_changes_exposure():
         netting,
         prepared,
         _closeout(),
+        _binding("credit-Q", "own-Q", cp_coupling="shared-paths"),
         default_dependence="wrong_way",
         wrong_way_risk=link,
         counterparty_default_law_id="credit-Q",
@@ -256,7 +288,7 @@ def test_invalid_path_weights_are_rejected_and_explicit_wwr_changes_exposure():
             values,
             cp_wwr,
             own,
-            jnp.ones((2,)),
+            _discount(times, currency, "rates-Q"),
             weighting,
             wrong_way_result=linked,
         )

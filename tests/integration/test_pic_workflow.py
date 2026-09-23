@@ -49,4 +49,16 @@ def test_electrostatic_pic_fixed_step_workflow_retains_constraints():
         )
     )
     assert solution.successful
-    assert jax.tree.leaves(solution.states)
+    assert solution.states.time.shape == (3,)
+    assert jnp.allclose(solution.states.time, jnp.asarray([0.0, 0.001, 0.002]))
+    assert jnp.array_equal(solution.states.accepted_step, jnp.asarray([0, 1, 2]))
+    assert jnp.all(solution.states.status == 0)
+    assert all(
+        bool(jnp.all(jnp.isfinite(leaf))) for leaf in jax.tree.leaves(solution.states)
+    )
+    charge = solution.states.charge.reshape((solution.states.time.size, -1))
+    assert jnp.allclose(jnp.sum(charge, axis=1), 0.0, atol=1e-12)
+    assert not jnp.array_equal(
+        solution.states.particles[0].position[0],
+        solution.states.particles[0].position[-1],
+    )

@@ -115,6 +115,14 @@ class PreparedOctree3D(StrictModule, NonTrainableState):
         leaf_capacity=8,
         maximum_depth=24,
     ):
+        for name, value in (
+            ("leaf_capacity", leaf_capacity),
+            ("maximum_depth", maximum_depth),
+        ):
+            if isinstance(value, bool) or not isinstance(value, int):
+                raise TypeError(f"{name} must be an integer.")
+            if value < 1:
+                raise ValueError(f"{name} must be positive.")
         positions = np.asarray(reference_positions, dtype=np.float64)
         mass_values = np.asarray(masses, dtype=np.float64)
         if (
@@ -123,11 +131,11 @@ class PreparedOctree3D(StrictModule, NonTrainableState):
             or mass_values.shape != (positions.shape[0],)
         ):
             raise ValueError("Octree positions/masses have incompatible shapes.")
-        capacity = max(int(leaf_capacity), 1)
+        capacity = leaf_capacity
         requested_depth = int(
             np.ceil(np.log(max(positions.shape[0] / capacity, 1.0)) / np.log(8.0))
         )
-        depth = min(max(requested_depth, 1), min(int(maximum_depth), 10))
+        depth = min(max(requested_depth, 1), min(maximum_depth, 10))
         minimum = np.min(positions, axis=0)
         maximum = np.max(positions, axis=0)
         extent = max(float(np.max(maximum - minimum)), np.finfo(np.float64).eps)

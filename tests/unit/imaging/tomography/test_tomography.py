@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -20,8 +21,13 @@ def _support(origin=(-1.0, 0.5, 0.5), direction=(1.0, 0.0, 0.0)):
 
 
 def test_voxel_projector_and_transpose_are_matched():
+    support = _support()
     plan = phx.imaging.tomography.VoxelXRayTransformPlan(
-        _support(), (2, 1, 1), (0, 0, 0), (1, 1, 1)
+        support,
+        (2, 1, 1),
+        (0, 0, 0),
+        (1, 1, 1),
+        support.rays.coordinate_contract,
     )
     attenuation = np.asarray((1.0, 2.0)).reshape((2, 1, 1))
     projected = plan.forward(attenuation)
@@ -46,8 +52,13 @@ def test_beer_lambert_and_iterative_reconstruction_reduce_projection_residual():
         np.linspace(-0.5, 0.5, 4),
     ).reconstruct(np.zeros((4, 8)))
     np.testing.assert_allclose(fbp, 0.0)
+    support = _support()
     plan = phx.imaging.tomography.VoxelXRayTransformPlan(
-        _support(), (2, 1, 1), (0, 0, 0), (1, 1, 1)
+        support,
+        (2, 1, 1),
+        (0, 0, 0),
+        (1, 1, 1),
+        support.rays.coordinate_contract,
     )
     solved = phx.imaging.tomography.IterativeCTPlan(plan, 4).solve(np.asarray((3.0,)))
     assert bool(solved.successful)
@@ -56,11 +67,58 @@ def test_beer_lambert_and_iterative_reconstruction_reduce_projection_residual():
 
 def test_tetrahedral_projector_has_matched_transpose():
     vertices = np.asarray(((0, 0, 0), (1, 0, 0), (0, 1, 0), (0, 0, 1)), dtype="float64")
+    support = _support(origin=(-1.0, 0.1, 0.1))
     transform = phx.imaging.tomography.TetrahedralXRayTransformPlan(
-        _support(origin=(-1.0, 0.1, 0.1)), vertices, np.asarray(((0, 1, 2, 3),))
+        support,
+        vertices,
+        np.asarray(((0, 1, 2, 3),)),
+        support.rays.coordinate_contract,
     )
     x = np.asarray((2.0,))
     y = np.asarray((0.7,))
     np.testing.assert_allclose(
         np.vdot(transform.forward(x), y), np.vdot(x, transform.transpose(y))
     )
+
+
+def test_tomography_plans_refuse_mismatched_geometry_and_invalid_policies():
+    support = _support()
+    wrong_contract = phx.SpatialCoordinateContract(
+        phx.units.MILLIMETER,
+        coordinate_system="cartesian-world",
+        reference_frame="scanner",
+    )
+    with pytest.raises(ValueError, match="spatial coordinate contract"):
+        phx.imaging.tomography.VoxelXRayTransformPlan(
+            support,
+            (2, 1, 1),
+            (0, 0, 0),
+            (1, 1, 1),
+            wrong_contract,
+        )
+    with pytest.raises(ValueError, match="Voxel geometry"):
+        phx.imaging.tomography.VoxelXRayTransformPlan(
+            support,
+            (2, 1, 1),
+            (np.nan, 0, 0),
+            (1, 1, 1),
+            support.rays.coordinate_contract,
+        )
+    with pytest.raises(ValueError, match="at least two"):
+        phx.imaging.tomography.FilteredBackprojectionPlan(
+            np.asarray((0.0,)),
+            np.asarray((0.0,)),
+            np.asarray((0.0,)),
+            np.asarray((0.0,)),
+        )
+    transform = phx.imaging.tomography.VoxelXRayTransformPlan(
+        support,
+        (2, 1, 1),
+        (0, 0, 0),
+        (1, 1, 1),
+        support.rays.coordinate_contract,
+    )
+    with pytest.raises(ValueError, match="iteration_count"):
+        phx.imaging.tomography.IterativeCTPlan(transform, 0)
+    with pytest.raises(ValueError, match="Detector parameters"):
+        phx.imaging.tomography.BeerLambertPlan(np.asarray((1.0,)), dark_signal=np.nan)

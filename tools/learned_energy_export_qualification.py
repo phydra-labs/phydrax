@@ -746,7 +746,10 @@ def _execute_exports(
                 rtol=PARITY_RTOL,
                 atol=PARITY_ATOL,
             )
-            executable = load_iree(destination)
+            executable = load_iree(
+                destination,
+                trusted_module_sha256=bundle.forward.manifest.module_sha256,
+            )
             manifest = executable.manifest
             case_records = {}
             for case_name in ("accepted", "rejected"):

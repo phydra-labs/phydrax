@@ -3122,7 +3122,7 @@ class PreparedProductionRun:
         self._commit_terminal(current, failure)
         return ProductionRunResult(
             current,
-            jnp.asarray(failure is None),
+            jnp.asarray(failure is None and current.status == "completed"),
             failure,
             self.run_id,
             (

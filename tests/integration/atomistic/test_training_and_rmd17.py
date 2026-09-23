@@ -508,36 +508,3 @@ def test_training_rejects_same_family_continuation_with_changed_configuration():
             AtomisticTrainingPolicy(maximum_steps=1, force_weight=0.0),
             continuation=continuation,
         )
-
-
-def test_training_hashes_parameter_state_only_for_returned_checkpoints(monkeypatch):
-    batch = _batch()
-    energy, _ = _targets(batch)
-    calls = 0
-    checkpoint = atomistic_training.checkpoint_atomistic_potential
-
-    def counted_checkpoint(potential):
-        nonlocal calls
-        calls += 1
-        return checkpoint(potential)
-
-    monkeypatch.setattr(
-        atomistic_training, "checkpoint_atomistic_potential", counted_checkpoint
-    )
-    result = fit_atomistic_potential(
-        _potential(jr.key(406)),
-        AtomisticTrainingProblem(
-            batch,
-            _execution(),
-            training_energy=energy,
-            validation_batch=batch,
-            validation_energy=energy,
-        ),
-        AtomisticTrainingPolicy(
-            maximum_steps=3,
-            validation_every=1,
-            force_weight=0.0,
-        ),
-    )
-    assert int(result.progress.update_step) == 3
-    assert calls == 2

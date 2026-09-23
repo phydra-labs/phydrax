@@ -420,6 +420,58 @@ def test_auto_and_native_known_pattern_plans_agree():
     assert compiled.num_colors <= native.num_colors
 
 
+def test_structural_scalar_dot_respects_contracted_axis_permutations():
+    source = phx.linalg.ArraySpace((2, 3), dtype=jnp.float64)
+    target = phx.linalg.ArraySpace((), dtype=jnp.float64)
+    point = jnp.arange(6.0, dtype=jnp.float64).reshape((2, 3))
+    constant = jnp.asarray(
+        [
+            [0.0, 0.0],
+            [0.0, 0.0],
+            [1.0, 0.0],
+        ],
+        dtype=jnp.float64,
+    )
+
+    def contracted(value, _):
+        return jax.lax.dot_general(
+            value,
+            constant,
+            dimension_numbers=(((0, 1), (1, 0)), ((), ())),
+        )
+
+    plan = phx.sparse.compile_sparse_jacobian(
+        contracted,
+        point,
+        source=source,
+        target=target,
+        compiler="auto",
+    )
+
+    expected = jax.jacfwd(contracted)(point, None).reshape((1, -1))
+    assert jnp.array_equal(plan.operator(point).as_dense(), expected)
+
+
+def test_structural_dynamic_slice_clamps_resolved_starts():
+    source = phx.linalg.ArraySpace((5,), dtype=jnp.float64)
+    target = phx.linalg.ArraySpace((3,), dtype=jnp.float64)
+    point = jnp.arange(5.0, dtype=jnp.float64)
+
+    def sliced(value, _):
+        return jax.lax.dynamic_slice(value, (4,), (3,))
+
+    plan = phx.sparse.compile_sparse_jacobian(
+        sliced,
+        point,
+        source=source,
+        target=target,
+        compiler="auto",
+    )
+
+    expected = jax.jacfwd(sliced)(point, None)
+    assert jnp.array_equal(plan.operator(point).as_dense(), expected)
+
+
 def test_sparse_derivative_contract_rejections_are_explicit():
     space = phx.linalg.ArraySpace((2,), dtype=jnp.float64)
     point = jnp.asarray([1.0, 2.0])

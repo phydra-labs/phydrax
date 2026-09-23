@@ -47,6 +47,13 @@ def qualify(oracle: Path = _DEFAULT_ORACLE) -> dict:
         ):
             raise ValueError("Material oracle samples do not match their recorded bytes.")
     samples = [json.loads(line) for line in raw_samples.splitlines()]
+    if not samples:
+        raise ValueError("Material oracle contains no qualification samples.")
+    sample_ids = tuple(sample.get("id") for sample in samples)
+    if any(not isinstance(value, str) or not value for value in sample_ids):
+        raise ValueError("Material oracle sample IDs must be non-empty strings.")
+    if len(set(sample_ids)) != len(sample_ids):
+        raise ValueError("Material oracle sample IDs must be unique.")
     evaluate = eqx.filter_jit(almonacid_2024_material_response)
     maximum_errors: dict[str, float] = {}
     for sample in samples:

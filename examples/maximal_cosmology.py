@@ -67,7 +67,9 @@ def main() -> None:
         0,
     )
 
-    print("parity_profile", bool(parity.successful))
+    if not bool(parity.successful):
+        raise RuntimeError("Maximal-cosmology parity profile failed")
+    print("parity_profile", True)
     print("barnes_hut_net_force", bh.evidence.net_force)
     print("fmm_error_indicator", fmm.evidence.maximum_opening_indicator)
     print("s3_distance", manifold.distance(s3_point, s3_target))

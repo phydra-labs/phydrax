@@ -12,6 +12,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
+from ..._model import register_artifact_value
 from ..._strict import StrictModule
 from ._register import _target_wire_ids, HilbertRegisterLayout
 
@@ -144,6 +145,20 @@ class QuantumProgram(StrictModule):
                 "operations": [operation.schema_id for operation in selected],
             }
         )
+
+
+register_artifact_value(
+    "phydrax.quantum:LocalUnitaryOperation",
+    LocalUnitaryOperation,
+)
+register_artifact_value(
+    "phydrax.quantum:LocalKrausChannelOperation",
+    LocalKrausChannelOperation,
+)
+register_artifact_value(
+    "phydrax.quantum:QuantumProgram",
+    QuantumProgram,
+)
 
 
 __all__ = [

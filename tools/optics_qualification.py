@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 from pathlib import Path
 
@@ -351,13 +352,25 @@ def _cylindrical_propagation_case() -> dict[str, float | int | bool]:
         float(temporal_mode),
         0.0,
     )
+    index_payload = json.dumps(
+        {
+            "kind": "constant-refractive-index-law",
+            "refractive_index": 1.5,
+            "minimum_angular_frequency": 0.5,
+            "maximum_angular_frequency": 40.0,
+            "reference_wave_speed": 1.0,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
     manifest = ArtifactManifest(
         artifact_id="cylindrical-optics-qualification-index",
         producer="phydrax",
         version="current",
-        sha256="0" * 64,
-        byte_size=0,
-        source_uri="generated://cylindrical-optics-qualification",
+        sha256=hashlib.sha256(index_payload).hexdigest(),
+        byte_size=len(index_payload),
+        source_uri="generated://cylindrical-optics-qualification-index",
         license_id="LicenseRef-PHYDRA",
         model="constant cylindrical qualification index",
         coverage="positive qualification frequencies",
@@ -536,7 +549,7 @@ def qualify() -> dict[str, object]:
     return {"accepted": bool(accepted), "cases": cases}
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--output",
@@ -546,9 +559,14 @@ def main() -> None:
     arguments = parser.parse_args()
     payload = qualify()
     arguments.output.parent.mkdir(parents=True, exist_ok=True)
-    arguments.output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-    print(json.dumps(payload, indent=2, sort_keys=True))
+    temporary = arguments.output.with_name(f".{arguments.output.name}.tmp")
+    temporary.write_text(
+        json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n"
+    )
+    temporary.replace(arguments.output)
+    print(json.dumps(payload, indent=2, sort_keys=True, allow_nan=False))
+    return 0 if payload["accepted"] else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

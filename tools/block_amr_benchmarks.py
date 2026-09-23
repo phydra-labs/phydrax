@@ -1304,7 +1304,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     _write_report(arguments.output, report)
     print(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
-    return 1 if report["failed_required_gates"] else 0
+    return 0 if report["status"] == "pass" else 1
 
 
 if __name__ == "__main__":

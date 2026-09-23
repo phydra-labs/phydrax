@@ -143,8 +143,8 @@ The canonical registry contains:
 
 Adapters import optional dependencies lazily. Every selected case × adapter row is
 emitted in stable order. Unsupported mathematics and unavailable packages become
-precise `skipped` rows; they are not removed from the report and are not replaced by
-a different algorithm.
+precise `skipped` rows. Failures after provider selection become explicit `failed`
+rows with the lifecycle phase and error; neither path is replaced by another algorithm.
 
 ## Timing protocol
 
@@ -172,7 +172,8 @@ are never silently folded into steady-state solve timing.
 Campaigns enable JAX float64 before capturing their runtime fingerprint. The fingerprint
 covers Python, Phydrax, NumPy, JAX, jaxlib, backend/device identity, default precision,
 performance-affecting environment variables, and the normalized installed-package set.
-Source revision remains separate so two commits can be compared in one identical runtime.
+Reports separately bind the exact harness, certificate evaluator, and case-source
+fingerprints, and comparisons require those fingerprints to match.
 The nonlinear-root Phydrax and Optimistix adapters both differentiate the converged
 solution with respect to the target through each library's implicit-root contract; an
 analytic diagonal sensitivity check guards this comparison.
@@ -185,10 +186,10 @@ zero means measured and absent. AmgX reports exact CSR/RHS uploads, solution dow
 and synchronizations from its backend result. Host-only adapters report zero device
 transfer.
 
-Memory evidence distinguishes input matrix bytes, setup bytes, and peak estimate.
-An unavailable provider metric remains `null` with a reason. Operation evidence uses
-provider counters when exposed and otherwise remains `null`; an iteration count is not
-relabeled as a matvec count unless the algorithm makes that equality exact.
+Memory evidence records initial and refreshed scopes separately; each scope distinguishes
+solver input bytes, setup bytes, and peak estimate. An unavailable provider metric
+remains `null` with a reason. Operation evidence uses provider counters when exposed and
+otherwise remains `null`; an iteration count is not relabeled as a matvec count.
 
 ## Convergence and comparability
 
@@ -200,6 +201,10 @@ relative residual, backward error, convergence result, and independent-certifica
 flag are recorded separately under `refresh`. Continuation success additionally requires
 demonstrated fold traversal; an endpoint residual alone is insufficient. Optimization
 rows retain stationarity/KKT/proximal evidence and reference objective gaps.
+
+Performance is eligible only when both rows report mathematical success, including the
+required refreshed certificate. `run`, `control`, and `compare` write their complete
+atomic artifact before returning nonzero for failed rows or regressions.
 
 `compare` requires matching schema, selected case × adapter cross-product, case
 fingerprints, implementations, timing protocol, transfer contract, and—unless explicitly

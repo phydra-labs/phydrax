@@ -104,8 +104,13 @@ class AtomisticSelectionPlan(StrictModule, NonTrainableState):
         selected = np.asarray(mask, dtype=np.bool_)
         if ids.ndim != 1 or selected.shape != ids.shape:
             raise ValueError("Selection mask must align with stable IDs.")
+        if not np.issubdtype(ids.dtype, np.integer):
+            raise TypeError("Selection stable IDs must be integers.")
+        ids = ids.astype(np.int64, copy=False)
+        if np.any(ids < 0) or np.unique(ids).size != ids.size:
+            raise ValueError("Selection stable IDs must be unique and non-negative.")
         self.mask = jnp.asarray(selected)
-        self.stable_ids = jnp.asarray(ids, dtype=jnp.int64)
+        self.stable_ids = jnp.asarray(ids)
         self.selection_id = canonical_fingerprint(
             {
                 "kind": "atomistic-selection",
@@ -174,13 +179,19 @@ class AtomisticFrame(StrictModule):
         source_id: str,
     ):
         position = jnp.asarray(positions)
-        ids = jnp.asarray(stable_ids, dtype=jnp.int64)
+        ids_host = np.asarray(stable_ids)
+        if not np.issubdtype(ids_host.dtype, np.integer):
+            raise TypeError("Frame stable IDs must be integers.")
+        ids_host = ids_host.astype(np.int64, copy=False)
         if (
             position.ndim != 2
             or position.shape[-1] != 3
-            or ids.shape != position.shape[:1]
+            or ids_host.shape != position.shape[:1]
         ):
             raise ValueError("Frame positions and stable IDs have incompatible shapes.")
+        if np.any(ids_host < 0) or np.unique(ids_host).size != ids_host.size:
+            raise ValueError("Frame stable IDs must be unique and non-negative.")
+        ids = jnp.asarray(ids_host)
 
         def optional(value, dtype=None):
             return None if value is None else jnp.asarray(value, dtype=dtype)

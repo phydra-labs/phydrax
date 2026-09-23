@@ -10,6 +10,7 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ...metrix import EuclideanStateGeometry
 from .._layout import InputLayout, StateLayout
@@ -107,7 +108,25 @@ class SINDyResult(StrictModule):
                 "use a structured manifold formulation for non-Euclidean state layouts."
             )
         identifier = (
-            f"identified-sindy:{self.source_id}:{self.method_id}"
+            "identified-sindy:"
+            + canonical_fingerprint(
+                {
+                    "source": self.source_id,
+                    "method": self.method_id,
+                    "formulation": self.formulation,
+                    "library": self.library.library_id,
+                    "state_layout": self.state_layout.layout_id,
+                    "input_layout": (
+                        None if self.input_layout is None else self.input_layout.layout_id
+                    ),
+                    "content": array_tree_fingerprint(
+                        {
+                            "coefficients": self.coefficients,
+                            "support": self.support,
+                        }
+                    ),
+                }
+            )
             if system_id is None
             else system_id
         )

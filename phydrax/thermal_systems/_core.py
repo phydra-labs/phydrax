@@ -6,6 +6,10 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+from math import isfinite
+
+import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
@@ -23,9 +27,17 @@ from ..qualification import CapabilityProfile, SupportTuple
 STEFAN_BOLTZMANN_W_M2_K4 = 5.670374419e-8
 
 
+@dataclass(frozen=True, slots=True)
+class EnclosureRadiosityResult:
+    radiosity_w_m2: Array
+    outward_heat_flux_w_m2: Array
+    residual_norm: Array
+    successful: Array
+
+
 def enclosure_radiosity(
     temperature_k: ArrayLike, emissivity: ArrayLike, view_factors: ArrayLike, /
-) -> tuple[Array, Array]:
+) -> EnclosureRadiosityResult:
     temperature = jnp.asarray(temperature_k)
     emissivity_ = jnp.asarray(emissivity)
     factors = jnp.asarray(view_factors)
@@ -38,30 +50,62 @@ def enclosure_radiosity(
         raise ValueError(
             "Enclosure temperatures, emissivities, and view factors do not align."
         )
+    temperature = eqx.error_if(
+        temperature,
+        jnp.any(
+            ~jnp.isfinite(temperature)
+            | ~jnp.isfinite(emissivity_)
+            | ~jnp.isfinite(factors)
+            | (temperature <= 0)
+            | (emissivity_ <= 0)
+            | (emissivity_ > 1)
+            | (factors < 0)
+        )
+        | jnp.any(jnp.abs(jnp.sum(factors, axis=1) - 1) > 1e-10),
+        "Enclosure data must be finite, physical, and have normalized view-factor rows.",
+    )
     matrix = jnp.eye(count) - (1.0 - emissivity_)[:, None] * factors
     emitted = emissivity_ * STEFAN_BOLTZMANN_W_M2_K4 * temperature**4
     space = ArraySpace((count,), dtype=temperature.dtype)
-    radiosity = solve(
+    solved = solve(
         LinearSystem(DenseLinearOperator(matrix, source=space, target=space)),
         emitted,
         policy=LinearSolvePolicy(DenseLU()),
-    ).value
-    irradiation = factors @ radiosity
-    return radiosity, radiosity - irradiation
+    )
+    irradiation = factors @ solved.value
+    residual_norm = jnp.linalg.norm(matrix @ solved.value - emitted)
+    successful = (
+        solved.successful
+        & jnp.all(jnp.isfinite(solved.value))
+        & jnp.isfinite(residual_norm)
+    )
+    return EnclosureRadiosityResult(
+        solved.value,
+        solved.value - irradiation,
+        residual_norm,
+        successful,
+    )
 
 
 def stefan_front_position(
     time_s: ArrayLike, diffusivity_m2_s: float, similarity_parameter: float, /
 ) -> Array:
-    if diffusivity_m2_s <= 0.0 or similarity_parameter < 0.0:
+    if (
+        not isfinite(diffusivity_m2_s)
+        or diffusivity_m2_s <= 0.0
+        or not isfinite(similarity_parameter)
+        or similarity_parameter < 0.0
+    ):
         raise ValueError(
-            "Stefan diffusivity must be positive and similarity parameter non-negative."
+            "Stefan diffusivity must be finite/positive and similarity parameter finite/non-negative."
         )
-    return (
-        2.0
-        * float(similarity_parameter)
-        * jnp.sqrt(float(diffusivity_m2_s) * jnp.asarray(time_s))
+    time = jnp.asarray(time_s)
+    time = eqx.error_if(
+        time,
+        jnp.any(~jnp.isfinite(time) | (time < 0)),
+        "Stefan time must be finite and nonnegative.",
     )
+    return 2.0 * float(similarity_parameter) * jnp.sqrt(float(diffusivity_m2_s) * time)
 
 
 def heat_pipe_capillary_margin(
@@ -99,6 +143,7 @@ def thermal_system_candidate_profiles() -> tuple[CapabilityProfile, ...]:
 
 __all__ = [
     "STEFAN_BOLTZMANN_W_M2_K4",
+    "EnclosureRadiosityResult",
     "enclosure_radiosity",
     "heat_pipe_capillary_margin",
     "stefan_front_position",

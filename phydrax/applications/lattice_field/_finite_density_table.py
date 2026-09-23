@@ -225,13 +225,18 @@ class EOSTableEvaluation(StrictModule, NonTrainableState):
 
 def evaluate_eos_table(
     table: FiniteDensityEOSTable,
+    qualification: EOSQualification,
     temperature: ArrayLike,
     baryon_chemical_potential: ArrayLike,
     /,
 ) -> EOSTableEvaluation:
     """Bilinearly evaluate qualified source cells without extrapolation or hole filling."""
-    if not isinstance(table, FiniteDensityEOSTable):
-        raise TypeError("table must be FiniteDensityEOSTable.")
+    if not isinstance(table, FiniteDensityEOSTable) or not isinstance(
+        qualification, EOSQualification
+    ):
+        raise TypeError("table and qualification must use finite-density EoS types.")
+    if qualification.table_id != table.table_id:
+        raise ValueError("EoS qualification belongs to another table.")
     temperature_ = jnp.asarray(temperature, dtype=table.plan.temperatures.dtype).reshape(
         ()
     )
@@ -257,11 +262,17 @@ def evaluate_eos_table(
             + ft * fm * values[ti + 1, mi + 1]
         )
 
-    corners_valid = (
+    corners_source_valid = (
         table.valid[ti, mi]
         & table.valid[ti + 1, mi]
         & table.valid[ti, mi + 1]
         & table.valid[ti + 1, mi + 1]
+    )
+    corners_qualified = (
+        qualification.qualified_cells[ti, mi]
+        & qualification.qualified_cells[ti + 1, mi]
+        & qualification.qualified_cells[ti, mi + 1]
+        & qualification.qualified_cells[ti + 1, mi + 1]
     )
     corners_derivative = (
         table.derivative_valid[ti, mi]
@@ -275,9 +286,15 @@ def evaluate_eos_table(
         & (baryon >= chemical[0])
         & (baryon <= chemical[-1])
     )
-    valid = inside & corners_valid
+    valid = inside & corners_qualified
     status = jnp.where(
-        valid, int(FiniteDensityStatus.SUCCESS), int(FiniteDensityStatus.OUTSIDE_DOMAIN)
+        ~inside,
+        int(FiniteDensityStatus.OUTSIDE_DOMAIN),
+        jnp.where(
+            ~(corners_source_valid & corners_qualified),
+            int(FiniteDensityStatus.UNQUALIFIED_SOURCE),
+            int(FiniteDensityStatus.SUCCESS),
+        ),
     )
     pressure = interpolate(table.pressure_over_temperature4)
     densities = interpolate(table.densities_over_temperature3)

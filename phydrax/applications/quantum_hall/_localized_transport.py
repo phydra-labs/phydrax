@@ -16,7 +16,14 @@ from jaxtyping import Array, ArrayLike
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...linalg import DenseLinearOperator, DenseLU, LinearSolvePolicy, LinearSystem, solve
+from ...linalg import (
+    DenseLinearOperator,
+    DenseLU,
+    LinearSolvePolicy,
+    LinearSolveResult,
+    LinearSystem,
+    solve,
+)
 
 
 class LocalizedHallNetworkPlan(StrictModule, NonTrainableState):
@@ -39,7 +46,7 @@ class LocalizedHallNetworkPlan(StrictModule, NonTrainableState):
         *,
         residual_tolerance: float = 1.0e-10,
     ):
-        rates = np.asarray(transition_rates, dtype=np.float64)
+        rates = np.array(transition_rates, dtype=np.float64, copy=True)
         injection = np.asarray(contact_injection, dtype=np.float64)
         extraction = np.asarray(contact_extraction, dtype=np.float64)
         weights = np.asarray(detailed_balance_weights, dtype=np.float64)
@@ -96,6 +103,7 @@ class LocalizedHallTransportResult(StrictModule, NonTrainableState):
     stationary_residual: Array
     detailed_balance_residual: Array
     current_conservation_residual: Array
+    linear_solve: LinearSolveResult
     successful: Array
     plan_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
@@ -111,13 +119,14 @@ def solve_localized_hall_transport(
     generator = rates.T - jnp.diag(jnp.sum(rates, axis=1))
     generator = generator - jnp.diag(jnp.sum(plan.contact_extraction, axis=0))
     source = jnp.sum(plan.contact_injection, axis=0)
-    matrix = generator.at[-1, :].set(1.0)
-    right = source.at[-1].set(1.0)
-    populations = solve(
+    matrix = generator
+    right = -source
+    linear_solve = solve(
         LinearSystem(DenseLinearOperator(matrix)),
         right,
         policy=LinearSolvePolicy(DenseLU()),
-    ).value
+    )
+    populations = linear_solve.value
     contact_currents = jnp.sum(
         plan.contact_injection - plan.contact_extraction * populations[None, :],
         axis=1,
@@ -131,9 +140,11 @@ def solve_localized_hall_transport(
     )
     conservation = jnp.abs(jnp.sum(contact_currents))
     successful = (
-        jnp.all(jnp.isfinite(populations))
+        linear_solve.successful
+        & jnp.all(jnp.isfinite(populations))
         & jnp.all(populations >= -plan.residual_tolerance)
         & (residual <= plan.residual_tolerance)
+        & (detailed <= plan.residual_tolerance)
         & (conservation <= plan.residual_tolerance)
     )
     return LocalizedHallTransportResult(
@@ -142,6 +153,7 @@ def solve_localized_hall_transport(
         residual,
         detailed,
         conservation,
+        linear_solve,
         successful,
         plan.plan_id,
         canonical_fingerprint(

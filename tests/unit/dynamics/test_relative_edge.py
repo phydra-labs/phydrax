@@ -69,3 +69,20 @@ def test_recurrence_seed_candidates_select_temporally_separated_minima():
     np.testing.assert_array_equal(np.asarray(candidates.target_indices), [4, 4])
     np.testing.assert_allclose(np.asarray(candidates.periods), [4.0, 2.0])
     np.testing.assert_allclose(np.asarray(candidates.distances), [0.05, 0.05])
+
+
+def test_recurrence_seed_candidates_do_not_cross_resets():
+    trajectory = phx.dynamics.TrajectoryData(
+        jnp.asarray([0.0, 1.0, 2.0, 3.0]),
+        jnp.asarray([[0.0], [10.0], [0.01], [20.0]]),
+        state_layout=phx.dynamics.StateLayout((1,)),
+        reset_mask=jnp.asarray([False, True, False]),
+        source_id="reset-recurrence-candidates",
+    )
+    candidate = phx.dynamics.analysis.recurrence_seed_candidates(
+        trajectory,
+        1,
+        minimum_separation=2,
+    )
+
+    assert not bool(candidate.valid[0])

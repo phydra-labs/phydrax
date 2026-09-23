@@ -184,6 +184,16 @@ def covariant_directions(
         raise TypeError("evolution must be an AbstractDifferentiableEvolution.")
     if not isinstance(grid, (TimeGrid, IterationGrid)):
         raise TypeError("grid must be a TimeGrid or IterationGrid.")
+    layout = evolution.state_layout
+    if (
+        not layout.geometry.trivial
+        or layout.size != layout.local_size
+        or layout.size != layout.tangent_size
+    ):
+        raise ValueError(
+            "Covariant directions require a trivial geometry with identical "
+            "point, local, and tangent dimensions."
+        )
     if kind not in ("clv", "adjoint"):
         raise ValueError("kind must be 'clv' or 'adjoint'.")
     if memory_mode not in ("store", "recompute"):
@@ -198,7 +208,7 @@ def covariant_directions(
         raise ValueError("initial_state has the wrong state shape.")
     if not jnp.issubdtype(state.dtype, jnp.floating):
         raise TypeError("initial_state must have a real floating dtype.")
-    dimension = evolution.state_layout.size
+    dimension = layout.size
     rank = dimension if leading_k is None else int(leading_k)
     if rank < 1 or rank > dimension:
         raise ValueError("leading_k must lie in [1, state dimension].")

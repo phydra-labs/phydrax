@@ -8,6 +8,7 @@ import numpy as np
 
 from phydrax.control import (
     continuous_transfer_function,
+    descriptor_frequency_response,
     discrete_transfer_function,
     frequency_response,
     FREQUENCY_SINGULAR,
@@ -16,7 +17,12 @@ from phydrax.control import (
     linearize_discrete_dynamics,
 )
 from phydrax.control._dynamics import DiscreteControlDynamics
-from phydrax.dynamics import DiscreteSystem, InputLayout, StateLayout
+from phydrax.dynamics import (
+    DiscreteSystem,
+    InputLayout,
+    LinearDescriptorSystem,
+    StateLayout,
+)
 from phydrax.dynamics._system import DiscreteTransitionResult
 from phydrax.linalg import ArraySpace
 from phydrax.metrix import QuaternionPoseStateGeometry
@@ -295,6 +301,23 @@ def test_mimo_frequency_response_and_gradient():
         return jnp.real(scalar.response[0, 0])
 
     np.testing.assert_allclose(jax.grad(real_response)(2.0), -0.12)
+
+
+def test_descriptor_frequency_uses_i_omega_e_minus_a_resolvent():
+    system = LinearDescriptorSystem(
+        jnp.asarray([[2.0]]),
+        jnp.asarray([[-3.0]]),
+        jnp.asarray([[4.0]]),
+        jnp.asarray([[5.0]]),
+        jnp.asarray([[0.25]]),
+        system_id="descriptor-reference",
+    )
+    frequency = jnp.asarray(1.5)
+    result = descriptor_frequency_response(system, frequency)
+    expected_state = 4.0 / (1j * frequency * 2.0 + 3.0)
+    np.testing.assert_allclose(result.state_response[0, 0], expected_state)
+    np.testing.assert_allclose(result.response[0, 0], 5.0 * expected_state + 0.25)
+    assert bool(result.successful)
 
 
 def test_unstable_and_singular_statuses_are_explicit():

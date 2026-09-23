@@ -2,8 +2,10 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 from phydrax.discretization import CellBlock, CellMesh
@@ -21,6 +23,7 @@ from phydrax.discretization.fem import (
     initial_finite_element_hp_topology,
     LevelSetCutQuadrature,
     NIrregularMortarPlan,
+    physical_mass_projection,
     refine_anisotropic_hp_cells,
     resize_hp_forest,
     SimplexNodalFamily,
@@ -285,3 +288,19 @@ def test_prism_and_pyramid_reference_families_prepare_real_cell_meshes():
         assert plan.exterior_facet_domain.entity_indices.shape[0] == (
             5 if kind == "pyramid" else 5
         )
+
+
+def test_physical_mass_projection_rejects_failed_column_solves():
+    source = jnp.ones((2, 1))
+    singular_target = jnp.ones((2, 2))
+
+    with pytest.raises(
+        (ValueError, eqx.EquinoxRuntimeError),
+        match="Physical mass-projection solve failed",
+    ):
+        physical_mass_projection(
+            source,
+            singular_target,
+            jnp.ones((2,)),
+            jnp.ones((2,)),
+        ).block_until_ready()

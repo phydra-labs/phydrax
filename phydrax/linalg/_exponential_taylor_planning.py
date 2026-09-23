@@ -447,7 +447,7 @@ def _prepare(
     coordinate_dtype = jax.tree.leaves(operator.source.structure())[0].dtype
     trace = (
         jnp.sum(assemble_diagonal(operator))
-        if plan.trace_source == "exact-diagonal"
+        if plan.feasible and plan.trace_source == "exact-diagonal"
         else jnp.asarray(0.0, dtype=coordinate_dtype)
     )
     finite = jnp.isfinite(norm) & jnp.all(jnp.isfinite(alpha_p))

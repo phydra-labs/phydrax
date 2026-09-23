@@ -54,6 +54,25 @@ def _positive_shape(value, /, *, owner: str) -> tuple[int, ...]:
     return shape
 
 
+def _leading_shape(
+    shape: tuple[int, ...],
+    event_shape: tuple[int, ...],
+    /,
+    *,
+    owner: str,
+) -> tuple[int, ...]:
+    events = tuple(event_shape)
+    if any(size <= 0 for size in events):
+        raise ValueError(f"{owner} event dimensions must be positive.")
+    if len(shape) < len(events) or (events and tuple(shape[-len(events) :]) != events):
+        raise ValueError(f"{owner} must end in event_shape={events}; got {shape}.")
+    return tuple(shape) if not events else tuple(shape[: -len(events)])
+
+
+def _event_axes(ndim: int, event_shape: tuple[int, ...], /) -> tuple[int, ...]:
+    return () if not event_shape else tuple(range(ndim - len(event_shape), ndim))
+
+
 class DiagonalNormalLaw(AbstractProbabilityLaw):
     """Full-rank diagonal Normal law over one explicit array event."""
 

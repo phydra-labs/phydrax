@@ -3,6 +3,7 @@
 #
 
 import jax.numpy as jnp
+import pytest
 
 import phydrax as phx
 
@@ -117,3 +118,26 @@ def test_ale_step_prepares_all_ssprk_geometry_and_commits_atomically():
         step.committed_geometry().cell_volumes[0][0],
         step.stage_endpoint.cell_volumes[0][0],
     )
+
+
+def test_patch_geometry_revision_is_exact_bounded_and_cannot_overflow_ale():
+    topology = _topology((4,))
+    geometry_plan = phx.discretization.VariablePatchGeometryPlan(
+        topology,
+        lambda point, time, args: point,
+        "bounded-revision",
+    )
+
+    for revision in (-1, 1.5, 2**31):
+        with pytest.raises(ValueError, match="revision"):
+            geometry_plan.state(0.0, revision=revision)
+
+    source = geometry_plan.state(
+        0.0,
+        revision=jnp.asarray(jnp.iinfo(jnp.int32).max, dtype=jnp.int32),
+    )
+    with pytest.raises(Exception, match="cannot advance"):
+        phx.discretization.VariablePatchALEPlan(geometry_plan).prepare_step(
+            source,
+            0.1,
+        )

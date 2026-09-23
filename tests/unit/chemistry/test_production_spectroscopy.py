@@ -165,6 +165,8 @@ def test_nonresonant_raman_reports_activity_and_depolarization_separately():
         successful=True,
         stationary_point=phx.chemistry.StationaryPointKind.MINIMUM,
         units=units,
+        source_system_id=system.system_id,
+        source_geometry_id=structure.structure_id,
         plan_id="synthetic-vibration",
     )
     polarizability_unit = phx.units.derived_unit(

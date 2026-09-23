@@ -379,48 +379,19 @@ def branch_and_bound(
             unresolved_bound = node_bound
             status = BranchAndBoundStatus.EVALUATION_FAILURE
             break
-        unbounded_child = False
         for child in sorted(children, key=problem.node_id):
-            child_evaluation = problem.evaluate(child)
-            if not isinstance(child_evaluation, BranchNodeEvaluation):
-                raise TypeError(
-                    "AbstractBranchAndBoundProblem.evaluate must return BranchNodeEvaluation."
-                )
-            if child_evaluation.unbounded:
-                status = BranchAndBoundStatus.UNBOUNDED
-                unresolved_bound = -inf
-                frontier.clear()
-                unbounded_child = True
-                break
-            if child_evaluation.infeasible:
-                pruned += 1
-                continue
-            child_bound = node_bound
-            if (
-                child_evaluation.lower_bound is not None
-                and child_evaluation.lower_bound.certified
-            ):
-                child_bound = max(
-                    child_bound,
-                    child_evaluation.lower_bound.value,
-                )
-            if child_bound >= incumbent_value:
-                pruned += 1
-                continue
             counter += 1
             heapq.heappush(
                 frontier,
                 (
-                    child_bound,
+                    node_bound,
                     problem.node_id(child),
                     counter,
                     child,
-                    child_evaluation,
+                    None,
                     False,
                 ),
             )
-        if unbounded_child:
-            break
 
     if status == BranchAndBoundStatus.WORK_LIMIT and not frontier:
         if incumbent is not None:

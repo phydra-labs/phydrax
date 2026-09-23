@@ -18,6 +18,7 @@ from jaxtyping import Array
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ..._tree_math import tree_where
 from .._alchemical import PreparedControlledHamiltonian
 from .._dynamics import AtomisticDynamicsState, PreparedAtomisticDynamics
 from .._thermodynamic import (
@@ -105,6 +106,7 @@ class AlchemicalSwitchingRecord(StrictModule, NonTrainableState):
     destination_potential_id: str = eqx.field(static=True)
     measure_ids: tuple[str, str] = eqx.field(static=True)
     unit_system_id: str = eqx.field(static=True)
+    inverse_temperature: float = eqx.field(static=True)
     unit_id: str = eqx.field(static=True)
     producer_id: str = eqx.field(static=True)
     run_id: str = eqx.field(static=True)
@@ -249,13 +251,10 @@ class AlchemicalSwitchingPlan(StrictModule, NonTrainableState):
         start = self.destination_state_index if reverse else self.source_state_index
         stop = self.source_state_index if reverse else self.destination_state_index
         state_controls = np.asarray(self.thermodynamic.controls, dtype=np.float64)
-        coordinate = np.linspace(float(start), float(stop), self.integration_steps + 1)
-        lower = np.floor(coordinate).astype(np.int32)
-        upper = np.ceil(coordinate).astype(np.int32)
-        fraction = (coordinate - lower.astype("float64"))[:, None]
-        controls = (1.0 - fraction) * state_controls[lower] + fraction * state_controls[
-            upper
-        ]
+        coordinate = np.linspace(0.0, 1.0, self.integration_steps + 1)[:, None]
+        start_controls = state_controls[start]
+        stop_controls = state_controls[stop]
+        controls = (1.0 - coordinate) * start_controls + coordinate * stop_controls
         temperature = float(np.asarray(self.thermodynamic.temperature)[start])
         phase_space = AtomisticPhaseSpaceMeasurePlan(self.dynamics.system)
         direction = "reverse" if reverse else "forward"
@@ -354,17 +353,19 @@ class AlchemicalSwitchingPlan(StrictModule, NonTrainableState):
             work = jnp.zeros((), dtype=state.kinematics.positions.dtype)
             successful = state.force.successful
             for next_index in range(1, self.integration_steps + 1):
+                previous_state = state
                 previous_external = state.energy.external_work
                 rebase = self.dynamics.rebase_thermodynamic_state(
                     state, table, next_index
                 )
-                successful = successful & rebase.successful
-                state = rebase.accepted_state
+                step = self.dynamics.step_detailed(rebase.accepted_state, table)
+                transition_successful = successful & rebase.successful & step.successful
+                successful = transition_successful
+                state = tree_where(
+                    transition_successful, step.accepted_state, previous_state
+                )
                 increment = state.energy.external_work - previous_external
-                work = work + jnp.where(rebase.successful, increment, 0.0)
-                step = self.dynamics.step_detailed(state, table)
-                successful = successful & step.successful
-                state = step.accepted_state
+                work = work + jnp.where(transition_successful, increment, 0.0)
             reduced_work = jnp.asarray(self.inverse_temperature, dtype=work.dtype) * work
             successful = successful & jnp.isfinite(reduced_work)
             work_values.append(jnp.where(successful, reduced_work, jnp.nan))
@@ -410,6 +411,7 @@ class AlchemicalSwitchingPlan(StrictModule, NonTrainableState):
             "run": run,
             "qualification": self.qualification.qualification_id,
             "sampling_exact": self.qualification.sampling_exact,
+            "inverse_temperature": self.inverse_temperature.hex(),
             "sampling_bias_bound": self.qualification.sampling_bias_bound,
         }
         successful = bool(
@@ -435,6 +437,7 @@ class AlchemicalSwitchingPlan(StrictModule, NonTrainableState):
                 self.thermodynamic.phase_space_measure_id,
             ),
             unit_system_id=self.thermodynamic.unit_system_id,
+            inverse_temperature=self.inverse_temperature,
             unit_id="1",
             producer_id=producer,
             run_id=run,

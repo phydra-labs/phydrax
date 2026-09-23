@@ -873,7 +873,7 @@ def test_conversion_is_immutable_source_free_and_provenance_is_complete(sk):
     assert result.provenance.source_version == sk.sklearn.__version__
     assert result.provenance.source_model.endswith(".LinearRegression")
     assert result.provenance.license_id == "BSD-3-Clause"
-    assert configuration["converter_schema"] == "phydrax.sklearn.fitted"
+    assert configuration["converter_identity"] == "phydrax.sklearn.fitted"
     assert configuration["semantic_notes"]
     assert len(configuration["sha256"]) == 64
     assert configuration["sha256"] == _configuration(duplicate_result)["sha256"]

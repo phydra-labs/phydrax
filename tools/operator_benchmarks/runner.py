@@ -390,15 +390,16 @@ def _train_operator_with_trace(
         scenario.case_ids,
         prefix=f"{scenario.name}:train",
     )
-    if scenario.validation is None:
-        validation_data = training_data
-    else:
-        validation_data = dataset(
+    validation_data = (
+        None
+        if scenario.validation is None
+        else dataset(
             scenario.validation.batch,
             scenario.validation.target,
             scenario.validation.case_ids,
             prefix=f"{scenario.name}:validation",
         )
+    )
     trainable_leaves, _ = partition_trainable(model)
     use_float64 = any(
         isinstance(leaf, jax.Array)
@@ -429,10 +430,10 @@ def _train_operator_with_trace(
         steps=int(steps) if trainable else 0,
         batch_size=training_data.size if batch_size is None else int(batch_size),
         gradient_accumulation=int(gradient_accumulation),
-        validation_batch_size=validation_data.size,
+        validation_batch_size=None if validation_data is None else validation_data.size,
         shuffle=False,
         seed=int(scenario.seed),
-        key=jr.key(0) if checkpoint_key is None else checkpoint_key,
+        key=jr.key(int(scenario.seed)) if checkpoint_key is None else checkpoint_key,
         dtype_policy=(
             OperatorDTypePolicy(
                 parameter_dtype=dtype_name,
@@ -443,12 +444,16 @@ def _train_operator_with_trace(
             else dtype_policy
         ),
         loss_scale_policy=loss_scale_policy,
-        validation_policy=OperatorValidationPolicy(
-            every=int(validation_interval),
-            patience=patience,
-            minimum_delta=float(minimum_delta),
-            relative_minimum_delta=float(relative_minimum_delta),
-            select_best=patience is not None,
+        validation_policy=(
+            None
+            if validation_data is None
+            else OperatorValidationPolicy(
+                every=int(validation_interval),
+                patience=patience,
+                minimum_delta=float(minimum_delta),
+                relative_minimum_delta=float(relative_minimum_delta),
+                select_best=patience is not None,
+            )
         ),
         checkpoint_path=checkpoint_path,
         checkpoint_every=int(validation_interval),
@@ -467,7 +472,9 @@ def _train_operator_with_trace(
         result.history.validation_steps,
         result.history.validation_losses,
         result.progress.stopped_early,
-        result.progress.stopped_early or not trainable,
+        result.progress.stopped_early
+        and not result.stopped_by_signal
+        and not result.stopped_by_host_control,
         result.resumed_from_step,
         tuple(
             (name, "none" if value is None else str(value))
@@ -735,7 +742,14 @@ def evaluate_operator_symmetry(
             1e-12,
         )
         relative_defects.append(float(jnp.mean(numerator / denominator)))
-        maximum_errors.append(float(jnp.max(jnp.abs(difference))))
+        mask = transformed_batch.require_single_query().mask_array(
+            case_shape=transformed_batch.case_shape
+        )
+        while mask.ndim < difference.ndim:
+            mask = mask[..., None]
+        maximum_errors.append(
+            float(jnp.max(jnp.where(mask, jnp.abs(difference), 0.0), initial=0.0))
+        )
 
     exact_count = symmetry.exact_element_count
     exact_indices = tuple(range(1, exact_count))
@@ -772,6 +786,14 @@ def evaluate_operator_symmetry(
             None if not reflections else float(np.mean(reflections))
         ),
     )
+
+
+def _masked_maximum_absolute_error(prediction, target, query, case_shape):
+    mask = query.mask_array(case_shape=case_shape)
+    difference = jnp.abs(jnp.asarray(prediction) - jnp.asarray(target))
+    while mask.ndim < difference.ndim:
+        mask = mask[..., None]
+    return jnp.max(jnp.where(mask, difference, 0.0), initial=0.0)
 
 
 def evaluate_operator(
@@ -884,7 +906,12 @@ def evaluate_operator(
                 conservation_error=float(jax.block_until_ready(conservation)),
                 maximum_absolute_error=float(
                     jax.block_until_ready(
-                        jnp.max(jnp.abs(field_prediction - field_target))
+                        _masked_maximum_absolute_error(
+                            field_prediction,
+                            field_target,
+                            query,
+                            evaluation.batch.case_shape,
+                        )
                     )
                 ),
             )
@@ -976,7 +1003,7 @@ def run_operator_benchmark(
         checkpoint_path=checkpoint_path,
         resume=resume,
         checkpoint_metadata=checkpoint_metadata,
-        checkpoint_key=checkpoint_key,
+        checkpoint_key=jr.key(int(seed)) if checkpoint_key is None else checkpoint_key,
         dtype_policy=dtype_policy,
         loss_scale_policy=loss_scale_policy,
     )

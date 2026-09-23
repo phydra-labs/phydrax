@@ -27,6 +27,9 @@ def _tda_manifold(amplitudes, energies):
         tuple((index,) for index in range(energies.size)),
         phx.units.HARTREE,
         _dipole_unit(),
+        provider_id="tda-test-provider",
+        request_id="tda-test-request",
+        state_space_id="tda-test-space",
     )
 
 

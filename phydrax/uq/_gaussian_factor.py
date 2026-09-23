@@ -248,13 +248,17 @@ def compress_gaussian_factor(
         _, upper = jnp.linalg.qr(_adjoint(factor.factor), mode="reduced")
         compressed = _adjoint(upper)
         method = "qr-compression"
-    return GaussianFactor(
+    result = GaussianFactor(
         compressed,
         regularization=factor.regularization,
         rank_tolerance=factor.rank_tolerance,
         factor_id=factor_id,
         resolved_method=method,
     )
+    valid = factor.valid & result.valid
+    status = jnp.where(factor.valid, result.status, factor.status).astype(jnp.int32)
+    result = eqx.tree_at(lambda node: node.valid, result, valid)
+    return eqx.tree_at(lambda node: node.status, result, status)
 
 
 def add_independent_gaussian_factors(

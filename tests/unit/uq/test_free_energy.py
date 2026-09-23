@@ -19,7 +19,7 @@ def _lineage(capacity, *, active=None):
     }
 
 
-def _work_dataset(values, sources):
+def _work_dataset(values, sources, *, inverse_temperature=1.0):
     values = jnp.asarray(values, dtype="float64")
     source = jnp.asarray(sources, dtype=jnp.int32)
     lineage = _lineage(values.size)
@@ -40,6 +40,7 @@ def _work_dataset(values, sources):
         run_id="analytic-run",
         work_id="directed-reduced-work",
         work_kind="equilibrium-difference",
+        inverse_temperature=inverse_temperature,
         qualification_id="exact-work-sampling",
         sampling_exact=True,
         sampling_bias_bound=0.0,
@@ -139,6 +140,23 @@ def test_fep_and_bar_use_directed_work_and_report_block_covariance():
     )
     np.testing.assert_allclose(
         bar.covariance, bar.influence_values @ bar.influence_values.T
+    )
+    assert (
+        dataset.dataset_id
+        != _work_dataset(
+            [delta] * 8 + [-delta] * 8,
+            [0] * 8 + [1] * 8,
+            inverse_temperature=2.0,
+        ).dataset_id
+    )
+
+    separated = _work_dataset(
+        [1000.0] * 8 + [1000.0] * 8,
+        [0] * 8 + [1] * 8,
+    )
+    disconnected = phx.uq.bennett_acceptance_ratio(separated)
+    assert int(disconnected.statistical_status) & int(
+        phx.uq.FreeEnergyStatus.DISCONNECTED
     )
 
     correlated = _work_dataset(

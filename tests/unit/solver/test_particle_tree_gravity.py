@@ -109,3 +109,41 @@ def test_inactive_nonfinite_particles_are_ignored() -> None:
     ).evaluate(tree)
     assert bool(result.successful)
     np.testing.assert_array_equal(result.acceleration[-1], 0.0)
+
+
+def test_periodic_barnes_hut_excludes_inactive_capacity():
+    active_positions = _cloud(7)
+    active_masses = jnp.linspace(0.5, 1.1, 7)
+    padded_positions = jnp.concatenate(
+        (active_positions, jnp.asarray([[jnp.nan, jnp.nan, jnp.nan]]))
+    )
+    padded_masses = jnp.concatenate((active_masses, jnp.asarray([0.0])))
+    padded = cosmology.ParticleOctreePlan3D((1.0, 1.0, 1.0), 4).prepare(
+        padded_positions,
+        padded_masses,
+        jnp.arange(8) < 7,
+    )
+    compact = cosmology.ParticleOctreePlan3D((1.0, 1.0, 1.0), 4).prepare(
+        active_positions,
+        active_masses,
+    )
+    barnes_hut = cosmology.BarnesHutGravityPlan(1.0, softening=0.05, opening_angle=0.0)
+    ewald = cosmology.PeriodicEwaldForcePlan(
+        (1.0, 1.0, 1.0),
+        1.0,
+        softening=0.05,
+        alpha=2.0,
+        real_shells=1,
+        reciprocal_modes=1,
+    )
+    plan = cosmology.PeriodicBarnesHutPlan(barnes_hut, ewald)
+    padded_result = plan.evaluate(padded)
+    compact_result = plan.evaluate(compact)
+    assert bool(padded_result.successful)
+    np.testing.assert_allclose(
+        padded_result.acceleration[:7],
+        compact_result.acceleration,
+        rtol=1.0e-12,
+        atol=1.0e-12,
+    )
+    np.testing.assert_array_equal(padded_result.acceleration[-1], 0.0)

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from math import prod
+from numbers import Integral
 from typing import Any, Literal
 
 import equinox as eqx
@@ -90,7 +91,14 @@ class KernelFunctionalTerm(StrictModule):
         field = str(field_name)
         point_array = jnp.asarray(points)
         coefficient_array = jnp.asarray(coefficients)
-        orders = tuple(tuple(order) for order in derivative_orders)
+        raw_orders = tuple(tuple(order) for order in derivative_orders)
+        if any(
+            not isinstance(value, Integral) or isinstance(value, bool)
+            for order in raw_orders
+            for value in order
+        ):
+            raise TypeError("Derivative multi-indices must contain exact integers.")
+        orders = tuple(tuple(int(value) for value in order) for order in raw_orders)
         if not field:
             raise ValueError("Kernel functional field names must be nonempty.")
         if (
@@ -103,7 +111,11 @@ class KernelFunctionalTerm(StrictModule):
             point_array = point_array.astype("float64")
         if not jnp.issubdtype(coefficient_array.dtype, jnp.inexact):
             coefficient_array = coefficient_array.astype("float64")
-        if not orders or any(any(value < 0 for value in order) for order in orders):
+        if (
+            not orders
+            or any(not order for order in orders)
+            or any(any(value < 0 for value in order) for order in orders)
+        ):
             raise ValueError("Derivative multi-indices must be nonnegative and nonempty.")
         if coefficient_array.ndim != 4:
             raise ValueError(

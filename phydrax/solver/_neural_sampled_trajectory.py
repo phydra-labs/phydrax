@@ -27,7 +27,6 @@ from ..operators.quantum import (
     evaluate_local_operator,
 )
 from ._variational_monte_carlo import (
-    _model_log_target,
     _score_geometry,
     _validate_model_coordinates,
     _validate_state_compatibility,
@@ -432,11 +431,13 @@ def solve_connected_vmc_neural_trajectory(
     for _ in range(policy.steps):
         iteration = int(current.iteration)
         step_key = jr.fold_in(key, iteration)
+        target = problem.vmc_problem.target_for_model(current.model)
         refreshed = problem.vmc_problem.kernel.refresh(
-            _model_log_target(current.model), current.markov_state
+            target,
+            current.markov_state,
         )
         samples = sample_markov(
-            _model_log_target(current.model),
+            target,
             problem.vmc_problem.kernel,
             refreshed,
             key=jr.fold_in(step_key, 0x51A7),

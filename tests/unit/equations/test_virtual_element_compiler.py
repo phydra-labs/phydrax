@@ -274,3 +274,21 @@ def test_l2_vem_rejects_undefined_operators_before_evaluation():
     )
     with pytest.raises(ValueError, match="no boundary trace"):
         phx.equations.compile_virtual_element_problem(boundary, space)
+
+
+def test_vem_runtime_rejects_same_mesh_with_different_field_degree():
+    linear = _space(1)
+    quadratic = _space(2)
+    state = jnp.zeros((quadratic.dof_map.global_dof_count,))
+
+    with pytest.raises(ValueError, match="runtime is incompatible"):
+        phx.equations.project_virtual_element_field(
+            quadratic,
+            state,
+            runtime=linear.default_runtime,
+        )
+
+    compiled = _compiled("matrix_free", degree=2)
+    context = phx.equations.VirtualElementExecutionContext(linear.default_runtime)
+    with pytest.raises(ValueError, match="context is incompatible"):
+        compiled.expand(jnp.zeros((compiled.state_space.size,)), context)

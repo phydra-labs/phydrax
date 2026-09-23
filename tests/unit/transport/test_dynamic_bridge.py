@@ -330,6 +330,29 @@ def test_physical_mass_mask_and_vector_event_shape_are_preserved():
     assert result.provenance.time_grid == "physical-bridge-grid"
 
 
+def test_normalized_density_endpoint_has_unit_physical_mass():
+    states = jnp.asarray([0.0, 1.0])
+    base = phx.integration.discrete(
+        states,
+        cx.AxisArray(jnp.asarray([1.0, 1.0]), dims=("state",)),
+        axes="state",
+        normalized=False,
+        provenance="mass-two-base",
+    )
+    normalized = phx.integration.normalized_density(base, jnp.zeros((2,)))
+    problem = phx.transport.dynamic.SchrodingerBridgeProblem(
+        normalized,
+        normalized,
+        jnp.asarray([0.0, 1.0]),
+        _matrix_kernel([[0.75, 0.25], [0.25, 0.75]]),
+        CONTEXT,
+    )
+
+    assert jnp.allclose(problem.initial.mass, 1.0)
+    assert jnp.allclose(problem.terminal.mass, 1.0)
+    assert jnp.allclose(problem.mass, 1.0)
+
+
 def test_dynamic_transport_public_catalog_is_intentional_and_complete():
     expected = {
         "BridgeInferenceAdapter",

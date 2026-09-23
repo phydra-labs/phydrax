@@ -46,6 +46,8 @@ reactor = phx.solver.ChemicalReactorPlan(
 )
 grid = phx.dynamics.TimeGrid(jnp.linspace(0.0, 1.0, 41), time_id="reactor")
 solution = reactor.solve(jnp.asarray((1.0, 0.0)), grid)
+if not bool(solution.successful):
+    raise RuntimeError("Chemical reactor solve failed")
 
-print("successful:", bool(solution.successful))
+print("successful:", True)
 print("final species amount:", solution.states[-1])

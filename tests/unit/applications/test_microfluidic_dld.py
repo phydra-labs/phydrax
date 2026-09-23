@@ -5,6 +5,7 @@
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -107,6 +108,25 @@ def _workflow():
         "synthetic-flow-evidence",
     )
     return workflow, state, flow
+
+
+def test_dld_workflow_rejects_classifier_on_another_outlet_plane():
+    workflow, _, _ = _workflow()
+    misplaced = phx.applications.microfluidics.DLDOutletPlan(
+        4.5, workflow.outlets.transverse_edges
+    )
+    with pytest.raises(ValueError, match="mismatch"):
+        phx.applications.microfluidics.DLDWorkflowPlan(
+            workflow.geometry,
+            workflow.transport,
+            misplaced,
+            workflow.metrics,
+            workflow.particle_classes,
+            step_count=workflow.step_count,
+            step_size=workflow.step_size,
+            flow_model_id=workflow.flow_model_id,
+            screening=workflow.screening,
+        )
 
 
 def test_dld_geometry_has_exact_post_wall_clearance_and_periodic_shift():

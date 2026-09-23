@@ -156,3 +156,28 @@ def test_real_ftetwild_compartment_mesh_preserves_nested_zone_interface():
     )
     step = runtime.step_backward_euler(state, 0.1)
     assert bool(step.accepted)
+
+
+def test_optional_compartment_interface_requires_declared_endpoints():
+    compartments = (
+        phx.geometry.CompartmentDefinition("inside", ("inside",), "material"),
+        phx.geometry.CompartmentDefinition("outside", ("outside",), "material"),
+    )
+    interface = phx.geometry.CompartmentInterfaceDefinition(
+        "invalid-optional",
+        "inside",
+        "undeclared",
+        "diagnostic",
+        required=False,
+    )
+
+    with pytest.raises(
+        ValueError, match="Interface endpoints must identify declared compartments"
+    ):
+        phx.geometry.CompartmentComplex(
+            "revision",
+            compartments,
+            (interface,),
+            (("inside", 1.0), ("outside", 1.0)),
+            (),
+        )

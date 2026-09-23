@@ -186,14 +186,38 @@ class BladeElementRotorPlan(StrictModule, NonTrainableState):
             induction[: self.radius.size],
             induction[self.radius.size :],
         )
-        normal, tangential, _, _, relative_speed, polar = fields(induction)
+        (
+            normal,
+            tangential,
+            momentum_normal,
+            momentum_tangential,
+            relative_speed,
+            polar,
+        ) = fields(induction)
         force = jnp.stack((normal, tangential), axis=-1)
         thrust = jnp.sum(normal)
         torque = jnp.sum(tangential * self.radius)
         power = torque * omega
         circulation = 0.5 * relative_speed * self.chord * polar.lift
-        wake_residual = jnp.sum(circulation - circulation)
-        successful = nonlinear.successful & polar.finite & jnp.all(jnp.isfinite(force))
+        axial_relative = axial * (1.0 - axial_induction)
+        tangential_relative = omega * self.radius * (1.0 + tangential_induction)
+        inflow = jnp.arctan2(axial_relative, tangential_relative)
+        momentum_lift = momentum_normal * jnp.cos(inflow) + momentum_tangential * jnp.sin(
+            inflow
+        )
+        momentum_circulation = momentum_lift / (
+            self.density
+            * jnp.maximum(relative_speed, 1.0e-8)
+            * self.section_width
+            * self.blade_count
+        )
+        wake_residual = jnp.max(jnp.abs(circulation - momentum_circulation))
+        successful = (
+            nonlinear.successful
+            & polar.finite
+            & jnp.all(jnp.isfinite(force))
+            & jnp.isfinite(wake_residual)
+        )
         return RotorResult(
             axial_induction,
             tangential_induction,

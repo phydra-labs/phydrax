@@ -12,7 +12,7 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ._contraction import ContractionResourcePolicy, plan_contraction
 from ._precision import TensorNetworkPrecisionPolicy
@@ -51,7 +51,7 @@ class TreeTensorNetwork(StrictModule):
             {
                 "kind": "tree-tensor-network",
                 "structure": structure.structure_id,
-                "dtype": str(arrays[0].dtype),
+                "tensors": array_tree_fingerprint(arrays),
                 "precision": precision_.policy_id,
             }
         )
@@ -82,7 +82,13 @@ def _validate_tree(structure: ContractionStructure, /) -> None:
             incidences.setdefault(leg.label, []).append(index)
     edges = []
     for label, sites in incidences.items():
-        if label in structure.outputs or len(sites) == 1:
+        if label in structure.outputs:
+            if len(sites) > 1:
+                raise ValueError(
+                    "Tree-network output labels may be incident to only one node."
+                )
+            continue
+        if len(sites) == 1:
             continue
         if len(sites) != 2 or sites[0] == sites[1]:
             raise ValueError(

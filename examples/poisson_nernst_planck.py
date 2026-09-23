@@ -45,7 +45,9 @@ for _ in range(20):
     evaluation = dynamics.evaluate(state)
     step = jnp.minimum(1.0e-4, 0.25 * evaluation.explicit_step_restriction)
     result = dynamics.step(state, step)
+    if not bool(result.successful):
+        raise RuntimeError("Poisson-Nernst-Planck step failed")
     state = result.concentrations
 
-print("successful:", bool(result.successful))
+print("successful:", True)
 print("free energy:", float(result.evaluation.total_free_energy))

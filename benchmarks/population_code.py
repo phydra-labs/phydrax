@@ -88,11 +88,16 @@ def main() -> None:
             "held_out_rmse": assessment.rmse.tolist(),
         },
     }
-    encoded = json.dumps(payload, indent=2)
+    payload["passed"] = payload["approximation"]["valid"]
+    encoded = json.dumps(payload, allow_nan=False, indent=2)
     if args.output is None:
         print(encoded)
     else:
-        args.output.write_text(encoded + "\n")
+        from benchmarks._io import write_json_atomic
+
+        write_json_atomic(args.output, payload)
+    if not payload["passed"]:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

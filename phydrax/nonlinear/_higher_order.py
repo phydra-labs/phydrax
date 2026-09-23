@@ -16,6 +16,7 @@ from phydrax._strict import StrictModule
 from .._tree_math import tree_allfinite
 from ..linalg import (
     FunctionLinearOperator,
+    LinearSolveControl,
     LinearSolvePolicy,
     LinearSystem,
     OperatorProperties,
@@ -151,8 +152,23 @@ class VectorHalley(AbstractNonlinearMethod):
         )
 
         def condition(current):
-            return (current.status == int(NonlinearStatus.ITERATING)) & (
-                current.iteration < termination.maximum_steps
+            within_evaluations = (
+                jnp.asarray(True)
+                if termination.maximum_evaluations is None
+                else current.residual_evaluations < termination.maximum_evaluations
+            )
+            within_linear = (
+                jnp.asarray(True)
+                if termination.maximum_linear_iterations is None
+                else (
+                    current.linear_iterations + 2 <= termination.maximum_linear_iterations
+                )
+            )
+            return (
+                (current.status == int(NonlinearStatus.ITERATING))
+                & (current.iteration < termination.maximum_steps)
+                & within_evaluations
+                & within_linear
             )
 
         def body(current):
@@ -167,12 +183,29 @@ class VectorHalley(AbstractNonlinearMethod):
                 operator_id=f"{problem_.problem_id}/halley-jacobian",
                 closure_convert=False,
             )
+            first_control = (
+                None
+                if termination.maximum_linear_iterations is None
+                else LinearSolveControl(
+                    maximum_steps=jnp.maximum(
+                        termination.maximum_linear_iterations
+                        - current.linear_iterations
+                        - 1,
+                        1,
+                    )
+                )
+            )
             first = solve_linear(
                 LinearSystem(jacobian),
                 current.residual,
                 policy=self.precision.bind_linear(self.linear),
+                control=first_control,
             )
             inverse_residual = first.value
+            first_iterations = jnp.sum(
+                first.diagnostics.iterations,
+                dtype=jnp.int32,
+            )
 
             def directional_jacobian(value):
                 return jax.jvp(
@@ -202,10 +235,23 @@ class VectorHalley(AbstractNonlinearMethod):
                 operator_id=f"{problem_.problem_id}/halley-modified-jacobian",
                 closure_convert=False,
             )
+            second_control = (
+                None
+                if termination.maximum_linear_iterations is None
+                else LinearSolveControl(
+                    maximum_steps=jnp.maximum(
+                        termination.maximum_linear_iterations
+                        - current.linear_iterations
+                        - first_iterations,
+                        1,
+                    )
+                )
+            )
             second = solve_linear(
                 LinearSystem(modified),
                 jax.tree.map(jnp.negative, current.residual),
                 policy=self.precision.bind_linear(self.linear),
+                control=second_control,
             )
             direction = second.value
 
@@ -229,10 +275,19 @@ class VectorHalley(AbstractNonlinearMethod):
             )
 
             def search_condition(item):
+                within_evaluations = (
+                    jnp.asarray(True)
+                    if termination.maximum_evaluations is None
+                    else (
+                        current.residual_evaluations + item.evaluations
+                        < termination.maximum_evaluations
+                    )
+                )
                 return (
                     ~item.accepted
                     & (item.evaluations < self.maximum_search_steps)
                     & (item.rate >= 1e-10)
+                    & within_evaluations
                 )
 
             def search_body(item):
@@ -303,6 +358,26 @@ class VectorHalley(AbstractNonlinearMethod):
                     )
                 )
             )
+            second_iterations = jnp.sum(
+                second.diagnostics.iterations,
+                dtype=jnp.int32,
+            )
+            evaluation_exhausted = (
+                jnp.asarray(False)
+                if termination.maximum_evaluations is None
+                else (
+                    current.residual_evaluations + search.evaluations
+                    >= termination.maximum_evaluations
+                )
+            )
+            linear_exhausted = (
+                jnp.asarray(False)
+                if termination.maximum_linear_iterations is None
+                else (
+                    current.linear_iterations + first_iterations + second_iterations
+                    >= termination.maximum_linear_iterations
+                )
+            )
             status = jnp.where(
                 converged,
                 int(NonlinearStatus.SUCCESS),
@@ -310,14 +385,20 @@ class VectorHalley(AbstractNonlinearMethod):
                     stagnated,
                     int(NonlinearStatus.RESIDUAL_STAGNATION),
                     jnp.where(
-                        search.accepted,
-                        int(NonlinearStatus.ITERATING),
-                        int(NonlinearStatus.LINE_SEARCH_FAILED),
+                        evaluation_exhausted,
+                        int(NonlinearStatus.MAXIMUM_EVALUATIONS_REACHED),
+                        jnp.where(
+                            linear_exhausted,
+                            int(NonlinearStatus.MAXIMUM_LINEAR_ITERATIONS_REACHED),
+                            jnp.where(
+                                search.accepted,
+                                int(NonlinearStatus.ITERATING),
+                                int(NonlinearStatus.LINE_SEARCH_FAILED),
+                            ),
+                        ),
                     ),
                 ),
             ).astype(jnp.int32)
-            first_iterations = jnp.sum(first.diagnostics.iterations, dtype=jnp.int32)
-            second_iterations = jnp.sum(second.diagnostics.iterations, dtype=jnp.int32)
             return _HalleyRun(
                 state=search.state,
                 residual=search.residual,
@@ -342,9 +423,27 @@ class VectorHalley(AbstractNonlinearMethod):
             )
 
         run = jax.lax.while_loop(condition, body, run)
+        evaluation_exhausted = (
+            jnp.asarray(False)
+            if termination.maximum_evaluations is None
+            else run.residual_evaluations >= termination.maximum_evaluations
+        )
+        linear_exhausted = (
+            jnp.asarray(False)
+            if termination.maximum_linear_iterations is None
+            else run.linear_iterations + 2 > termination.maximum_linear_iterations
+        )
         status = jnp.where(
             run.status == int(NonlinearStatus.ITERATING),
-            int(NonlinearStatus.MAXIMUM_STEPS_REACHED),
+            jnp.where(
+                evaluation_exhausted,
+                int(NonlinearStatus.MAXIMUM_EVALUATIONS_REACHED),
+                jnp.where(
+                    linear_exhausted,
+                    int(NonlinearStatus.MAXIMUM_LINEAR_ITERATIONS_REACHED),
+                    int(NonlinearStatus.MAXIMUM_STEPS_REACHED),
+                ),
+            ),
             run.status,
         ).astype(jnp.int32)
         diagnostics = NonlinearDiagnostics(

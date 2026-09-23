@@ -40,7 +40,10 @@ def main() -> None:
             validate=True,
         )
         compile_seconds = time.perf_counter() - started
-        executable = phx.export.load_iree(destination)
+        executable = phx.export.load_iree(
+            destination,
+            trusted_module_sha256=exported.manifest.module_sha256,
+        )
         started = time.perf_counter()
         deployed = executable(np.asarray(sample))
         warm_seconds = time.perf_counter() - started

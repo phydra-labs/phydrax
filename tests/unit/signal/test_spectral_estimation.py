@@ -1,5 +1,6 @@
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from phydrax.signal import WelchSpectrumPlan
 
@@ -32,6 +33,20 @@ def test_welch_preserves_leading_signal_axes():
 
     np.testing.assert_allclose(peaks, (5.078125, 10.15625), atol=0.4)
     assert result.power_spectral_density.shape == (2, 65)
+
+
+def test_welch_rejects_invalid_axes_and_fractional_topology() -> None:
+    plan = WelchSpectrumPlan(0.1, 4)
+    values = jnp.ones((2, 8))
+
+    with pytest.raises(ValueError, match="out of bounds"):
+        plan.evaluate(values, axis=2)
+    with pytest.raises(TypeError, match="integer"):
+        plan.evaluate(values, axis=1.5)
+    with pytest.raises(TypeError, match="integer"):
+        WelchSpectrumPlan(0.1, 4.5)
+    with pytest.raises(TypeError, match="integer"):
+        WelchSpectrumPlan(0.1, 4, overlap=1.5)
 
 
 def test_welch_tukey_median_policy_retains_one_sided_power():

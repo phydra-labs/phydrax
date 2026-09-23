@@ -63,6 +63,7 @@ class FreeEnergyStatePlan(StrictModule, NonTrainableState):
     measure_id: str = eqx.field(static=True)
     bias_id: str | None = eqx.field(static=True)
     unit_system_id: str = eqx.field(static=True)
+    inverse_temperature: float = eqx.field(static=True)
     system_id: str = eqx.field(static=True)
     neutral_control_evidence: bool = eqx.field(static=True)
     charge_evidence_id: str = eqx.field(static=True)
@@ -91,6 +92,15 @@ class FreeEnergyStatePlan(StrictModule, NonTrainableState):
             != hamiltonian.system.plan.units.unit_system_id
         ):
             raise ValueError("State table and controlled Hamiltonian identities differ.")
+        inverse_temperature = float(np.asarray(thermodynamic.beta)[index])
+        if (
+            not bool(np.asarray(thermodynamic.temperature_mask)[index])
+            or not np.isfinite(inverse_temperature)
+            or inverse_temperature <= 0.0
+        ):
+            raise ValueError(
+                "Free-energy states require a finite positive inverse temperature."
+            )
         neutral_flags = hamiltonian.partition.preparation.neutral_electrostatic_regions
         neutral = all(
             neutral_flags[control_index]
@@ -117,6 +127,7 @@ class FreeEnergyStatePlan(StrictModule, NonTrainableState):
         self.measure_id = thermodynamic.phase_space_measure_id
         self.bias_id = thermodynamic.bias_ids[index]
         self.unit_system_id = thermodynamic.unit_system_id
+        self.inverse_temperature = inverse_temperature
         self.system_id = thermodynamic.system_id
         self.neutral_control_evidence = neutral
         self.charge_evidence_id = charge_evidence
@@ -131,16 +142,19 @@ class FreeEnergyStatePlan(StrictModule, NonTrainableState):
                 "measure": self.measure_id,
                 "bias": self.bias_id,
                 "units": self.unit_system_id,
+                "inverse_temperature": inverse_temperature.hex(),
                 "charge_evidence": charge_evidence,
             }
         )
 
     def project(self, result: Any, dataset: Any, /) -> "FreeEnergyStateResult":
+
         (
             state_ids,
             potential_ids,
             measure_ids,
             bias_ids,
+            inverse_temperatures,
             unit_system_id,
             _,
             qualification_id,
@@ -154,6 +168,7 @@ class FreeEnergyStatePlan(StrictModule, NonTrainableState):
             measure_ids,
             bias_ids,
             unit_system_id,
+            inverse_temperatures,
         )
         value, variance = _estimate(
             result.free_energies[index], result.covariance[index, index]
@@ -260,10 +275,16 @@ def _authenticated_metadata(result: Any, dataset: Any, /):
         raise ValueError("Free-energy result and dataset state identities differ.")
     if isinstance(dataset, ReducedPotentialDataset):
         measures = (dataset.measure_id,) * len(dataset.state_ids)
+        inverse_temperatures = tuple(
+            float(value) for value in np.asarray(dataset.inverse_temperatures)
+        )
         mapping_id = None
         unit_system_id = dataset.unit_system_id
     else:
         measures = tuple(dataset.measure_ids)
+        inverse_temperatures = (float(dataset.inverse_temperature),) * len(
+            dataset.state_ids
+        )
         mapping_id = dataset.mapping_id
         unit_system_id = dataset.unit_system_id
     return (
@@ -271,6 +292,7 @@ def _authenticated_metadata(result: Any, dataset: Any, /):
         tuple(dataset.potential_ids),
         measures,
         tuple(dataset.bias_ids),
+        inverse_temperatures,
         unit_system_id,
         mapping_id,
         dataset.qualification_id,
@@ -286,6 +308,7 @@ def _validate_state_metadata(
     measure_ids,
     bias_ids,
     unit_system_id,
+    inverse_temperatures,
     /,
 ) -> int:
     if plan.state_id not in state_ids:
@@ -295,6 +318,7 @@ def _validate_state_metadata(
         potential_ids[index] != plan.potential_id
         or measure_ids[index] != plan.measure_id
         or bias_ids[index] != plan.bias_id
+        or inverse_temperatures[index] != plan.inverse_temperature
         or unit_system_id != plan.unit_system_id
         or not plan.neutral_control_evidence
     ):
@@ -358,6 +382,7 @@ class FreeEnergyProtocolLegPlan(StrictModule, NonTrainableState):
             potential_ids,
             measure_ids,
             bias_ids,
+            inverse_temperatures,
             unit_system_id,
             mapping_id,
             qualification_id,
@@ -371,6 +396,7 @@ class FreeEnergyProtocolLegPlan(StrictModule, NonTrainableState):
             measure_ids,
             bias_ids,
             unit_system_id,
+            inverse_temperatures,
         )
         destination_index = _validate_state_metadata(
             self.destination,
@@ -379,6 +405,7 @@ class FreeEnergyProtocolLegPlan(StrictModule, NonTrainableState):
             measure_ids,
             bias_ids,
             unit_system_id,
+            inverse_temperatures,
         )
         if not bool(np.asarray(result.connectivity)[source_index, destination_index]):
             raise ValueError("Protocol leg endpoints are disconnected in the analysis.")

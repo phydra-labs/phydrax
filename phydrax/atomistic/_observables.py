@@ -30,11 +30,21 @@ class ThermodynamicAccumulator(StrictModule):
     temperature_square_sum: Array
     pressure_sum: Array
     pressure_square_sum: Array
+    successful: Array
 
     @classmethod
     def empty(cls, dtype) -> "ThermodynamicAccumulator":
         zero = jnp.zeros((), dtype=dtype)
-        return cls(jnp.zeros((), dtype=jnp.int32), zero, zero, zero, zero, zero, zero)
+        return cls(
+            jnp.zeros((), dtype=jnp.int32),
+            zero,
+            zero,
+            zero,
+            zero,
+            zero,
+            zero,
+            jnp.asarray(True),
+        )
 
     def update(
         self,
@@ -44,8 +54,11 @@ class ThermodynamicAccumulator(StrictModule):
         /,
     ) -> "ThermodynamicAccumulator":
         diagnostics = dynamics.diagnostics(state, thermodynamic_states)
-        pressure = jnp.where(
-            jnp.isfinite(diagnostics.pressure), diagnostics.pressure, 0.0
+        pressure = diagnostics.pressure
+        valid = (
+            jnp.isfinite(diagnostics.total_energy)
+            & jnp.isfinite(diagnostics.temperature)
+            & jnp.isfinite(pressure)
         )
         return ThermodynamicAccumulator(
             self.count + 1,
@@ -55,6 +68,7 @@ class ThermodynamicAccumulator(StrictModule):
             self.temperature_square_sum + diagnostics.temperature**2,
             self.pressure_sum + pressure,
             self.pressure_square_sum + pressure**2,
+            self.successful & valid,
         )
 
 
@@ -66,6 +80,7 @@ class ThermodynamicSummary(StrictModule):
     mean_pressure: Array
     pressure_variance: Array
     count: Array
+    successful: Array
 
 
 def summarize_thermodynamics(
@@ -85,6 +100,7 @@ def summarize_thermodynamics(
         pressure,
         jnp.maximum(accumulator.pressure_square_sum / count - pressure**2, 0.0),
         accumulator.count,
+        accumulator.successful & (accumulator.count > 0),
     )
 
 
@@ -318,9 +334,10 @@ def static_structure_factor(
         raise ValueError("Structure-factor masks and scattering lengths are misaligned.")
     weights = jnp.where(particles, scattering, 0.0)
     normalization = jnp.sum(weights * weights)
+    safe_values = jnp.where(particles[None, :, None], values, 0.0)
     phase = contract(
         "tnd,kd->tkn",
-        values,
+        safe_values,
         plan.wave_vectors.astype(values.dtype),
     )
     amplitude = jnp.sum(weights[None, None, :] * jnp.exp(1j * phase), axis=-1)
@@ -332,7 +349,11 @@ def static_structure_factor(
         jnp.maximum(active_frames, 1)
     )
     finite = (
-        jnp.all(jnp.isfinite(jnp.where(samples[:, None, None], values, 0.0)))
+        jnp.all(
+            jnp.isfinite(
+                jnp.where(samples[:, None, None] & particles[None, :, None], values, 0.0)
+            )
+        )
         & jnp.all(jnp.isfinite(weights))
         & jnp.all(jnp.isfinite(frame_values))
     )
@@ -458,9 +479,13 @@ def lagged_msd_vacf(
     safe_target = jnp.clip(target, 0, frame_count - 1)
     pair_frames = inside & samples[None, :] & samples[safe_target]
     pair_particles = pair_frames[..., None] & particles[None, None, :]
-    displacement = position[safe_target] - position[origin]
-    velocity_product = jnp.sum(velocity[safe_target] * velocity[origin], axis=-1)
-    squared = jnp.sum(displacement * displacement, axis=-1)
+    safe_position = jnp.where(particles[None, :, None], position, 0.0)
+    safe_velocity = jnp.where(particles[None, :, None], velocity, 0.0)
+    displacement = safe_position[safe_target] - safe_position[origin]
+    squared = jnp.sum(jnp.real(displacement * jnp.conj(displacement)), axis=-1)
+    velocity_product = jnp.sum(
+        safe_velocity[safe_target] * safe_velocity[origin], axis=-1
+    )
     particle_pair_counts = jnp.sum(pair_particles, axis=(1, 2), dtype=jnp.int32)
     denominator = jnp.maximum(particle_pair_counts, 1).astype(position.dtype)
     msd = jnp.sum(jnp.where(pair_particles, squared, 0.0), axis=(1, 2)) / denominator
@@ -473,8 +498,20 @@ def lagged_msd_vacf(
         jnp.where(pair_frames, time[safe_target] - time[origin], 0.0), axis=1
     ) / jnp.maximum(origin_counts, 1)
     finite = (
-        jnp.all(jnp.isfinite(jnp.where(samples[:, None, None], position, 0.0)))
-        & jnp.all(jnp.isfinite(jnp.where(samples[:, None, None], velocity, 0.0)))
+        jnp.all(
+            jnp.isfinite(
+                jnp.where(
+                    samples[:, None, None] & particles[None, :, None], position, 0.0
+                )
+            )
+        )
+        & jnp.all(
+            jnp.isfinite(
+                jnp.where(
+                    samples[:, None, None] & particles[None, :, None], velocity, 0.0
+                )
+            )
+        )
         & jnp.all(jnp.isfinite(jnp.where(samples, time, 0.0)))
     )
     successful = (

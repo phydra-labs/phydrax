@@ -33,6 +33,27 @@ def _bounded_count(count: int, maximum: int, label: str, /) -> int:
     return value
 
 
+def _validated_integer_indices(
+    value: ArrayLike,
+    width: int,
+    limits: Sequence[int],
+    label: str,
+    /,
+) -> Array:
+    raw = jnp.asarray(value)
+    if not jnp.issubdtype(raw.dtype, jnp.integer):
+        raise TypeError(f"{label} must have an integer dtype.")
+    if raw.ndim < 1 or raw.shape[-1] != width:
+        raise ValueError(f"{label} has the wrong trailing dimension.")
+    bounds = jnp.asarray(tuple(limits), dtype=raw.dtype)
+    checked = eqx.error_if(
+        raw,
+        jnp.any((raw < 0) | (raw >= bounds)),
+        f"{label} contains an out-of-range index.",
+    )
+    return checked.astype(jnp.int32)
+
+
 class TensorizedGrid(StrictModule):
     """Finite Cartesian grid with explicit one-dimensional nodes and weights."""
 
@@ -131,9 +152,12 @@ class TensorizedGrid(StrictModule):
         return jnp.stack(columns, axis=-1)
 
     def coordinates(self, indices: ArrayLike, /) -> Array:
-        points = jnp.asarray(indices, dtype=jnp.int32)
-        if points.ndim < 1 or points.shape[-1] != self.dimension:
-            raise ValueError("Grid indices need one trailing coordinate per axis.")
+        points = _validated_integer_indices(
+            indices,
+            self.dimension,
+            self.mode_sizes,
+            "Grid indices",
+        )
         return jnp.stack(
             tuple(
                 axis[points[..., position]]
@@ -143,9 +167,12 @@ class TensorizedGrid(StrictModule):
         )
 
     def weights(self, indices: ArrayLike, /) -> Array:
-        points = jnp.asarray(indices, dtype=jnp.int32)
-        if points.ndim < 1 or points.shape[-1] != self.dimension:
-            raise ValueError("Grid indices need one trailing coordinate per axis.")
+        points = _validated_integer_indices(
+            indices,
+            self.dimension,
+            self.mode_sizes,
+            "Grid indices",
+        )
         result = jnp.ones(points.shape[:-1], dtype=self.axis_weights[0].dtype)
         for position, weights in enumerate(self.axis_weights):
             result = result * weights[points[..., position]]
@@ -234,9 +261,12 @@ class QuanticsLayout(StrictModule):
         return len(self.digit_axes)
 
     def digitize(self, indices: ArrayLike, /) -> Array:
-        points = jnp.asarray(indices, dtype=jnp.int32)
-        if points.ndim < 1 or points.shape[-1] != self.axis_count:
-            raise ValueError("Quantics digitization needs one index per physical axis.")
+        points = _validated_integer_indices(
+            indices,
+            self.axis_count,
+            self.axis_sizes,
+            "Quantics physical indices",
+        )
         blocked: list[list[Array]] = []
         for axis, bases in enumerate(self.axis_digit_sizes):
             value = points[..., axis]
@@ -250,9 +280,12 @@ class QuanticsLayout(StrictModule):
         )
 
     def undigitize(self, digits: ArrayLike, /) -> Array:
-        values = jnp.asarray(digits, dtype=jnp.int32)
-        if values.ndim < 1 or values.shape[-1] != self.digit_count:
-            raise ValueError("Quantics digits do not match this layout.")
+        values = _validated_integer_indices(
+            digits,
+            self.digit_count,
+            self.digit_mode_sizes,
+            "Quantics digits",
+        )
         physical = []
         for axis, bases in enumerate(self.axis_digit_sizes):
             value = jnp.zeros(values.shape[:-1], dtype=jnp.int32)
@@ -319,9 +352,12 @@ class TensorFunction(StrictModule):
         )
 
     def evaluate(self, indices: ArrayLike, /, *, max_evaluations: int) -> Array:
-        points = jnp.asarray(indices, dtype=jnp.int32)
-        if points.ndim < 1 or points.shape[-1] != self.grid.dimension:
-            raise ValueError("TensorFunction indices do not match its grid.")
+        points = _validated_integer_indices(
+            indices,
+            self.grid.dimension,
+            self.grid.mode_sizes,
+            "TensorFunction indices",
+        )
         count = prod(points.shape[:-1])
         _bounded_count(count, max_evaluations, "function evaluation")
         coordinates = self.grid.coordinates(points)

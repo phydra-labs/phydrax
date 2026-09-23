@@ -12,6 +12,7 @@ import numpy as np
 
 from ..._document_resource import decode_text_resource
 from ..._external_resource import read_bounded_resource, ResourceLimits
+from ..._physical import SpatialCoordinateContract
 from ..._publication import publish_bytes
 from ...interchange import (
     AdapterError,
@@ -20,6 +21,7 @@ from ...interchange import (
     AdapterStatus,
     require_lossless,
 )
+from ...units import TIME, UnitDefinition
 from ..imaging import DenseDisplacementField2D
 from ..piv import PhysicalPIVResult2D
 from ._piv_field import field_columns, field_from_columns
@@ -35,8 +37,8 @@ def read_openpiv_text(
     *,
     value_kind: OpenPIVValueKind,
     geometry_id: str | None = None,
-    spatial_unit: str | None = None,
-    time_unit: str | None = None,
+    coordinate_contract: SpatialCoordinateContract | None = None,
+    time_unit: UnitDefinition | None = None,
     coordinate_convention: OpenPIVCoordinateConvention = "physical",
     pixels_per_unit: float = 1.0,
     delta_t: float = 1.0,
@@ -114,12 +116,15 @@ def read_openpiv_text(
                 AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC,
                 "Physical OpenPIV velocity requires the right-handed physical coordinate convention.",
             )
-        spatial = "" if spatial_unit is None else str(spatial_unit).strip()
-        temporal = "" if time_unit is None else str(time_unit).strip()
-        if not spatial or not temporal:
+        if not isinstance(coordinate_contract, SpatialCoordinateContract):
             raise AdapterError(
                 AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC,
-                "Physical OpenPIV velocity requires explicit spatial_unit and time_unit.",
+                "Physical OpenPIV velocity requires coordinate_contract.",
+            )
+        if not isinstance(time_unit, UnitDefinition) or time_unit.dimension != TIME:
+            raise AdapterError(
+                AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC,
+                "Physical OpenPIV velocity requires a time UnitDefinition.",
             )
         positions, velocity, validity = _physical_grid(x, y, u, v, valid)
         displacement = velocity * time
@@ -130,8 +135,9 @@ def read_openpiv_text(
             validity,
             source_id,
             f"openpiv-physical:{source_id}",
-            spatial,
-            temporal,
+            coordinate_contract.length_unit,
+            time_unit,
+            coordinate_contract.reference_frame,
         )
         mapping = (
             "OpenPIV x -> physical x",
@@ -142,6 +148,11 @@ def read_openpiv_text(
         target_format = "PhysicalPIVResult2D"
         target_id = source_id
         preserved = ("positions_xy", "displacement_xy", "velocity_xy", "valid")
+        unit_assumptions = (
+            f"spatial_unit={coordinate_contract.length_unit.unit_id}",
+            f"time_unit={time_unit.unit_id}",
+            f"frame_id={coordinate_contract.reference_frame}",
+        )
     else:
         if geometry_id is None or not str(geometry_id).strip():
             raise AdapterError(
@@ -178,6 +189,7 @@ def read_openpiv_text(
         target_format = "DenseDisplacementField2D"
         target_id = field.field_id
         preserved = ("positions_rc", "displacement_rc", "valid")
+        unit_assumptions = ()
     losses = [
         AdapterLoss(
             "vector_status",
@@ -240,7 +252,8 @@ def read_openpiv_text(
             f"pixels_per_unit={scale}",
             f"delta_t={time}",
             f"coordinate_convention={coordinate_convention}",
-        ),
+        )
+        + unit_assumptions,
         losses=losses,
     )
     return field, report
@@ -293,6 +306,11 @@ def write_openpiv_text(
         source_id = field.source_field_id
         source_format = "PhysicalPIVResult2D"
         preserved = ("positions_xy", "velocity_xy", "valid")
+        assumptions = (
+            f"spatial_unit={field.spatial_unit.unit_id}",
+            f"time_unit={field.time_unit.unit_id}",
+            f"frame_id={field.frame_id}",
+        )
     elif isinstance(field, DenseDisplacementField2D):
         row, column, dr, dc, valid = field_columns(field)
         x = column / scale
@@ -318,6 +336,7 @@ def write_openpiv_text(
         source_id = field.field_id
         source_format = "DenseDisplacementField2D"
         preserved = ("positions_rc", "displacement_rc", "valid")
+        assumptions = (f"pixels_per_unit={scale}", f"delta_t={time}")
     else:
         raise TypeError("field must be DenseDisplacementField2D or PhysicalPIVResult2D.")
     flags = (~valid).astype(np.int32)
@@ -365,7 +384,7 @@ def write_openpiv_text(
         target_id=target_id,
         coordinate_mapping=mapping,
         preserved_fields=preserved,
-        assumptions=(f"pixels_per_unit={scale}", f"delta_t={time}"),
+        assumptions=assumptions,
         losses=losses,
     )
     if lossless:

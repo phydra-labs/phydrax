@@ -262,7 +262,17 @@ def finite_size_growth(
     cadence = int(rescale_interval)
     if not np.isfinite(distance) or distance <= 0.0 or cadence < 1:
         raise ValueError("perturbation_distance and rescale_interval must be positive.")
-    dimension = evolution.state_layout.size
+    layout = evolution.state_layout
+    if (
+        not layout.geometry.trivial
+        or layout.size != layout.local_size
+        or layout.size != layout.tangent_size
+    ):
+        raise ValueError(
+            "finite_size_growth requires a trivial geometry with identical "
+            "point, local, and tangent dimensions."
+        )
+    dimension = layout.size
     if directions is None:
         count = dimension if num_directions is None else int(num_directions)
         if count < 1:
@@ -494,7 +504,7 @@ def recurrence_quantification(
         )
         for output, value in zip(scalar_outputs, values, strict=True):
             output[case] = value
-        valid_output[case] = eligible_points > 0 and np.isfinite(recurrence_rate)
+        valid_output[case] = eligible_points > 0 and bool(np.all(np.isfinite(values)))
         status[case] = (
             CHAOS_DIAGNOSTIC_SUCCESS
             if valid_output[case]
@@ -782,7 +792,15 @@ def correlation_dimension(
             local_slope[case, finite_indices] = np.gradient(
                 log_sum[finite_indices], log_radius[finite_indices]
             )
-        result_valid[case] = np.isfinite(dimensions[case])
+        result_valid[case] = np.all(
+            np.isfinite(
+                (
+                    dimensions[case],
+                    intercepts[case],
+                    r_squared[case],
+                )
+            )
+        )
         statuses[case] = (
             CHAOS_DIAGNOSTIC_SUCCESS
             if result_valid[case]

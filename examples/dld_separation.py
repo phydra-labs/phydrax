@@ -107,11 +107,13 @@ def main() -> None:
         volume_flow=jnp.asarray(2.0),
         pressure_drop=jnp.asarray(4.0),
     )
+    if not bool(result.successful):
+        raise RuntimeError("DLD separation workflow failed")
     print(
         json.dumps(
             {
                 "scientific_status": "synthetic-invariant-demonstration",
-                "successful": bool(result.successful),
+                "successful": True,
                 "terminal_codes": [
                     int(value) for value in result.final_state.terminal_code
                 ],

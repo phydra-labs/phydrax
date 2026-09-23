@@ -74,7 +74,7 @@ class PeriodicEwaldEvidence(StrictModule, NonTrainableState):
         background = jnp.asarray(background_applied, dtype=jnp.bool_).reshape(())
         finite = (
             jnp.isfinite(net)
-            & ~jnp.isnan(distance)
+            & jnp.isfinite(distance)
             & jnp.all(jnp.isfinite(residuals))
             & (distance > 0.0)
             & jnp.all(residuals >= 0.0)

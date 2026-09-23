@@ -585,19 +585,48 @@ def compile_workset_program(
     cell_locals = np.concatenate(
         tuple(np.arange(block.cell_count, dtype=np.int32) for block in mesh.blocks)
     )
-    cell_offset = 0
-    for block_index, block in enumerate(mesh.blocks):
-        block_cells = np.arange(
-            cell_offset,
-            cell_offset + block.cell_count,
+    cell_offsets = np.cumsum(
+        np.asarray(
+            (0,) + tuple(block.cell_count for block in mesh.blocks),
             dtype=np.int32,
         )
-        cell_offset += block.cell_count
+    )
+    neighbor_blocks_by_owner = {index: set() for index in range(len(mesh.blocks))}
+    for action_index, action in enumerate(form.actions):
+        if action_index in common_action_indices:
+            continue
+        domain = _domain_for_action(action, discretization)
+        if domain.kind != "interior_facet":
+            continue
+        owners = np.asarray(domain.owner_cells, dtype=np.int32)
+        neighbors = np.asarray(domain.neighbor_cells, dtype=np.int32)
+        valid = neighbors >= 0
+        for owner_block, neighbor_block in zip(
+            cell_blocks[owners[valid]],
+            cell_blocks[neighbors[valid]],
+            strict=True,
+        ):
+            neighbor_blocks_by_owner[int(owner_block)].add(int(neighbor_block))
+    block_entries = []
+    for block_index, block in enumerate(mesh.blocks):
+        block_entries.append((block_index, block, None))
+        block_entries.extend(
+            (block_index, block, neighbor_block_index)
+            for neighbor_block_index in sorted(neighbor_blocks_by_owner[block_index])
+        )
+    for block_index, block, neighbor_block_index in block_entries:
+        block_cells = np.arange(
+            cell_offsets[block_index],
+            cell_offsets[block_index + 1],
+            dtype=np.int32,
+        )
         for action_index, action in enumerate(form.actions):
             if action_index in common_action_indices:
                 continue
             domain = _domain_for_action(action, discretization)
             if domain.kind == "cell":
+                if neighbor_block_index is not None:
+                    continue
                 selected = np.flatnonzero(
                     np.isin(block_cells, np.asarray(domain.entity_indices))
                 )
@@ -613,9 +642,22 @@ def compile_workset_program(
                 neighbor_trace_permutations = None
             else:
                 domain_owners = np.asarray(domain.owner_cells, dtype=np.int32)
-                selected = np.flatnonzero(
-                    (domain_owners >= block_cells[0]) & (domain_owners <= block_cells[-1])
+                domain_neighbors = np.asarray(domain.neighbor_cells, dtype=np.int32)
+                owner_selected = (domain_owners >= block_cells[0]) & (
+                    domain_owners <= block_cells[-1]
                 )
+                if domain.kind == "interior_facet":
+                    if neighbor_block_index is None:
+                        continue
+                    safe_neighbors = np.maximum(domain_neighbors, 0)
+                    neighbor_selected = (domain_neighbors >= 0) & (
+                        cell_blocks[safe_neighbors] == neighbor_block_index
+                    )
+                    selected = np.flatnonzero(owner_selected & neighbor_selected)
+                else:
+                    if neighbor_block_index is not None:
+                        continue
+                    selected = np.flatnonzero(owner_selected)
                 if selected.size == 0:
                     continue
                 entity_indices = np.asarray(domain.entity_indices)[selected]
@@ -647,6 +689,7 @@ def compile_workset_program(
             gathers = {}
             neighbor_gathers = {}
             widths = {}
+            neighbor_widths = {}
             for field in fields:
                 field_index = discretization._field_index(field)
                 dof_map = discretization.dof_maps[field_index]
@@ -669,19 +712,26 @@ def compile_workset_program(
                             dof_map.cell_dofs[neighbor_block][neighbor_local],
                             dtype=np.int32,
                         )
-                        if neighbor_dofs.shape != (route.shape[1],):
-                            raise ValueError(
-                                "Facet neighbors require compatible local widths."
-                            )
                         neighbor_rows.append(neighbor_dofs)
                     neighbor_route = np.asarray(neighbor_rows, dtype=np.int32)
                 gathers[field] = route
                 neighbor_gathers[field] = neighbor_route
                 widths[field] = route.shape[1]
+                neighbor_widths[field] = neighbor_route.shape[1]
             representative_output = _output_fields(action)[0]
             output_field_index = discretization._field_index(representative_output)
             element = discretization.elements[output_field_index][block_index]
             coordinate_element = discretization.coordinate_elements[block_index]
+            neighbor_block = (
+                None
+                if neighbor_block_index is None
+                else mesh.blocks[neighbor_block_index]
+            )
+            neighbor_coordinate_element = (
+                None
+                if neighbor_block_index is None
+                else discretization.coordinate_elements[neighbor_block_index]
+            )
             reference, reference_id = _prepared_reference(
                 action,
                 block,
@@ -689,6 +739,27 @@ def compile_workset_program(
                 discretization.precision_policy,
                 domain.kind,
             )
+            if neighbor_block is None:
+                neighbor_reference = None
+                reference_ids = (reference_id,)
+            else:
+                neighbor_element = discretization.elements[output_field_index][
+                    neighbor_block_index
+                ]
+                neighbor_reference, neighbor_reference_id = _prepared_reference(
+                    action,
+                    neighbor_block,
+                    neighbor_element,
+                    discretization.precision_policy,
+                    domain.kind,
+                )
+                if tuple(
+                    facet.points.shape[0] for facet in neighbor_reference.facets
+                ) != tuple(facet.points.shape[0] for facet in reference.facets):
+                    raise ValueError(
+                        "Cross-block tensor facets require matching trace quadrature; use a mortar for nonmatching traces."
+                    )
+                reference_ids = (reference_id, neighbor_reference_id)
             strategy = _select_local_kernel(
                 str(local_kernel), str(realization), action, domain.kind, reference
             )
@@ -700,7 +771,7 @@ def compile_workset_program(
                 widths,
                 support_id=domain.support_id,
                 entity_set_id=domain.entity_set_id,
-                reference_action_ids=(reference_id,),
+                reference_action_ids=reference_ids,
                 field_layout_ids=tuple(
                     discretization.local_field_binding(field).layout_id
                     for field in fields
@@ -710,12 +781,24 @@ def compile_workset_program(
                         "kind": "finite-element-geometry-actions",
                         "coordinate_element": coordinate_element.element_id,
                         "block": block.name,
+                        "neighbor_coordinate_element": (
+                            None
+                            if neighbor_coordinate_element is None
+                            else neighbor_coordinate_element.element_id
+                        ),
+                        "neighbor_block": (
+                            None if neighbor_block is None else neighbor_block.name
+                        ),
                     }
                 ),
                 coefficient_layout_ids=_coefficient_layout_ids(action),
                 precision_id=discretization.precision_policy.policy_id,
                 ir_semantics_id=ir.actions[action_index].action_id,
                 local_kernel=strategy,
+                neighbor_local_widths=neighbor_widths,
+                neighbor_block_name=(
+                    None if neighbor_block is None else neighbor_block.name
+                ),
             )
             worksets.append(
                 CompiledWorkset(
@@ -726,6 +809,7 @@ def compile_workset_program(
                     neighbor_cells,
                     gathers,
                     reference=reference,
+                    neighbor_reference=neighbor_reference,
                     neighbor_gathers=neighbor_gathers,
                     owner_local_entities=owner_local_entities,
                     neighbor_local_entities=neighbor_local_entities,
@@ -822,6 +906,7 @@ def compile_finite_element_hp_mortar_workset(
         ir_semantics_id=action_ir.action_id,
         local_kernel="mortar",
         neighbor_local_widths={field_name: neighbor_trace.size},
+        neighbor_block_name=discretization.mesh.blocks[neighbor_block_index].name,
     )
     return CompiledWorkset(
         signature,

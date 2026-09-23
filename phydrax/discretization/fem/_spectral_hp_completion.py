@@ -1401,9 +1401,17 @@ def physical_mass_projection(
     coupling = jnp.swapaxes(target, -1, -2) @ (weights[:, None] * source)
     space = ArraySpace((target.shape[1],), dtype=target.dtype)
     operator = DenseLinearOperator(target_mass, source=space, target=space)
-    columns = tuple(
-        solve(LinearSystem(operator), coupling[:, column]).value
+    results = tuple(
+        solve(LinearSystem(operator), coupling[:, column])
         for column in range(coupling.shape[1])
+    )
+    columns = tuple(
+        eqx.error_if(
+            result.value,
+            jnp.any(~result.successful) | jnp.any(~jnp.isfinite(result.value)),
+            "Physical mass-projection solve failed.",
+        )
+        for result in results
     )
     return jnp.stack(columns, axis=1)
 

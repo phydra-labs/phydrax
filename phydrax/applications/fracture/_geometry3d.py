@@ -75,6 +75,16 @@ class CrackSurfaceGeometry3D(StrictModule, NonTrainableState):
         counts = Counter(undirected)
         if any(count > 2 for count in counts.values()):
             raise ValueError("Crack surface contains a nonmanifold edge.")
+        incidences: dict[tuple[int, int], list[tuple[int, int]]] = {}
+        for oriented, key in zip(oriented_edges, undirected, strict=True):
+            incidences.setdefault(key, []).append(oriented)
+        if any(
+            len(edges) == 2 and edges[0] != (edges[1][1], edges[1][0])
+            for edges in incidences.values()
+        ):
+            raise ValueError(
+                "Adjacent crack triangles must traverse shared edges oppositely."
+            )
         front = np.asarray(
             [
                 oriented

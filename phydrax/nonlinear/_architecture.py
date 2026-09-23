@@ -19,8 +19,10 @@ from .._strict import StrictModule
 from .._tree_math import tree_allfinite
 from ..linalg import (
     AbstractLinearOperator,
+    LinearSolveControl,
     LinearSolvePolicy,
     LinearSystem,
+    plan as plan_linear,
     solve as solve_linear,
 )
 from ._linearization import JacobianPolicy, prepare_jacobian
@@ -268,71 +270,123 @@ class NewtonDirectionPolicy(AbstractDirectionPolicy):
             raise TypeError("model must be NonlinearModel.")
         if not isinstance(budget, NonlinearWorkBudget):
             raise TypeError("budget must be NonlinearWorkBudget.")
-        right_hand_side = jax.tree.map(jnp.negative, model.residual)
-        linear_result = solve_linear(
-            LinearSystem(model.operator),
-            right_hand_side,
-            policy=self.precision.bind_linear(self.linear),
-        )
-        direction = linear_result.value
-        image = model.operator.mv(direction)
-        slope = self.precision.decision(
-            jnp.real(
-                self.precision.inner(
-                    model.operator.target,
-                    model.residual,
-                    image,
-                )
-            )
-        )
-        iterations = jnp.sum(
-            linear_result.diagnostics.iterations,
-            dtype=jnp.int32,
-        )
-        work = NonlinearWork(
-            jvp_evaluations=jnp.sum(
-                linear_result.diagnostics.matvec_count,
-                dtype=jnp.int32,
-            )
-            + 1,
-            vjp_evaluations=jnp.sum(
-                linear_result.diagnostics.adjoint_matvec_count,
-                dtype=jnp.int32,
-            ),
+        minimum_work = NonlinearWork(
+            jvp_evaluations=3,
             linear_setups=1,
             linear_solves=1,
-            linear_iterations=iterations,
+            linear_iterations=1,
         )
-        finite = tree_allfinite(direction) & jnp.isfinite(slope)
-        permitted = budget.permits(work)
-        status = jnp.where(
-            ~permitted,
-            int(DirectionStatus.BUDGET_EXHAUSTED),
-            jnp.where(
-                ~linear_result.diagnostics.converged,
-                int(DirectionStatus.LINEAR_FAILURE),
+        linear_problem = LinearSystem(model.operator)
+        linear_policy = self.precision.bind_linear(self.linear)
+        linear_plan = plan_linear(linear_problem, linear_policy)
+        structural_limit = linear_policy.tolerance.max_steps or model.operator.source.size
+        linear_limit = jnp.where(
+            budget.linear_iterations < 0,
+            structural_limit,
+            budget.linear_iterations,
+        )
+        jvp_limit = jnp.where(
+            budget.jvp_evaluations < 0,
+            structural_limit,
+            jnp.maximum(budget.jvp_evaluations - 2, 0),
+        )
+        solve_limit = jnp.minimum(
+            jnp.asarray(structural_limit, dtype=jnp.int32),
+            jnp.minimum(linear_limit, jvp_limit),
+        )
+        control = (
+            LinearSolveControl(maximum_steps=jnp.maximum(solve_limit, 1))
+            if linear_plan.backend == "native-krylov"
+            else None
+        )
+        preflight = budget.permits(minimum_work)
+
+        def execute(_):
+            right_hand_side = jax.tree.map(jnp.negative, model.residual)
+            linear_result = solve_linear(
+                linear_problem,
+                right_hand_side,
+                policy=linear_plan,
+                control=control,
+            )
+            direction = linear_result.value
+            image = model.operator.mv(direction)
+            slope = self.precision.decision(
+                jnp.real(
+                    self.precision.inner(
+                        model.operator.target,
+                        model.residual,
+                        image,
+                    )
+                )
+            )
+            iterations = jnp.sum(
+                linear_result.diagnostics.iterations,
+                dtype=jnp.int32,
+            )
+            work = NonlinearWork(
+                jvp_evaluations=jnp.sum(
+                    linear_result.diagnostics.matvec_count,
+                    dtype=jnp.int32,
+                )
+                + 1,
+                vjp_evaluations=jnp.sum(
+                    linear_result.diagnostics.adjoint_matvec_count,
+                    dtype=jnp.int32,
+                ),
+                linear_setups=1,
+                linear_solves=1,
+                linear_iterations=iterations,
+            )
+            finite = tree_allfinite(direction) & jnp.isfinite(slope)
+            permitted = budget.permits(work)
+            status = jnp.where(
+                ~permitted,
+                int(DirectionStatus.BUDGET_EXHAUSTED),
                 jnp.where(
-                    ~finite,
-                    int(DirectionStatus.NONFINITE),
+                    ~linear_result.diagnostics.converged,
+                    int(DirectionStatus.LINEAR_FAILURE),
                     jnp.where(
-                        slope >= 0.0,
-                        int(DirectionStatus.NONDESCENT),
-                        int(DirectionStatus.SUCCESS),
+                        ~finite,
+                        int(DirectionStatus.NONFINITE),
+                        jnp.where(
+                            slope >= 0.0,
+                            int(DirectionStatus.NONDESCENT),
+                            int(DirectionStatus.SUCCESS),
+                        ),
                     ),
                 ),
-            ),
-        ).astype(jnp.int32)
-        return DirectionResult(
-            direction=direction,
-            model_image=image,
-            slope=slope,
-            predicted_reduction=-slope,
-            status=status,
-            work=work,
-            precision_evidence=model.precision_evidence,
-            precision_policy_id=self.precision.policy_id,
-            direction_id="newton",
-        )
+            ).astype(jnp.int32)
+            return DirectionResult(
+                direction=direction,
+                model_image=image,
+                slope=slope,
+                predicted_reduction=-slope,
+                status=status,
+                work=work,
+                precision_evidence=model.precision_evidence,
+                precision_policy_id=self.precision.policy_id,
+                direction_id="newton",
+            )
+
+        def reject(_):
+            slope = jnp.asarray(jnp.nan, dtype=model.residual_norm.dtype)
+            return DirectionResult(
+                direction=model.operator.source.zeros(),
+                model_image=model.operator.target.zeros(),
+                slope=slope,
+                predicted_reduction=slope,
+                status=jnp.asarray(
+                    int(DirectionStatus.BUDGET_EXHAUSTED),
+                    dtype=jnp.int32,
+                ),
+                work=NonlinearWork.zero(),
+                precision_evidence=model.precision_evidence,
+                precision_policy_id=self.precision.policy_id,
+                direction_id="newton",
+            )
+
+        return jax.lax.cond(preflight, execute, reject, operand=None)
 
 
 class ResidualArmijoPolicy(AbstractGlobalizationPolicy):

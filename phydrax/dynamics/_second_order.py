@@ -11,7 +11,7 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ..discretization import DiscretizationBundle
 
@@ -143,11 +143,22 @@ class SecondOrderDifferentialProblem(StrictModule):
         bundle_id = (
             None if discretization_bundle is None else discretization_bundle.bundle_id
         )
+        if problem_id is None and args is not None:
+            raise ValueError(
+                "problem_id is required when second-order problem args are supplied."
+            )
         payload = {
             "system_id": system.system_id,
             "state_shape": list(system.state_shape),
             "state_dtype": str(configuration.dtype),
             "discretization_bundle_id": bundle_id,
+            "initial": array_tree_fingerprint(
+                {
+                    "configuration": configuration,
+                    "velocity": velocity,
+                    "acceleration": acceleration,
+                }
+            ),
         }
         identifier = (
             f"second-order-problem:{canonical_fingerprint(payload)}"

@@ -372,7 +372,11 @@ def _lower_endpoint(target: FiniteBridgeTarget, name: str, /) -> _FiniteEndpoint
         partition = jnp.sum(unnormalized, axis=-1, keepdims=True)
         probabilities = unnormalized / partition
         log_partition = jnp.squeeze(maximum, -1) + jnp.log(jnp.squeeze(partition, -1))
-        mass = base.mass if target.normalized else base.mass * jnp.exp(log_partition)
+        mass = (
+            jnp.ones_like(base.mass)
+            if target.normalized
+            else base.mass * jnp.exp(log_partition)
+        )
         probabilities = eqx.error_if(
             probabilities,
             jnp.any(~jnp.isfinite(probabilities)),

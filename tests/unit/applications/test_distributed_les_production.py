@@ -2,7 +2,6 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import inspect
 
 import jax
 import jax.numpy as jnp
@@ -25,10 +24,7 @@ from phydrax.discretization.spectral._distributed import (
     SpectralMeshTopology,
     SpectralResourceError,
 )
-from phydrax.discretization.spectral._distributed_les import (
-    DistributedPeriodicLESPlan,
-    PreparedDistributedPeriodicLES,
-)
+from phydrax.discretization.spectral._distributed_les import DistributedPeriodicLESPlan
 from phydrax.equations._incompressible import _PeriodicRotationalDrift
 from phydrax.equations._les_closures import (
     LESParameterProvenance,
@@ -279,6 +275,38 @@ def test_distributed_fixed_step_accepts_and_rejects_transactionally(scheme):
     assert method.method_id != method.plan.plan_id
 
 
+def test_distributed_method_rejects_failed_forcing_and_foreign_coordinates():
+    space, _, _, dynamics, _, state = _compiled(forcing=True)
+    coordinates = phx.discretization.HermitianSpectralCoordinates(
+        space, component_shape=(3,)
+    )
+    method = DistributedPeriodicLESMethodPlan("etdrk2").prepare(dynamics, coordinates)
+    zero = jnp.zeros_like(state)
+    result = method.step(
+        jnp.asarray(0, dtype=jnp.int32),
+        jnp.asarray(0.0),
+        zero,
+        jnp.asarray(1.0e-4),
+        None,
+    )
+    assert not bool(dynamics.stage(0.0, zero).forcing_successful)
+    assert not bool(result.successful)
+    np.testing.assert_array_equal(result.accepted_state, zero)
+
+    foreign_space = phx.discretization.TensorSpectralPlan(
+        tuple(phx.discretization.FourierBasisPlan(4) for _ in range(3)),
+        axis_names=("x", "y", "z"),
+        field_name="velocity",
+    ).prepare(tuple(phx.discretization.AxisDomain.periodic(0.0, 2.0) for _ in range(3)))
+    foreign = phx.discretization.HermitianSpectralCoordinates(
+        foreign_space, component_shape=(3,)
+    )
+    with pytest.raises(ValueError, match="another distributed discretization"):
+        DistributedPeriodicLESMethodPlan("etdrk2").prepare(dynamics, foreign)
+    with pytest.raises(ValueError, match="another distributed discretization"):
+        DistributedPeriodicLESStatisticsPlan(dynamics, foreign)
+
+
 def test_distributed_sharded_statistics_and_no_host_gather(monkeypatch):
     space, _, _, dynamics, _, state = _compiled()
     coordinates = phx.discretization.HermitianSpectralCoordinates(
@@ -304,12 +332,6 @@ def test_distributed_sharded_statistics_and_no_host_gather(monkeypatch):
     assert result.molecular_dissipation >= 0.0
     assert restart.sharding_preserved
     np.testing.assert_array_equal(restored, state)
-    source = inspect.getsource(type(dynamics))
-    backend_source = inspect.getsource(PreparedDistributedPeriodicLES)
-    assert "device_get" not in source
-    assert "process_allgather" not in source
-    assert "device_get" not in backend_source
-    assert "process_allgather" not in backend_source
 
 
 def _artifact_store(tmp_path, plan):

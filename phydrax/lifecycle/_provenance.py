@@ -9,6 +9,7 @@ from __future__ import annotations
 import hashlib
 import importlib.metadata
 import json
+import os
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -16,6 +17,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Protocol
 
+from .._host_io import open_regular_beneath
 from ..logging import emit
 
 
@@ -102,35 +104,81 @@ def _spdx_license(value: str | None) -> str | None:
     return aliases.get(cleaned, "NOASSERTION")
 
 
-def digest_paths(root: str | Path, paths: Sequence[str | Path], /) -> str:
-    """Hash path names, modes, and bytes in caller-specified source/lock sets."""
+def digest_paths(
+    root: str | Path,
+    paths: Sequence[str | Path],
+    /,
+    *,
+    maximum_total_bytes: int = 1_073_741_824,
+) -> str:
+    """Hash names, modes, and bytes through held descriptor-relative paths."""
 
+    if type(maximum_total_bytes) is not int or maximum_total_bytes < 0:
+        raise ValueError("maximum_total_bytes must be a non-negative integer.")
     root_path = Path(root).resolve()
     normalized: list[tuple[str, Path]] = []
     for item in paths:
         raw = root_path / item if not Path(item).is_absolute() else Path(item)
-        if raw.is_symlink():
-            raise ValueError("Provenance paths cannot be symbolic links.")
-        candidate = raw.resolve()
+        absolute = raw.absolute()
         try:
-            relative = candidate.relative_to(root_path).as_posix()
+            relative_path = absolute.relative_to(root_path)
         except ValueError as error:
             raise ValueError("Provenance paths must remain beneath root.") from error
-        if not candidate.is_file():
-            raise ValueError(f"Provenance path {relative!r} is not a regular file.")
-        normalized.append((relative, candidate))
+        if not relative_path.parts or any(
+            component in ("", ".", "..") for component in relative_path.parts
+        ):
+            raise ValueError("Provenance paths must be canonical relative files.")
+        normalized.append((relative_path.as_posix(), relative_path))
     if len({name for name, _ in normalized}) != len(normalized):
         raise ValueError("Provenance paths must be unique.")
+
     digest = hashlib.sha256()
-    for relative, path in sorted(normalized):
-        name = relative.encode("utf-8")
-        content = path.read_bytes()
-        mode = path.stat().st_mode & 0o111
-        digest.update(len(name).to_bytes(8, "big"))
-        digest.update(name)
-        digest.update(mode.to_bytes(2, "big"))
-        digest.update(len(content).to_bytes(8, "big"))
-        digest.update(content)
+    remaining = maximum_total_bytes
+    for relative, relative_path in sorted(normalized, key=lambda item: item[0]):
+        try:
+            with open_regular_beneath(
+                relative_path,
+                trusted_root=root_path,
+                maximum_depth=max(1, len(relative_path.parts)),
+            ) as opened:
+                before = opened.file_status
+                if before.st_size > remaining:
+                    raise ValueError("Provenance paths exceed maximum_total_bytes.")
+                name = relative.encode("utf-8")
+                digest.update(len(name).to_bytes(8, "big"))
+                digest.update(name)
+                digest.update((before.st_mode & 0o111).to_bytes(2, "big"))
+                digest.update(before.st_size.to_bytes(8, "big"))
+                observed = 0
+                while True:
+                    block = os.read(
+                        opened.descriptor,
+                        min(1 << 20, before.st_size - observed + 1),
+                    )
+                    if not block:
+                        break
+                    observed += len(block)
+                    if observed > before.st_size:
+                        raise ValueError(
+                            f"Provenance path {relative!r} changed while being hashed."
+                        )
+                    digest.update(block)
+                after = opened.verify_stable()
+        except (OSError, RuntimeError) as error:
+            raise ValueError(
+                f"Provenance path {relative!r} changed while being hashed."
+            ) from error
+        if observed != before.st_size or (
+            before.st_size,
+            before.st_mtime_ns,
+            before.st_ctime_ns,
+        ) != (
+            after.st_size,
+            after.st_mtime_ns,
+            after.st_ctime_ns,
+        ):
+            raise ValueError(f"Provenance path {relative!r} changed while being hashed.")
+        remaining -= observed
     return digest.hexdigest()
 
 

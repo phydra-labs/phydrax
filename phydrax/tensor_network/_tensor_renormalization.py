@@ -253,7 +253,7 @@ class TensorRenormalizationPlan(StrictModule):
     policy: TensorRenormalizationPolicy
     stages: tuple[TensorRenormalizationStagePlan, ...]
     cost: TensorRenormalizationCostEstimate
-    tensor_id: str = eqx.field(static=True)
+    tensor_structure_id: str = eqx.field(static=True)
     problem_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
@@ -437,7 +437,7 @@ def _hotrg_vertical_stage_plan(
         (vertical, retained, vertical, retained),
         retained,
         retained,
-        horizontal**4,
+        2 * vertical**2 * horizontal**4,
         merge,
         coarse,
     )
@@ -503,7 +503,7 @@ def _hotrg_horizontal_stage_plan(
         (retained, horizontal, retained, horizontal),
         retained,
         retained,
-        vertical**4,
+        2 * vertical**4 * horizontal**2,
         merge,
         coarse,
     )
@@ -630,7 +630,7 @@ def plan_tensor_renormalization(
         {
             "kind": "tensor-renormalization-plan",
             "problem": problem.problem_id,
-            "tensor": tensor.tensor_id,
+            "tensor_structure": tensor.structure_id,
             "policy": policy.policy_id,
             "stages": tuple(stage.stage_id for stage in stages),
         }
@@ -639,7 +639,7 @@ def plan_tensor_renormalization(
         policy,
         tuple(stages),
         cost,
-        tensor.tensor_id,
+        tensor.structure_id,
         problem.problem_id,
         plan_id,
     )
@@ -652,7 +652,7 @@ def _validate_structure(
 ) -> None:
     if problem.problem_id != plan.problem_id:
         raise ValueError("Tensor-renormalization problem identity changed; replan.")
-    if problem.tensor.tensor_id != plan.tensor_id:
+    if problem.tensor.structure_id != plan.tensor_structure_id:
         raise ValueError("Uniform square tensor structure changed; replan.")
 
 
@@ -669,13 +669,19 @@ def prepare_tensor_renormalization(
         else plan_tensor_renormalization(problem, plan_or_policy)
     )
     _validate_structure(problem, plan)
+    numeric_version = jnp.asarray(problem.tensor.numeric_version, dtype=jnp.int32)
     prepared_id = canonical_fingerprint(
-        {"kind": "prepared-tensor-renormalization", "plan": plan.plan_id}
+        {
+            "kind": "prepared-tensor-renormalization",
+            "plan": plan.plan_id,
+            "tensor": problem.tensor.tensor_id,
+            "numeric_version": int(numeric_version),
+        }
     )
     return PreparedTensorRenormalization(
         problem,
         plan,
-        jnp.asarray(problem.tensor.numeric_version, dtype=jnp.int32),
+        numeric_version,
         prepared_id,
     )
 
@@ -690,11 +696,20 @@ def refresh_tensor_renormalization(
     if not isinstance(problem, TensorRenormalizationProblem):
         raise TypeError("problem must be TensorRenormalizationProblem.")
     _validate_structure(problem, prepared.plan)
+    numeric_version = prepared.numeric_version + jnp.asarray(1, dtype=jnp.int32)
+    prepared_id = canonical_fingerprint(
+        {
+            "kind": "prepared-tensor-renormalization",
+            "plan": prepared.plan.plan_id,
+            "tensor": problem.tensor.tensor_id,
+            "numeric_version": int(numeric_version),
+        }
+    )
     return PreparedTensorRenormalization(
         problem,
         prepared.plan,
-        prepared.numeric_version + jnp.asarray(1, dtype=jnp.int32),
-        prepared.prepared_id,
+        numeric_version,
+        prepared_id,
     )
 
 

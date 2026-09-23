@@ -132,3 +132,30 @@ def test_time_and_lineage_do_not_collapse_acquisition_semantics():
             phx.measurement.DataOrigin.SYNTHETIC,
             phx.measurement.DataStage.RAW,
         )
+
+
+def test_physical_supports_require_three_dimensions_and_typed_monotone_time():
+    contract = phx.SpatialCoordinateContract(
+        phx.units.METER,
+        coordinate_system="cartesian",
+        reference_frame="sensor",
+    )
+    with pytest.raises(ValueError, match="sample_count, 3"):
+        phx.measurement.PointSampleSupport(np.zeros((1, 2)), ("point",), contract)
+    with pytest.raises(ValueError, match="time UnitDefinition"):
+        phx.measurement.PointSampleSupport(
+            np.zeros((2, 3)),
+            ("first", "second"),
+            contract,
+            sample_times=np.asarray((0.0, 1.0)),
+            time_unit=phx.units.ONE,
+        )
+    with pytest.raises(ValueError, match="monotonically increasing"):
+        phx.measurement.RaySampleSupport(
+            np.zeros((2, 3)),
+            np.asarray(((1.0, 0.0, 0.0), (1.0, 0.0, 0.0))),
+            ("first", "second"),
+            contract,
+            sample_times=np.asarray((1.0, 0.0)),
+            time_unit=phx.units.SECOND,
+        )

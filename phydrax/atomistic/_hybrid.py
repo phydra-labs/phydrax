@@ -295,6 +295,7 @@ def respa_step(
             neighborhood,
             **kwargs(unwrapped),
         )
+        successful = successful & fast.successful
         momentum = momentum + 0.5 * inner * force_scale * fast.forces
         unwrapped = unwrapped + inner * momentum * inverse_mass
         if dynamics.system.cell is None:
@@ -399,10 +400,32 @@ def evaluate_subtractive_potential(
     region_indices: ArrayLike,
     /,
 ) -> SubtractivePotentialEvaluation:
-    indices = jnp.asarray(region_indices, dtype=jnp.int32)
-    low_all_evaluation = low_all.evaluate(full_positions, full_neighborhood)
-    low_region_evaluation = low_region.evaluate(region_positions, region_neighborhood)
-    high_region_evaluation = high_region.evaluate(region_positions, region_neighborhood)
+    raw_indices = jnp.asarray(region_indices)
+    if raw_indices.ndim != 1 or raw_indices.dtype.kind not in "iu":
+        raise TypeError("region_indices must be an integer vector.")
+    if low_region.system.prepared_id != high_region.system.prepared_id:
+        raise ValueError("Low- and high-level region potentials must share one system.")
+    full_position = jnp.asarray(full_positions)
+    region_position = jnp.asarray(region_positions)
+    if (
+        full_position.shape != (low_all.system.capacity, 3)
+        or region_position.shape != (low_region.system.capacity, 3)
+        or raw_indices.shape != (low_region.system.capacity,)
+    ):
+        raise ValueError("Subtractive region positions and indices are misaligned.")
+    indices = raw_indices.astype(jnp.int32)
+    full_ids = low_all.system.plan.particle_ids
+    region_ids = low_region.system.plan.particle_ids
+    indices = eqx.error_if(
+        indices,
+        jnp.any((indices < 0) | (indices >= low_all.system.capacity))
+        | jnp.any(jnp.diff(jnp.sort(indices)) == 0)
+        | ~jnp.array_equal(full_ids[indices], region_ids),
+        "region_indices must be unique, in range, and match the region particle IDs.",
+    )
+    low_all_evaluation = low_all.evaluate(full_position, full_neighborhood)
+    low_region_evaluation = low_region.evaluate(region_position, region_neighborhood)
+    high_region_evaluation = high_region.evaluate(region_position, region_neighborhood)
     region_force = high_region_evaluation.forces - low_region_evaluation.forces
     full_force = low_all_evaluation.forces.at[indices].add(region_force)
     energy = (
@@ -431,8 +454,22 @@ def local_species_energy_delta(
     if not potential.plan.capabilities.dynamic_species:
         raise ValueError("Potential program does not support dynamic species.")
     current = jnp.asarray(species, dtype=jnp.int32)
-    index = jnp.asarray(particle_index, dtype=jnp.int32).reshape(())
-    proposed = current.at[index].set(jnp.asarray(proposed_species, dtype=jnp.int32))
+    if current.shape != (potential.system.capacity,):
+        raise ValueError("species must match the atomistic system capacity.")
+    index = jnp.asarray(particle_index)
+    replacement = jnp.asarray(proposed_species)
+    if index.shape != () or index.dtype.kind not in "iu":
+        raise TypeError("particle_index must be an integer scalar.")
+    if replacement.shape != () or replacement.dtype.kind not in "iu":
+        raise TypeError("proposed_species must be an integer scalar.")
+    index = eqx.error_if(
+        index.astype(jnp.int32),
+        (index < 0)
+        | (index >= potential.system.capacity)
+        | ~potential.system.active_mask[index],
+        "particle_index must identify an active particle.",
+    )
+    proposed = current.at[index].set(replacement.astype(jnp.int32))
     current_energy = potential.energy(positions, neighborhood, species=current)[0]
     proposed_energy = potential.energy(positions, neighborhood, species=proposed)[0]
     return proposed_energy - current_energy

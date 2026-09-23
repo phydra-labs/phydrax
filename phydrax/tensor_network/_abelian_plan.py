@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from numbers import Integral
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -49,8 +50,19 @@ class AbelianContractionPlan(StrictModule):
             raise ValueError("Abelian contraction groups must match.")
         left_rank = len(left_layout.legs)
         right_rank = len(right_layout.legs)
-        left_axes_ = tuple(int(axis) % left_rank for axis in left_axes)
-        right_axes_ = tuple(int(axis) % right_rank for axis in right_axes)
+        raw_left = tuple(left_axes)
+        raw_right = tuple(right_axes)
+        if any(
+            not isinstance(axis, Integral) or isinstance(axis, bool)
+            for axis in raw_left + raw_right
+        ):
+            raise TypeError("Contraction axes must be integers.")
+        if any(not -left_rank <= axis < left_rank for axis in raw_left) or any(
+            not -right_rank <= axis < right_rank for axis in raw_right
+        ):
+            raise ValueError("Contraction axis is outside its tensor rank.")
+        left_axes_ = tuple(axis + left_rank if axis < 0 else axis for axis in raw_left)
+        right_axes_ = tuple(axis + right_rank if axis < 0 else axis for axis in raw_right)
         if (
             not left_axes_
             or len(left_axes_) != len(right_axes_)

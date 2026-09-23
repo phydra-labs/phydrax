@@ -19,6 +19,7 @@ from phydrax.ein import contract
 from .._doc import DOC_KEY0
 from .._fingerprint import array_tree_signature, canonical_fingerprint
 from .._sampling import (
+    FullMarkovTarget,
     MarkovSampleResult,
     MarkovState,
     MetropolisHastings,
@@ -361,7 +362,10 @@ class VariationalMonteCarloSubspaceProblem(StrictModule):
         self, *, key: Key[Array, ""] = DOC_KEY0
     ) -> VariationalMonteCarloSubspaceState:
         markov = self.kernel.initialize(
-            _mixture_log_target(self.models),
+            FullMarkovTarget(
+                _mixture_log_target(self.models),
+                target_id=f"{self.problem_id}:mixture",
+            ),
             self.initial_configurations,
         )
         return VariationalMonteCarloSubspaceState(
@@ -720,10 +724,13 @@ def evaluate_variational_monte_carlo_subspace(
     tolerance = float(ritz_tolerance)
     if not isfinite(tolerance) or tolerance < 0.0:
         raise ValueError("ritz_tolerance must be finite and non-negative.")
-    log_target = _mixture_log_target(models_)
-    refreshed = problem.kernel.refresh(log_target, markov_state)
+    target = FullMarkovTarget(
+        _mixture_log_target(models_),
+        target_id=f"{problem.problem_id}:mixture",
+    )
+    refreshed = problem.kernel.refresh(target, markov_state)
     samples = sample_markov(
-        log_target,
+        target,
         problem.kernel,
         refreshed,
         key=key,

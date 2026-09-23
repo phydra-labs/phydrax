@@ -171,6 +171,7 @@ def run_exact_factor_graph(
             variable_probabilities, structure_id=prepared.structure_id
         ),
         factor_probabilities=tuple(factor_probabilities),
+        factor_tables=tuple(arrays),
         map_assignment=jnp.where(
             feasible,
             prepared.assignments[map_index],

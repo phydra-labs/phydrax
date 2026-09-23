@@ -67,6 +67,10 @@ class ConditionalFunctionFrameFlowOperator(StrictModule):
         expected = (self.encoder.latent_size,)
         if law.event_shape != expected:
             raise ValueError(f"Coefficient law event shape must be {expected}.")
+        if law.batch_shape != encoding.case_shape:
+            raise ValueError(
+                "Coefficient law batch shape must match the function-frame case shape."
+            )
         return FunctionFrameCoefficientFlowState(
             encoding,
             law,

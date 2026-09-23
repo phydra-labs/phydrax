@@ -126,3 +126,16 @@ def test_amr_specialist_updates_active_cells_and_preserves_enthalpy():
     assert bool(evidence.successful)
     assert jnp.mean(updated.levels[0].values[:2, ..., 1]) > initial_species[1]
     np.testing.assert_array_equal(updated.levels[0].values[:2, ..., 2], enthalpy)
+    hook_updated, hook_accepted = plan(
+        0,
+        hierarchy,
+        jnp.asarray(0.01),
+        jnp.asarray(0.01),
+        {"application": "argument"},
+    )
+    assert bool(hook_accepted)
+    np.testing.assert_allclose(
+        hook_updated.levels[0].values,
+        updated.levels[0].values,
+        equal_nan=True,
+    )

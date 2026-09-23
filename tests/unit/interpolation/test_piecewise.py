@@ -167,6 +167,37 @@ def test_linear_query_jvp_uses_right_hand_slope_at_an_interior_knot():
     )
 
 
+@pytest.mark.parametrize("derivative_order", (True, 1.5, "1"))
+def test_piecewise_derivative_orders_require_exact_integers(derivative_order):
+    nodes = jnp.asarray([0.0, 1.0, 2.0])
+    values = nodes**2
+
+    with pytest.raises(TypeError, match="integer"):
+        linear_interpolate(
+            nodes,
+            values,
+            jnp.asarray(0.5),
+            derivative_order=derivative_order,
+        )
+    with pytest.raises(TypeError, match="integer"):
+        cubic_hermite_interpolate(
+            nodes,
+            values,
+            jnp.asarray(0.5),
+            derivative_order=derivative_order,
+        )
+
+
+def test_piecewise_source_axis_is_strictly_validated():
+    nodes = jnp.asarray([0.0, 1.0, 2.0])
+    values = jnp.ones((2, 3))
+
+    with pytest.raises(TypeError, match="axis"):
+        linear_interpolate(nodes, values, 0.5, axis=1.5)
+    with pytest.raises(ValueError, match="out of bounds"):
+        linear_interpolate(nodes, values, 0.5, axis=2)
+
+
 def test_local_cubic_slopes_use_one_sided_and_secant_average_rules():
     nodes = jnp.asarray([0.0, 1.0, 3.0, 6.0])
     values = jnp.asarray([0.0, 2.0, 8.0, 20.0])

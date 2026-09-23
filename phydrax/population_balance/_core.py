@@ -17,6 +17,13 @@ from .._trainable import NonTrainableState
 from ..qualification import CapabilityProfile, SupportTuple
 
 
+class SectionalAggregationRate(StrictModule):
+    cell_number_density_rate: Array
+    overflow_number_rate: Array
+    overflow_first_moment_rate: Array
+    first_moment_residual: Array
+
+
 class SectionalPopulationPlan(StrictModule, NonTrainableState):
     edges: Array
     centers: Array
@@ -28,6 +35,7 @@ class SectionalPopulationPlan(StrictModule, NonTrainableState):
         if (
             values.ndim != 1
             or values.size < 3
+            or not np.all(np.isfinite(values))
             or np.any(np.diff(values) <= 0.0)
             or values[0] < 0.0
         ):
@@ -46,6 +54,11 @@ class SectionalPopulationPlan(StrictModule, NonTrainableState):
         powers = jnp.asarray(orders)
         if density.shape[-1] != self.centers.size:
             raise ValueError("Population density must end with the sectional axis.")
+        density = eqx.error_if(
+            density,
+            jnp.any(~jnp.isfinite(density) | (density < 0)),
+            "Population density must be finite and nonnegative.",
+        )
         return jnp.sum(
             density[..., None, :] * self.centers ** powers[..., None] * self.widths,
             axis=-1,
@@ -77,7 +90,9 @@ class SectionalPopulationPlan(StrictModule, NonTrainableState):
         flux = face_velocity * face_density
         return -jnp.diff(flux, axis=-1) / self.widths
 
-    def aggregation_rate(self, number_density: ArrayLike, kernel: ArrayLike, /) -> Array:
+    def aggregation_rate(
+        self, number_density: ArrayLike, kernel: ArrayLike, /
+    ) -> SectionalAggregationRate:
         density = jnp.asarray(number_density)
         coefficients = jnp.asarray(kernel)
         bins = self.centers.size
@@ -85,19 +100,59 @@ class SectionalPopulationPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "This bounded aggregation route requires one sectional vector and square kernel."
             )
-        loss = density * (coefficients @ density)
-        birth = jnp.zeros_like(density)
+        density = eqx.error_if(
+            density,
+            jnp.any(
+                ~jnp.isfinite(density)
+                | ~jnp.isfinite(coefficients)
+                | (density < 0)
+                | (coefficients < 0)
+            ),
+            "Aggregation density and kernel must be finite and nonnegative.",
+        )
+        density = eqx.error_if(
+            density,
+            ~jnp.allclose(coefficients, jnp.swapaxes(coefficients, -1, -2)),
+            "Aggregation kernel must be symmetric for moment conservation.",
+        )
+        number = density * self.widths
+        loss_number = number * (coefficients @ number)
+        birth_number = jnp.zeros_like(number)
+        overflow_number = jnp.asarray(0.0, dtype=number.dtype)
+        overflow_moment = jnp.asarray(0.0, dtype=number.dtype)
         for left in range(bins):
             for right in range(bins):
                 product_size = self.centers[left] + self.centers[right]
-                target = jnp.clip(
-                    jnp.searchsorted(self.edges, product_size) - 1, 0, bins - 1
+                event_rate = (
+                    0.5 * coefficients[left, right] * number[left] * number[right]
                 )
-                contribution = (
-                    0.5 * coefficients[left, right] * density[left] * density[right]
+                is_overflow = product_size > self.centers[-1]
+                upper = jnp.clip(
+                    jnp.searchsorted(self.centers, product_size, side="left"),
+                    1,
+                    bins - 1,
                 )
-                birth = birth.at[target].add(contribution)
-        return birth - loss
+                lower = upper - 1
+                denominator = self.centers[upper] - self.centers[lower]
+                upper_weight = (product_size - self.centers[lower]) / denominator
+                upper_weight = jnp.clip(upper_weight, 0.0, 1.0)
+                bounded = jnp.where(is_overflow, 0.0, event_rate)
+                birth_number = birth_number.at[lower].add((1.0 - upper_weight) * bounded)
+                birth_number = birth_number.at[upper].add(upper_weight * bounded)
+                overflow_number = overflow_number + jnp.where(
+                    is_overflow, event_rate, 0.0
+                )
+                overflow_moment = overflow_moment + jnp.where(
+                    is_overflow, product_size * event_rate, 0.0
+                )
+        cell_number_rate = birth_number - loss_number
+        first_residual = jnp.sum(self.centers * cell_number_rate) + overflow_moment
+        return SectionalAggregationRate(
+            cell_number_rate / self.widths,
+            overflow_number,
+            overflow_moment,
+            first_residual,
+        )
 
     def breakage_rate(
         self, number_density: ArrayLike, rate: ArrayLike, daughter_matrix: ArrayLike, /
@@ -112,11 +167,37 @@ class SectionalPopulationPlan(StrictModule, NonTrainableState):
             or daughters.shape != (bins, bins)
         ):
             raise ValueError("Breakage arrays do not match the sectional plan.")
+        density = eqx.error_if(
+            density,
+            jnp.any(
+                ~jnp.isfinite(density)
+                | ~jnp.isfinite(rate_)
+                | ~jnp.isfinite(daughters)
+                | (density < 0)
+                | (rate_ < 0)
+                | (daughters < 0)
+            ),
+            "Breakage data must be finite and nonnegative.",
+        )
+        daughter_moment = self.centers @ daughters
+        density = eqx.error_if(
+            density,
+            jnp.any(
+                (rate_ > 0)
+                & (
+                    jnp.abs(daughter_moment - self.centers)
+                    > 1e-10 * jnp.maximum(self.centers, 1.0)
+                )
+            ),
+            "Active daughter distributions must conserve first moment.",
+        )
         return daughters @ (rate_ * density) - rate_ * density
 
     def realizable(self, number_density: ArrayLike, /) -> Array:
         density = jnp.asarray(number_density)
-        return jnp.all(jnp.isfinite(density)) & jnp.all(density >= 0.0)
+        return density.shape == self.centers.shape and jnp.all(
+            jnp.isfinite(density)
+        ) & jnp.all(density >= 0.0)
 
 
 def population_balance_candidate_profiles() -> tuple[CapabilityProfile, ...]:
@@ -127,7 +208,7 @@ def population_balance_candidate_profiles() -> tuple[CapabilityProfile, ...]:
         ),
         (
             "population-balance.aggregation",
-            {"coordinates": "one", "method": "fixed-pivot-nearest-bin"},
+            {"coordinates": "one", "method": "fixed-pivot-moment-preserving"},
         ),
         (
             "population-balance.breakage",
@@ -146,4 +227,8 @@ def population_balance_candidate_profiles() -> tuple[CapabilityProfile, ...]:
     )
 
 
-__all__ = ["SectionalPopulationPlan", "population_balance_candidate_profiles"]
+__all__ = [
+    "SectionalAggregationRate",
+    "SectionalPopulationPlan",
+    "population_balance_candidate_profiles",
+]

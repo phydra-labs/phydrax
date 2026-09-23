@@ -100,7 +100,7 @@ def test_nearest_centroid_probabilities_cases_masks_and_hard_contract():
         )
     )
     model = result.as_trainable()
-    probability = model.probabilities(cases[:, :2])
+    probability = model.predict_proba(cases[:, :2])
 
     assert probability.shape == (2, 2, 2)
     assert jnp.allclose(jnp.sum(probability, axis=-1), 1.0)
@@ -108,7 +108,7 @@ def test_nearest_centroid_probabilities_cases_masks_and_hard_contract():
     assert "predict" in result.gradient_contract.nondifferentiable_outputs
     assert jnp.all(
         jnp.isfinite(
-            jax.grad(lambda point: jnp.sum(model.probabilities(point) ** 2))(cases[:, 0])
+            jax.grad(lambda point: jnp.sum(model.predict_proba(point) ** 2))(cases[:, 0])
         )
     )
 

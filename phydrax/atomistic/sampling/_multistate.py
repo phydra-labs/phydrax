@@ -300,8 +300,12 @@ class AtomisticMultistatePlan(StrictModule, NonTrainableState):
             )
         replicas = np.asarray(replica_ids, dtype=np.int64).reshape((-1,))
         replica_count = replicas.size
-        if replica_count <= 0 or len(set(replicas.tolist())) != replica_count:
-            raise ValueError("Replica IDs must be a nonempty unique vector.")
+        if (
+            replica_count <= 0
+            or len(set(replicas.tolist())) != replica_count
+            or np.any(replicas < 0)
+        ):
+            raise ValueError("Replica IDs must be a nonempty unique non-negative vector.")
         if exchange is not None and not isinstance(
             exchange, AtomisticReplicaExchangePlan
         ):
@@ -352,8 +356,15 @@ class AtomisticMultistatePlan(StrictModule, NonTrainableState):
             if dependence_group_indices is None
             else np.asarray(dependence_group_indices, dtype=np.int32).reshape((-1,))
         )
-        if chains.shape != (replica_count,) or groups.shape != (replica_count,):
-            raise ValueError("Chain and dependence-group indices must have length R.")
+        if (
+            chains.shape != (replica_count,)
+            or groups.shape != (replica_count,)
+            or np.any(chains < 0)
+            or np.any(groups < 0)
+        ):
+            raise ValueError(
+                "Chain and dependence-group indices must be non-negative vectors of length R."
+            )
         if exchange is not None and len(set(groups.tolist())) != 1:
             raise ValueError(
                 "An exchange-connected replica ladder must share one dependence group."

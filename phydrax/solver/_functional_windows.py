@@ -16,6 +16,7 @@ from jaxtyping import Array
 from .._fingerprint import canonical_fingerprint
 from .._frozendict import frozendict
 from .._strict import StrictModule
+from .._trainable import partition_trainable
 from .._training import TrainingProgress
 from ..domain import DomainFunction
 from ..optim._update_alignment import ConflictFreeUpdateStatistics
@@ -186,10 +187,19 @@ class FunctionalTimeWindowResult(StrictModule):
         return self.solvers[index]
 
 
+def _array_leaf_signature(tree: Any, /) -> tuple[tuple[tuple[int, ...], str], ...]:
+    return tuple(
+        (tuple(leaf.shape), str(leaf.dtype))
+        for leaf in jax.tree.leaves(tree)
+        if eqx.is_array(leaf)
+    )
+
+
 def _transfer_training_state(
     source: Any,
     target: Any,
     training: FunctionalTrainingPlan,
+    optimizer: Any,
     /,
 ):
     state = source.training_state
@@ -197,10 +207,24 @@ def _transfer_training_state(
         raise ValueError(
             "Optimizer-state transfer requires a source FunctionalTrainingPlan."
         )
-    source_structure = jax.tree.structure(source.functions)
-    target_structure = jax.tree.structure(target.functions)
-    if source_structure != target_structure:
-        raise ValueError("Optimizer-state transfer requires identical function PyTrees.")
+    source_parameters, _ = partition_trainable(source.functions)
+    target_parameters, _ = partition_trainable(target.functions)
+    initialized_optimizer_state = optimizer.init(target_parameters)
+    parameters_match = jax.tree.structure(source_parameters) == jax.tree.structure(
+        target_parameters
+    ) and _array_leaf_signature(source_parameters) == _array_leaf_signature(
+        target_parameters
+    )
+    optimizer_state_matches = jax.tree.structure(
+        state.optimizer_state
+    ) == jax.tree.structure(initialized_optimizer_state) and _array_leaf_signature(
+        state.optimizer_state
+    ) == _array_leaf_signature(initialized_optimizer_state)
+    optimizer_state = (
+        state.optimizer_state
+        if parameters_match and optimizer_state_matches
+        else initialized_optimizer_state
+    )
     update_alignment_statistics = (
         None
         if training.update_alignment is None
@@ -214,7 +238,7 @@ def _transfer_training_state(
         current_functions=target.functions,
         best_functions=target.functions,
         previous_functions=None,
-        optimizer_state=state.optimizer_state,
+        optimizer_state=optimizer_state,
         key=state.key,
         pseudo_inverse_steps=(),
         term_multipliers=(),
@@ -262,11 +286,17 @@ def train_functional_time_windows(
             raise ValueError(
                 "Optimizer-state transfer requires a FunctionalTrainingPlan for every window."
             )
+        optimizer = plan.optimizer(index)
         if plan.transfer_optimizer_state and index > 0:
-            built = _transfer_training_state(current, built, training)
+            built = _transfer_training_state(
+                current,
+                built,
+                training,
+                optimizer,
+            )
         current = built.solve(
             num_iter=plan.steps[index],
-            optim=plan.optimizer(index),
+            optim=optimizer,
             training=training,
             resume=plan.transfer_optimizer_state and index > 0,
         )

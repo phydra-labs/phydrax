@@ -51,8 +51,10 @@ def run():
     result = phx.solver.PreparedImplicitMPMDynamics(compiled.dynamics).step_detailed(
         state, 0.001, arguments
     )
+    if not bool(result.successful):
+        raise RuntimeError("Implicit MPM step failed")
     return {
-        "successful": bool(result.successful),
+        "successful": True,
         "residual_norm": float(result.diagnostics.residual_norm),
         "nonlinear_steps": int(result.diagnostics.nonlinear_steps),
         "linear_iterations": int(result.diagnostics.linear_iterations),

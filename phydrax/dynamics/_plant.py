@@ -650,8 +650,10 @@ def _select_runtime_state(
 
 
 def _runtime_digest(state: PlantRuntimeState, /) -> str:
+    case_shape = tuple(state.time.shape)
+    _, key_data, _ = _key_parts(state.key, case_shape, "PlantRuntimeState key")
     arrays = array_tree_fingerprint(
-        (state.payload, state.time, state.step_index, jax.random.key_data(state.key))
+        (state.payload, state.time, state.step_index, key_data)
     )
     return canonical_fingerprint(
         {
@@ -1119,13 +1121,12 @@ class ArrayDiscreteSystemPlant(AbstractDiscretePlant):
         initial_time: Array,
     ) -> PlantProposal:
         del parameters, initial_time
+        _, key_data, _ = _key_parts(keys, case_shape, "initializer keys")
+        typed_keys = jax.random.wrap_key_data(key_data)
         if self.state_schema.case_ndim == 0:
-            payload = jnp.asarray(self.initializer(keys))
+            payload = jnp.asarray(self.initializer(typed_keys))
         else:
-            _, key_data, typed = _key_parts(keys, case_shape, "initializer keys")
-            key_values = (
-                jnp.reshape(keys, (-1,)) if typed else jnp.reshape(key_data, (-1, 2))
-            )
+            key_values = jnp.reshape(typed_keys, (-1,))
             flat_payload = jax.vmap(self.initializer)(key_values)
             payload = jnp.reshape(
                 flat_payload, case_shape + self.system.state_layout.shape

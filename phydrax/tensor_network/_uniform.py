@@ -59,6 +59,8 @@ class UniformMatrixProductState(StrictModule):
         values = tuple(precision_.storage(jnp.asarray(value)) for value in tensors)
         if not values or any(value.ndim != 3 for value in values):
             raise ValueError("Uniform MPS tensors require (left, physical, right).")
+        if any(any(dimension <= 0 for dimension in value.shape) for value in values):
+            raise ValueError("Uniform MPS tensor dimensions must all be positive.")
         bond = values[0].shape[0]
         if bond < 1 or any(
             value.shape[0] != bond or value.shape[-1] != bond for value in values
@@ -106,6 +108,8 @@ class UniformMatrixProductOperator(StrictModule):
         values = tuple(precision_.storage(jnp.asarray(value)) for value in tensors)
         if not values or any(value.ndim != 4 for value in values):
             raise ValueError("Uniform MPO tensors require (left, output, input, right).")
+        if any(any(dimension <= 0 for dimension in value.shape) for value in values):
+            raise ValueError("Uniform MPO tensor dimensions must all be positive.")
         bond = values[0].shape[0]
         if bond < 1 or any(
             value.shape[0] != bond or value.shape[-1] != bond for value in values

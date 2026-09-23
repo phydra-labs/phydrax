@@ -1,6 +1,6 @@
 """Pointwise, separable, and process neural models."""
 
-from ..._model import ModelBinding
+from ..._model import ModelBinding, register_artifact_value
 from .._loss import add_model_loss, ModelWithLoss
 from . import wrappers
 from ._algebra_analytic import (
@@ -198,3 +198,15 @@ __all__ = [
     "refine_kan_edges",
     "wrappers",
 ]
+
+for _artifact_name in __all__:
+    _artifact_value = globals()[_artifact_name]
+    if isinstance(_artifact_value, type) and _artifact_value.__module__.startswith(
+        "phydrax.nn."
+    ):
+        register_artifact_value(
+            f"phydrax.nn.model:{_artifact_name}",
+            _artifact_value,
+        )
+
+del _artifact_name, _artifact_value

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from math import prod
+from numbers import Integral
 from typing import Literal
 
 import equinox as eqx
@@ -53,7 +54,22 @@ class TensorTrainSolvePlan(StrictModule, NonTrainableState):
         max_dense_entries: int,
         max_local_unknowns: int,
     ):
-        modes = tuple(mode_sizes)
+        raw_modes = tuple(mode_sizes)
+        integer_fields = raw_modes + (
+            max_rank,
+            enrichment_rank,
+            sweeps,
+            max_dense_entries,
+            max_local_unknowns,
+        )
+        if any(
+            not isinstance(value, Integral) or isinstance(value, bool)
+            for value in integer_fields
+        ):
+            raise TypeError(
+                "TensorTrain solve dimensions, ranks, counts, and budgets must be integers."
+            )
+        modes = tuple(int(value) for value in raw_modes)
         rank = int(max_rank)
         enrich = int(enrichment_rank)
         sweep_count = int(sweeps)
@@ -65,7 +81,14 @@ class TensorTrainSolvePlan(StrictModule, NonTrainableState):
             raise ValueError("TensorTrain solve method must be 'als' or 'amen'.")
         if not modes or any(size <= 0 for size in modes):
             raise ValueError("TensorTrain solve modes must be nonempty and positive.")
-        if rank <= 0 or sweep_count <= 0 or tolerance < 0.0 or ridge <= 0.0:
+        if (
+            rank <= 0
+            or sweep_count <= 0
+            or not np.isfinite(tolerance)
+            or tolerance < 0.0
+            or not np.isfinite(ridge)
+            or ridge <= 0.0
+        ):
             raise ValueError(
                 "TensorTrain solve ranks, sweeps, tolerance, or ridge are invalid."
             )
@@ -301,11 +324,12 @@ def _update_core(
     plan: TensorTrainSolvePlan,
     /,
 ) -> TensorTrain:
-    frame = _core_frame(tensor, axis)
-    if frame.shape[1] > plan.max_local_unknowns:
+    unknowns = prod(tensor.cores[axis].shape)
+    if unknowns > plan.max_local_unknowns:
         raise ValueError(
-            f"ALS core needs {frame.shape[1]} local unknowns, exceeding budget {plan.max_local_unknowns}."
+            f"ALS core needs {unknowns} local unknowns, exceeding budget {plan.max_local_unknowns}."
         )
+    frame = _core_frame(tensor, axis)
     design = ein.contract("ij,jk->ik", matrix, frame)
     local = regularized_least_squares(design, right_hand_side, plan.local_regularization)
     cores = list(tensor.cores)

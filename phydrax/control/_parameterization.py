@@ -57,6 +57,7 @@ class AbstractControlParameterization(StrictModule):
     """Fixed-shape map from coefficients to physical controls."""
 
     control_shape: tuple[int, ...] = eqx.field(static=True)
+    time_grid: eqx.AbstractVar[TimeGrid | None]
     parameter_shape: tuple[int, ...] = eqx.field(static=True)
     parameterization_id: str = eqx.field(static=True)
     approximation_id: str = eqx.field(static=True)
@@ -85,6 +86,33 @@ class AbstractControlParameterization(StrictModule):
     ) -> Array:
         """Sample an open-loop parameterization at shared physical times."""
         raise NotImplementedError
+
+
+def _validate_parameterization_grid(
+    parameterization: AbstractControlParameterization,
+    time_grid: TimeGrid,
+    /,
+) -> AbstractControlParameterization:
+    bound_grid = parameterization.time_grid
+    if bound_grid is None:
+        return parameterization
+    if (
+        bound_grid.time_id != time_grid.time_id
+        or bound_grid.times.shape != time_grid.times.shape
+    ):
+        raise ValueError(
+            "Grid-bound control parameterization must use the exact problem time grid."
+        )
+    checked_times = eqx.error_if(
+        bound_grid.times,
+        jnp.any(bound_grid.times != time_grid.times),
+        "Grid-bound control parameterization must use the exact problem time grid.",
+    )
+    return eqx.tree_at(
+        lambda value: value.time_grid.times,
+        parameterization,
+        checked_times,
+    )
 
 
 class PiecewiseConstantControlParameterization(AbstractControlParameterization):
@@ -275,6 +303,7 @@ class BSplineControlParameterization(AbstractControlParameterization):
     """Differentiable fixed-grid B-spline control in physical time."""
 
     grid: BSplineGrid
+    time_grid: TimeGrid | None
 
     def __init__(
         self,
@@ -288,6 +317,7 @@ class BSplineControlParameterization(AbstractControlParameterization):
             raise TypeError("grid must be a BSplineGrid.")
         shape = _shape(control_shape, "control_shape")
         self.grid = grid
+        self.time_grid = None
         self.control_shape = shape
         self.parameter_shape = (grid.coefficient_count,) + shape
         self.parameterization_id = _identifier(parameterization_id, "parameterization_id")

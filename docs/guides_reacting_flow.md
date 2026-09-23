@@ -30,7 +30,16 @@ The initial profile requires periodic axes and synchronized stepping. It is not 
 
 ## AMR, ALE, sources, and scheduling
 
-`ReactingAMRSynchronizationPlan` is a post-reflux chemistry specialist for the existing block-AMR runtime with level subcycling disabled. AMR payloads end in all species mass densities and enthalpy density. `FixedConnectivityReactingALERemapPlan` conserves species and enthalpy extensives under supplied old/new cell measures. `EnergyDepositionSourcePlan` uses a smooth finite-duration pulse whose volume integral and cumulative work equal the declared energy. `ChemistryWorkSchedulePlan` updates deterministic worker assignments only from accepted measured RHS counts.
+`ReactingAMRSynchronizationPlan` is a post-reflux chemistry specialist for the
+existing block-AMR runtime with level subcycling disabled. A configured
+`specialist_synchronization` hook receives
+`(level, hierarchy, end_time, interval_dt, args)` for the exact completed level
+interval; it must not infer either time from hierarchy state. AMR payloads end in all
+species mass densities and enthalpy density. `FixedConnectivityReactingALERemapPlan`
+conserves species and enthalpy extensives under supplied old/new cell measures.
+`EnergyDepositionSourcePlan` uses a smooth finite-duration pulse whose volume integral
+and cumulative work equal the declared energy. `ChemistryWorkSchedulePlan` updates
+deterministic worker assignments only from accepted measured RHS counts.
 
 These narrow profiles do not claim a complete moving-engine DNS or arbitrary AMR low-Mach projection.
 

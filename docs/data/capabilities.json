@@ -1,5 +1,5 @@
 {
-  "catalog_id": "edd1efe539519f3b0b597adff1bf086ee195a72be869de4e26711cf87423cca6",
+  "catalog_id": "5952379b4ccdc26e0950ad3beede095fb1c148f6169d87faada49052462fe921",
   "declarations": [
     {
       "capability": "acoustics.vibroacoustic",
@@ -1419,6 +1419,28 @@
       "profiles": [],
       "public_symbols": [
         "phydrax.applications.protein_folding"
+      ]
+    },
+    {
+      "capability": "application.quantum-hall",
+      "declaration_id": "cdaefaf89519eeeb97ab3d8554b267f0bc5e9ef2b8dd3950fd79fc2b265490e8",
+      "dependencies": [],
+      "disposition": "research",
+      "documentation": [],
+      "domain_maturity": "application-research",
+      "evidence": [],
+      "examples": [],
+      "intended_uses": [
+        "bounded-application-research"
+      ],
+      "kind": "capability-declaration",
+      "nonclaims": [
+        "no-umbrella-application-release-profile"
+      ],
+      "owner": "phydrax.applications.quantum_hall",
+      "profiles": [],
+      "public_symbols": [
+        "phydrax.applications.quantum_hall"
       ]
     },
     {

@@ -1,8 +1,15 @@
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
-from phydrax.uq._conditional_volatility import fit_har, GARCHModel
+from phydrax.uq._conditional_volatility import (
+    CONDITIONAL_VOLATILITY_OPTIMIZER_FAILURE,
+    fit_garch,
+    fit_har,
+    GARCHModel,
+)
 from phydrax.uq._linear_time_series import (
+    ARIMAModel,
     augmented_dickey_fuller,
     fit_arima,
     fit_var,
@@ -27,6 +34,18 @@ def test_arima_recovers_stable_ar_coefficient_with_irregular_mask():
     assert not fit.residual_mask[101]
     assert not fit.residual_mask[102]
     assert jnp.isfinite(fit.log_likelihood)
+
+
+def test_arima_forecast_requires_declared_lag_history():
+    model = ARIMAModel(
+        0.0,
+        jnp.asarray([0.5, 0.25]),
+        jnp.asarray([0.1]),
+        1.0,
+        differencing=1,
+    )
+    with pytest.raises(ValueError, match=r"max\(p, q\)"):
+        model.forecast(jnp.asarray([0.0, 1.0]), 1)
 
 
 def test_var_recovers_cross_lag_and_stability():
@@ -94,6 +113,14 @@ def test_garch_and_gjr_variance_recursions_match_hand_oracle():
     assert jnp.allclose(asymmetric_variance, jnp.asarray([1.0, 0.8, 2.5]))
     assert garch.stable
     assert gjr.stable
+
+
+def test_garch_fit_requires_optimizer_convergence():
+    values = jnp.sin(jnp.linspace(0.0, 20.0, 128))
+    fit = fit_garch(values, maximum_steps=1)
+
+    assert not bool(fit.successful)
+    assert int(fit.status) == CONDITIONAL_VOLATILITY_OPTIMIZER_FAILURE
 
 
 def test_har_requires_complete_trailing_windows():

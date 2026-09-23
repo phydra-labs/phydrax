@@ -95,7 +95,11 @@ def _coefficients(grid):
 def test_material_basis_projection_preserves_declared_order():
     support = _support()
     transform = phx.imaging.tomography.VoxelXRayTransformPlan(
-        support, (2, 1, 1), (0.0, 0.0, 0.0), (1.0, 1.0, 1.0)
+        support,
+        (2, 1, 1),
+        (0.0, 0.0, 0.0),
+        (1.0, 1.0, 1.0),
+        support.rays.coordinate_contract,
     )
     plan = phx.imaging.tomography.MaterialBasisProjectionPlan(
         transform, ("material-a", "material-b")
@@ -103,6 +107,10 @@ def test_material_basis_projection_preserves_declared_order():
     density = jnp.asarray((0.1, 0.2)).reshape((2, 1, 1))
     fractions = jnp.asarray(((1.0, 0.0), (0.0, 1.0))).reshape((2, 1, 1, 2))
     np.testing.assert_allclose(plan.project(density, fractions), ((0.1, 0.2),))
+    with pytest.raises(ValueError, match="nonnegative"):
+        plan.project(density, fractions.at[0, 0, 0, 0].set(-1.0))
+    with pytest.raises(ValueError, match="sum to one"):
+        plan.project(density, 0.5 * fractions)
 
 
 def test_two_material_two_energy_signal_and_detector_semantics():

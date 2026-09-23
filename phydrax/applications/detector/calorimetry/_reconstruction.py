@@ -77,8 +77,8 @@ def reconstruct_calorimeter_clusters(
         response, CalorimeterResponse
     ):
         raise TypeError("plan and response must use calorimeter types.")
-    if response.plan_id == "":
-        raise ValueError("Response provenance is missing.")
+    if response.geometry_id != plan.geometry.geometry_id:
+        raise ValueError("Calorimeter response and clustering geometry differ.")
     mapping = plan.cell_to_cluster
     valid_cell = (mapping >= 0) & plan.geometry.active & ~plan.geometry.dead
     membership = (

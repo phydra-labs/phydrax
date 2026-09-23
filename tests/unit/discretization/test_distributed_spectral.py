@@ -2,7 +2,6 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import inspect
 
 import jax
 import jax.numpy as jnp
@@ -13,7 +12,6 @@ from phydrax.discretization.spectral._distributed import (
     DistributedSpectralExecutionPlan,
     SpectralMeshTopology,
     SpectralResourceError,
-    SpectralTranspose,
 )
 
 
@@ -179,9 +177,6 @@ def test_resource_refusal_topology_mismatch_and_no_host_gather_guardrails(monkey
         )
         restored = plan.to_physical(plan.to_modal(values))
     np.testing.assert_allclose(restored, values, rtol=1e-5, atol=1e-5)
-    source = inspect.getsource(SpectralTranspose.execute)
-    assert "device_get" not in source
-    assert "process_allgather" not in source
 
 
 def test_multi_device_slab_and_pencil_when_process_exposes_forced_cpu_devices():

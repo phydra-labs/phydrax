@@ -115,6 +115,7 @@ def test_route_inventories_cover_each_commercial_qualification_surface():
         "topology-restart",
         "multiblock-extruded",
         "scale-resource",
+        "substrate",
     }
     assert set(compressible.ROUTES) == {
         "smooth-dgsem",
@@ -141,6 +142,12 @@ def test_route_inventories_cover_each_commercial_qualification_surface():
         "cantera-boundary",
         "low-mach",
         "statistics",
+        "equilibrium",
+        "equilibrium-jumps",
+        "cema",
+        "low-mach-spatial",
+        "reacting-production",
+        "learned-chemistry",
     }
 
 
@@ -190,6 +197,7 @@ def test_serialization_and_metric_identity_are_deterministic_and_content_derived
         ]
     )
     assert json.loads(output_path.read_text()) == left
+    verify_candidate_artifact(json.loads(output_path.read_text()))
     assert output_path.read_text().endswith("\n")
 
 

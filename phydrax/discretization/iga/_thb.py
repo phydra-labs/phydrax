@@ -63,6 +63,8 @@ class THBLevel(StrictModule, NonTrainableState):
 class THBBasisCertificate(StrictModule, NonTrainableState):
     """Machine-checked nestedness, truncation, and independence evidence."""
 
+    hierarchy_id: str = eqx.field(static=True)
+
     nested: bool = eqx.field(static=True)
     partition_defect: float = eqx.field(static=True)
     rank: int = eqx.field(static=True)
@@ -74,6 +76,7 @@ class THBBasisCertificate(StrictModule, NonTrainableState):
 
     def __init__(
         self,
+        hierarchy_id: str,
         *,
         nested: bool,
         partition_defect: float,
@@ -83,17 +86,33 @@ class THBBasisCertificate(StrictModule, NonTrainableState):
         tolerance: float,
         diagnostic_codes: Sequence[str] = (),
     ):
+        hierarchy = str(hierarchy_id)
         partition = float(partition_defect)
         prolongation = float(prolongation_defect)
         tolerance_ = float(tolerance)
         rank_ = int(rank)
         count = int(basis_count)
         codes = tuple(str(code) for code in diagnostic_codes)
-        if tolerance_ <= 0.0 or min(partition, prolongation) < 0.0:
-            raise ValueError("THB certificate tolerances and defects are invalid.")
+        if (
+            not hierarchy
+            or not np.isfinite(tolerance_)
+            or tolerance_ <= 0.0
+            or not np.isfinite(partition)
+            or not np.isfinite(prolongation)
+            or min(partition, prolongation) < 0.0
+            or rank_ < 0
+            or count < 0
+        ):
+            raise ValueError(
+                "THB certificate identity, tolerances, or defects are invalid."
+            )
         passed = (
-            bool(nested) and rank_ == count and max(partition, prolongation) <= tolerance_
+            bool(nested)
+            and count > 0
+            and rank_ == count
+            and max(partition, prolongation) <= tolerance_
         )
+        self.hierarchy_id = hierarchy
         self.nested = bool(nested)
         self.partition_defect = partition
         self.rank = rank_
@@ -104,6 +123,7 @@ class THBBasisCertificate(StrictModule, NonTrainableState):
         self.certificate_id = canonical_fingerprint(
             {
                 "kind": "thb-basis-certificate",
+                "hierarchy": hierarchy,
                 "nested": bool(nested),
                 "partition_defect": partition,
                 "rank": rank_,
@@ -186,17 +206,26 @@ class THBHierarchy(StrictModule, NonTrainableState):
         return jnp.asarray(np.concatenate(columns, axis=1))
 
     def certify(self, /, *, tolerance: float = 1.0e-10) -> THBBasisCertificate:
+        tolerance_ = float(tolerance)
+        if not np.isfinite(tolerance_) or tolerance_ <= 0.0:
+            raise ValueError("THB certification tolerance must be finite and positive.")
         matrices = tuple(np.asarray(value) for value in self.prolongations)
         nested = all(np.linalg.matrix_rank(value) == value.shape[1] for value in matrices)
-        partition = max(
-            (
-                float(np.max(np.abs(value @ np.ones(value.shape[1]) - 1.0)))
-                for value in matrices
-            ),
-            default=0.0,
-        )
         transform = np.asarray(self.transformation())
-        rank = int(np.linalg.matrix_rank(transform, tol=tolerance))
+        partition = float(
+            np.max(
+                np.abs(
+                    transform @ np.ones((transform.shape[1],), dtype=transform.dtype)
+                    - np.ones((transform.shape[0],), dtype=transform.dtype)
+                ),
+                initial=0.0,
+            )
+        )
+        rank = (
+            0
+            if transform.shape[1] == 0
+            else int(np.linalg.matrix_rank(transform, tol=tolerance_))
+        )
         prolongation_defect = max(
             (float(np.max(np.abs(np.minimum(value, 0.0)))) for value in matrices),
             default=0.0,
@@ -204,19 +233,22 @@ class THBHierarchy(StrictModule, NonTrainableState):
         codes = []
         if not nested:
             codes.append("thb.not_nested")
-        if partition > tolerance:
+        if transform.shape[1] == 0:
+            codes.append("thb.empty_active_basis")
+        if partition > tolerance_:
             codes.append("thb.partition")
         if rank != transform.shape[1]:
             codes.append("thb.dependent")
-        if prolongation_defect > tolerance:
+        if prolongation_defect > tolerance_:
             codes.append("thb.negative_prolongation")
         return THBBasisCertificate(
+            hierarchy_id=self.hierarchy_id,
             nested=nested,
             partition_defect=partition,
             rank=rank,
             basis_count=transform.shape[1],
             prolongation_defect=prolongation_defect,
-            tolerance=tolerance,
+            tolerance=tolerance_,
             diagnostic_codes=codes,
         )
 

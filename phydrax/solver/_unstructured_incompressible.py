@@ -64,6 +64,8 @@ class UnstructuredPressureProjectionResult(StrictModule):
     pressure_increment: Array
     divergence_before: Array
     divergence_after: Array
+    compatibility_defect: Array
+    divergence_norm: Array
     pressure_residual: Array
     compatible_rhs: Array
     rhie_chow_correction: Array
@@ -263,8 +265,15 @@ class UnstructuredPressureProjectionPlan(StrictModule, NonTrainableState):
         )
         residual_norm = jnp.sqrt(jnp.sum(volumes * residual**2))
         rhs_norm = jnp.sqrt(jnp.sum(volumes * rhs**2))
-        converged = linear.successful & (
-            residual_norm <= self.tolerance * jnp.maximum(rhs_norm, 1.0)
+        divergence_before_norm = jnp.sqrt(jnp.sum(volumes * divergence_before**2))
+        divergence_norm = jnp.sqrt(jnp.sum(volumes * divergence_after**2))
+        compatibility_defect = jnp.abs(mean_divergence) * jnp.sqrt(jnp.sum(volumes))
+        divergence_tolerance = self.tolerance * jnp.maximum(divergence_before_norm, 1.0)
+        converged = (
+            linear.successful
+            & (residual_norm <= self.tolerance * jnp.maximum(rhs_norm, 1.0))
+            & (compatibility_defect <= divergence_tolerance)
+            & (divergence_norm <= divergence_tolerance)
         )
         return UnstructuredPressureProjectionResult(
             velocity=corrected_velocity,
@@ -273,6 +282,8 @@ class UnstructuredPressureProjectionPlan(StrictModule, NonTrainableState):
             pressure_increment=increment,
             divergence_before=divergence_before,
             divergence_after=divergence_after,
+            compatibility_defect=compatibility_defect,
+            divergence_norm=divergence_norm,
             pressure_residual=residual,
             compatible_rhs=rhs,
             face_inverse_momentum=face_inverse,

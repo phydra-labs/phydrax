@@ -284,7 +284,8 @@ class DoglegLeastSquares(AbstractLeastSquaresMethod):
         )
         radius = self.initial_radius
         history = [float(objective)]
-        iterations = evaluations = accepted = rejected = 0
+        iterations = accepted = rejected = 0
+        evaluations = 1
         jvp = vjp = 0
         step_norm = 0.0
         ratio = jnp.asarray(jnp.nan, dtype=objective.dtype)
@@ -293,6 +294,10 @@ class DoglegLeastSquares(AbstractLeastSquaresMethod):
         while (
             status == int(OptimizationStatus.ITERATING)
             and iterations < termination.maximum_steps
+            and (
+                termination.maximum_evaluations is None
+                or evaluations < termination.maximum_evaluations
+            )
         ):
             jacobian = self.precision.accumulation(
                 jax.jacfwd(residual_coordinates)(coordinates)
@@ -368,13 +373,22 @@ class DoglegLeastSquares(AbstractLeastSquaresMethod):
             elif not accept and radius <= self.minimum_radius:
                 status = int(OptimizationStatus.TRUST_REGION_FAILED)
         if status == int(OptimizationStatus.ITERATING):
-            status = int(OptimizationStatus.MAXIMUM_STEPS_REACHED)
+            status = (
+                int(OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED)
+                if (
+                    termination.maximum_evaluations is not None
+                    and evaluations >= termination.maximum_evaluations
+                )
+                else int(OptimizationStatus.MAXIMUM_STEPS_REACHED)
+            )
+        budget_exhausted = status == int(OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED)
         final_jacobian = jax.jacfwd(residual_coordinates)(coordinates)
         final_gradient = jnp.conj(final_jacobian.T) @ residual_vector
         final_optimality = optimality_norm(final_gradient, parameters)
         primal_feasibility = 0.0 if bounds is None else bounds.violation(parameters)
         if (
-            float(final_optimality)
+            not budget_exhausted
+            and float(final_optimality)
             <= float(
                 termination.optimality_threshold(
                     final_optimality if initial_optimality is None else initial_optimality
@@ -388,10 +402,10 @@ class DoglegLeastSquares(AbstractLeastSquaresMethod):
                 final_optimality if initial_optimality is None else initial_optimality
             ),
             final_optimality_norm=final_optimality,
-            objective_evaluations=evaluations + 2,
+            objective_evaluations=evaluations,
             final_step_norm=step_norm,
             iterations=iterations,
-            residual_evaluations=evaluations + 2,
+            residual_evaluations=evaluations + 1,
             jvp_evaluations=jvp + space.size,
             vjp_evaluations=vjp + 1,
             accepted_steps=accepted,

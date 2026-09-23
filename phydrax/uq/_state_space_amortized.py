@@ -143,7 +143,9 @@ class AmortizedGaussianMarkovEncoder(StrictModule):
         suffix = jnp.cumsum(masked_hidden[:, ::-1], axis=1)[:, ::-1] / jnp.maximum(
             suffix_count[..., None], 1.0
         )
-        hidden = jnp.tanh(local_hidden + 0.5 * (prefix + suffix))
+        hidden = (
+            jnp.tanh(masked_hidden + 0.5 * (prefix + suffix)) * context_float[..., None]
+        )
         temporal = (
             ein.contract("oh,cth->cto", self.temporal_weight, hidden) + self.temporal_bias
         )
@@ -368,7 +370,7 @@ def fit_amortized_state_space_variational(
             key=jr.fold_in(key, 0xA60B),
         )
         if family is None
-        else family
+        else family.condition(problem)
     )
     if not isinstance(family_, AmortizedGaussianMarkovFamily):
         raise TypeError("family must be AmortizedGaussianMarkovFamily or None.")

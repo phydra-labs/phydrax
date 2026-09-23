@@ -143,7 +143,7 @@ def main() -> None:
         mueller,
         **keyword,
     )
-    jax.block_until_ready(first.accepted_state.tetrad_four_momentum)
+    jax.block_until_ready(first)
     compile_and_first = time.perf_counter() - start
     start = time.perf_counter()
     for _ in range(arguments.repetitions):
@@ -156,7 +156,7 @@ def main() -> None:
             mueller,
             **keyword,
         )
-    jax.block_until_ready(result.accepted_state.tetrad_four_momentum)
+    jax.block_until_ready(result)
     execution = (time.perf_counter() - start) / arguments.repetitions
     if not bool(result.successful):
         raise RuntimeError("Packet benchmark transport failed.")

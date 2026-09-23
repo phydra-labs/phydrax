@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 from phydrax.ein import contract
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._model import register_artifact_value
 from .._strict import StrictModule
 from ..linalg import (
     DenseLinearOperator,
@@ -838,6 +839,24 @@ def _analyze_conditional_affinity(
         certificate_id,
         jnp.asarray(bool(np.all(eligible_array))),
     )
+
+
+for _artifact_value in (
+    ChemicalReactionDirection,
+    ChemicalAffinePivot,
+    ChemicalConditionalAffinePlan,
+    ChemicalConditionalAffineCertificate,
+    ChemicalConditionalAffineDrivers,
+    ChemicalConditionalAffineAssembly,
+    ChemicalConditionalAffineResult,
+    PreparedChemicalConditionalAffine,
+):
+    register_artifact_value(
+        f"phydrax.chemistry.conditional_affine:{_artifact_value.__name__}",
+        _artifact_value,
+    )
+
+del _artifact_value
 
 
 __all__ = [

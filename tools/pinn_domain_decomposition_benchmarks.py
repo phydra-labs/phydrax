@@ -215,7 +215,7 @@ def _run_partition_of_unity(
         final_loss=float(result.evidence.training_loss),
         relative_l2=_relative_l2(result.global_field, domain),
         elapsed_seconds=elapsed,
-        interface_defect=0.0,
+        interface_defect=float(result.evidence.maximum_pair_loss),
     )
 
 

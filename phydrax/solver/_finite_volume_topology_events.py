@@ -944,6 +944,10 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
                 and accepted_steps[index] == previous_step
                 and times[index] == previous_time
             )
+            if pending_input_epochs and state is not TopologyEventState.REQUESTED:
+                raise ValueError(
+                    "Pending topology event records must form a trailing batch."
+                )
             if state is TopologyEventState.REQUESTED:
                 if input_epoch != historical_tip:
                     raise ValueError(
@@ -952,13 +956,8 @@ class FiniteVolumeTopologyEventJournal(StrictModule, NonTrainableState):
                 pending_input_epochs.append(input_epoch)
                 if status is not TopologyEventStatus.PENDING or result is not None:
                     raise ValueError("Requested topology event slot is inconsistent.")
-                if index != count - 1:
-                    raise ValueError(
-                        "A pending topology event must be the final journal record."
-                    )
-                if pending_input_epochs and (
-                    input_epoch != self.current_epoch_id
-                    or (len(pending_input_epochs) > 1 and not same_batch)
+                if input_epoch != self.current_epoch_id or (
+                    len(pending_input_epochs) > 1 and not same_batch
                 ):
                     raise ValueError("Pending topology event batch is inconsistent.")
             elif state is TopologyEventState.COMMITTED:

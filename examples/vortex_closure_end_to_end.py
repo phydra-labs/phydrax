@@ -38,9 +38,11 @@ population, journal = population_plan.initialize(
     active_mask=jnp.asarray((True, True, True, True, False, False)),
 )
 split = population_plan.split(population, journal, 0, (0.02, 0.0))
+if not bool(field.successful & split.successful):
+    raise RuntimeError("Vortex field evaluation or population split failed")
 
 print("field", field.velocity)
 print("FMM tail bound", field.diagnostics.backend_diagnostics.geometric_tail_bound)
 print("population count", split.evidence.active_count_after)
 print("strength defect", split.evidence.strength_residual)
-print("successful", bool(field.successful & split.successful))
+print("successful", True)

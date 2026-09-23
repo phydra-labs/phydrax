@@ -270,7 +270,7 @@ def solve_heavy_ion_path(
         raise ValueError("initial_charge_strangeness must contain Q/S values.")
 
     def iteration(_, state):
-        values, active = state
+        values, active, failed, iterations = state
         chemical = jnp.asarray([baryon, values[0], values[1]])
         evaluated = evaluate_taylor_eos(prepared, temperature_, chemical)
         densities = evaluated.densities_over_temperature3
@@ -297,19 +297,30 @@ def solve_heavy_ion_path(
         )
         candidate = values + solved.value
         converged = jnp.linalg.norm(residual) <= plan.tolerance
-        valid = (
+        solve_valid = (
             evaluated.derivative_valid
             & jnp.all(solved.status == 0)
             & jnp.all(jnp.isfinite(candidate))
         )
-        update = active & ~converged & valid
-        return jnp.where(update, candidate, values), update
+        attempted = active & ~converged
+        update = attempted & solve_valid
+        return (
+            jnp.where(update, candidate, values),
+            update,
+            failed | (attempted & ~solve_valid),
+            iterations + attempted.astype(jnp.int32),
+        )
 
-    final, active = jax.lax.fori_loop(
+    final, _, failed, iterations = jax.lax.fori_loop(
         0,
         plan.maximum_iterations,
         iteration,
-        (initial, jnp.asarray(True)),
+        (
+            initial,
+            jnp.asarray(True),
+            jnp.asarray(False),
+            jnp.asarray(0, dtype=jnp.int32),
+        ),
     )
     chemical = jnp.asarray([baryon, final[0], final[1]])
     evaluated = evaluate_taylor_eos(prepared, temperature_, chemical)
@@ -321,11 +332,11 @@ def solve_heavy_ion_path(
         ]
     )
     converged = jnp.linalg.norm(residual) <= plan.tolerance
-    valid = converged & evaluated.derivative_valid & ~active
+    valid = converged & evaluated.derivative_valid & ~failed
     return HeavyIonConstraintResult(
         chemical,
         residual,
-        jnp.asarray(plan.maximum_iterations, dtype=jnp.int32),
+        iterations,
         converged,
         valid,
         jnp.asarray(

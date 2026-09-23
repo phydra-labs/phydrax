@@ -565,3 +565,70 @@ def test_nullspace_evidence_respects_distinct_state_and_residual_spaces():
     assert float(evidence.left_residual_norm) == 0.0
     assert float(evidence.right_norm) == 1.0
     assert float(evidence.left_norm) == 1.0
+
+
+def test_linear_homotopy_preserves_and_validates_declared_spaces():
+    space = phx.linalg.ArraySpace((), dtype=jnp.float64)
+    start = nl.NonlinearSystemProblem(
+        lambda state, args: state - 1.0,
+        state_space=space,
+        residual_space=space,
+        problem_id="spaced-start",
+    )
+    target = nl.NonlinearSystemProblem(
+        lambda state, args: state - 2.0,
+        state_space=space,
+        residual_space=space,
+        problem_id="spaced-target",
+    )
+    homotopy = ct.linear_homotopy(start, target)
+    state_space, residual_space = homotopy.continuation_problem.declared_spaces()
+
+    assert state_space.space_id == space.space_id
+    assert residual_space.space_id == space.space_id
+
+    incompatible = nl.NonlinearSystemProblem(
+        lambda state, args: jnp.stack((state, state)),
+        state_space=space,
+        residual_space=phx.linalg.ArraySpace((2,), dtype=jnp.float64),
+        problem_id="incompatible-target",
+    )
+    with pytest.raises(ValueError, match="residual spaces"):
+        ct.linear_homotopy(start, incompatible)
+
+
+def test_deflation_preserves_original_domain_and_acceptance_guards():
+    space = phx.linalg.ArraySpace((), dtype=jnp.float64)
+    problem = nl.NonlinearSystemProblem(
+        lambda state, args: jnp.log(state),
+        state_space=space,
+        residual_space=space,
+        trial_validity=lambda state, args: state > 0.0,
+        trial_validity_id="positive-deflation-domain",
+        validity=lambda state, residual, auxiliary, args: state > 0.0,
+        problem_id="guarded-deflation",
+    )
+    deflation = ct.RootDeflation(
+        problem,
+        [jnp.asarray(1.0)],
+        metric=ct.CallableDeflationMetric(
+            lambda left, right: jnp.abs(left - right),
+            metric_id="guarded-distance",
+        ),
+    )
+    transformed = deflation.as_problem()
+    result = ct.solve_deflated(
+        deflation,
+        nl.NewtonKrylov(),
+        jnp.asarray(-1.0),
+        termination=nl.NonlinearTermination(maximum_steps=2),
+    )
+
+    assert transformed.state_space is problem.state_space
+    assert transformed.residual_space is problem.residual_space
+    assert transformed.trial_validity_id == problem.trial_validity_id
+    assert not bool(result.successful)
+    assert int(result.status) == int(ct.DeflatedRootStatus.NONLINEAR_SOLVE_FAILED)
+    assert int(result.nonlinear_result.status) == int(
+        nl.NonlinearStatus.UNRECOVERABLE_DOMAIN_FAILURE
+    )

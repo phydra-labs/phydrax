@@ -60,8 +60,10 @@ class ContactGuaranteeEvidence(StrictModule):
         margin: ArrayLike = jnp.inf,
         backend_id: str,
     ):
-        level_ = jnp.asarray(int(level), dtype=jnp.int32)
-        required = jnp.asarray(int(required_level), dtype=jnp.int32)
+        level_value = ContactGuaranteeLevel(int(level))
+        required_value = ContactGuaranteeLevel(int(required_level))
+        level_ = jnp.asarray(int(level_value), dtype=jnp.int32)
+        required = jnp.asarray(int(required_value), dtype=jnp.int32)
         finite_ = jnp.asarray(finite, dtype=jnp.bool_)
         complete = jnp.asarray(work_complete, dtype=jnp.bool_)
         failure = jnp.asarray(failure_code, dtype=jnp.int32)
@@ -85,7 +87,8 @@ class ContactGuaranteeEvidence(StrictModule):
         self.backend_id = identifier
 
     def meets(self, required: ContactGuaranteeLevel | int, /) -> Array:
-        return self.successful & (self.level >= int(required))
+        required_value = ContactGuaranteeLevel(int(required))
+        return self.successful & (self.level >= int(required_value))
 
 
 __all__ = [

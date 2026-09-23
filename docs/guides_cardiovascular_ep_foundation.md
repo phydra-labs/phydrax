@@ -191,7 +191,7 @@ the state's immutable runtime identity, exact array bytes, and logical time to
 the prepared `runtime_id`; an uninterrupted serial run and checkpoint/restart
 replay have the same identity.
 
-## Qualification and raw benchmark
+## Qualification
 
 Run the tetrahedral slab qualification when validating this route:
 
@@ -203,11 +203,3 @@ python tools/cardiovascular_ep_foundation_qualification.py \
 It requires propagation across the slab, successful branchwise LAT and chord CV,
 positive row-sum masses, symmetric stiffness, satisfaction of the diffusion bound,
 and bitwise-identical checkpoint replay.
-
-The raw performance benchmark reports preparation, compilation/warmup, SSPRK33
-step throughput, storage, and exact runtime identity:
-
-```console
-python benchmarks/cardiovascular_monodomain.py \
-  --cubes 32 --dt-ms 0.02 --steps 200
-```

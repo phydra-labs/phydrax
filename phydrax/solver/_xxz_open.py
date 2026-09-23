@@ -17,6 +17,7 @@ from ._purified_tebd import (
     diagnose_purified_stationarity,
     PurifiedStationarityDiagnostic,
     PurifiedStrangProblem,
+    PurifiedStrangResult,
     solve_purified_strang,
 )
 
@@ -126,6 +127,7 @@ def qualify_boundary_driven_xxz(
     current_problem = problem
     magnetization = []
     final_result = None
+    step_results = []
     for _ in range(int(steps)):
         final_result = solve_purified_strang(
             current_problem,
@@ -134,6 +136,7 @@ def qualify_boundary_driven_xxz(
             maximum_bond_dimension=maximum_bond_dimension,
             maximum_purification_dimension=maximum_purification_dimension,
         )
+        step_results.append(final_result)
         local = jnp.stack(
             [
                 jnp.real(
@@ -154,14 +157,24 @@ def qualify_boundary_driven_xxz(
     if final_result is None:
         raise ValueError("XXZ qualification requires at least one step.")
     history = jnp.stack(magnetization)
+    aggregate_result = PurifiedStrangResult(
+        final_result.final_state,
+        jnp.concatenate(tuple(result.raw_trace_history for result in step_results)),
+        jnp.concatenate(tuple(result.bond_discarded_history for result in step_results)),
+        jnp.concatenate(tuple(result.kraus_discarded_history for result in step_results)),
+        jnp.concatenate(
+            tuple(result.canonical_residual_history for result in step_results)
+        ),
+        problem_id=problem.problem_id,
+    )
     diagnostic = diagnose_purified_stationarity(
-        final_result,
+        aggregate_result,
         history,
         window=min(int(steady_window), max(1, history.shape[0] - 1)),
         tolerance=1e-4,
         truncation_tolerance=1e-6,
     )
-    return XXZQualificationResult(final_result, history, diagnostic)
+    return XXZQualificationResult(aggregate_result, history, diagnostic)
 
 
 __all__ = [

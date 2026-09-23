@@ -257,3 +257,28 @@ def test_piecewise_density_binds_preparation_and_replay_policy_identity():
         assert alternate_law.law_id != law.law_id
         with pytest.raises(ValueError, match="replay-policy identity"):
             alternate_law.log_prob_with_diagnostics(jnp.asarray([0.2]))
+
+
+def test_scalar_latent_and_hybrid_laws_preserve_sample_axes():
+    scalar = phx.uq.Uniform(-1.0, 1.0)
+    injective = phx.transport.InjectiveContinuousFlowLaw(
+        scalar,
+        lambda value: value[None],
+        lambda value: value[0],
+        event_shape=(1,),
+    )
+
+    injected = injective.sample(jr.key(31), (5,))
+
+    assert injected.shape == (5, 1)
+    assert injective.log_prob(injected).shape == (5,)
+
+    hybrid = phx.transport.HybridFlowLaw(
+        jnp.asarray([0.4, 0.6]),
+        (scalar, phx.uq.Uniform(1.0, 2.0)),
+        mode_id="scalar-hybrid",
+    )
+    samples = hybrid.sample(jr.key(32), (7,))
+
+    assert samples.value.shape == (7,)
+    assert hybrid.log_prob(samples.mode, samples.value).shape == (7,)

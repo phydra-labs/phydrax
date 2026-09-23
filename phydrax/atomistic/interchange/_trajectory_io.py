@@ -325,6 +325,28 @@ class H5MDTrajectoryReader(AtomisticTrajectoryReader):
         self.handle.close()
 
 
+def _xyz_stream_contract(metadata: dict) -> tuple:
+    return (
+        metadata.get("system_id"),
+        metadata.get("topology_id"),
+        metadata.get("coordinate_domain"),
+        tuple(metadata.get("stable_ids", ())),
+        tuple(
+            name
+            for name in (
+                "velocities",
+                "momenta",
+                "forces",
+                "cell",
+                "image_counts",
+                "energy",
+            )
+            if metadata.get(name) is not None
+        ),
+        tuple(sorted(metadata.get("auxiliary", {}))),
+    )
+
+
 class ExtendedXYZTrajectoryPlan(
     AbstractAtomisticTrajectorySourcePlan, AbstractAtomisticTrajectorySinkPlan
 ):
@@ -352,11 +374,13 @@ class ExtendedXYZTrajectoryWriter(AtomisticTrajectoryWriter):
         target = Path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
         self.units = None
+        self.stream_contract = None
         if append and target.is_file() and target.stat().st_size:
             with open(target, encoding="utf-8") as existing:
                 existing.readline()
                 metadata = _xyz_metadata(existing.readline())
             self.units = _unit_descriptor(metadata)
+            self.stream_contract = _xyz_stream_contract(metadata)
         self.handle = open(target, "a" if append else "w", encoding="utf-8")
         self.sink_id = sink_id
 
@@ -393,6 +417,13 @@ class ExtendedXYZTrajectoryWriter(AtomisticTrajectoryWriter):
             },
             "valid": bool(frame.valid),
         }
+        contract = _xyz_stream_contract(metadata)
+        if self.stream_contract is None:
+            self.stream_contract = contract
+        elif contract != self.stream_contract:
+            raise ValueError(
+                "Extended XYZ frames must share system, topology, domain, stable-ID order, and field schema."
+            )
         if self.units is None:
             metadata["unit_system"] = frame.units.to_dict()
             self.units = frame.units
@@ -418,6 +449,7 @@ class ExtendedXYZTrajectoryReader(AtomisticTrajectoryReader):
         self.handle = open(path, encoding="utf-8")
         self.source_id = source_id
         self.units = None
+        self.stream_contract = None
 
     def __iter__(self):
         while True:
@@ -426,6 +458,13 @@ class ExtendedXYZTrajectoryReader(AtomisticTrajectoryReader):
                 break
             count = int(count_line)
             metadata = _xyz_metadata(self.handle.readline())
+            contract = _xyz_stream_contract(metadata)
+            if self.stream_contract is None:
+                self.stream_contract = contract
+            elif contract != self.stream_contract:
+                raise ValueError(
+                    "Extended XYZ stream identity or field schema changed between frames."
+                )
             descriptor = metadata.get("unit_system")
             if self.units is None:
                 self.units = _unit_descriptor(metadata)

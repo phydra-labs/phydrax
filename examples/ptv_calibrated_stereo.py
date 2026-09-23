@@ -80,9 +80,41 @@ tracks = phx.velocimetry.tracking.link_tracks(
 )
 trajectory = phx.velocimetry.tracking.to_trajectory_data(tracks)
 
+reconstruction_ok = all(
+    bool(
+        (jnp.sum(reconstruction.valid) == 1)
+        & jnp.all(
+            jnp.where(
+                reconstruction.valid,
+                reconstruction.status
+                == int(phx.velocimetry.tracking.ReconstructionStatus.SUCCESS),
+                True,
+            )
+        )
+    )
+    for reconstruction in reconstructions
+)
+reconstructed = jnp.stack(
+    tuple(
+        reconstruction.positions_xyz[reconstruction.valid][0]
+        for reconstruction in reconstructions
+    )
+)
+tracking_ok = bool(
+    jnp.all(tracks.step_status == int(phx.velocimetry.tracking.TrackStatus.SUCCESS))
+    & jnp.all(tracks.overflow_count == 0)
+    & jnp.any(jnp.all(tracks.observed, axis=1))
+)
+trajectory_ok = bool(jnp.sum(trajectory.sample_valid) == len(truth))
+truth_ok = bool(jnp.allclose(reconstructed, jnp.stack(truth), atol=5.0e-3))
+if not (reconstruction_ok and tracking_ok and trajectory_ok and truth_ok):
+    raise RuntimeError(
+        "Stereo PTV reconstruction, tracking, or trajectory evidence failed"
+    )
+
 print(
     "reconstructed positions", reconstructions[0].positions_xyz[reconstructions[0].valid]
 )
 print("active track ids", tracks.track_ids[tracks.observed])
 print("trajectory samples", int(jnp.sum(trajectory.sample_valid)))
-print("successful", bool(jnp.all(reconstructions[0].valid[:1])))
+print("successful", True)

@@ -104,6 +104,12 @@ def test_tree_objectives_labels_weighted_aggregation_and_inactive_trees():
     points = jnp.array([[-1.0], [1.0]])
     assert jnp.allclose(binary(points), jax.nn.sigmoid(jnp.array([-2.0, 2.0])))
     assert jnp.array_equal(binary.predict_labels(points), jnp.array([0, 1]))
+    assert jnp.array_equal(binary.predict(points), jnp.array([0, 1]))
+    assert jnp.array_equal(binary.decision_function(points), jnp.array([-2.0, 2.0]))
+    assert jnp.allclose(
+        binary.predict_proba(points).sum(axis=-1),
+        jnp.ones((2,)),
+    )
     assert jnp.allclose(apply_objective(jnp.array([[-1.0, 1.0]]), "softmax").sum(-1), 1.0)
     assert jnp.all(apply_objective(jnp.array([-2.0, 2.0]), "positive") > 0.0)
     assert jnp.allclose(
@@ -131,6 +137,26 @@ def test_tree_objectives_labels_weighted_aggregation_and_inactive_trees():
         max_steps=1,
     )
     assert median(jnp.array([[0.0], [9.0]])).tolist() == [7.0, 7.0]
+
+    padded = TreeEnsemble(
+        feature_index=jnp.full((2, 1), -1),
+        threshold=jnp.zeros((2, 1)),
+        left_child=jnp.full((2, 1), -1),
+        right_child=jnp.full((2, 1), -1),
+        default_left=jnp.zeros((2, 1), dtype="bool"),
+        leaf_value=jnp.array([[[3.0]], [[jnp.nan]]]),
+        node_mask=jnp.array([[True], [False]]),
+        leaf_mask=jnp.array([[True], [False]]),
+        tree_mask=jnp.array([True, False]),
+        base_score=jnp.array([0.0]),
+        feature_schema=FeatureSchema(("x",)),
+        max_steps=1,
+    )
+    assert jnp.array_equal(padded(jnp.array([[0.0], [1.0]])), jnp.array([3.0, 3.0]))
+    assert jnp.array_equal(
+        padded.predict_leaf(jnp.array([[0.0]])),
+        jnp.array([[0, -1]]),
+    )
 
 
 def test_case_dependent_trees_preserve_case_and_point_axes_under_jit():
@@ -213,5 +239,39 @@ def test_invalid_structure_complex_inputs_and_bounded_nonconvergence_fail_closed
         feature_schema=FeatureSchema(("x",)),
         max_steps=1,
     )
-    with pytest.raises(Exception, match="exhausted its bound"):
+    assert not cycle.structure_diagnostics().valid
+
+    shared_child = _stump()
+    shared_child = TreeEnsemble(
+        feature_index=shared_child.feature_index,
+        threshold=shared_child.threshold,
+        left_child=shared_child.left_child,
+        right_child=jnp.array([[1, -1, -1]]),
+        default_left=shared_child.default_left,
+        leaf_value=shared_child.leaf_value,
+        node_mask=shared_child.node_mask,
+        leaf_mask=shared_child.leaf_mask,
+        tree_mask=shared_child.tree_mask,
+        base_score=shared_child.base_score,
+        feature_schema=shared_child.feature_schema,
+        max_steps=2,
+    )
+    leaf_on_inactive = _stump()
+    leaf_on_inactive = TreeEnsemble(
+        feature_index=leaf_on_inactive.feature_index,
+        threshold=leaf_on_inactive.threshold,
+        left_child=leaf_on_inactive.left_child,
+        right_child=leaf_on_inactive.right_child,
+        default_left=leaf_on_inactive.default_left,
+        leaf_value=leaf_on_inactive.leaf_value,
+        node_mask=leaf_on_inactive.node_mask.at[0, 2].set(False),
+        leaf_mask=leaf_on_inactive.leaf_mask,
+        tree_mask=leaf_on_inactive.tree_mask,
+        base_score=leaf_on_inactive.base_score,
+        feature_schema=leaf_on_inactive.feature_schema,
+        max_steps=2,
+    )
+    assert not shared_child.structure_diagnostics().valid
+    assert not leaf_on_inactive.structure_diagnostics().valid
+    with pytest.raises(Exception, match="invalid active"):
         cycle(jnp.array([[0.0]]))

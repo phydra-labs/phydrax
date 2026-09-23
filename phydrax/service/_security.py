@@ -194,7 +194,14 @@ class AsymmetricVerifier(Protocol):
     def key_id(self) -> str: ...
     @property
     def algorithm(self) -> str: ...
-    def verify(self, payload: bytes, envelope: SignatureEnvelope, /) -> None: ...
+    def verify(
+        self,
+        payload: bytes,
+        envelope: SignatureEnvelope,
+        /,
+        *,
+        expected_purpose: str,
+    ) -> None: ...
 
 
 def _signing_message(payload: bytes, purpose: str, signed_at: int) -> bytes:
@@ -288,7 +295,15 @@ class Ed25519Verifier:
     def key_id(self) -> str:
         return self._key_id
 
-    def verify(self, payload: bytes, envelope: SignatureEnvelope, /) -> None:
+    def verify(
+        self,
+        payload: bytes,
+        envelope: SignatureEnvelope,
+        /,
+        *,
+        expected_purpose: str,
+    ) -> None:
+        _require_signature_purpose(envelope, expected_purpose)
         if envelope.key_id != self.key_id or envelope.algorithm != self.algorithm:
             raise IntegrityError(
                 "Signature key or algorithm does not match the verifier."
@@ -363,7 +378,15 @@ class KMSVerifier:
     def algorithm(self) -> str:
         return self._algorithm
 
-    def verify(self, payload: bytes, envelope: SignatureEnvelope, /) -> None:
+    def verify(
+        self,
+        payload: bytes,
+        envelope: SignatureEnvelope,
+        /,
+        *,
+        expected_purpose: str,
+    ) -> None:
+        _require_signature_purpose(envelope, expected_purpose)
         if envelope.key_id != self.key_id or envelope.algorithm != self.algorithm:
             raise IntegrityError(
                 "Signature key or algorithm does not match the KMS verifier."
@@ -438,8 +461,15 @@ class SigningTrustStore:
             return updated
 
     def verify(
-        self, payload: bytes, envelope: SignatureEnvelope, /, *, at_time: int
+        self,
+        payload: bytes,
+        envelope: SignatureEnvelope,
+        /,
+        *,
+        expected_purpose: str,
+        at_time: int,
     ) -> None:
+        _require_signature_purpose(envelope, expected_purpose)
         with self._lock:
             record = self._records.get(envelope.key_id)
             verifier = self._verifiers.get(envelope.key_id)
@@ -458,7 +488,7 @@ class SigningTrustStore:
         # Revocation invalidates every signature from the compromised key, including old ones.
         if record.revoked_at is not None:
             raise IntegrityError("Signature key has been revoked.")
-        verifier.verify(payload, envelope)
+        verifier.verify(payload, envelope, expected_purpose=expected_purpose)
 
     def records(self) -> tuple[SigningKeyTrustRecord, ...]:
         with self._lock:
@@ -468,6 +498,20 @@ class SigningTrustStore:
                     key=lambda value: (value.activated_at, value.key_id),
                 )
             )
+
+
+def _require_signature_purpose(
+    envelope: SignatureEnvelope, expected_purpose: str, /
+) -> None:
+    if (
+        not isinstance(expected_purpose, str)
+        or not expected_purpose
+        or expected_purpose != expected_purpose.strip()
+        or "\x00" in expected_purpose
+    ):
+        raise ValueError("Expected signature purpose must be canonical and nonempty.")
+    if envelope.purpose != expected_purpose:
+        raise IntegrityError("Signature purpose does not match the consuming protocol.")
 
 
 __all__ = [

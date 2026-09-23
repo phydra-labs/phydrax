@@ -52,3 +52,22 @@ def test_abstract_property_can_be_implemented():
             return "implemented"
 
     assert PropertyImplementation().label == "implemented"
+
+
+def test_abstract_strict_bases_may_supply_overridable_defaults():
+    class AbstractContract(StrictModule):
+        @abstractmethod
+        def evaluate(self) -> int:
+            raise NotImplementedError
+
+        def identity(self) -> str:
+            return "contract"
+
+    class Implementation(AbstractContract):
+        def evaluate(self) -> int:
+            return 1
+
+        def identity(self) -> str:
+            return "replacement"
+
+    assert Implementation().identity() == "replacement"

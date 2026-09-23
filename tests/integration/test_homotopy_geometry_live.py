@@ -32,24 +32,43 @@ def _digest(path):
 
 
 def _provider():
-    if os.environ.get("PHYDRAX_RUN_HOMOTOPY_CONTINUATION_LIVE") != "1":
+    required = (
+        "PHYDRAX_JULIA_EXECUTABLE",
+        "PHYDRAX_JULIA_SHA256",
+        "PHYDRAX_JULIA_VERSION",
+        "PHYDRAX_HC_PROJECT",
+        "PHYDRAX_HC_PROJECT_SHA256",
+        "PHYDRAX_HC_MANIFEST_SHA256",
+        "PHYDRAX_HC_UUID",
+        "PHYDRAX_HC_VERSION",
+    )
+    missing = tuple(name for name in required if not os.environ.get(name))
+    if missing:
         pytest.skip(
-            "Set PHYDRAX_RUN_HOMOTOPY_CONTINUATION_LIVE=1 for the real provider test."
+            "live HomotopyContinuation capability is absent: " + ", ".join(missing)
         )
     executable_path = Path(os.environ["PHYDRAX_JULIA_EXECUTABLE"]).resolve(strict=True)
     project = Path(os.environ["PHYDRAX_HC_PROJECT"]).resolve(strict=True)
+    executable_digest = _digest(executable_path)
+    if executable_digest != os.environ["PHYDRAX_JULIA_SHA256"]:
+        pytest.fail("The live Julia executable does not match its explicit pin.")
+    project_digest = _digest(project / "Project.toml")
+    manifest_digest = _digest(project / "Manifest.toml")
+    if project_digest != os.environ["PHYDRAX_HC_PROJECT_SHA256"]:
+        pytest.fail("The live Julia Project.toml does not match its explicit pin.")
+    if manifest_digest != os.environ["PHYDRAX_HC_MANIFEST_SHA256"]:
+        pytest.fail("The live Julia Manifest.toml does not match its explicit pin.")
     executable = PinnedExecutable(
         str(executable_path),
-        os.environ["PHYDRAX_JULIA_SHA256"],
+        executable_digest,
         os.environ["PHYDRAX_JULIA_VERSION"],
         os.environ.get("PHYDRAX_JULIA_LICENSE", "MIT"),
         "https://julialang.org/",
     )
-    assert _digest(executable_path) == executable.sha256
     environment = HomotopyContinuationEnvironment(
         project,
-        os.environ["PHYDRAX_HC_PROJECT_SHA256"],
-        os.environ["PHYDRAX_HC_MANIFEST_SHA256"],
+        project_digest,
+        manifest_digest,
         os.environ["PHYDRAX_HC_UUID"],
         os.environ["PHYDRAX_HC_VERSION"],
         depot_path=os.environ.get("PHYDRAX_JULIA_DEPOT", ""),

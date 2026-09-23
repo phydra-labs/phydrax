@@ -124,3 +124,65 @@ def test_nontrivial_gauge_flow_reports_jacobian_and_uses_exact_mh_ratio():
         rtol=1e-6,
     )
     assert jnp.all(result.proposal_valid)
+
+
+def test_learned_sampler_states_reject_different_prepared_owners():
+    support = _support()
+    metric = freeze_learned_metric(jnp.eye(1, dtype=jnp.float32), support)
+    hmc_plan = DelayedAcceptanceHMCPlan(support, step_size=0.1, leapfrog_steps=2)
+
+    def hmc(surrogate_id):
+        return prepare_delayed_acceptance_hmc(
+            hmc_plan,
+            lambda x: -0.5 * jnp.sum(x**2),
+            lambda x: -0.5 * jnp.sum(x**2),
+            metric,
+            target_id="standard-normal",
+            surrogate_id=surrogate_id,
+            geometry_id="euclidean-r1",
+            parameter_values=jnp.asarray([0.5]),
+        )
+
+    first_hmc = hmc("surrogate-a")
+    second_hmc = hmc("surrogate-b")
+    hmc_state = initialize_delayed_acceptance_hmc(
+        first_hmc,
+        jnp.zeros((1, 1), dtype=jnp.float32),
+    )
+    with pytest.raises(ValueError, match="another prepared kernel"):
+        sample_delayed_acceptance_hmc(
+            second_hmc,
+            hmc_state,
+            key=jax.random.key(30),
+            num_draws=1,
+        )
+
+    flow = ScalarGaugeEquivariantFlow(support, scale=1.1)
+    flow_plan = GaugeFlowProposalPlan(support, equivariance_tolerance=1e-6)
+
+    def proposal(base_id):
+        return prepare_gauge_flow_proposal(
+            flow_plan,
+            flow,
+            lambda x: -0.5 * jnp.sum(x**2),
+            lambda key: jax.random.normal(key, (1,), dtype=jnp.float32),
+            lambda x: -0.5 * jnp.sum(x**2),
+            target_id="standard-normal",
+            geometry_id="euclidean-r1",
+            base_id=base_id,
+            parameter_values=jnp.asarray([0.5]),
+        )
+
+    first_proposal = proposal("base-a")
+    second_proposal = proposal("base-b")
+    flow_state = initialize_gauge_flow_chain(
+        first_proposal,
+        jnp.zeros((1, 1), dtype=jnp.float32),
+    )
+    with pytest.raises(ValueError, match="another prepared proposal"):
+        sample_gauge_flow_proposal(
+            second_proposal,
+            flow_state,
+            key=jax.random.key(31),
+            num_draws=1,
+        )

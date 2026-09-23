@@ -51,13 +51,15 @@ def main() -> None:
         lambda points, time, args: points[:, 0] - 0.45,
         "wall",
     ).prepare(geometry)
+    if not bool(geometry.valid & ale.successful):
+        raise RuntimeError("Mapped geometry or ALE step evidence failed")
 
     print(
         {
             "epoch_id": topology.epoch.epoch_id,
             "entity_complex_id": entities.complex_id,
-            "mapped_geometry_valid": bool(geometry.valid),
-            "ale_step_valid": bool(ale.successful),
+            "mapped_geometry_valid": True,
+            "ale_step_valid": True,
             "cut_cells": embedded.evidence.cut_cell_count,
             "volume_closure": embedded.evidence.maximum_volume_closure_defect,
             "face_closure": embedded.evidence.maximum_face_closure_defect,

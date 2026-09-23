@@ -18,6 +18,9 @@ from ._unstructured import UnstructuredFiniteVolumeDiscretization
 from ._unstructured_remap import UnstructuredConservativeRemapPlan
 
 
+_INT32_MAX = np.iinfo(np.int32).max
+
+
 def _amr_identity(value: str, name: str, /) -> str:
     if not isinstance(value, str) or not value or value != value.strip():
         raise ValueError(f"{name} must be a nonempty canonical string.")
@@ -163,6 +166,16 @@ class UnstructuredAMRFluxRegister(StrictModule):
             second = first
         if mismatch.shape != first.shape:
             raise ValueError("AMR flux-register correction has an inconsistent shape.")
+        if any(array.dtype.kind != "f" for array in (first, coarse, second, mismatch)):
+            raise TypeError("AMR flux-register arrays must have real floating dtypes.")
+        mismatch = eqx.error_if(
+            mismatch,
+            jnp.any(~jnp.isfinite(first))
+            | jnp.any(~jnp.isfinite(coarse))
+            | jnp.any(~jnp.isfinite(second))
+            | jnp.any(~jnp.isfinite(mismatch)),
+            "AMR flux-register arrays must be finite.",
+        )
 
         topology = (
             None if topology_id is None else _amr_identity(topology_id, "topology_id")
@@ -273,12 +286,18 @@ class UnstructuredAMRFluxRegister(StrictModule):
             steps = np.arange(len(intervals), dtype=np.int32)
         else:
             steps = np.asarray(accepted_steps)
-            if steps.shape != (len(intervals),) or steps.dtype.kind not in "iu":
+            if (
+                steps.shape != (len(intervals),)
+                or steps.dtype.kind != "i"
+                or np.any(steps < 0)
+                or np.any(steps > _INT32_MAX)
+            ):
                 raise ValueError(
-                    "accepted_steps must contain one integer ID per fine interval."
+                    "accepted_steps must contain one nonnegative int32 ID per fine interval."
                 )
             if np.any(np.diff(steps) <= 0):
                 raise ValueError("Fine accepted-step IDs must be strictly monotone.")
+            steps = steps.astype(np.int32, copy=False)
 
         self.integrated_correction = mismatch
         self.coarse_flux_integral = coarse

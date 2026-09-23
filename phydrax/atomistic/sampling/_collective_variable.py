@@ -45,8 +45,8 @@ class CollectiveVariableMetric(StrictModule, NonTrainableState):
 
     def __init__(self, /, *, period: float | None = None):
         period_ = None if period is None else float(period)
-        if period_ is not None and period_ <= 0.0:
-            raise ValueError("CV period must be positive.")
+        if period_ is not None and (not np.isfinite(period_) or period_ <= 0.0):
+            raise ValueError("CV period must be finite and positive.")
         self.periodic = period_ is not None
         self.period = period_
         self.metric_id = canonical_fingerprint({"kind": "cv-metric", "period": period_})
@@ -204,6 +204,16 @@ class CollectiveVariablePlan(AbstractCollectiveVariablePlan):
             int(jnp.min(self.indices)) < 0 or int(jnp.max(self.indices)) >= capacity
         ):
             raise ValueError("CV index exceeds selected coordinate domain.")
+        if (
+            self.domain is not AtomisticSiteDomain.INTERACTION_SITES
+            and self.indices.size
+            and np.any(
+                ~np.asarray(system.active_mask)[
+                    np.asarray(self.indices, dtype=np.int32).reshape((-1,))
+                ]
+            )
+        ):
+            raise ValueError("CV indices may reference only active particle slots.")
         if self.domain is AtomisticSiteDomain.INTERACTION_SITES and self.kind in (
             CollectiveVariableKind.CENTER_OF_MASS_DISTANCE,
             CollectiveVariableKind.RADIUS_OF_GYRATION,
@@ -229,26 +239,43 @@ class PreparedCollectiveVariable(StrictModule, NonTrainableState):
         self, positions: ArrayLike, /, *, cell=None, cell_vectors=None
     ) -> CollectiveVariableEvaluation:
         dof = jnp.asarray(positions, dtype=self.system.plan.coordinate_dtype)
-        coordinates = (
-            self.system.coordinate_map.realize(dof, cell=cell).positions
-            if self.plan.domain is AtomisticSiteDomain.INTERACTION_SITES
-            else dof
-        )
+        site_state = None
+        if self.plan.domain is AtomisticSiteDomain.INTERACTION_SITES:
+            fractional = (
+                None
+                if cell_vectors is None
+                else cell.fractional_with_vectors(dof, cell_vectors)
+            )
+            site_state = self.system.coordinate_map.realize(
+                dof,
+                cell=cell,
+                fractional_positions=fractional,
+                cell_vectors=cell_vectors,
+            )
+            coordinates = site_state.positions
+        else:
+            coordinates = dof
+
+        def minimum_image(vector):
+            if cell is None:
+                return vector
+            if cell_vectors is None:
+                return cell.minimum_image(vector)
+            return cell.minimum_image_with_vectors(vector, cell_vectors)
+
         index = self.plan.indices
         kind = self.plan.kind
         margin = jnp.asarray(jnp.inf, dtype=dof.dtype)
         success = jnp.asarray(True)
         if kind is CollectiveVariableKind.DISTANCE:
             vector = coordinates[index[0]] - coordinates[index[1]]
-            if cell is not None:
-                vector = cell.minimum_image(vector)
+            vector = minimum_image(vector)
             value = jnp.sqrt(jnp.sum(vector * vector))
             margin = value
         elif kind is CollectiveVariableKind.ANGLE:
             left = coordinates[index[0]] - coordinates[index[1]]
             right = coordinates[index[2]] - coordinates[index[1]]
-            if cell is not None:
-                left, right = cell.minimum_image(left), cell.minimum_image(right)
+            left, right = minimum_image(left), minimum_image(right)
             cross_norm = jnp.sqrt(jnp.sum(jnp.cross(left, right) ** 2))
             value = jnp.arctan2(cross_norm, jnp.sum(left * right))
             margin = jnp.minimum(jnp.sqrt(jnp.sum(left**2)), jnp.sqrt(jnp.sum(right**2)))
@@ -260,12 +287,11 @@ class PreparedCollectiveVariable(StrictModule, NonTrainableState):
                 points[2] - points[1],
                 points[3] - points[2],
             )
-            if cell is not None:
-                b0, b1, b2 = (
-                    cell.minimum_image(b0),
-                    cell.minimum_image(b1),
-                    cell.minimum_image(b2),
-                )
+            b0, b1, b2 = (
+                minimum_image(b0),
+                minimum_image(b1),
+                minimum_image(b2),
+            )
             axis_norm = jnp.sqrt(jnp.sum(b1**2))
             axis = b1 / jnp.where(axis_norm > 0.0, axis_norm, 1.0)
             v = b0 - jnp.sum(b0 * axis) * axis
@@ -286,8 +312,7 @@ class PreparedCollectiveVariable(StrictModule, NonTrainableState):
                 mass[second]
             )
             vector = c1 - c2
-            if cell is not None:
-                vector = cell.minimum_image(vector)
+            vector = minimum_image(vector)
             value = jnp.sqrt(jnp.sum(vector**2))
         elif kind is CollectiveVariableKind.RADIUS_OF_GYRATION:
             selected = coordinates[index]
@@ -299,8 +324,7 @@ class PreparedCollectiveVariable(StrictModule, NonTrainableState):
         elif kind is CollectiveVariableKind.COORDINATION:
             pairs = index.reshape((-1, 2))
             vector = coordinates[pairs[:, 0]] - coordinates[pairs[:, 1]]
-            if cell is not None:
-                vector = cell.minimum_image(vector)
+            vector = minimum_image(vector)
             distance = jnp.sqrt(jnp.sum(vector**2, axis=-1))
             r0, power = self.plan.parameters[:2]
             ratio = distance / r0
@@ -309,8 +333,7 @@ class PreparedCollectiveVariable(StrictModule, NonTrainableState):
         elif kind is CollectiveVariableKind.CONTACT_SIMILARITY:
             pairs = index.reshape((-1, 2))
             vector = coordinates[pairs[:, 0]] - coordinates[pairs[:, 1]]
-            if cell is not None:
-                vector = cell.minimum_image(vector)
+            vector = minimum_image(vector)
             distance = jnp.sqrt(jnp.sum(vector**2, axis=-1))
             target = self.plan.reference.reshape((-1,))
             scale = self.plan.parameters.reshape(())
@@ -395,7 +418,11 @@ class PreparedCollectiveVariable(StrictModule, NonTrainableState):
                     pair_difference,
                 )
             )
-        success = success & jnp.all(jnp.isfinite(value))
+        success = (
+            success
+            & (jnp.asarray(True) if site_state is None else site_state.successful)
+            & jnp.all(jnp.isfinite(value))
+        )
         return CollectiveVariableEvaluation(
             jnp.asarray(value), margin, success, self.prepared_id
         )

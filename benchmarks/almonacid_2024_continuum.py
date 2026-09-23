@@ -126,7 +126,8 @@ def run(inputs, refinement, steps, repetitions, sensitivity):
         "rollout_seconds": rollout_seconds,
         "steps": rows,
         "implicit_sensitivity": derivative,
-        "all_successful": len(rows) == steps
+        "all_successful": source_qualified
+        and len(rows) == steps
         and all(row["successful"] for row in rows)
         and bool(first.successful),
         "source_equivalence_qualified": source_qualified,
@@ -160,9 +161,11 @@ def main():
         args.sensitivity,
     )
     payload = json.dumps(result, indent=2, sort_keys=True, allow_nan=False)
-    args.output.write_text(payload + "\n")
+    from benchmarks._io import write_json_atomic
+
+    write_json_atomic(args.output, result)
     print(payload)
-    if not result["all_successful"]:
+    if not result["all_successful"] or not result["source_equivalence_qualified"]:
         raise SystemExit(1)
 
 

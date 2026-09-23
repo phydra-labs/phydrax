@@ -807,6 +807,7 @@ class PreparedDistributedWaveAMR(StrictModule, NonTrainableState):
         *,
         writer_id: str,
         attempt_id: str | None = None,
+        parent_manifest: CheckpointManifest | None = None,
     ) -> tuple[ProcessCheckpointPublication, DistributedWaveAMRCheckpointEvidence]:
         checked = self.validate_state(state)
         evidence = self.checkpoint_evidence(checkpoint_id)
@@ -820,9 +821,12 @@ class PreparedDistributedWaveAMR(StrictModule, NonTrainableState):
             evidence.checkpoint_id,
             self.execution_id,
             tree,
+            analysis_plan_id=self.source_prepared_id,
+            numeric_revision_id=self.physics_id,
             writer_id=writer_id,
             attempt_id=attempt_id,
             topology_epoch=self.hierarchy.topology.epoch.index,
+            parent_manifest=parent_manifest,
         )
         observed_paths = {
             dict(shard.metadata)["array_path"] for shard in publication.shards
@@ -874,6 +878,8 @@ class PreparedDistributedWaveAMR(StrictModule, NonTrainableState):
         manifest: CheckpointManifest,
         source: PreparedDistributedWaveAMR,
         /,
+        *,
+        parent_manifest: CheckpointManifest | None = None,
     ) -> tuple[DistributedWaveAMRState, DistributedWaveAMRRestoreEvidence]:
         self._validate_checkpoint_manifest(manifest, source)
         if source.hierarchy.mesh is None:
@@ -894,14 +900,23 @@ class PreparedDistributedWaveAMR(StrictModule, NonTrainableState):
                     manifest,
                     f"['psi'][{level}]",
                     sharding,
+                    parent_manifest=parent_manifest,
                 )
             )
         replicated = NamedSharding(source.hierarchy.mesh, PartitionSpec())
         scale = restore_global_array_from_checkpoint(
-            repository, manifest, "['scale_factor']", replicated
+            repository,
+            manifest,
+            "['scale_factor']",
+            replicated,
+            parent_manifest=parent_manifest,
         )
         accepted = restore_global_array_from_checkpoint(
-            repository, manifest, "['accepted_boundary']", replicated
+            repository,
+            manifest,
+            "['accepted_boundary']",
+            replicated,
+            parent_manifest=parent_manifest,
         )
         source_state = source.bind_packed_state(
             tuple(restored), scale, accepted_boundary=accepted

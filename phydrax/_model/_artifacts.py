@@ -4,30 +4,19 @@
 
 from __future__ import annotations
 
-import importlib
-import sys
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any
 
+import equinox as eqx
 import jax
+
+from .._frozendict import frozendict
 
 
 ArchitectureEncoder = Callable[[Any], Mapping[str, Any]]
 ArchitectureDecoder = Callable[[Mapping[str, Any]], Any]
 
-_TRUSTED_ARTIFACT_ROOTS = frozenset(
-    {
-        "builtins",
-        "collections",
-        "equinox",
-        "functools",
-        "jax",
-        "numpy",
-        "optax",
-        "phydrax",
-    }
-)
 _ARTIFACT_VALUES_BY_ID: dict[str, Any] = {}
 _ARTIFACT_IDS_BY_VALUE: dict[int, tuple[Any, str]] = {}
 
@@ -65,60 +54,32 @@ def register_artifact_value(value_id: str, value: Any, /) -> Any:
 
 
 def artifact_value_id(value: Any, /) -> str:
-    """Return a stable value identity without recording its defining module path."""
+    """Return one explicitly registered path-independent artifact identity."""
     existing = _ARTIFACT_IDS_BY_VALUE.get(id(value))
     if existing is not None and existing[0] is value:
         return existing[1]
-    module = value.__module__
-    qualname = value.__qualname__
-    if "<locals>" in qualname or "<lambda>" in qualname:
-        raise TypeError("Portable artifacts cannot encode local callables.")
-    root = module.split(".", 1)[0]
-    if root not in _TRUSTED_ARTIFACT_ROOTS:
-        raise TypeError(f"Portable artifacts do not trust package root {root!r}.")
-    identity = f"{root}.artifact:{qualname}"
-    register_artifact_value(identity, value)
-    return identity
+    raise TypeError(
+        "Portable artifact values require an explicit canonical registration."
+    )
 
 
 def artifact_value(value_id: str, /) -> Any:
-    """Resolve a registered value by stable identity, independent of module layout."""
+    """Resolve one explicitly registered path-independent artifact identity."""
     identity = str(value_id)
     registered = _ARTIFACT_VALUES_BY_ID.get(identity)
-    if registered is not None:
-        return registered
-    root, separator, qualname = identity.partition(".artifact:")
-    if not separator or not qualname or root not in _TRUSTED_ARTIFACT_ROOTS:
+    if registered is None:
         raise ValueError(f"Unknown artifact value ID {identity!r}.")
-    importlib.import_module(root)
-    matches: dict[int, Any] = {}
-    for module_name, module in tuple(sys.modules.items()):
-        if module is None or (
-            module_name != root and not module_name.startswith(f"{root}.")
-        ):
-            continue
-        resolved: Any = module
-        for component in qualname.split("."):
-            namespace = vars(resolved)
-            if component not in namespace:
-                break
-            resolved = namespace[component]
-        else:
-            matches[id(resolved)] = resolved
-    if not matches:
-        raise ValueError(
-            f"Artifact value ID {identity!r} is not registered by the installed package."
-        )
-    if len(matches) != 1:
-        raise ValueError(
-            f"Artifact value ID {identity!r} is ambiguous; register an explicit identity."
-        )
-    resolved = next(iter(matches.values()))
-    register_artifact_value(identity, resolved)
-    return resolved
+    return registered
 
 
 register_artifact_value("jax.artifact:tanh", jax.nn.tanh)
+register_artifact_value("jax.artifact:gelu", jax.nn.gelu)
+register_artifact_value("jax.artifact:relu", jax.nn.relu)
+register_artifact_value("jax.artifact:sigmoid", jax.nn.sigmoid)
+register_artifact_value("jax.artifact:silu", jax.nn.silu)
+register_artifact_value("jax.artifact:softplus", jax.nn.softplus)
+register_artifact_value("equinox.nn:Linear", eqx.nn.Linear)
+register_artifact_value("phydrax.core:frozendict", frozendict)
 
 
 @dataclass(frozen=True, slots=True)

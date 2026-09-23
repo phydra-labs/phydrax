@@ -510,8 +510,17 @@ class PreparedStatisticalDynamics(StrictModule, NonTrainableState):
         count = int(steps)
         if count < 0:
             raise ValueError("steps must be non-negative.")
+        require_valid_state(
+            self.plan.layout,
+            initial_state,
+            hermitian_tolerance=self.plan.hermitian_tolerance,
+            psd_tolerance=self.plan.psd_tolerance,
+            maximum_rank=(None if rank_policy is None else rank_policy.maximum_rank),
+        )
         state = initial_state
         time = jnp.asarray(initial_time)
+        if time.shape != () or not bool(np.asarray(jnp.isfinite(time))):
+            raise ValueError("initial_time must be a finite scalar.")
         evidence: list[StatisticalStepEvidence] = []
         rank_events: list[RankAdaptationEvent] = []
         for step_index in range(count):
@@ -589,7 +598,28 @@ class PreparedStatisticalDynamics(StrictModule, NonTrainableState):
             hermitian_tolerance=self.plan.hermitian_tolerance,
             psd_tolerance=self.plan.psd_tolerance,
         )
-        return checkpoint.state, checkpoint.time, checkpoint.step
+        time = jnp.asarray(checkpoint.time)
+        step = np.asarray(checkpoint.step)
+        if (
+            time.shape != ()
+            or not bool(np.asarray(jnp.isfinite(time)))
+            or step.shape != ()
+            or not np.issubdtype(step.dtype, np.integer)
+            or int(step) < 0
+        ):
+            raise ValueError("Checkpoint time and step are invalid.")
+        checkpoint_id = canonical_fingerprint(
+            {
+                "kind": "statistical-dynamics-checkpoint",
+                "prepared": self.prepared_id,
+                "time": float(np.asarray(time)),
+                "step": int(step),
+                "state": array_tree_fingerprint(checkpoint.state),
+            }
+        )
+        if checkpoint.checkpoint_id != checkpoint_id:
+            raise ValueError("Checkpoint content identity is invalid.")
+        return checkpoint.state, time, jnp.asarray(step, dtype=jnp.int32)
 
 
 class StatisticalDynamicsCheckpoint(StrictModule):

@@ -156,15 +156,17 @@ class PreparedRingPolymerDynamics(StrictModule):
         return energies, forces, jnp.all(successes)
 
     def _spring(self, positions: Array, /) -> tuple[Array, Array]:
-        previous = jnp.roll(positions, 1, axis=0)
-        following = jnp.roll(positions, -1, axis=0)
+        active = self.potential.system.active_mask[None, :, None]
+        safe_positions = jnp.where(active, positions, 0.0)
+        previous = jnp.roll(safe_positions, 1, axis=0)
+        following = jnp.roll(safe_positions, -1, axis=0)
         mass = self.potential.system.plan.masses[None, :, None]
         factor = self.potential.system.plan.units.kinetic_to_energy
         omega2 = self.spring_frequency**2
-        displacement = positions - previous
+        displacement = safe_positions - previous
         energy = 0.5 * factor * omega2 * jnp.sum(mass * displacement * displacement)
-        force = -factor * omega2 * mass * (2.0 * positions - previous - following)
-        return energy, force
+        force = -factor * omega2 * mass * (2.0 * safe_positions - previous - following)
+        return energy, jnp.where(active, force, 0.0)
 
     def initialize_state(
         self,
@@ -183,6 +185,9 @@ class PreparedRingPolymerDynamics(StrictModule):
             position = base
         else:
             raise ValueError("Ring-polymer positions have invalid shape.")
+        position = jnp.where(
+            self.potential.system.active_mask[None, :, None], position, 0.0
+        )
         if (velocity is None) == (momentum is None):
             raise ValueError("Supply exactly one of velocity or momentum.")
         masses = self.potential.system.plan.masses
@@ -199,6 +204,9 @@ class PreparedRingPolymerDynamics(StrictModule):
         )
         if momenta.shape != position.shape:
             raise ValueError("Ring-polymer momentum or velocity has invalid shape.")
+        momenta = jnp.where(
+            self.potential.system.mobile_mask[None, :, None], momenta, 0.0
+        )
         physical, _, physical_success = self._physical(position)
         spring, _ = self._spring(position)
         successful = (
@@ -216,6 +224,9 @@ class PreparedRingPolymerDynamics(StrictModule):
         )
 
     def apply_pile(self, state: RingPolymerState, /) -> tuple[Array, Array]:
+        if state.prepared_id != self.prepared_id:
+            raise ValueError("Ring-polymer state belongs to another runtime.")
+        incoming_success = state.successful
         bead_count = self.plan.bead_count
         dtype = state.momenta.dtype
         modes = jnp.fft.fft(state.momenta, axis=0) / jnp.sqrt(bead_count)
@@ -260,7 +271,15 @@ class PreparedRingPolymerDynamics(StrictModule):
             * noise
         )
         momenta = jnp.real(jnp.fft.ifft(mode_momenta, axis=0) * jnp.sqrt(bead_count))
-        heat = self._kinetic(momenta) - self._kinetic(state.momenta)
+        momenta = jnp.where(
+            self.potential.system.mobile_mask[None, :, None], momenta, 0.0
+        )
+        momenta = jnp.where(incoming_success, momenta, state.momenta)
+        heat = jnp.where(
+            incoming_success,
+            self._kinetic(momenta) - self._kinetic(state.momenta),
+            0.0,
+        )
         return momenta, heat
 
     def _kinetic(self, momenta: Array, /) -> Array:
@@ -269,9 +288,16 @@ class PreparedRingPolymerDynamics(StrictModule):
         return 0.5 * factor * jnp.sum(momenta * momenta * inverse_mass)
 
     def estimators(self, state: RingPolymerState, /) -> RingPolymerEstimators:
-        centroid = jnp.mean(state.positions, axis=0)
+        active = self.potential.system.active_mask
+        safe_positions = jnp.where(active[None, :, None], state.positions, 0.0)
+        centroid = jnp.mean(safe_positions, axis=0)
+        squared_radius = jnp.mean(
+            jnp.sum((safe_positions - centroid[None, :, :]) ** 2, axis=-1),
+            axis=0,
+        )
         radius = jnp.sqrt(
-            jnp.mean(jnp.sum((state.positions - centroid[None, :, :]) ** 2, axis=-1))
+            jnp.sum(jnp.where(active, squared_radius, 0.0))
+            / jnp.maximum(jnp.sum(active), 1)
         )
         mean_potential = jnp.mean(state.physical_potential)
         primitive = (
@@ -309,7 +335,7 @@ class PreparedRingPolymerDynamics(StrictModule):
             state.random_key,
             physical_next,
             spring_next,
-            success_0 & success_1,
+            state.successful & success_0 & success_1,
             self.prepared_id,
         )
         thermostatted, _ = self.apply_pile(staged)

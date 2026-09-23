@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from numbers import Integral
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -109,6 +110,13 @@ def apply_abelian_two_site_gate(
 
     if not isinstance(state, AbelianMatrixProductState):
         raise TypeError("state must be AbelianMatrixProductState.")
+    if (
+        not isinstance(left_site, Integral)
+        or isinstance(left_site, bool)
+        or not isinstance(maximum_bond_dimension, Integral)
+        or isinstance(maximum_bond_dimension, bool)
+    ):
+        raise TypeError("left_site and maximum_bond_dimension must be integers.")
     site = int(left_site)
     if not 0 <= site < state.site_count - 1:
         raise ValueError("Two-site gate index is outside the Abelian MPS.")

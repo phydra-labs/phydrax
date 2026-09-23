@@ -13,6 +13,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, Key
 
 from .._frozendict import frozendict
+from .._sampling._addressing import derive_key, SampleAddress
 from .._strict import StrictModule
 from ._bsde import (
     BSDEControlMode,
@@ -166,11 +167,16 @@ def _jump_values(
     path_indices = jnp.arange(sample_size, dtype=jnp.uint32)
     event_indices = jnp.arange(events.max_events, dtype=jnp.uint32)
 
+    address = SampleAddress(
+        "bsde",
+        "jump-control",
+        target=label,
+        role="event",
+    )
+
     def one_path(path_index, times, states, channels, marks):
         def one_event(event_index, time, state, channel, mark):
-            event_key = jax.random.fold_in(
-                key, path_index * events.max_events + event_index
-            )
+            event_key = derive_key(key, address, path_index, event_index)
             value = jnp.asarray(
                 jump_control(
                     label,
@@ -352,7 +358,10 @@ def evaluate_jump_bsde(
         successful = successful & (events.status == JUMP_SUCCESS)
     compensated = jump_sums - compensators
     local = base.local_residuals - compensated
-    global_residual = base.global_residual - jnp.sum(compensated, axis=-2)
+    global_residual = base.global_residual - jnp.sum(
+        compensated,
+        axis=len(paths.sample_shape),
+    )
     valid_paths = base.valid_paths & successful
     result = JumpBSDEEvaluation(
         base=base,
@@ -427,7 +436,7 @@ def jump_bsde_diagnostics(
     }
     compensated_mean = jnp.mean(
         evaluation.compensated_jump_increments,
-        axis=tuple(range(evaluation.compensated_jump_increments.ndim - 1)),
+        axis=tuple(range(len(evaluation.base.paths.sample_shape) + 1)),
     )
     local_rms = jnp.sqrt(jnp.mean(evaluation.local_residuals**2))
     global_rms = jnp.sqrt(jnp.mean(evaluation.global_residual**2))

@@ -105,6 +105,12 @@ def test_exact_geodesic_manifolds_and_intrinsic_statistics():
     target = spd.exp(matrix, step)
     assert jnp.allclose(spd.log(matrix, target), step, atol=1e-6)
 
+    empty = jnp.empty((0, 3))
+    with pytest.raises(ValueError, match="at least one sample"):
+        phx.metrix.frechet_objective(sphere, point, empty)
+    with pytest.raises(ValueError, match="at least one sample"):
+        phx.metrix.frechet_mean(sphere, empty)
+
 
 def test_complex_projective_unitary_and_hpd_geometry():
     projective = phx.metrix.ComplexProjectiveManifold(2)

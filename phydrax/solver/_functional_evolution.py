@@ -125,7 +125,7 @@ def _solve_distribution_evolution(
         total_steps=int(num_iter),
         key=key,
         algorithm_id="functional-evolution-training",
-        progress=TrainingProgress(best_value=float("inf")),
+        progress=TrainingProgress(),
         session=session,
     )
     control.best_payload = params

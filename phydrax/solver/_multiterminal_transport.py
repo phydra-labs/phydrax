@@ -18,7 +18,14 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
-from ..linalg import DenseLinearOperator, DenseLU, LinearSolvePolicy, LinearSystem, solve
+from ..linalg import (
+    DenseLinearOperator,
+    DenseLU,
+    LinearSolvePolicy,
+    LinearSolveStatus,
+    LinearSystem,
+    solve,
+)
 from ..operators.quantum import (
     elastic_transmission,
     electronic_contact_current_kernels,
@@ -218,30 +225,30 @@ def solve_multiterminal_coherent(
 ) -> MultiTerminalCoherentResult:
     if not isinstance(problem, MultiTerminalCoherentProblem):
         raise TypeError("problem must be MultiTerminalCoherentProblem.")
-    transmission_values = []
-    particle_kernels = []
-    energy_kernels = []
-    heat_kernels = []
-    point_successes = []
     contact_count = len(problem.contacts)
-    for energy in problem.energy_grid_joule:
+
+    def one_energy(energy):
         spectral_energy = energy + 1.0j * problem.numerical_broadening_joule
-        embeddings = []
-        lead_successes = []
-        for contact in problem.contacts:
-            lead = prepare_periodic_lead_embedding(
+        prepared_leads = tuple(
+            prepare_periodic_lead_embedding(
                 contact.lead,
                 energy,
                 broadening=problem.numerical_broadening_joule,
             )
-            embeddings.append(
-                retarded_embedding(
-                    spectral_energy,
-                    lead.surface_green,
-                    contact.device_coupling,
-                )
+            for contact in problem.contacts
+        )
+        embeddings = tuple(
+            retarded_embedding(
+                spectral_energy,
+                lead.surface_green,
+                contact.device_coupling,
             )
-            lead_successes.append(lead.successful)
+            for contact, lead in zip(
+                problem.contacts,
+                prepared_leads,
+                strict=True,
+            )
+        )
         point = retarded_open_system_point(
             spectral_energy,
             problem.hamiltonian,
@@ -269,15 +276,21 @@ def solve_multiterminal_coherent(
             occupations,
             problem.chemical_potentials_joule,
         )
-        transmission_values.append(transmission)
-        particle_kernels.append(currents.particle_current_into_region)
-        energy_kernels.append(currents.energy_current_into_region)
-        heat_kernels.append(currents.heat_current_into_region)
-        point_successes.append(point.successful & jnp.all(jnp.stack(lead_successes)))
-    transmissions = jnp.stack(transmission_values)
-    particle = jnp.stack(particle_kernels)
-    energy_current = jnp.stack(energy_kernels)
-    heat = jnp.stack(heat_kernels)
+        point_successful = jnp.all(point.successful) & jnp.all(
+            jnp.stack(tuple(value.successful for value in prepared_leads))
+        )
+        return (
+            transmission,
+            currents.particle_current_into_region,
+            currents.energy_current_into_region,
+            currents.heat_current_into_region,
+            point_successful,
+        )
+
+    transmissions, particle, energy_current, heat, point_successful = jax.lax.map(
+        one_energy,
+        problem.energy_grid_joule,
+    )
     measure = problem.quadrature_weights_joule[:, None] / _PLANCK_CONSTANT_SI
     integrated_particle = jnp.sum(measure * particle, axis=0)
     integrated_energy = jnp.sum(measure * energy_current, axis=0)
@@ -285,7 +298,6 @@ def solve_multiterminal_coherent(
     charge = ELECTRONIC_TRANSPORT_CONVENTION.charge_current(integrated_particle)
     particle_residual = jnp.abs(jnp.sum(integrated_particle))
     energy_residual = jnp.abs(jnp.sum(integrated_energy))
-    point_successful = jnp.stack(point_successes)
     successful = (
         jnp.all(point_successful)
         & jnp.all(jnp.isfinite(transmissions))
@@ -294,17 +306,7 @@ def solve_multiterminal_coherent(
         & (energy_residual <= problem.energy_continuity_tolerance_watt)
     )
     result_id = canonical_fingerprint(
-        {
-            "kind": "multi-terminal-coherent-result",
-            "problem": problem.problem_id,
-            "arrays": array_tree_fingerprint(
-                {
-                    "transmissions": np.asarray(transmissions),
-                    "particle_current": np.asarray(integrated_particle),
-                    "energy_current": np.asarray(integrated_energy),
-                }
-            ),
-        }
+        {"kind": "multi-terminal-coherent-result", "problem": problem.problem_id}
     )
     return MultiTerminalCoherentResult(
         transmissions,
@@ -358,7 +360,9 @@ class TransportProbeResult(StrictModule, NonTrainableState):
     occupations: Array
     chemical_potentials_joule: Array
     probe_current_residual: Array
+    linear_solve_status: Array
     successful: Array
+    problem_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
@@ -375,7 +379,7 @@ def _probe_linear_solve(
     probe_indices: tuple[int, ...],
     fixed_values: Array,
     /,
-) -> tuple[Array, Array]:
+) -> tuple[Array, Array, Array]:
     count = laplacian.shape[0]
     probes = jnp.asarray(probe_indices, dtype=jnp.int32)
     fixed_mask = jnp.ones((count,), dtype=jnp.bool_).at[probes].set(False)
@@ -389,7 +393,27 @@ def _probe_linear_solve(
     )
     values = fixed_values.at[probes].set(solved.value)
     residual = jnp.max(jnp.abs(laplacian[probes] @ values), initial=0.0)
-    return values, residual
+    return values, residual, solved.status
+
+
+def _validate_probe_inputs(
+    problem: MultiTerminalCoherentProblem,
+    coherent: MultiTerminalCoherentResult,
+    plan: TransportProbePlan,
+    /,
+) -> None:
+    if not isinstance(problem, MultiTerminalCoherentProblem) or not isinstance(
+        coherent, MultiTerminalCoherentResult
+    ):
+        raise TypeError("problem and coherent have invalid types.")
+    if not isinstance(plan, TransportProbePlan):
+        raise TypeError("plan must be TransportProbePlan.")
+    if coherent.problem_id != problem.problem_id:
+        raise ValueError("Probe result and coherent problem identities differ.")
+    if any(value >= len(problem.contacts) for value in plan.probe_indices):
+        raise ValueError("A probe index is outside the contact roster.")
+    if len(plan.probe_indices) >= len(problem.contacts):
+        raise ValueError("At least one physical contact must remain fixed.")
 
 
 def solve_dephasing_probes(
@@ -400,14 +424,7 @@ def solve_dephasing_probes(
 ) -> TransportProbeResult:
     """Solve zero-current occupations independently at every energy."""
 
-    if not isinstance(problem, MultiTerminalCoherentProblem) or not isinstance(
-        coherent, MultiTerminalCoherentResult
-    ):
-        raise TypeError("problem and coherent have invalid types.")
-    if not isinstance(plan, TransportProbePlan):
-        raise TypeError("plan must be TransportProbePlan.")
-    if any(value >= len(problem.contacts) for value in plan.probe_indices):
-        raise ValueError("A probe index is outside the contact roster.")
+    _validate_probe_inputs(problem, coherent, plan)
     physical = jax.vmap(_fermi, in_axes=(0, None, None))(
         problem.energy_grid_joule,
         problem.chemical_potentials_joule,
@@ -421,10 +438,11 @@ def solve_dephasing_probes(
             occupation,
         )
 
-    occupations, residuals = jax.vmap(one)(coherent.transmissions, physical)
+    occupations, residuals, solve_status = jax.vmap(one)(coherent.transmissions, physical)
     residual = jnp.max(residuals)
     successful = (
         coherent.successful
+        & jnp.all(solve_status == int(LinearSolveStatus.SUCCESS))
         & jnp.all(
             (occupations >= -plan.residual_tolerance)
             & (occupations <= 1.0 + plan.residual_tolerance)
@@ -435,7 +453,9 @@ def solve_dephasing_probes(
         occupations,
         jnp.full_like(problem.chemical_potentials_joule, jnp.nan),
         residual,
+        solve_status,
         successful,
+        problem.problem_id,
         plan.plan_id,
         canonical_fingerprint(
             {
@@ -455,30 +475,75 @@ def solve_voltage_probes(
 ) -> TransportProbeResult:
     """Solve linear-response integrated zero-current probe potentials."""
 
-    if not isinstance(problem, MultiTerminalCoherentProblem) or not isinstance(
-        coherent, MultiTerminalCoherentResult
-    ):
-        raise TypeError("problem and coherent have invalid types.")
-    if not isinstance(plan, TransportProbePlan):
-        raise TypeError("plan must be TransportProbePlan.")
-    weights = problem.quadrature_weights_joule
-    integrated = jnp.sum(weights[:, None, None] * coherent.transmissions, axis=0)
-    potentials, residual = _probe_linear_solve(
-        _landauer_laplacian(integrated),
-        plan.probe_indices,
+    _validate_probe_inputs(problem, coherent, plan)
+    probe_indices = jnp.asarray(plan.probe_indices, dtype=jnp.int32)
+    probe_temperatures = problem.temperatures_kelvin[probe_indices]
+    probe_temperatures = eqx.error_if(
+        probe_temperatures,
+        jnp.any(probe_temperatures <= 0.0),
+        "Linear-response voltage probes require positive probe temperatures.",
+    )
+    temperatures = problem.temperatures_kelvin.at[probe_indices].set(probe_temperatures)
+    occupations_at_reference = jax.vmap(_fermi, in_axes=(0, None, None))(
+        problem.energy_grid_joule,
         problem.chemical_potentials_joule,
+        temperatures,
+    )
+    positive_temperature = temperatures > 0.0
+    safe_temperature = jnp.where(positive_temperature, temperatures, 1.0)
+    susceptibility = jnp.where(
+        positive_temperature[None, :],
+        occupations_at_reference
+        * (1.0 - occupations_at_reference)
+        / (_BOLTZMANN_CONSTANT_SI * safe_temperature[None, :]),
+        0.0,
+    )
+    laplacians = jax.vmap(_landauer_laplacian)(coherent.transmissions)
+    measure = problem.quadrature_weights_joule / _PLANCK_CONSTANT_SI
+    base_currents = jnp.sum(
+        measure[:, None]
+        * jax.vmap(lambda matrix, values: matrix @ values)(
+            laplacians, occupations_at_reference
+        ),
+        axis=0,
+    )
+    jacobian = jnp.sum(
+        measure[:, None, None] * laplacians * susceptibility[:, None, :],
+        axis=0,
+    )
+    probe_matrix = jacobian[probe_indices[:, None], probe_indices[None, :]]
+    solved = solve(
+        LinearSystem(DenseLinearOperator(probe_matrix)),
+        -base_currents[probe_indices],
+        policy=LinearSolvePolicy(DenseLU()),
+    )
+    delta = (
+        jnp.zeros_like(problem.chemical_potentials_joule)
+        .at[probe_indices]
+        .set(solved.value)
+    )
+    potentials = problem.chemical_potentials_joule + delta
+    residual = jnp.max(
+        jnp.abs(base_currents[probe_indices] + jacobian[probe_indices] @ delta)
     )
     occupations = jax.vmap(_fermi, in_axes=(0, None, None))(
         problem.energy_grid_joule,
         potentials,
-        problem.temperatures_kelvin,
+        temperatures,
     )
-    successful = coherent.successful & (residual <= plan.residual_tolerance)
+    successful = (
+        coherent.successful
+        & solved.successful
+        & jnp.all(jnp.isfinite(potentials))
+        & (residual <= plan.residual_tolerance)
+    )
     return TransportProbeResult(
         occupations,
         potentials,
         residual,
+        solved.status,
         successful,
+        problem.problem_id,
         plan.plan_id,
         canonical_fingerprint(
             {

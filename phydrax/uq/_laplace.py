@@ -304,8 +304,13 @@ def fit_laplace(
     dimension_limit = int(max_dimension)
     if dimension_limit <= 0:
         raise ValueError("max_dimension must be positive.")
-    if stationarity_tolerance is not None and float(stationarity_tolerance) < 0.0:
-        raise ValueError("stationarity_tolerance must be non-negative or None.")
+    if stationarity_tolerance is not None and (
+        not jnp.isfinite(float(stationarity_tolerance))
+        or float(stationarity_tolerance) < 0.0
+    ):
+        raise ValueError(
+            "stationarity_tolerance must be finite and non-negative or None."
+        )
 
     position = problem.initial_position if map_position is None else map_position
     problem.parameter_space.constrain(position)

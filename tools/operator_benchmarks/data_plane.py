@@ -96,16 +96,6 @@ def _device_bytes(batch) -> int:
     )
 
 
-def _peak_device_bytes() -> int | None:
-    statistics = jax.devices()[0].memory_stats()
-    if statistics is None:
-        return None
-    for key in ("peak_bytes_in_use", "peak_bytes_in_use.max"):
-        if key in statistics:
-            return int(statistics[key])
-    return None
-
-
 def _profile_epoch(loader, *, consumer_latency: float):
     tracemalloc.start()
     started = time.perf_counter()
@@ -162,9 +152,12 @@ def run_data_plane_benchmark(
         lambda: jax.jit(jax.vmap(permutation.jax)).lower(positions),
         lambda lowered: lowered.compile(),
     )
-    _, ordering_first_execution_seconds = measure_synchronized(
+    reference_order, ordering_first_execution_seconds = measure_synchronized(
         lambda: compiled_order(positions)
     )
+    expected_order = tuple(int(value) for value in reference_order.tolist())
+    if len(expected_order) != int(cases) or set(expected_order) != set(range(int(cases))):
+        raise AssertionError("Compiled reference permutation is not exact coverage.")
 
     fingerprint_source = phx.nn.operator.InMemoryOperatorCaseSource(dataset)
     fingerprint_started = time.perf_counter()
@@ -227,7 +220,7 @@ def run_data_plane_benchmark(
     sync_peak = int(median(profile[2] for profile in sync_profiles))
     prefetched_peak = int(median(profile[2] for profile in prefetched_profiles))
     exact_order_match = all(
-        sync[3] == prefetched[3]
+        sync[3] == expected_order and prefetched[3] == expected_order
         for sync, prefetched in zip(sync_profiles, prefetched_profiles, strict=True)
     )
 
@@ -270,7 +263,7 @@ def run_data_plane_benchmark(
         sync_peak_host_bytes=sync_peak,
         prefetched_peak_host_bytes=prefetched_peak,
         current_batch_device_bytes=sync_profiles[0][4],
-        peak_device_bytes=_peak_device_bytes(),
+        peak_device_bytes=None,
         resume_gate_seconds=resume_gate_seconds,
         resume_gate_case_reads=len(resume_gate_reads),
         exact_order_match=exact_order_match,

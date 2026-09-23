@@ -29,13 +29,15 @@ def _cell_gathers(basis: TensorSplineBasisSpec, /) -> np.ndarray:
             int(
                 np.ravel_multi_index(
                     tuple(
-                        span - basis.degree + offset
-                        for span, offset in zip(active, shifts, strict=True)
+                        span - degree + offset
+                        for span, degree, offset in zip(
+                            active, basis.degrees, shifts, strict=True
+                        )
                     ),
                     basis.control_shape,
                 )
             )
-            for shifts in np.ndindex((basis.degree + 1,) * basis.parametric_dimension)
+            for shifts in np.ndindex(tuple(degree + 1 for degree in basis.degrees))
         ]
         routes.append(local)
     return np.asarray(routes, dtype=np.int32)

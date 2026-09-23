@@ -1,6 +1,7 @@
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -230,3 +231,29 @@ def test_ecsw_selects_nonnegative_element_quadrature_and_reproduces_target():
 
     assert jnp.all(artifact.weights >= 0.0)
     np.testing.assert_allclose(result, np.asarray([0.0, 8.0]), atol=1e-5)
+
+
+def test_thin_gnat_rejects_nonintegral_duplicate_and_out_of_range_nodes():
+    full, _ = _reduction()
+    residual = _residual_basis(full, "residual", "thin-gnat-snapshots")
+    metric = jnp.eye(3, dtype=jnp.float64)
+
+    with pytest.raises(TypeError, match="integers"):
+        phx.rom.prepare_thin_gnat(
+            residual,
+            jnp.asarray([0.9, 1.1]),
+            metric,
+            provider_id="sampled-residual",
+        )
+    for nodes, message in (
+        (jnp.asarray([-1, 1]), "outside"),
+        (jnp.asarray([0, 3]), "outside"),
+        (jnp.asarray([0, 0]), "unique"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            phx.rom.prepare_thin_gnat(
+                residual,
+                nodes,
+                metric,
+                provider_id="sampled-residual",
+            )

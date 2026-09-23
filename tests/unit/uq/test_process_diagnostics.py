@@ -1,5 +1,6 @@
 import jax.numpy as jnp
 import jax.random as jr
+import pytest
 
 import phydrax as phx
 import phydrax.axes as cx
@@ -36,6 +37,18 @@ def test_horizon_scores_preserve_horizons_and_reject_biased_forecasts():
     assert jnp.all(reference.pointwise_coverage < 0.98)
     assert jnp.mean(reference.marginal_crps) < jnp.mean(shifted.marginal_crps)
     assert jnp.mean(reference.energy_score) < jnp.mean(shifted.energy_score)
+
+
+def test_horizon_scores_reject_nonfinite_active_weights():
+    samples = jnp.zeros((4, 2, 2, 1))
+    targets = jnp.zeros((2, 2, 1))
+    with pytest.raises(ValueError, match="finite"):
+        phx.uq.horizon_score_diagnostics(
+            samples,
+            targets,
+            jnp.asarray([0.5, 1.0]),
+            weights=jnp.asarray([[[1.0], [jnp.inf]], [[1.0], [1.0]]]),
+        )
 
 
 def test_uniform_pit_and_exchangeable_observable_ranks_pass_dkw_gate():
@@ -123,3 +136,42 @@ def test_predictive_variance_decomposition_obeys_total_variance_identity():
     )
     assert jnp.allclose(diagnostics.reconstructed, diagnostics.total)
     assert jnp.max(jnp.abs(diagnostics.remainder)) < 1e-6
+
+
+def test_variance_decomposition_aligns_reordered_named_masks_and_variance():
+    values = jnp.arange(12.0).reshape((2, 3, 2))
+    valid_ba = jnp.asarray(
+        [[True, False], [True, True], [False, True]],
+        dtype=jnp.bool_,
+    )
+    conditional_xba = jnp.arange(12.0).reshape((2, 3, 2)) / 10.0
+    axes = (
+        phx.uq.SampleAxis("a", "epistemic"),
+        phx.uq.SampleAxis("b", "process"),
+    )
+    reordered = phx.uq.PredictiveField(
+        cx.AxisArray(values, dims=("a", "b", "x")),
+        axes,
+        valid=cx.AxisArray(valid_ba, dims=("b", "a")),
+        conditional_variance=cx.AxisArray(
+            conditional_xba,
+            dims=("x", "b", "a"),
+        ),
+    )
+    canonical = phx.uq.PredictiveField(
+        cx.AxisArray(values, dims=("a", "b", "x")),
+        axes,
+        valid=cx.AxisArray(valid_ba.T, dims=("a", "b")),
+        conditional_variance=cx.AxisArray(
+            jnp.transpose(conditional_xba, (2, 1, 0)),
+            dims=("a", "b", "x"),
+        ),
+    )
+
+    reordered_result = phx.uq.predictive_variance_decomposition(reordered)
+    canonical_result = phx.uq.predictive_variance_decomposition(canonical)
+    assert jnp.allclose(
+        reordered_result.reconstructed,
+        canonical_result.reconstructed,
+        equal_nan=True,
+    )

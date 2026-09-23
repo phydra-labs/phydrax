@@ -7,7 +7,6 @@ import struct
 from pathlib import Path
 
 import numpy as np
-import pyproj
 import pytest
 
 import phydrax as phx
@@ -104,7 +103,8 @@ def _segy_rev2_bytes():
     return bytes(text + binary) + b"".join(records)
 
 
-def test_explicit_proj_pipeline_and_variable_length_segy_rev2_are_qualified():
+def test_explicit_proj_pipeline_runtime_smoke_and_variable_length_segy_rev2():
+    pyproj = pytest.importorskip("pyproj")
     source = _geographic()
     target = GeospatialContract(
         phx.SpatialCoordinateContract(METER, reference_frame="earth-fixed"),
@@ -137,6 +137,8 @@ def test_explicit_proj_pipeline_and_variable_length_segy_rev2_are_qualified():
     np.testing.assert_allclose(transform.coordinates[0], [6378137.0, 0.0, 0.0], atol=1e-6)
     assert not transform.transform.parameters["network_enabled"]
     assert transform.transform.resources[0].content_sha256 == proj_database_sha256
+    assert transform.transform.parameters["pyproj_version"] == pyproj.__version__
+    assert transform.transform.parameters["proj_version"] == pyproj.proj_version_str
     with pytest.raises(ValueError, match="pinned SHA-256"):
         CoordinateTransformPlan(
             source,
@@ -164,6 +166,13 @@ def test_explicit_proj_pipeline_and_variable_length_segy_rev2_are_qualified():
         decoded.series.sample_valid, [[True, True, False], [True] * 3]
     )
     np.testing.assert_allclose(decoded.sample_intervals, [0.002, 0.003])
+    np.testing.assert_allclose(decoded.series.values, [[1, 2, 0], [3, 4, 5]])
+    np.testing.assert_allclose(
+        decoded.source_positions, [[1000, 2000, 100], [1000, 2000, 100]]
+    )
+    np.testing.assert_allclose(
+        decoded.receiver_positions, [[1100, 2100, 100], [1100, 2100, 100]]
+    )
 
 
 def test_electrical_mt_gravity_and_geodetic_text_profiles(tmp_path):
@@ -182,6 +191,10 @@ def test_electrical_mt_gravity_and_geodetic_text_profiles(tmp_path):
     )
     assert isinstance(survey, ElectricalTabularSurvey)
     np.testing.assert_allclose(survey.voltage_V, [0.2])
+    np.testing.assert_allclose(survey.current_A, [1.0])
+    np.testing.assert_allclose(survey.standard_deviation_V, [0.01])
+    np.testing.assert_allclose(survey.source_a_m, [[0.0, 0.0, 0.0]])
+    np.testing.assert_allclose(survey.receiver_n_m, [[1.0, 1.0, 0.0]])
 
     edi = tmp_path / "site.edi"
     edi.write_text(
@@ -200,6 +213,24 @@ def test_electrical_mt_gravity_and_geodetic_text_profiles(tmp_path):
         impedance_scale_ohm=1.0,
     )
     assert mt.impedance_ohm.shape == (2, 2, 2)
+    np.testing.assert_allclose(mt.frequencies_Hz, [1.0, 10.0])
+    np.testing.assert_allclose(
+        mt.impedance_ohm,
+        [
+            [[1.0 - 1.0j, 3.0 - 3.0j], [-3.0 + 3.0j, 1.0 - 1.0j]],
+            [[2.0 - 2.0j, 4.0 - 4.0j], [-4.0 + 4.0j, 2.0 - 2.0j]],
+        ],
+    )
+    np.testing.assert_allclose(
+        mt.standard_deviation_ohm,
+        0.1
+        * np.asarray(
+            [
+                [[1.0, 1.0], [1.0, 1.0]],
+                [[2.0, 2.0], [2.0, 2.0]],
+            ]
+        ),
+    )
 
     xml = tmp_path / "site.xml"
     xml.write_text(
@@ -218,6 +249,8 @@ def test_electrical_mt_gravity_and_geodetic_text_profiles(tmp_path):
         coordinates=_geographic(),
     )
     np.testing.assert_allclose(mt_xml.frequencies_Hz, [1.0])
+    np.testing.assert_allclose(mt_xml.impedance_ohm, np.full((1, 2, 2), 1.0 - 1.0j))
+    np.testing.assert_allclose(mt_xml.standard_deviation_ohm, 0.1)
 
     gfc = tmp_path / "model.gfc"
     gfc.write_text(
@@ -228,6 +261,12 @@ def test_electrical_mt_gravity_and_geodetic_text_profiles(tmp_path):
     model = read_icgem_gfc(gfc.name, trusted_root=tmp_path, limits=_limits())
     assert model.maximum_degree == 1
     np.testing.assert_allclose(model.cosine[0, 0], 1.0)
+    assert model.model_name == "TEST"
+    assert model.gravitational_constant_m3_s2 == 4.0e14
+    assert model.reference_radius_m == 6_400_000.0
+    assert model.normalization == "fully_normalized"
+    assert model.tide_system == "tide_free"
+    np.testing.assert_array_equal(model.sine, np.zeros((2, 2)))
 
     sinex = tmp_path / "solution.snx"
     sinex.write_text(
@@ -248,9 +287,10 @@ def test_electrical_mt_gravity_and_geodetic_text_profiles(tmp_path):
 
 
 def test_geotiff_netcdf_sac_stationxml_and_las_profiles_execute(tmp_path):
-    import obspy
-    import rasterio
-    import xarray as xr
+    obspy = pytest.importorskip("obspy")
+    rasterio = pytest.importorskip("rasterio")
+    xr = pytest.importorskip("xarray")
+    pymseed = pytest.importorskip("pymseed")
     from obspy.core.inventory import Channel, Inventory, Network, Site, Station
     from rasterio.transform import from_origin
 
@@ -293,6 +333,9 @@ def test_geotiff_netcdf_sac_stationxml_and_las_profiles_execute(tmp_path):
         expected_crs="EPSG:32610",
     )
     np.testing.assert_allclose(raster.values, [[1, 2, 3], [4, 5, 6]])
+    np.testing.assert_allclose(raster.x, [0.5, 1.5, 2.5])
+    np.testing.assert_allclose(raster.y, [1.5, 0.5])
+    np.testing.assert_array_equal(raster.valid, np.ones((2, 3), dtype=bool))
     with pytest.raises(ValueError, match="resource limits"):
         read_geotiff_grid(
             geotiff.name,
@@ -319,6 +362,9 @@ def test_geotiff_netcdf_sac_stationxml_and_las_profiles_execute(tmp_path):
         y_name="y",
     )
     np.testing.assert_allclose(grid.values, [[1, 2], [3, 4]])
+    np.testing.assert_allclose(grid.x, [0.5, 1.5])
+    np.testing.assert_allclose(grid.y, [1.5, 0.5])
+    np.testing.assert_array_equal(grid.valid, np.ones((2, 2), dtype=bool))
 
     leap_resource = bounded_resource_from_bytes(
         b"leap", limits=ResourceLimits(100, 1, 1, 1, 0)
@@ -344,6 +390,17 @@ def test_geotiff_netcdf_sac_stationxml_and_las_profiles_execute(tmp_path):
         sample_unit=PASCAL,
     )
     np.testing.assert_allclose(waveform.traces[0].series.values, [1, 2, 3])
+    sac_trace = waveform.traces[0]
+    assert (sac_trace.network, sac_trace.station, sac_trace.channel) == (
+        "XX",
+        "AAA",
+        "BHZ",
+    )
+    assert sac_trace.start_tai_seconds == 10.0
+    np.testing.assert_allclose(
+        sac_trace.series.support.broadcast_coordinates(), [0.0, 0.1, 0.2]
+    )
+    np.testing.assert_array_equal(sac_trace.series.sample_valid, [True, True, True])
     with pytest.raises(ValueError, match="decoded-sample limit"):
         read_sac(
             sac.name,
@@ -352,7 +409,6 @@ def test_geotiff_netcdf_sac_stationxml_and_las_profiles_execute(tmp_path):
             utc_time=utc,
             sample_unit=PASCAL,
         )
-    import pymseed
 
     mini = pymseed.MS3TraceList()
     mini.add_data(
@@ -380,6 +436,14 @@ def test_geotiff_netcdf_sac_stationxml_and_las_profiles_execute(tmp_path):
     assert waveform3.format == "miniseed3"
     assert waveform3.traces[0].channel == "BHZ"
     np.testing.assert_allclose(waveform3.traces[0].series.values, [4, 5, 6])
+    assert waveform3.traces[0].start_tai_seconds == 10.0
+    np.testing.assert_allclose(
+        waveform3.traces[0].series.support.broadcast_coordinates(),
+        [0.0, 0.1, 0.2],
+    )
+    np.testing.assert_array_equal(
+        waveform3.traces[0].series.sample_valid, [True, True, True]
+    )
 
     channel = Channel(
         code="BHZ",
@@ -411,6 +475,13 @@ def test_geotiff_netcdf_sac_stationxml_and_las_profiles_execute(tmp_path):
         coordinates=_geographic(),
     )
     np.testing.assert_allclose(metadata.channels[0].orientation, [0, 0, 1], atol=1e-12)
+    assert (
+        metadata.channels[0].network,
+        metadata.channels[0].station,
+        metadata.channels[0].channel,
+    ) == ("XX", "AAA", "BHZ")
+    np.testing.assert_allclose(metadata.channels[0].position, [-120.0, 45.0, 99.0])
+    assert metadata.channels[0].sample_rate_hz == 10.0
 
     trajectory = BoreholeTrajectory(
         "well", [0.0, 10.0], [[0, 0, 0], [0, 0, -10]], _local(registration="unknown")
@@ -430,3 +501,8 @@ def test_geotiff_netcdf_sac_stationxml_and_las_profiles_execute(tmp_path):
         expected_index_unit_label="M",
     )
     np.testing.assert_allclose(log.values, [2000, 2100, 2200])
+    np.testing.assert_allclose(log.measured_depth_m, [0.0, 5.0, 10.0])
+    np.testing.assert_array_equal(log.valid, [True, True, True])
+    assert log.mnemonic == "RHOB"
+    assert log.value_unit_label == "KG/M3"
+    assert log.trajectory_id == trajectory.trajectory_id

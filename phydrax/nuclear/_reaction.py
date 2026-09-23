@@ -51,6 +51,13 @@ class NuclearReactionConservation:
     charge_defect: int
     lepton_defect: int
 
+    def __post_init__(self) -> None:
+        for name in ("baryon_defect", "charge_defect", "lepton_defect"):
+            value = getattr(self, name)
+            if isinstance(value, bool) or not isinstance(value, Integral):
+                raise TypeError(f"{name} must be an integer.")
+            object.__setattr__(self, name, int(value))
+
     @property
     def successful(self) -> bool:
         return self.baryon_defect == self.charge_defect == self.lepton_defect == 0
@@ -92,7 +99,19 @@ class NuclearReactionChannel:
             raise TypeError("data must be NuclearDataProvenance.")
         if not isinstance(self.conservation, NuclearReactionConservation):
             raise TypeError("conservation must be NuclearReactionConservation.")
-        if not self.conservation.successful:
+        recomputed = NuclearReactionConservation(
+            _quantum_total(products, "baryon_number")
+            - _quantum_total(reactants, "baryon_number"),
+            _quantum_total(products, "charge_number")
+            - _quantum_total(reactants, "charge_number"),
+            _quantum_total(products, "lepton_number")
+            - _quantum_total(reactants, "lepton_number"),
+        )
+        if self.conservation != recomputed:
+            raise ValueError(
+                "Nuclear reaction conservation ledger does not match participants."
+            )
+        if not recomputed.successful:
             raise ValueError(
                 "Nuclear reaction branch violates a declared conserved quantity."
             )

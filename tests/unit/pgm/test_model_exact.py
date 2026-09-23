@@ -127,3 +127,31 @@ def test_factor_graph_rejects_duplicate_scope_and_numerical_contract_violations(
             (phx.pgm.VariableSelection.all(variables),),
             jnp.asarray([[0.0, jnp.inf], [0.0, 0.0]]),
         )
+
+
+def test_normalized_law_rejects_nonintegral_states_before_indexing():
+    graph = _binary_pair()
+    plan = phx.pgm.plan_variable_elimination(graph)
+    law = phx.pgm.NormalizedFactorGraphLaw(plan)
+
+    assert jnp.isneginf(law.log_prob(jnp.asarray([0.9, 0.0])))
+
+
+def test_ising_weights_must_be_finite():
+    variables = phx.pgm.DiscreteVariableGroup("x", shape=(1,), num_states=2)
+    with pytest.raises(ValueError, match="finite"):
+        phx.pgm.IsingFactorGroup(
+            (phx.pgm.VariableSelection.all(variables),),
+            jnp.asarray([-jnp.inf]),
+        )
+
+
+def test_empty_factor_graph_has_a_valid_empty_junction_tree():
+    graph = phx.pgm.DiscreteFactorGraph(())
+    plan = phx.pgm.plan_variable_elimination(graph)
+    junction = phx.pgm.plan_junction_tree(plan)
+    result = phx.pgm.junction_tree_calibrate(junction)
+
+    assert junction.cliques == ()
+    assert bool(result.valid)
+    assert result.elimination.log_normalizer == pytest.approx(0.0)

@@ -11,6 +11,7 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ..dynamics import TimeGrid
 from ..dynamics._system import DiscreteTransitionEvidence
@@ -163,7 +164,7 @@ class ControlResult(StrictModule):
     feasibility: SampledControlFeasibility
     valid: Array
     status: Array
-    result_id: str = eqx.field(static=True)
+    result_namespace: str = eqx.field(static=True)
     method_id: str = eqx.field(static=True)
 
     def __init__(
@@ -173,7 +174,7 @@ class ControlResult(StrictModule):
         parameters: ArrayLike,
         sampled_loss: SampledControlLoss,
         feasibility: SampledControlFeasibility,
-        result_id: str,
+        result_namespace: str,
         method_id: str,
     ):
         if not isinstance(trajectory, ControlTrajectory):
@@ -206,8 +207,38 @@ class ControlResult(StrictModule):
         self.feasibility = feasibility
         self.valid = valid
         self.status = status
-        self.result_id = _identifier(result_id, "ControlResult result_id")
+        self.result_namespace = _identifier(
+            result_namespace, "ControlResult result_namespace"
+        )
         self.method_id = _identifier(method_id, "ControlResult method_id")
+
+    @property
+    def result_id(self) -> str:
+        return f"{self.result_namespace}:" + canonical_fingerprint(
+            {
+                "kind": "control-result",
+                "problem": self.trajectory.problem_id,
+                "dynamics": self.trajectory.dynamics_id,
+                "control": self.trajectory.control_id,
+                "time": self.trajectory.time_grid.time_id,
+                "method": self.method_id,
+                "content": array_tree_fingerprint(
+                    {
+                        "states": self.trajectory.states,
+                        "controls": self.trajectory.controls,
+                        "trajectory_valid": self.trajectory.valid,
+                        "trajectory_status": self.trajectory.status,
+                        "parameters": self.parameters,
+                        "sampled_total": self.sampled_loss.total,
+                        "sampled_valid": self.sampled_loss.valid,
+                        "maximum_violation": self.feasibility.maximum_violation,
+                        "feasible": self.feasibility.feasible,
+                        "valid": self.valid,
+                        "status": self.status,
+                    }
+                ),
+            }
+        )
 
     @property
     def successful(self) -> Array:

@@ -81,8 +81,10 @@ dfsph = phx.discretization.PreparedDFSPH(
 dfsph_result = dfsph.step_detailed(
     0.0, dfsph.initialize_state(position, jnp.zeros_like(position)), 0.001
 )
+if not bool(solution.successful & iisph_result.successful & dfsph_result.successful):
+    raise RuntimeError("WCSPH, IISPH, or DFSPH example step failed")
 
-print("advanced WCSPH successful", bool(solution.successful))
+print("advanced WCSPH successful", True)
 print("free-surface particles", int(diagnostics.free_surface_count))
 print("viscous dissipation", float(diagnostics.viscous_dissipation_rate))
 print("artificial dissipation", float(diagnostics.artificial_viscosity_dissipation))
@@ -90,13 +92,13 @@ print("density variance rate", float(diagnostics.density_variance_rate))
 print("renormalization applications", int(jnp.sum(solution.transform_applied)))
 print(
     "IISPH successful",
-    bool(iisph_result.successful),
+    True,
     "residual",
     float(iisph_result.residual),
 )
 print(
     "DFSPH successful",
-    bool(dfsph_result.successful),
+    True,
     "divergence",
     float(dfsph_result.divergence_residual),
     "density",

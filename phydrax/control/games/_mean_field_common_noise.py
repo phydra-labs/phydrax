@@ -731,6 +731,17 @@ def solve_common_noise_mean_field_fixed_point(
             induced_this_iteration[scenario_index] = induced
             final_induced[scenario_index] = induced
             induced_flow_ids[iteration][scenario_index] = induced.mean_field_id
+            if (
+                not _compatible_flows(flow, induced)
+                or len(labels) != induced.num_particles
+            ):
+                induced_flow_validity = induced_flow_validity.at[
+                    iteration, scenario_index
+                ].set(False)
+                iteration_statuses[scenario_index] = (
+                    CommonNoiseMeanFieldStatus.INVALID_INDUCED_LAW
+                )
+                continue
             induced_source_ids[iteration][scenario_index] = induced.source_path_id
             induced_valid, induced_ess, induced_cluster_count = _cluster_evidence(
                 induced, labels
@@ -748,7 +759,6 @@ def solve_common_noise_mean_field_fixed_point(
             law_valid = (
                 bool(induced_valid)
                 and induced_cluster_count == cluster_count
-                and _compatible_flows(flow, induced)
                 and identity_is_new
             )
             induced_flow_validity = induced_flow_validity.at[

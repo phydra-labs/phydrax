@@ -68,7 +68,6 @@ class UnstructuredConservativeRemapEvidence(StrictModule):
         source_coverage_tolerance: Any,
         candidate_count: int,
         accepted_count: int,
-        passed: bool,
         status: UnstructuredConservativeRemapStatus,
         predicate_uncertain_count: int = 0,
         helper_statuses: tuple[str, ...] = (),
@@ -76,22 +75,65 @@ class UnstructuredConservativeRemapEvidence(StrictModule):
         resource_evidence_id: str = "",
         evidence_id: str = "",
     ):
-        self.target_coverage_defects = jnp.asarray(target_coverage_defects)
-        self.source_coverage_defects = jnp.asarray(source_coverage_defects)
-        self.target_coverage_tolerance = jnp.asarray(target_coverage_tolerance)
-        self.source_coverage_tolerance = jnp.asarray(source_coverage_tolerance)
-        self.candidate_count = jnp.asarray(int(candidate_count), dtype=jnp.int32)
-        self.accepted_count = jnp.asarray(int(accepted_count), dtype=jnp.int32)
-        self.predicate_uncertain_count = jnp.asarray(
-            int(predicate_uncertain_count), dtype=jnp.int32
+        if not isinstance(status, UnstructuredConservativeRemapStatus):
+            raise TypeError("status must be UnstructuredConservativeRemapStatus.")
+        counts = {
+            "candidate_count": candidate_count,
+            "accepted_count": accepted_count,
+            "predicate_uncertain_count": predicate_uncertain_count,
+        }
+        if any(
+            isinstance(value, (bool, np.bool_))
+            or not isinstance(value, (int, np.integer))
+            or int(value) < 0
+            or int(value) > np.iinfo(np.int32).max
+            for value in counts.values()
+        ):
+            raise ValueError("Remap evidence counts must be nonnegative int32 values.")
+        candidate = int(candidate_count)
+        accepted = int(accepted_count)
+        uncertain = int(predicate_uncertain_count)
+        if (
+            accepted > candidate
+            or uncertain > candidate
+            or accepted + uncertain > candidate
+        ):
+            raise ValueError("Remap evidence counts exceed the candidate count.")
+        target_defects = jnp.asarray(target_coverage_defects)
+        source_defects = jnp.asarray(source_coverage_defects)
+        target_tolerance = jnp.asarray(target_coverage_tolerance)
+        source_tolerance = jnp.asarray(source_coverage_tolerance)
+        if (
+            target_defects.shape != target_tolerance.shape
+            or source_defects.shape != source_tolerance.shape
+        ):
+            raise ValueError("Remap coverage defects and tolerances must align.")
+        target_defects = eqx.error_if(
+            target_defects,
+            jnp.any(~jnp.isfinite(target_defects))
+            | jnp.any(~jnp.isfinite(target_tolerance))
+            | jnp.any(target_tolerance < 0.0),
+            "Target remap coverage evidence must be finite with nonnegative tolerances.",
         )
-        self.passed = jnp.asarray(bool(passed))
+        source_defects = eqx.error_if(
+            source_defects,
+            jnp.any(~jnp.isfinite(source_defects))
+            | jnp.any(~jnp.isfinite(source_tolerance))
+            | jnp.any(source_tolerance < 0.0),
+            "Source remap coverage evidence must be finite with nonnegative tolerances.",
+        )
+        self.target_coverage_defects = target_defects
+        self.source_coverage_defects = source_defects
+        self.target_coverage_tolerance = target_tolerance
+        self.source_coverage_tolerance = source_tolerance
+        self.candidate_count = jnp.asarray(candidate, dtype=jnp.int32)
+        self.accepted_count = jnp.asarray(accepted, dtype=jnp.int32)
+        self.predicate_uncertain_count = jnp.asarray(uncertain, dtype=jnp.int32)
+        self.passed = jnp.asarray(status is UnstructuredConservativeRemapStatus.SUCCESS)
         self.status = jnp.asarray(int(status), dtype=jnp.int32)
         self.helper_statuses = tuple(str(value) for value in helper_statuses)
         self.helper_evidence_id = str(helper_evidence_id)
         self.resource_evidence_id = str(resource_evidence_id)
-        self.evidence_id = str(evidence_id)
-        self.status = jnp.asarray(int(status), dtype=jnp.int32)
         self.evidence_id = str(evidence_id)
 
 
@@ -253,7 +295,6 @@ def _result(
         candidate_count=candidate_count,
         accepted_count=accepted_count,
         predicate_uncertain_count=predicate_uncertain_count,
-        passed=status is UnstructuredConservativeRemapStatus.SUCCESS,
         status=status,
         evidence_id=evidence_id,
     )

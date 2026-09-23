@@ -124,7 +124,6 @@ def test_per_input_adaptation_preserves_scanned_hidden_layers():
             output = layer(output)
         return output
 
-    assert adapted._scan_enabled
     assert set(report.input_indices) == {0, 1, 2, 3}
     assert np.allclose(
         np.asarray(jax.jit(jax.vmap(adapted))(evaluation)),
@@ -177,8 +176,6 @@ def test_adaptation_preserves_scan_execution_with_distinct_grid_values():
             output = layer(output)
         return output
 
-    assert model._scan_enabled
-    assert adapted._scan_enabled
     assert not np.array_equal(
         np.asarray(adapted.layers[1].edge_basis.grid.knots),
         np.asarray(adapted.layers[2].edge_basis.grid.knots),

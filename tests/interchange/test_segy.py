@@ -140,5 +140,17 @@ def test_decoder_accounts_before_allocation_and_file_reader_stays_under_root(tmp
         path.name, trusted_root=tmp_path, profile=profile, limits=_limits()
     )
     assert loaded.manifest.source_kind == "file"
+    assert loaded.manifest.size_bytes == len(data)
+    np.testing.assert_array_equal(loaded.series.values, [[1.0, 2.0, 3.0]])
+
+    outside_path = tmp_path.parent / f"{tmp_path.name}-outside.sgy"
+    outside_path.write_bytes(
+        _segy(sequences=(1,), identifications=(1,), samples=((9.0, 8.0, 7.0),))
+    )
     with pytest.raises(ValueError):
-        read_segy("../line.sgy", trusted_root=tmp_path, profile=profile, limits=_limits())
+        read_segy(
+            f"../{outside_path.name}",
+            trusted_root=tmp_path,
+            profile=profile,
+            limits=_limits(),
+        )

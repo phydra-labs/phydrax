@@ -65,9 +65,11 @@ def main() -> None:
     )
     state = flow.project_state(zero_velocity)
     result = method.step(0.0, state)
+    if not bool(result.successful):
+        raise RuntimeError("Prescribed immersed-cylinder step failed")
     print(
         {
-            "successful": bool(result.successful),
+            "successful": True,
             "divergence_norm": float(jnp.linalg.norm(result.projection.divergence_after)),
             "maximum_slip": float(
                 jnp.max(jnp.linalg.norm(result.projection.marker_slip, axis=-1))

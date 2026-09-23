@@ -119,7 +119,9 @@ prepared = phx.solver.prepare_reactive_monolithic_step(
     stage,
 )
 result = phx.solver.solve_reactive_monolithic_step(prepared, state)
-print(f"successful={bool(result.successful)}")
+if not bool(result.successful):
+    raise RuntimeError("Monolithic reactive CFD-DEM step failed")
+print("successful=True")
 print(f"fluid_temperature={float(result.accepted_state.fluid.temperature[0]):.6f}")
 print(f"particle_velocity={float(result.accepted_state.particle_velocity[0, 0]):.6f}")
 print(

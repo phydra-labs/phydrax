@@ -118,6 +118,8 @@ class VectorLocalRootPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 f"Vector local root initial state must have shape {(self.dimension,)}."
             )
+        if not jnp.issubdtype(initial_.dtype, jnp.inexact):
+            raise TypeError("Vector local root initial state must have an inexact dtype.")
 
         def solve_fn(function, guess):
             return self._newton(function, guess)
@@ -226,6 +228,10 @@ class LocalRootPlan(StrictModule, NonTrainableState):
         initial_ = jnp.asarray(initial)
         if initial_.shape != ():
             raise ValueError("Local constitutive roots are scalar.")
+        if not jnp.issubdtype(initial_.dtype, jnp.inexact):
+            raise TypeError(
+                "Local constitutive root initial state must have an inexact dtype."
+            )
 
         def solve_fn(function, guess):
             return self._newton(function, guess)

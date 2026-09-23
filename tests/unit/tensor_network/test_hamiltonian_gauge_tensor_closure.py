@@ -29,6 +29,13 @@ def test_fusion_mps_and_projector_mpo_match_dense_sector():
     assert jnp.allclose(dense_state, expected_state)
     assert jnp.allclose(projector.operator.to_dense(), basis.dense_projector())
     assert jnp.allclose(projector.operator.to_dense() @ dense_state, dense_state)
+    structural = build_gauge_projector_mpo(
+        basis,
+        maximum_reference_elements=1,
+    )
+    assert structural.evidence.valid
+    assert structural.evidence.structurally_proven
+    assert structural.evidence.verification_method == "deterministic-charge-flow"
 
 
 def test_su2_fusion_basis_constructs_exact_singlet_multiplicities():

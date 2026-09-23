@@ -1,8 +1,10 @@
 import jax
 import jax.numpy as jnp
 
+import phydrax as phx
 from phydrax.continuation._stability_pencil import (
     ContinuationStabilityPencil,
+    GeneralizedPencilStabilityAnalyzer,
     hopf_point_evidence,
     HopfContinuationAdapter,
 )
@@ -59,3 +61,28 @@ def test_real_block_hopf_locus_has_local_frequency_and_phase_evidence():
     assert evidence.frequency > 0
     assert evidence.normalization_residual < 1.0e-7
     assert evidence.phase_residual < 1.0e-7
+
+
+def test_generalized_pencil_omits_hopf_indicator_without_conjugate_pair():
+    pencil = ContinuationStabilityPencil(
+        lambda state, coordinate, args: (
+            jnp.asarray([[coordinate, 0.0], [0.0, -1.0]]),
+            None,
+        ),
+        pencil_id="purely-real-pencil",
+    )
+    problem = phx.continuation.ParameterContinuationProblem(
+        lambda state, coordinate, args: (
+            jnp.asarray([[coordinate, 0.0], [0.0, -1.0]]) @ state
+        ),
+        problem_id="purely-real-stability",
+    )
+    evidence = GeneralizedPencilStabilityAnalyzer(pencil).analyze(
+        problem,
+        jnp.zeros(2),
+        jnp.asarray(0.25),
+    )
+
+    assert bool(evidence.successful)
+    assert int(evidence.conjugate_pair_count) == 0
+    assert jnp.isnan(evidence.leading_complex_real_part)

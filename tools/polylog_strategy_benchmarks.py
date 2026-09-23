@@ -59,7 +59,7 @@ def _measure(
         "steady_ms": steady_ms,
         "checksum": _checksum(result),
         "output_bytes": logical_array_bytes(result),
-        "retained_bytes": (
+        "generated_code_bytes": (
             None if memory is None else int(memory.generated_code_size_in_bytes)
         ),
         "workspace_bytes": None if memory is None else int(memory.temp_size_in_bytes),

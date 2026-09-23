@@ -74,6 +74,8 @@ class OperatorParameterRange:
     scale: Literal["linear", "log"] = "linear"
 
     def __post_init__(self):
+        if not (np.isfinite(float(self.minimum)) and np.isfinite(float(self.maximum))):
+            raise ValueError("Parameter range bounds must be finite.")
         if not self.name:
             raise ValueError("Parameter names must be non-empty.")
         if float(self.minimum) > float(self.maximum):
@@ -117,6 +119,10 @@ class ReferenceSolverEvidence:
     tolerance: float
 
     def __post_init__(self):
+        if not (
+            np.isfinite(float(self.relative_error)) and np.isfinite(float(self.tolerance))
+        ):
+            raise ValueError("Reference errors and tolerances must be finite.")
         if not self.method:
             raise ValueError("Reference solver method must be non-empty.")
         if self.verification not in (
@@ -220,6 +226,27 @@ class OperatorBenchmarkEvaluation:
     rollout_source_key: str | None = None
     case_ids: tuple[str, ...] = ()
 
+    def __post_init__(self) -> None:
+        if not self.name or not self.split or not self.shift:
+            raise ValueError("Evaluation name, split, and shift must be non-empty.")
+        if self.rollout_steps <= 0:
+            raise ValueError("Evaluation rollout_steps must be positive.")
+        if self.rollout_steps > 1 and not self.rollout_source_key:
+            raise ValueError("Multi-step rollout requires rollout_source_key.")
+        expected_cases = int(np.prod(self.batch.case_shape))
+        if len(self.case_ids) != expected_cases or len(set(self.case_ids)) != len(
+            self.case_ids
+        ):
+            raise ValueError(
+                "Evaluation case_ids must provide one unique identity per case."
+            )
+        if isinstance(self.target, OperatorTargetBatch):
+            self.target.validate(self.batch)
+        else:
+            OperatorTargetBatch.from_arrays({"output": self.target}, self.batch).validate(
+                self.batch
+            )
+
 
 @dataclass(frozen=True)
 class OperatorBenchmarkScenario:
@@ -246,6 +273,28 @@ class OperatorBenchmarkScenario:
     task: OperatorTask | None = None
 
     def __post_init__(self):
+        if not self.name:
+            raise ValueError("Scenario name must be non-empty.")
+        if not self.evaluations:
+            raise ValueError("Scenario requires at least one evaluation.")
+        evaluation_names = tuple(value.name for value in self.evaluations)
+        if len(set(evaluation_names)) != len(evaluation_names):
+            raise ValueError("Scenario evaluation names must be unique.")
+        expected_train_cases = int(np.prod(self.train_batch.case_shape))
+        if len(self.case_ids) != expected_train_cases or len(set(self.case_ids)) != len(
+            self.case_ids
+        ):
+            raise ValueError(
+                "Scenario case_ids must provide one unique identity per training case."
+            )
+        if isinstance(self.seed, bool) or not isinstance(self.seed, int):
+            raise TypeError("Scenario seed must be an integer.")
+        if isinstance(self.train_target, OperatorTargetBatch):
+            self.train_target.validate(self.train_batch)
+        else:
+            OperatorTargetBatch.from_arrays(
+                {"output": self.train_target}, self.train_batch
+            ).validate(self.train_batch)
         task = self.task
         if task is not None:
             expected_targets = {field.name for field in task.target_fields}
@@ -283,19 +332,31 @@ class OperatorBenchmarkScenario:
                 raise ValueError(
                     "A domain support source requires kind 'occupancy' or 'sdf'."
                 )
-            if self.domain_support_key not in self.train_batch.inputs:
-                raise ValueError("domain_support_key must name a training-batch input.")
+            for batch in (
+                self.train_batch,
+                *(evaluation.batch for evaluation in self.evaluations),
+                *(() if self.validation is None else (self.validation.batch,)),
+            ):
+                if self.domain_support_key not in batch.inputs:
+                    raise ValueError(
+                        "domain_support_key must name an input on every split."
+                    )
             if (
                 self.domain_support_kind == "occupancy"
                 and self.domain_support_threshold is not None
                 and not 0.0 <= float(self.domain_support_threshold) <= 1.0
             ):
                 raise ValueError("Occupancy support thresholds must lie in [0, 1].")
-        if (
-            self.conservation_source_key is not None
-            and self.conservation_source_key not in self.train_batch.inputs
-        ):
-            raise ValueError("conservation_source_key must name a training-batch input.")
+        if self.conservation_source_key is not None:
+            for batch in (
+                self.train_batch,
+                *(evaluation.batch for evaluation in self.evaluations),
+                *(() if self.validation is None else (self.validation.batch,)),
+            ):
+                if self.conservation_source_key not in batch.inputs:
+                    raise ValueError(
+                        "conservation_source_key must name an input on every split."
+                    )
         if self.symmetry is not None:
             source_names = tuple(name for name, _ in self.symmetry.source_representations)
             if any(name not in self.train_batch.inputs for name in source_names):

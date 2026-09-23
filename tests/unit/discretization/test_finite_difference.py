@@ -4,7 +4,9 @@
 
 from fractions import Fraction
 
+import jax
 import jax.numpy as jnp
+import pytest
 
 import phydrax as phx
 
@@ -204,6 +206,50 @@ def test_patch_kernels_support_vectorized_regions_without_view_index_matrices():
     result = prepared(jnp.asarray([1.0, 2.0, 3.0, 4.0, 5.0]), kernel_indices=indices)
 
     assert jnp.allclose(result, jnp.asarray([6.0, 4.0, 12.0]))
+
+
+def test_patch_kernel_dispatch_rejects_noninteger_and_out_of_range_indices():
+    prepared = phx.discretization.PatchKernelPlan(
+        (3,),
+        (
+            lambda patch, args: jnp.sum(patch),
+            lambda patch, args: jnp.max(patch),
+        ),
+    ).prepare((5,))
+    values = jnp.asarray((1.0, 2.0, 3.0, 4.0, 5.0))
+
+    with pytest.raises(TypeError, match="exact integers"):
+        prepared(values, kernel_indices=jnp.asarray((0.0, 1.0, 0.0)))
+
+    for indices in (
+        jnp.asarray((-1, 0, 1), dtype=jnp.int32),
+        jnp.asarray((0, 1, 2), dtype=jnp.int32),
+    ):
+        with pytest.raises(Exception, match="registered patch kernel"):
+            result = jax.jit(lambda dispatch: prepared(values, kernel_indices=dispatch))(
+                indices
+            )
+            jax.block_until_ready(result)
+
+
+def test_finite_difference_rejects_conflicting_boundaries_on_one_axis():
+    grid = _periodic_grid()
+    periodic = phx.discretization.DerivativeRequest(
+        "periodic-dx",
+        grid,
+        "x",
+        boundary="periodic",
+    )
+    one_sided = phx.discretization.DerivativeRequest(
+        "one-sided-dxx",
+        grid,
+        "x",
+        derivative_order=2,
+        boundary="one_sided",
+    )
+
+    with pytest.raises(ValueError, match="share boundary semantics"):
+        phx.discretization.FiniteDifferencePlan(grid, (periodic, one_sided))
 
 
 def test_ordered_patch_kernel_exposes_causal_scan_semantics():

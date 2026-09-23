@@ -797,6 +797,8 @@ class CompiledContactSearchPlan(StrictModule, NonTrainableState):
     face_vertex_radius: Array
     edges: Array
     faces: Array
+    vertex_count: int = eqx.field(static=True)
+    ambient_dimension: int = eqx.field(static=True)
     edge_vertex_capacity: int = eqx.field(static=True)
     edge_edge_capacity: int = eqx.field(static=True)
     face_vertex_capacity: int = eqx.field(static=True)
@@ -887,6 +889,8 @@ class CompiledContactSearchPlan(StrictModule, NonTrainableState):
         )
         self.edges = jnp.asarray(edges)
         self.faces = jnp.asarray(faces)
+        self.vertex_count = scene.vertex_count
+        self.ambient_dimension = scene.ambient_dimension
         self.edge_vertex_radius = jnp.asarray(edge_vertex_radius)
         self.edge_edge_radius = jnp.asarray(edge_edge_radius)
         self.face_vertex_radius = jnp.asarray(face_vertex_radius)
@@ -921,8 +925,9 @@ class CompiledContactSearchPlan(StrictModule, NonTrainableState):
             if end_positions is None
             else jnp.asarray(end_positions, dtype=start.dtype)
         )
-        if start.shape != end.shape or start.ndim != 2:
-            raise ValueError("Compiled search positions have invalid shape.")
+        expected = (self.vertex_count, self.ambient_dimension)
+        if start.shape != expected or end.shape != expected:
+            raise ValueError(f"Compiled search positions must have shape {expected}.")
         point_min = jnp.minimum(start, end)
         point_max = jnp.maximum(start, end)
         edge_start = start[self.edges]

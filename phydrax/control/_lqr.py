@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from math import isfinite
 
 import equinox as eqx
 import jax
@@ -125,7 +126,7 @@ class AffineFeedbackPolicy(AbstractControlParameterization):
         assert self.time_grid is not None
         time = eqx.error_if(
             time,
-            (time < self.time_grid.t0) | (time > self.time_grid.t1),
+            ~jnp.isfinite(time) | (time < self.time_grid.t0) | (time > self.time_grid.t1),
             "Feedback-policy time lies outside its physical grid.",
         )
         index = jnp.searchsorted(self.time_grid.times, time, side="right") - 1
@@ -253,7 +254,9 @@ class QuadraticValueFunction(StrictModule):
             assert self.time_grid is not None
             query = eqx.error_if(
                 query,
-                (query < self.time_grid.t0) | (query > self.time_grid.t1),
+                ~jnp.isfinite(query)
+                | (query < self.time_grid.t0)
+                | (query > self.time_grid.t1),
                 "Value-function time lies outside its physical grid.",
             )
             index = jnp.searchsorted(self.time_grid.times, query, side="right") - 1
@@ -368,12 +371,21 @@ def _finite_inputs(
             f"control_matrices must have shape case_shape + (horizon, n, m); got {b.shape}."
         )
     m = b.shape[-1]
-    a = _require_shape(a, case_shape + (horizon, n, n), "dynamics_matrices")
-    b = _require_shape(b, case_shape + (horizon, n, m), "control_matrices")
-    q = _require_shape(state_costs, case_shape + (horizon, n, n), "state_costs")
-    r = _require_shape(control_costs, case_shape + (horizon, m, m), "control_costs")
-    q_terminal = _require_shape(
-        terminal_state_cost, case_shape + (n, n), "terminal_state_cost"
+    required = (
+        _require_shape(a, case_shape + (horizon, n, n), "dynamics_matrices"),
+        _require_shape(b, case_shape + (horizon, n, m), "control_matrices"),
+        _require_shape(state_costs, case_shape + (horizon, n, n), "state_costs"),
+        _require_shape(control_costs, case_shape + (horizon, m, m), "control_costs"),
+        _require_shape(terminal_state_cost, case_shape + (n, n), "terminal_state_cost"),
+    )
+    if any(jnp.issubdtype(value.dtype, jnp.complexfloating) for value in required):
+        raise TypeError("Finite-horizon LQR data must be real-valued.")
+    a, b, q, r, q_terminal = required
+    finite_required = jnp.stack(tuple(jnp.all(jnp.isfinite(value)) for value in required))
+    a = eqx.error_if(
+        a,
+        jnp.any(~finite_required),
+        "Finite-horizon LQR required inputs must be finite.",
     )
     dtype = jnp.result_type(a, b, q, r, q_terminal, jnp.float64)
     zeros = lambda shape: jnp.zeros(shape, dtype=dtype)
@@ -416,6 +428,28 @@ def _finite_inputs(
         terminal_constant_value = jnp.broadcast_to(terminal_constant_value, case_shape)
     terminal_constant_ = _require_shape(
         terminal_constant_value, case_shape, "terminal_constant"
+    )
+    all_values = (
+        a,
+        b,
+        q,
+        r,
+        q_terminal,
+        c,
+        cross,
+        q_linear,
+        r_linear,
+        constants,
+        q_terminal_linear,
+        terminal_constant_,
+    )
+    if any(jnp.issubdtype(value.dtype, jnp.complexfloating) for value in all_values):
+        raise TypeError("Finite-horizon LQR data must be real-valued.")
+    all_finite = jnp.stack(tuple(jnp.all(jnp.isfinite(value)) for value in all_values))
+    a = eqx.error_if(
+        a,
+        jnp.any(~all_finite),
+        "Finite-horizon LQR inputs must be finite.",
     )
     q = _require_positive_semidefinite(q, "state_costs", cost_tolerance)
     r = _require_positive_definite(r, "control_costs", cost_tolerance)
@@ -478,8 +512,15 @@ def finite_horizon_lqr(
     costs use the convention ``xᵀQx/2 + uᵀRu/2 + xᵀNu + qᵀx + rᵀu + d``.
     Every stage array has an explicit time axis; no time broadcasting occurs.
     """
-    if tolerance <= 0.0 or cost_tolerance < 0.0:
-        raise ValueError("tolerance must be positive and cost_tolerance non-negative.")
+    if (
+        not isfinite(float(tolerance))
+        or not isfinite(float(cost_tolerance))
+        or tolerance <= 0.0
+        or cost_tolerance < 0.0
+    ):
+        raise ValueError(
+            "tolerance must be finite and positive and cost_tolerance finite and non-negative."
+        )
     values, case_shape, horizon, n, _ = _finite_inputs(
         dynamics_matrices,
         control_matrices,

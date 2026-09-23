@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 import pytest
 
+import phydrax.sampling._split_group_dynamics as split_dynamics
 from phydrax.metrix import (
     EuclideanStateGeometry,
     FlatTorusStateGeometry,
@@ -170,6 +171,37 @@ def test_transported_group_nuts_has_finite_tree_and_detects_turning():
     assert prepared.target.geometry.contains(result.state.position)
     assert result.evidence.u_turn_detected | result.evidence.maximum_depth_reached
     assert result.reference_measure == "flat-torus"
+
+
+def test_nuts_nonfinite_u_turn_evidence_is_a_divergence(monkeypatch):
+    prepared = _prepared(dynamics="nuts-reference", persistence=0.0)
+    state = initialize_split_group_dynamics_state(prepared, jnp.asarray([0.2, -0.1]))
+
+    def nonfinite_turn(_prepared, _left, _right, _left_p, _right_p):
+        tangent = jnp.zeros(prepared.target.local_coordinate_shape)
+        return split_dynamics.TransportedUTurnEvidence(
+            tangent,
+            tangent,
+            tangent,
+            jnp.asarray(jnp.nan),
+            jnp.asarray(jnp.nan),
+            jnp.asarray(False),
+            jnp.asarray(False),
+        )
+
+    monkeypatch.setattr(
+        split_dynamics,
+        "transported_group_u_turn",
+        nonfinite_turn,
+    )
+    result = split_group_transition(prepared, state, key=jax.random.key(123))
+
+    assert result.evidence.divergent
+    assert (
+        result.evidence.status
+        == split_dynamics.SplitGroupDynamicsStatus.NONFINITE_OR_DIVERGENT_TRAJECTORY
+    )
+    assert jnp.array_equal(result.state.position, state.position)
 
 
 def test_su_n_is_supported_and_noncompact_geometry_fails_before_execution():

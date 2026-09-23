@@ -796,7 +796,7 @@ def realize_stochastic_sources(
                 2 * jr.bernoulli(source_key, shape=plan.source_shape).astype("float64")
                 - 1
             )
-            return values.astype(jnp.complex64)
+            return values.astype(jnp.complex128)
         real_key, imag_key = jr.split(source_key)
         real = 2 * jr.bernoulli(real_key, shape=plan.source_shape).astype("float64") - 1
         imag = 2 * jr.bernoulli(imag_key, shape=plan.source_shape).astype("float64") - 1
@@ -1007,6 +1007,11 @@ def point_to_all_propagator(
     values = result.values
     if values.ndim != 4 or prod(shape) != values.shape[0]:
         raise ValueError("Propagator values and lattice_shape are incompatible.")
+    values = eqx.error_if(
+        values,
+        ~(result.finite & jnp.all(result.status == 0)),
+        "Point-to-all conversion requires successful finite propagator solves.",
+    )
     _, spin, color, sources = values.shape
     if sources != spin * color:
         raise ValueError(

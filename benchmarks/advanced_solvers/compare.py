@@ -28,6 +28,10 @@ def compare_reports(
     """Compare complete reports without silently dropping missing or invalid rows."""
     validate_report(reference)
     validate_report(candidate)
+    if reference["provenance"] != candidate["provenance"]:
+        raise IncomparableReportsError(
+            "benchmark harness, certificate evaluator, or case source differs"
+        )
     protocol_fields = (
         "seed",
         "warmup",
@@ -93,6 +97,21 @@ def compare_reports(
                 }
             )
             continue
+        if baseline_status == "failed" or contender_status == "failed":
+            comparisons.append(
+                {
+                    "row_identity": identity,
+                    "problem": baseline["problem"],
+                    "implementation": baseline["implementation"],
+                    "status": {
+                        "reference": baseline_status,
+                        "candidate": contender_status,
+                    },
+                    "skip_reason": None,
+                    "metrics": None,
+                }
+            )
+            continue
         baseline_residual = baseline["certificate"]["relative_residual"]
         candidate_residual = contender["certificate"]["relative_residual"]
         baseline_backward = baseline["certificate"]["backward_error"]
@@ -148,10 +167,24 @@ def compare_reports(
                 },
             }
         )
+    regressed = any(
+        row["metrics"] is not None
+        and row["metrics"]["solve_performance"] is not None
+        and row["metrics"]["solve_performance"]["comparison"] is not None
+        and row["metrics"]["solve_performance"]["comparison"]["regressed"]
+        for row in comparisons
+    )
+    candidate_mathematically_successful = all(
+        row["status"] == "skipped"
+        or row["status"]["candidate"] == "success"
+        for row in comparisons
+    )
     return {
         "reference_environment": reference["environment"]["fingerprint"],
         "candidate_environment": candidate["environment"]["fingerprint"],
         "same_environment": same_environment,
+        "passed": candidate_mathematically_successful and not regressed,
+        "regressed": regressed,
         "rows": comparisons,
     }
 
@@ -167,6 +200,24 @@ def _solve_performance(
 ) -> dict[str, Any] | None:
     if policy is None:
         return None
+    unsuccessful = [
+        label
+        for label, row in (("reference", reference), ("candidate", candidate))
+        if row["outcome"]["status"] != "success"
+        or (
+            row["refresh"]["applicable"]
+            and row["refresh"]["certificate_converged"] is not True
+        )
+    ]
+    if unsuccessful:
+        return {
+            "eligible": False,
+            "comparison": None,
+            "reason": (
+                "performance requires mathematical success for both rows; failed "
+                + ", ".join(unsuccessful)
+            ),
+        }
     if not same_environment:
         return {
             "eligible": False,
@@ -205,13 +256,27 @@ def _require_matched_contract(
             raise IncomparableReportsError(
                 f"row {identity} differs in required comparison field {field!r}"
             )
-    implementation_fields = ("adapter", "backend", "method", "preconditioner")
+    implementation_fields = (
+        "adapter",
+        "backend",
+        "method",
+        "preconditioner",
+        "versions",
+    )
     if any(
         reference["implementation"][field] != candidate["implementation"][field]
         for field in implementation_fields
     ):
         raise IncomparableReportsError(
             f"row {identity} differs in its implementation configuration"
+        )
+    availability_fields = ("capability", "dependency", "dependency_version")
+    if any(
+        reference["availability"][field] != candidate["availability"][field]
+        for field in availability_fields
+    ):
+        raise IncomparableReportsError(
+            f"row {identity} differs in provider identity"
         )
     transfer_fields = (
         "input_origin",
@@ -225,9 +290,44 @@ def _require_matched_contract(
         for field in transfer_fields
     ):
         raise IncomparableReportsError(f"row {identity} differs in its transfer contract")
-    if reference["certificate"]["kind"] != candidate["certificate"]["kind"]:
+    certificate_fields = (
+        "kind",
+        "capability",
+        "problem_fingerprint",
+        "evaluator_fingerprint",
+    )
+    if any(
+        reference["certificate"][field] != candidate["certificate"][field]
+        for field in certificate_fields
+    ):
         raise IncomparableReportsError(
-            f"row {identity} uses different certificate relations"
+            f"row {identity} uses different certificate identity"
+        )
+    refresh_contract_fields = (
+        "applicable",
+        "symbolic_reused",
+        "numeric_refreshed",
+        "symbolic_refresh_count",
+        "numeric_refresh_count",
+        "certificate_problem_fingerprint",
+        "certificate_kind",
+    )
+    if any(
+        reference["refresh"][field] != candidate["refresh"][field]
+        for field in refresh_contract_fields
+    ):
+        raise IncomparableReportsError(
+            f"row {identity} differs in refresh lifecycle identity"
+        )
+    if (
+        reference["memory"]["evidence"] != candidate["memory"]["evidence"]
+        or (
+            (reference["timing"]["differentiation"]["count"] > 0)
+            != (candidate["timing"]["differentiation"]["count"] > 0)
+        )
+    ):
+        raise IncomparableReportsError(
+            f"row {identity} differs in memory or differentiation scope"
         )
 
 

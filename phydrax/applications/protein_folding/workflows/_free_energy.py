@@ -194,6 +194,7 @@ class ProteinFreeEnergyWorkflow:
             run_id=self.run_id,
             work_id=work_id,
             work_kind=work_kind,
+            inverse_temperature=self.inverse_temperature,
             qualification_id=qualification_id,
             sampling_exact=sampling_exact,
             sampling_bias_bound=sampling_bias_bound,
@@ -372,6 +373,16 @@ class ProteinFreeEnergyWorkflow:
             raise ValueError(
                 "Dataset configurational measure does not match this workflow."
             )
+        if isinstance(dataset, ReducedWorkDataset):
+            beta = float(dataset.inverse_temperature)
+            beta_tolerance = max(1.0e-12, 128.0 * np.finfo(np.float64).eps)
+            if not np.isclose(
+                beta,
+                self.inverse_temperature,
+                rtol=beta_tolerance,
+                atol=0.0,
+            ):
+                raise ValueError("Reduced-work beta does not match this workflow.")
         if isinstance(dataset, ReducedPotentialDataset):
             beta = np.asarray(dataset.inverse_temperatures)
             beta_tolerance = max(1.0e-12, 128.0 * np.finfo(beta.dtype).eps)

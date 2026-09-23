@@ -7,7 +7,7 @@ import jax.numpy as jnp
 import pytest
 
 from phydrax._interpolation import fourier_interpolate
-from phydrax.signal import fourier_resample
+from phydrax.signal import fourier_resample, FourierSpectrumPlan
 
 
 @pytest.mark.parametrize("source_size,target_size", ((5, 8), (6, 9), (9, 6), (8, 5)))
@@ -87,6 +87,47 @@ def test_fourier_resampling_is_jittable_and_has_linear_gradients():
 
     assert jnp.isfinite(output)
     assert jnp.allclose(gradient, target_size / values.size)
+
+
+def test_fourier_spectrum_results_remain_transform_safe() -> None:
+    plan = FourierSpectrumPlan(8, 0.25)
+    samples = jnp.arange(8.0)
+
+    eager = plan.evaluate(samples)
+    compiled = jax.jit(plan.evaluate)(samples)
+    gradient = jax.grad(lambda values: jnp.real(plan.evaluate(values).spectrum[0]))(
+        samples
+    )
+
+    assert eager.result_id is not None
+    assert compiled.result_id is None
+    assert jnp.allclose(compiled.spectrum, eager.spectrum)
+    assert jnp.all(jnp.isfinite(gradient))
+
+
+@pytest.mark.parametrize(
+    "output_shape,axes,error",
+    (
+        ((3.5,), None, TypeError),
+        ((4,), (1.5,), TypeError),
+        ((4,), (1,), ValueError),
+    ),
+)
+def test_fourier_resampling_rejects_invalid_sizes_and_axes(
+    output_shape, axes, error
+) -> None:
+    with pytest.raises(error):
+        fourier_resample(jnp.ones((4,)), output_shape, axes=axes)
+
+
+@pytest.mark.parametrize("name,value", (("sample_count", 8.5), ("padding_count", 2.5)))
+def test_fourier_spectrum_topology_requires_exact_integers(name, value) -> None:
+    if name == "sample_count":
+        with pytest.raises(TypeError, match="integer"):
+            FourierSpectrumPlan(value, 0.25)
+    else:
+        with pytest.raises(TypeError, match="integer"):
+            FourierSpectrumPlan(8, 0.25, padding_count=value)
 
 
 def test_shifted_resampling_matches_direct_multiaxis_evaluation():

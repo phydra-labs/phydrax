@@ -35,8 +35,10 @@ compiled = phx.equations.compile_vortex_particle_flow(
 state = compiled.initialize_state(position, strength)
 evaluation = compiled.dynamics.evaluate(0.0, state)
 diagnostics = compiled.dynamics.diagnostics(0.0, state)
+if not bool(diagnostics.finite):
+    raise RuntimeError("Three-dimensional vortex diagnostics are nonfinite")
 
 print("velocity", evaluation[2])
 print("strength rate", evaluation[3])
 print("total vector strength", diagnostics.total_strength)
-print("finite", bool(diagnostics.finite))
+print("finite", True)

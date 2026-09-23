@@ -73,7 +73,7 @@ class ContractResolutionContext(StrictModule, NonTrainableState):
         ):
             raise ValueError("cashflow_capacity must be a positive integer.")
         status = ContractResolutionStatus.SUCCESS
-        if reference_data.as_of.available_ns > as_of.epoch_nanoseconds:
+        if reference_data.as_of.available_ns > as_of.available_ns:
             status |= ContractResolutionStatus.CAUSAL_TIME_VIOLATION
         ordered = tuple(sorted(calendar_values, key=lambda value: value.calendar_id))
         self.reference_data = reference_data

@@ -12,7 +12,9 @@ from phydrax.interchange.hep import (
     spectrum_observables_from_slha,
 )
 from phydrax.particle_physics import (
+    cross_qualify_spectra,
     evaluate_scale_bvp,
+    NativeSpectrumStatus,
     ScaleBVPPlan,
     ScaleBVPStatus,
     solve_scale_bvp,
@@ -68,6 +70,18 @@ def test_spectrum_status_keeps_numerical_physical_and_warning_axes_separate():
         result.observables.value("pdg:25", kind="pole-mass"), 125.1
     )
     assert "approximation" in result.claim
+
+
+def test_cross_qualification_rejects_noncanonical_provider_keys_without_lookup_failure():
+    evidence = cross_qualify_spectra(
+        ("mass",),
+        np.asarray((1.0,)),
+        {" provider-a ": np.asarray((1.0,))},
+        relative_tolerance=1.0e-8,
+    )
+
+    assert not bool(evidence.accepted)
+    assert int(evidence.status) == int(NativeSpectrumStatus.INVALID_INPUT)
 
 
 def test_strict_slha_roundtrip_preserves_unknown_blocks_comments_and_decays():

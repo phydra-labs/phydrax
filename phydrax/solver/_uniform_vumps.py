@@ -65,10 +65,19 @@ class UniformVUMPSProblem(StrictModule):
                 raise ValueError(
                     "Uniform Abelian state and operator charge groups differ."
                 )
+            if (
+                initial_state.charge_labels != hamiltonian.charge_labels
+                or initial_state.physical_charges != hamiltonian.physical_charges
+            ):
+                raise ValueError(
+                    "Uniform Abelian state and operator charge rosters differ."
+                )
             abelian_identity = canonical_fingerprint(
                 {
                     "state": initial_state.state_id,
                     "operator": hamiltonian.operator_id,
+                    "charge_labels": initial_state.charge_labels,
+                    "physical_charges": initial_state.physical_charges,
                 }
             )
             initial_state = initial_state.state
@@ -196,6 +205,7 @@ class UniformVUMPSResult(StrictModule):
     fixed_points: UniformTransferFixedPoints
     diagnostics: UniformVUMPSDiagnostics
     numeric_version: Array
+    abelian_identity: str | None = eqx.field(static=True)
     prepared_id: str = eqx.field(static=True)
 
     @property
@@ -444,6 +454,7 @@ def solve_uniform_vumps(problem_or_prepared, policy=None, /):
         fixed,
         diagnostics,
         prepared.numeric_version,
+        prepared.problem.abelian_identity,
         prepared.prepared_id,
     )
 

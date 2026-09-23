@@ -34,9 +34,11 @@ def main() -> None:
     candidate = runtime.candidate(initial, 0.05)
     final = candidate.commit()
     output = runtime.output(final)
+    if not bool(candidate.evidence.successful):
+        raise RuntimeError("Skeletal-fiber candidate failed")
     payload = {
         "prepared_id": runtime.prepared_id,
-        "successful": bool(candidate.evidence.successful),
+        "successful": True,
         "time_ms": float(final.time_ms),
         "surface_voltage_mV": output.membrane_potential_mV[0].tolist(),
         "cytosolic_calcium_uM": output.cytosolic_calcium_uM[0].tolist(),

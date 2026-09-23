@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from numbers import Integral
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -19,21 +20,23 @@ def _as_inexact_array(values: ArrayLike, /) -> Array:
 
 
 def _normalize_axis(axis: int, ndim: int, /) -> int:
-    if isinstance(axis, bool) or not isinstance(axis, int):
+    if isinstance(axis, bool) or not isinstance(axis, Integral):
         raise TypeError("axis must be an integer.")
     if ndim <= 0:
         raise ValueError("Signal arrays must have positive rank.")
-    if axis < -ndim or axis >= ndim:
-        raise ValueError(f"axis {axis} is out of bounds for rank {ndim}.")
-    return axis % ndim
+    resolved = int(axis)
+    if resolved < -ndim or resolved >= ndim:
+        raise ValueError(f"axis {resolved} is out of bounds for rank {ndim}.")
+    return resolved % ndim
 
 
 def _positive_int(value: int, name: str, /) -> int:
-    if isinstance(value, bool) or not isinstance(value, int):
+    if isinstance(value, bool) or not isinstance(value, Integral):
         raise TypeError(f"{name} must be an integer.")
-    if value <= 0:
+    resolved = int(value)
+    if resolved <= 0:
         raise ValueError(f"{name} must be positive.")
-    return value
+    return resolved
 
 
 def _signal_to_last(values: ArrayLike, axis: int, /) -> tuple[Array, int]:

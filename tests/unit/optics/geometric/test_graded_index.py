@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -61,8 +62,17 @@ def test_tetrahedral_field_and_curved_schlieren_retain_route_evidence():
         rays,
         image,
         np.asarray(((1.0, 0.0, 0.0), (0.0, 1.0, 0.0))),
+        "world",
         quantity,
     )
+    with pytest.raises(ValueError, match="orthonormal"):
+        phx.imaging.CurvedSchlierenPlan(
+            rays,
+            image,
+            np.asarray(((2.0, 0.0, 0.0), (0.0, 1.0, 0.0))),
+            "world",
+            quantity,
+        )
     positions = np.asarray(
         ((0.5, 0.5, 0.5), (0.5, 1.0, 0.5), (1.0, 0.5, 0.5), (1.0, 1.0, 0.5))
     )

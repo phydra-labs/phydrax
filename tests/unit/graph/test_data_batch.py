@@ -37,3 +37,27 @@ def test_batch_from_data_list_and_back():
     assert len(recovered) == 2
     assert recovered[0].x.shape == (2, 1)
     assert recovered[1].edge_index.shape == (2, 2)
+
+
+def test_batch_preserves_complete_graph_labels():
+    first = _make_data(0.0)
+    second = _make_data(10.0)
+    first = vx.Data(
+        x=first.x,
+        edge_index=first.edge_index,
+        edge_attr=first.edge_attr,
+        y=jnp.asarray([[1.0, 2.0]]),
+    )
+    second = vx.Data(
+        x=second.x,
+        edge_index=second.edge_index,
+        edge_attr=second.edge_attr,
+        y=jnp.asarray([[3.0, 4.0]]),
+    )
+
+    batch = vx.Batch.from_data_list((first, second))
+
+    assert jnp.array_equal(batch.y, jnp.asarray([[1.0, 2.0], [3.0, 4.0]]))
+    recovered = batch.to_data_list()
+    assert jnp.array_equal(recovered[0].y, first.y)
+    assert jnp.array_equal(recovered[1].y, second.y)

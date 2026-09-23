@@ -306,8 +306,12 @@ def path_event_scores(
 
     def atomic_scores(atomic: AtomicPathEvent) -> Array:
         if isinstance(atomic, TerminalSetEvent):
-            function = atomic.predicate if atomic.score is None else atomic.score
-            values = jax.vmap(lambda t, x: _call_path(function, t, x))(times, states)
+            if atomic.score is None:
+                occurred = jax.vmap(lambda t, x: _call_path(atomic.predicate, t, x))(
+                    times, states
+                )
+                return jnp.where(occurred, 0.0, -1.0)
+            values = jax.vmap(lambda t, x: _call_path(atomic.score, t, x))(times, states)
             return values.astype("float64")
         if isinstance(atomic, ThresholdCrossingEvent):
             values = (

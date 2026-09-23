@@ -11,8 +11,10 @@ from jaxtyping import Array
 from phydrax.ein import contract
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._physical import SpatialCoordinateContract
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...units import TIME, UnitDefinition
 from ..imaging import DenseDisplacementField2D
 from ._types import PhysicalPIVResult2D, PIVResult
 
@@ -22,32 +24,36 @@ class AffinePixelMap2D(StrictModule, NonTrainableState):
 
     matrix: Array
     transform_id: str = eqx.field(static=True)
-    spatial_unit: str = eqx.field(static=True)
+    coordinate_contract: SpatialCoordinateContract = eqx.field(static=True)
 
     def __init__(
-        self, matrix: Array, /, *, spatial_unit: str, transform_id: str | None = None
+        self,
+        matrix: Array,
+        coordinate_contract: SpatialCoordinateContract,
+        /,
+        *,
+        transform_id: str | None = None,
     ):
         matrix_ = jnp.asarray(matrix, dtype=jnp.float64)
         if matrix_.shape != (2, 3):
             raise ValueError("Affine matrix must have shape (2, 3).")
         if not bool(jnp.all(jnp.isfinite(matrix_))):
             raise ValueError("Affine matrix must be finite.")
-        unit = str(spatial_unit)
-        if not unit:
-            raise ValueError("spatial_unit must be non-empty.")
+        if not isinstance(coordinate_contract, SpatialCoordinateContract):
+            raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
         homogeneous = jnp.concatenate((matrix_, jnp.asarray([[0.0, 0.0, 1.0]])), axis=0)
         resolved_id = transform_id or canonical_fingerprint(
             {
                 "kind": "affine-pixel-map-2d",
                 "matrix": array_tree_fingerprint(matrix_),
-                "spatial_unit": unit,
+                "coordinate_contract": coordinate_contract.spatial_id,
             }
         )
         if not isinstance(resolved_id, str) or not resolved_id:
             raise ValueError("transform_id must be a non-empty string.")
         self.matrix = homogeneous
         self.transform_id = resolved_id
-        self.spatial_unit = unit
+        self.coordinate_contract = coordinate_contract
 
 
 class HomographyPixelMap2D(StrictModule, NonTrainableState):
@@ -55,31 +61,35 @@ class HomographyPixelMap2D(StrictModule, NonTrainableState):
 
     matrix: Array
     transform_id: str = eqx.field(static=True)
-    spatial_unit: str = eqx.field(static=True)
+    coordinate_contract: SpatialCoordinateContract = eqx.field(static=True)
 
     def __init__(
-        self, matrix: Array, /, *, spatial_unit: str, transform_id: str | None = None
+        self,
+        matrix: Array,
+        coordinate_contract: SpatialCoordinateContract,
+        /,
+        *,
+        transform_id: str | None = None,
     ):
         matrix_ = jnp.asarray(matrix, dtype=jnp.float64)
         if matrix_.shape != (3, 3):
             raise ValueError("Homography matrix must have shape (3, 3).")
         if not bool(jnp.all(jnp.isfinite(matrix_))):
             raise ValueError("Homography matrix must be finite.")
-        unit = str(spatial_unit)
-        if not unit:
-            raise ValueError("spatial_unit must be non-empty.")
+        if not isinstance(coordinate_contract, SpatialCoordinateContract):
+            raise TypeError("coordinate_contract must be SpatialCoordinateContract.")
         resolved_id = transform_id or canonical_fingerprint(
             {
                 "kind": "homography-pixel-map-2d",
                 "matrix": array_tree_fingerprint(matrix_),
-                "spatial_unit": unit,
+                "coordinate_contract": coordinate_contract.spatial_id,
             }
         )
         if not isinstance(resolved_id, str) or not resolved_id:
             raise ValueError("transform_id must be a non-empty string.")
         self.matrix = matrix_
         self.transform_id = resolved_id
-        self.spatial_unit = unit
+        self.coordinate_contract = coordinate_contract
 
 
 def map_pixels_to_physical(
@@ -116,7 +126,7 @@ def convert_to_physical(
     /,
     *,
     delta_t: Array | float,
-    time_unit: str,
+    time_unit: UnitDefinition,
     stage: str = "replaced",
 ) -> PhysicalPIVResult2D:
     """Convert finite pixel endpoints, preserving nonlinear homography displacement."""
@@ -133,9 +143,8 @@ def convert_to_physical(
         field = source
     else:
         raise TypeError("source must be a DenseDisplacementField2D or PIVResult.")
-    time_unit_ = str(time_unit)
-    if not time_unit_:
-        raise ValueError("time_unit must be non-empty.")
+    if not isinstance(time_unit, UnitDefinition) or time_unit.dimension != TIME:
+        raise ValueError("time_unit must be a time UnitDefinition.")
     elapsed = jnp.asarray(delta_t, dtype=jnp.float64)
     if elapsed.shape != ():
         raise ValueError("delta_t must be scalar.")
@@ -160,8 +169,9 @@ def convert_to_physical(
         valid,
         field.field_id,
         transform.transform_id,
-        transform.spatial_unit,
-        time_unit_,
+        transform.coordinate_contract.length_unit,
+        time_unit,
+        transform.coordinate_contract.reference_frame,
     )
 
 

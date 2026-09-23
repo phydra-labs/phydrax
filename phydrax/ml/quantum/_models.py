@@ -15,7 +15,7 @@ from jaxtyping import Array, ArrayLike
 import phydrax.ein as ein
 
 from ..._fingerprint import canonical_fingerprint
-from ..._model import AbstractArrayModel
+from ..._model import AbstractArrayModel, register_artifact_value
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...operators.quantum._observables import LocalObservable
@@ -321,9 +321,25 @@ class BinaryVariationalCircuitClassifier(AbstractArrayModel):
         self.in_size = feature_model.in_size
         self.out_size = "scalar"
 
-    def _logit(self, x: Any, /, *, key: Any = None) -> Array:
+    def _logit_one(self, x: Array, /, *, key: Any = None) -> Array:
         features = self.feature_model(x, key=key)
         return ein.contract("f,f->", self.weight, features) + self.bias
+
+    def _logit(self, x: Any, /, *, key: Any = None) -> Array:
+        values = jnp.asarray(x)
+        if values.shape[-1:] != (self.in_size,):
+            raise ValueError(f"Expected final feature axis of size {self.in_size}.")
+        if values.ndim == 1:
+            return self._logit_one(values, key=key)
+        flat = values.reshape((-1, self.in_size))
+        if key is None:
+            logits = jax.vmap(lambda point: self._logit_one(point))(flat)
+        else:
+            keys = jax.random.split(key, flat.shape[0])
+            logits = jax.vmap(
+                lambda point, point_key: self._logit_one(point, key=point_key)
+            )(flat, keys)
+        return logits.reshape(values.shape[:-1])
 
     def decision_function(self, x: Any, /) -> Array:
         return self._logit(x)
@@ -333,7 +349,11 @@ class BinaryVariationalCircuitClassifier(AbstractArrayModel):
 
     def predict_log_proba(self, x: Any, /) -> Array:
         logit = self._logit(x)
-        return jnp.stack((jax.nn.log_sigmoid(-logit), jax.nn.log_sigmoid(logit)))
+        return jnp.stack((jax.nn.log_sigmoid(-logit), jax.nn.log_sigmoid(logit)), axis=-1)
+
+    def predict_proba(self, x: Any, /) -> Array:
+        positive = self.positive_probability(x)
+        return jnp.stack((1.0 - positive, positive), axis=-1)
 
     def predict(self, x: Any, /) -> Array:
         return jnp.where(
@@ -344,6 +364,28 @@ class BinaryVariationalCircuitClassifier(AbstractArrayModel):
 
     def __call__(self, x: Any, /, *, key: Any = None) -> Array:
         return jax.nn.sigmoid(self._logit(x, key=key))
+
+
+register_artifact_value(
+    "phydrax.ml.quantum.internal:ParameterShiftPlan",
+    ParameterShiftPlan,
+)
+register_artifact_value(
+    "phydrax.ml.quantum.internal:PreparedDenseQuantumTemplate",
+    PreparedDenseQuantumTemplate,
+)
+
+
+register_artifact_value(
+    "phydrax.ml.quantum.internal:DenseCircuitExecution",
+    _DenseCircuitExecution,
+)
+
+
+register_artifact_value(
+    "phydrax.ml.quantum.internal:DenseExpectationExecution",
+    _DenseExpectationExecution,
+)
 
 
 __all__ = [

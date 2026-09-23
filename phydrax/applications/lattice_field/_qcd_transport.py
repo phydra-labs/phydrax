@@ -56,10 +56,14 @@ class QCDTransportTable(StrictModule, NonTrainableState):
             or chemical.ndim != 1
             or temperatures_.size < 2
             or chemical.size < 2
+            or np.any(~np.isfinite(temperatures_))
+            or np.any(~np.isfinite(chemical))
             or np.any(np.diff(temperatures_) <= 0.0)
             or np.any(np.diff(chemical) <= 0.0)
         ):
-            raise ValueError("QCD transport table axes must be increasing vectors.")
+            raise ValueError(
+                "QCD transport table axes must be finite increasing vectors."
+            )
         expected = (temperatures_.size, chemical.size)
         if (
             shear.shape != expected
@@ -163,10 +167,11 @@ def evaluate_qcd_transport(
         & (chemical >= table.baryon_chemical_potentials[0])
         & (chemical <= table.baryon_chemical_potentials[-1])
     )
-    valid = corners_valid & in_domain
     shear = interpolate(table.shear_viscosity_over_entropy)
     bulk = interpolate(table.bulk_viscosity_over_entropy)
     diffusion = interpolate(table.baryon_diffusion)
+    finite = jnp.isfinite(shear) & jnp.isfinite(bulk) & jnp.isfinite(diffusion)
+    valid = corners_valid & in_domain & finite
     return QCDTransportEvaluation(
         jnp.where(valid, shear, jnp.nan),
         jnp.where(valid, bulk, jnp.nan),

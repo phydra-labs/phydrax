@@ -293,6 +293,41 @@ def test_failed_finite_discrete_rollback_invalidates_evolution_and_tangent():
     assert bool(jnp.isnan(tangent.tangent[0]))
 
 
+def test_evolve_skips_backend_after_first_failed_segment():
+    def transition(context, state, args):
+        del args
+        checked = eqx.error_if(
+            state,
+            context.source > 0,
+            "backend invoked after failed evolution segment",
+        )
+        return phx.dynamics.DiscreteTransitionResult(
+            checked + 1.0,
+            checked,
+            jnp.asarray(False),
+            jnp.asarray(77, dtype=jnp.int32),
+        )
+
+    evolution = phx.dynamics.DiscreteEvolution(
+        phx.dynamics.DiscreteSystem(
+            transition,
+            state_layout=phx.dynamics.StateLayout((1,)),
+            system_id="single-attempt-evolution",
+        )
+    )
+    result = phx.dynamics.evolve(
+        evolution,
+        jnp.asarray([1.0]),
+        phx.dynamics.IterationGrid.from_steps(3, iteration_id="single-attempt-grid"),
+    )
+
+    np.testing.assert_array_equal(
+        result.transition_evidence.attempted,
+        jnp.asarray([True, False, False]),
+    )
+    assert int(result.transition_evidence.first_failure_status) == 77
+
+
 def test_diffrax_evolution_rollout_and_numerical_flow_jvp_share_system():
     layout = phx.dynamics.StateLayout((1,))
     system = phx.dynamics.ContinuousSystem(

@@ -1,3 +1,4 @@
+import equinox as eqx
 import jax.numpy as jnp
 import pytest
 
@@ -32,7 +33,7 @@ def test_unequal_complex_kurokawa_round_trip_and_power_identity():
 
 
 def test_reference_and_response_validation_and_audit():
-    with pytest.raises(Exception):
+    with pytest.raises(eqx.EquinoxRuntimeError, match=r"finite with Re\(z0\) > 0"):
         ElectricalWaveReference(-50.0)
     reference = ElectricalWaveReference(50.0)
     response = ScatteringResponse(

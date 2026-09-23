@@ -171,6 +171,9 @@ class ParticlePopulationPlan(StrictModule, NonTrainableState):
         )
         ordered_valid = request.valid[order]
         ordered_mass = request.masses[order]
+        inverse_order = (
+            jnp.empty_like(order).at[order].set(jnp.arange(width, dtype=order.dtype))
+        )
         requested = jnp.sum(ordered_valid, dtype=jnp.int32)
         slots = jnp.nonzero(reusable, size=width, fill_value=-1)[0].astype(jnp.int32)
         safe_slots = jnp.maximum(slots, 0)
@@ -228,8 +231,8 @@ class ParticlePopulationPlan(StrictModule, NonTrainableState):
         return ParticleAllocationResult(
             candidate,
             accepted,
-            jnp.where(use, safe_slots, -1),
-            use,
+            jnp.where(use, safe_slots, -1)[inverse_order],
+            use[inverse_order],
             requested,
             jnp.sum(use, dtype=jnp.int32),
             status,

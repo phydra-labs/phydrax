@@ -49,8 +49,12 @@ def main() -> None:
     result = eqx.filter_jit(prepared.solve)(state)
     global_phase_tangent = 0.01j * state.psi
     tangent = eqx.filter_jit(prepared.jvp)(state, global_phase_tangent)
+    if not bool(result.successful):
+        raise RuntimeError("Differentiable wave-dark-matter solve failed")
+    if not bool(jnp.all(jnp.isfinite(tangent))):
+        raise RuntimeError("Wave-dark-matter JVP is nonfinite")
 
-    print("completed", bool(result.successful))
+    print("completed", True)
     print("accepted_steps", int(result.diagnostics.accepted_steps))
     print("maximum_norm_error", float(jnp.max(result.diagnostics.norm_relative_error)))
     print(
@@ -62,7 +66,7 @@ def main() -> None:
         float(jnp.max(result.diagnostics.de_broglie_nyquist_fraction)),
     )
     print("final_total_energy", float(result.diagnostics.total_energy[-1]))
-    print("finite_jvp", bool(jnp.all(jnp.isfinite(tangent))))
+    print("finite_jvp", True)
     print("prepared_id", prepared.prepared_id)
 
 

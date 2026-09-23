@@ -12,6 +12,7 @@ from typing import Literal
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+from jax import core as jax_core
 from jaxtyping import Array, ArrayLike
 
 from phydrax import ein
@@ -420,6 +421,35 @@ class MaterialBasisProjectionPlan(StrictModule):
         expected = self.transform.volume_shape + (len(self.material_ids),)
         if fractions.shape != expected:
             raise ValueError(f"material_fractions must have shape {expected}.")
+        if jnp.issubdtype(density.dtype, jnp.complexfloating) or jnp.issubdtype(
+            fractions.dtype, jnp.complexfloating
+        ):
+            raise TypeError("density_kg_m3 and material_fractions must be real-valued.")
+        invalid_values = jnp.any(~jnp.isfinite(density) | (density < 0.0)) | jnp.any(
+            ~jnp.isfinite(fractions) | (fractions < 0.0)
+        )
+        tolerance = 128.0 * jnp.finfo(jnp.result_type(fractions.dtype, jnp.float64)).eps
+        invalid_partition = jnp.any(
+            jnp.abs(jnp.sum(fractions, axis=-1) - 1.0) > tolerance
+        )
+        if isinstance(invalid_values, jax_core.Tracer):
+            density = eqx.error_if(
+                density,
+                invalid_values,
+                "density_kg_m3 and material_fractions must be finite and nonnegative.",
+            )
+            fractions = eqx.error_if(
+                fractions,
+                invalid_partition,
+                "material_fractions must sum to one in every voxel.",
+            )
+        else:
+            if bool(invalid_values):
+                raise ValueError(
+                    "density_kg_m3 and material_fractions must be finite and nonnegative."
+                )
+            if bool(invalid_partition):
+                raise ValueError("material_fractions must sum to one in every voxel.")
         material_density = ein.contract("...,...m->...m", density, fractions)
         projections = tuple(
             self.transform.forward(material_density[..., index]).values

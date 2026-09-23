@@ -774,7 +774,9 @@ for different architectures, graph topologies, conditions, or solver settings.
 Train members independently with `fit_ensemble`; do not vectorize high-level solver
 logging or adaptive-collocation state. `RandomizedPriorModel` adds an independently
 initialized prior network to a learned network. `FrozenModel` keeps the prior outside
-Phydrax trainable partitions.
+Phydrax trainable partitions while preserving its exact input binding. It forwards
+only named prediction capabilities actually implemented by the wrapped model:
+`decision_function`, `predict`, `predict_log_proba`, and `predict_proba`.
 
 Set `return_diagnostics=True` on `fit_ensemble` to receive an
 `EnsembleFitResult`. It records each member index, deterministic initialization and
@@ -1809,7 +1811,6 @@ flow_config = phx.uq.FlowNUTSConfig(
     history_capacity_per_chain=4,
     history_thinning=1,
     flow_layers=1,
-    num_knots=4,
     nn_width=8,
     nn_depth=1,
     max_epochs=2,
@@ -2575,6 +2576,23 @@ Physical parameters and a flexible discrepancy can explain the same signal.
 fixed-state GP, and jointly inferred GP comparisons. It gates physical-parameter
 bias, held-out NLL/CRPS, coverage, and maximum physical/GP posterior correlation,
 returning every exact failure rather than a generic warning.
+
+## Prespecified scientific limit studies
+
+`ScientificLimitStudyPlan` evaluates only its declared
+`ScientificLimitVariation` fits over identified `ScientificLimitDatum` values.
+Every nonempty `included_datum_ids` selection must refer to supplied datum IDs;
+unknown IDs are an input error, not an empty or partially matched fit.
+`ScientificLimitAxis.minimum_span` is applied after the axis's declared
+`identity`, `inverse`, `square`, or `log` coordinate transform, so support is
+measured in the coordinates actually used by the fit.
+
+Each fit exposes `complete` or `abstained` status and an exact reason. Insufficient
+points or transformed span, ill conditioning, rank deficiency, a failed linear
+solve, or a failed/nonfinite covariance solve abstains with `NaN` estimates rather
+than raising from numerical covariance construction or publishing partial evidence.
+The aggregate result combines only complete prespecified fits and abstains when none
+complete.
 
 ## Method boundaries
 

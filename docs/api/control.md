@@ -444,6 +444,11 @@ chance-constraint certificates.
 
 ### QP API
 
+Decoding is bound to the prepared numeric program:
+`decode_linear_control_solution(prepared, result)` accepts the exact
+`PreparedLinearControlQP`, not only a structural compilation. This preserves the
+numeric binding used to interpret the primal and dual decision rows.
+
 ::: phydrax.control.LinearQuadraticControlProblem
 
 ::: phydrax.control.LinearControlCompilationPolicy
@@ -895,7 +900,9 @@ by its corresponding result.
 ## Stochastic control and games
 
 The stochastic-control contracts distinguish a physical action from the noise
-increment that follows it. For `N` paths and `T` steps,
+increment that follows it. `PreparedControlledNoise` and frozen SAA training/holdout
+bundles bind the exact physical `TimeGrid`; equal step counts or increment shapes do
+not establish compatible time identity. For `N` paths and `T` steps,
 `PreparedControlledNoise.increments` has `(N, T) + noise_shape`;
 `ControlledPathBatch.states` has `(N, T + 1) + state_shape`; and actions have
 `(N, T) + action_shape`. `independence_labels`, not raw path count, define the

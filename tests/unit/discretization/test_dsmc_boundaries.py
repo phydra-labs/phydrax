@@ -5,6 +5,7 @@
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -129,6 +130,26 @@ def test_production_surface_event_uses_hit_time_and_surface_ledger():
     moments = phx.discretization.dsmc.DSMCMomentPlan(
         species, cells, minimum_particles_per_cell=1
     )
+    with pytest.raises(ValueError, match="requires one physical plan"):
+        phx.solver.DSMCProductionPlan(
+            streaming,
+            collision,
+            internal,
+            ntc,
+            moments,
+        )
+    reservoir_streaming = phx.discretization.dsmc.DSMCStreamingPlan(
+        cells,
+        (("reservoir", "specular"),),
+    )
+    with pytest.raises(ValueError, match="requires one physical plan"):
+        phx.solver.DSMCProductionPlan(
+            reservoir_streaming,
+            collision,
+            internal,
+            ntc,
+            moments,
+        )
     plan = phx.solver.DSMCProductionPlan(
         streaming,
         collision,
@@ -148,6 +169,10 @@ def test_production_surface_event_uses_hit_time_and_surface_ledger():
         jnp.asarray((True, True, False)),
         jnp.zeros((3,), dtype=jnp.int32),
     )
+    pending = streaming.advance(particles, jnp.asarray(0.02))
+    assert bool(pending.state.active[0])
+    assert pending.state.position[0, 0] < 0.0
+    assert pending.state.velocity[0, 0] == -1.0
     state = plan.initialize(
         particles, jax.random.key(8), majorant_sigma_speed=jnp.asarray((100.0,))
     )

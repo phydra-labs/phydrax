@@ -29,7 +29,7 @@ class PICBenchmarkReport:
     compile_and_first_ms: float
     steady_step_ms: float
     continuity_defect: float
-    gauss_defect: float
+    maximum_continuity_residual: float
     charge_balance_defect: float
     successful: bool
 
@@ -79,7 +79,18 @@ def run_pic_benchmark(*, smoke=False):
     jax.block_until_ready(result.current)
     steady_ms = (perf_counter() - started) * 1.0e3 / repetitions
     resources = dict(transfer.charge.preparation.resource_counts)
-    successful = bool(result.successful)
+    successful = bool(
+        result.successful
+        and jnp.isfinite(result.maximum_continuity_defect)
+        and jnp.all(jnp.isfinite(result.continuity_residual))
+        and result.maximum_continuity_defect <= 1.0e-9
+        and jnp.max(jnp.abs(result.continuity_residual)) <= 1.0e-9
+        and jnp.maximum(
+            result.start_charge.balance.maximum_absolute_balance_defect,
+            result.end_charge.balance.maximum_absolute_balance_defect,
+        )
+        <= 1.0e-10
+    )
     return PICBenchmarkReport(
         "experimental",
         version("phydrax"),
@@ -108,7 +119,7 @@ def main():
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     report = run_pic_benchmark(smoke=args.smoke)
-    payload = json.dumps(asdict(report), indent=2)
+    payload = json.dumps(asdict(report), indent=2, allow_nan=False)
     print(payload)
     if args.output is not None:
         args.output.write_text(payload + "\n", encoding="utf-8")

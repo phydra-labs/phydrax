@@ -236,6 +236,8 @@ class IntegerLatticeTransportPlan(StrictModule, NonTrainableState):
     ) -> tuple[CompressibleKineticPopulationState, IntegerLatticeTransportEvidence]:
         if state.spatial_shape != self.grid_shape:
             raise ValueError("State spatial shape does not match the transport grid.")
+        if state.rule_id != self.rule.rule_id:
+            raise ValueError("State velocity-rule identity does not match transport.")
         velocities = np.asarray(self.rule.velocities, dtype=np.int32)
         streamed_fields = []
         for populations in state.populations:
@@ -255,6 +257,8 @@ class IntegerLatticeTransportPlan(StrictModule, NonTrainableState):
             state.frame_velocity,
             state.frame_temperature_scale,
             state.layout,
+            state.model_id,
+            state.rule_id,
         )
         old_mass = jnp.sum(state.population("particle"))
         new_mass = jnp.sum(candidate.population("particle"))
@@ -281,6 +285,8 @@ class IntegerLatticeTransportPlan(StrictModule, NonTrainableState):
             state.frame_velocity,
             state.frame_temperature_scale,
             state.layout,
+            state.model_id,
+            state.rule_id,
         )
         return accepted, IntegerLatticeTransportEvidence(
             mass_defect=defect,

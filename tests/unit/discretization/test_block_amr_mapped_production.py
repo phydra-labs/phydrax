@@ -4,6 +4,7 @@
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -59,6 +60,21 @@ def test_high_order_mapped_metrics_close_and_satisfy_gcl():
         0.0,
         atol=2.0e-6,
     )
+
+
+def test_canonical_mapped_geometry_rejects_invalid_revision_values():
+    def identity(point, time, args):
+        del time, args
+        return point
+
+    plan = phx.discretization.CanonicalMappedGeometryPlan(
+        _topology_2d(),
+        phx.discretization.PatchCoordinateMapSet(identity, "identity-revision-test"),
+    )
+
+    for revision in (-1, 1.5, 2**31):
+        with pytest.raises(ValueError, match="revision"):
+            plan.evaluate(0.0, revision=revision)
 
 
 def test_nonconforming_mortar_uses_one_common_physical_surface():

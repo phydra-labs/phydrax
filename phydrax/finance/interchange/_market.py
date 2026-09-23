@@ -173,6 +173,7 @@ def market_snapshot_to_records(snapshot: MarketDataSnapshot, /) -> FinanceRecord
             "reference_data_id": snapshot.reference_data_id,
             "snapshot_id": snapshot.snapshot_id,
         },
+        columns=("observation_id", "quote_key", "value", "timestamp", "lineage"),
     )
 
 

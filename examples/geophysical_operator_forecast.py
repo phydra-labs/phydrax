@@ -131,7 +131,8 @@ def run_example(*, steps=40, artifact_directory=None):
         artifact_id="spherical-diffusion-qualification",
     )
     trained = fit.trained_operator
-    assert trained is not None
+    if trained is None:
+        raise RuntimeError("Spherical operator fit did not produce a trained operator")
 
     def artifact_roundtrip(directory):
         training.save_operator_artifact(directory, trained)
@@ -268,7 +269,8 @@ def run_example(*, steps=40, artifact_directory=None):
         learning_rate=0.005,
         output_field_map={"output": "increment"},
     )
-    assert column_fit.trained_operator is not None
+    if column_fit.trained_operator is None:
+        raise RuntimeError("Column closure fit did not produce a trained operator")
     admission = deploy_column_closure(
         column_fit.trained_operator,
         binding,

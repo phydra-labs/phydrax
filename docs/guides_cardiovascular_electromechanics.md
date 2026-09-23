@@ -103,21 +103,3 @@ continued = prepared.restart(checkpoint, next_end_time_ms).solve()
 `ElectromechanicsPreparationEvidence` records transfer IDs, forward quantity, cadence, fixed-topology status, bidirectionality, and differentiation policy. `ElectromechanicsEvidence` retains native interface residuals, participant status/evaluation counts, coupling iterations, terminal statuses, cadence ratio, declared participant substep work per window, work-accounting completeness, success, and rollback. Callback `work` is supplied to native per-window diagnostics; retained rollout evidence exposes native participant evaluation counts and declared cadence work as portable work measures.
 
 A successful active-stress or active-strain evaluation is not evidence of electrical coupling. Electromechanics qualification additionally requires the typed port/transfer preparation evidence and a successful native coupling trajectory.
-
-## Cube qualification benchmark
-
-`benchmarks/cardiovascular_electromechanics.py` builds a unit-cube transfer from eight EP corner nodes to a configurable tensor mechanics grid, plus a mechanics-to-EP corner restriction. It executes:
-
-- one-way activation transfer and mechanics response;
-- bidirectional activation/stretch fixed-point coupling;
-- doubled-cadence refinement;
-- checkpoint restart for another physical window.
-
-Run it with:
-
-```console
-python benchmarks/cardiovascular_electromechanics.py \
-  --points-per-axis 3 --cadence 4 --windows 4
-```
-
-The JSON record includes both transfer IDs, one-way and bidirectional success, maximum interface residual, cadence-refinement difference, restart success/time, and wall-clock measurements. Qualification should require success, residual below the declared tolerance, a refinement difference appropriate to the model/discretization, and exact restart time.

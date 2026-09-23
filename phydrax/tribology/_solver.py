@@ -6,7 +6,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -51,6 +53,8 @@ class MassConservingEHLSolver:
     sliding_velocity_m_s: float
     cavitation_pressure_pa: float
     bulk_modulus_pa: float
+    coupling_tolerance: float
+    balance_tolerance: float
 
     @classmethod
     def create(
@@ -65,10 +69,14 @@ class MassConservingEHLSolver:
         cavitation_pressure_pa: float = 0.0,
         bulk_modulus_pa: float = 1.0e9,
         symmetry_tolerance: float = 1e-10,
+        coupling_tolerance: float = 1e-8,
+        balance_tolerance: float = 1e-10,
     ) -> MassConservingEHLSolver:
         widths = np.asarray(cell_widths_m, dtype=np.float64)
         gap = np.asarray(undeformed_gap_m, dtype=np.float64)
         compliance = np.asarray(elastic_compliance_m_pa, dtype=np.float64)
+        if not all(np.all(np.isfinite(value)) for value in (widths, gap, compliance)):
+            raise ValueError("EHL geometry and compliance must be finite.")
         if widths.ndim != 1 or widths.size < 2 or np.any(widths <= 0):
             raise ValueError("EHL cell widths must be a positive vector.")
         if gap.shape != widths.shape or np.any(gap <= 0):
@@ -79,8 +87,19 @@ class MassConservingEHLSolver:
             raise ValueError("EHL elastic compliance must be symmetric.")
         if np.min(np.linalg.eigvalsh(compliance)) < -symmetry_tolerance:
             raise ValueError("EHL elastic compliance must be positive semidefinite.")
-        if viscosity_pa_s <= 0 or bulk_modulus_pa <= 0:
-            raise ValueError("EHL viscosity and bulk modulus must be positive.")
+        if (
+            not isfinite(viscosity_pa_s)
+            or viscosity_pa_s <= 0
+            or not isfinite(sliding_velocity_m_s)
+            or not isfinite(cavitation_pressure_pa)
+            or not isfinite(bulk_modulus_pa)
+            or bulk_modulus_pa <= 0
+            or not isfinite(coupling_tolerance)
+            or coupling_tolerance <= 0
+            or not isfinite(balance_tolerance)
+            or balance_tolerance <= 0
+        ):
+            raise ValueError("EHL material and convergence controls are invalid.")
         return cls(
             jnp.asarray(widths),
             jnp.asarray(gap),
@@ -89,6 +108,8 @@ class MassConservingEHLSolver:
             float(sliding_velocity_m_s),
             float(cavitation_pressure_pa),
             float(bulk_modulus_pa),
+            float(coupling_tolerance),
+            float(balance_tolerance),
         )
 
     def film_and_saturation(
@@ -106,12 +127,25 @@ class MassConservingEHLSolver:
             raise ValueError("EHL state does not match solver cells.")
         if iterations <= 0 or not 0 < relaxation <= 1:
             raise ValueError("EHL coupling iteration controls are invalid.")
+        content = eqx.error_if(
+            content,
+            jnp.any(~jnp.isfinite(content) | (content < 0)),
+            "EHL fluid content must be finite and nonnegative.",
+        )
+        pressure = eqx.error_if(
+            pressure,
+            jnp.any(~jnp.isfinite(pressure) | (pressure < self.cavitation_pressure_pa)),
+            "EHL pressure must be finite and at least the cavitation pressure.",
+        )
         for _ in range(iterations):
             film = self.undeformed_gap_m + self.elastic_compliance_m_pa @ (
                 pressure - self.cavitation_pressure_pa
             )
-            if bool(jnp.any(film <= 0)):
-                raise ValueError("EHL elastic deformation closed the lubricating film.")
+            film = eqx.error_if(
+                film,
+                jnp.any(~jnp.isfinite(film) | (film <= 0)),
+                "EHL elastic deformation closed the lubricating film.",
+            )
             ratio = content / film
             target = self.cavitation_pressure_pa + self.bulk_modulus_pa * jnp.maximum(
                 ratio - 1.0, 0
@@ -120,7 +154,7 @@ class MassConservingEHLSolver:
         film = self.undeformed_gap_m + self.elastic_compliance_m_pa @ (
             pressure - self.cavitation_pressure_pa
         )
-        saturation = jnp.minimum(content / film, 1.0)
+        saturation = content / film
         target = self.cavitation_pressure_pa + self.bulk_modulus_pa * jnp.maximum(
             content / film - 1.0, 0
         )
@@ -170,9 +204,23 @@ class MassConservingEHLSolver:
         outlet_flux_m2_s: float = 0.0,
         coupling_iterations: int = 64,
     ) -> EHLStep:
-        if step_size_s <= 0:
-            raise ValueError("EHL step size must be positive.")
-        film, saturation, pressure, _, _ = self.film_and_saturation(
+        if (
+            not isfinite(step_size_s)
+            or step_size_s <= 0
+            or isinstance(coupling_iterations, bool)
+            or not isinstance(coupling_iterations, int)
+            or coupling_iterations <= 0
+            or not isfinite(inlet_flux_m2_s)
+            or not isfinite(outlet_flux_m2_s)
+        ):
+            raise ValueError("EHL step and flux controls are invalid.")
+        (
+            film,
+            saturation,
+            pressure,
+            initial_complementarity,
+            initial_coupling_residual,
+        ) = self.film_and_saturation(
             state.fluid_content_m,
             state.pressure_pa,
             iterations=coupling_iterations,
@@ -185,10 +233,15 @@ class MassConservingEHLSolver:
             outlet_flux_m2_s=outlet_flux_m2_s,
         )
         rate = -(flux[1:] - flux[:-1]) / self.cell_widths_m
-        content = jnp.asarray(state.fluid_content_m) + float(step_size_s) * rate
-        if bool(jnp.any(content < -1e-14)):
-            raise ValueError("EHL transport CFL condition violated non-negative content.")
-        content = jnp.maximum(content, 0)
+        candidate_content = jnp.asarray(state.fluid_content_m) + float(step_size_s) * rate
+        transport_valid = jnp.all(
+            jnp.isfinite(candidate_content) & (candidate_content >= 0)
+        )
+        content = jnp.where(
+            transport_valid,
+            candidate_content,
+            jnp.asarray(state.fluid_content_m),
+        )
         film, saturation, pressure, complementarity, coupling_residual = (
             self.film_and_saturation(
                 content,
@@ -210,12 +263,30 @@ class MassConservingEHLSolver:
         )
         friction = contract("q,q->", self.cell_widths_m, friction_density)
         successful = (
-            jnp.all(jnp.isfinite(pressure))
-            & jnp.all(content >= 0)
+            transport_valid
+            & jnp.all(jnp.isfinite(pressure))
+            & jnp.all(jnp.isfinite(film))
+            & jnp.all(pressure >= self.cavitation_pressure_pa)
             & jnp.all((saturation >= 0) & (saturation <= 1))
+            & (initial_complementarity <= self.coupling_tolerance)
+            & (initial_coupling_residual <= self.coupling_tolerance)
+            & (complementarity <= self.coupling_tolerance)
+            & (coupling_residual <= self.coupling_tolerance)
+            & jnp.isfinite(balance)
+            & (jnp.abs(balance) <= self.balance_tolerance)
+        )
+        accepted_content = jnp.where(
+            successful,
+            content,
+            jnp.asarray(state.fluid_content_m),
+        )
+        accepted_pressure = jnp.where(
+            successful,
+            pressure,
+            jnp.asarray(state.pressure_pa),
         )
         return EHLStep(
-            EHLState(content, pressure),
+            EHLState(accepted_content, accepted_pressure),
             film,
             saturation,
             flux,

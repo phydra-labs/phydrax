@@ -703,36 +703,36 @@ class CardiovascularCheckpointRecord(StrictModule, NonTrainableState):
     execution_manifest_id: str = eqx.field(static=True)
     checkpoint_id: str = eqx.field(static=True)
     parent_checkpoint_id: str | None = eqx.field(static=True)
+    parent_manifest_id: str | None = eqx.field(static=True)
     record_id: str = eqx.field(static=True)
 
     def __init__(
         self,
         archive: LifecycleArchive,
         execution_manifest_id: str,
-        checkpoint_id: str,
-        parent_checkpoint_id: str | None,
         /,
     ):
         if not isinstance(archive, LifecycleArchive):
             raise TypeError("archive must be LifecycleArchive.")
+        manifest = archive.manifest
+        if not isinstance(manifest, CheckpointManifest) or not manifest.complete:
+            raise ValueError("archive must contain a complete CheckpointManifest.")
         execution = _identifier(execution_manifest_id, "execution_manifest_id")
-        checkpoint = _identifier(checkpoint_id, "checkpoint_id")
-        parent = (
-            None
-            if parent_checkpoint_id is None
-            else _identifier(parent_checkpoint_id, "parent_checkpoint_id")
-        )
+        if manifest.execution_plan_id != execution:
+            raise ValueError("Checkpoint archive does not match the execution manifest.")
         self.archive = archive
         self.execution_manifest_id = execution
-        self.checkpoint_id = checkpoint
-        self.parent_checkpoint_id = parent
+        self.checkpoint_id = manifest.checkpoint_id
+        self.parent_checkpoint_id = manifest.parent_checkpoint_id
+        self.parent_manifest_id = manifest.parent_manifest_id
         self.record_id = canonical_fingerprint(
             {
                 "kind": "cardiovascular-checkpoint-record",
                 "archive": archive.archive_id,
                 "execution": execution,
-                "checkpoint": checkpoint,
-                "parent": parent,
+                "checkpoint": manifest.checkpoint_id,
+                "parent_checkpoint": manifest.parent_checkpoint_id,
+                "parent_manifest": manifest.parent_manifest_id,
             }
         )
 
@@ -767,7 +767,7 @@ class CardiovascularLifecycleCheckpointCodec(StrictModule, NonTrainableState):
         checkpoint_id: str,
         committed: bool,
         layout_ids: Mapping[str, Sequence[str]] | None = None,
-        parent_checkpoint_id: str | None = None,
+        parent: CardiovascularCheckpointRecord | None = None,
         diagnostic_ids: Sequence[str] = (),
     ) -> CardiovascularCheckpointRecord:
         """Atomically publish only a committed, capacity-admitted state."""
@@ -781,11 +781,33 @@ class CardiovascularLifecycleCheckpointCodec(StrictModule, NonTrainableState):
         if not isinstance(arrays, Mapping) or not arrays:
             raise ValueError("Checkpoint arrays must be a non-empty mapping.")
         checkpoint = _identifier(checkpoint_id, "checkpoint_id")
-        parent = (
-            None
-            if parent_checkpoint_id is None
-            else _identifier(parent_checkpoint_id, "parent_checkpoint_id")
-        )
+        parent_checkpoint_id = None
+        parent_manifest_id = None
+        parent_archive = None
+        if parent is not None:
+            if not isinstance(parent, CardiovascularCheckpointRecord):
+                raise TypeError(
+                    "parent must be a CardiovascularCheckpointRecord or None."
+                )
+            parent_archive = parent.archive
+            parent_manifest = parent_archive.manifest
+            compatible_parent = (
+                isinstance(parent_manifest, CheckpointManifest)
+                and parent_manifest.complete
+                and parent.execution_manifest_id == self.execution.manifest_id
+                and parent_manifest.analysis_plan_id == self.execution.analysis_plan_id
+                and parent_manifest.numeric_revision_id
+                == self.execution.numeric_revision_id
+                and parent_manifest.execution_plan_id == self.execution.manifest_id
+            )
+            if not compatible_parent:
+                raise CardiovascularRuntimeError(
+                    CardiovascularRuntimeStatus.CHECKPOINT_MISMATCH,
+                    phase="checkpoint-write-parent",
+                    entity_ids=(self.execution.manifest_id,),
+                )
+            parent_checkpoint_id = parent_manifest.checkpoint_id
+            parent_manifest_id = parent_manifest.manifest_id
         diagnostics = tuple(_identifier(v, "diagnostic_id") for v in diagnostic_ids)
         if len(set(diagnostics)) != len(diagnostics):
             raise ValueError("Checkpoint diagnostic IDs must be unique.")
@@ -832,22 +854,46 @@ class CardiovascularLifecycleCheckpointCodec(StrictModule, NonTrainableState):
             self.execution.manifest_id,
             shards,
             complete=True,
-            parent_checkpoint_id=parent,
+            parent_checkpoint_id=parent_checkpoint_id,
+            parent_manifest_id=parent_manifest_id,
             diagnostic_ids=diagnostics,
         )
-        archive = create_lifecycle_archive(path, manifest=manifest, arrays=payloads)
+        archive = create_lifecycle_archive(
+            path,
+            manifest=manifest,
+            arrays=payloads,
+            parent=parent_archive,
+        )
         return CardiovascularCheckpointRecord(
             archive,
             self.execution.manifest_id,
-            checkpoint,
-            parent,
         )
 
-    def read(self, path: str | Path, /) -> CardiovascularCheckpointRecord:
-        """Open and verify archive checksums and exact execution compatibility."""
+    def read(
+        self,
+        path: str | Path,
+        /,
+        *,
+        parent: CardiovascularCheckpointRecord | None = None,
+    ) -> CardiovascularCheckpointRecord:
+        """Open and verify archive checksums, lineage, and execution compatibility."""
 
+        if parent is not None and not isinstance(parent, CardiovascularCheckpointRecord):
+            raise TypeError("parent must be a CardiovascularCheckpointRecord or None.")
+        parent_archive = None if parent is None else parent.archive
+        if (
+            parent is not None
+            and parent.execution_manifest_id != self.execution.manifest_id
+        ):
+            raise CardiovascularRuntimeError(
+                CardiovascularRuntimeStatus.CHECKPOINT_MISMATCH,
+                phase="checkpoint-read-parent",
+                entity_ids=(self.execution.manifest_id,),
+            )
         archive = open_lifecycle_archive(
-            path, limits=_checkpoint_archive_limits(self.execution.capacity)
+            path,
+            parent=parent_archive,
+            limits=_checkpoint_archive_limits(self.execution.capacity),
         )
         manifest = archive.manifest
         if not isinstance(manifest, CheckpointManifest):
@@ -893,8 +939,6 @@ class CardiovascularLifecycleCheckpointCodec(StrictModule, NonTrainableState):
         return CardiovascularCheckpointRecord(
             archive,
             self.execution.manifest_id,
-            manifest.checkpoint_id,
-            manifest.parent_checkpoint_id,
         )
 
 
@@ -2128,7 +2172,7 @@ def write_cardiovascular_distributed_solver_checkpoint(
     /,
     *,
     checkpoint_id: str,
-    parent_checkpoint_id: str | None = None,
+    parent: CardiovascularCheckpointRecord | None = None,
 ) -> CardiovascularCheckpointRecord:
     """Atomically checkpoint accepted owned shards with every runtime binding."""
 
@@ -2158,7 +2202,7 @@ def write_cardiovascular_distributed_solver_checkpoint(
         checkpoint_id=checkpoint_id,
         committed=state.successful,
         layout_ids=layouts,
-        parent_checkpoint_id=parent_checkpoint_id,
+        parent=parent,
     )
 
 

@@ -183,12 +183,3 @@ python tools/cardiovascular_hemodynamics_qualification.py --output hemodynamics.
 ```
 
 The report covers physical/lattice roundtrips, the Carreau--Yasuda Newtonian limit, Poiseuille flow integration, the low-Womersley quasi-steady limit, terminal outlet volume and power, a fixed-wall candidate/commit, and a native D3Q19/MAC comparison evolved from rest under the same body acceleration and time horizon. A failed case gives a nonzero exit status.
-
-For candidate-kernel timing of both rheology types:
-
-```text
-python benchmarks/cardiovascular_hemodynamics.py \
-  --shape 32 24 24 --repeats 20 --output hemodynamics_benchmark.json
-```
-
-Benchmark output reports population-state bytes, compile-and-first-call time, steady execution time, cell updates per second, Mach evidence, relaxation-rate extrema, and success. It is a numerical throughput measurement for the fixed-wall D3Q19 candidate path only; it is not evidence of physiological or clinical validity.

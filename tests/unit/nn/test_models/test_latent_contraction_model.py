@@ -171,7 +171,7 @@ def test_latent_contraction_aligned_scan_matches_loop_for_homogeneous_factors():
     x = jnp.array([0.3, -0.2], dtype="float64")
     out_loop = model_loop(x)
     out_scan = model_scan(x)
-    assert model_scan._scan_enabled_aligned
+
     assert out_scan.shape == out_loop.shape
     assert jnp.allclose(out_scan, out_loop)
 
@@ -203,7 +203,6 @@ def test_latent_contraction_scan_falls_back_when_aligned_factors_not_uniform():
         s=scalar_model,
         v=vector_model,
     )
-    assert not model._scan_enabled_aligned
 
     x = jnp.array([0.1, 0.2, 0.3], dtype="float64")
     out = model(x)

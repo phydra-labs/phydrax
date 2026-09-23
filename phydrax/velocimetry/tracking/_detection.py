@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 from numbers import Integral
 
 import equinox as eqx
@@ -47,10 +48,17 @@ class ParticleDetectionPlan(StrictModule, NonTrainableState):
         covariance_floor: float = 1e-4,
         maximum_detections: int = 1024,
     ):
+        scalar_values = (
+            small_sigma,
+            large_sigma,
+            threshold,
+            crowding_distance,
+            covariance_floor,
+        )
+        if not all(math.isfinite(float(value)) for value in scalar_values):
+            raise ValueError("Detection plan scalar values must be finite.")
         if not (0.0 < float(small_sigma) < float(large_sigma)):
             raise ValueError("Require 0 < small_sigma < large_sigma.")
-        if not jnp.isfinite(threshold):
-            raise ValueError("threshold must be finite.")
         for name, value in (
             ("local_maximum_radius", local_maximum_radius),
             ("centroid_radius", centroid_radius),
@@ -138,8 +146,10 @@ def detect_particles(
         raise ValueError("image shape must equal geometry.image_shape.")
     if values.size < plan.maximum_detections:
         raise ValueError("maximum_detections cannot exceed the image pixel count.")
+    if jnp.issubdtype(values.dtype, jnp.complexfloating):
+        raise TypeError("image must be real-valued.")
     if not jnp.issubdtype(values.dtype, jnp.inexact):
-        values = values.astype("float64")
+        values = values.astype(jnp.float64)
     finite = jnp.isfinite(values)
     support = (
         finite

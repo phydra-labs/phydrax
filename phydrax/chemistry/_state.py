@@ -201,6 +201,11 @@ class PeriodicElectronicSectorPlan(StrictModule, NonTrainableState):
         magnetization = float(spin_magnetization)
         charge = float(charge_per_cell)
         policy = str(background_policy).strip()
+        allowed_policies = {"forbid-charged-cell", "uniform-background"}
+        if policy not in allowed_policies:
+            raise ValueError(
+                "background_policy must be 'forbid-charged-cell' or 'uniform-background'."
+            )
         if any(not isfinite(value) for value in (electrons, magnetization, charge)):
             raise ValueError(
                 "Periodic electron, magnetization, and charge values must be finite."

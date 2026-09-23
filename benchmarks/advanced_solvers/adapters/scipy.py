@@ -194,9 +194,9 @@ class ScipyAdapter(BenchmarkAdapter):
             matrix_bytes = _sparse_bytes(prepared_state.matrix)
             return {
                 "matrix_bytes": matrix_bytes,
-                "setup_bytes": 0,
+                "setup_bytes": None,
                 "peak_estimate_bytes": None,
-                "evidence": "exact retained CSC bytes; ARPACK basis/output/workspace peak is unavailable",
+                "evidence": "exact retained CSC bytes; ARPACK basis/output/workspace storage is unavailable",
             }
         if isinstance(problem, NonlinearProblem):
             arrays = [problem.initial, problem.target]
@@ -207,15 +207,15 @@ class ScipyAdapter(BenchmarkAdapter):
             if problem.diagonal is not None:
                 arrays.append(problem.diagonal)
         else:
-            arrays = [problem.initial, problem.optimum]
+            arrays = [problem.initial]
             if problem.target is not None:
                 arrays.append(problem.target)
         problem_bytes = sum(array.nbytes for array in arrays)
         return {
             "matrix_bytes": int(problem_bytes),
-            "setup_bytes": 0,
+            "setup_bytes": None,
             "peak_estimate_bytes": None,
-            "evidence": "exact benchmark input bytes; optimizer retained/workspace peak is unavailable",
+            "evidence": "exact solver input bytes; optimizer retained/workspace storage is unavailable",
         }
 
     def _solve_nonlinear(

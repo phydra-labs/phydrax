@@ -29,6 +29,8 @@ class BoilingWallStep:
     temperature_k: Array
     boiling: BoilingEvaluation
     energy_balance_residual_j_m2: Array
+    candidate_temperature_k: Array
+    successful: Array
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,8 +105,16 @@ class PoolBoilingCurve:
         step_size_s: float,
         /,
     ) -> BoilingWallStep:
-        if areal_heat_capacity_j_m2_k <= 0 or step_size_s <= 0:
-            raise ValueError("Boiling wall capacity and step size must be positive.")
+        if (
+            not np.isfinite(areal_heat_capacity_j_m2_k)
+            or areal_heat_capacity_j_m2_k <= 0
+            or not np.isfinite(step_size_s)
+            or step_size_s <= 0
+            or not np.isfinite(imposed_heat_flux_w_m2)
+        ):
+            raise ValueError(
+                "Boiling wall inputs must be finite with positive capacity and step size."
+            )
         boiling = self.evaluate(wall_temperature_k)
         net_flux = float(imposed_heat_flux_w_m2) - boiling.heat_flux_w_m2
         temperature_change = (
@@ -114,10 +124,18 @@ class PoolBoilingCurve:
         stored = float(areal_heat_capacity_j_m2_k) * temperature_change
         supplied = float(step_size_s) * float(imposed_heat_flux_w_m2)
         removed = float(step_size_s) * boiling.heat_flux_w_m2
-        return BoilingWallStep(
+        successful = jnp.isfinite(next_temperature) & (next_temperature > 0)
+        accepted_temperature = jnp.where(
+            successful,
             next_temperature,
+            jnp.asarray(wall_temperature_k),
+        )
+        return BoilingWallStep(
+            accepted_temperature,
             boiling,
             supplied - removed - stored,
+            next_temperature,
+            successful,
         )
 
 

@@ -6,7 +6,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -35,6 +37,7 @@ class SpatialChemoMechanicalSystem:
     chemical_expansion_coupling: Array
     mobility_laplacian: Array
     storage_weights: Array
+    tolerance: float
 
     @classmethod
     def create(
@@ -53,6 +56,13 @@ class SpatialChemoMechanicalSystem:
         coupling = np.asarray(chemical_expansion_coupling, dtype=np.float64)
         mobility = np.asarray(mobility_laplacian, dtype=np.float64)
         weights = np.asarray(storage_weights, dtype=np.float64)
+        if not isfinite(tolerance) or tolerance <= 0:
+            raise ValueError("Chemo-mechanical tolerance must be finite and positive.")
+        if not all(
+            np.all(np.isfinite(value))
+            for value in (mechanical, chemical, coupling, mobility, weights)
+        ):
+            raise ValueError("Chemo-mechanical operators must be finite.")
         if mechanical.ndim != 2 or mechanical.shape[0] != mechanical.shape[1]:
             raise ValueError("Chemo-mechanical stiffness must be square.")
         if chemical.ndim != 2 or chemical.shape[0] != chemical.shape[1]:
@@ -87,6 +97,7 @@ class SpatialChemoMechanicalSystem:
             jnp.asarray(coupling),
             jnp.asarray(mobility),
             jnp.asarray(weights),
+            float(tolerance),
         )
 
     def advance(
@@ -104,8 +115,27 @@ class SpatialChemoMechanicalSystem:
         chemical_size = self.chemical_hessian.shape[0]
         if old.shape != (chemical_size,) or source.shape != (chemical_size,):
             raise ValueError("Chemical state and source have incompatible shapes.")
-        if force.shape != (mechanical_size,) or step_size_s <= 0:
+        if (
+            force.shape != (mechanical_size,)
+            or not isfinite(step_size_s)
+            or step_size_s <= 0
+        ):
             raise ValueError("Mechanical load or chemo-mechanical step is invalid.")
+        old = eqx.error_if(
+            old,
+            jnp.any(~jnp.isfinite(old) | (old < 0)),
+            "Chemical concentration must be finite and nonnegative.",
+        )
+        source = eqx.error_if(
+            source,
+            jnp.any(~jnp.isfinite(source)),
+            "Chemical source must be finite.",
+        )
+        force = eqx.error_if(
+            force,
+            jnp.any(~jnp.isfinite(force)),
+            "Mechanical load must be finite.",
+        )
         storage = jnp.diag(self.storage_weights / float(step_size_s))
         transport_hessian = self.mobility_laplacian @ self.chemical_hessian
         matrix = jnp.block(
@@ -141,8 +171,14 @@ class SpatialChemoMechanicalSystem:
         )
         successful = (
             result.successful
-            & jnp.all(next_concentration >= -1e-12)
-            & (dissipation >= -1e-12)
+            & jnp.all(jnp.isfinite(result.value))
+            & jnp.all(next_concentration >= -self.tolerance)
+            & jnp.isfinite(mass_residual)
+            & (jnp.abs(mass_residual) <= self.tolerance)
+            & jnp.isfinite(dissipation)
+            & (dissipation >= -self.tolerance)
+            & jnp.isfinite(residual_norm)
+            & (residual_norm <= self.tolerance * (1.0 + jnp.linalg.norm(right)))
         )
         return ChemoMechanicalStep(
             displacement,

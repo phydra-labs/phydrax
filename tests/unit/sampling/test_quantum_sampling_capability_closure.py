@@ -2,6 +2,7 @@
 
 import jax.numpy as jnp
 import jax.random as jr
+import pytest
 
 import phydrax as phx
 from phydrax._sampling import _hamiltonian as hamiltonian
@@ -11,8 +12,11 @@ from phydrax.nn.quantum import (
     RestrictedBoltzmannAmplitude,
 )
 from phydrax.sampling import (
+    adapt_hamiltonian_kernel,
     adapt_proposal_scale,
+    FullMarkovTarget,
     GaussianRandomWalkProposal,
+    HamiltonianAdaptationPlan,
     initialize_hamiltonian_state,
     initialize_proposal_adaptation,
     MarkovChunkPlan,
@@ -171,7 +175,10 @@ def test_hamiltonian_initial_positions_fail_closed_even_for_constant_target():
 def test_chunked_markov_prefix_and_partial_mask_are_explicit():
     kernel = MetropolisHastings(GaussianRandomWalkProposal(0.2))
     initial = jnp.zeros((3, 1))
-    target = lambda value: -0.5 * jnp.sum(value**2)
+    target = FullMarkovTarget(
+        lambda value: -0.5 * jnp.sum(value**2),
+        target_id="chunked-standard-normal",
+    )
     state = kernel.initialize(target, initial)
     result = sample_markov_chunked(
         target,
@@ -183,6 +190,46 @@ def test_chunked_markov_prefix_and_partial_mask_are_explicit():
     assert result.samples.shape == (3, 6, 1)
     assert jnp.array_equal(result.active, jnp.array([1, 1, 1, 1, 1, 0], dtype="bool"))
     assert bool(result.replay_exact)
+
+
+def test_hamiltonian_state_is_bound_to_exact_prepared_kernel():
+    log_target = lambda value: -0.5 * jnp.sum(value**2)
+    first = prepare_hamiltonian_kernel(
+        log_target,
+        jnp.eye(1),
+        step_size=0.1,
+        target_id="owner-a",
+    )
+    changed_step = prepare_hamiltonian_kernel(
+        log_target,
+        jnp.eye(1),
+        step_size=0.2,
+        target_id="owner-a",
+    )
+    changed_target = prepare_hamiltonian_kernel(
+        log_target,
+        jnp.eye(1),
+        step_size=0.1,
+        target_id="owner-b",
+    )
+    state = initialize_hamiltonian_state(first, jnp.zeros((1, 1)))
+    for kernel in (changed_step, changed_target):
+        with pytest.raises(ValueError, match="another prepared kernel"):
+            sample_hamiltonian(
+                kernel,
+                state,
+                key=jr.key(61),
+                num_draws=1,
+            )
+
+    adapted = adapt_hamiltonian_kernel(
+        first,
+        state,
+        HamiltonianAdaptationPlan(warmup_steps=2),
+        key=jr.key(62),
+    )
+    assert adapted.final_state.target_id == adapted.kernel.target_id
+    assert adapted.final_state.kernel_id == adapted.kernel.kernel_id
 
 
 def test_robbins_monro_scale_adapts_only_before_frozen_boundary():

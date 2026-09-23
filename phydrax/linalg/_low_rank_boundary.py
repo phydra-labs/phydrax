@@ -59,6 +59,8 @@ class LowRankBoundaryCorrectionPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Boundary Green/capacitance preparation produced nonfinite values."
             )
+        if np.linalg.matrix_rank(capacitance) != capacitance.shape[0]:
+            raise ValueError("Boundary capacitance is singular.")
         self.operator = jnp.asarray(matrix)
         self.boundary_indices = jnp.asarray(indices)
         self.green_columns = jnp.asarray(green)

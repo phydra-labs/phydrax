@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+from math import isfinite
+
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
@@ -48,6 +50,9 @@ class BosonicGaussianState(StrictModule):
         geometry_precision: GeometryPrecisionPolicy | None = None,
         hermitian_precision: HermitianPrecisionPolicy | None = None,
     ):
+        hbar_ = float(hbar)
+        if not isfinite(hbar_) or hbar_ <= 0.0:
+            raise ValueError("hbar must be finite and strictly positive.")
         mean_ = jnp.asarray(mean)
         covariance_ = jnp.asarray(covariance, dtype=mean_.dtype)
         geometry_ = (
@@ -76,7 +81,7 @@ class BosonicGaussianState(StrictModule):
         covariance_compute = geometry_.compute(covariance_)
         symmetric = 0.5 * (covariance_compute + covariance_compute.T)
         complex_dtype = jnp.complex64 if symmetric.dtype.itemsize <= 4 else jnp.complex128
-        uncertainty = symmetric.astype(complex_dtype) + (0.5j * float(hbar) * omega)
+        uncertainty = symmetric.astype(complex_dtype) + (0.5j * hbar_ * omega)
         uncertainty_spectrum = HermitianSpectrum(
             uncertainty,
             tolerance=tolerance,
@@ -87,7 +92,7 @@ class BosonicGaussianState(StrictModule):
         eigenvalues = jnp.linalg.eigvals(symplectic_matrix)
         symplectic = geometry_.decision(jnp.sort(jnp.abs(eigenvalues))[::2])
         _, log_determinant = jnp.linalg.slogdet(
-            hermitian_.factorization(2.0 * symmetric / float(hbar))
+            hermitian_.factorization(2.0 * symmetric / hbar_)
         )
         purity = geometry_.decision(jnp.exp(-0.5 * jnp.maximum(log_determinant, 0.0)))
         residual = geometry_.decision(
@@ -116,7 +121,7 @@ class BosonicGaussianState(StrictModule):
             children={"uncertainty-spectrum": uncertainty_spectrum.precision_evidence},
         )
         self.mode_count = modes
-        self.hbar = float(hbar)
+        self.hbar = hbar_
 
 
 class BosonicGaussianChannel(StrictModule):
@@ -145,6 +150,9 @@ class BosonicGaussianChannel(StrictModule):
         geometry_precision: GeometryPrecisionPolicy | None = None,
         hermitian_precision: HermitianPrecisionPolicy | None = None,
     ):
+        hbar_ = float(hbar)
+        if not isfinite(hbar_) or hbar_ <= 0.0:
+            raise ValueError("hbar must be finite and strictly positive.")
         x_ = jnp.asarray(x)
         y_ = jnp.asarray(y, dtype=x_.dtype)
         displacement_ = jnp.asarray(displacement, dtype=x_.dtype)
@@ -174,9 +182,9 @@ class BosonicGaussianChannel(StrictModule):
         x_compute = geometry_.compute(x_)
         y_compute = geometry_.compute(y_)
         complex_dtype = jnp.complex64 if x_compute.dtype.itemsize <= 4 else jnp.complex128
-        cp_matrix = 0.5 * (y_compute + y_compute.T).astype(complex_dtype) + 0.5j * float(
-            hbar
-        ) * (omega - x_compute @ omega @ x_compute.T)
+        cp_matrix = 0.5 * (y_compute + y_compute.T).astype(
+            complex_dtype
+        ) + 0.5j * hbar_ * (omega - x_compute @ omega @ x_compute.T)
         cp_spectrum = HermitianSpectrum(
             cp_matrix,
             tolerance=tolerance,
@@ -197,7 +205,7 @@ class BosonicGaussianChannel(StrictModule):
             children={"cp-spectrum": cp_spectrum.precision_evidence},
         )
         self.mode_count = modes
-        self.hbar = float(hbar)
+        self.hbar = hbar_
         self.channel_id = str(channel_id)
 
     def apply(self, state: BosonicGaussianState, /) -> BosonicGaussianState:

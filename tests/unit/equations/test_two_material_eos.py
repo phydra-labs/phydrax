@@ -27,6 +27,20 @@ def _materials():
     return ideal, stiff
 
 
+@pytest.mark.parametrize(
+    ("density", "pressure"),
+    (
+        (jnp.inf, 1.0),
+        (1.0, jnp.inf),
+        (jnp.nan, 1.0),
+        (1.0, jnp.nan),
+    ),
+)
+def test_thermodynamic_materials_reject_nonfinite_states(density, pressure):
+    for material in _materials():
+        assert not bool(material.admissible(jnp.asarray(density), jnp.asarray(pressure)))
+
+
 def test_ideal_ideal_round_trip_and_report_coefficients():
     ideal, _ = _materials()
     closure = TwoMaterialEOSClosure(

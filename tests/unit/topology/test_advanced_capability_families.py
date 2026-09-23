@@ -74,6 +74,35 @@ def test_finite_multiparameter_module_does_not_claim_a_barcode():
     assert not result.barcode_claimed
 
 
+def test_finite_persistence_module_rejects_inconsistent_direct_map():
+    field = phx.topology.PrimeField(2)
+
+    with pytest.raises(ValueError, match="noncommuting path maps"):
+        phx.topology.FinitePersistenceModule(
+            jnp.asarray([1, 1, 1]),
+            jnp.asarray([[0, 1], [1, 2], [0, 2]]),
+            (
+                jnp.asarray([[1]]),
+                jnp.asarray([[1]]),
+                jnp.asarray([[0]]),
+            ),
+            field=field,
+        )
+
+    with pytest.raises(ValueError, match="noncommuting path maps"):
+        phx.topology.FinitePersistenceModule(
+            jnp.asarray([1, 1, 1, 1]),
+            jnp.asarray([[0, 1], [1, 2], [2, 3], [0, 3]]),
+            (
+                jnp.asarray([[1]]),
+                jnp.asarray([[1]]),
+                jnp.asarray([[1]]),
+                jnp.asarray([[0]]),
+            ),
+            field=field,
+        )
+
+
 def test_mixed_zigzag_interval_decomposition_reconstructs_dimensions_and_ranks():
     field = phx.topology.PrimeField(3)
     result = phx.topology.compute_zigzag_intervals(
@@ -112,6 +141,31 @@ def test_explicit_diagonal_cup_product_and_constant_cellular_sheaf():
         coefficients=phx.topology.PrimeField(3),
     )
     assert jnp.array_equal(product, jnp.asarray([2]))
+
+    empty_diagonal = phx.topology.CellDiagonalApproximation(
+        interval.topology,
+        0,
+        0,
+        0,
+        jnp.zeros((0,), dtype=jnp.int32),
+        jnp.zeros((0,), dtype=jnp.int32),
+        jnp.zeros((0,), dtype=jnp.int32),
+        jnp.zeros((0,), dtype=jnp.int32),
+    )
+    zero_product = phx.topology.cup_product(
+        jnp.asarray([1, 2]),
+        jnp.asarray([2, 1]),
+        empty_diagonal,
+        coefficients=phx.topology.PrimeField(3),
+    )
+    assert jnp.array_equal(zero_product, jnp.zeros((2,), dtype=jnp.int32))
+    with pytest.raises(ValueError, match="Left cochain length"):
+        phx.topology.cup_product(
+            jnp.asarray([1]),
+            jnp.asarray([2, 1]),
+            empty_diagonal,
+            coefficients=phx.topology.PrimeField(3),
+        )
 
     sheaf = phx.topology.CellularSheaf(
         interval.topology,

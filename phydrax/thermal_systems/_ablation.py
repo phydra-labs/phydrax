@@ -28,6 +28,8 @@ class AblationSurfaceStep:
     removed_mass_kg_m2: Array
     rejected_energy_j_m2: Array
     energy_balance_residual_j_m2: Array
+    candidate_state: AblationSurfaceState
+    successful: Array
     exhausted: Array
 
 
@@ -49,8 +51,15 @@ class AblationSurfaceModel:
         )
         if any(not np.isfinite(value) or value <= 0 for value in positive):
             raise ValueError("Ablation material parameters must be finite and positive.")
-        if not 0 <= self.emissivity <= 1 or not 0 <= self.absorptivity <= 1:
-            raise ValueError("Ablation radiative properties must lie in [0, 1].")
+        if (
+            not np.isfinite(self.emissivity)
+            or not np.isfinite(self.absorptivity)
+            or not 0 <= self.emissivity <= 1
+            or not 0 <= self.absorptivity <= 1
+        ):
+            raise ValueError(
+                "Ablation radiative properties must be finite and lie in [0, 1]."
+            )
 
     def advance(
         self,
@@ -64,63 +73,73 @@ class AblationSurfaceModel:
     ) -> AblationSurfaceStep:
         thickness = jnp.asarray(state.remaining_thickness_m)
         temperature = jnp.asarray(state.surface_temperature_k)
-        if bool((thickness < 0) | (temperature <= 0)) or step_size_s <= 0:
-            raise ValueError("Ablation surface state or step size is invalid.")
-        if environment_temperature_k <= 0:
-            raise ValueError("Ablation environment temperature must be positive.")
+        dtype = jnp.result_type(thickness, temperature)
+        convective = jnp.asarray(convective_heat_flux_w_m2, dtype=dtype)
+        incident = jnp.asarray(incident_radiative_flux_w_m2, dtype=dtype)
+        conductive = jnp.asarray(conductive_heat_loss_w_m2, dtype=dtype)
+        environment = jnp.asarray(environment_temperature_k, dtype=dtype)
+        dt = jnp.asarray(step_size_s, dtype=dtype)
+        input_valid = (
+            jnp.all(jnp.isfinite(thickness))
+            & jnp.all(jnp.isfinite(temperature))
+            & jnp.all(thickness >= 0)
+            & jnp.all(temperature > 0)
+            & jnp.isfinite(convective)
+            & jnp.isfinite(incident)
+            & jnp.isfinite(conductive)
+            & jnp.isfinite(environment)
+            & (environment > 0)
+            & jnp.isfinite(dt)
+            & (dt > 0)
+        )
         radiative_loss = (
-            self.emissivity
-            * STEFAN_BOLTZMANN_W_M2_K4
-            * (temperature**4 - float(environment_temperature_k) ** 4)
+            self.emissivity * STEFAN_BOLTZMANN_W_M2_K4 * (temperature**4 - environment**4)
         )
-        net_flux = (
-            float(convective_heat_flux_w_m2)
-            + self.absorptivity * float(incident_radiative_flux_w_m2)
-            - float(conductive_heat_loss_w_m2)
-            - radiative_loss
-        )
-        supplied = float(step_size_s) * net_flux
-        if bool(supplied <= 0):
-            sensible = supplied
-            next_temperature = jnp.maximum(
-                temperature + sensible / self.areal_heat_capacity_j_m2_k, 0
-            )
-            actual_sensible = self.areal_heat_capacity_j_m2_k * (
-                next_temperature - temperature
-            )
-            rejected = supplied - actual_sensible
-            return AblationSurfaceStep(
-                AblationSurfaceState(thickness, next_temperature),
-                net_flux,
-                jnp.asarray(0.0),
-                jnp.asarray(0.0),
-                rejected,
-                supplied - actual_sensible - rejected,
-                thickness <= 0,
-            )
-
+        net_flux = convective + self.absorptivity * incident - conductive - radiative_loss
+        supplied = dt * net_flux
+        cooling = supplied <= 0
+        cooling_temperature = temperature + supplied / self.areal_heat_capacity_j_m2_k
         heating_need = self.areal_heat_capacity_j_m2_k * jnp.maximum(
             self.ablation_temperature_k - temperature, 0
         )
-        sensible = jnp.minimum(supplied, heating_need)
-        next_temperature = temperature + sensible / self.areal_heat_capacity_j_m2_k
-        available_ablation = supplied - sensible
+        sensible = jnp.minimum(jnp.maximum(supplied, 0), heating_need)
+        heated_temperature = temperature + sensible / self.areal_heat_capacity_j_m2_k
+        available_ablation = jnp.maximum(supplied - sensible, 0)
         requested_mass = available_ablation / self.effective_heat_of_ablation_j_kg
         available_mass = self.density_kg_m3 * thickness
         removed_mass = jnp.minimum(requested_mass, available_mass)
         recession = removed_mass / self.density_kg_m3
         next_thickness = jnp.maximum(thickness - recession, 0)
+        candidate_temperature = jnp.where(
+            cooling, cooling_temperature, heated_temperature
+        )
+        candidate = AblationSurfaceState(next_thickness, candidate_temperature)
+        successful = (
+            input_valid
+            & jnp.all(jnp.isfinite(next_thickness))
+            & jnp.all(jnp.isfinite(candidate_temperature))
+            & jnp.all(candidate_temperature > 0)
+        )
+        accepted = AblationSurfaceState(
+            jnp.where(successful, next_thickness, thickness),
+            jnp.where(successful, candidate_temperature, temperature),
+        )
+        actual_sensible = self.areal_heat_capacity_j_m2_k * (
+            candidate_temperature - temperature
+        )
         ablation_energy = removed_mass * self.effective_heat_of_ablation_j_kg
-        rejected = available_ablation - ablation_energy
-        residual = supplied - sensible - ablation_energy - rejected
+        rejected = supplied - actual_sensible - ablation_energy
+        residual = supplied - actual_sensible - ablation_energy - rejected
         return AblationSurfaceStep(
-            AblationSurfaceState(next_thickness, next_temperature),
+            accepted,
             net_flux,
             recession,
             removed_mass,
             rejected,
             residual,
-            next_thickness <= 0,
+            candidate,
+            successful,
+            accepted.remaining_thickness_m <= 0,
         )
 
 

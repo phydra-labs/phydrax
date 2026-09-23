@@ -135,6 +135,17 @@ def test_nifti_export_requires_rights_from_every_reference(tmp_path):
         phx.imaging.NibabelImageProvider().write(asset, tmp_path / "blocked.nii")
 
 
+def test_nifti_export_requires_explicit_semantic_loss_admission(tmp_path):
+    asset = _asset(
+        np.zeros((2, 2, 2), dtype=np.float64),
+        phx.imaging.ImageFieldSpec.named(
+            "signal", phx.units.ONE, phx.measurement.ValueKind.REAL_SCALAR
+        ),
+    )
+    with pytest.raises(ValueError, match="governed image semantics"):
+        phx.imaging.NibabelImageProvider().write(asset, tmp_path / "lossy.nii")
+
+
 def test_image_affine_units_frames_and_qform_conflict():
     matrix = np.asarray(
         (
@@ -212,6 +223,29 @@ def test_tensor_transfer_reorients_spd_field():
     ).execute()
     np.testing.assert_allclose(result.values[0], np.diag((2.0, 3.0, 1.0)), atol=1e-12)
     assert bool(result.evidence.successful)
+    with pytest.raises(ValueError, match="orthogonal"):
+        phx.imaging.TensorImageTransferPlan(
+            image,
+            np.asarray(((0.4, 0.4, 0.4),)),
+            "mesh-basis",
+            2.0 * np.eye(3),
+        )
+
+
+def test_registration_refuses_empty_support_and_non_millimeter_policy():
+    with pytest.raises(ValueError, match="at least one point"):
+        phx.imaging.RegistrationEvaluationPlan(
+            np.zeros((0, 3)),
+            "reference",
+            "target",
+        )
+    with pytest.raises(ValueError, match="canonical millimeter"):
+        phx.imaging.RegistrationEvaluationPlan(
+            np.zeros((1, 3)),
+            "reference",
+            "target",
+            length_unit=phx.units.METER,
+        )
 
 
 def test_conservative_overlap_has_exact_mass_and_dual_pairing():
@@ -342,6 +376,11 @@ def test_probability_transfer_preserves_simplex_and_segmentation_transition():
         ),
         ontology,
     )
+    uncovered = phx.imaging.LabelImageTransferPlan(
+        labels, np.asarray(((10.0, 10.0, 10.0),))
+    ).execute()
+    assert not bool(uncovered.valid[0])
+    assert uncovered.values[0] == 0
     transition = phx.imaging.SegmentationProcessingPlan(
         labels,
         (
@@ -406,8 +445,9 @@ def test_real_nifti_roundtrip_preserves_values_affine_and_rights(tmp_path):
         reference_frame="patient",
     )
     assert asset.references == (reference,)
-    restored = provider.write(asset, tmp_path / "restored.nii.gz")
-    restored_image = nib.load(restored)
+    export = provider.write(asset, tmp_path / "restored.nii.gz", allow_semantic_loss=True)
+    assert {"references", "derivation", "deidentification"} <= set(export.lost_semantics)
+    restored_image = nib.load(export.path)
     np.testing.assert_array_equal(np.asanyarray(restored_image.dataobj), values)
     np.testing.assert_allclose(restored_image.affine, matrix)
 
@@ -453,7 +493,9 @@ def test_real_timed_nifti_roundtrip_preserves_temporal_axis(tmp_path):
         reference_frame="patient",
         time_axis=time_axis,
     )
-    target = provider.write(asset, tmp_path / "timed-restored.nii.gz")
-    restored = nib.load(target)
+    export = provider.write(
+        asset, tmp_path / "timed-restored.nii.gz", allow_semantic_loss=True
+    )
+    restored = nib.load(export.path)
     assert restored.header.get_xyzt_units() == ("mm", "sec")
     assert restored.header.get_zooms()[3] == pytest.approx(0.5)

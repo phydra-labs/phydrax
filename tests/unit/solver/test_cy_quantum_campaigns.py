@@ -4,6 +4,7 @@
 
 import jax
 import jax.numpy as jnp
+import pytest
 
 import phydrax as phx
 
@@ -23,6 +24,23 @@ def test_tetrahedral_qubit_tomography_improves_likelihood():
     assert bool(problem.manifold.contains(result.density))
     artifact = phx.solver.freeze_quantum_tomography(result, problem)
     assert artifact.povm_id == problem.povm.povm_id
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    (
+        {"iterations": -1},
+        {"maximum_backtracks": -1},
+        {"learning_rate": 0.0},
+        {"learning_rate": jnp.inf},
+        {"contraction": 0.0},
+        {"contraction": 1.0},
+        {"likelihood_tolerance": -1.0},
+    ),
+)
+def test_tomography_policy_rejects_invalid_line_search_controls(arguments):
+    with pytest.raises(ValueError):
+        phx.solver.QuantumTomographyPolicy(**arguments)
 
 
 def test_lindblad_amplitude_damping_preserves_density_invariants():

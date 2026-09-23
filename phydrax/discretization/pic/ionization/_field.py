@@ -174,8 +174,56 @@ class FieldIonizationPlan(StrictModule, NonTrainableState):
                 )
             ),
         )
-        successful = allocation.successful & transition.successful & stable
+        candidate_success = allocation.successful & transition.successful & stable
         electron_state = PICParticleState(electron_position, electron_velocity)
+        finite = jnp.all(jnp.isfinite(electron_state.position)) & jnp.all(
+            jnp.isfinite(electron_state.proper_velocity)
+        )
+        successful = candidate_success & finite
+        accepted_ion_charge = PICChargeState(
+            jnp.where(
+                successful,
+                transition.candidate_state.charge_number,
+                ion_charge.charge_number,
+            ),
+            jnp.where(
+                successful,
+                transition.candidate_state.transition_count,
+                ion_charge.transition_count,
+            ),
+            jnp.where(
+                successful,
+                transition.candidate_state.last_transition_step,
+                ion_charge.last_transition_step,
+            ),
+        )
+        accepted_population = ParticlePopulationState(
+            jnp.where(
+                successful,
+                allocation.candidate_state.active,
+                electron_population.active,
+            ),
+            jnp.where(
+                successful,
+                allocation.candidate_state.mass,
+                electron_population.mass,
+            ),
+            jnp.where(
+                successful,
+                allocation.candidate_state.incarnation,
+                electron_population.incarnation,
+            ),
+            jnp.where(
+                successful,
+                allocation.candidate_state.ever_occupied,
+                electron_population.ever_occupied,
+            ),
+            jnp.where(
+                successful,
+                allocation.candidate_state.retired,
+                electron_population.retired,
+            ),
+        )
         accepted_electron = PICParticleState(
             jnp.where(successful, electron_state.position, electron_particles.position),
             jnp.where(
@@ -201,13 +249,10 @@ class FieldIonizationPlan(StrictModule, NonTrainableState):
                 electron_charge.last_transition_step,
             ),
         )
-        finite = jnp.all(jnp.isfinite(electron_state.position)) & jnp.all(
-            jnp.isfinite(electron_state.proper_velocity)
-        )
         return PICIonizationResult(
-            transition.accepted_state,
+            accepted_ion_charge,
             ion_particles,
-            allocation.accepted_state,
+            accepted_population,
             accepted_electron,
             accepted_charge,
             use,
@@ -218,7 +263,7 @@ class FieldIonizationPlan(StrictModule, NonTrainableState):
             self.ionization_energy * jnp.sum(use, dtype=magnitude.dtype),
             allocation.capacity_available,
             finite,
-            successful & finite,
+            successful,
             self.plan_id,
         )
 

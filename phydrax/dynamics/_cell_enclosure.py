@@ -7,7 +7,7 @@ from __future__ import annotations
 import equinox as eqx
 import numpy as np
 
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..sparse import EdgeRelation
@@ -71,6 +71,13 @@ class CellMapEnclosure(StrictModule, NonTrainableState):
                 "exit": exit_set.subcomplex_id,
                 "degree": degree_,
                 "isolating": isolating,
+                "relation": array_tree_fingerprint(
+                    {
+                        "source_indices": relation.source_indices,
+                        "target_indices": relation.target_indices,
+                        "valid": relation.valid,
+                    }
+                ),
             }
         )
 

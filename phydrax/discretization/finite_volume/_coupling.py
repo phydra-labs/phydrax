@@ -271,6 +271,14 @@ class UnstructuredFiniteVolumeCouplingPlan(StrictModule, NonTrainableState):
                 "Embedded-boundary coupling requires both an EmbeddedBoundaryPlan and UnstructuredEmbeddedBoundarySet."
             )
         vof_ = _optional_plan(vof, UnstructuredVOFPlan, "vof")
+        if (
+            motion_ is not None
+            and vof_ is not None
+            and vof_.geometry_family_id != motion_.plan_id
+        ):
+            raise ValueError(
+                "Moving VOF coupling requires the VOF plan to bind the motion geometry family."
+            )
         phase_change_ = _optional_plan(phase_change, VOFPhaseChangePlan, "phase_change")
         if phase_change_ is not None and (
             vof_ is None or phase_change_.vof.plan_id != vof_.plan_id

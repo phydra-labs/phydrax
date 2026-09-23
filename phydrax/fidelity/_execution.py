@@ -23,7 +23,7 @@ if TYPE_CHECKING:
 
 
 class FidelityEvaluation(StrictModule, NonTrainableState):
-    """One immutable model evaluation in a canonical observable space."""
+    """One immutable model evaluation; ``result`` is runtime-only evidence."""
 
     observable: PyTree[Array]
     valid: Array

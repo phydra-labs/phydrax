@@ -200,6 +200,20 @@ def run_twin(*, ensemble_size=24):
         ).mean(axis=-1)
         * 4.0e20
     )
+    restart_bitwise_equal = np.array_equal(
+        np.asarray(restarted.ensemble),
+        np.asarray(result.final_state.ensemble),
+    )
+    restart_key_equal = np.array_equal(
+        np.asarray(jax.random.key_data(restarted.root_key)),
+        np.asarray(jax.random.key_data(root)),
+    )
+    if (
+        not restart_bitwise_equal
+        or not restart_key_equal
+        or not bool(jnp.all(smoother.valid))
+    ):
+        raise RuntimeError("Assimilation smoothing or restart evidence failed")
     return {
         "analysis_rmse_K": float(jnp.sqrt(jnp.mean((analysis_mean - truth) ** 2))),
         "unassimilated_rmse_K": float(jnp.sqrt(jnp.mean((open_loop - truth) ** 2))),
@@ -221,19 +235,10 @@ def run_twin(*, ensemble_size=24):
             np.max(np.abs(mean_increment - expected_increment))
             / max(1.0, np.max(np.abs(expected_increment)))
         ),
-        "restart_bitwise_equal": bool(
-            np.array_equal(
-                np.asarray(restarted.ensemble), np.asarray(result.final_state.ensemble)
-            )
-        ),
-        "restart_key_equal": bool(
-            np.array_equal(
-                np.asarray(jax.random.key_data(restarted.root_key)),
-                np.asarray(jax.random.key_data(root)),
-            )
-        ),
+        "restart_bitwise_equal": True,
+        "restart_key_equal": True,
         "lineage_id": lineage.lineage_id,
-        "smoother_valid": bool(jnp.all(smoother.valid)),
+        "smoother_valid": True,
     }
 
 

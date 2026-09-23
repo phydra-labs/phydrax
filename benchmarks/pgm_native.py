@@ -27,7 +27,7 @@ def _measure(function, *arguments, repeats):
         result = function(*arguments)
         jax.block_until_ready(result)
     steady_seconds = (time.perf_counter() - start) / repeats
-    return first_seconds, steady_seconds
+    return result, first_seconds, steady_seconds
 
 
 def _grid_edges(side):
@@ -66,7 +66,7 @@ def run(*, side, bp_steps, chains, repeats):
     bp_prepare_seconds = time.perf_counter() - prepare_start
     bp_state = phx.pgm.initialize_belief_propagation(bp_plan)
     bp_run = jax.jit(lambda state: phx.pgm.run_belief_propagation(bp_plan, state))
-    bp_first, bp_steady = _measure(bp_run, bp_state, repeats=repeats)
+    bp_result, bp_first, bp_steady = _measure(bp_run, bp_state, repeats=repeats)
     batch_cases = min(chains, 16)
     batch_state = phx.pgm.BatchedBeliefPropagationState(
         jnp.broadcast_to(bp_state.messages, (batch_cases, bp_plan.message_count)),
@@ -77,7 +77,7 @@ def run(*, side, bp_steps, chains, repeats):
         structure_id=graph.structure_id,
     )
     batch_run = jax.jit(lambda state: phx.pgm.batch_belief_propagation(bp_plan, state))
-    batch_first, batch_steady = _measure(
+    batch_result, batch_first, batch_steady = _measure(
         batch_run,
         batch_state,
         repeats=repeats,
@@ -88,8 +88,8 @@ def run(*, side, bp_steps, chains, repeats):
     gibbs_prepare_seconds = time.perf_counter() - prepare_start
     initial = jr.bernoulli(jr.key(5), 0.5, (chains, variables)).astype(jnp.int32)
     gibbs_state = phx.pgm.initialize_gibbs(gibbs_plan, initial)
-    gibbs_run = jax.jit(lambda state, key: phx.pgm.gibbs_sweep(gibbs_plan, state, key)[0])
-    gibbs_first, gibbs_steady = _measure(
+    gibbs_run = jax.jit(lambda state, key: phx.pgm.gibbs_sweep(gibbs_plan, state, key))
+    gibbs_result, gibbs_first, gibbs_steady = _measure(
         gibbs_run,
         gibbs_state,
         jr.key(6),
@@ -105,9 +105,9 @@ def run(*, side, bp_steps, chains, repeats):
             state,
             key,
             random_policy,
-        )[0]
+        )
     )
-    random_first, random_steady = _measure(
+    random_result, random_first, random_steady = _measure(
         random_gibbs_run,
         gibbs_state,
         jr.key(7),
@@ -123,7 +123,7 @@ def run(*, side, bp_steps, chains, repeats):
         ),
     )
     elimination_prepare_seconds = time.perf_counter() - elimination_start
-    elimination_first, elimination_steady = _measure(
+    elimination_result, elimination_first, elimination_steady = _measure(
         phx.pgm.variable_elimination,
         elimination_plan,
         repeats=repeats,
@@ -143,11 +143,13 @@ def run(*, side, bp_steps, chains, repeats):
             "compile_and_first_seconds": bp_first,
             "steady_seconds": bp_steady,
             "maximum_steps": bp_steps,
+            "successful": bool(bp_result.successful),
         },
         "batch_bp": {
             "cases": batch_cases,
             "compile_and_first_seconds": batch_first,
             "steady_seconds": batch_steady,
+            "successful": bool(batch_result.successful),
         },
         "gibbs": {
             "chains": chains,
@@ -157,6 +159,8 @@ def run(*, side, bp_steps, chains, repeats):
             "steady_sweep_seconds": gibbs_steady,
             "random_scan_compile_and_first_seconds": random_first,
             "random_scan_steady_sweep_seconds": random_steady,
+            "successful": bool(jnp.all(gibbs_result[1].valid))
+            and bool(jnp.all(random_result[1].valid)),
         },
         "elimination": {
             "treewidth": elimination_plan.treewidth,
@@ -164,11 +168,17 @@ def run(*, side, bp_steps, chains, repeats):
             "prepare_seconds": elimination_prepare_seconds,
             "first_seconds": elimination_first,
             "steady_seconds": elimination_steady,
+            "successful": bool(elimination_result.successful),
         },
         "packed_graphs": {
             "graphs": packed.num_graphs,
             "nodes": packed.topology.num_nodes,
         },
+        "passed": bool(bp_result.successful)
+        and bool(batch_result.successful)
+        and bool(jnp.all(gibbs_result[1].valid))
+        and bool(jnp.all(random_result[1].valid))
+        and bool(elimination_result.successful),
     }
 
 
@@ -183,18 +193,15 @@ def main():
     arguments = parser.parse_args()
     if min(arguments.side, arguments.bp_steps, arguments.chains, arguments.repeats) < 1:
         raise ValueError("Benchmark sizes and repeats must be positive.")
-    print(
-        json.dumps(
-            run(
-                side=arguments.side,
-                bp_steps=arguments.bp_steps,
-                chains=arguments.chains,
-                repeats=arguments.repeats,
-            ),
-            indent=2,
-            sort_keys=True,
-        )
+    result = run(
+        side=arguments.side,
+        bp_steps=arguments.bp_steps,
+        chains=arguments.chains,
+        repeats=arguments.repeats,
     )
+    print(json.dumps(result, allow_nan=False, indent=2, sort_keys=True))
+    if not result["passed"]:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

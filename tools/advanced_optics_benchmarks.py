@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import platform
 import time
@@ -91,6 +92,38 @@ def _beamlet_case():
     return _timed(lambda: reconstruct_gaussian_beamlets(prepared, beamlet))
 
 
+def _generated_index_manifest(
+    artifact_id: str,
+    *,
+    model: str,
+    coverage: str,
+    maximum_frequency: float,
+) -> ArtifactManifest:
+    payload = json.dumps(
+        {
+            "kind": "constant-refractive-index-law",
+            "refractive_index": 1.5,
+            "minimum_angular_frequency": 0.5,
+            "maximum_angular_frequency": maximum_frequency,
+            "reference_wave_speed": 1.0,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        allow_nan=False,
+    ).encode("utf-8")
+    return ArtifactManifest(
+        artifact_id=artifact_id,
+        producer="phydrax",
+        version="current",
+        sha256=hashlib.sha256(payload).hexdigest(),
+        byte_size=len(payload),
+        source_uri=f"generated://{artifact_id}",
+        license_id="LicenseRef-PHYDRA",
+        model=model,
+        coverage=coverage,
+    )
+
+
 def _nonlinear_case():
     plane = TensorGridPlan(
         (FourierAxisSpec(4), FourierAxisSpec(4)), axis_names=("u", "v")
@@ -106,16 +139,11 @@ def _nonlinear_case():
     field = AnalyticPulseField(
         space, pulse_time, values, mode, 0.0, polarization="scalar"
     )
-    manifest = ArtifactManifest(
-        artifact_id="advanced-optics-benchmark-index",
-        producer="phydrax",
-        version="current",
-        sha256="0" * 64,
-        byte_size=0,
-        source_uri="generated://advanced-optics-benchmark",
-        license_id="LicenseRef-PHYDRA",
+    manifest = _generated_index_manifest(
+        "advanced-optics-benchmark-index",
         model="constant benchmark index",
         coverage="positive benchmark frequencies",
+        maximum_frequency=20.0,
     )
     law = ConstantRefractiveIndex(
         1.5,
@@ -160,16 +188,11 @@ def _cylindrical_case():
         * jnp.exp(-1j * mode * pulse_time.coordinates)[None, :]
     )
     field = CylindricalAnalyticPulseField(hankel, pulse_time, values, mode, 0.0)
-    manifest = ArtifactManifest(
-        artifact_id="advanced-cylindrical-optics-benchmark-index",
-        producer="phydrax",
-        version="current",
-        sha256="0" * 64,
-        byte_size=0,
-        source_uri="generated://advanced-cylindrical-optics-benchmark",
-        license_id="LicenseRef-PHYDRA",
+    manifest = _generated_index_manifest(
+        "advanced-cylindrical-optics-benchmark-index",
         model="constant cylindrical benchmark index",
         coverage="positive benchmark frequencies",
+        maximum_frequency=40.0,
     )
     law = ConstantRefractiveIndex(
         1.5,

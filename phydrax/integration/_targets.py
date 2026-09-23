@@ -363,11 +363,14 @@ class MappedTarget(StrictModule):
         mask: Callable | Array | None = None,
         target_mass: Array | None = None,
     ):
+        mass = _target_mass(target_mass)
+        if mass is not None and mass.shape != ():
+            raise ValueError("Mapped target_mass must be one scalar.")
         self.reference_rule = reference_rule
         self.mapping = mapping
         self.jacobian = jacobian
         self.mask = mask
-        self.target_mass = target_mass
+        self.target_mass = mass
 
 
 MultilevelSampler: TypeAlias = Callable[[int, Array, Any], Any]

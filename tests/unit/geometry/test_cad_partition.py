@@ -15,7 +15,13 @@ from OCP.TopExp import TopExp_Explorer
 from OCP.TopoDS import TopoDS
 
 from phydrax._physical import SpatialCoordinateContract
-from phydrax.geometry._cad_revision import AssociationStatus, CADSelectionSet
+from phydrax.geometry._cad_revision import (
+    AssociationStatus,
+    CADOccurrence,
+    CADRevision,
+    CADSelectionSet,
+    CADSelector,
+)
 from phydrax.geometry.brep import _partition as partition_module
 from phydrax.geometry.brep._model import BRepEntityId
 from phydrax.geometry.brep._occt import persist_occt_shape, read_occt_shape
@@ -363,3 +369,32 @@ def test_staging_failure_does_not_clobber_existing_destination(tmp_path, monkeyp
         )
     assert destination.read_bytes() == b"existing-artifact"
     assert not tuple(tmp_path.glob(f".{destination.name}.partition-*"))
+
+
+def test_revision_children_rejects_a_forged_parent_selector():
+    parent = CADOccurrence(
+        "revision",
+        "root",
+        "assembly-entity",
+        "assembly",
+        ("root",),
+    )
+    child = CADOccurrence(
+        "revision",
+        "face",
+        "face-entity",
+        "face",
+        ("root", "face"),
+        parent_occurrence_id="root",
+    )
+    revision = CADRevision("revision", "source", (parent, child), "provenance")
+    forged = CADSelector(
+        "revision",
+        "root",
+        "part",
+        ("root",),
+        "different-entity",
+    )
+
+    with pytest.raises(ValueError, match="does not match the revision inventory"):
+        revision.children(forged)

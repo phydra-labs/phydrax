@@ -93,9 +93,15 @@ def _evaluate_target_expression(
     if op == "negate":
         return -values[0]
     if op == "add":
-        return values[0] + values[1]
+        result = values[0]
+        for value in values[1:]:
+            result = result + value
+        return result
     if op == "multiply":
-        return values[0] * values[1]
+        result = values[0]
+        for value in values[1:]:
+            result = result * value
+        return result
     if op == "divide":
         return values[0] / values[1]
     if op == "power":

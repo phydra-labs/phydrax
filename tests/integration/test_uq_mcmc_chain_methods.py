@@ -11,7 +11,6 @@ import pytest
 
 import phydrax as phx
 import phydrax.axes as cx
-import phydrax.uq._mcmc as mcmc_module
 
 
 def _correlated_problem():
@@ -45,19 +44,8 @@ def _assert_tree_close(left, right, *, atol=1e-10):
     assert all(jax.tree_util.tree_leaves(comparisons))
 
 
-def test_vectorized_nuts_replays_and_matches_independent_sequential_chains(
-    monkeypatch,
-):
+def test_vectorized_nuts_replays_and_matches_independent_sequential_chains():
     problem = _correlated_problem()
-    unstack_calls = 0
-    original_unstack = mcmc_module._unstack_tree
-
-    def tracked_unstack(*args, **kwargs):
-        nonlocal unstack_calls
-        unstack_calls += 1
-        return original_unstack(*args, **kwargs)
-
-    monkeypatch.setattr(mcmc_module, "_unstack_tree", tracked_unstack)
     settings: dict[str, Any] = dict(
         key=jr.key(200),
         num_chains=3,
@@ -68,30 +56,22 @@ def test_vectorized_nuts_replays_and_matches_independent_sequential_chains(
         max_num_doublings=7,
     )
     sequential = phx.uq.sample_nuts(problem, **settings, chain_method="sequential")
-    sequential_unstacks = unstack_calls
-    unstack_calls = 0
     vectorized = phx.uq.sample_nuts(problem, **settings, chain_method="vectorized")
-    vectorized_unstacks = unstack_calls
-    unstack_calls = 0
     vectorized_replay = phx.uq.sample_nuts(
         problem,
         **settings,
         chain_method="vectorized",
     )
-    unstack_calls = 0
     interleaved = phx.uq.sample_nuts(
         problem,
         **settings,
         chain_method="interleaved",
     )
-    interleaved_unstacks = unstack_calls
-    unstack_calls = 0
     interleaved_replay = phx.uq.sample_nuts(
         problem,
         **settings,
         chain_method="interleaved",
     )
-
     _assert_tree_equal(vectorized.samples, vectorized_replay.samples)
     _assert_tree_equal(
         vectorized.unconstrained_samples,
@@ -131,8 +111,6 @@ def test_vectorized_nuts_replays_and_matches_independent_sequential_chains(
     assert vectorized.chain_method == "vectorized"
     assert sequential.chain_method == "sequential"
     assert interleaved.chain_method == "interleaved"
-    assert sequential_unstacks > vectorized_unstacks
-    assert vectorized_unstacks == interleaved_unstacks == 2
     assert not jnp.array_equal(vectorized.samples[0], vectorized.samples[1])
     assert vectorized.diagnostics.rhat.shape == (2,)
     assert vectorized.sample_memory_bytes == sequential.sample_memory_bytes

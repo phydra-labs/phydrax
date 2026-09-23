@@ -187,11 +187,16 @@ def main() -> None:
         "quantum_instrument": _quantum_profile(arguments.repeats),
         "platform_admission": _platform_profile(),
     }
-    encoded = json.dumps(payload, indent=2)
+    payload["passed"] = bool(payload["platform_admission"]["admitted"])
+    encoded = json.dumps(payload, allow_nan=False, indent=2)
     if arguments.output is None:
         print(encoded)
     else:
-        arguments.output.write_text(encoded + "\n")
+        from benchmarks._io import write_json_atomic
+
+        write_json_atomic(arguments.output, payload)
+    if not payload["passed"]:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

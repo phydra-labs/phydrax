@@ -86,6 +86,8 @@ def save_compressible_kinetic_iree(
             frame,
             frame_scale,
             plan.layout,
+            plan.model_id,
+            plan.rule.rule_id,
         )
         old = plan.moments(state)
         target_features = plan._target_features(old.velocity, old.temperature)
@@ -129,6 +131,8 @@ def save_compressible_kinetic_iree(
             frame,
             frame_scale,
             plan.layout,
+            plan.model_id,
+            plan.rule.rule_id,
         )
         new = plan.moments(candidate_state)
         mass_defect = new.density - old.density

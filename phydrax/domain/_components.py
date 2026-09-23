@@ -480,12 +480,7 @@ class DomainComponent(StrictModule):
         density_fn = (
             density
             if isinstance(density, DomainFunction)
-            else DomainFunction(
-                domain=self.domain,
-                deps=self.domain.labels,
-                func=density,
-                metadata={},
-            )
+            else self.domain.Function(*self.domain.labels)(density)
         )
         combined = density_fn if self.weight_all is None else self.weight_all * density_fn
         return DomainComponent(

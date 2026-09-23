@@ -206,10 +206,15 @@ def test_lifecycle_checkpoint_serial_restart_lineage_capacity_and_corruption(tmp
         tmp_path / "accepted-0002.phx",
         restored.arrays,
         checkpoint_id="checkpoint:0002",
-        parent_checkpoint_id=restored.checkpoint_id,
+        parent=restored,
         committed=True,
     )
     assert second.parent_checkpoint_id == "checkpoint:0001"
+    assert second.parent_manifest_id == restored.archive.manifest.manifest_id
+    restored_second = codec.read(second.archive.path, parent=restored)
+    assert restored_second.checkpoint_id == second.checkpoint_id
+    with pytest.raises(ValueError, match="parent archive"):
+        codec.read(second.archive.path)
 
     with pytest.raises(CardiovascularRuntimeError) as uncommitted:
         codec.write(
@@ -227,6 +232,21 @@ def test_lifecycle_checkpoint_serial_restart_lineage_capacity_and_corruption(tmp
     with pytest.raises(CardiovascularRuntimeError) as mismatch:
         mismatched.read(first_path)
     assert mismatch.value.status is CardiovascularRuntimeStatus.CHECKPOINT_MISMATCH
+    wrong_parent = mismatched.write(
+        tmp_path / "wrong-parent.phx",
+        restored.arrays,
+        checkpoint_id="checkpoint:wrong-parent",
+        committed=True,
+    )
+    with pytest.raises(CardiovascularRuntimeError) as wrong_lineage:
+        codec.write(
+            tmp_path / "wrong-child.phx",
+            restored.arrays,
+            checkpoint_id="checkpoint:wrong-child",
+            committed=True,
+            parent=wrong_parent,
+        )
+    assert wrong_lineage.value.status is CardiovascularRuntimeStatus.CHECKPOINT_MISMATCH
 
     with zipfile.ZipFile(first_path, "a") as archive:
         archive.writestr("unexpected-member", b"injected corruption")

@@ -79,9 +79,8 @@ class _PreparedPrivateGradient:
             raise TypeError("per_step_trace must be a MechanismTrace.")
         if not isinstance(self.planned_guarantee, PrivacyGuarantee):
             raise TypeError("planned_guarantee must be a PrivacyGuarantee.")
-        if int(self.sampler_seed) < 0:
-            raise ValueError("sampler_seed must be non-negative.")
-        object.__setattr__(self, "sampler_seed", int(self.sampler_seed))
+        if type(self.sampler_seed) is not int or self.sampler_seed < 0:
+            raise ValueError("sampler_seed must be a non-negative integer.")
         object.__setattr__(
             self,
             "prepared_id",
@@ -101,10 +100,10 @@ class _PreparedPrivateGradient:
         )
 
     def batch_iterator(self, num_examples: int, /, *, start_step: int = 0) -> Any:
-        num_examples = int(num_examples)
-        start_step = int(start_step)
-        if num_examples < 1:
-            raise ValueError("num_examples must be positive.")
+        if type(num_examples) is not int or num_examples < 1:
+            raise ValueError("num_examples must be a positive integer.")
+        if type(start_step) is not int:
+            raise TypeError("start_step must be an integer.")
         if not 0 <= start_step <= self.training_plan.mechanism.iterations:
             raise ValueError("start_step lies outside the prepared training schedule.")
         batches = self.upstream_plan.batch_selection_strategy.batch_iterator(
@@ -147,7 +146,8 @@ class _PreparedPrivateGradient:
         )
 
     def trace(self, completed_steps: int, /) -> MechanismTrace:
-        completed_steps = int(completed_steps)
+        if type(completed_steps) is not int:
+            raise TypeError("completed_steps must be an integer.")
         if not 1 <= completed_steps <= self.training_plan.mechanism.iterations:
             raise ValueError("completed_steps lies outside the prepared mechanism.")
         return MechanismTrace(self.per_step_trace.event_json, completed_steps)
@@ -233,9 +233,8 @@ def _prepare_private_gradient(
         raise ValueError(
             "The initial private provider supports only JAX threefry2x32 keys."
         )
-    sampler_seed = int(sampler_seed)
-    if sampler_seed < 0:
-        raise ValueError("sampler_seed must be non-negative.")
+    if type(sampler_seed) is not int or sampler_seed < 0:
+        raise ValueError("sampler_seed must be a non-negative integer.")
 
     dp, batch_selection, clipping, noise_addition, accounting, execution_plan = (
         _upstream_modules()

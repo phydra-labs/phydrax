@@ -4,6 +4,7 @@
 
 import hashlib
 
+import numpy as np
 import pytest
 
 from phydrax._external_runtime import pin_energy_executable
@@ -59,6 +60,7 @@ record = {
     "homotopy_continuation_uuid": request["homotopy_continuation_uuid"],
     "homotopy_continuation_version": request["homotopy_continuation_version"],
     "start_system": request["start_system"],
+    "seed": request["seed"],
     "execution_status": "complete",
     "start_count": 1,
     "tracked_path_count": 1,
@@ -179,3 +181,61 @@ def test_project_pin_is_rechecked_before_execution(tmp_path):
     assert result.status is HomotopyContinuationExecutionStatus.PROVIDER_FAILED
     assert result.run is None
     assert "before execution" in result.error
+
+
+def test_numpy_integer_support_serializes_through_the_public_execution_boundary(tmp_path):
+    request = HomotopyContinuationRequest(
+        "request",
+        "support",
+        "system",
+        np.int64(1),
+        np.int64(1),
+        (np.int64(0), np.int64(0)),
+        ((np.int64(0),), (np.int64(2),)),
+        (-1.0, 1.0),
+    )
+
+    result = execute_homotopy_continuation(
+        _provider(tmp_path),
+        HomotopyContinuationPolicy(path_capacity=2, timeout_seconds=10),
+        request,
+    )
+
+    assert result.status is HomotopyContinuationExecutionStatus.COMPLETE
+
+
+def test_resource_refusal_occurs_before_provider_launch(tmp_path):
+    request = HomotopyContinuationRequest(
+        "request",
+        "support",
+        "system",
+        1,
+        2,
+        (0,),
+        ((1, 0),),
+        (1.0,),
+    )
+
+    result = execute_homotopy_continuation(
+        _provider(tmp_path),
+        HomotopyContinuationPolicy(
+            path_capacity=2,
+            maximum_variable_count=1,
+        ),
+        request,
+    )
+
+    assert result.status is HomotopyContinuationExecutionStatus.RESOURCE_EXHAUSTED
+    assert result.run is None
+
+
+def test_availability_rejects_changed_executable_bytes(tmp_path):
+    provider = _provider(tmp_path)
+    executable = provider.executable.path
+    with open(executable, "a", encoding="utf-8") as stream:
+        stream.write("\n# changed\n")
+
+    availability = homotopy_continuation_availability(provider)
+
+    assert not availability.available
+    assert "SHA-256" in availability.reason

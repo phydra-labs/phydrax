@@ -16,8 +16,14 @@ class ProcessSchedule:
         return cls(tuple(sorted(events, key=lambda x: (x.start_time_s, x.event_id))))
 
     def __post_init__(self):
-        if not self.events or len({x.event_id for x in self.events}) != len(self.events):
-            raise ValueError("Schedule events must be nonempty and unique.")
+        canonical = tuple(sorted(self.events, key=lambda x: (x.start_time_s, x.event_id)))
+        if (
+            not self.events
+            or any(not isinstance(event, ToolpathEvent) for event in self.events)
+            or len({x.event_id for x in self.events}) != len(self.events)
+            or self.events != canonical
+        ):
+            raise ValueError("Schedule events must be nonempty, unique, and canonical.")
         if any(
             b.start_time_s < a.end_time_s
             for a, b in zip(self.events, self.events[1:], strict=False)

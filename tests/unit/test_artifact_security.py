@@ -11,6 +11,7 @@ import pytest
 
 from phydrax._artifact_security import (
     admit_external_artifact,
+    AdmittedExternalArtifact,
     ExternalArtifactPolicy,
     read_admitted_artifact,
 )
@@ -49,10 +50,10 @@ def test_external_artifact_is_checksum_verified_before_bytes_are_returned(tmp_pa
     payload = b"independent bytes"
     (tmp_path / "reference.bin").write_bytes(payload)
     policy = _policy(tmp_path)
+    manifest = _manifest(payload)
+    admitted = admit_external_artifact("reference.bin", manifest, policy=policy)
 
-    admitted = admit_external_artifact("reference.bin", _manifest(payload), policy=policy)
-
-    assert read_admitted_artifact(admitted, policy=policy) == payload
+    assert read_admitted_artifact(admitted, manifest, policy=policy) == payload
 
 
 def test_external_artifact_rejects_traversal_absolute_and_symlink_paths(tmp_path):
@@ -108,11 +109,12 @@ def test_external_artifact_read_rechecks_content_and_pickle_suffixes_are_forbidd
     path = tmp_path / "reference.bin"
     path.write_bytes(payload)
     policy = _policy(tmp_path)
-    admitted = admit_external_artifact("reference.bin", _manifest(payload), policy=policy)
+    manifest = _manifest(payload)
+    admitted = admit_external_artifact("reference.bin", manifest, policy=policy)
     path.write_bytes(b"tampered bytes!")
 
     with pytest.raises(ValueError, match="checksum mismatch"):
-        read_admitted_artifact(admitted, policy=policy)
+        read_admitted_artifact(admitted, manifest, policy=policy)
     with pytest.raises(ValueError, match="non-pickle"):
         ExternalArtifactPolicy(
             tmp_path,
@@ -120,3 +122,23 @@ def test_external_artifact_read_rechecks_content_and_pickle_suffixes_are_forbidd
             allowed_license_ids=("CC-BY-4.0",),
             allowed_suffixes=(".pkl",),
         )
+
+
+def test_forged_admission_cannot_replace_the_trusted_manifest(tmp_path):
+    payload = b"attacker-selected bytes"
+    path = tmp_path / "reference.bin"
+    path.write_bytes(payload)
+    policy = _policy(tmp_path)
+    trusted_manifest = _manifest(b"independently authorized bytes")
+    forged = AdmittedExternalArtifact(
+        "reference.bin",
+        str(path),
+        hashlib.sha256(payload).hexdigest(),
+        len(payload),
+        "CC-BY-4.0",
+        "attacker-manifest",
+        policy.policy_id,
+    )
+
+    with pytest.raises(PermissionError, match="trusted manifest"):
+        read_admitted_artifact(forged, trusted_manifest, policy=policy)

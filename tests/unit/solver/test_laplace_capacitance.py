@@ -1,3 +1,4 @@
+import equinox as eqx
 import jax.numpy as jnp
 import pytest
 
@@ -116,7 +117,9 @@ def test_capacitance_plan_rejects_invalid_partitions_and_supports_mathematical_a
     assert prepared_capacitance.sensitivity.permittivity_differentiable
 
 
-def test_capacitance_fixed_epoch_coordinate_jvp_and_stable_dual_preconditioner():
+def test_capacitance_fixed_epoch_coordinate_jvp_and_stable_dual_preconditioner(
+    monkeypatch,
+):
     galerkin = _prepared_two_conductors()
     epoch = phx.operators.BoundaryMeshEpoch(galerkin._binding.mesh)
     left, right = _selections(galerkin)
@@ -135,6 +138,27 @@ def test_capacitance_fixed_epoch_coordinate_jvp_and_stable_dual_preconditioner()
     )
     assert bool(derivative.valid)
     assert jnp.allclose(derivative.capacitance_tangent, 0.0)
+    solve = capacitance_solver.solve
+
+    def failed_tangent_solve(*args, **kwargs):
+        solved = solve(*args, **kwargs)
+        return eqx.tree_at(
+            lambda value: value.status,
+            solved,
+            jnp.ones_like(solved.status),
+        )
+
+    monkeypatch.setattr(capacitance_solver, "solve", failed_tangent_solve)
+    failed_derivative = (
+        capacitance_solver.differentiate_laplace_capacitance_coordinates_3d(
+            prepared,
+            result,
+            jnp.zeros((1, face_count, face_count)),
+            jnp.zeros((1, face_count)),
+        )
+    )
+    assert not bool(failed_derivative.valid)
+    assert not bool(failed_derivative.linear_results[0][0].successful)
 
     preconditioner = capacitance_solver.prepare_laplace_stable_dual_calderon_3d(
         galerkin,

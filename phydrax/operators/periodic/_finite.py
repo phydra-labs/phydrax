@@ -45,7 +45,13 @@ class PeriodicFiniteBoundaryPlan(StrictModule, NonTrainableState):
         kind: BoundaryKind,
         /,
     ):
-        shape = tuple(supercell_shape)
+        if any(
+            isinstance(value, (bool, np.bool_))
+            or not isinstance(value, (int, np.integer))
+            for value in supercell_shape
+        ):
+            raise TypeError("Finite supercell dimensions must be exact integers.")
+        shape = tuple(int(value) for value in supercell_shape)
         axes = tuple(bool(value) for value in periodic_axes)
         twist = tuple(float(value) for value in twists)
         if (

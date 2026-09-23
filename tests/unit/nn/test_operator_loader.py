@@ -244,7 +244,6 @@ def test_dataset_and_loader_fingerprints_cover_content_but_not_prefetch():
 
     assert synchronous.fingerprint == prefetched.fingerprint
     assert synchronous.fingerprint != changed_seed.fingerprint
-    assert synchronous.fingerprint == synchronous.fingerprint
     identical_metadata = phx.nn.operator.training.OperatorBatchLoader(
         explicit_equivalent,
         batch_size=3,

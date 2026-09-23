@@ -302,6 +302,11 @@ class FreeSurfaceRezonePlan(StrictModule, NonTrainableState):
             ),
             1.0,
         )
+        successful = (
+            finite
+            & conservative
+            & (new_quality >= old_quality + self.minimum_quality_improvement)
+        )
         event_id = canonical_fingerprint(
             {
                 "kind": "free-surface-rezone-event",
@@ -319,12 +324,12 @@ class FreeSurfaceRezonePlan(StrictModule, NonTrainableState):
             projection_residual=jnp.asarray(0.0, dtype=old_state.eta.dtype),
             finite=finite,
             conservative=conservative,
-            successful=finite
-            & conservative
-            & (new_quality + self.minimum_quality_improvement >= old_quality),
+            successful=successful,
             event_id=event_id,
         )
-        return FreeSurfaceRezoneResult(new_hydrodynamics, new_continuation, evidence)
+        if bool(np.asarray(successful)):
+            return FreeSurfaceRezoneResult(new_hydrodynamics, new_continuation, evidence)
+        return FreeSurfaceRezoneResult(hydrodynamics, continuation, evidence)
 
 
 class GraphShorelineEventPlan(StrictModule, NonTrainableState):

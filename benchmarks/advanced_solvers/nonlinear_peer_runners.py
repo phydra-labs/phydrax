@@ -8,6 +8,7 @@ import hashlib
 import importlib.metadata
 import importlib.util
 import json
+import math
 import os
 import shlex
 import subprocess
@@ -75,7 +76,29 @@ def python_runtime_identity(spec: PeerSpec, /) -> str | None:
         raise TypeError("python_runtime_identity requires a Python distribution peer.")
     if importlib.util.find_spec(spec.package) is None:
         return None
-    return f"{spec.package}=={importlib.metadata.version(spec.package)}"
+    try:
+        version = importlib.metadata.version(spec.package)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+    return f"{spec.package}=={version}"
+
+
+def _python_source_revision(spec: PeerSpec, /) -> str | None:
+    if spec.package is None:
+        return None
+    try:
+        distribution = importlib.metadata.distribution(spec.package)
+    except importlib.metadata.PackageNotFoundError:
+        return None
+    direct_url = distribution.read_text("direct_url.json")
+    if direct_url is None:
+        return None
+    try:
+        payload = json.loads(direct_url)
+    except json.JSONDecodeError:
+        return None
+    revision = payload.get("vcs_info", {}).get("commit_id")
+    return revision if isinstance(revision, str) else None
 
 
 def make_runner_request(
@@ -152,20 +175,40 @@ def run_python_peer(
             ),
             observed_identity,
         )
-    record = callback()
-    response = {
-        "request_id": request["request_id"],
-        "runner_id": request["implementation"],
-        "initial_fingerprint": request["initial_fingerprint"],
-        "observed_identity": observed_identity,
-        "source_revision": spec.source_revision,
-        "available": True,
-        "availability_reason": "available",
-        "backend": record["backend"],
-        "solution": record["solution"],
-        "work_counts": record["work_counts"],
-    }
-    validate_peer_response(request, response)
+    observed_revision = _python_source_revision(spec)
+    if observed_revision != spec.source_revision:
+        return PeerInvocation(
+            None,
+            "revision-unverified",
+            (
+                f"Expected source revision {spec.source_revision!r}; installed "
+                f"distribution records {observed_revision!r}."
+            ),
+            observed_identity,
+        )
+    try:
+        record = callback()
+        _validate_execution_record(record)
+        response = {
+            "request_id": request["request_id"],
+            "runner_id": request["implementation"],
+            "initial_fingerprint": request["initial_fingerprint"],
+            "observed_identity": observed_identity,
+            "source_revision": observed_revision,
+            "available": True,
+            "availability_reason": "available",
+            "backend": record["backend"],
+            "solution": record["solution"],
+            "work_counts": record["work_counts"],
+        }
+        validate_peer_response(request, response)
+    except (KeyError, TypeError, ValueError, RuntimeError, OSError) as error:
+        return PeerInvocation(
+            None,
+            "runner-error",
+            f"Python peer failed: {type(error).__name__}: {error}",
+            observed_identity,
+        )
     return PeerInvocation(response, None, None, observed_identity)
 
 
@@ -189,12 +232,26 @@ def run_external_peer(
             f"Environment variable {environment_name} is not configured.",
             None,
         )
-    command = shlex.split(command_text)
+    try:
+        command = shlex.split(command_text)
+    except ValueError as error:
+        return PeerInvocation(None, "runner-error", f"Invalid runner command: {error}", None)
     if not command:
         return PeerInvocation(
             None,
             "runtime-missing",
             f"Environment variable {environment_name} contains no command.",
+            None,
+        )
+    trusted_revision = os.environ.get(f"{environment_name}_SOURCE_REVISION")
+    if trusted_revision != spec.source_revision:
+        return PeerInvocation(
+            None,
+            "revision-unverified",
+            (
+                f"{environment_name}_SOURCE_REVISION must equal the frozen revision "
+                f"{spec.source_revision!r}."
+            ),
             None,
         )
     try:
@@ -211,6 +268,13 @@ def run_external_peer(
             None,
             "runner-error",
             f"External runner exceeded {float(timeout_seconds):g} seconds.",
+            None,
+        )
+    except OSError as error:
+        return PeerInvocation(
+            None,
+            "runner-error",
+            f"External runner could not start: {type(error).__name__}: {error}",
             None,
         )
     if completed.returncode != 0:
@@ -250,6 +314,15 @@ def run_external_peer(
             None,
         )
     try:
+        _validate_execution_record(raw)
+    except (KeyError, TypeError, ValueError) as error:
+        return PeerInvocation(
+            None,
+            "runner-error",
+            f"External runner response is malformed: {error}",
+            None,
+        )
+    try:
         validate_peer_response(request, raw)
     except ValueError as error:
         message = str(error)
@@ -261,6 +334,34 @@ def run_external_peer(
             reason = "runner-error"
         return PeerInvocation(None, reason, message, raw["observed_identity"])
     return PeerInvocation(raw, None, None, raw["observed_identity"])
+
+
+def _validate_execution_record(record: Mapping[str, Any], /) -> None:
+    if not isinstance(record, Mapping):
+        raise TypeError("runner record must be an object")
+    if "available" in record and not isinstance(record["available"], bool):
+        raise TypeError("runner available field must be boolean")
+    backend = record.get("backend")
+    work_counts = record.get("work_counts")
+    if not isinstance(backend, Mapping):
+        raise TypeError("runner backend evidence must be an object")
+    for field in ("attempted", "completed"):
+        if not isinstance(backend.get(field), bool):
+            raise TypeError(f"runner backend {field} must be boolean")
+    claimed = backend.get("claimed_success")
+    if claimed is not None and not isinstance(claimed, bool):
+        raise TypeError("runner backend claimed_success must be boolean or null")
+    if not isinstance(work_counts, Mapping):
+        raise TypeError("runner work_counts must be an object")
+    for key, value in work_counts.items():
+        if (
+            not isinstance(key, str)
+            or isinstance(value, bool)
+            or not isinstance(value, (int, float))
+            or not math.isfinite(float(value))
+            or float(value) < 0.0
+        ):
+            raise ValueError("runner work counts must be finite nonnegative numbers")
 
 
 __all__ = [

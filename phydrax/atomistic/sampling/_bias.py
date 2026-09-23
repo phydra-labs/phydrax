@@ -245,6 +245,10 @@ class PreparedAtomisticBias(AbstractPreparedAtomisticBias):
         )
 
     def energy(self, positions: Array, state: AtomisticBiasState, time: Array, /):
+        if not isinstance(state, AtomisticBiasState):
+            raise TypeError("state must be an AtomisticBiasState.")
+        if state.bias_id != self.plan.bias_id:
+            raise ValueError("Bias state belongs to another bias plan.")
         values, valid = self.plan.variables.evaluate(
             positions, cell=self.dynamics.system.cell
         )
@@ -338,6 +342,14 @@ class PreparedAtomisticBias(AbstractPreparedAtomisticBias):
         physical_force: Array,
         /,
     ) -> AtomisticBiasState:
+        if not isinstance(state, AtomisticBiasState):
+            raise TypeError("state must be an AtomisticBiasState.")
+        if state.bias_id != self.plan.bias_id:
+            raise ValueError("Bias state belongs to another bias plan.")
+        if not isinstance(evaluation, AtomisticBiasEvaluation):
+            raise TypeError("evaluation must be an AtomisticBiasEvaluation.")
+        if evaluation.bias_id != self.prepared_id:
+            raise ValueError("Bias evaluation belongs to another prepared runtime.")
         if self.plan.kind is BiasKind.METADYNAMICS:
             available = state.hill_count < self.plan.maximum_hills
             index = jnp.minimum(state.hill_count, max(self.plan.maximum_hills - 1, 0))

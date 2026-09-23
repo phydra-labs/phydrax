@@ -129,17 +129,22 @@ def _case(repetitions: int):
     compiled_rates = eqx.filter_jit(plan.partial_rates)
     compiled_react = eqx.filter_jit(plan.react)
 
-    started = time.perf_counter()
+    root_key = jr.key(0)
+    rate_started = time.perf_counter()
     rates = compiled_rates(initial, 0, 1)
-    first = compiled_react(initial, 0, 1, jr.key(0))
-    jax.block_until_ready(first.accepted_state.packets.canonical_momenta)
-    compile_and_first_ms = 1000.0 * (time.perf_counter() - started)
+    jax.block_until_ready(rates)
+    rate_compile_and_first_ms = 1000.0 * (time.perf_counter() - rate_started)
+
+    started = time.perf_counter()
+    first = compiled_react(initial, 0, 1, jr.fold_in(root_key, 0))
+    jax.block_until_ready(first)
+    reaction_compile_and_first_ms = 1000.0 * (time.perf_counter() - started)
 
     started = time.perf_counter()
     result = first
     for epoch in range(repetitions):
-        result = compiled_react(initial, 0, 1, jr.key(epoch + 1))
-    jax.block_until_ready(result.accepted_state.packets.canonical_momenta)
+        result = compiled_react(initial, 0, 1, jr.fold_in(root_key, epoch + 1))
+        jax.block_until_ready(result)
     execution_ms = 1000.0 * (time.perf_counter() - started) / repetitions
     return {
         "reaction_profile": "nonrelativistic-reversible-2-to-2",
@@ -147,7 +152,9 @@ def _case(repetitions: int):
         "forward_partial_rate": float(rates.partial_rates[0]),
         "reverse_partial_rate": float(rates.partial_rates[1]),
         "total_partial_rate": float(rates.total_rate),
-        "compile_and_first_ms": compile_and_first_ms,
+        "rate_compile_and_first_ms": rate_compile_and_first_ms,
+        "reaction_compile_and_first_ms": reaction_compile_and_first_ms,
+        "rng": {"root_seed": 0, "reaction_stream": "fold_in(epoch)"},
         "execution_ms": execution_ms,
         "reactions_per_second": 1000.0 / execution_ms,
         "selected_channel": int(result.evidence.selected_channel),

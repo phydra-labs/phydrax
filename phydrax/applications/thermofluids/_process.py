@@ -25,6 +25,16 @@ from ...dynamics import (
 )
 
 
+def _residual_numeric_id(semantic_id: str, parameters, /) -> str:
+    return canonical_fingerprint(
+        {
+            "kind": "thermofluid-residual-binding",
+            "semantic": semantic_id,
+            "parameters": parameters,
+        }
+    )
+
+
 class ThermofluidPortKind(StrEnum):
     MATERIAL = "material"
     HEAT = "heat"
@@ -363,6 +373,11 @@ def fixed_material_boundary_component(
             f"prescribe_{variable}",
             prescribed(variable, target),
             (DAEDerivativeIncidence(variable, 0),),
+            residual_semantic_id="thermofluids.material.fixed-boundary.prescribed-value",
+            residual_numeric_id=_residual_numeric_id(
+                "thermofluids.material.fixed-boundary.prescribed-value",
+                {"variable": variable, "target": target},
+            ),
         )
         for variable, target in zip(
             ("pressure", "specific_enthalpy", "mass_flow"), parameters, strict=True
@@ -436,6 +451,11 @@ def isenthalpic_valve_component(
                 DAEDerivativeIncidence("inlet_pressure"),
                 DAEDerivativeIncidence("outlet_pressure"),
             ),
+            residual_semantic_id="thermofluids.material.isenthalpic-valve.pressure-ratio",
+            residual_numeric_id=_residual_numeric_id(
+                "thermofluids.material.isenthalpic-valve.pressure-ratio",
+                {"pressure_ratio": ratio},
+            ),
         ),
         DAEEquationBlock(
             "isenthalpic",
@@ -444,6 +464,11 @@ def isenthalpic_valve_component(
                 DAEDerivativeIncidence("inlet_enthalpy"),
                 DAEDerivativeIncidence("outlet_enthalpy"),
             ),
+            residual_semantic_id="thermofluids.material.isenthalpic-valve.enthalpy",
+            residual_numeric_id=_residual_numeric_id(
+                "thermofluids.material.isenthalpic-valve.enthalpy",
+                {},
+            ),
         ),
         DAEEquationBlock(
             "mass_balance",
@@ -451,6 +476,11 @@ def isenthalpic_valve_component(
             (
                 DAEDerivativeIncidence("inlet_mass_flow"),
                 DAEDerivativeIncidence("outlet_mass_flow"),
+            ),
+            residual_semantic_id="thermofluids.material.isenthalpic-valve.mass-balance",
+            residual_numeric_id=_residual_numeric_id(
+                "thermofluids.material.isenthalpic-valve.mass-balance",
+                {},
             ),
         ),
     )

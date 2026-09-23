@@ -250,18 +250,29 @@ def _forecast(
                 state.step_index,
                 member=member,
             )
-            sample = problem.model.transition.sample(
-                member_key,
-                previous_member,
-                starts[case_index],
-                ends[case_index],
-                context,
-            )
-            sample_valid = jnp.all(sample.valid) & jnp.all(sample.status == 0)
-            accepted = case_active & sample_valid
-            return (
-                jnp.where(accepted, sample.values, previous_member),
-                jnp.where(case_active, sample_valid, True),
+
+            def propagate(_):
+                sample = problem.model.transition.sample(
+                    member_key,
+                    previous_member,
+                    starts[case_index],
+                    ends[case_index],
+                    context,
+                )
+                sample_valid = jnp.all(sample.valid) & jnp.all(sample.status == 0)
+                return (
+                    jnp.where(sample_valid, sample.values, previous_member),
+                    sample_valid,
+                )
+
+            return jax.lax.cond(
+                case_active & (ends[case_index] != starts[case_index]),
+                propagate,
+                lambda _: (
+                    previous_member,
+                    jnp.where(case_active, context.input_valid, True),
+                ),
+                operand=None,
             )
 
         members, member_validity = jax.vmap(forecast_member)(
@@ -485,7 +496,7 @@ def ensemble_filter_step(
         analysis,
         state.ensemble,
     )
-    status = jnp.where(
+    step_status = jnp.where(
         ~active,
         ENSEMBLE_FILTER_SUCCESS,
         jnp.where(
@@ -498,10 +509,11 @@ def ensemble_filter_step(
             ),
         ),
     ).astype(jnp.int32)
+    status = jnp.where(state.valid, step_status, state.status).astype(jnp.int32)
     next_valid = state.valid & jnp.where(
         active, transition_case_valid & transform_valid, True
     )
-    increment = jnp.where(active, likelihood, 0.0)
+    increment = jnp.where(accepted, likelihood, 0.0)
     cumulative = state.log_likelihood + increment
     next_state = EnsembleFilterState(
         ensemble=next_ensemble,
@@ -526,7 +538,7 @@ def ensemble_filter_step(
         cumulative_log_likelihood=cumulative,
         observed_count=jnp.sum(masks.reshape(case_shape + (-1,)), axis=-1),
         active=active,
-        valid=transition_case_valid & transform_valid,
+        valid=accepted,
         status=status,
     )
     return next_state, record

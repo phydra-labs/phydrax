@@ -195,6 +195,7 @@ class ControlledTransitionProblem(StrictModule):
 class PreparedControlledNoise(StrictModule):
     """Complete replayable noise paths with explicit coupling and independence."""
 
+    time_grid: TimeGrid
     increments: Array
     valid: Array
     independence_labels: Array
@@ -214,7 +215,10 @@ class PreparedControlledNoise(StrictModule):
         coupling_id: str,
         independence_labels: ArrayLike,
         noise_shape: Sequence[int],
+        time_grid: TimeGrid,
     ):
+        if not isinstance(time_grid, TimeGrid):
+            raise TypeError("time_grid must be a TimeGrid.")
         noises = _shape(noise_shape, "noise_shape")
         values = _real_inexact(increments, "increments")
         expected_rank = 2 + len(noises)
@@ -231,6 +235,10 @@ class PreparedControlledNoise(StrictModule):
         step_count = values.shape[1]
         if path_count < 1 or step_count < 1:
             raise ValueError("increments must contain at least one path and one step.")
+        if step_count != time_grid.num_steps:
+            raise ValueError(
+                "increments step count must match the prepared physical time grid."
+            )
         validity = jnp.asarray(valid, dtype=jnp.bool_)
         if tuple(validity.shape) != (path_count,):
             raise ValueError(f"valid must have shape ({path_count},).")
@@ -257,6 +265,7 @@ class PreparedControlledNoise(StrictModule):
             raise ValueError("realization_ids must contain non-empty strings.")
         if len(set(identifiers)) != path_count:
             raise ValueError("realization_ids must uniquely identify every path.")
+        self.time_grid = time_grid
         self.increments = values
         self.valid = validity
         self.independence_labels = labels
@@ -275,6 +284,7 @@ class PreparedControlledNoise(StrictModule):
         *,
         valid: ArrayLike,
         noise_shape: Sequence[int],
+        time_grid: TimeGrid,
     ) -> PreparedControlledNoise:
         """Attach stochastic-realization provenance to evaluated increments."""
         if not is_stochastic_realization(realization):
@@ -302,6 +312,7 @@ class PreparedControlledNoise(StrictModule):
             coupling_id=realization.coupling_id,
             independence_labels=jnp.asarray(integer_labels, dtype=jnp.int32),
             noise_shape=noise_shape,
+            time_grid=time_grid,
         )
 
 
@@ -351,6 +362,16 @@ class ControlledPathBatch(StrictModule):
             raise ValueError(
                 "prepared_noise step count does not match the problem time grid."
             )
+        if (
+            prepared_noise.time_grid.time_id != problem.time_grid.time_id
+            or prepared_noise.time_grid.times.shape != problem.time_grid.times.shape
+        ):
+            raise ValueError("prepared_noise time grid does not match the problem.")
+        checked_noise = eqx.error_if(
+            prepared_noise.increments,
+            jnp.any(prepared_noise.time_grid.times != problem.time_grid.times),
+            "prepared_noise time grid does not match the problem.",
+        )
         count = prepared_noise.num_paths
         steps = problem.time_grid.num_steps
         expected_states = (count, steps + 1) + problem.state_shape
@@ -380,7 +401,7 @@ class ControlledPathBatch(StrictModule):
         self.time_grid = problem.time_grid
         self.states = states_
         self.actions = actions_
-        self.noise_paths = prepared_noise.increments
+        self.noise_paths = checked_noise
         self.noise_valid = prepared_noise.valid
         self.valid = validity
         self.status = statuses
@@ -575,15 +596,23 @@ def rollout_feedback(
         raise ValueError(
             "prepared noise step count does not match the problem time grid."
         )
+    if (
+        prepared_noise.time_grid.time_id != problem.time_grid.time_id
+        or prepared_noise.time_grid.times.shape != problem.time_grid.times.shape
+    ):
+        raise ValueError("prepared noise time grid does not match the problem.")
+    increments = eqx.error_if(
+        prepared_noise.increments,
+        jnp.any(prepared_noise.time_grid.times != problem.time_grid.times),
+        "prepared noise time grid does not match the problem.",
+    )
 
     count = prepared_noise.num_paths
     state = jnp.broadcast_to(problem.initial_state, (count,) + problem.state_shape)
     states = [state]
     actions = []
     stage_costs = []
-    finite_noise = jnp.all(
-        _event_finite(prepared_noise.increments, problem.noise_shape), axis=1
-    )
+    finite_noise = jnp.all(_event_finite(increments, problem.noise_shape), axis=1)
     status = jnp.where(
         prepared_noise.valid & finite_noise,
         int(FeedbackPolicyEvaluationStatus.SUCCESS),
@@ -613,7 +642,7 @@ def rollout_feedback(
             )
         )(state, action)
         stage = _scalar_values(stage, count, "stage_cost")
-        noise = prepared_noise.increments[:, step]
+        noise = increments[:, step]
         next_state = jax.vmap(
             lambda current_state, current_action, current_noise: jnp.asarray(
                 problem.transition(

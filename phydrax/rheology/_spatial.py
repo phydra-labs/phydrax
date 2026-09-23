@@ -6,7 +6,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -19,6 +21,7 @@ from ._core import ViscoelasticLaw
 @dataclass(frozen=True, slots=True)
 class SpatialConformationStep:
     conformation: Array
+    candidate_conformation: Array
     polymer_stress_pa: Array
     minimum_eigenvalue: Array
     transport_balance_residual: Array
@@ -34,6 +37,7 @@ class SpatialConformationSolver:
     transport_generator_s_inv: Array
     law: ViscoelasticLaw
     eigenvalue_floor: float = 1e-10
+    conservation_tolerance: float = 1e-10
 
     @classmethod
     def create(
@@ -48,6 +52,17 @@ class SpatialConformationSolver:
     ) -> SpatialConformationSolver:
         weights = np.asarray(measure_weights, dtype=np.float64)
         generator = np.asarray(transport_generator_s_inv, dtype=np.float64)
+        if not isinstance(law, ViscoelasticLaw):
+            raise TypeError("Rheology law must be ViscoelasticLaw.")
+        if (
+            not isfinite(eigenvalue_floor)
+            or eigenvalue_floor <= 0
+            or not isfinite(conservation_tolerance)
+            or conservation_tolerance <= 0
+            or not np.all(np.isfinite(weights))
+            or not np.all(np.isfinite(generator))
+        ):
+            raise ValueError("Rheology stabilization/conservation data are invalid.")
         if weights.ndim != 1 or weights.size == 0 or np.any(weights <= 0):
             raise ValueError("Rheology measures must be a positive vector.")
         if generator.shape != (weights.size, weights.size):
@@ -65,7 +80,13 @@ class SpatialConformationSolver:
             )
         if eigenvalue_floor <= 0:
             raise ValueError("Conformation eigenvalue floor must be positive.")
-        return cls(jnp.asarray(weights), jnp.asarray(generator), law, eigenvalue_floor)
+        return cls(
+            jnp.asarray(weights),
+            jnp.asarray(generator),
+            law,
+            eigenvalue_floor,
+            conservation_tolerance,
+        )
 
     def advance(
         self,
@@ -83,8 +104,14 @@ class SpatialConformationSolver:
             or gradient.shape != value.shape
         ):
             raise ValueError("Spatial conformation and velocity gradients must align.")
-        if step_size_s <= 0:
-            raise ValueError("Rheology step size must be positive.")
+        if not isfinite(step_size_s) or step_size_s <= 0:
+            raise ValueError("Rheology step size must be finite and positive.")
+        value = eqx.error_if(
+            value,
+            jnp.any(~jnp.isfinite(value) | ~jnp.isfinite(gradient)),
+            "Conformation and velocity gradients must be finite.",
+        )
+        value = self.law._validated_conformation(value)
         symmetric = 0.5 * (value + jnp.swapaxes(value, -1, -2))
         local_rate = (
             contract("qik,qkj->qij", gradient, symmetric)
@@ -110,25 +137,25 @@ class SpatialConformationSolver:
             components.append(jnp.stack(columns, axis=-1))
         transported = jnp.stack(components, axis=-2)
         transported = 0.5 * (transported + jnp.swapaxes(transported, -1, -2))
-        eigenvalues, eigenvectors = jnp.linalg.eigh(transported)
-        bounded = jnp.maximum(eigenvalues, self.eigenvalue_floor)
-        stabilized = contract("qik,qk,qjk->qij", eigenvectors, bounded, eigenvectors)
-        correction = stabilized - transported
+        eigenvalues = jnp.linalg.eigvalsh(transported)
+        minimum = jnp.min(eigenvalues)
         transport_balance = contract(
             "q,qij->ij", self.measure_weights, transported - right
         )
-        correction_norm = jnp.sqrt(
-            jnp.real(contract("qij,qij->", jnp.conj(correction), correction))
-        )
-        minimum = jnp.min(jnp.linalg.eigvalsh(stabilized))
+        correction_norm = jnp.asarray(0.0, dtype=value.dtype)
+        balance_norm = jnp.linalg.norm(transport_balance)
         successful = (
             jnp.all(jnp.stack(native_success))
-            & jnp.all(jnp.isfinite(stabilized))
-            & (minimum >= 0)
+            & jnp.all(jnp.isfinite(transported))
+            & (minimum >= self.eigenvalue_floor)
+            & jnp.isfinite(balance_norm)
+            & (balance_norm <= self.conservation_tolerance)
         )
+        accepted = jnp.where(successful, transported, value)
         return SpatialConformationStep(
-            stabilized,
-            self.law.stress(stabilized),
+            accepted,
+            transported,
+            self.law.stress(accepted),
             minimum,
             transport_balance,
             correction_norm,

@@ -51,6 +51,10 @@ class SpatialPiezoelectricSystem:
             raise ValueError("Piezoelectric dielectric stiffness must be square.")
         if coupling.shape != (mechanical.shape[0], dielectric.shape[0]):
             raise ValueError("Piezoelectric coupling does not match field coordinates.")
+        if not all(
+            np.all(np.isfinite(value)) for value in (mechanical, dielectric, coupling)
+        ):
+            raise ValueError("Piezoelectric operators must be finite.")
         if not np.allclose(mechanical, mechanical.T, atol=symmetry_tolerance, rtol=0):
             raise ValueError("Piezoelectric mechanical stiffness must be symmetric.")
         if not np.allclose(dielectric, dielectric.T, atol=symmetry_tolerance, rtol=0):

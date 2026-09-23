@@ -177,6 +177,7 @@ def test_free_energy_adapters_agree_with_exact_constant_energy_shift():
         sampling_exact=True,
         sampling_bias_bound=0.0,
     )
+    assert work.inverse_temperature == workflow.inverse_temperature
     fep = workflow.fep(work)
     bar = workflow.bar(work)
     potentials = jnp.stack((jnp.zeros(12), jnp.full(12, delta)))

@@ -79,7 +79,9 @@ result = phx.discretization.insert_reactive_particles_with_growth(
         minimum_increment=2, maximum_capacity=16
     ),
 )
-print(f"successful={bool(result.successful)}")
+if not bool(result.successful):
+    raise RuntimeError("Reactive particle-pool growth failed")
+print("successful=True")
 print(f"old_capacity={particles.capacity}")
 print(f"new_capacity={result.epoch.dynamics.bodies.capacity}")
 print(f"occupied={int(jnp.sum(result.epoch.ever_occupied))}")

@@ -150,14 +150,16 @@ def integrate_projective_samples(
     if values.shape[0] != target.normalized_weights.shape[0]:
         raise ValueError("Integrand must preserve the projective sample axis.")
     shape = (values.shape[0],) + (1,) * (values.ndim - 1)
+    active = target.samples.valid.reshape(shape)
+    safe_values = jnp.where(active, values, 0.0)
     normalized = jnp.sum(
-        precision_.accumulation(target.normalized_weights.reshape(shape) * values),
+        precision_.accumulation(target.normalized_weights.reshape(shape) * safe_values),
         axis=0,
     )
     physical = precision_.output(
         precision_.accumulation(target.physical_mass) * normalized
     )
-    valid = target.valid & jnp.all(jnp.isfinite(values))
+    valid = target.valid & jnp.all(jnp.isfinite(safe_values))
     return ProjectiveIntegralResult(
         precision_.output(normalized),
         physical,

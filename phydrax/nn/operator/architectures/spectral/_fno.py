@@ -19,6 +19,7 @@ from jaxtyping import Array, Key
 
 import phydrax.ein as ein
 from phydrax._doc import DOC_KEY0
+from phydrax._model import register_artifact_value
 from phydrax._strict import StrictModule
 from phydrax.nn._dependency import OperatorDependencySupport
 from phydrax.nn._keys import EvalKey, fold_in_eval_key
@@ -1283,3 +1284,32 @@ __all__ = [
     "SpectralConvolutionResourcePolicy",
     "SpectralConvND",
 ]
+
+register_artifact_value(
+    "phydrax.operator.internal:FNOResidualStep",
+    _FNOResidualStep,
+)
+register_artifact_value(
+    "phydrax.operator.internal:SpectralConvolutionResourcePolicy",
+    SpectralConvolutionResourcePolicy,
+)
+register_artifact_value(
+    "phydrax.operator.internal:SpectralConvND",
+    SpectralConvND,
+)
+register_artifact_value(
+    "phydrax.operator.internal:MultiScaleSpectralConvND",
+    MultiScaleSpectralConvND,
+)
+register_artifact_value(
+    "phydrax.operator.internal:ChannelNorm",
+    _ChannelNorm,
+)
+register_artifact_value(
+    "phydrax.operator.internal:AxialSpectralConvND",
+    _AxialSpectralConvND,
+)
+register_artifact_value(
+    "phydrax.operator.internal:IFNOConvergence",
+    IFNOConvergence,
+)

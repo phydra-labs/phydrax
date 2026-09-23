@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._bodies import CelestialBodyCatalog
@@ -91,7 +91,8 @@ class TabulatedEphemeris(StrictModule, NonTrainableState):
                 "kind": "tabulated-ephemeris",
                 "catalog": catalog.catalog_id,
                 "provenance": provenance.provenance_id,
-                "num_times": times_host.size,
+                "times": array_tree_fingerprint(times_host),
+                "states": array_tree_fingerprint(states_host),
                 "bounds_policy": bounds_policy,
             }
         )

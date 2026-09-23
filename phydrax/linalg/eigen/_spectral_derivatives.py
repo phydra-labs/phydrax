@@ -187,17 +187,33 @@ def attach_projector_derivative(
     eigenvectors: Array,
     inverse_basis: Array,
     selected_mask: Array,
+    differentiation_valid: Array,
     /,
 ) -> Array:
     """Attach the mathematical first-order projector derivative to a stopped value."""
-    del problem, eigenvalues, eigenvectors, inverse_basis, selected_mask
+    del (
+        problem,
+        eigenvalues,
+        eigenvectors,
+        inverse_basis,
+        selected_mask,
+        differentiation_valid,
+    )
     return projector
 
 
 @attach_projector_derivative.def_jvp
 def _attach_projector_derivative_jvp(primals, tangents):
-    problem, projector, eigenvalues, eigenvectors, inverse_basis, selected_mask = primals
-    problem_tangent, _, _, _, _, _ = tangents
+    (
+        problem,
+        projector,
+        eigenvalues,
+        eigenvectors,
+        inverse_basis,
+        selected_mask,
+        differentiation_valid,
+    ) = primals
+    problem_tangent, _, _, _, _, _, _ = tangents
     derivative, _, _ = projector_tangent(
         problem,
         problem_tangent,
@@ -205,6 +221,11 @@ def _attach_projector_derivative_jvp(primals, tangents):
         eigenvectors,
         inverse_basis,
         selected_mask,
+    )
+    derivative = jnp.where(
+        differentiation_valid[..., None, None],
+        derivative,
+        0,
     )
     return projector, derivative
 
@@ -219,6 +240,7 @@ def attach_density_derivative(
     eigenvectors: Array,
     inverse_basis: Array,
     selected_mask: Array,
+    differentiation_valid: Array,
     /,
 ) -> Array:
     """Attach the mathematical first-order density-kernel derivative."""
@@ -230,6 +252,7 @@ def attach_density_derivative(
         eigenvectors,
         inverse_basis,
         selected_mask,
+        differentiation_valid,
     )
     return density
 
@@ -245,8 +268,9 @@ def _attach_density_derivative_jvp(primals, tangents):
         eigenvectors,
         inverse_basis,
         selected_mask,
+        differentiation_valid,
     ) = primals
-    problem_tangent, _, _, _, _, _, _, _ = tangents
+    problem_tangent, _, _, _, _, _, _, _, _ = tangents
     projector_derivative, _, paired_metric_tangent = projector_tangent(
         problem,
         problem_tangent,
@@ -261,6 +285,11 @@ def _attach_density_derivative_jvp(primals, tangents):
         density,
         paired_metric,
         paired_metric_tangent,
+    )
+    derivative = jnp.where(
+        differentiation_valid[..., None, None],
+        derivative,
+        0,
     )
     return density, derivative
 

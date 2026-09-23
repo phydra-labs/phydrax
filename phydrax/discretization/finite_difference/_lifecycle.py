@@ -11,7 +11,6 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
-import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._array_archive import (
@@ -26,6 +25,43 @@ from ._precision import FDExecutionPrecisionPolicy
 
 
 _FD_CHECKPOINT_FORMAT = "phydrax-fd-checkpoint"
+
+
+def _checkpoint_time(value: ArrayLike, /) -> Array:
+    time = jnp.asarray(value)
+    if time.shape != () or time.dtype.kind not in "iuf":
+        raise ValueError("FD checkpoint time must be a finite real scalar.")
+    return eqx.error_if(
+        time,
+        ~jnp.isfinite(time),
+        "FD checkpoint time must be a finite real scalar.",
+    )
+
+
+def _checkpoint_array(
+    value: ArrayLike,
+    name: str,
+    /,
+    *,
+    expected_inexact_dtype: object | None = None,
+) -> Array:
+    array = jnp.asarray(value)
+    if (
+        expected_inexact_dtype is not None
+        and jnp.issubdtype(array.dtype, jnp.inexact)
+        and array.dtype != expected_inexact_dtype
+    ):
+        raise TypeError(
+            f"FD checkpoint {name} has dtype {array.dtype}; "
+            f"expected {expected_inexact_dtype} for inexact state."
+        )
+    if jnp.issubdtype(array.dtype, jnp.inexact):
+        array = eqx.error_if(
+            array,
+            jnp.any(~jnp.isfinite(array)),
+            f"FD checkpoint {name} must contain only finite inexact values.",
+        )
+    return array
 
 
 class FDCheckpointPlan(StrictModule, NonTrainableState):
@@ -117,11 +153,16 @@ class FDCheckpoint(StrictModule):
             or not checkpoint_id
         ):
             raise ValueError("FD checkpoint fields and identities are invalid.")
-        self.time = jnp.asarray(time)
+        self.time = _checkpoint_time(time)
         self.field_names = field_names
-        self.fields = tuple(jnp.asarray(fields[name]) for name in field_names)
+        self.fields = tuple(
+            _checkpoint_array(fields[name], f"field {name!r}") for name in field_names
+        )
         self.auxiliary_names = auxiliary_names
-        self.auxiliary = tuple(jnp.asarray(auxiliary[name]) for name in auxiliary_names)
+        self.auxiliary = tuple(
+            _checkpoint_array(auxiliary[name], f"auxiliary {name!r}")
+            for name in auxiliary_names
+        )
         self.plan_id = str(plan_id)
         self.checkpoint_id = str(checkpoint_id)
 
@@ -162,27 +203,31 @@ def write_fd_checkpoint(
             "FD checkpoint array names must be portable and fields non-empty."
         )
     expected_field_dtype = jnp.dtype(plan.precision.field_dtype)
+    normalized_fields = {}
     for name, value in field_values.items():
-        array = jnp.asarray(value)
+        array = _checkpoint_array(
+            value,
+            f"field {name!r}",
+            expected_inexact_dtype=expected_field_dtype,
+        )
         if array.dtype != expected_field_dtype:
             raise TypeError(
                 f"FD checkpoint field {name!r} has dtype {array.dtype}; expected {expected_field_dtype}."
             )
-    for name, value in auxiliary_values.items():
-        array = jnp.asarray(value)
-        if (
-            jnp.issubdtype(array.dtype, jnp.inexact)
-            and array.dtype != expected_field_dtype
-        ):
-            raise TypeError(
-                f"FD checkpoint auxiliary {name!r} has dtype {array.dtype}; "
-                f"expected {expected_field_dtype} for inexact state."
-            )
-    arrays = {f"field/{name}": value for name, value in field_values.items()}
+        normalized_fields[name] = array
+    normalized_auxiliary = {
+        name: _checkpoint_array(
+            value,
+            f"auxiliary {name!r}",
+            expected_inexact_dtype=expected_field_dtype,
+        )
+        for name, value in auxiliary_values.items()
+    }
+    arrays = {f"field/{name}": value for name, value in normalized_fields.items()}
     arrays.update(
-        {f"auxiliary/{name}": value for name, value in auxiliary_values.items()}
+        {f"auxiliary/{name}": value for name, value in normalized_auxiliary.items()}
     )
-    arrays["time"] = np.asarray(time)
+    arrays["time"] = _checkpoint_time(time)
     metadata_ = {} if metadata is None else dict(metadata)
     checkpoint_id = canonical_fingerprint(
         {
@@ -236,20 +281,56 @@ def read_fd_checkpoint(
         )
     field_names = manifest["field_names"]
     auxiliary_names = manifest["auxiliary_names"]
-    if not isinstance(field_names, list) or not isinstance(auxiliary_names, list):
+    if (
+        not isinstance(field_names, list)
+        or not isinstance(auxiliary_names, list)
+        or any(
+            not isinstance(name, str) or not _portable_name(name) for name in field_names
+        )
+        or any(
+            not isinstance(name, str) or not _portable_name(name)
+            for name in auxiliary_names
+        )
+        or len(set(field_names)) != len(field_names)
+        or len(set(auxiliary_names)) != len(auxiliary_names)
+    ):
         raise ArrayArchiveCorruptionError("FD checkpoint array name lists are invalid.")
     expected_arrays = {"time"}
     expected_arrays.update(f"field/{name}" for name in field_names)
     expected_arrays.update(f"auxiliary/{name}" for name in auxiliary_names)
     if set(arrays) != expected_arrays:
         raise ArrayArchiveCorruptionError("FD checkpoint array payload is incomplete.")
-    return FDCheckpoint(
-        arrays["time"],
-        {name: arrays[f"field/{name}"] for name in field_names},
-        {name: arrays[f"auxiliary/{name}"] for name in auxiliary_names},
-        expected_plan.plan_id,
-        str(manifest["checkpoint_id"]),
-    )
+    expected_dtype = jnp.dtype(expected_plan.precision.field_dtype)
+    try:
+        fields = {
+            name: _checkpoint_array(
+                arrays[f"field/{name}"],
+                f"field {name!r}",
+                expected_inexact_dtype=expected_dtype,
+            )
+            for name in field_names
+        }
+        if any(value.dtype != expected_dtype for value in fields.values()):
+            raise TypeError("FD checkpoint field dtype is incompatible with the plan.")
+        auxiliary = {
+            name: _checkpoint_array(
+                arrays[f"auxiliary/{name}"],
+                f"auxiliary {name!r}",
+                expected_inexact_dtype=expected_dtype,
+            )
+            for name in auxiliary_names
+        }
+        return FDCheckpoint(
+            _checkpoint_time(arrays["time"]),
+            fields,
+            auxiliary,
+            expected_plan.plan_id,
+            str(manifest["checkpoint_id"]),
+        )
+    except (TypeError, ValueError, eqx.EquinoxRuntimeError) as error:
+        raise ArrayArchiveCorruptionError(
+            "FD checkpoint contains invalid runtime state."
+        ) from error
 
 
 __all__ = [

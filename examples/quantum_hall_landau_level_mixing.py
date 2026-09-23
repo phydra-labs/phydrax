@@ -6,11 +6,16 @@ from phydrax.operators.quantum import evaluate_local_operator
 from phydrax.units import ELECTRONVOLT
 
 
-sphere = qh.HaldaneSpherePlan(2, qh.MonopoleLandauLevel(3, 0, qh.SPIN_POLARIZED_ELECTRON), "fermion", qh.QuantumHallEnergyScale(
-    ELECTRONVOLT,
-    1.602_176_634e-19,
-    "electronvolt",
-), )
+sphere = qh.HaldaneSpherePlan(
+    2,
+    qh.MonopoleLandauLevel(3, 0, qh.SPIN_POLARIZED_ELECTRON),
+    "fermion",
+    qh.QuantumHallEnergyScale(
+        ELECTRONVOLT,
+        1.602_176_634e-19,
+        "electronvolt",
+    ),
+)
 prepared = qh.prepare_landau_level_mixing_vmc(
     qh.LandauLevelMixingVMCPlan(
         sphere,

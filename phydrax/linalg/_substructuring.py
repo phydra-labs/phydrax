@@ -238,16 +238,20 @@ class DeluxeScalingPlan(StrictModule, NonTrainableState):
                 shared = shared[multiplicity[shared] == 2]
                 if shared.size == 0:
                     continue
-                left_indices = np.searchsorted(maps[left], shared)
-                right_indices = np.searchsorted(maps[right], shared)
-                if not np.array_equal(maps[left][left_indices], shared):
-                    lookup = {int(value): index for index, value in enumerate(maps[left])}
-                    left_indices = np.asarray([lookup[int(value)] for value in shared])
-                if not np.array_equal(maps[right][right_indices], shared):
-                    lookup = {
-                        int(value): index for index, value in enumerate(maps[right])
-                    }
-                    right_indices = np.asarray([lookup[int(value)] for value in shared])
+                left_lookup = {
+                    int(value): index for index, value in enumerate(maps[left])
+                }
+                right_lookup = {
+                    int(value): index for index, value in enumerate(maps[right])
+                }
+                left_indices = np.asarray(
+                    [left_lookup[int(value)] for value in shared],
+                    dtype=np.int64,
+                )
+                right_indices = np.asarray(
+                    [right_lookup[int(value)] for value in shared],
+                    dtype=np.int64,
+                )
                 left_schur = _interface_schur(matrices[left], left_indices)
                 right_schur = _interface_schur(matrices[right], right_indices)
                 total = left_schur + right_schur

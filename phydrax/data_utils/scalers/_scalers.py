@@ -53,10 +53,23 @@ class AffineScaler(_AbstractScaler):
         - `alpha`: Multiplicative scale applied after normalization.
         - `beta`: Additive offset applied after scaling.
         """
-        self.reference_value = jnp.asarray(reference_value, dtype=jnp.float64)
-        self.scale_value = jnp.asarray(scale_value, dtype=jnp.float64)
-        self.alpha = jnp.asarray(alpha, dtype=jnp.float64)
-        self.beta = jnp.asarray(beta, dtype=jnp.float64)
+        reference = jnp.asarray(reference_value, dtype=jnp.float64)
+        scale = jnp.asarray(scale_value, dtype=jnp.float64)
+        multiplier = jnp.asarray(alpha, dtype=jnp.float64)
+        offset = jnp.asarray(beta, dtype=jnp.float64)
+        if not bool(
+            jnp.all(jnp.isfinite(reference))
+            & jnp.all(jnp.isfinite(scale))
+            & jnp.all(jnp.isfinite(multiplier))
+            & jnp.all(jnp.isfinite(offset))
+        ):
+            raise ValueError("Affine scaler parameters must be finite.")
+        if bool(jnp.any(scale == 0.0)) or bool(jnp.any(multiplier == 0.0)):
+            raise ValueError("Affine scaler scale_value and alpha must be nonzero.")
+        self.reference_value = reference
+        self.scale_value = scale
+        self.alpha = multiplier
+        self.beta = offset
 
     def transform(self, x: ArrayLike) -> Array:
         x_arr = jnp.asarray(x, dtype=jnp.float64)

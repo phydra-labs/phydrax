@@ -157,7 +157,7 @@ def _dimensions(value: str, /) -> tuple[int, ...]:
     return tuple(int(item) for item in value.split(",") if item)
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser(
         description="Benchmark exact nD Trefftz trial spaces."
     )
@@ -172,8 +172,9 @@ def main() -> None:
         evaluation_points=arguments.evaluation_points,
         seed=arguments.seed,
     )
-    print(json.dumps(result, indent=2, sort_keys=True))
+    print(json.dumps(result, indent=2, sort_keys=True, allow_nan=False))
+    return 0 if result["passed"] else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

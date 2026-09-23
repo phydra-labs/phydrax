@@ -37,14 +37,16 @@ def run():
         0.0,
         0.01,
     )
+    if not bool(plane_response.successful[0] & plastic_response.successful[0]):
+        raise RuntimeError("MPM plane-stress or plasticity evaluation failed")
     return {
         "plane_stress": {
-            "successful": bool(plane_response.successful[0]),
+            "successful": True,
             "P33_residual": float(plane_response.diagnostics["plane_stress_residual"][0]),
             "lambda3": float(plane_response.diagnostics["out_of_plane_stretch"][0]),
         },
         "plasticity": {
-            "successful": bool(plastic_response.successful[0]),
+            "successful": True,
             "branch": int(plastic_response.branch_code[0]),
             "plastic_multiplier": float(
                 plastic_response.diagnostics["plastic_multiplier"][0]

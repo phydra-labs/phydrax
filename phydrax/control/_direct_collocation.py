@@ -15,7 +15,7 @@ import jax.random as jr
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ..discretization import TemporalMesh
 from ..dynamics import (
@@ -1814,6 +1814,7 @@ def solve_prepared_direct_collocation(
         & jnp.all(jnp.isfinite(raw_constraints))
         & jnp.all(jnp.isfinite(values.decision.states))
         & jnp.all(jnp.isfinite(values.decision.controls))
+        & off_grid.finite
     )
     status = jnp.where(
         ~finite,
@@ -1833,7 +1834,14 @@ def solve_prepared_direct_collocation(
             ),
         ),
     ).astype(jnp.int32)
-    case_valid = _event_finite(values.decision.states, compilation.problem.state_shape)
+    state_finite = _event_finite(values.decision.states, compilation.problem.state_shape)
+    control_finite = _event_finite(
+        values.decision.controls, compilation.problem.control_shape
+    )
+    terminal_finite = jnp.ones(compilation.problem.case_shape + (1,), dtype=jnp.bool_)
+    case_valid = state_finite & jnp.concatenate(
+        (control_finite, terminal_finite), axis=-1
+    )
     control_status = jnp.full(
         compilation.problem.case_shape,
         jnp.where(
@@ -1903,7 +1911,23 @@ def solve_prepared_direct_collocation(
         diagnostics,
         status,
         compilation,
-        result_id=f"{compilation.problem.problem_id}:direct-collocation-result",
+        result_id="control-direct-collocation-result:"
+        + canonical_fingerprint(
+            {
+                "problem": compilation.problem.problem_id,
+                "compilation": compilation.compilation_id,
+                "numeric_binding": structured_program.numeric_binding_id,
+                "method": prepared.method.method_id,
+                "result": array_tree_fingerprint(
+                    {
+                        "coordinates": final_coordinates,
+                        "objective": values.objective,
+                        "status": status,
+                        "optimization_status": optimization.status,
+                    }
+                ),
+            }
+        ),
         method_id=method_id,
     )
 

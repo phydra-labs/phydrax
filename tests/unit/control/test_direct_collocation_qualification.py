@@ -35,7 +35,12 @@ def _record(case_id, backend="native", **overrides):
         "constraints": 8,
         "jacobian_nonzeros": 24,
         "dense_materialized": backend == "native",
+        "materialization_verified": True,
         "elapsed_seconds": 1.0,
+        "certified": True,
+        "jit_verified": True,
+        "vmap_verified": True,
+        "refresh_verified": True,
     }
     values.update(overrides)
     return DirectCollocationQualificationRecord.create(**values)
@@ -79,6 +84,14 @@ def test_qualification_artifact_fingerprint_and_coverage_are_independent():
             "numpy": "2.4.6",
             "dtype": "float64",
             "backends": ["native"],
+            "setups": [
+                {
+                    "case_id": case.case_id,
+                    "problem_id": f"problem:{case.case_id}",
+                    "plan_id": f"plan:{case.case_id}",
+                }
+                for case in cases
+            ],
         },
         cases=cases,
         records=records,
@@ -95,6 +108,15 @@ def test_qualification_artifact_fingerprint_and_coverage_are_independent():
     duplicated = replace(artifact, cases=cases + (cases[0],))
     with pytest.raises(ValueError, match="duplicate cases"):
         duplicated.verify(required_case_ids=required)
+    incomplete = replace(artifact, records=records[:-1])
+    with pytest.raises(ValueError, match="case/backend coverage is incomplete"):
+        incomplete.verify(required_case_ids=required)
+    forged_graduation = replace(
+        artifact,
+        graduation={**artifact.graduation, "production_ready": False},
+    )
+    with pytest.raises(ValueError, match="does not match record evidence"):
+        forged_graduation.verify(required_case_ids=required)
 
 
 def test_qualification_record_rejects_nonfinite_and_tampered_metrics():
@@ -114,9 +136,11 @@ def test_graduation_requires_sparse_refresh_evidence_for_production():
         documentation_complete=True,
         artifact_present=True,
     )
-    assert validated["level"] == 1
     assert not validated["production_ready"]
-    combined = native + tuple(_record(case_id, "ipopt") for case_id in cases)
+    assert not validated["refresh_verified"]
+    combined = native + tuple(
+        _record(case_id, "ipopt", refresh_verified=True) for case_id in cases
+    )
     production = evaluate_direct_collocation_graduation(
         combined,
         documentation_complete=True,
@@ -132,9 +156,11 @@ def test_regression_detects_new_false_success_and_dense_sparse_path():
         _record(
             "case",
             "ipopt",
-            successful=False,
+            successful=True,
+            certified=False,
             false_success=True,
             dense_materialized=True,
+            materialization_verified=True,
             derivative_action_error=1.0e-6,
         ),
     )

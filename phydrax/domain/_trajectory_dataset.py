@@ -680,12 +680,33 @@ def trajectory_default_quadrature_total_weight(
         per_sample = jnp.ones((n,), dtype=jnp.float64)
     elif boundary:
         per_sample = jnp.full((n,), 2.0, dtype=jnp.float64)
+    elif domain.sampling_mode == "observation_uniform" and isinstance(
+        time_comp, Interior
+    ):
+        time_field = batch[TRAJECTORY_TIME_INDEX_KEY]
+        if not isinstance(time_field, cx.AxisArray):
+            raise TypeError(
+                "Trajectory time indices must be stored as a phydrax.axes.AxisArray."
+            )
+        time_idx = jnp.asarray(time_field.data, dtype=jnp.int32)
+        terminal = domain.lengths[case_idx] - 1
+        node_width = jnp.where(
+            (time_idx == 0) | (time_idx == terminal),
+            0.5 * domain.dt,
+            domain.dt,
+        )
+        node_width = jnp.where(domain.lengths[case_idx] == 1, 0.0, node_width)
+        scale = float(domain.total_observations)
+        if domain.measure_mode == "time_integral_average":
+            scale = scale / float(domain.size)
+        per_sample = scale * node_width
     else:
         per_sample = durations
 
-    if domain.measure_mode == "time_integral_sum":
+    if domain.measure_mode == "time_integral_sum" and not (
+        domain.sampling_mode == "observation_uniform" and isinstance(time_comp, Interior)
+    ):
         per_sample = per_sample * float(domain.size)
-
     return cx.AxisArray(per_sample / float(n), dims=(axis,))
 
 

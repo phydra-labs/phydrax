@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import equinox as eqx
 import jax.numpy as jnp
+import numpy as np
 from jaxtyping import Array
 
 from .._precision import PrecisionEvidenceEnvelope
@@ -25,6 +26,7 @@ from ._belief_propagation import (
     _bethe_log_normalizer,
     _bp_step,
     _factor_probabilities,
+    _graph_numeric_tables,
     _variable_log_beliefs,
     BeliefPropagationSchedulePolicy,
     BeliefPropagationState,
@@ -89,6 +91,7 @@ def _sum_product_result(
             prepared.precision.output(probabilities)
             for probabilities in factor_probabilities
         ),
+        factor_tables=_graph_numeric_tables(prepared.graph),
         log_normalizer=prepared.precision.output(log_normalizer),
         state=state,
         status=status,
@@ -120,6 +123,17 @@ def _mapping(
     return _bp_step(prepared, messages, evidence, force_full=True)[0]
 
 
+def _probability_mapping(
+    prepared: PreparedBeliefPropagation,
+    evidence: Array,
+    probabilities: Array,
+    /,
+) -> Array:
+    tiny = jnp.finfo(probabilities.dtype).tiny
+    messages = jnp.log(jnp.maximum(probabilities, tiny))
+    return jnp.exp(_mapping(prepared, evidence, messages))
+
+
 def _termination(
     prepared: PreparedBeliefPropagation,
     value: NonlinearTermination | None,
@@ -147,6 +161,36 @@ def _validate_state(
         raise ValueError("State message shape does not match the prepared plan.")
     if state.evidence.structure_id != prepared.graph.structure_id:
         raise ValueError("State evidence does not match the prepared graph.")
+    expected_evidence_shape = (prepared.state_variable_indices.shape[0],)
+    if state.evidence.values.shape != expected_evidence_shape:
+        raise ValueError(
+            f"State evidence must have shape {expected_evidence_shape}; "
+            f"got {state.evidence.values.shape}."
+        )
+
+
+def _invalid_log_values(value: Array, /) -> Array:
+    return jnp.any(jnp.isnan(value) | jnp.isposinf(value))
+
+
+def _infeasible_support(
+    prepared: PreparedBeliefPropagation,
+    evidence: Array,
+    messages: Array,
+    /,
+) -> Array:
+    infeasible = jnp.asarray(False)
+    offsets = np.asarray(prepared.graph.variable_state_offsets)
+    for start, stop in zip(offsets[:-1], offsets[1:]):
+        infeasible = infeasible | jnp.all(jnp.isneginf(evidence[int(start) : int(stop)]))
+    for table in prepared.factor_tables:
+        axes = tuple(range(1, table.ndim))
+        infeasible = infeasible | jnp.any(jnp.all(jnp.isneginf(table), axis=axes))
+    for layout in prepared.message_layout:
+        for start, stop, count, cardinality in layout:
+            rows = messages[start:stop].reshape((count, cardinality))
+            infeasible = infeasible | jnp.any(jnp.all(jnp.isneginf(rows), axis=-1))
+    return infeasible
 
 
 def run_accelerated_belief_propagation(
@@ -225,10 +269,14 @@ def run_implicit_belief_propagation(
     if any(evidence.capabilities.sparse_support for evidence in prepared.factor_evidence):
         raise ValueError("Implicit BP does not support sparse structural support.")
     policy = prepared.precision
-    initial = policy.accumulation(state.messages)
+    initial = jnp.exp(policy.accumulation(state.messages))
     evidence = policy.evaluation(state.evidence.values)
     problem = FixedPointProblem(
-        lambda messages, args: _mapping(prepared, args, messages),
+        lambda probabilities, args: _probability_mapping(
+            prepared,
+            args,
+            probabilities,
+        ),
         problem_id=f"implicit-bp:{prepared.plan_id}",
     ).as_nonlinear_problem()
     # Inexact Newton already scales each correction by its residual via forcing.
@@ -248,8 +296,18 @@ def run_implicit_belief_propagation(
         derivative_policy=derivative_policy,
         args=evidence,
     )
+    final_probabilities = _probability_mapping(
+        prepared,
+        evidence,
+        nonlinear.state,
+    )
+    final_messages = jnp.where(
+        final_probabilities > 0.0,
+        jnp.log(final_probabilities),
+        -jnp.inf,
+    )
     final_state = BeliefPropagationState(
-        policy.accumulation(nonlinear.state),
+        policy.accumulation(final_messages),
         state.evidence,
         step_index=state.step_index + nonlinear.diagnostics.iterations,
     )
@@ -259,22 +317,35 @@ def run_implicit_belief_propagation(
         nonlinear,
         method_id="sum-product-implicit-root",
     )
-    finite_input = jnp.all(jnp.isfinite(state.evidence.values)) & jnp.all(
-        jnp.isfinite(state.messages)
+    invalid_input = _invalid_log_values(state.evidence.values) | _invalid_log_values(
+        state.messages
     )
     for table in prepared.factor_tables:
-        finite_input = finite_input & jnp.all(jnp.isfinite(table))
-    finite_output = jnp.isfinite(inference.log_normalizer) & jnp.all(
-        jnp.isfinite(final_state.messages)
+        invalid_input = invalid_input | _invalid_log_values(table)
+    invalid_output = _invalid_log_values(inference.log_normalizer) | _invalid_log_values(
+        final_state.messages
     )
-    accepted = inference.successful & finite_input & finite_output
+    infeasible = (
+        _infeasible_support(prepared, state.evidence.values, state.messages)
+        | _infeasible_support(
+            prepared,
+            state.evidence.values,
+            final_state.messages,
+        )
+        | jnp.isneginf(inference.log_normalizer)
+    )
+    accepted = inference.successful & ~invalid_input & ~invalid_output & ~infeasible
     status = jnp.where(
-        ~finite_input,
+        invalid_input,
         int(BeliefPropagationStatus.NONFINITE_INPUT),
         jnp.where(
-            ~finite_output,
-            int(BeliefPropagationStatus.NONFINITE_MESSAGE),
-            inference.status,
+            infeasible,
+            int(BeliefPropagationStatus.INFEASIBLE),
+            jnp.where(
+                invalid_output,
+                int(BeliefPropagationStatus.NONFINITE_MESSAGE),
+                inference.status,
+            ),
         ),
     ).astype(jnp.int32)
     inference = eqx.tree_at(

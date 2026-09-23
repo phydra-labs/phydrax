@@ -174,15 +174,26 @@ def trajectory_from_sgp4(
     )
     if jd.ndim != 1 or jd.size < 1:
         raise ValueError("SGP4 Julian dates must form a nonempty rank-one schedule.")
+    if np.any(~np.isfinite(jd)) or np.any(~np.isfinite(fraction)):
+        raise ValueError("SGP4 Julian dates and fractions must be finite.")
     states = np.zeros((jd.size, 6), dtype=np.float64)
-    status = np.zeros((jd.size,), dtype=np.int32)
+    provider_status = np.zeros((jd.size,), dtype=np.int32)
     valid = np.ones((jd.size,), dtype=np.bool_)
+    finite_outputs = np.ones((jd.size,), dtype=np.bool_)
     for index, (day, part) in enumerate(zip(jd, fraction, strict=True)):
         error, position_km, velocity_km_s = satrec.sgp4(float(day), float(part))
-        status[index] = int(error)
-        valid[index] = int(error) == 0
-        states[index, :3] = np.asarray(position_km, dtype=np.float64)
-        states[index, 3:] = np.asarray(velocity_km_s, dtype=np.float64)
+        position = np.asarray(position_km, dtype=np.float64)
+        velocity = np.asarray(velocity_km_s, dtype=np.float64)
+        if position.shape != (3,) or velocity.shape != (3,):
+            raise ValueError(
+                "SGP4 provider states must contain position/velocity three-vectors."
+            )
+        finite = np.all(np.isfinite(position)) and np.all(np.isfinite(velocity))
+        finite_outputs[index] = finite
+        provider_status[index] = int(error)
+        valid[index] = int(error) == 0 and finite
+        states[index, :3] = position
+        states[index, 3:] = velocity
     velocity_unit = _KILOMETER_PER_SECOND
     positions = convert_value(
         states[:, :3],
@@ -205,7 +216,11 @@ def trajectory_from_sgp4(
     native_status = np.where(
         valid,
         int(AstrodynamicsStatus.SUCCESS),
-        int(AstrodynamicsStatus.NO_SOLUTION),
+        np.where(
+            finite_outputs,
+            int(AstrodynamicsStatus.NO_SOLUTION),
+            int(AstrodynamicsStatus.NONFINITE_INPUT),
+        ),
     ).astype(np.int32)
     return CartesianOrbitTrajectory(
         relative_times,
@@ -214,6 +229,7 @@ def trajectory_from_sgp4(
         jnp.asarray(native_status),
         context,
         trajectory_id="external:sgp4-compatible",
+        provider_status=jnp.asarray(provider_status),
     )
 
 

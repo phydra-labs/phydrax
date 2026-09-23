@@ -9,6 +9,7 @@ import json
 import time
 from pathlib import Path
 
+import jax
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -66,6 +67,7 @@ def main() -> None:
     )
     start = time.perf_counter()
     result = compressor.evaluate(inlet, jnp.asarray(1.0), jnp.asarray(0.0), design)
+    jax.block_until_ready(result)
     elapsed_ms = 1000.0 * (time.perf_counter() - start)
     payload = {
         "elapsed_ms": elapsed_ms,
@@ -73,11 +75,15 @@ def main() -> None:
         "outlet_pressure": float(result.outlet.total_pressure),
         "shaft_power": float(result.shaft_power),
     }
-    encoded = json.dumps(payload, indent=2)
+    encoded = json.dumps(payload, allow_nan=False, indent=2)
     if arguments.output is None:
         print(encoded)
     else:
-        arguments.output.write_text(encoded + "\n")
+        from benchmarks._io import write_json_atomic
+
+        write_json_atomic(arguments.output, payload)
+    if not payload["successful"]:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

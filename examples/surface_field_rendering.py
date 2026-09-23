@@ -50,6 +50,7 @@ prepared = phx.rendering.SurfaceImagePlan(
     realization,
     support,
     camera,
+    contract,
     quantity,
     phx.measurement.ValueLayout.scalar(),
     phx.measurement.SamplingSemantics(phx.measurement.SpatialSamplingKind.POINT),

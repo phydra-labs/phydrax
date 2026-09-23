@@ -265,14 +265,34 @@ def assess_release(
     if not profile.standards.satisfied:
         reasons.append("standards-traceability-incomplete")
     releasable = not reasons
-    evidence = tuple(gate_evidence[gate] for gate in MPMReleaseGate)
-    bundle = MPMReleaseEvidenceBundle(
-        claim,
-        intended_use,
-        evidence,
-        independent_approver_id=review.release_approver_id,
+    evidence = tuple(
+        gate_evidence[gate] for gate in profile.required_gates if gate in gate_evidence
     )
-    released = releasable & bundle.releasable
+    complete_inventory = all(gate in gate_evidence for gate in MPMReleaseGate)
+    if complete_inventory:
+        bundle = MPMReleaseEvidenceBundle(
+            claim,
+            intended_use,
+            tuple(gate_evidence[gate] for gate in MPMReleaseGate),
+            independent_approver_id=review.release_approver_id,
+        )
+        evidence_bundle_id = bundle.bundle_id
+        evidence_releasable = bundle.releasable
+    else:
+        evidence_bundle_id = canonical_fingerprint(
+            {
+                "kind": "mpm-required-release-evidence",
+                "claim": claim.claim_id,
+                "intended_use": intended_use.intended_use_id,
+                "required_gates": tuple(gate.name for gate in profile.required_gates),
+                "evidence": tuple(value.gate_id for value in evidence),
+                "approver": review.release_approver_id,
+            }
+        )
+        evidence_releasable = len(evidence) == len(profile.required_gates) and all(
+            value.passed and not value.deviation_ids for value in evidence
+        )
+    released = releasable and evidence_releasable
     release_profile = CapabilityProfile(
         f"{profile.name}.{claim.claim_id}",
         profile.capability_profile.provider,
@@ -280,9 +300,7 @@ def assess_release(
         (claim.support_tuple,),
         dependencies=profile.capability_profile.dependencies,
         required_gates=profile.capability_profile.required_gates,
-        release_evidence=tuple(
-            gate_evidence[gate].release_evidence for gate in profile.required_gates
-        ),
+        release_evidence=tuple(value.release_evidence for value in evidence),
         released=released,
     )
     return MPMReleaseAssessment(
@@ -299,7 +317,7 @@ def assess_release(
             {
                 "kind": "mpm-release-assessment",
                 "profile": release_profile.profile_id,
-                "bundle": bundle.bundle_id,
+                "bundle": evidence_bundle_id,
                 "review": review.review_record_id,
                 "standards": profile.standards.matrix_id,
                 "reasons": reasons,

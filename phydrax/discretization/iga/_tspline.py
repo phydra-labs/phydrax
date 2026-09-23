@@ -326,8 +326,10 @@ class TMesh2D(StrictModule, NonTrainableState):
         if not anchors_ or not all(isinstance(anchor, TAnchor2D) for anchor in anchors_):
             raise TypeError("anchors must be a nonempty sequence of TAnchor2D values.")
         anchor_ids = tuple(anchor.anchor_id for anchor in anchors_)
-        if len(set(anchor_ids)) != len(anchor_ids):
-            raise ValueError("T-spline anchor IDs must be unique.")
+        if tuple(sorted(anchor_ids)) != tuple(range(len(anchors_))):
+            raise ValueError(
+                "T-spline anchor IDs must be exactly 0 through coefficient_count - 1."
+            )
         vertices, edges, cells_ = _build_topology(cell_ids, cell_bounds, cell_levels)
         domain = (
             min(bounds[0] for bounds in cell_bounds),

@@ -140,6 +140,13 @@ class AtomisticNanoflowClosureArtifact(StrictModule, NonTrainableState):
             raise ValueError(
                 "Only admitted finite nanoflow closures can become artifacts."
             )
+        symmetry_scale = max(1.0, float(np.max(np.abs(covariance_))))
+        symmetry_tolerance = 128.0 * np.finfo(covariance_.dtype).eps * symmetry_scale
+        if not np.allclose(covariance_, covariance_.T, rtol=0.0, atol=symmetry_tolerance):
+            raise ValueError("Nanoflow closure covariance must be symmetric.")
+        eigenvalues = np.linalg.eigvalsh(covariance_)
+        if float(np.min(eigenvalues)) < -symmetry_tolerance:
+            raise ValueError("Nanoflow closure covariance must be positive semidefinite.")
 
         self.value = jnp.asarray(value_)
         self.covariance = jnp.asarray(covariance_)
@@ -185,6 +192,14 @@ def diffusion_closure_artifact(
 ) -> AtomisticNanoflowClosureArtifact:
     if not isinstance(fit, DiffusionTensorFitResult):
         raise TypeError("fit must be DiffusionTensorFitResult.")
+    if (
+        fit.support_id != support.support_id
+        or fit.system_id != system_id
+        or fit.force_field_id != force_field_id
+        or fit.rollout_id != rollout_id
+        or observer_id != fit.source_observer_id
+    ):
+        raise ValueError("Diffusion fit provenance does not match the closure support.")
     return AtomisticNanoflowClosureArtifact(
         NanoflowClosureKind.DIFFUSION_TENSOR,
         fit.diffusion_tensor,
@@ -214,6 +229,14 @@ def slip_closure_artifact(
 ) -> AtomisticNanoflowClosureArtifact:
     if not isinstance(fit, DrivenSlipFitResult):
         raise TypeError("fit must be DrivenSlipFitResult.")
+    if (
+        fit.support_id != support.support_id
+        or fit.system_id != system_id
+        or fit.force_field_id != force_field_id
+        or fit.rollout_id != rollout_id
+        or observer_id != fit.source_observer_id
+    ):
+        raise ValueError("Slip fit provenance does not match the closure support.")
     return AtomisticNanoflowClosureArtifact(
         NanoflowClosureKind.SLIP_LENGTH,
         fit.slip_lengths,
@@ -243,6 +266,16 @@ def wall_friction_closure_artifact(
 ) -> AtomisticNanoflowClosureArtifact:
     if not isinstance(correlation, WallForceCorrelationResult):
         raise TypeError("correlation must be WallForceCorrelationResult.")
+    if (
+        correlation.support_id != support.support_id
+        or correlation.system_id != system_id
+        or correlation.force_field_id != force_field_id
+        or correlation.rollout_id != rollout_id
+        or observer_id != correlation.force_source_id
+    ):
+        raise ValueError(
+            "Wall-force correlation provenance does not match the closure support."
+        )
     return AtomisticNanoflowClosureArtifact(
         NanoflowClosureKind.WALL_FRICTION,
         jnp.asarray((correlation.friction_coefficient,)),

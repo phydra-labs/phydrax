@@ -53,8 +53,8 @@ def _run_context():
         crossing_angle=0.0,
         beam_spot_mean=jnp.zeros(4),
         beam_spot_covariance=jnp.eye(4),
-        energy_unit_id="GeV",
-        length_unit_id="mm",
+        energy_unit=phx.units.GIGAELECTRONVOLT,
+        length_unit=phx.units.MILLIMETER,
         source_id="beam-test",
     )
     return phx.particle_physics.HEPRunContext(
@@ -94,34 +94,34 @@ def test_host_event_pack_unpack_preserves_graph_and_reports_attribute_loss():
         0,
         (
             pp.HostParticleRecord(
-                0,
+                10,
                 11,
                 pp.ParticleRole.INCOMING,
                 -1,
                 (5.0, 0.0, 0.0, 5.0),
                 0.0,
-                end_vertex_id=0,
+                end_vertex_id=7,
             ),
             pp.HostParticleRecord(
-                1,
+                20,
                 -11,
                 pp.ParticleRole.INCOMING,
                 -1,
                 (5.0, 0.0, 0.0, -5.0),
                 0.0,
-                end_vertex_id=0,
+                end_vertex_id=7,
             ),
             pp.HostParticleRecord(
-                2,
+                30,
                 22,
                 pp.ParticleRole.OUTGOING,
                 1,
                 (10.0, 0.0, 0.0, 0.0),
                 10.0,
-                production_vertex_id=0,
+                production_vertex_id=7,
             ),
         ),
-        (pp.HostVertexRecord(0, (0.0, 0.0, 0.0, 0.0), (0, 1), (2,)),),
+        (pp.HostVertexRecord(7, (0.0, 0.0, 0.0, 0.0), (10, 20), (30,)),),
         (pp.HostEventWeight("nominal", 1.0, pp.WeightVariationKind.NOMINAL, "nominal"),),
         "host-test",
         "host-source",
@@ -134,8 +134,10 @@ def test_host_event_pack_unpack_preserves_graph_and_reports_attribute_loss():
     assert int(packed.events.production_vertex_indices[0, 2]) == 0
     assert int(packed.events.end_vertex_indices[0, 0]) == 0
     unpacked = pp.unpack_particle_events(packed.events)
-    assert unpacked[0].vertices[0].incoming_particle_ids == (0, 1)
-    assert unpacked[0].vertices[0].outgoing_particle_ids == (2,)
+    assert unpacked[0].vertices[0].vertex_id == 7
+    assert unpacked[0].vertices[0].incoming_particle_ids == (10, 20)
+    assert unpacked[0].vertices[0].outgoing_particle_ids == (30,)
+    assert tuple(value.particle_id for value in unpacked[0].particles) == (10, 20, 30)
 
 
 def test_conditions_normalization_and_systematics_remain_distinct():

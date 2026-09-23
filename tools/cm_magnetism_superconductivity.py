@@ -154,7 +154,7 @@ def _bdg_residuals():
     }
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
@@ -172,14 +172,41 @@ def main() -> None:
         "soc": _soc_residuals(),
         "linear_spin_wave": _lswt_residuals(),
         "fermionic_bdg": _bdg_residuals(),
+        "passed": False,
         "release_claim": False,
     }
-    payload = json.dumps(report, indent=2, sort_keys=True) + "\n"
+    finite_values = np.asarray(
+        (
+            report["spin_half_su2_residual"],
+            report["soc"]["hermiticity_residual"],
+            report["soc"]["angular_momentum_residual"],
+            report["linear_spin_wave"]["paraunitarity_residual"],
+            report["linear_spin_wave"]["frequency_pairing_residual"],
+            report["linear_spin_wave"]["minimum_stability_eigenvalue"],
+            report["fermionic_bdg"]["particle_hole_residual"],
+            report["fermionic_bdg"]["spectral_pairing_residual"],
+            report["fermionic_bdg"]["minimum_direct_gap"],
+        )
+    )
+    report["passed"] = bool(
+        np.all(np.isfinite(finite_values))
+        and report["spin_half_su2_residual"] <= 1.0e-12
+        and report["soc"]["hermiticity_residual"] <= 1.0e-12
+        and report["soc"]["angular_momentum_residual"] <= 1.0e-12
+        and report["linear_spin_wave"]["paraunitarity_residual"] <= 1.0e-10
+        and report["linear_spin_wave"]["frequency_pairing_residual"] <= 1.0e-10
+        and report["linear_spin_wave"]["minimum_stability_eigenvalue"] >= 0.0
+        and report["fermionic_bdg"]["particle_hole_residual"] <= 1.0e-12
+        and report["fermionic_bdg"]["spectral_pairing_residual"] <= 1.0e-12
+        and report["fermionic_bdg"]["minimum_direct_gap"] >= 0.0
+    )
+    payload = json.dumps(report, indent=2, sort_keys=True, allow_nan=False) + "\n"
     if args.output is None:
         print(payload, end="")
     else:
         args.output.write_text(payload, encoding="utf-8")
+    return 0 if report["passed"] else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

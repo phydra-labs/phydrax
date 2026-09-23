@@ -9,6 +9,7 @@ from typing import Any, Literal
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._interpolation import (
@@ -114,8 +115,8 @@ class SampledSeriesReconstruction(StrictModule):
         if node_side not in ("left", "right"):
             raise ValueError("node_side must be 'left' or 'right'.")
         tolerance = float(snap_tolerance)
-        if tolerance < 0.0:
-            raise ValueError("snap_tolerance must be non-negative.")
+        if not np.isfinite(tolerance) or tolerance < 0.0:
+            raise ValueError("snap_tolerance must be finite and non-negative.")
 
         capabilities = _capabilities(interpolation)
         if series.alignment != capabilities.alignment:

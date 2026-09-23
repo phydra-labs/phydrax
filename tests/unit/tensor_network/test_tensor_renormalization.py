@@ -163,6 +163,7 @@ def test_hotrg_plan_preserves_anisotropy_and_alternates_directions():
     )
     assert plan.stages[0].output_shape == (2, 4, 2, 4)
     assert plan.stages[1].output_shape == (4, 4, 4, 4)
+    assert plan.stages[0].maximum_factorization_elements == 2 * 2**2 * 3**4
 
 
 def test_prepared_refresh_reuses_plan_but_changes_partition_density():
@@ -185,7 +186,8 @@ def test_prepared_refresh_reuses_plan_but_changes_partition_density():
     )
     updated = tn.run_tensor_renormalization(refreshed)
     assert refreshed.plan.plan_id == prepared.plan.plan_id
-    assert refreshed.prepared_id == prepared.prepared_id
+    assert refreshed.prepared_id != prepared.prepared_id
+    assert refreshed.problem.tensor.tensor_id != prepared.problem.tensor.tensor_id
     assert int(refreshed.numeric_version) == int(prepared.numeric_version) + 1
     assert jnp.allclose(
         updated.log_partition_density - original.log_partition_density,

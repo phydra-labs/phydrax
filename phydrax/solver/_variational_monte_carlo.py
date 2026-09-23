@@ -4,16 +4,19 @@
 
 from __future__ import annotations
 
+import dataclasses
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from math import isfinite
 from pathlib import Path
+from types import FunctionType
 from typing import Any, Literal, TYPE_CHECKING, TypeAlias
 
 import equinox as eqx
 import jax
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
 from jaxtyping import Array, Key
 
 import phydrax.axes as cx
@@ -221,7 +224,7 @@ class VariationalMonteCarloProblem(StrictModule):
             if target_factory_id is not None:
                 raise ValueError("target_factory_id requires target_factory.")
             factory_identity = None
-            target_identity = "raw-callable"
+            target_identity = None
             target_kind = "full"
         else:
             if not callable(target_factory):
@@ -279,7 +282,11 @@ class VariationalMonteCarloProblem(StrictModule):
         self.target_factory = target_factory
         self.complex_parameter_mode = mode
         self.target_factory_id = factory_identity
-        self.target_id = target_identity
+        self.target_id = (
+            f"{identifier}:amplitude-squared"
+            if target_identity is None
+            else target_identity
+        )
         self.target_kind = target_kind
         self.problem_id = identifier
 
@@ -294,7 +301,10 @@ class VariationalMonteCarloProblem(StrictModule):
     def target_for_model(self, model: Any, /):
         """Bind the problem's declared sampling target to one frozen model."""
         if self.target_factory is None:
-            return _model_log_target(model)
+            return FullMarkovTarget(
+                _model_log_target(model),
+                target_id=self.target_id,
+            )
         target = _explicit_model_target(self.target_factory(model))
         if target.target_id != self.target_id or _target_kind(target) != self.target_kind:
             raise ValueError(
@@ -651,6 +661,82 @@ def _raise_vmc(status: Array, role: str, /) -> None:
     raise RuntimeError(f"{role} failed with VMC status {vmc_status_name(status)}.")
 
 
+def _model_static_payload(value: Any, path: str = "model", /) -> Any:
+    if eqx.is_array(value):
+        array = jnp.asarray(value)
+        return {
+            "kind": "array-leaf",
+            "shape": list(array.shape),
+            "dtype": str(array.dtype),
+        }
+    if value is None or isinstance(value, (bool, int, str)):
+        return value
+    if isinstance(value, float):
+        if not isfinite(value):
+            raise ValueError(f"{path} contains a nonfinite static value.")
+        return value
+    if isinstance(value, complex):
+        if not isfinite(value.real) or not isfinite(value.imag):
+            raise ValueError(f"{path} contains a nonfinite static value.")
+        return {"kind": "complex", "real": value.real, "imag": value.imag}
+    if isinstance(value, np.dtype):
+        return {"kind": "dtype", "value": value.str}
+    if isinstance(value, FunctionType):
+        closure = (
+            ()
+            if value.__closure__ is None
+            else tuple(
+                _model_static_payload(cell.cell_contents, f"{path}.closure[{index}]")
+                for index, cell in enumerate(value.__closure__)
+            )
+        )
+        return {
+            "kind": "function",
+            "module": value.__module__,
+            "qualname": value.__qualname__,
+            "bytecode": value.__code__.co_code.hex(),
+            "defaults": _model_static_payload(value.__defaults__, f"{path}.defaults"),
+            "closure": closure,
+        }
+    if isinstance(value, type):
+        return {
+            "kind": "type",
+            "module": value.__module__,
+            "qualname": value.__qualname__,
+        }
+    if isinstance(value, Mapping):
+        if any(not isinstance(key, str) for key in value):
+            raise TypeError(f"{path} static mapping keys must be strings.")
+        return {
+            key: _model_static_payload(value[key], f"{path}.{key}")
+            for key in sorted(value)
+        }
+    if isinstance(value, (tuple, list)):
+        return [
+            _model_static_payload(item, f"{path}[{index}]")
+            for index, item in enumerate(value)
+        ]
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return {
+            "kind": "model-node",
+            "type": f"{type(value).__module__}.{type(value).__qualname__}",
+            "fields": {
+                field.name: _model_static_payload(
+                    getattr(value, field.name), f"{path}.{field.name}"
+                )
+                for field in dataclasses.fields(value)
+            },
+        }
+    raise TypeError(
+        f"{path} contains unsupported static checkpoint identity type "
+        f"{type(value).__name__}."
+    )
+
+
+def _model_structure_id(model: Any, /) -> str:
+    return canonical_fingerprint(_model_static_payload(model))
+
+
 def _policy_checkpoint_compatibility(
     policy: VariationalMonteCarloPolicy, /
 ) -> dict[str, Any]:
@@ -687,6 +773,7 @@ def _checkpoint_compatibility(
             problem.initial_configurations
         ),
         "model_signature": array_tree_signature(problem.model),
+        "model_structure_id": _model_structure_id(problem.model),
         "parameter_paths": list(problem.parameter_subspace.leaf_paths),
         "policy_fingerprint": canonical_fingerprint(
             _policy_checkpoint_compatibility(policy)
@@ -710,8 +797,8 @@ def _validate_state_compatibility(
         raise ValueError("VMC state chain count is incompatible with the problem.")
     if state.markov_state.target_id != problem.target_id:
         raise ValueError("VMC state target identity is incompatible with the problem.")
-    if array_tree_signature(state.model) != array_tree_signature(problem.model):
-        raise ValueError("VMC state model structure is incompatible with the problem.")
+    if _model_structure_id(state.model) != _model_structure_id(problem.model):
+        raise ValueError("VMC state model static structure is incompatible.")
     if int(state.iteration) < 0:
         raise ValueError("VMC state iteration must be non-negative.")
 

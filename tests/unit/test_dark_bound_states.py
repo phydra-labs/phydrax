@@ -27,7 +27,7 @@ from phydrax.particle_physics._bound_states import (
 from phydrax.particle_physics._identity import ParticleCatalogReference
 from phydrax.particle_physics._species import ParticleSpeciesTable
 from phydrax.solver._dark_sector_epoch_runtime import DarkSectorEpochPlan
-from phydrax.units import COULOMB
+from phydrax.units import BARN, COULOMB
 
 
 def _capture_plan():
@@ -69,22 +69,6 @@ def _capture_plan():
         observer_id="observer",
         orientation_id="future-right-handed",
     )
-    runtime = DarkSectorEpochPlan(
-        packet_capacity=1,
-        event_capacity=2,
-        product_capacity=4,
-        radiation_capacity=2,
-        work_capacity=4,
-        frontier_capacity=4,
-        packet_width=1,
-        event_width=8,
-        product_width=4,
-        radiation_width=4,
-        work_width=8,
-        frontier_width=8,
-        species_revision_id="5" * 64,
-        topology_revision_id="6" * 64,
-    )
     catalog = ParticleCatalogReference(
         source_id="bound-test",
         provider_release="test",
@@ -98,6 +82,22 @@ def _capture_plan():
         catalog=catalog,
         energy_unit=units.energy_unit,
         charge_unit=COULOMB,
+    )
+    runtime = DarkSectorEpochPlan(
+        packet_capacity=1,
+        event_capacity=2,
+        product_capacity=4,
+        radiation_capacity=2,
+        work_capacity=4,
+        frontier_capacity=4,
+        packet_width=1,
+        event_width=8,
+        product_width=4,
+        radiation_width=4,
+        work_width=8,
+        frontier_width=8,
+        species_revision_id=species.table_id,
+        topology_revision_id="6" * 64,
     )
     level = DarkBoundStateLevel(
         20,
@@ -125,37 +125,60 @@ def _capture_plan():
         spectrum,
         20,
         capture_coefficient=0.25,
+        photo_dissociation_coefficient=0.25,
         emitted_radiation_degeneracy=2,
         constituent_degeneracies=(2, 2),
         multipole_order=1,
-        cross_section_unit_id="energy^-2",
+        cross_section_unit=BARN,
         coefficient_source_id="dipole-control",
     )
 
 
 def test_radiative_capture_and_photo_dissociation_obey_pointwise_detailed_balance():
     plan = _capture_plan()
-    result = evaluate_radiative_capture_balance(plan, jnp.asarray((0.2, 1.0, 2.0)))
+    momentum = jnp.asarray((0.2, 1.0, 2.0))
+    result = evaluate_radiative_capture_balance(plan, momentum)
+    energy = jnp.sqrt(5.0**2 + momentum**2)
+    photon_energy = 2.0 * energy - 9.0
+    relative_velocity = 2.0 * momentum / energy
+    expected_capture = 0.25 * photon_energy**3 / relative_velocity
+    expected_dissociation = 0.25 * 2.0 * momentum**2 * photon_energy / relative_velocity
     assert jnp.all(result.kinematically_open)
     assert jnp.all(result.finite)
-    assert jnp.all(result.capture_cross_section > 0.0)
-    assert jnp.all(result.photo_dissociation_cross_section > 0.0)
-    np.testing.assert_allclose(result.detailed_balance_residual, 0.0, atol=1e-12)
+    np.testing.assert_allclose(result.capture_cross_section, expected_capture, rtol=1e-7)
     np.testing.assert_allclose(
         result.photo_dissociation_cross_section,
-        result.detailed_balance_factor * result.capture_cross_section,
+        expected_dissociation,
         rtol=1e-7,
     )
+    np.testing.assert_allclose(result.detailed_balance_residual, 0.0, atol=1e-12)
 
 
 def test_thermal_forward_reverse_rates_share_one_saha_equilibrium_ratio():
     plan = _capture_plan()
-    result = evaluate_thermal_bound_state_balance(plan, jnp.asarray((0.1, 0.5, 1.0)))
+    temperature = jnp.asarray((0.1, 0.5, 1.0))
+    result = evaluate_thermal_bound_state_balance(plan, temperature)
+    reduced_mass = 2.5
+    thermal_momentum = jnp.sqrt(2.0 * reduced_mass * temperature)
+    energy = jnp.sqrt(5.0**2 + thermal_momentum**2)
+    photon_energy = 2.0 * energy - 9.0
+    relative_velocity = 2.0 * thermal_momentum / 5.0
+    expected_capture_rate = (
+        0.25 * photon_energy**3 / (2.0 * thermal_momentum / energy)
+    ) * relative_velocity
+    expected_ratio = (
+        4.0
+        * (reduced_mass * temperature / (2.0 * jnp.pi)) ** 1.5
+        * jnp.exp(-1.0 / temperature)
+    )
     assert jnp.all(result.finite)
-    assert jnp.all(result.equilibrium_ratio > 0.0)
-    np.testing.assert_allclose(result.detailed_balance_residual, 0.0, atol=1e-12)
+    np.testing.assert_allclose(result.equilibrium_ratio, expected_ratio, rtol=1e-7)
+    np.testing.assert_allclose(
+        result.capture_rate_coefficient, expected_capture_rate, rtol=1e-7
+    )
     np.testing.assert_allclose(
         result.photo_dissociation_rate,
-        result.equilibrium_ratio * result.capture_rate_coefficient,
+        expected_ratio * expected_capture_rate,
         rtol=1e-7,
     )
+    np.testing.assert_allclose(result.detailed_balance_residual, 0.0, atol=1e-12)

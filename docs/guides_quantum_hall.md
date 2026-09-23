@@ -48,7 +48,7 @@ The initial support is fully spin polarized. The local kinetic operator computes
 The canonical quantum-lattice lowering constructs an exact Abelian MPO carrying particle number and orbital momentum. `HallCylinderDMRGPlan` uses the existing Abelian residual-sweep solver and reports residuals, discarded weights, and charge drift. This is finite-cylinder DMRG; no infinite-cylinder or thermodynamic-limit claim is made.
 ## Infinite cylinder
 
-`InfiniteHallCylinderPlan` binds a filling-compatible uniform Abelian MPS/MPO unit cell to native VUMPS. A filling `p/q` requires a `q`-orbital unit cell carrying `p` particles. Matrix-free transfer fixed points, injectivity, correlation length, and Galerkin residual remain visible. Infinite length does not remove finite-circumference, interaction-range, or bond-dimension error.
+`InfiniteHallCylinderPlan` binds a filling-compatible uniform Abelian MPS/MPO unit cell to native VUMPS. A filling `p/q` requires a `q`-orbital unit cell carrying `p` particles. The currently certified route is restricted to bond-one product unit cells: the result recomputes the output particle-charge expectation and variance and fails closed if VUMPS leaves the declared sector. Matrix-free transfer fixed points, injectivity, correlation length, and Galerkin residual remain visible. Infinite length does not remove finite-circumference, interaction-range, variational-support, or product-state error.
 
 
 ## Disorder and transport

@@ -48,6 +48,9 @@ class ParticleSpeciesTable(StrictModule, NonTrainableState):
             raise ValueError("pdg_ids must be a non-empty one-dimensional array.")
         if not np.issubdtype(identifiers.dtype, np.integer):
             raise TypeError("pdg_ids must contain integers.")
+        int32 = np.iinfo(np.int32)
+        if np.any(identifiers < int32.min) or np.any(identifiers > int32.max):
+            raise OverflowError("pdg_ids must fit signed int32.")
         if energies.shape != identifiers.shape or charges_.shape != identifiers.shape:
             raise ValueError("Species energies and charges must align with pdg_ids.")
         if not isinstance(catalog, ParticleCatalogReference):
@@ -69,7 +72,8 @@ class ParticleSpeciesTable(StrictModule, NonTrainableState):
             raise ValueError("Active charges must be finite.")
         if len(set(identifiers[active_].tolist())) != int(np.sum(active_)):
             raise ValueError("Active PDG identities must be unique.")
-        self.pdg_ids = jnp.asarray(identifiers, dtype=jnp.int32)
+        stored_identifiers = identifiers.astype(np.int32, copy=False)
+        self.pdg_ids = jnp.asarray(stored_identifiers)
         self.rest_energies = jnp.asarray(energies)
         self.charges = jnp.asarray(charges_, dtype=self.rest_energies.dtype)
         self.active = jnp.asarray(active_)
@@ -85,7 +89,7 @@ class ParticleSpeciesTable(StrictModule, NonTrainableState):
                 "charge_unit": charge_unit.unit_id,
                 "content": array_tree_fingerprint(
                     {
-                        "pdg_ids": identifiers,
+                        "pdg_ids": stored_identifiers,
                         "rest_energies": energies,
                         "charges": charges_,
                         "active": active_,

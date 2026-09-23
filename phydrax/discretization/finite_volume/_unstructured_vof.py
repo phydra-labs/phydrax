@@ -583,6 +583,8 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
     gradient: PreparedCellPolynomialReconstruction
     bisection_iterations: int = eqx.field(static=True)
     physical_layout_id: str = eqx.field(static=True)
+    topology_epoch_id: str = eqx.field(static=True)
+    geometry_family_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -592,6 +594,8 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
         /,
         *,
         bisection_iterations: int = 60,
+        topology_epoch_id: str | None = None,
+        geometry_family_id: str | None = None,
     ):
         if not isinstance(discretization, UnstructuredFiniteVolumeDiscretization):
             raise TypeError("VOF requires unstructured FV geometry.")
@@ -628,6 +632,20 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
             or discretization.neighbor_cells.shape != (face_count,)
         ):
             raise ValueError("PLIC polygon or physical face layout is invalid.")
+        epoch_id = (
+            discretization.topology_id
+            if topology_epoch_id is None
+            else str(topology_epoch_id)
+        )
+        family_id = (
+            discretization.geometry_id
+            if geometry_family_id is None
+            else str(geometry_family_id)
+        )
+        if not epoch_id or not family_id:
+            raise ValueError(
+                "VOF topology epoch and geometry family IDs must be non-empty."
+            )
         physical_layout_id = canonical_fingerprint(
             {
                 "kind": "jax-plic-physical-face-layout",
@@ -642,6 +660,8 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
         self.gradient = gradient
         self.bisection_iterations = iterations
         self.physical_layout_id = physical_layout_id
+        self.topology_epoch_id = epoch_id
+        self.geometry_family_id = family_id
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "unstructured-vof-plan",
@@ -649,6 +669,8 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
                 "gradient": gradient.prepared_id,
                 "bisection_iterations": iterations,
                 "physical_layout": physical_layout_id,
+                "topology_epoch": epoch_id,
+                "geometry_family": family_id,
             }
         )
 
@@ -761,6 +783,11 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
                 raise TypeError("stage_metrics must be FiniteVolumeStageMetrics or None.")
             if stage_metrics.cell_count != geometry.cell_count:
                 raise ValueError("Stage metrics and VOF cell counts differ.")
+            if (
+                stage_metrics.topology_epoch_id != self.topology_epoch_id
+                or stage_metrics.geometry_family_id != self.geometry_family_id
+            ):
+                raise ValueError("Stage metrics are stale for this VOF geometry epoch.")
             if effective_geometry is not None:
                 raise ValueError(
                     "Moved PLIC and embedded effective geometry are not yet composable."
@@ -819,12 +846,23 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
         receptors = geometry.neighbor_cells.astype(jnp.int32)
 
         if effective_geometry is None:
-            polygons = base_polygons
-            cell_vertex_valid = base_cell_vertex_valid
-            cell_volumes = stage_cell_volumes
             cell_active = stage_cell_active
-            edge_points = base_edge_points
-            open_face_active = jnp.ones((face_count,), dtype=jnp.bool_)
+            polygons = jnp.where(
+                cell_active[:, None, None],
+                base_polygons,
+                jnp.zeros_like(base_polygons),
+            )
+            cell_vertex_valid = base_cell_vertex_valid & cell_active[:, None]
+            cell_volumes = stage_cell_volumes
+            safe_stage_receptors = jnp.maximum(receptors, 0)
+            open_face_active = cell_active[owners] & (
+                (receptors < 0) | cell_active[safe_stage_receptors]
+            )
+            edge_points = jnp.where(
+                open_face_active[:, None, None],
+                base_edge_points,
+                jnp.zeros_like(base_edge_points),
+            )
             effective_geometry_id = stage_geometry_id
             effective_evidence = (
                 jnp.asarray(True)
@@ -875,6 +913,11 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
                     <= effective_geometry.evidence.open_segment_measure_tolerance
                 ).all()
             )
+        alpha = eqx.error_if(
+            alpha,
+            jnp.any((~cell_active) & (alpha != 0.0)),
+            "Volume fraction must be exactly zero on inactive stage cells.",
+        )
 
         polygon_evidence = jax.vmap(_jax_convex_polygon_evidence)(
             polygons,
@@ -1424,6 +1467,11 @@ class UnstructuredVOFPlan(StrictModule, NonTrainableState):
             raise ValueError("Stage geometry evidence is not certified.")
         if stage_metrics.cell_count != geometry.cell_count:
             raise ValueError("Stage geometry has an incompatible cell count.")
+        if (
+            stage_metrics.topology_epoch_id != self.topology_epoch_id
+            or stage_metrics.geometry_family_id != self.geometry_family_id
+        ):
+            raise ValueError("Stage geometry is stale for this VOF geometry epoch.")
 
         vertices = np.asarray(geometry.vertices)
         face_edges = np.asarray(geometry.connectivity.edges, dtype=np.int32)

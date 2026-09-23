@@ -34,6 +34,8 @@ def main() -> None:
     final, history = jax.lax.scan(step, initial, xs=None, length=step_count)
     initial_output = runtime.evaluate(initial, 40.0)
     final_output = runtime.evaluate(final, 40.0)
+    if not bool(jnp.all(history[:, 2] == 1.0)):
+        raise RuntimeError("Motor-unit trajectory contains a failed step")
     payload = {
         "model": skeletal_muscle.motor_units.POTVIN_FUGLEVAND_2017_MODEL_ID,
         "source_doi": skeletal_muscle.motor_units.POTVIN_FUGLEVAND_2017_DOI,
@@ -48,7 +50,7 @@ def main() -> None:
         "final_total_force": float(final_output.total_force),
         "final_capacity_fraction": float(final_output.total_force_capacity_fraction),
         "recruited_unit_count": int(jnp.sum(runtime.evaluate(initial, 40.0).recruited)),
-        "all_steps_successful": bool(jnp.all(history[:, 2] == 1.0)),
+        "all_steps_successful": True,
     }
     print(json.dumps(payload, indent=2, sort_keys=True))
 

@@ -14,9 +14,21 @@ def _general(matrix, mass=None):
     )
 
 
+def _assert_successful(result):
+    assert bool(result.successful)
+    assert bool(result.diagnostics.converged)
+    assert bool(result.diagnostics.output_finite)
+    assert jnp.all(jnp.isfinite(result.diagnostics.right_relative_residuals))
+    assert jnp.all(jnp.isfinite(result.diagnostics.left_relative_residuals))
+    assert jnp.max(result.diagnostics.right_relative_residuals) < 1e-8
+    assert jnp.max(result.diagnostics.left_relative_residuals) < 1e-8
+
+
 def test_homogeneous_resolution_matching_is_one_to_one_and_permutation_safe():
     coarse = _general(jnp.diag(jnp.asarray([1.0, 2.0, 4.0])))
     fine = _general(jnp.diag(jnp.asarray([4.0, 1.0, 2.0 + 1e-9])))
+    _assert_successful(coarse)
+    _assert_successful(fine)
     report = phx.linalg.eigen.compare_general_eigen_resolutions(coarse, fine)
 
     assert report.matched_count == 3
@@ -30,6 +42,8 @@ def test_homogeneous_resolution_matching_preserves_infinite_classification():
     mass = jnp.diag(jnp.asarray([1.0, 0.0]))
     coarse = _general(matrix, mass)
     fine = _general(matrix + jnp.diag(jnp.asarray([1e-10, 0.0])), mass)
+    _assert_successful(coarse)
+    _assert_successful(fine)
     report = phx.linalg.eigen.compare_general_eigen_resolutions(coarse, fine)
 
     assert report.matched_count == 2
@@ -40,6 +54,8 @@ def test_homogeneous_resolution_matching_preserves_infinite_classification():
 def test_repeated_cluster_is_not_certified_as_individual_modes():
     coarse = _general(jnp.diag(jnp.asarray([1.0, 1.0, 3.0])))
     fine = _general(jnp.diag(jnp.asarray([1.0, 1.0, 3.0])))
+    _assert_successful(coarse)
+    _assert_successful(fine)
     report = phx.linalg.eigen.compare_general_eigen_resolutions(coarse, fine)
 
     ambiguous = int(phx.linalg.eigen.GeneralEigenMatchStatus.AMBIGUOUS_CLUSTER)
@@ -66,6 +82,8 @@ def test_spectral_eigenspace_evidence_compares_transferred_modes():
     fine_result = phx.linalg.eigen.general_eigensolve(
         phx.linalg.eigen.GeneralEigenproblem(fine_operator)
     )
+    _assert_successful(coarse_result)
+    _assert_successful(fine_result)
     transfer = phx.discretization.prepare_spectral_modal_transfer(coarse, fine)
     report = phx.discretization.compare_spectral_eigen_resolutions(
         coarse_result,

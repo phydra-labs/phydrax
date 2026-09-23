@@ -203,7 +203,8 @@ def array_collection_digest(arrays: Mapping[str, Any], /) -> str:
 
 
 def _array_payload(value: Any, /) -> bytes:
-    array = np.asarray(value)
+    value_array = np.asarray(value)
+    array = np.ascontiguousarray(value_array) if value_array.ndim else value_array
     if array.dtype.hasobject:
         raise TypeError("Archive arrays cannot have object dtype.")
     buffer = io.BytesIO()
@@ -256,30 +257,38 @@ def unpack_array_tree(
     /,
 ) -> Any:
     """Restore one array-only PyTree against an exact runtime template."""
-    if not isinstance(specification, Mapping):
-        raise ValueError("Archived PyTree specification must be a mapping.")
+    if not isinstance(specification, Mapping) or set(specification) != {
+        "paths",
+        "arrays",
+        "num_leaves",
+    }:
+        raise ValueError("Archived PyTree specification must be canonical.")
 
     template_path_leaves, treedef = jax.tree_util.tree_flatten_with_path(template)
     expected_paths = [
         jax.tree_util.keystr(path) or "<root>" for path, _ in template_path_leaves
     ]
-    names = specification.get("arrays")
+    names = specification["arrays"]
     if (
-        specification.get("paths") != expected_paths
-        or specification.get("num_leaves") != len(expected_paths)
+        specification["paths"] != expected_paths
+        or type(specification["num_leaves"]) is not int
+        or specification["num_leaves"] != len(expected_paths)
         or not isinstance(names, list)
         or len(names) != len(expected_paths)
+        or any(not isinstance(name, str) or not name for name in names)
+        or len(set(names)) != len(names)
     ):
         raise ValueError("Archived PyTree does not match the runtime template.")
     leaves = []
     for name, (_, template_leaf) in zip(names, template_path_leaves, strict=True):
-        if not isinstance(name, str) or name not in arrays:
+        if not isinstance(name, str) or not name or name not in arrays:
             raise ValueError("Archived PyTree array is missing.")
-        value = jnp.asarray(arrays[name])
-        expected = jnp.asarray(template_leaf)
-        if value.shape != expected.shape or value.dtype != expected.dtype:
+        value = np.asarray(arrays[name])
+        expected_shape = tuple(template_leaf.shape)
+        expected_dtype = np.dtype(template_leaf.dtype)
+        if value.shape != expected_shape or value.dtype != expected_dtype:
             raise ValueError("Archived PyTree array shape or dtype changed.")
-        leaves.append(value)
+        leaves.append(jnp.asarray(value))
     return jax.tree_util.tree_unflatten(treedef, leaves)
 
 
@@ -304,7 +313,8 @@ def write_array_archive(
     for index, name in enumerate(sorted(arrays)):
         if not isinstance(name, str) or not name:
             raise TypeError("Archive array names must be non-empty strings.")
-        array = np.asarray(arrays[name])
+        source_array = np.asarray(arrays[name])
+        array = np.ascontiguousarray(source_array) if source_array.ndim else source_array
         elements = _admit_array_for_archive(array, policy, name)
         if total_elements > policy.max_total_array_elements - elements:
             raise ValueError("Archive arrays exceed the aggregate element limit.")
@@ -322,6 +332,7 @@ def write_array_archive(
             "shape": list(array.shape),
             "dtype": array.dtype.str,
             "sha256": hashlib.sha256(payload).hexdigest(),
+            "order": "C",
         }
     complete_manifest = dict(manifest)
     if "arrays" in complete_manifest:
@@ -463,6 +474,8 @@ def _preflight_members(
     member_names = [member.filename for member in members]
     if len(set(member_names)) != len(member_names):
         raise ArrayArchiveCorruptionError("Archive contains duplicate members.")
+    if any(not _canonical_member_name(name) for name in member_names):
+        raise ArrayArchiveCorruptionError("Archive contains noncanonical member names.")
     if any(
         member.compress_type != zipfile.ZIP_STORED
         or member.file_size != member.compress_size
@@ -582,7 +595,7 @@ def _read_exact(stream: IO[bytes], size: int, /) -> bytes:
 
 def _read_npy_metadata(
     stream: IO[bytes],
-    member_size: int,
+    member_size: int | None,
     limits: ArrayArchiveLimits,
     /,
 ) -> tuple[np.dtype[Any], tuple[int, ...], int]:
@@ -623,9 +636,11 @@ def _read_npy_metadata(
             isinstance(extent, bool) or not isinstance(extent, int) or extent < 0
             for extent in shape
         )
-        or not isinstance(header["fortran_order"], bool)
+        or header["fortran_order"] is not False
     ):
-        raise ArrayArchiveCorruptionError("Archive array shape metadata is invalid.")
+        raise ArrayArchiveCorruptionError(
+            "Archive array shape or storage-order metadata is invalid."
+        )
     if len(shape) > limits.max_array_rank:
         raise ArrayArchiveCorruptionError("Archive array exceeds the rank limit.")
     elements = 1
@@ -656,11 +671,12 @@ def _read_npy_metadata(
         raise ArrayArchiveCorruptionError(
             "Archive array dtype is not admitted by policy."
         )
-    expected_size = stream.tell() + elements * dtype.itemsize
-    if expected_size != member_size:
-        raise ArrayArchiveCorruptionError(
-            "Archive array byte size is inconsistent with its NPY metadata."
-        )
+    if member_size is not None:
+        expected_size = stream.tell() + elements * dtype.itemsize
+        if expected_size != member_size:
+            raise ArrayArchiveCorruptionError(
+                "Archive array byte size is inconsistent with its NPY metadata."
+            )
     return dtype, shape, elements
 
 
@@ -705,11 +721,12 @@ def read_array_archive(
             ):
                 raise TypeError("Expected archive inventory is invalid.")
             shape, dtype = specification
-            shape_ = tuple(shape)
-            if any(extent < 0 for extent in shape_):
-                raise ValueError("Expected archive shapes must be nonnegative.")
+            if not isinstance(shape, tuple) or any(
+                type(extent) is not int or extent < 0 for extent in shape
+            ):
+                raise TypeError("Expected archive shapes must be integer tuples.")
             expected[name] = (
-                shape_,
+                shape,
                 None if dtype is None else np.dtype(dtype),
             )
     try:
@@ -726,10 +743,14 @@ def read_array_archive(
                 ) from error
             _validate_json_nesting(manifest_text, policy.max_manifest_nesting)
             try:
-                manifest = json.loads(manifest_text)
-            except (json.JSONDecodeError, RecursionError) as error:
+                manifest = json.loads(
+                    manifest_text,
+                    object_pairs_hook=_unique_json_object,
+                    parse_constant=_reject_json_constant,
+                )
+            except (json.JSONDecodeError, RecursionError, ValueError) as error:
                 raise ArrayArchiveCorruptionError(
-                    "Archive manifest is invalid finite JSON."
+                    "Archive manifest is invalid finite duplicate-free JSON."
                 ) from error
             if not isinstance(manifest, dict):
                 raise ArrayArchiveCorruptionError("Archive manifest must be an object.")
@@ -737,6 +758,10 @@ def read_array_archive(
             inventory = manifest.get("arrays")
             if not isinstance(inventory, dict):
                 raise ArrayArchiveCorruptionError("Archive array inventory is missing.")
+            if list(inventory) != sorted(inventory):
+                raise ArrayArchiveCorruptionError(
+                    "Archive array inventory ordering is noncanonical."
+                )
             if expected is not None and set(inventory) != set(expected):
                 raise ArrayArchiveCorruptionError(
                     "Archive inventory does not match the exact runtime template."
@@ -747,12 +772,12 @@ def read_array_archive(
                 str, tuple[zipfile.ZipInfo, np.dtype[Any], tuple[int, ...]]
             ] = {}
             total_elements = 0
-            for logical_name, record in inventory.items():
+            for logical_index, (logical_name, record) in enumerate(inventory.items()):
                 if (
                     not isinstance(logical_name, str)
                     or not logical_name
                     or not isinstance(record, dict)
-                    or set(record) != {"member", "shape", "dtype", "sha256"}
+                    or set(record) != {"member", "shape", "dtype", "order", "sha256"}
                 ):
                     raise ArrayArchiveCorruptionError(
                         "Archive array inventory is invalid."
@@ -760,7 +785,7 @@ def read_array_archive(
                 member_name = record["member"]
                 if (
                     not isinstance(member_name, str)
-                    or member_name == "manifest.json"
+                    or member_name != f"arrays/{logical_index:06d}.npy"
                     or member_name not in member_by_name
                     or member_name in expected_members
                 ):
@@ -787,10 +812,12 @@ def read_array_archive(
                     )
                 record_shape = record["shape"]
                 record_dtype = record["dtype"]
+                record_order = record["order"]
                 if (
                     not isinstance(record_shape, list)
                     or any(type(extent) is not int for extent in record_shape)
                     or not isinstance(record_dtype, str)
+                    or record_order != "C"
                     or record_shape != list(shape)
                     or record_dtype != dtype.str
                 ):

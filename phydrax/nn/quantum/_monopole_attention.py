@@ -5,8 +5,8 @@
 """Permutation-equivariant monopole-sphere determinant amplitude."""
 
 from __future__ import annotations
-from collections.abc import Sequence
 
+from collections.abc import Sequence
 from math import comb, pi, sqrt
 
 import equinox as eqx

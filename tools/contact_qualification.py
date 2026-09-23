@@ -87,37 +87,35 @@ def main():
     )
     hertz = phx.applications.contact.hertz_sphere_half_space(1.0, 1000.0, 10.0)
     derivative_defect = float(jnp.abs(analytic - finite_difference))
-    print(
-        json.dumps(
-            {
-                "qualification": "deformable-contact",
-                "device": str(jax.devices()[0]),
-                "dtype": str(distance_squared.dtype),
-                "barrier_derivative_defect": derivative_defect,
-                "candidate_complete": bool(epoch.successful),
-                "ccd_successful": bool(safety.successful),
-                "ccd_guarantee_level": int(safety.guarantee.level),
-                "interface_balance_defect": float(
-                    jnp.max(jnp.abs(interface_residual.action_reaction_residual))
-                ),
-                "hertz_contact_radius": float(hertz.contact_radius),
-                "ccd_step_size": float(safety.step_size),
-                "ccd_interval_count": int(safety.interval_count),
-                "qualified": bool(
-                    derivative_defect < 1.0e-6
-                    and epoch.successful
-                    and safety.successful
-                    and safety.guarantee.level
-                    == int(phx.discretization.ContactGuaranteeLevel.ROUNDING_CERTIFIED)
-                    and interface_residual.successful
-                    and hertz.contact_radius > 0.0
-                    and 0.0 < safety.step_size < 0.5
-                ),
-            },
-            indent=2,
-        )
-    )
+    report = {
+        "qualification": "deformable-contact",
+        "device": str(jax.devices()[0]),
+        "dtype": str(distance_squared.dtype),
+        "barrier_derivative_defect": derivative_defect,
+        "candidate_complete": bool(epoch.successful),
+        "ccd_successful": bool(safety.successful),
+        "ccd_guarantee_level": int(safety.guarantee.level),
+        "interface_balance_defect": float(
+            jnp.max(jnp.abs(interface_residual.action_reaction_residual))
+        ),
+        "hertz_contact_radius": float(hertz.contact_radius),
+        "ccd_step_size": float(safety.step_size),
+        "ccd_interval_count": int(safety.interval_count),
+        "qualified": bool(
+            jnp.isfinite(derivative_defect)
+            and derivative_defect < 1.0e-6
+            and epoch.successful
+            and safety.successful
+            and safety.guarantee.level
+            == int(phx.discretization.ContactGuaranteeLevel.ROUNDING_CERTIFIED)
+            and interface_residual.successful
+            and hertz.contact_radius > 0.0
+            and 0.0 < safety.step_size < 0.5
+        ),
+    }
+    print(json.dumps(report, indent=2, allow_nan=False))
+    return 0 if report["qualified"] else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -424,16 +424,19 @@ def plan_junction_tree(plan: VariableEliminationPlan, /) -> JunctionTreePlan:
 
     parents = [-2] * clique_count
     separators: list[tuple[int, ...]] = [()] * clique_count
-    parents[0] = -1
-    pending = deque([0])
-    while pending:
-        parent = pending.popleft()
-        for child in sorted(adjacency[parent]):
-            if parents[child] != -2:
-                continue
-            parents[child] = parent
-            separators[child] = tuple(sorted(set(cliques[child]) & set(cliques[parent])))
-            pending.append(child)
+    if clique_count:
+        parents[0] = -1
+        pending = deque([0])
+        while pending:
+            parent = pending.popleft()
+            for child in sorted(adjacency[parent]):
+                if parents[child] != -2:
+                    continue
+                parents[child] = parent
+                separators[child] = tuple(
+                    sorted(set(cliques[child]) & set(cliques[parent]))
+                )
+                pending.append(child)
 
     for variable in range(plan.graph.num_variables):
         containing = {index for index, clique in enumerate(cliques) if variable in clique}
@@ -563,11 +566,15 @@ class NormalizedFactorGraphLaw(AbstractProbabilityLaw):
         return support & jnp.isfinite(score)
 
     def log_prob(self, value: ArrayLike, /) -> Array:
-        states = jnp.asarray(value, dtype=jnp.int32)
-        score = factor_graph_log_score(self.plan.graph, states)
-        indices = self.plan.graph.variable_state_offsets[:-1] + states
+        value_ = jnp.asarray(value)
+        support = factor_graph_contains(self.plan.graph, value_)
+        states = value_.astype(jnp.int32)
+        cardinalities = self.plan.graph.cardinalities
+        safe_states = jnp.clip(states, 0, cardinalities - 1)
+        score = factor_graph_log_score(self.plan.graph, value_)
+        indices = self.plan.graph.variable_state_offsets[:-1] + safe_states
         return jnp.where(
-            self.contains(states),
+            support & jnp.isfinite(score),
             score + jnp.sum(self.evidence[indices], axis=-1) - self.result.log_normalizer,
             -jnp.inf,
         )

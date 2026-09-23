@@ -15,6 +15,7 @@ import optax
 from jaxtyping import Array, ArrayLike, PyTree
 
 from .._fingerprint import array_tree_fingerprint
+from .._sampling import derive_key, SampleAddress
 from .._strict import StrictModule
 from ._minibatch_posterior import LikelihoodBatch, MinibatchPosteriorProblem
 from ._parameterized_state_space import ParameterizedStateSpaceProblem
@@ -241,8 +242,18 @@ class BufferedParticleGradientEstimator(AbstractStochasticGradientEstimator):
             != self.parameterized.parameter_space.raw_shapes
         ):
             raise ValueError("Buffered estimator parameter coordinates do not match.")
-        window = self.window_plan.sample(key)
-        log_terms, score_terms = self.correction.score_terms(position, window, key)
+        address = SampleAddress(
+            "uq.buffered-state-space",
+            "gradient-estimate",
+            target=self.estimator_id,
+            role="window",
+        )
+        window_key = derive_key(key, address, 0)
+        boundary_key = derive_key(key, address, 1)
+        window = self.window_plan.sample(window_key)
+        log_terms, score_terms = self.correction.score_terms(
+            position, window, boundary_key
+        )
         log_terms_array = jnp.asarray(log_terms)
         if log_terms_array.shape != (self.window_plan.num_steps,):
             raise ValueError(

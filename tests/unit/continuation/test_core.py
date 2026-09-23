@@ -702,3 +702,52 @@ def test_application_transactions_commit_once_and_checkpoint_only_accepted_state
             branch_id=result.provenance.branch_id,
             observed_decision_ids=("corrupted-decision",),
         )
+
+
+def test_rejected_initial_candidate_is_not_published_or_checkpointed():
+    problem = phx.continuation.ParameterContinuationProblem(
+        lambda state, coordinate, args: state - coordinate,
+        problem_id="rejected-initial-candidate",
+    )
+
+    def evaluate(transaction, source, candidate, args):
+        del transaction, args
+        return phx.continuation.ParameterTransferEvidence.for_candidate(
+            source,
+            candidate,
+            application_accepted=False,
+            message="reject initial candidate",
+        )
+
+    def commit(transaction, source, candidate, evidence, args):
+        del transaction, source, candidate, evidence, args
+        raise AssertionError("A rejected initial candidate must not commit.")
+
+    adapter = phx.continuation.CallableContinuationAdapter(
+        problem,
+        adapter_id="reject-initial-adapter",
+        freeze=lambda state, args: dict(state),
+        evaluate=evaluate,
+        commit=commit,
+        rollback=lambda transaction, source, candidate, evidence, args: {"version": 0},
+        state_identity=lambda state, args: f"state-{state['version']}",
+        checkpoint=lambda state, args: dict(state),
+        restore=lambda data, args: dict(data),
+    )
+    result = phx.continuation.continue_branch(
+        adapter,
+        jnp.asarray(0.0),
+        jnp.asarray(0.0),
+        num_steps=0,
+        application_state={"version": 0},
+    )
+
+    assert int(result.status) == int(
+        phx.continuation.ContinuationStatus.APPLICATION_REJECTED
+    )
+    assert result.points == ()
+    assert result.events == ()
+    assert len(result.steps) == 1
+    assert not bool(result.steps[0].accepted)
+    assert result.accepted_state is None
+    assert result.checkpoint is None

@@ -87,10 +87,25 @@ def _dates(
     return _positive(maturity_time, "maturity_time")
 
 
-def _curve(curves: CurveSet, curve_id: str, valuation_date: FinanceDate, /):
+def _curve(
+    curves: CurveSet,
+    curve_id: str,
+    valuation_date: FinanceDate,
+    currency: Currency,
+    role: str,
+    /,
+):
     curve = curves.curve(curve_id)
-    if curve.definition.valuation_date.ordinal != valuation_date.ordinal:
+    definition = curve.definition
+    if definition.valuation_date.ordinal != valuation_date.ordinal:
         raise ValueError("Product and curve valuation dates must match.")
+    if definition.role != role:
+        raise ValueError(f"Curve {curve_id!r} must have role {role!r}.")
+    if (
+        definition.currency is None
+        or definition.currency.currency_id != currency.currency_id
+    ):
+        raise ValueError("Product and curve currencies must match exactly.")
     return curve
 
 
@@ -219,10 +234,18 @@ class ResolvedEquityForward(AbstractResolvedContract):
             "spot_price must be finite and positive.",
         )
         discount = _curve(
-            curves, self.discount_curve_id, self.valuation_date
+            curves,
+            self.discount_curve_id,
+            self.valuation_date,
+            self.currency,
+            "discount",
         ).discount_factor(self.maturity_time)
         dividend = _curve(
-            curves, self.dividend_curve_id, self.valuation_date
+            curves,
+            self.dividend_curve_id,
+            self.valuation_date,
+            self.currency,
+            "dividend",
         ).discount_factor(self.maturity_time)
         return spot * dividend / discount
 
@@ -253,7 +276,11 @@ class ResolvedEquityForward(AbstractResolvedContract):
         self, curves: CurveSet, spot_price: ArrayLike, /
     ) -> DeterministicCashflowReplay:
         discount = _curve(
-            curves, self.discount_curve_id, self.valuation_date
+            curves,
+            self.discount_curve_id,
+            self.valuation_date,
+            self.currency,
+            "discount",
         ).discount_factor(self.maturity_time)
         return _single_replay(
             contract_id=self.contract_id,
@@ -271,9 +298,8 @@ class ResolvedEquityForward(AbstractResolvedContract):
 
 
 class ResolvedFXForward(AbstractResolvedContract):
-    """Deliverable FX forward quoted as quote currency per unit base currency."""
+    """Deliverable FX forward represented by its two contractual currency legs."""
 
-    settlement_rate: Array
     contract_id: str = eqx.field(static=True)
     resolved_id: str = eqx.field(static=True)
     fx_pair: FXPair = eqx.field(static=True)
@@ -285,7 +311,6 @@ class ResolvedFXForward(AbstractResolvedContract):
     quote_discount_curve_id: str = eqx.field(static=True)
     base_discount_curve_id: str = eqx.field(static=True)
     pay_receive: PayReceive = eqx.field(static=True)
-    settlement_rate_known: bool = eqx.field(static=True)
 
     def __init__(
         self,
@@ -300,14 +325,11 @@ class ResolvedFXForward(AbstractResolvedContract):
         quote_discount_curve_id: str,
         base_discount_curve_id: str,
         pay_receive: PayReceive | str,
-        settlement_rate: ArrayLike = 0.0,
-        settlement_rate_known: bool,
     ):
         if not isinstance(fx_pair, FXPair):
             raise TypeError("fx_pair must be an FXPair.")
         maturity = _dates(valuation_date, maturity_date, maturity_time)
         contract = _identifier(contract_id, "contract_id")
-        self.settlement_rate = _settlement_fixing(settlement_rate, settlement_rate_known)
         self.contract_id = contract
         self.fx_pair = fx_pair
         self.valuation_date = valuation_date
@@ -322,7 +344,6 @@ class ResolvedFXForward(AbstractResolvedContract):
             base_discount_curve_id, "base_discount_curve_id"
         )
         self.pay_receive = _direction(pay_receive)
-        self.settlement_rate_known = settlement_rate_known
         self.resolved_id = _resolved_id(
             "resolved-fx-forward",
             {
@@ -334,9 +355,25 @@ class ResolvedFXForward(AbstractResolvedContract):
                 "quote_discount_curve": self.quote_discount_curve_id,
                 "base_discount_curve": self.base_discount_curve_id,
                 "direction": self.pay_receive.value,
-                "settlement_known": settlement_rate_known,
             },
         )
+
+    def _curves(self, curves: CurveSet, /):
+        quote = _curve(
+            curves,
+            self.quote_discount_curve_id,
+            self.valuation_date,
+            self.fx_pair.quote,
+            "discount",
+        )
+        base = _curve(
+            curves,
+            self.base_discount_curve_id,
+            self.valuation_date,
+            self.fx_pair.base,
+            "discount",
+        )
+        return base, quote
 
     def forward_rate(self, curves: CurveSet, spot_quote_per_base: ArrayLike, /) -> Array:
         spot = jnp.asarray(spot_quote_per_base)
@@ -347,61 +384,79 @@ class ResolvedFXForward(AbstractResolvedContract):
             (~jnp.isfinite(spot)) | (spot <= 0.0),
             "spot_quote_per_base must be finite and positive.",
         )
-        quote_discount = _curve(
-            curves, self.quote_discount_curve_id, self.valuation_date
-        ).discount_factor(self.maturity_time)
-        base_discount = _curve(
-            curves, self.base_discount_curve_id, self.valuation_date
-        ).discount_factor(self.maturity_time)
-        return spot * base_discount / quote_discount
-
-    def settlement_amount(
-        self, curves: CurveSet, spot_quote_per_base: ArrayLike, /
-    ) -> Array:
-        rate = (
-            self.settlement_rate
-            if self.settlement_rate_known
-            else self.forward_rate(curves, spot_quote_per_base)
+        base, quote = self._curves(curves)
+        return (
+            spot
+            * base.discount_factor(self.maturity_time)
+            / quote.discount_factor(self.maturity_time)
         )
-        return self.pay_receive.sign * self.base_notional * (rate - self.delivery_rate)
 
     @property
     def known_cashflows(self) -> CashflowBatch:
-        amount = (
-            self.pay_receive.sign
-            * self.base_notional
-            * (self.settlement_rate - self.delivery_rate)
-        )
-        return _known_settlement(
-            contract_id=self.contract_id,
-            maturity_date=self.maturity_date,
-            amount=amount,
-            currency=self.fx_pair.quote,
-            known=self.settlement_rate_known,
+        direction = self.pay_receive.sign
+        return CashflowBatch(
+            (self.maturity_date, self.maturity_date),
+            jnp.asarray(
+                (
+                    direction * self.base_notional,
+                    -direction * self.base_notional * self.delivery_rate,
+                )
+            ),
+            (self.fx_pair.base, self.fx_pair.quote),
+            obligation_ids=(
+                f"{self.contract_id}:base-delivery",
+                f"{self.contract_id}:quote-delivery",
+            ),
         )
 
-    def cashflow_replay(
-        self, curves: CurveSet, spot_quote_per_base: ArrayLike, /
-    ) -> DeterministicCashflowReplay:
-        discount = _curve(
-            curves, self.quote_discount_curve_id, self.valuation_date
-        ).discount_factor(self.maturity_time)
-        return _single_replay(
-            contract_id=self.contract_id,
-            maturity_date=self.maturity_date,
-            maturity_time=self.maturity_time,
-            amount=self.settlement_amount(curves, spot_quote_per_base),
-            currency=self.fx_pair.quote,
-            known=self.settlement_rate_known,
-            discount_factor=discount,
+    def cashflow_replay(self, curves: CurveSet, /) -> DeterministicCashflowReplay:
+        base, quote = self._curves(curves)
+        direction = self.pay_receive.sign
+        valid = jnp.ones((2,), dtype=jnp.bool_)
+        return DeterministicCashflowReplay(
+            payment_ordinals=jnp.asarray(
+                (self.maturity_date.ordinal, self.maturity_date.ordinal),
+                dtype=jnp.int32,
+            ),
+            payment_times=jnp.full((2,), self.maturity_time),
+            amounts=jnp.asarray(
+                (
+                    direction * self.base_notional,
+                    -direction * self.base_notional * self.delivery_rate,
+                )
+            ),
+            slot_currencies=(self.fx_pair.base, self.fx_pair.quote),
+            valid_mask=valid,
+            known_mask=valid,
+            projected_mask=jnp.zeros((2,), dtype=jnp.bool_),
+            notional_exchange_mask=valid,
+            discount_factors=jnp.asarray(
+                (
+                    base.discount_factor(self.maturity_time),
+                    quote.discount_factor(self.maturity_time),
+                )
+            ),
+            obligation_ids=(
+                f"{self.contract_id}:base-delivery",
+                f"{self.contract_id}:quote-delivery",
+            ),
             curve_ids=(
-                self.quote_discount_curve_id,
                 self.base_discount_curve_id,
+                self.quote_discount_curve_id,
             ),
         )
 
     def present_value(self, curves: CurveSet, spot_quote_per_base: ArrayLike, /) -> Array:
-        return self.cashflow_replay(curves, spot_quote_per_base).present_value(
+        spot = jnp.asarray(spot_quote_per_base)
+        if spot.shape != ():
+            raise ValueError("spot_quote_per_base must be scalar.")
+        spot = eqx.error_if(
+            spot,
+            (~jnp.isfinite(spot)) | (spot <= 0.0),
+            "spot_quote_per_base must be finite and positive.",
+        )
+        replay = self.cashflow_replay(curves)
+        return spot * replay.present_value(self.fx_pair.base) + replay.present_value(
             self.fx_pair.quote
         )
 
@@ -484,10 +539,18 @@ class ResolvedCommodityForward(AbstractResolvedContract):
             "spot_price must be finite and positive.",
         )
         discount = _curve(
-            curves, self.discount_curve_id, self.valuation_date
+            curves,
+            self.discount_curve_id,
+            self.valuation_date,
+            self.currency,
+            "discount",
         ).discount_factor(self.maturity_time)
         net_benefit = _curve(
-            curves, self.net_benefit_curve_id, self.valuation_date
+            curves,
+            self.net_benefit_curve_id,
+            self.valuation_date,
+            self.currency,
+            "net-benefit",
         ).discount_factor(self.maturity_time)
         return spot * net_benefit / discount
 
@@ -518,7 +581,11 @@ class ResolvedCommodityForward(AbstractResolvedContract):
         self, curves: CurveSet, spot_price: ArrayLike, /
     ) -> DeterministicCashflowReplay:
         discount = _curve(
-            curves, self.discount_curve_id, self.valuation_date
+            curves,
+            self.discount_curve_id,
+            self.valuation_date,
+            self.currency,
+            "discount",
         ).discount_factor(self.maturity_time)
         return _single_replay(
             contract_id=self.contract_id,

@@ -184,17 +184,14 @@ def main():
         _case(phx.solver.ReactiveCouplingMode.STRANG_FROZEN_FLUID, 1),
         _case(phx.solver.ReactiveCouplingMode.ITERATED_STAGGERED, 2),
     ]
-    print(
-        json.dumps(
-            {
-                "campaign": "reactive-cfd-dem-atomic-balance",
-                "passed": all(case["passed"] for case in cases),
-                "cases": cases,
-            },
-            indent=2,
-        )
-    )
+    report = {
+        "campaign": "reactive-cfd-dem-atomic-balance",
+        "passed": all(case["passed"] for case in cases),
+        "cases": cases,
+    }
+    print(json.dumps(report, indent=2, allow_nan=False))
+    return 0 if report["passed"] else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

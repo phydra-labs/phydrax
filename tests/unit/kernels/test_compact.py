@@ -234,3 +234,27 @@ def test_compact_matrix_kernel_hyperparameter_gradients_are_finite():
         jnp.asarray(0.5), jnp.asarray(1.2)
     )
     assert jnp.all(jnp.isfinite(jnp.asarray(gradients)))
+
+
+def test_real_compact_kernel_families_reject_complex_coordinates():
+    sphere = phx.kernels.SphereSpectralKernel(
+        1,
+        2,
+        phx.kernels.HeatSpectralMultiplier(0.2),
+    )
+    with pytest.raises(TypeError, match="real coordinates"):
+        sphere.matrix(
+            jnp.asarray([[1.0 + 0.1j, 0.0j]]),
+            jnp.asarray([[1.0, 0.0]]),
+        )
+
+    rotation = phx.kernels.SpecialOrthogonalCharacterKernel(
+        2,
+        2,
+        phx.kernels.HeatSpectralMultiplier(0.2),
+    )
+    with pytest.raises(TypeError, match="real coordinates"):
+        rotation.matrix(
+            jnp.eye(2, dtype=jnp.complex128) + 0.1j,
+            jnp.eye(2),
+        )

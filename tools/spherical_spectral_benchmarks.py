@@ -134,7 +134,7 @@ def _compiled_case(
         "steady_ms": steady_ms,
         "checksum": _tree_checksum(value),
         "output_bytes": logical_array_bytes(value),
-        "retained_bytes": (
+        "generated_code_bytes": (
             None if memory is None else int(memory.generated_code_size_in_bytes)
         ),
         "workspace_bytes": None if memory is None else int(memory.temp_size_in_bytes),

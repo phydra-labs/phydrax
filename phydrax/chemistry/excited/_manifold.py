@@ -34,6 +34,9 @@ class ElectronicManifoldResult(StrictModule, NonTrainableState):
     clusters: tuple[tuple[int, ...], ...] = eqx.field(static=True)
     energy_unit: UnitDefinition
     electric_dipole_unit: UnitDefinition
+    provider_id: str = eqx.field(static=True)
+    request_id: str = eqx.field(static=True)
+    state_space_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
     def __init__(
@@ -52,6 +55,9 @@ class ElectronicManifoldResult(StrictModule, NonTrainableState):
         electric_dipole_unit: UnitDefinition,
         /,
         *,
+        provider_id: str,
+        request_id: str,
+        state_space_id: str,
         symmetry_sector: str | None = None,
         magnetic_transition_dipoles: ArrayLike | None = None,
         rotatory_strengths: ArrayLike | None = None,
@@ -77,6 +83,9 @@ class ElectronicManifoldResult(StrictModule, NonTrainableState):
         method_ = str(method).strip()
         spin = str(spin_sector).strip()
         symmetry = None if symmetry_sector is None else str(symmetry_sector).strip()
+        provider = str(provider_id).strip()
+        request = str(request_id).strip()
+        state_space = str(state_space_id).strip()
         if (
             absolute.shape != (roots,)
             or electric.shape != (roots, 3)
@@ -90,6 +99,9 @@ class ElectronicManifoldResult(StrictModule, NonTrainableState):
             or not spin
             or symmetry_sector is not None
             and not symmetry
+            or not provider
+            or not request
+            or not state_space
         ):
             raise ValueError(
                 "Excited-manifold energies, properties, or identities do not align."
@@ -98,6 +110,12 @@ class ElectronicManifoldResult(StrictModule, NonTrainableState):
             value for cluster in clusters for value in cluster
         ) != tuple(range(roots)):
             raise ValueError("Excited-state clusters must partition roots in order.")
+        if np.any(~np.isfinite(np.asarray(oscillator))) or np.any(
+            np.asarray(oscillator) < 0.0
+        ):
+            raise ValueError(
+                "Excited-state oscillator strengths must be finite and non-negative."
+            )
         self.excitation_energies = excitation
         self.absolute_energies = absolute
         self.representation = representation
@@ -113,6 +131,9 @@ class ElectronicManifoldResult(StrictModule, NonTrainableState):
         self.clusters = clusters
         self.energy_unit = energy_unit
         self.electric_dipole_unit = electric_dipole_unit
+        self.provider_id = provider
+        self.request_id = request
+        self.state_space_id = state_space
         self.result_id = canonical_fingerprint(
             {
                 "kind": "electronic-manifold-result",
@@ -123,6 +144,9 @@ class ElectronicManifoldResult(StrictModule, NonTrainableState):
                 "clusters": [list(value) for value in clusters],
                 "energy_unit": energy_unit.unit_id,
                 "electric_dipole_unit": electric_dipole_unit.unit_id,
+                "provider": provider,
+                "request": request,
+                "state_space": state_space,
                 "successful": bool(self.successful),
                 "arrays": array_tree_fingerprint(
                     {

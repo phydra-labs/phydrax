@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import sqlite3
+import stat
 import threading
 from collections.abc import Iterator, Mapping, Sequence
 from contextlib import contextmanager
@@ -19,6 +21,7 @@ from types import MappingProxyType
 from typing import Protocol
 
 from .._execution_resources import ResourceRequest
+from .._host_io import open_directory_beneath
 from ._contracts import (
     AuditRecord,
     IntegrityError,
@@ -49,28 +52,48 @@ def _identifier(value: str, name: str, /) -> str:
     return value
 
 
+def _digest(value: str, name: str, /) -> str:
+    if (
+        type(value) is not str
+        or len(value) != 64
+        or any(character not in "0123456789abcdef" for character in value)
+    ):
+        raise ValueError(f"{name} must be a lowercase SHA-256 digest.")
+    return value
+
+
 _CREDENTIAL_FIELD = re.compile(
-    r"(?:^|[_\-.])(?:authorization|credential|password|secret|private[_-]?key|"
-    r"access[_-]?token|refresh[_-]?token)(?:$|[_\-.])",
+    r"(?:^|[_\-.])(?:authorization|credential|password|secret(?:[_-]value)?|"
+    r"private[_-]?key|api[_-]?key|token|access[_-]?token|refresh[_-]?token|"
+    r"session|cookie)(?:$|[_\-.])",
     re.IGNORECASE,
 )
 _CREDENTIAL_VALUE = (
     re.compile(r"(?i)^bearer\s+\S+$"),
     re.compile(r"^-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----"),
+    re.compile(r"(?i)^(?:basic|token)\s+\S+$"),
+)
+_OPAQUE_CREDENTIAL_VALUE = re.compile(r"[A-Za-z0-9+/]{40,}={0,2}\Z")
+_SECRET_HANDLE_FIELDS = frozenset(
+    {"secret_handle_id", "secret_handle_ids", "secret_handles"}
 )
 
 
 def _assert_no_credentials(value: object, /, *, field_name: str = "") -> None:
     normalized_name = field_name.casefold().replace("-", "_").replace(".", "_")
-    is_handle_reference = normalized_name.startswith(
-        "secret_handle_"
-    ) and normalized_name.endswith(("id", "ids"))
+    is_handle_reference = normalized_name in _SECRET_HANDLE_FIELDS or (
+        normalized_name.startswith("secret_handle_")
+        and normalized_name.endswith(("id", "ids"))
+    )
     if field_name and _CREDENTIAL_FIELD.search(field_name) and not is_handle_reference:
         raise ValueError("Durable service records cannot contain credential fields.")
-    if isinstance(value, str) and any(
-        pattern.search(value) for pattern in _CREDENTIAL_VALUE
-    ):
-        raise ValueError("Durable service records cannot contain credential values.")
+    if isinstance(value, str):
+        opaque_secret = _OPAQUE_CREDENTIAL_VALUE.fullmatch(value) is not None and not (
+            len(value) == 64
+            and all(character in "0123456789abcdef" for character in value)
+        )
+        if opaque_secret or any(pattern.search(value) for pattern in _CREDENTIAL_VALUE):
+            raise ValueError("Durable service records cannot contain credential values.")
     if isinstance(value, Mapping):
         for key, item in value.items():
             _assert_no_credentials(item, field_name=str(key))
@@ -101,16 +124,23 @@ class DurableJobRecord:
             _identifier(value, name)
         if self.request_id:
             _identifier(self.request_id, "request_id")
-        if len(self.request_digest) != 64 or any(
-            c not in "0123456789abcdef" for c in self.request_digest
-        ):
-            raise ValueError("request_digest must be a lowercase SHA-256 digest.")
+        _digest(self.request_digest, "request_digest")
+        if not isinstance(self.state, JobState):
+            raise TypeError("state must be a JobState.")
+        if type(self.attempt) is not int or type(self.version) is not int:
+            raise TypeError("attempt and version must be integers.")
         if self.attempt <= 0 or self.version <= 0:
             raise ValueError("attempt and version must be positive.")
+        if type(self.submitted_at) is not int or type(self.updated_at) is not int:
+            raise TypeError("Job timestamps must be integers.")
         if self.submitted_at < 0 or self.updated_at < self.submitted_at:
             raise ValueError("Job timestamps are invalid.")
-        if self.lease_expires_at is not None and self.lease_expires_at < 0:
-            raise ValueError("lease_expires_at must be nonnegative.")
+        if self.lease_expires_at is not None and (
+            type(self.lease_expires_at) is not int or self.lease_expires_at < 0
+        ):
+            raise ValueError("lease_expires_at must be a nonnegative integer.")
+        if self.scheduler_job_id is not None:
+            _identifier(self.scheduler_job_id, "scheduler_job_id")
         payload = json.loads(_canonical_json(dict(self.payload)))
         if not isinstance(payload, dict):
             raise TypeError("Job payload must be a JSON object.")
@@ -140,13 +170,25 @@ class OutboxMessage:
             (self.idempotency_key, "idempotency_key"),
         ):
             _identifier(value, name)
+        if any(
+            type(value) is not int
+            for value in (self.created_at, self.available_at, self.attempts)
+        ):
+            raise TypeError("Outbox timestamps and attempts must be integers.")
         if min(self.created_at, self.available_at, self.attempts) < 0:
             raise ValueError("Outbox timestamps and attempts must be nonnegative.")
+        for value, name in (
+            (self.lease_expires_at, "lease_expires_at"),
+            (self.delivered_at, "delivered_at"),
+        ):
+            if value is not None and (type(value) is not int or value < 0):
+                raise ValueError(f"{name} must be a nonnegative integer or None.")
+        if self.lease_owner is not None:
+            _identifier(self.lease_owner, "lease_owner")
         payload = json.loads(_canonical_json(dict(self.payload)))
         if not isinstance(payload, dict):
             raise TypeError("Outbox payload must be a JSON object.")
         object.__setattr__(self, "payload", MappingProxyType(payload))
-
         _assert_no_credentials(payload)
 
 
@@ -160,6 +202,9 @@ class ServiceTransaction(Protocol):
         self, record: DurableJobRecord, /, *, expected_version: int
     ) -> DurableJobRecord: ...
     def enqueue(self, message: OutboxMessage, /) -> OutboxMessage: ...
+    def acknowledge_outbox(
+        self, owner: str, message_id: str, delivered_at: int, /
+    ) -> None: ...
     def append_audit(self, record: AuditRecord, /) -> AuditRecord: ...
     def reserve_quota(
         self,
@@ -169,6 +214,9 @@ class ServiceTransaction(Protocol):
         quota: TenantQuota,
         /,
     ) -> None: ...
+    def delete_job(
+        self, tenant_id: str, job_id: str, /, *, expected_version: int
+    ) -> None: ...
     def release_quota(self, tenant_id: str, job_id: str, /) -> None: ...
 
 
@@ -177,6 +225,7 @@ class DurableJobProvider(Protocol):
     def transaction(self) -> Iterator[ServiceTransaction]: ...
 
     def recover_stale_attempts(self, now: int, /) -> tuple[DurableJobRecord, ...]: ...
+    def jobs(self) -> tuple[DurableJobRecord, ...]: ...
 
 
 class DurableAuditProvider(Protocol):
@@ -186,6 +235,9 @@ class DurableAuditProvider(Protocol):
 
 
 class DurableOutboxProvider(Protocol):
+    @contextmanager
+    def transaction(self) -> Iterator[ServiceTransaction]: ...
+
     def claim_outbox(
         self,
         owner: str,
@@ -218,12 +270,19 @@ class DurableServiceStore(Protocol):
         self, owner: str, message_id: str, available_at: int, /
     ) -> None: ...
     def recover_stale_attempts(self, now: int, /) -> tuple[DurableJobRecord, ...]: ...
+    def jobs(self) -> tuple[DurableJobRecord, ...]: ...
     def quota_usage(self, tenant_id: str, /) -> TenantUsage: ...
     def reconcile_quota(
         self, tenant_id: str, active_job_ids: Sequence[str], /
     ) -> TenantUsage: ...
     def audit_records(self, tenant_id: str, /) -> tuple[AuditRecord, ...]: ...
     def verify_audit_chain(self) -> None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class _SchedulerReservation:
+    owner: str
+    scheduler_job_id: str | None
 
 
 class _SQLiteTransaction:
@@ -336,6 +395,28 @@ class _SQLiteTransaction:
             )
         return existing
 
+    def delete_job(
+        self, tenant_id: str, job_id: str, /, *, expected_version: int
+    ) -> None:
+        cursor = self._connection.execute(
+            "DELETE FROM jobs WHERE tenant_id=? AND job_id=? AND version=?",
+            (tenant_id, job_id, expected_version),
+        )
+        if cursor.rowcount != 1:
+            raise IntegrityError("Durable job deletion lost its revision fence.")
+        self.release_quota(tenant_id, job_id)
+
+    def acknowledge_outbox(
+        self, owner: str, message_id: str, delivered_at: int, /
+    ) -> None:
+        cursor = self._connection.execute(
+            """UPDATE outbox SET delivered_at=?, lease_owner=NULL, lease_expires_at=NULL
+               WHERE message_id=? AND lease_owner=? AND delivered_at IS NULL""",
+            (delivered_at, message_id, owner),
+        )
+        if cursor.rowcount != 1:
+            raise IntegrityError("Outbox acknowledgement does not own an active lease.")
+
     def append_audit(self, record: AuditRecord, /) -> AuditRecord:
         previous_row = self._connection.execute(
             "SELECT sequence, record_digest FROM audit ORDER BY sequence DESC LIMIT 1"
@@ -412,18 +493,69 @@ class _SQLiteTransaction:
 class SQLiteServiceStore:
     """SQLite reference store with atomic job, quota, audit, and outbox commits."""
 
-    def __init__(self, path: str | Path = ":memory:", /):
+    def __init__(
+        self,
+        path: str | Path = ":memory:",
+        /,
+        *,
+        maximum_database_bytes: int = 4 * 1024 * 1024 * 1024,
+    ):
+        if type(maximum_database_bytes) is not int or maximum_database_bytes <= 0:
+            raise ValueError("SQLite database bound must be a positive integer.")
         self._lock = threading.RLock()
-        self._connection = sqlite3.connect(
-            str(path), isolation_level=None, check_same_thread=False
+        admission = _admit_sqlite_path(path)
+        admitted_path = ":memory:" if admission is None else admission.connection_path
+        if admission is not None:
+            admission.verify()
+        connection_target = (
+            admitted_path
+            if admission is None
+            else f"{Path(admitted_path).as_uri()}?mode=rw"
         )
+        try:
+            self._connection = sqlite3.connect(
+                connection_target,
+                isolation_level=None,
+                check_same_thread=False,
+                uri=admission is not None,
+            )
+        except sqlite3.Error:
+            try:
+                if admission is not None:
+                    admission.verify()
+            finally:
+                if admission is not None:
+                    admission.close()
+            raise
+        try:
+            if admission is not None:
+                admission.verify()
+        except BaseException:
+            self._connection.close()
+            if admission is not None:
+                admission.close()
+            raise
+        self._path_admission = admission
         self._connection.row_factory = sqlite3.Row
         self._connection.execute("PRAGMA foreign_keys=ON")
+        page_size = int(self._connection.execute("PRAGMA page_size").fetchone()[0])
+        maximum_pages = maximum_database_bytes // page_size
+        if maximum_pages < 1:
+            self.close()
+            raise ValueError("SQLite database bound is smaller than one database page.")
+        page_count = int(self._connection.execute("PRAGMA page_count").fetchone()[0])
+        if page_count > maximum_pages:
+            self.close()
+            raise ValueError("Existing SQLite database exceeds its byte bound.")
+        self._connection.execute(f"PRAGMA max_page_count={maximum_pages}")
         self._create_schema()
 
     def close(self) -> None:
         with self._lock:
             self._connection.close()
+            if self._path_admission is not None:
+                self._path_admission.close()
+                self._path_admission = None
 
     def _create_schema(self) -> None:
         with self._lock:
@@ -482,10 +614,12 @@ class SQLiteServiceStore:
                     gpu_count INTEGER NOT NULL,
                     PRIMARY KEY(tenant_id, job_id)
                 );
-                CREATE TABLE IF NOT EXISTS scheduler_idempotency (
+                CREATE TABLE IF NOT EXISTS scheduler_reservations (
                     provider_id TEXT NOT NULL,
                     idempotency_key TEXT NOT NULL,
-                    scheduler_job_id TEXT NOT NULL,
+                    request_digest TEXT NOT NULL,
+                    reservation_owner TEXT NOT NULL,
+                    scheduler_job_id TEXT,
                     PRIMARY KEY(provider_id, idempotency_key)
                 );
                 """
@@ -503,49 +637,83 @@ class SQLiteServiceStore:
             else:
                 self._connection.commit()
 
-    def lookup(self, provider_id: str, key: str, /) -> str | None:
-        _identifier(provider_id, "provider_id")
-        _identifier(key, "idempotency key")
+    def jobs(self) -> tuple[DurableJobRecord, ...]:
         with self._lock:
+            rows = self._connection.execute(
+                "SELECT * FROM jobs ORDER BY tenant_id, job_id"
+            ).fetchall()
+        return tuple(_job_from_row(row) for row in rows)
+
+    def reserve(
+        self, provider_id: str, key: str, request_digest: str, owner: str, /
+    ) -> _SchedulerReservation:
+        for value, name in (
+            (provider_id, "provider_id"),
+            (key, "idempotency key"),
+            (owner, "reservation owner"),
+        ):
+            _identifier(value, name)
+        _digest(request_digest, "request_digest")
+        with self.transaction():
+            self._connection.execute(
+                """INSERT INTO scheduler_reservations
+                   (provider_id, idempotency_key, request_digest,
+                    reservation_owner, scheduler_job_id)
+                   VALUES (?, ?, ?, ?, NULL)
+                   ON CONFLICT(provider_id, idempotency_key) DO NOTHING""",
+                (provider_id, key, request_digest, owner),
+            )
             row = self._connection.execute(
-                "SELECT scheduler_job_id FROM scheduler_idempotency WHERE provider_id=? AND idempotency_key=?",
+                """SELECT request_digest, reservation_owner, scheduler_job_id
+                   FROM scheduler_reservations
+                   WHERE provider_id=? AND idempotency_key=?""",
                 (provider_id, key),
             ).fetchone()
-        return None if row is None else str(row[0])
+            assert row is not None
+            if str(row["request_digest"]) != request_digest:
+                raise IntegrityError(
+                    "Scheduler idempotency key was reused for a different request."
+                )
+            scheduler_job_id = row["scheduler_job_id"]
+            reservation_owner = str(row["reservation_owner"])
+            if scheduler_job_id is None and reservation_owner != owner:
+                raise IntegrityError("Scheduler submission is already reserved.")
+            return _SchedulerReservation(
+                reservation_owner,
+                None if scheduler_job_id is None else str(scheduler_job_id),
+            )
 
-    def record(
+    def complete(
         self,
         provider_id: str,
         key: str,
+        request_digest: str,
+        owner: str,
         scheduler_job_id: str,
         /,
     ) -> str:
-        _identifier(provider_id, "provider_id")
-        _identifier(key, "idempotency key")
         _identifier(scheduler_job_id, "scheduler_job_id")
-        with self._lock:
-            self._connection.execute("BEGIN IMMEDIATE")
-            try:
-                self._connection.execute(
-                    "INSERT INTO scheduler_idempotency VALUES (?, ?, ?) "
-                    "ON CONFLICT(provider_id, idempotency_key) DO NOTHING",
-                    (provider_id, key, scheduler_job_id),
-                )
+        with self.transaction():
+            cursor = self._connection.execute(
+                """UPDATE scheduler_reservations SET scheduler_job_id=?
+                   WHERE provider_id=? AND idempotency_key=? AND request_digest=?
+                   AND reservation_owner=? AND scheduler_job_id IS NULL""",
+                (scheduler_job_id, provider_id, key, request_digest, owner),
+            )
+            if cursor.rowcount != 1:
                 row = self._connection.execute(
-                    "SELECT scheduler_job_id FROM scheduler_idempotency WHERE provider_id=? AND idempotency_key=?",
+                    """SELECT request_digest, scheduler_job_id
+                       FROM scheduler_reservations
+                       WHERE provider_id=? AND idempotency_key=?""",
                     (provider_id, key),
                 ).fetchone()
-                self._connection.commit()
-            except BaseException:
-                self._connection.rollback()
-                raise
-        assert row is not None
-        existing = str(row[0])
-        if existing != scheduler_job_id:
-            raise IntegrityError(
-                "Scheduler idempotency key resolved to conflicting jobs."
-            )
-        return existing
+                if (
+                    row is None
+                    or str(row["request_digest"]) != request_digest
+                    or str(row["scheduler_job_id"]) != scheduler_job_id
+                ):
+                    raise IntegrityError("Scheduler reservation ownership changed.")
+        return scheduler_job_id
 
     def claim_outbox(
         self,
@@ -625,10 +793,41 @@ class SQLiteServiceStore:
             ).fetchall()
             for row in rows:
                 stale = _job_from_row(row)
+                payload = dict(stale.payload)
+                if payload.get("kind") == "service-job":
+                    prior = payload.get("prior_run_records")
+                    current_run = payload.get("run_record")
+                    checkpoints = payload.get("checkpoints")
+                    if (
+                        not isinstance(prior, list)
+                        or not isinstance(checkpoints, list)
+                        or any(not isinstance(value, Mapping) for value in checkpoints)
+                    ):
+                        raise IntegrityError("Durable service job payload is malformed.")
+                    if current_run is not None:
+                        prior = [*prior, current_run]
+                    payload.update(
+                        {
+                            "state": JobState.QUEUED.value,
+                            "attempt": stale.attempt + 1,
+                            "run_record": None,
+                            "prior_run_records": prior,
+                            "started_at": None,
+                            "finished_at": None,
+                            "cancel_requested_at": None,
+                            "failure": None,
+                            "recovered_checkpoint_id": (
+                                None
+                                if not checkpoints
+                                else checkpoints[-1].get("checkpoint_id")
+                            ),
+                        }
+                    )
                 updated = replace(
                     stale,
                     state=JobState.QUEUED,
                     attempt=stale.attempt + 1,
+                    payload=payload,
                     updated_at=now,
                     lease_expires_at=None,
                     scheduler_job_id=None,
@@ -695,7 +894,9 @@ class SQLiteServiceStore:
 
 
 class OutboxHandler(Protocol):
-    def __call__(self, message: OutboxMessage, /) -> None: ...
+    def __call__(
+        self, message: OutboxMessage, transaction: ServiceTransaction, /
+    ) -> None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -745,7 +946,9 @@ class OutboxDispatcher:
             try:
                 if handler is None:
                     raise LookupError("No handler is registered for the outbox topic.")
-                handler(message)
+                with self._store.transaction() as transaction:
+                    handler(message, transaction)
+                    transaction.acknowledge_outbox(owner, message.message_id, now)
             except Exception:
                 self._store.release_outbox(
                     owner,
@@ -754,11 +957,6 @@ class OutboxDispatcher:
                 )
                 failed.append(message.message_id)
             else:
-                self._store.acknowledge_outbox(
-                    owner,
-                    message.message_id,
-                    now,
-                )
                 delivered.append(message.message_id)
         return OutboxDispatchReport(tuple(delivered), tuple(failed))
 
@@ -778,6 +976,133 @@ _AUDIT_FIELDS = (
     "previous_digest",
     "record_digest",
 )
+
+
+@dataclass(slots=True)
+class _SQLitePathAdmission:
+    path: str
+    connection_path: str
+    link_name: str
+    parent_path: Path
+    file_descriptor: int
+    parent_descriptor: int
+    file_identity: tuple[int, int, int]
+    parent_identity: tuple[int, int, int]
+
+    def verify(self) -> None:
+        try:
+            file_status = os.fstat(self.file_descriptor)
+            parent_status = os.fstat(self.parent_descriptor)
+            path_status = os.stat(self.path, follow_symlinks=False)
+            path_parent_status = os.stat(self.parent_path, follow_symlinks=False)
+            connection_status = os.stat(
+                self.link_name,
+                dir_fd=self.parent_descriptor,
+                follow_symlinks=False,
+            )
+        except OSError as error:
+            raise ValueError("SQLite database path changed during connection.") from error
+        if (
+            self.file_identity
+            != (file_status.st_dev, file_status.st_ino, file_status.st_mode)
+            or self.parent_identity
+            != (parent_status.st_dev, parent_status.st_ino, parent_status.st_mode)
+            or self.file_identity
+            != (path_status.st_dev, path_status.st_ino, path_status.st_mode)
+            or self.file_identity
+            != (
+                connection_status.st_dev,
+                connection_status.st_ino,
+                connection_status.st_mode,
+            )
+            or self.parent_identity
+            != (
+                path_parent_status.st_dev,
+                path_parent_status.st_ino,
+                path_parent_status.st_mode,
+            )
+        ):
+            raise ValueError("SQLite database path changed during connection.")
+
+    def close(self) -> None:
+        os.close(self.file_descriptor)
+        os.close(self.parent_descriptor)
+
+
+def _admit_sqlite_path(path: str | Path, /) -> _SQLitePathAdmission | None:
+    if path == ":memory:":
+        return None
+    candidate = Path(path).absolute()
+    parent = candidate.parent
+    if not parent.exists() or not parent.is_dir():
+        raise ValueError("SQLite database parent must be an existing directory.")
+    with open_directory_beneath(
+        parent,
+        trusted_root=parent.parent,
+        maximum_depth=1,
+    ) as opened_parent:
+        flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0)
+        try:
+            file_descriptor = os.open(
+                candidate.name,
+                flags,
+                0o600,
+                dir_fd=opened_parent.descriptor,
+            )
+        except OSError as error:
+            raise ValueError("SQLite database cannot be a symbolic link.") from error
+        try:
+            file_status = os.fstat(file_descriptor)
+            if not stat.S_ISREG(file_status.st_mode):
+                raise ValueError("SQLite database must be a regular file.")
+            os.fchmod(file_descriptor, 0o600)
+            file_status = os.fstat(file_descriptor)
+            parent_descriptor = os.dup(opened_parent.descriptor)
+            link_name = f".{candidate.name}.phydrax-sqlite"
+            try:
+                os.link(
+                    candidate.name,
+                    link_name,
+                    src_dir_fd=opened_parent.descriptor,
+                    dst_dir_fd=opened_parent.descriptor,
+                    follow_symlinks=False,
+                )
+            except FileExistsError:
+                alias_status = os.stat(
+                    link_name,
+                    dir_fd=opened_parent.descriptor,
+                    follow_symlinks=False,
+                )
+                if (
+                    alias_status.st_dev,
+                    alias_status.st_ino,
+                    alias_status.st_mode,
+                ) != (
+                    file_status.st_dev,
+                    file_status.st_ino,
+                    file_status.st_mode,
+                ):
+                    raise ValueError(
+                        "SQLite stable connection alias conflicts with the database."
+                    )
+            admission = _SQLitePathAdmission(
+                str(candidate),
+                str(parent / link_name),
+                link_name,
+                parent,
+                os.dup(file_descriptor),
+                parent_descriptor,
+                (file_status.st_dev, file_status.st_ino, file_status.st_mode),
+                (
+                    opened_parent.directory_status.st_dev,
+                    opened_parent.directory_status.st_ino,
+                    opened_parent.directory_status.st_mode,
+                ),
+            )
+        finally:
+            os.close(file_descriptor)
+    admission.verify()
+    return admission
 
 
 def audit_digest(record: AuditRecord, /) -> str:
@@ -835,17 +1160,12 @@ def _outbox_from_row(row: sqlite3.Row) -> OutboxMessage:
     )
 
 
-# Explicit local-reference spelling retained beside the implementation name.
-LocalTransactionalServiceStore = SQLiteServiceStore
-
-
 __all__ = [
     "DurableJobRecord",
     "DurableAuditProvider",
     "DurableJobProvider",
     "DurableOutboxProvider",
     "DurableServiceStore",
-    "LocalTransactionalServiceStore",
     "OutboxDispatcher",
     "OutboxDispatchReport",
     "OutboxHandler",

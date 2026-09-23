@@ -699,11 +699,6 @@ class FixedGridSubcyclingSubsystem(AbstractCouplingSubsystem):
         error_reliable = jnp.asarray(True)
         auxiliary: list[Any] = []
         for step_index in range(grid.num_steps):
-            subwindow = CouplingWindow(
-                step_index,
-                window.start + window.size * grid.nodes[step_index],
-                window.start + window.size * grid.nodes[step_index + 1],
-            )
             subinputs = tuple(
                 waveform.sample(step_index, port.space)
                 for waveform, port in zip(waveforms, self.input_ports, strict=True)
@@ -712,10 +707,15 @@ class FixedGridSubcyclingSubsystem(AbstractCouplingSubsystem):
 
             def execute(
                 _,
-                current_window=subwindow,
                 current_state=state,
                 current_inputs=subinputs,
+                current_step_index=step_index,
             ):
+                current_window = CouplingWindow(
+                    current_step_index,
+                    window.start + window.size * grid.nodes[current_step_index],
+                    window.start + window.size * grid.nodes[current_step_index + 1],
+                )
                 result = self.advance_substep(
                     current_window, current_state, current_inputs, args
                 )

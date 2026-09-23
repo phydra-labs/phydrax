@@ -114,6 +114,7 @@ class GeneralizedLangevinRuntimePlan(StrictModule, NonTrainableState):
             transition.ndim != 2
             or transition.shape[0] != transition.shape[1]
             or noise.shape != transition.shape
+            or transition.shape[0] == 0
             or np.any(~np.isfinite(transition))
             or np.any(~np.isfinite(noise))
             or not math.isfinite(thermal)

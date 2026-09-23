@@ -129,6 +129,29 @@ class MixedPrecisionRootExecution(StrictModule):
         if not isinstance(termination, NonlinearTermination):
             raise TypeError("termination must be NonlinearTermination.")
         self.precision.validate_tolerance(termination.absolute_residual)
+        if (
+            termination.maximum_evaluations is not None
+            and termination.maximum_evaluations < 3
+        ):
+            raise ValueError(
+                "Mixed-precision root execution requires at least three residual "
+                "evaluations to solve and certify the physical problem."
+            )
+        model_termination = NonlinearTermination(
+            absolute_residual=termination.absolute_residual,
+            relative_residual=termination.relative_residual,
+            maximum_residual=termination.maximum_residual,
+            absolute_step=termination.absolute_step,
+            relative_step=termination.relative_step,
+            maximum_steps=termination.maximum_steps,
+            maximum_evaluations=(
+                None
+                if termination.maximum_evaluations is None
+                else termination.maximum_evaluations - 2
+            ),
+            maximum_linear_iterations=termination.maximum_linear_iterations,
+            divergence_factor=termination.divergence_factor,
+        )
         model_initial = self.precision.state(initial_state)
 
         def model_residual(state, current_args):
@@ -158,7 +181,7 @@ class MixedPrecisionRootExecution(StrictModule):
             result = method.solve(
                 model_problem,
                 model_initial,
-                termination=termination,
+                termination=model_termination,
                 args=args,
                 precision=self.precision,
             )
@@ -166,7 +189,7 @@ class MixedPrecisionRootExecution(StrictModule):
             result = method.solve(
                 model_problem,
                 model_initial,
-                termination=termination,
+                termination=model_termination,
                 args=args,
             )
         model_state = self.precision.state(result.state)

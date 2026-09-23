@@ -75,6 +75,28 @@ def _sha256(path: Path, /) -> str:
     return digest.hexdigest()
 
 
+def _strict_json_object(text: str, /) -> Mapping[str, object]:
+    def unique(pairs):
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"Duplicate JSON field {key!r}.")
+            result[key] = value
+        return result
+
+    def reject_constant(value):
+        raise ValueError(f"Non-finite JSON value {value!r}.")
+
+    document = json.loads(
+        text,
+        object_pairs_hook=unique,
+        parse_constant=reject_constant,
+    )
+    if not isinstance(document, Mapping):
+        raise TypeError("External release record must be a JSON object.")
+    return document
+
+
 def _inspect_record(path: Path, /) -> tuple[dict[str, object], tuple[str, ...]]:
     result: dict[str, object] = {"path": str(path)}
     blockers: list[str] = []
@@ -105,8 +127,8 @@ def _inspect_signed_record(
     if failures:
         return result, failures
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
+        document = _strict_json_object(path.read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
         result["status"] = "invalid-json"
         return result, ("invalid-json",)
     if not isinstance(document, Mapping):
@@ -192,8 +214,8 @@ def _load_bound_external_record(
     if failures:
         return result, failures, None
     try:
-        document = json.loads(path.read_text(encoding="utf-8"))
-    except (UnicodeDecodeError, json.JSONDecodeError):
+        document = _strict_json_object(path.read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError):
         result["status"] = "invalid-json"
         return result, ("invalid-json",), None
     if not isinstance(document, Mapping):

@@ -29,10 +29,10 @@ def _identifier_key(reference: AssetReference | InstrumentReference, /) -> str:
     return f"{reference.identifier.scheme}:{reference.identifier.value}"
 
 
-def _snapshot_clock(value: FinancialTimestamp, name: str, /) -> int:
+def _snapshot_clocks(value: FinancialTimestamp, name: str, /) -> tuple[int, int]:
     if not isinstance(value, FinancialTimestamp):
         raise TypeError(f"{name} must be a FinancialTimestamp.")
-    return int(value.epoch_nanoseconds)
+    return int(value.event_ns), int(value.available_ns)
 
 
 class ReferenceDataSnapshot(StrictModule, NonTrainableState):
@@ -70,16 +70,22 @@ class ReferenceDataSnapshot(StrictModule, NonTrainableState):
             raise TypeError("lineage must be a DataLineage.")
         asset_ids = tuple(_identifier_key(value) for value in asset_values)
         instrument_ids = tuple(_identifier_key(value) for value in instrument_values)
-        currency_codes = tuple(value.code for value in currency_values)
+        currency_ids = tuple(value.currency_id for value in currency_values)
         if len(set(asset_ids)) != len(asset_ids):
             raise ValueError("Reference-data asset identifiers must be unique.")
         if len(set(instrument_ids)) != len(instrument_ids):
             raise ValueError("Reference-data instrument identifiers must be unique.")
-        if len(set(currency_codes)) != len(currency_codes):
-            raise ValueError("Reference-data currency codes must be unique.")
+        if set(asset_ids) & set(instrument_ids):
+            raise ValueError(
+                "Reference-data asset and instrument identifiers must be disjoint."
+            )
+        if len(set(currency_ids)) != len(currency_ids):
+            raise ValueError("Reference-data currency identities must be unique.")
         self.assets = tuple(sorted(asset_values, key=_identifier_key))
         self.instruments = tuple(sorted(instrument_values, key=_identifier_key))
-        self.currencies = tuple(sorted(currency_values, key=lambda value: value.code))
+        self.currencies = tuple(
+            sorted(currency_values, key=lambda value: value.currency_id)
+        )
         self.as_of = as_of
         self.lineage = lineage
         self.snapshot_id = canonical_fingerprint(
@@ -116,7 +122,14 @@ class ReferenceDataSnapshot(StrictModule, NonTrainableState):
         return {
             "asset_ids": [_identifier_key(value) for value in self.assets],
             "instrument_ids": [_identifier_key(value) for value in self.instruments],
-            "currencies": [value.code for value in self.currencies],
+            "currencies": [
+                {
+                    "code": value.code,
+                    "minor_unit": value.minor_unit,
+                    "currency_id": value.currency_id,
+                }
+                for value in self.currencies
+            ],
             "as_of_ns": int(self.as_of.epoch_nanoseconds),
             "lineage_id": self.lineage.lineage_id,
             "snapshot_id": self.snapshot_id,
@@ -146,7 +159,7 @@ class MarketDataSnapshot(StrictModule, NonTrainableState):
             raise TypeError("snapshot_time must be a FinancialTimestamp.")
         if not isinstance(reference_data_id, str):
             raise TypeError("reference_data_id must be a string.")
-        snapshot_ns = int(snapshot_time.epoch_nanoseconds)
+        snapshot_ns = int(snapshot_time.available_ns)
         if any(value.available_time_ns > snapshot_ns for value in values):
             raise ValueError(
                 "A snapshot cannot contain observations unavailable at snapshot_time."
@@ -172,7 +185,7 @@ class MarketDataSnapshot(StrictModule, NonTrainableState):
                 "observations": [value.observation_id for value in ordered],
                 "snapshot_available_ns": int(snapshot_time.available_ns),
                 "snapshot_vintage_id": snapshot_time.vintage_id,
-                "snapshot_time_ns": snapshot_ns,
+                "snapshot_event_ns": int(snapshot_time.event_ns),
                 "reference_data_id": self.reference_data_id,
             }
         )
@@ -209,7 +222,9 @@ class MarketDataSnapshot(StrictModule, NonTrainableState):
 
         if not isinstance(layout, RiskFactorLayout):
             raise TypeError("layout must be a RiskFactorLayout.")
-        decision_ns = _snapshot_clock(decision_time, "decision_time")
+        decision_event_ns, decision_available_ns = _snapshot_clocks(
+            decision_time, "decision_time"
+        )
         if not isinstance(tie_policy, QuoteTiePolicy):
             raise TypeError("tie_policy must be a QuoteTiePolicy.")
         if max_age_ns is not None and (
@@ -238,7 +253,7 @@ class MarketDataSnapshot(StrictModule, NonTrainableState):
                 status,
                 event,
                 available,
-                decision_time_ns=decision_ns,
+                decision_time_ns=decision_available_ns,
                 observation_ids=observation_ids,
             )
         by_key: dict[str, list[QuoteObservation]] = {}
@@ -246,9 +261,13 @@ class MarketDataSnapshot(StrictModule, NonTrainableState):
             by_key.setdefault(observation.key.key_id, []).append(observation)
         for index, factor in enumerate(layout.keys):
             all_key = by_key.get(factor.quote_key.key_id, [])
-            effective = [item for item in all_key if item.event_time_ns <= decision_ns]
+            effective = [
+                item for item in all_key if item.event_time_ns <= decision_event_ns
+            ]
             candidates = [
-                item for item in effective if item.available_time_ns <= decision_ns
+                item
+                for item in effective
+                if item.available_time_ns <= decision_available_ns
             ]
             if not candidates:
                 status[index] = int(
@@ -284,7 +303,7 @@ class MarketDataSnapshot(StrictModule, NonTrainableState):
                 selected_status |= MarketStatus.NONFINITE
             if (
                 max_age_ns is not None
-                and decision_ns - selected.event_time_ns > max_age_ns
+                and decision_event_ns - selected.event_time_ns > max_age_ns
             ):
                 selected_status |= MarketStatus.STALE
             values[index] = selected_value if np.isfinite(selected_value) else 0.0
@@ -301,14 +320,15 @@ class MarketDataSnapshot(StrictModule, NonTrainableState):
             status,
             event,
             available,
-            decision_time_ns=decision_ns,
+            decision_time_ns=decision_available_ns,
             observation_ids=observation_ids,
         )
 
     def to_record(self) -> Mapping[str, Any]:
         return {
             "observation_ids": [value.observation_id for value in self.observations],
-            "snapshot_time_ns": int(self.snapshot_time.epoch_nanoseconds),
+            "snapshot_event_time_ns": int(self.snapshot_time.event_ns),
+            "snapshot_available_time_ns": int(self.snapshot_time.available_ns),
             "reference_data_id": self.reference_data_id,
             "snapshot_id": self.snapshot_id,
         }

@@ -117,14 +117,10 @@ def main():
     arguments = parser.parse_args()
     if arguments.dt <= 0.0:
         raise ValueError("Hydrodynamic qualification dt must be positive.")
-    print(
-        json.dumps(
-            run_case(arguments.case, arguments.dt),
-            indent=2,
-            sort_keys=True,
-        )
-    )
+    report = run_case(arguments.case, arguments.dt)
+    print(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
+    return 0 if report["passed"] else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

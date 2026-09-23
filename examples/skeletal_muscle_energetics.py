@@ -32,9 +32,11 @@ def main() -> None:
         jnp.asarray((0.1, 0.12)),
         jnp.asarray((-0.01, 0.01)),
     )
+    if not bool(result.evidence.successful):
+        raise RuntimeError("Skeletal-muscle energetics evaluation failed")
     payload = {
         "model_id": result.model_id,
-        "successful": bool(result.evidence.successful),
+        "successful": True,
         "muscle_metabolic_power_W": result.muscle_metabolic_power_W.tolist(),
         "total_muscle_metabolic_power_W": float(result.total_muscle_metabolic_power_W),
         "claim_scope": "muscle-only phenomenological power; basal and thermal fields excluded",

@@ -45,6 +45,8 @@ class PeriodicBandManifold(StrictModule, NonTrainableState):
     ):
         if not isinstance(spectrum, PeriodicSpectrumResult):
             raise TypeError("spectrum must be PeriodicSpectrumResult.")
+        if not bool(spectrum.successful):
+            raise ValueError("Band manifolds require a successful periodic spectrum.")
         indices = np.asarray(band_indices)
         tolerance = float(gap_tolerance)
         if (
@@ -258,7 +260,8 @@ class PeriodicOverlapBundle(StrictModule, NonTrainableState):
         minimum = float(np.min(singular))
         floor = float(link_singular_value_floor)
         resolved = bool(
-            manifold.resolved
+            manifold.spectrum.successful
+            and manifold.resolved
             and isfinite(floor)
             and floor > 0.0
             and minimum > floor

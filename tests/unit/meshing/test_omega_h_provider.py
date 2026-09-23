@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.meshing.providers._omega_h import _read_partition_records
 
 
 @pytest.mark.meshing_omega_h
@@ -75,6 +76,58 @@ def test_real_omega_h_refines_and_preserves_partition_evidence():
     assert len(corners) > len(cells)
     assert result.target.audit.passed
     assert result.lineage_status == "unknown"
+    assert "aggregate_output_bytes" in result.target.runtime.enforced_limits
+    assert (
+        "native_adaptation_output_preallocation"
+        in result.target.runtime.unenforced_limits
+    )
     assert len(result.partitions) == 1
     assert all(owner == 0 for owner in result.partitions[0].cell_owner_ranks)
     assert np.all(np.linalg.eigvalsh(np.asarray(result.metric.values)) > 0.0)
+
+
+def test_omega_h_refuses_entity_budget_before_native_launch():
+    points = np.asarray(((0.0, 0.0), (1.0, 0.0), (0.0, 1.0)))
+    mesh = phx.discretization.CellMesh.from_triangles(
+        points,
+        np.asarray(((0, 1, 2),)),
+    )
+    scope = phx.meshing.MeshingScope(
+        mesh.mesh_id,
+        mesh.numeric_version,
+        phx.meshing.MeshingEntityKind.MESH,
+        0,
+        mesh.entity_set(0).entity_set_id,
+        mesh.vertex_global_ids,
+    )
+    metric = phx.meshing.MeshMetricField(
+        scope,
+        np.broadcast_to(np.eye(2), (len(points), 2, 2)),
+        minimum_size=0.5,
+        maximum_size=2.0,
+        maximum_anisotropy=1.0,
+    )
+
+    with pytest.raises(phx.meshing.MeshingFailure) as failure:
+        phx.meshing.OmegaHProvider("nonexistent-omega-h").execute(
+            mesh,
+            metric,
+            phx.SpatialCoordinateContract.si(),
+            limits=phx.meshing.MeshingLimits(maximum_vertices=1),
+        )
+
+    assert failure.value.category is phx.meshing.MeshingFailureCategory.RESOURCE_EXHAUSTED
+
+
+def test_omega_h_multirank_output_uses_one_aggregate_byte_budget(tmp_path):
+    (tmp_path / "rank-0.json").write_bytes(b"x" * 60)
+    (tmp_path / "rank-1.json").write_bytes(b"x" * 60)
+
+    with pytest.raises(phx.meshing.MeshingFailure) as failure:
+        _read_partition_records(
+            tmp_path,
+            2,
+            phx.meshing.MeshingLimits(maximum_data_bytes=100),
+        )
+
+    assert failure.value.category is phx.meshing.MeshingFailureCategory.RESOURCE_EXHAUSTED

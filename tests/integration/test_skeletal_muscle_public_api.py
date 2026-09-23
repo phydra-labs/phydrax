@@ -20,6 +20,7 @@ def test_skeletal_muscle_facade_exports_only_owned_contracts():
         "personalization",
         "proprioception",
         "skeletal_muscle_quantity",
+        "thermal",
     ]
     for name in skeletal_muscle.__all__:
         assert name in vars(skeletal_muscle)

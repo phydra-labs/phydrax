@@ -7,6 +7,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 from enum import StrEnum
+from numbers import Integral
 
 import equinox as eqx
 import numpy as np
@@ -23,6 +24,25 @@ def _identifier(value: str, name: str, /) -> str:
     result = str(value).strip()
     if not result:
         raise ValueError(f"{name} must be non-empty.")
+    return result
+
+
+def _integer(
+    value: object,
+    name: str,
+    /,
+    *,
+    minimum: int | None = None,
+    bits: int = 64,
+) -> int:
+    if isinstance(value, bool) or not isinstance(value, Integral):
+        raise TypeError(f"{name} must be an integer.")
+    result = int(value)
+    info = np.iinfo(np.int32 if bits == 32 else np.int64)
+    if result < info.min or result > info.max:
+        raise OverflowError(f"{name} must fit signed int{bits}.")
+    if minimum is not None and result < minimum:
+        raise ValueError(f"{name} must be at least {minimum}.")
     return result
 
 
@@ -81,8 +101,9 @@ class HostParticleRecord:
     attributes: tuple[HostAttribute, ...] = ()
 
     def __post_init__(self) -> None:
-        if int(self.particle_id) < 0:
-            raise ValueError("particle_id must be nonnegative.")
+        particle_id = _integer(self.particle_id, "particle_id", minimum=0)
+        pdg_id = _integer(self.pdg_id, "pdg_id", bits=32)
+        provider_status = _integer(self.provider_status, "provider_status", bits=32)
         if not isinstance(self.role, ParticleRole):
             raise TypeError("role must be ParticleRole.")
         momentum = tuple(float(value) for value in self.momentum)
@@ -91,13 +112,19 @@ class HostParticleRecord:
         rest_energy = float(self.rest_energy)
         if not math.isfinite(rest_energy) or rest_energy < 0.0:
             raise ValueError("rest_energy must be finite and nonnegative.")
-        for value, name in (
-            (self.production_vertex_id, "production_vertex_id"),
-            (self.end_vertex_id, "end_vertex_id"),
-        ):
-            if value is not None and int(value) < 0:
-                raise ValueError(f"{name} must be nonnegative when present.")
-        color = tuple(self.color_flow)
+        production_vertex = (
+            None
+            if self.production_vertex_id is None
+            else _integer(self.production_vertex_id, "production_vertex_id", minimum=0)
+        )
+        end_vertex = (
+            None
+            if self.end_vertex_id is None
+            else _integer(self.end_vertex_id, "end_vertex_id", minimum=0)
+        )
+        color = tuple(
+            _integer(value, "color_flow", minimum=0, bits=32) for value in self.color_flow
+        )
         if len(color) != 2:
             raise ValueError("color_flow must contain two integers.")
         attributes = tuple(self.attributes)
@@ -106,21 +133,13 @@ class HostParticleRecord:
         attribute_keys = tuple((value.namespace, value.name) for value in attributes)
         if len(set(attribute_keys)) != len(attribute_keys):
             raise ValueError("Particle attribute names must be unique within namespaces.")
-        object.__setattr__(self, "particle_id", int(self.particle_id))
-        object.__setattr__(self, "pdg_id", int(self.pdg_id))
-        object.__setattr__(self, "provider_status", int(self.provider_status))
+        object.__setattr__(self, "particle_id", particle_id)
+        object.__setattr__(self, "pdg_id", pdg_id)
+        object.__setattr__(self, "provider_status", provider_status)
         object.__setattr__(self, "momentum", momentum)
         object.__setattr__(self, "rest_energy", rest_energy)
-        object.__setattr__(
-            self,
-            "production_vertex_id",
-            None if self.production_vertex_id is None else int(self.production_vertex_id),
-        )
-        object.__setattr__(
-            self,
-            "end_vertex_id",
-            None if self.end_vertex_id is None else int(self.end_vertex_id),
-        )
+        object.__setattr__(self, "production_vertex_id", production_vertex)
+        object.__setattr__(self, "end_vertex_id", end_vertex)
         object.__setattr__(self, "color_flow", color)
         object.__setattr__(self, "attributes", attributes)
 
@@ -134,19 +153,19 @@ class HostVertexRecord:
     attributes: tuple[HostAttribute, ...] = ()
 
     def __post_init__(self) -> None:
-        vertex_id = int(self.vertex_id)
+        vertex_id = _integer(self.vertex_id, "vertex_id", minimum=0)
         position = tuple(float(value) for value in self.position)
-        incoming = tuple(self.incoming_particle_ids)
-        outgoing = tuple(self.outgoing_particle_ids)
+        incoming = tuple(
+            _integer(value, "incoming_particle_id", minimum=0)
+            for value in self.incoming_particle_ids
+        )
+        outgoing = tuple(
+            _integer(value, "outgoing_particle_id", minimum=0)
+            for value in self.outgoing_particle_ids
+        )
         attributes = tuple(self.attributes)
-        if (
-            vertex_id < 0
-            or len(position) != 4
-            or any(not math.isfinite(value) for value in position)
-        ):
+        if len(position) != 4 or any(not math.isfinite(value) for value in position):
             raise ValueError("Vertex identity and position are invalid.")
-        if any(value < 0 for value in incoming + outgoing):
-            raise ValueError("Vertex particle identities must be nonnegative.")
         if len(set(incoming)) != len(incoming) or len(set(outgoing)) != len(outgoing):
             raise ValueError("Vertex incoming/outgoing identities must be unique.")
         if set(incoming) & set(outgoing):
@@ -239,8 +258,14 @@ class HostEventRecord:
                     raise ValueError(
                         "Outgoing vertex incidence is not bidirectionally consistent."
                     )
-        object.__setattr__(self, "event_id", int(self.event_id))
-        object.__setattr__(self, "subevent_id", int(self.subevent_id))
+        object.__setattr__(
+            self, "event_id", _integer(self.event_id, "event_id", minimum=0)
+        )
+        object.__setattr__(
+            self,
+            "subevent_id",
+            _integer(self.subevent_id, "subevent_id", minimum=0, bits=32),
+        )
         object.__setattr__(self, "particles", particles)
         object.__setattr__(self, "vertices", vertices)
         object.__setattr__(self, "weights", weights)
@@ -286,20 +311,26 @@ class EventPackingReport(StrictModule, NonTrainableState):
         statuses_ = tuple(statuses)
         if any(not isinstance(value, EventPackingStatus) for value in statuses_):
             raise TypeError("statuses must contain EventPackingStatus values.")
+        count_inputs = (
+            source_event_count,
+            admitted_event_count,
+            rejected_event_count,
+            attribute_loss_count,
+        )
         counts = tuple(
-            map(
-                int,
-                (
-                    source_event_count,
-                    admitted_event_count,
-                    rejected_event_count,
-                    attribute_loss_count,
-                ),
-            )
+            _integer(value, "packing count", minimum=0) for value in count_inputs
         )
         losses = tuple(sorted(str(value).strip() for value in semantic_loss_fields))
-        if any(value < 0 for value in counts) or counts[1] + counts[2] != counts[0]:
-            raise ValueError("Packing counts are invalid.")
+        admitted_from_status = sum(
+            value is EventPackingStatus.ADMITTED for value in statuses_
+        )
+        if (
+            len(statuses_) != counts[0]
+            or counts[1] + counts[2] != counts[0]
+            or counts[1] != admitted_from_status
+            or counts[2] != counts[0] - admitted_from_status
+        ):
+            raise ValueError("Packing statuses and counts are inconsistent.")
         if any(not value for value in losses) or len(set(losses)) != len(losses):
             raise ValueError(
                 "semantic_loss_fields must contain distinct non-empty values."
@@ -385,6 +416,7 @@ def pack_host_events(
     event_ids = np.zeros((event_capacity,), dtype=np.int64)
     subevent_ids = np.zeros((event_capacity,), dtype=np.int32)
     event_active = np.zeros((event_capacity,), dtype=np.bool_)
+    particle_ids = np.zeros((event_capacity, particle_capacity), dtype=np.int64)
     pdg_ids = np.zeros((event_capacity, particle_capacity), dtype=np.int32)
     roles = np.zeros((event_capacity, particle_capacity), dtype=np.int32)
     provider_status = np.zeros((event_capacity, particle_capacity), dtype=np.int32)
@@ -398,6 +430,7 @@ def pack_host_events(
     end_vertex_indices = np.full((event_capacity, particle_capacity), -1, dtype=np.int32)
     color_flow = np.zeros((event_capacity, particle_capacity, 2), dtype=np.int32)
     vertices = np.zeros((event_capacity, vertex_capacity, 4), dtype=np.float64)
+    vertex_ids = np.zeros((event_capacity, vertex_capacity), dtype=np.int64)
     vertex_active = np.zeros((event_capacity, vertex_capacity), dtype=np.bool_)
     overflow = np.zeros((event_capacity,), dtype=np.bool_)
     weight_values = np.zeros((event_capacity, len(layout)), dtype=np.float64)
@@ -427,6 +460,7 @@ def pack_host_events(
             if len(vertex.incoming_particle_ids) > 2:
                 relation_overflow = True
         for particle_slot, particle in enumerate(particles[:particle_capacity]):
+            particle_ids[event_slot, particle_slot] = particle.particle_id
             pdg_ids[event_slot, particle_slot] = particle.pdg_id
             roles[event_slot, particle_slot] = int(particle.role)
             provider_status[event_slot, particle_slot] = particle.provider_status
@@ -467,6 +501,7 @@ def pack_host_events(
                     end_vertex_indices[event_slot, particle_slot] = vertex_slot
             attribute_loss_count += len(particle.attributes)
         for vertex_slot, vertex in enumerate(vertices_[:vertex_capacity]):
+            vertex_ids[event_slot, vertex_slot] = vertex.vertex_id
             vertices[event_slot, vertex_slot] = vertex.position
             vertex_active[event_slot, vertex_slot] = True
             attribute_loss_count += len(vertex.attributes)
@@ -500,6 +535,7 @@ def pack_host_events(
         event_ids=event_ids,
         subevent_ids=subevent_ids,
         event_active=event_active,
+        particle_ids=particle_ids,
         pdg_ids=pdg_ids,
         roles=roles,
         provider_status=provider_status,
@@ -512,6 +548,7 @@ def pack_host_events(
         color_flow=color_flow,
         production_vertices=vertices,
         vertex_active=vertex_active,
+        vertex_ids=vertex_ids,
         weights=weights,
         overflow=overflow,
         source_id=source_id,
@@ -544,22 +581,26 @@ def unpack_particle_events(events: ParticleEventBatch, /) -> tuple[HostEventReco
         vertex_mask = np.asarray(events.vertex_active[event_slot])
         production = np.asarray(events.production_vertex_indices[event_slot])
         ending = np.asarray(events.end_vertex_indices[event_slot])
-        particle_ids = tuple(np.flatnonzero(particle_mask))
+        particle_slots = tuple(np.flatnonzero(particle_mask))
+        particle_ids = tuple(
+            int(events.particle_ids[event_slot, slot]) for slot in particle_slots
+        )
+        particle_id_by_slot = dict(zip(particle_slots, particle_ids, strict=True))
         vertices: list[HostVertexRecord] = []
         for vertex_slot in np.flatnonzero(vertex_mask):
             incoming = tuple(
-                particle_id
-                for particle_id in particle_ids
-                if ending[particle_id] == vertex_slot
+                particle_id_by_slot[particle_slot]
+                for particle_slot in particle_slots
+                if ending[particle_slot] == vertex_slot
             )
             outgoing = tuple(
-                particle_id
-                for particle_id in particle_ids
-                if production[particle_id] == vertex_slot
+                particle_id_by_slot[particle_slot]
+                for particle_slot in particle_slots
+                if production[particle_slot] == vertex_slot
             )
             vertices.append(
                 HostVertexRecord(
-                    int(vertex_slot),
+                    int(events.vertex_ids[event_slot, vertex_slot]),
                     tuple(
                         float(value)
                         for value in np.asarray(
@@ -572,20 +613,30 @@ def unpack_particle_events(events: ParticleEventBatch, /) -> tuple[HostEventReco
             )
         particles = tuple(
             HostParticleRecord(
-                particle_id,
-                int(events.pdg_ids[event_slot, particle_id]),
-                ParticleRole(int(events.roles[event_slot, particle_id])),
-                int(events.provider_status[event_slot, particle_id]),
+                particle_id_by_slot[particle_slot],
+                int(events.pdg_ids[event_slot, particle_slot]),
+                ParticleRole(int(events.roles[event_slot, particle_slot])),
+                int(events.provider_status[event_slot, particle_slot]),
                 tuple(
                     float(value)
-                    for value in np.asarray(events.momenta[event_slot, particle_id])
+                    for value in np.asarray(events.momenta[event_slot, particle_slot])
                 ),
-                float(events.rest_energies[event_slot, particle_id]),
-                None if production[particle_id] < 0 else int(production[particle_id]),
-                None if ending[particle_id] < 0 else int(ending[particle_id]),
-                tuple(np.asarray(events.color_flow[event_slot, particle_id])),
+                float(events.rest_energies[event_slot, particle_slot]),
+                (
+                    None
+                    if production[particle_slot] < 0
+                    else int(
+                        events.vertex_ids[event_slot, int(production[particle_slot])]
+                    )
+                ),
+                (
+                    None
+                    if ending[particle_slot] < 0
+                    else int(events.vertex_ids[event_slot, int(ending[particle_slot])])
+                ),
+                tuple(np.asarray(events.color_flow[event_slot, particle_slot])),
             )
-            for particle_id in particle_ids
+            for particle_slot in particle_slots
         )
         weights = tuple(
             HostEventWeight(

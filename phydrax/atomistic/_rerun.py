@@ -9,6 +9,7 @@ from itertools import islice
 
 import equinox as eqx
 import jax.numpy as jnp
+import numpy as np
 
 from .._fingerprint import canonical_fingerprint
 from .._strict import StrictModule
@@ -203,6 +204,7 @@ class AtomisticRerunPlan(StrictModule):
         group_energies = []
         source_ids = []
         count = 0
+        source_valid = True
         mean = jnp.zeros((len(self.state_indices),))
         second_moment = jnp.zeros_like(mean)
         minimum = jnp.full_like(mean, jnp.inf)
@@ -228,6 +230,13 @@ class AtomisticRerunPlan(StrictModule):
                 ):
                     raise ValueError(
                         "Rerun frame topology or complete unit system is incompatible."
+                    )
+                if not np.array_equal(
+                    np.asarray(frame.stable_ids),
+                    np.asarray(self.potential.system.plan.particle_ids),
+                ):
+                    raise ValueError(
+                        "Rerun frame stable IDs must exactly match system particle order."
                     )
                 if frame.coordinate_domain is AtomisticSiteDomain.INTERACTION_SITES:
                     raise ValueError(
@@ -279,6 +288,7 @@ class AtomisticRerunPlan(StrictModule):
                 evaluations.append(state_evaluations)
                 group_energies.append(groups)
                 source_ids.append(frame.source_id)
+                source_valid = source_valid and bool(frame.valid)
                 count += 1
                 energy = jnp.stack(tuple(value.energy for value in state_evaluations))
                 delta = energy - mean
@@ -295,8 +305,10 @@ class AtomisticRerunPlan(StrictModule):
                     and int(frame.step) % self.reporter.stride == 0
                 ):
                     writer.write(self._reported_frame(frame, state_evaluations, groups))
-        successful = count > 0 and all(
-            bool(value.successful) for row in evaluations for value in row
+        successful = (
+            count > 0
+            and source_valid
+            and all(bool(value.successful) for row in evaluations for value in row)
         )
         reduction = AtomisticRerunReduction(
             count,

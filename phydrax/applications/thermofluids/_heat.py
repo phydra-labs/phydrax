@@ -29,6 +29,16 @@ from ._process import (
 )
 
 
+def _residual_numeric_id(semantic_id: str, parameters, /) -> str:
+    return canonical_fingerprint(
+        {
+            "kind": "thermofluid-residual-binding",
+            "semantic": semantic_id,
+            "parameters": parameters,
+        }
+    )
+
+
 class HeatPortBridge(StrictModule):
     """Convert an external K-or-Celsius/W port into Kelvin and inward watts.
 
@@ -234,6 +244,15 @@ def thermal_capacitance_component(
                     energy_balance,
                     (DAEDerivativeIncidence("temperature", 1),)
                     + tuple(DAEDerivativeIncidence(flow) for flow in flow_names),
+                    residual_semantic_id="thermofluids.heat.thermal-capacitance.energy-balance",
+                    residual_numeric_id=_residual_numeric_id(
+                        "thermofluids.heat.thermal-capacitance.energy-balance",
+                        {
+                            "capacity": capacity,
+                            "orientation": int(orientation),
+                            "flows": flow_names,
+                        },
+                    ),
                 ),
             ),
             tuple(port[0] for port in ports),
@@ -299,6 +318,14 @@ def thermal_conductor_component(
                             "right_temperature",
                         )
                     ),
+                    residual_semantic_id="thermofluids.heat.thermal-conductor.transfer",
+                    residual_numeric_id=_residual_numeric_id(
+                        "thermofluids.heat.thermal-conductor.transfer",
+                        {
+                            "conductance": conductance_value,
+                            "left_orientation": int(left_orientation),
+                        },
+                    ),
                 ),
                 DAEEquationBlock(
                     "energy_balance",
@@ -306,6 +333,14 @@ def thermal_conductor_component(
                     (
                         DAEDerivativeIncidence("left_heat_flow"),
                         DAEDerivativeIncidence("right_heat_flow"),
+                    ),
+                    residual_semantic_id="thermofluids.heat.thermal-conductor.balance",
+                    residual_numeric_id=_residual_numeric_id(
+                        "thermofluids.heat.thermal-conductor.balance",
+                        {
+                            "left_orientation": int(left_orientation),
+                            "right_orientation": int(right_orientation),
+                        },
                     ),
                 ),
             ),
@@ -345,6 +380,11 @@ def temperature_boundary_component(
                     "temperature_boundary",
                     residual,
                     (DAEDerivativeIncidence("temperature"),),
+                    residual_semantic_id="thermofluids.heat.temperature-boundary",
+                    residual_numeric_id=_residual_numeric_id(
+                        "thermofluids.heat.temperature-boundary",
+                        {"temperature": target},
+                    ),
                 ),
             ),
             (port,),

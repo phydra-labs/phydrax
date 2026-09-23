@@ -144,13 +144,16 @@ def evaluate_contact_kinematics_batch(
     feature_count = scene.vertex_count + scene.edge_count + scene.face_count
     left_feature = jnp.clip(batch.left_feature_indices, 0, feature_count - 1)
     right_feature = jnp.clip(batch.right_feature_indices, 0, feature_count - 1)
+    tangential_slip = dt * tangential_velocity
+    step_valid = jnp.isfinite(dt) & (dt > 0.0)
     finite_per_route = (
         jnp.isfinite(distance)
         & jnp.isfinite(gap)
         & jnp.isfinite(normal_velocity)
         & jnp.all(jnp.isfinite(tangential_velocity), axis=-1)
+        & jnp.all(jnp.isfinite(tangential_slip), axis=-1)
     )
-    valid = valid & finite_per_route
+    valid = valid & step_valid & finite_per_route
     identifier = canonical_fingerprint(
         {
             "kind": "contact-kinematics-batch",
@@ -180,7 +183,7 @@ def evaluate_contact_kinematics_batch(
         gap,
         normal_velocity,
         tangential_velocity,
-        dt * tangential_velocity,
+        tangential_slip,
         batch.weights.astype(current.dtype),
         evaluation.minimum_separation,
         evaluation.distance.feature,
@@ -189,7 +192,7 @@ def evaluate_contact_kinematics_batch(
             evaluation.mollifier_margin,
         ),
         valid,
-        jnp.all((~batch.valid) | finite_per_route),
+        step_valid & jnp.all((~batch.valid) | finite_per_route),
         batch.kind,
         identifier,
     )

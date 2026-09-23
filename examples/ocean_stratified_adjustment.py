@@ -36,8 +36,10 @@ def run():
     restriction = ocean.dynamics.step_restriction(coordinates)
     stage = ocean.dynamics.stage(0.0, coordinates)
     diagnostics = ocean.dynamics.diagnostics(0.0, coordinates)
+    if not bool(stage.success):
+        raise RuntimeError("Ocean stratified-adjustment stage failed")
     return {
-        "successful": bool(stage.success),
+        "successful": True,
         "stable_step": float(restriction.selected),
         "stratification_step": float(restriction.stratification),
         "divergence_norm": float(diagnostics.divergence_norm),

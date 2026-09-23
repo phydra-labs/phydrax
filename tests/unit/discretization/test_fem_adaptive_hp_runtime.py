@@ -4,9 +4,11 @@
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 from phydrax.discretization import CellBlock, CellMesh
+from phydrax.discretization._hexahedral import _FACES
 from phydrax.discretization.fem import (
     balanced_hp_refinement_ids,
     certify_finite_element_hp_geometry,
@@ -30,6 +32,7 @@ from phydrax.discretization.fem import (
     tensor_modal_decay_estimate,
     tensor_trace_interpolation,
 )
+from phydrax.discretization.fem._hp_runtime import _facet_vertices
 
 
 def _quad_mesh():
@@ -56,7 +59,7 @@ def _quad_mesh():
     )
 
 
-def _hex_mesh():
+def _hex_mesh(*, global_id=30):
     coordinates = jnp.asarray(
         tuple(
             (float(x), float(y), float(z))
@@ -72,7 +75,7 @@ def _hex_mesh():
                 "hexes",
                 "hexahedron",
                 jnp.asarray(((0, 1, 3, 2, 4, 5, 7, 6),), dtype=jnp.int32),
-                global_ids=jnp.asarray((30,), dtype=jnp.int64),
+                global_ids=jnp.asarray((global_id,), dtype=jnp.int64),
             ),
         ),
     )
@@ -143,6 +146,47 @@ def test_hex_refinement_allocates_eight_curved_children():
     assert refined.topology.child_capacity == 8
     assert np.all(np.asarray(refined.topology.levels)[1:9] == 1)
     assert np.all(np.isfinite(np.asarray(refined.geometry.cell_vertices)[1:9]))
+
+
+def test_hex_hp_domains_use_the_canonical_mesh_face_order():
+    topology, geometry = initial_finite_element_hp_topology(_hex_mesh(), 2, 12)
+    epoch = prepare_finite_element_hp_epoch(topology, geometry, "u")
+    _, exterior = finite_element_hp_domains(epoch)
+    block = epoch.mesh.blocks[0]
+
+    for row, interface_row in enumerate(np.asarray(exterior.entity_indices)):
+        slot = int(np.asarray(epoch.interfaces.owner_slots)[interface_row])
+        local_facet = int(np.asarray(exterior.owner_local_entities)[row])
+        hp_points = _facet_vertices(topology, geometry, slot, local_facet)
+        owner_cell = int(np.asarray(exterior.owner_cells)[row])
+        mesh_points = np.asarray(epoch.mesh.coordinates)[
+            np.asarray(block.vertices)[owner_cell, np.asarray(_FACES[local_facet])]
+        ]
+
+        assert {tuple(point) for point in hp_points} == {
+            tuple(point) for point in mesh_points
+        }
+
+
+def test_hp_coarsening_rejects_geometry_from_another_topology():
+    topology, geometry = initial_finite_element_hp_topology(_hex_mesh(), 2, 12)
+    refined = refine_tensor_hp_cells(
+        topology,
+        geometry,
+        jnp.asarray((30,), dtype=jnp.int64),
+    )
+    _, foreign_geometry = initial_finite_element_hp_topology(
+        _hex_mesh(global_id=31),
+        2,
+        12,
+    )
+
+    with pytest.raises(ValueError, match="identities disagree"):
+        coarsen_tensor_hp_cells(
+            refined.topology,
+            foreign_geometry,
+            jnp.asarray((30,), dtype=jnp.int64),
+        )
 
 
 def test_modal_decay_and_hp_decision_separate_p_from_h():

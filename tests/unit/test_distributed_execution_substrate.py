@@ -15,6 +15,7 @@ import numpy as np
 import pytest
 from jax.sharding import Mesh, NamedSharding, PartitionSpec
 
+import phydrax.lifecycle._distributed_checkpoint as checkpoint_module
 from phydrax._data_plane import IndexEpochPlan
 from phydrax.backends import APPLE_METAL_PROFILE
 from phydrax.discretization._distributed_field import (
@@ -45,7 +46,10 @@ from phydrax.execution import (
 )
 from phydrax.lifecycle import (
     assemble_distributed_checkpoint_from_repository,
+    CheckpointManifest,
+    CheckpointShard,
     publish_process_checkpoint,
+    RepositoryCorruptionError,
     restore_global_array_from_checkpoint,
 )
 from phydrax.lifecycle._repository import (
@@ -167,6 +171,21 @@ def test_execution_plan_admits_complete_distributed_candidate_and_round_trips() 
     assert restored.plan_fingerprint == plan.plan_fingerprint
     assert restored.group == group
     assert restored.value_placements[0].global_shape == (8, 3)
+
+    tampered = plan.to_payload()
+    tampered["backend"] = "tampered-backend"
+    with pytest.raises(ValueError, match="fingerprint"):
+        type(plan).from_payload(tampered)
+
+    missing_fingerprint = plan.to_payload()
+    del missing_fingerprint["plan_fingerprint"]
+    with pytest.raises(ValueError, match="plan_fingerprint"):
+        type(plan).from_payload(missing_fingerprint)
+
+    unknown_field = plan.to_payload()
+    unknown_field["unexpected"] = True
+    with pytest.raises(ValueError, match="unknown fields"):
+        type(plan).from_payload(unknown_field)
 
 
 def test_process_symmetric_child_groups_are_disjoint() -> None:
@@ -308,6 +327,8 @@ def test_addressable_checkpoint_publishes_once_and_restores_directly(
         "checkpoint-a",
         "execution-a",
         {"value": value},
+        analysis_plan_id="analysis-a",
+        numeric_revision_id="revision-a",
         writer_id="writer-a",
     )
     manifest = assemble_distributed_checkpoint_from_repository(
@@ -326,6 +347,114 @@ def test_addressable_checkpoint_publishes_once_and_restores_directly(
         sharding,
     )
     np.testing.assert_array_equal(np.asarray(restored), np.arange(12))
+    forged_metadata = dict(publication.shards[0].metadata)
+    forged_metadata["repository_id"] = "forged-repository"
+    forged_shard = CheckpointShard(
+        publication.shards[0].shard_id,
+        publication.shards[0].payload_digest,
+        publication.shards[0].byte_count,
+        publication.shards[0].layout_ids,
+        metadata=forged_metadata,
+    )
+    forged_manifest = CheckpointManifest(
+        manifest.checkpoint_id,
+        manifest.analysis_plan_id,
+        manifest.numeric_revision_id,
+        manifest.execution_plan_id,
+        (forged_shard,),
+        complete=True,
+    )
+    with pytest.raises(RepositoryCorruptionError, match="lifecycle ownership"):
+        restore_global_array_from_checkpoint(
+            repository,
+            forged_manifest,
+            metadata["array_path"],
+            sharding,
+        )
+    publish_process_checkpoint(
+        repository,
+        "checkpoint-b",
+        "execution-a",
+        {"value": value + 1.0},
+        writer_id="writer-b",
+        analysis_plan_id="analysis-a",
+        numeric_revision_id="revision-a",
+        parent_manifest=manifest,
+    )
+    child = assemble_distributed_checkpoint_from_repository(
+        repository,
+        "checkpoint-b",
+        "analysis-a",
+        "revision-a",
+        "execution-a",
+        expected_process_count=1,
+        parent_manifest=manifest,
+    )
+    assert child.parent_checkpoint_id == manifest.checkpoint_id
+    assert child.parent_manifest_id == manifest.manifest_id
+    child_path = dict(child.shards[0].metadata)["array_path"]
+    child_restored = restore_global_array_from_checkpoint(
+        repository,
+        child,
+        child_path,
+        sharding,
+        parent_manifest=manifest,
+    )
+    np.testing.assert_array_equal(np.asarray(child_restored), np.arange(12) + 1.0)
+
+
+def test_distributed_checkpoint_rejects_huge_declared_shape_before_device_allocation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    shard = CheckpointShard(
+        "shard-huge",
+        "0" * 64,
+        128,
+        ("layout-huge",),
+        metadata={
+            "artifact_id": "artifact-huge",
+            "artifact_manifest_id": "manifest-huge",
+            "checkpoint_id": "checkpoint-huge",
+            "analysis_plan_id": "analysis-huge",
+            "numeric_revision_id": "revision-huge",
+            "execution_plan_id": "execution-huge",
+            "logical_name": "array-0",
+            "array_path": "['value']",
+            "global_shape": "[1000000000]",
+            "dtype": "<f8",
+            "index": "[[0,1,1]]",
+            "process_index": "0",
+            "device_id": "0",
+            "replica_id": "0",
+            "topology_epoch": "0",
+            "repository_id": "repository-huge",
+            "parent_checkpoint_id": "none",
+            "parent_manifest_id": "none",
+        },
+    )
+    manifest = CheckpointManifest(
+        "checkpoint-huge",
+        "analysis-huge",
+        "revision-huge",
+        "execution-huge",
+        (shard,),
+        complete=True,
+    )
+    monkeypatch.setattr(
+        checkpoint_module.jax,
+        "make_array_from_callback",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("device allocation was reached before manifest admission")
+        ),
+    )
+
+    with pytest.raises(RepositoryCorruptionError, match="axis-length"):
+        restore_global_array_from_checkpoint(
+            object(),
+            manifest,
+            "['value']",
+            None,
+        )
 
 
 def test_distributed_pcg_uses_owned_pairing_and_global_consensus() -> None:
@@ -346,6 +475,31 @@ def test_distributed_pcg_uses_owned_pairing_and_global_consensus() -> None:
     )
     np.testing.assert_allclose(result.value, jnp.asarray([1.0, 2.0, 3.0, 0.0]))
     assert bool(result.converged)
+
+
+@pytest.mark.parametrize(
+    "weights",
+    (
+        jnp.asarray([1.0, 0.0]),
+        jnp.asarray([1.0, -1.0]),
+        jnp.asarray([1.0, jnp.nan]),
+    ),
+)
+def test_distributed_pairing_requires_positive_finite_owned_weights(weights) -> None:
+    with pytest.raises(ValueError, match="finite and strictly positive"):
+        DistributedPairing(jnp.asarray([True, True]), weights=weights)
+
+    padded = DistributedPairing(
+        jnp.asarray([True, False]),
+        weights=jnp.asarray([2.0, jnp.nan]),
+    )
+    assert padded.inner(jnp.asarray([3.0, 1.0]), jnp.asarray([4.0, 1.0])) == 24.0
+
+    with pytest.raises(TypeError, match="real numeric"):
+        DistributedPairing(
+            jnp.asarray([True, False]),
+            weights=jnp.asarray([1.0 + 0.0j, 0.0 + 1.0j]),
+        )
 
 
 @pytest.mark.parametrize(

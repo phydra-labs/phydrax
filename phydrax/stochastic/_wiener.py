@@ -131,6 +131,7 @@ class WienerRealization(StrictModule):
         label: str | None = None,
         coupling_id: str | None = None,
         _path_indices: Array | None = None,
+        _realization_id: str | None = None,
         _path_signs: Array | None = None,
     ):
         key = _validated_key(root_key)
@@ -168,6 +169,10 @@ class WienerRealization(StrictModule):
             not isinstance(coupling_id, str) or not coupling_id
         ):
             raise ValueError("WienerRealization coupling_id must be non-empty or None.")
+        if _realization_id is not None and (
+            not isinstance(_realization_id, str) or not _realization_id
+        ):
+            raise ValueError("_realization_id must be non-empty or None.")
 
         count = prod(samples) if samples else 1
         expected_shape = samples
@@ -200,17 +205,21 @@ class WienerRealization(StrictModule):
             algorithm=algorithm,
             noise_id=noise_id,
         )
-        realization_id = _fingerprint(
-            key,
-            support=support_value,
-            noise_shape=noise,
-            sample_shape=samples,
-            path_indices=indices,
-            path_signs=signs,
-            tolerance=tolerance_value,
-            levy_area=levy_area,
-            algorithm=algorithm,
-            noise_id=noise_id,
+        realization_id = (
+            _fingerprint(
+                key,
+                support=support_value,
+                noise_shape=noise,
+                sample_shape=samples,
+                path_indices=indices,
+                path_signs=signs,
+                tolerance=tolerance_value,
+                levy_area=levy_area,
+                algorithm=algorithm,
+                noise_id=noise_id,
+            )
+            if _realization_id is None
+            else _realization_id
         )
 
         self.root_key = key

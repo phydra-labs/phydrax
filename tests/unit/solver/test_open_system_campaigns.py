@@ -62,6 +62,7 @@ def test_evidence_contracts_reject_malformed_values():
         )
     with pytest.raises(ValueError, match="Semantic replay"):
         campaigns.SemanticReplayEvidence(
+            independently_replayed=True,
             variates_equal=True,
             address_schema_equal=True,
             event_time_difference=-1.0,
@@ -71,6 +72,20 @@ def test_evidence_contracts_reject_malformed_values():
             disagreement_tolerance=1.0,
             observable_tolerance=1.0,
         )
+    with pytest.raises(ValueError, match="cannot exceed one"):
+        campaigns.SemanticReplayEvidence(
+            independently_replayed=True,
+            variates_equal=True,
+            address_schema_equal=True,
+            event_time_difference=0.0,
+            channel_disagreement_probability=1.1,
+            observable_difference=0.0,
+            event_time_tolerance=1.0,
+            disagreement_tolerance=1.0,
+            observable_tolerance=1.0,
+        )
+    with pytest.raises(TypeError, match="must be integers"):
+        campaigns.CampaignCapacityEvidence("work", 1.5, 2)
 
 
 def test_promotion_requires_named_physicality_and_verified_archive(tmp_path):
@@ -102,7 +117,8 @@ def test_promotion_requires_named_physicality_and_verified_archive(tmp_path):
         expected_code_fingerprint="promotion-code",
     ).evaluate(policy)
     assert not bool(unverified.promoted)
-    assert bool(verified.promoted)
+    assert not bool(verified.promoted)
+    assert not bool(record.replay.valid)
     assert not verified.missing_physicality
 
 

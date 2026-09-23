@@ -253,6 +253,8 @@ class IsingFactorGroup(StrictModule):
     def __init__(self, selections: Sequence[VariableSelection], weights: ArrayLike, /):
         scope = _selection_tuple(selections)
         values = _real_array("weights", weights).reshape((-1,))
+        if not bool(np.all(np.isfinite(np.asarray(values)))):
+            raise ValueError("Ising weights must be finite.")
         if values.shape != (scope[0].size,):
             raise ValueError("Ising weights must have one value per factor.")
         self.selections = scope

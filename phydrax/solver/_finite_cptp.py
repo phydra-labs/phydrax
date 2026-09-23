@@ -197,6 +197,10 @@ def integrate_finite_cptp(
         channels.append(channel)
         valid_steps.append(step_valid)
     history = jnp.stack(densities)
+    trace_residuals = jnp.abs(jnp.trace(history, axis1=-2, axis2=-1) - 1.0)
+    hermiticity_residuals = jnp.max(
+        jnp.abs(history - jnp.conj(jnp.swapaxes(history, -1, -2))), axis=(-2, -1)
+    )
     hermitian = 0.5 * (history + jnp.conj(jnp.swapaxes(history, -1, -2)))
     minimum = HermitianSpectrum(
         hermitian,
@@ -212,14 +216,18 @@ def integrate_finite_cptp(
         trace_preservation_residuals=jnp.stack(
             [channel.evidence.trace_preservation_residual for channel in channels]
         ),
-        density_trace_residuals=jnp.abs(jnp.trace(history, axis1=-2, axis2=-1) - 1.0),
-        density_hermiticity_residuals=jnp.max(
-            jnp.abs(history - jnp.conj(jnp.swapaxes(history, -1, -2))), axis=(-2, -1)
-        ),
+        density_trace_residuals=trace_residuals,
+        density_hermiticity_residuals=hermiticity_residuals,
         density_minimum_eigenvalues=minimum,
         valid_steps=jnp.stack(valid_steps),
         final_map=cumulative,
-        valid=still_valid & jnp.all(jnp.isfinite(history)),
+        valid=(
+            still_valid
+            & jnp.all(jnp.isfinite(history))
+            & jnp.all(trace_residuals <= plan.tolerance)
+            & jnp.all(hermiticity_residuals <= plan.tolerance)
+            & jnp.all(minimum >= -plan.tolerance)
+        ),
         plan_id=plan.plan_id,
         method_claim=(
             "piecewise-constant-exponential-exact-per-interval"

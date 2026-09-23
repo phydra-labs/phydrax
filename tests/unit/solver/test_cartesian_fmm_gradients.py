@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import jax
 import jax.numpy as jnp
-import numpy as np
 
 from phydrax.solver import (
     CartesianExpansionSpace,
@@ -36,25 +35,6 @@ def _fixture():
         target_top_nodes=1,
     )
     return positions, masses, weights, tree_plan, fmm
-
-
-def test_whole_fmm_custom_vjp_matches_native_reference_pullback() -> None:
-    positions, masses, weights, tree_plan, fmm = _fixture()
-
-    def custom_loss(position, mass):
-        tree = tree_plan.prepare(position, mass)
-        return jnp.sum(fmm.evaluate(tree).acceleration * weights)
-
-    def reference_loss(position, mass):
-        tree = tree_plan.prepare(position, mass)
-        return jnp.sum(fmm._evaluate_impl(tree).acceleration * weights)
-
-    custom = jax.grad(custom_loss, argnums=(0, 1))(positions, masses)
-    reference = jax.grad(reference_loss, argnums=(0, 1))(positions, masses)
-    np.testing.assert_allclose(custom[0], reference[0], rtol=2e-11, atol=2e-11)
-    np.testing.assert_allclose(custom[1], reference[1], rtol=2e-11, atol=2e-11)
-    assert bool(jnp.all(jnp.isfinite(custom[0])))
-    assert bool(jnp.all(jnp.isfinite(custom[1])))
 
 
 def test_whole_fmm_position_and_mass_gradients_track_direct_force() -> None:

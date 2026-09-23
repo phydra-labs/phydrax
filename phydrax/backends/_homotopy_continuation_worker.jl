@@ -7,6 +7,12 @@ using HomotopyContinuation
 using JSON3
 import HomotopyContinuation.ModelKit: Expression, Variable
 
+const MAX_VARIABLE_COUNT = 4_096
+const MAX_EQUATION_COUNT = 4_096
+const MAX_TERM_COUNT = 1_000_000
+const MAX_EXPONENT_ENTRIES = 10_000_000
+const MAX_STORAGE_BYTES = 256 * 1024 * 1024
+
 const INPUT_KEYS = Set([
     "protocol_id",
     "request_id",
@@ -19,6 +25,11 @@ const INPUT_KEYS = Set([
     "start_system",
     "path_capacity",
     "seed",
+    "maximum_variable_count",
+    "maximum_equation_count",
+    "maximum_term_count",
+    "maximum_exponent_entries",
+    "maximum_storage_bytes",
     "equation_count",
     "variable_count",
     "equation_indices",
@@ -34,10 +45,17 @@ const PATH_STATUSES = (
     "invalid_endpoint",
 )
 
-function require_integer(value, name; minimum = 0)
-    value isa Integer || error("$(name) must be an integer")
-    value >= minimum || error("$(name) is below its lower bound")
+function require_integer(value, name; minimum = 0, maximum = typemax(Int))
+    value isa Integer && !(value isa Bool) || error("$(name) must be an integer")
+    minimum <= value <= maximum || error("$(name) is outside its bounds")
     return Int(value)
+end
+
+function checked_product(left, right, maximum, name)
+    left >= 0 && right >= 0 || error("$(name) factors must be nonnegative")
+    left == 0 && return 0
+    right <= div(maximum, left) || error("$(name) exceeds its bound")
+    return left * right
 end
 
 function finite_number(value, name)
@@ -51,13 +69,59 @@ function parse_input(path)
     filesize(path) <= 64 * 1024 * 1024 || error("input exceeds the worker byte bound")
     record = JSON3.read(read(path, String), Dict{String,Any})
     Set(keys(record)) == INPUT_KEYS || error("input fields do not match the protocol")
-    equation_count = require_integer(record["equation_count"], "equation_count"; minimum = 1)
-    variable_count = require_integer(record["variable_count"], "variable_count"; minimum = 1)
-    path_capacity = require_integer(record["path_capacity"], "path_capacity"; minimum = 1)
-    path_capacity <= 10^8 || error("path_capacity exceeds the worker hard bound")
-    seed = require_integer(record["seed"], "seed")
-    seed <= typemax(UInt32) || error("seed does not fit UInt32")
+    record["protocol_id"] == "phydrax.homotopy-continuation" ||
+        error("unsupported homotopy-continuation protocol")
+    maximum_variable_count = require_integer(
+        record["maximum_variable_count"],
+        "maximum_variable_count";
+        minimum = 1,
+        maximum = MAX_VARIABLE_COUNT,
+    )
+    maximum_equation_count = require_integer(
+        record["maximum_equation_count"],
+        "maximum_equation_count";
+        minimum = 1,
+        maximum = MAX_EQUATION_COUNT,
+    )
+    maximum_term_count = require_integer(
+        record["maximum_term_count"],
+        "maximum_term_count";
+        minimum = 1,
+        maximum = MAX_TERM_COUNT,
+    )
+    maximum_exponent_entries = require_integer(
+        record["maximum_exponent_entries"],
+        "maximum_exponent_entries";
+        minimum = 1,
+        maximum = MAX_EXPONENT_ENTRIES,
+    )
+    maximum_storage_bytes = require_integer(
+        record["maximum_storage_bytes"],
+        "maximum_storage_bytes";
+        minimum = 1,
+        maximum = MAX_STORAGE_BYTES,
+    )
+    equation_count = require_integer(
+        record["equation_count"],
+        "equation_count";
+        minimum = 1,
+        maximum = maximum_equation_count,
+    )
+    variable_count = require_integer(
+        record["variable_count"],
+        "variable_count";
+        minimum = 1,
+        maximum = maximum_variable_count,
+    )
+    path_capacity = require_integer(
+        record["path_capacity"],
+        "path_capacity";
+        minimum = 1,
+        maximum = 10^8,
+    )
+    seed = require_integer(record["seed"], "seed"; maximum = typemax(UInt32))
     start_system = record["start_system"]
+    start_system isa AbstractString || error("start_system must be a string")
     start_system in ("total-degree", "polyhedral") || error("unsupported start system")
     rows = record["equation_indices"]
     powers = record["exponents"]
@@ -65,22 +129,52 @@ function parse_input(path)
     rows isa AbstractVector || error("equation_indices must be an array")
     powers isa AbstractVector || error("exponents must be an array")
     coefficients isa AbstractVector || error("coefficients must be an array")
-    length(rows) == length(powers) == length(coefficients) || error("term arrays differ in length")
-    length(rows) <= 10^7 || error("term count exceeds the worker hard bound")
+    length(rows) == length(powers) == length(coefficients) ||
+        error("term arrays differ in length")
+    length(rows) <= maximum_term_count || error("term count exceeds its bound")
+    exponent_entries = checked_product(
+        length(rows),
+        variable_count,
+        maximum_exponent_entries,
+        "exponent entry count",
+    )
+    estimated_storage = checked_product(
+        exponent_entries,
+        sizeof(Int),
+        maximum_storage_bytes,
+        "exponent storage",
+    )
+    fixed_storage = variable_count * 64 + equation_count * 64 + length(rows) * 40
+    fixed_storage <= maximum_storage_bytes - estimated_storage ||
+        error("estimated worker storage exceeds its bound")
     parsed_rows = Int[]
     parsed_powers = Vector{Int}[]
     parsed_coefficients = ComplexF64[]
+    sizehint!(parsed_rows, length(rows))
+    sizehint!(parsed_powers, length(rows))
+    sizehint!(parsed_coefficients, length(rows))
     for term in eachindex(rows)
-        row = require_integer(rows[term], "equation index")
-        row < equation_count || error("equation index is out of range")
+        row = require_integer(
+            rows[term],
+            "equation index";
+            maximum = equation_count - 1,
+        )
         exponent = powers[term]
         exponent isa AbstractVector || error("each exponent must be an array")
-        length(exponent) == variable_count || error("exponent width differs from variable_count")
+        length(exponent) == variable_count ||
+            error("exponent width differs from variable_count")
+        parsed_exponent = Int[]
+        sizehint!(parsed_exponent, variable_count)
+        for value in exponent
+            push!(parsed_exponent, require_integer(value, "exponent"))
+        end
         coefficient = coefficients[term]
-        coefficient isa AbstractVector || error("each coefficient must be [real, imaginary]")
-        length(coefficient) == 2 || error("each coefficient must have two components")
+        coefficient isa AbstractVector ||
+            error("each coefficient must be [real, imaginary]")
+        length(coefficient) == 2 ||
+            error("each coefficient must have two components")
         push!(parsed_rows, row)
-        push!(parsed_powers, [require_integer(value, "exponent") for value in exponent])
+        push!(parsed_powers, parsed_exponent)
         push!(
             parsed_coefficients,
             complex(
@@ -137,6 +231,7 @@ function output_template(record, status, start_count, paths)
         "homotopy_continuation_uuid" => string(Base.PkgId(HomotopyContinuation).uuid),
         "homotopy_continuation_version" => string(Base.pkgversion(HomotopyContinuation)),
         "start_system" => record["start_system"],
+        "seed" => record["seed"],
         "execution_status" => status,
         "start_count" => start_count,
         "tracked_path_count" => length(paths),
@@ -206,13 +301,20 @@ function main(input_path, output_path)
         seed = UInt32(record["seed"]),
         show_progress = false,
     )
-    raw_paths = sort(
-        HomotopyContinuation.path_results(result);
-        by = path -> something(HomotopyContinuation.path_number(path), typemax(Int)),
-    )
-    length(raw_paths) == start_count || error("provider did not return one result per start path")
+    raw_paths = HomotopyContinuation.path_results(result)
+    length(raw_paths) == start_count ||
+        error("provider did not return one result per start path")
+    path_numbers = [HomotopyContinuation.path_number(path) for path in raw_paths]
+    all(number isa Integer for number in path_numbers) ||
+        error("provider path result omitted its source path number")
+    sort!(raw_paths; by=path -> Int(HomotopyContinuation.path_number(path)))
+    sorted_numbers = [
+        Int(HomotopyContinuation.path_number(path)) for path in raw_paths
+    ]
+    sorted_numbers == collect(1:start_count) ||
+        error("provider path numbers do not exactly cover start paths")
     paths = [
-        path_record(path, index - 1, record["variable_count"])
+        path_record(path, sorted_numbers[index] - 1, record["variable_count"])
         for (index, path) in enumerate(raw_paths)
     ]
     output = output_template(record, "complete", start_count, paths)

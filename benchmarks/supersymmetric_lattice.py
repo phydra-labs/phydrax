@@ -69,19 +69,30 @@ def benchmark_case(extent: int, repeats: int):
             tolerance=1e-9,
         )
     )
-    run, warm_seconds = measure_synchronized(
+    root_key = jax.random.key(101)
+    keys = jax.random.split(root_key, repeats + 2)
+    _, warm_seconds = measure_synchronized(
         lambda: sample_twisted_n2_rhmc(
             prepared,
             coordinates,
-            jax.random.key(101),
+            keys[0],
             num_draws=1,
         )
     )
+    run, _ = measure_synchronized(
+        lambda: sample_twisted_n2_rhmc(
+            prepared,
+            coordinates,
+            keys[1],
+            num_draws=max(32, repeats),
+        )
+    )
+    timing_keys = iter(keys[2:])
     _, steady = measure_repeated(
         lambda: sample_twisted_n2_rhmc(
             prepared,
             coordinates,
-            jax.random.key(101),
+            next(timing_keys),
             num_draws=1,
         ),
         warmup=0,
@@ -103,6 +114,12 @@ def benchmark_case(extent: int, repeats: int):
         "prepare_seconds": prepare_seconds,
         "algebra_seconds": algebra_seconds,
         "warm_transition_seconds": warm_seconds,
+        "rng": {
+            "root_seed": 101,
+            "warmup_stream": 0,
+            "acceptance_stream": 1,
+            "timing_streams": list(range(2, repeats + 2)),
+        },
         "steady": steady.to_seconds_dict(),
         "logical_bytes": {
             "prepared": logical_array_bytes(prepared),
@@ -132,18 +149,23 @@ def main() -> None:
     arguments = parser.parse_args()
     if any(value < 1 for value in arguments.extents) or arguments.repeats < 1:
         raise ValueError("Extents and repeats must be positive.")
+    cases = [
+        benchmark_case(extent, arguments.repeats) for extent in arguments.extents
+    ]
     payload = {
         "environment": capture_environment().to_dict(),
-        "cases": [
-            benchmark_case(extent, arguments.repeats) for extent in arguments.extents
-        ],
+        "cases": cases,
+        "passed": all(case["successful"] for case in cases),
     }
-    encoded = json.dumps(payload, indent=2, sort_keys=True)
+    encoded = json.dumps(payload, allow_nan=False, indent=2, sort_keys=True)
     if arguments.output:
-        with open(arguments.output, "w", encoding="utf-8") as stream:
-            stream.write(encoded + "\n")
+        from benchmarks._io import write_json_atomic
+
+        write_json_atomic(arguments.output, payload)
     else:
         print(encoded)
+    if not payload["passed"]:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

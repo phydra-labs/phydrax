@@ -27,6 +27,12 @@ def test_nonnormal_resolvent_exceeds_inverse_eigenvalue_distance():
         phx.linalg.eigen.ResolventScanProblem(operator, jnp.asarray([1.0 + 0.0j]))
     )
 
+    assert bool(result.successful)
+    assert bool(result.diagnostics.finite)
+    assert result.status == int(phx.linalg.eigen.ResolventScanStatus.SUCCESS)
+    assert result.diagnostics.schur_status == int(
+        phx.linalg.eigen.SchurSolveStatus.SUCCESS
+    )
     assert result.resolvent_norms[0] > 10.0
 
 
@@ -91,6 +97,11 @@ def test_resolvent_refresh_preserves_identity_and_rejects_new_operator_identity(
 
     assert refreshed.prepared_id == prepared.prepared_id
     assert refreshed.numeric_version == 1
+    assert bool(result.successful)
+    assert bool(result.diagnostics.finite)
+    assert result.status == int(phx.linalg.eigen.ResolventScanStatus.SUCCESS)
+    assert result.provenance.prepared_id == refreshed.prepared_id
+    assert result.provenance.numeric_version == refreshed.numeric_version
     np.testing.assert_allclose(result.resolvent_norms, [0.5], atol=1e-12)
     with pytest.raises(ValueError, match="symbolic plan"):
         phx.linalg.eigen.refresh_resolvent_scan(

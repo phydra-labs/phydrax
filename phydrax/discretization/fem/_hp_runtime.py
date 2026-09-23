@@ -39,11 +39,11 @@ _HP_LINEAGE_RELATIONS = {"unchanged": 0, "refinement": 1, "coarsening": 2}
 _QUAD_FACETS = ((0, 1), (1, 2), (2, 3), (3, 0))
 _HEX_FACETS = (
     (0, 3, 2, 1),
-    (1, 2, 6, 5),
     (4, 5, 6, 7),
-    (0, 4, 7, 3),
     (0, 1, 5, 4),
-    (3, 7, 6, 2),
+    (1, 2, 6, 5),
+    (2, 3, 7, 6),
+    (3, 0, 4, 7),
 )
 
 
@@ -865,6 +865,8 @@ def coarsen_tensor_hp_cells(
     parent_cell_ids: ArrayLike,
     /,
 ) -> FiniteElementHPRefinementResult:
+    if geometry.topology_id != topology.topology_id:
+        raise ValueError("hp coarsening topology and geometry identities disagree.")
     parent_ids = np.asarray(parent_cell_ids, dtype=np.int64)
     identifiers = np.asarray(topology.cell_global_ids).copy()
     allocated = np.asarray(topology.allocated).copy()
@@ -2128,11 +2130,11 @@ def _tensor_facet_axis_side(
     elif cell_kind == "hexahedron":
         values = (
             (2, 0, (0, 1)),
-            (0, 1, (1, 2)),
             (2, 1, (0, 1)),
-            (0, 0, (1, 2)),
             (1, 0, (0, 2)),
+            (0, 1, (1, 2)),
             (1, 1, (0, 2)),
+            (0, 0, (1, 2)),
         )
     else:
         raise ValueError("Tensor trace constraints require quad/hex cells.")

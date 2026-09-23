@@ -1,5 +1,6 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 
+import equinox as eqx
 import jax.numpy as jnp
 import pytest
 
@@ -30,6 +31,28 @@ def test_lanczos_cg_and_gauss_seidel_fixed_capacity_evidence():
         assert resolved.active_mask.shape == (4,)
         assert resolved.residual_history.shape == (5,)
         assert resolved.operator.source.size == 4
+
+
+def test_fixed_gauss_seidel_order_resolves_under_filtered_jit():
+    points = jnp.linspace(0.0, 1.0, 5)[:, None]
+    observations = jnp.sin(points[:, 0])
+    residual = observations - 0.1
+    policy = phx.uq.GaussSeidelGaussianProcessActionPolicy(
+        3,
+        ordering="fixed",
+        fixed_order=jnp.asarray([2, 0, 4]),
+    )
+
+    @eqx.filter_jit
+    def selected(current_policy):
+        resolved = current_policy.resolve(
+            points,
+            state=_state(),
+            residual=residual,
+        )
+        return resolved.selected_indices
+
+    assert jnp.array_equal(selected(policy), jnp.asarray([2, 0, 4]))
 
 
 def test_residual_dependent_factor_fails_but_condition_path_resolves_actions():

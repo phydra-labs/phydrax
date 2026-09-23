@@ -1009,8 +1009,8 @@ class PreparedStochasticTurbulentInflow(StrictModule, NonTrainableState):
         if key_.shape != reference.shape or key_.dtype != reference.dtype:
             raise ValueError("key must be one typed JAX PRNG key.")
         index = int(sample_index)
-        if index < 0 or index > np.iinfo(np.uint32).max:
-            raise ValueError("sample_index must fit a nonnegative uint32.")
+        if index < 0 or index >= np.iinfo(np.uint32).max:
+            raise ValueError("sample_index must leave room for a uint32 increment.")
         return StochasticTurbulentInflowState(
             key=key_,
             sample_index=jnp.asarray(index, dtype=jnp.uint32),
@@ -1037,6 +1037,11 @@ class PreparedStochasticTurbulentInflow(StrictModule, NonTrainableState):
         mean_scalars: ArrayLike | None = None,
     ) -> StochasticTurbulentInflowResult:
         self._validate_state(state)
+        sample_index = eqx.error_if(
+            state.sample_index,
+            state.sample_index == jnp.asarray(np.iinfo(np.uint32).max, dtype=jnp.uint32),
+            "Inflow sample_index is exhausted.",
+        )
         count = self.coordinates.shape[0]
         dtype = self.synthesis.dtype
         if mean_velocity is None:
@@ -1119,14 +1124,14 @@ class PreparedStochasticTurbulentInflow(StrictModule, NonTrainableState):
         )
         next_state = StochasticTurbulentInflowState(
             key=next_key,
-            sample_index=state.sample_index + jnp.asarray(1, dtype=jnp.uint32),
+            sample_index=sample_index + jnp.asarray(1, dtype=jnp.uint32),
             prepared_id=self.prepared_id,
         )
         evidence = StochasticTurbulentInflowEvidence(
             parent_key=state.key,
             draw_key=draw_key,
             next_key=next_key,
-            sample_index=state.sample_index,
+            sample_index=sample_index,
             fluctuation_volume_flux=fluctuation_flux,
             total_volume_flux=total_flux,
             divergence_residual=divergence_residual,

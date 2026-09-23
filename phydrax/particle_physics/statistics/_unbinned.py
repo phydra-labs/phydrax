@@ -114,6 +114,7 @@ class ExtendedMixtureModel(StrictModule, NonTrainableState):
             or len(names) != len(evidence)
             or any(not value for value in names + evidence)
             or len(set(names)) != len(names)
+            or len(set(evidence)) != len(evidence)
         ):
             raise ValueError(
                 "Mixture components require unique names and normalization evidence."
@@ -159,20 +160,23 @@ def evaluate_extended_mixture(
         raise ValueError(
             "Component density/yield support is incompatible with the model."
         )
-    positive = jnp.all(yields_ > 0.0)
+    positive = jnp.all(jnp.isfinite(yields_) & (yields_ > 0.0))
+    safe_log_densities = jnp.where(dataset.active[:, None], log_densities, 0.0)
     log_intensity = jsp.special.logsumexp(
         jnp.log(jnp.maximum(yields_, jnp.finfo(yields_.dtype).tiny))[None, :]
-        + log_densities,
+        + safe_log_densities,
         axis=1,
     )
-    value = jnp.sum(
-        jnp.where(dataset.active, dataset.weights * log_intensity, 0.0)
-    ) - jnp.sum(yields_)
-    finite = jnp.all(
-        jnp.where(dataset.active[:, None], jnp.isfinite(log_densities), True)
-    ) & jnp.isfinite(value)
+    event_log_intensity = jnp.where(dataset.active, log_intensity, 0.0)
+    value = jnp.sum(dataset.weights * event_log_intensity) - jnp.sum(yields_)
+    finite = (
+        jnp.all(jnp.where(dataset.active[:, None], jnp.isfinite(log_densities), True))
+        & jnp.all(jnp.isfinite(yields_))
+        & jnp.isfinite(value)
+        & jnp.all(jnp.isfinite(event_log_intensity))
+    )
     return UnbinnedLikelihoodEvaluation(
-        log_intensity,
+        event_log_intensity,
         value,
         finite,
         finite & positive,

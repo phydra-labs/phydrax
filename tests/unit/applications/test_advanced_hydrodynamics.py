@@ -168,6 +168,14 @@ def test_vertical_rezone_preserves_scalar_content_and_shoreline_handoff():
     assert bool(result.evidence.finite)
     assert int(result.state.mesh_epoch) == 1
     assert shoreline.status in ("continue", "rezone")
+    strict = phx.applications.hydrodynamics.FreeSurfaceRezonePlan(
+        1.4,
+        minimum_quality_improvement=10.0,
+    ).rezone(hydro, continuation)
+    assert not bool(strict.evidence.successful)
+    assert strict.evidence.new_quality < (strict.evidence.old_quality + 10.0)
+    assert strict.hydrodynamics.prepared_id == hydro.prepared_id
+    assert strict.state is continuation
 
 
 def test_capillary_wave_step_closes_and_updates_controller():

@@ -181,8 +181,8 @@ def _assemble_graph(
         edge_mask=edge_mask,
         graph_mask=jnp.ones((case_count,), dtype=jnp.bool_),
     )
-    edge_index = jnp.arange(edge_capacity, dtype=jnp.int32)
-    safe_receivers = jnp.where(edge_mask, receivers, atom_capacity)
+    edge_index = jnp.arange(senders.shape[0], dtype=jnp.int32)
+    safe_receivers = jnp.where(edge_mask, receivers, case_count * atom_capacity)
     order = jnp.lexsort((senders, safe_receivers))
     sorted_receivers = receivers[order]
     sorted_valid = edge_mask[order]

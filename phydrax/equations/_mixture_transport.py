@@ -220,9 +220,10 @@ class MixtureAveragedTransportPlan(StrictModule, NonTrainableState):
         binary = properties.binary_diffusion_coefficients
         mole = thermo.mole_fraction
         off_diagonal = ~jnp.eye(species_count, dtype=jnp.bool_)
+        safe_binary = jnp.where(off_diagonal, binary, 1.0)
         resistance = jnp.where(
             off_diagonal,
-            mole[..., None, :] / binary,
+            mole[..., None, :] / safe_binary,
             0.0,
         )
         denominator = jnp.sum(resistance, axis=-1)
@@ -230,9 +231,12 @@ class MixtureAveragedTransportPlan(StrictModule, NonTrainableState):
         raw_flux = -density_[..., None, None] * mixture_diffusion[..., :, None] * gradient
         correction = jnp.sum(raw_flux, axis=-2)
         species_flux = raw_flux - mass[..., :, None] * correction[..., None, :]
+        present = mass > 0.0
+        safe_density = jnp.where(density_ > 0.0, density_, 1.0)
+        safe_mass = jnp.where(present, mass, 1.0)
         velocities = jnp.where(
-            mass[..., :, None] > 0.0,
-            species_flux / (density_[..., None, None] * mass[..., :, None]),
+            present[..., :, None],
+            species_flux / (safe_density[..., None, None] * safe_mass[..., :, None]),
             0.0,
         )
         viscosity_species = properties.species_viscosity

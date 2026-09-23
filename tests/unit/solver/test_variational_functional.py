@@ -67,3 +67,41 @@ def test_domain_function_binding_validates_field_and_region_maps():
             {"body": source},
             geometry_variables={"body": "x"},
         )
+
+
+def test_boundary_normal_accepts_density_wrapped_component_target():
+    domain = phx.domain.Interval1d(0.0, 1.0)
+    boundary = domain.component({"x": phx.domain.Boundary()})
+    field = domain.Function("x")(lambda x: x[0])
+    functional = phx.variational.Functional(
+        "boundary-density",
+        (
+            phx.variational.LocalIntegralTerm(
+                "boundary",
+                region="boundary",
+                fields=(phx.variational.FieldJetSpec("u", value=True),),
+                density=lambda fields, geometry, context: (
+                    fields["u"].value * geometry.normal[0]
+                ),
+                density_id="boundary-density-normal",
+                normal=True,
+            ),
+        ),
+        variable_fields=("u",),
+    )
+    source = phx.integration.per_step(
+        phx.integration.normalized_density(
+            phx.integration.over(boundary),
+            domain.Function("x")(lambda x: jnp.zeros(x.shape[:-1])),
+        ),
+        phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(4)),
+    )
+
+    terms = phx.terms.bind_functional(
+        functional,
+        {"u": field},
+        {"boundary": source},
+        geometry_variables={"boundary": "x"},
+    )
+
+    assert len(terms) == 1

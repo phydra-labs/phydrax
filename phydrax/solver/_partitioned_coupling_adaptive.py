@@ -508,6 +508,9 @@ class PreparedCouplingEpoch(StrictModule, NonTrainableState):
     prepared_coupling: PreparedCoupling
     participant_epoch_ids: tuple[str, ...] = eqx.field(static=True)
     waveform_capacity_ids: tuple[str, ...] = eqx.field(static=True)
+    participant_epoch_codes: tuple[int, ...] = eqx.field(static=True)
+    waveform_required_samples: tuple[int, ...] = eqx.field(static=True)
+    topology_code: int = eqx.field(static=True)
     epoch_id: str = eqx.field(static=True)
 
     def __init__(
@@ -516,9 +519,27 @@ class PreparedCouplingEpoch(StrictModule, NonTrainableState):
         participant_epoch_ids: Sequence[str],
         waveform_capacity_ids: Sequence[str],
         /,
+        *,
+        participant_epoch_codes: Sequence[int],
+        waveform_required_samples: Sequence[int],
+        topology_code: int,
     ):
         participant = tuple(str(value) for value in participant_epoch_ids)
         waveform = tuple(str(value) for value in waveform_capacity_ids)
+        participant_codes = tuple(participant_epoch_codes)
+        waveform_samples = tuple(waveform_required_samples)
+        if (
+            len(participant_codes) != len(participant)
+            or len(waveform_samples) != len(participant)
+            or any(
+                isinstance(value, bool) or not isinstance(value, int) or value < 0
+                for value in (*participant_codes, *waveform_samples)
+            )
+            or isinstance(topology_code, bool)
+            or not isinstance(topology_code, int)
+            or topology_code < 0
+        ):
+            raise ValueError("Coupling epoch numeric request contract is invalid.")
         if len(participant) != len(prepared_coupling.subsystems):
             raise ValueError("One participant epoch ID is required per subsystem.")
         if not all(participant) or not all(waveform):
@@ -526,12 +547,18 @@ class PreparedCouplingEpoch(StrictModule, NonTrainableState):
         self.prepared_coupling = prepared_coupling
         self.participant_epoch_ids = participant
         self.waveform_capacity_ids = waveform
+        self.participant_epoch_codes = participant_codes
+        self.waveform_required_samples = waveform_samples
+        self.topology_code = topology_code
         self.epoch_id = canonical_fingerprint(
             {
                 "kind": "prepared-coupling-epoch",
                 "prepared": prepared_coupling.plan_id,
                 "participants": participant,
                 "waveforms": waveform,
+                "participant_codes": participant_codes,
+                "waveform_required_samples": waveform_samples,
+                "topology_code": topology_code,
             }
         )
 
@@ -618,6 +645,26 @@ def transition_coupling_epoch(
             current_epoch,
             current_state,
             jnp.asarray(True),
+            request,
+            transition.transition_id,
+        )
+    request_matches = (
+        int(np.asarray(request.status)) == int(CouplingStatus.SUCCESS)
+        and int(np.asarray(request.topology_code)) == target_epoch.topology_code
+        and np.array_equal(
+            np.asarray(request.participant_epoch_codes),
+            np.asarray(target_epoch.participant_epoch_codes, dtype=np.int32),
+        )
+        and np.array_equal(
+            np.asarray(request.waveform_required_samples),
+            np.asarray(target_epoch.waveform_required_samples, dtype=np.int32),
+        )
+    )
+    if not request_matches:
+        return CouplingEpochTransitionResult(
+            current_epoch,
+            current_state,
+            jnp.asarray(False),
             request,
             transition.transition_id,
         )

@@ -10,6 +10,7 @@ from math import prod
 import equinox as eqx
 
 from ..._fingerprint import canonical_fingerprint
+from ..._model import register_artifact_value
 from ..._strict import StrictModule
 
 
@@ -74,6 +75,12 @@ class HilbertRegisterLayout(StrictModule):
         return prod(
             self.local_dimensions[index] for index in self.target_indices(wire_ids)
         )
+
+
+register_artifact_value(
+    "phydrax.quantum:HilbertRegisterLayout",
+    HilbertRegisterLayout,
+)
 
 
 __all__ = ["HilbertRegisterLayout"]

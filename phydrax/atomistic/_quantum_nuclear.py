@@ -101,6 +101,8 @@ class StagingCoordinatePlan(StrictModule, NonTrainableState):
 
     def forward(self, positions: ArrayLike, /):
         q = jnp.asarray(positions)
+        if q.ndim == 0 or q.shape[0] != self.bead_count:
+            raise ValueError("Staging coordinates must match the plan bead count.")
         staging = jnp.zeros_like(q).at[0].set(q[0])
         for bead in range(1, self.bead_count):
             reference = ((self.bead_count - bead) * q[bead - 1] + q[0]) / (
@@ -111,6 +113,8 @@ class StagingCoordinatePlan(StrictModule, NonTrainableState):
 
     def inverse(self, staging: ArrayLike, /):
         u = jnp.asarray(staging)
+        if u.ndim == 0 or u.shape[0] != self.bead_count:
+            raise ValueError("Staging coordinates must match the plan bead count.")
         q = jnp.zeros_like(u).at[0].set(u[0])
         for bead in range(1, self.bead_count):
             reference = ((self.bead_count - bead) * q[bead - 1] + q[0]) / (

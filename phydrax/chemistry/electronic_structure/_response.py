@@ -35,7 +35,7 @@ from ...operators.quantum.gaussian import (
     nuclear_repulsion_energy,
     overlap_matrix,
 )
-from ._mean_field import RestrictedMeanFieldState
+from ._mean_field import mean_field_owner_id, RestrictedMeanFieldState
 from ._molecular_hf import MolecularHartreeFockPlan
 from ._molecular_ks import MolecularKohnShamPlan
 
@@ -173,6 +173,8 @@ class MeanFieldResponsePlan(StrictModule, NonTrainableState):
             state.evidence.converged
         ):
             raise ValueError("Response requires a converged restricted mean-field state.")
+        if state.owner_id != mean_field_owner_id(calculation.plan_id, positions):
+            raise ValueError("Response state belongs to another plan or geometry.")
         coordinate = jnp.asarray(positions)
         zero_field = jnp.zeros((3,), dtype=coordinate.dtype)
         problem = NonlinearSystemProblem(
@@ -301,6 +303,10 @@ class MeanFieldResponsePlan(StrictModule, NonTrainableState):
             state.evidence.converged
         ):
             raise ValueError("Hessian response requires a converged restricted state.")
+        if state.owner_id != mean_field_owner_id(calculation.plan_id, positions):
+            raise ValueError(
+                "Hessian response state belongs to another plan or geometry."
+            )
         coordinate = jnp.asarray(positions)
         zero_field = jnp.zeros((3,), dtype=coordinate.dtype)
         density_coordinates = state.density.reshape((-1,))

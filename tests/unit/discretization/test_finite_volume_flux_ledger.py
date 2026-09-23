@@ -911,7 +911,18 @@ def _amr_conservation_plan():
     return BlockAMRConservationPlan(prepared, topology)
 
 
-def _amr_accepted_ledger(flux_integral, start_time, end_time, accepted_step, plan):
+def _amr_accepted_ledger(
+    flux_integral,
+    start_time,
+    end_time,
+    accepted_step,
+    plan,
+    *,
+    start_version=None,
+    end_version=None,
+    start_evidence_version=None,
+    end_evidence_version=None,
+):
     interval = end_time - start_time
     integral = np.asarray(flux_integral, dtype=np.float32)
     stage = _stage(
@@ -922,11 +933,23 @@ def _amr_accepted_ledger(flux_integral, start_time, end_time, accepted_step, pla
         evidence_policy_id=plan.precision.policy_id,
         topology_epoch_id=plan.topology.epoch.epoch_id,
     )
+    start_version = accepted_step if start_version is None else start_version
+    end_version = accepted_step + 1 if end_version is None else end_version
+    start_evidence_version = (
+        start_version if start_evidence_version is None else start_evidence_version
+    )
+    end_evidence_version = (
+        end_version if end_evidence_version is None else end_evidence_version
+    )
     return _integrate(
         stage,
         stage,
         stage,
         interval,
+        start_version=start_version,
+        end_version=end_version,
+        start_evidence_version=start_evidence_version,
+        end_evidence_version=end_evidence_version,
         start_time=start_time,
         end_time=end_time,
         accepted_step=accepted_step,
@@ -1026,3 +1049,66 @@ def test_amr_route_aggregation_rejects_unbound_route_identity():
 
     with pytest.raises(ValueError, match="exactly one block"):
         plan.aggregate_accepted_route((ledger,), "route:not-in-ledger")
+
+
+@pytest.mark.parametrize(
+    ("second_versions", "message"),
+    [
+        pytest.param((103, 104, 101, 102), "geometry versions", id="geometry"),
+        pytest.param((101, 102, 103, 104), "evidence versions", id="evidence"),
+    ],
+)
+def test_amr_route_aggregation_requires_contiguous_dynamic_versions(
+    second_versions, message
+):
+    plan = _amr_conservation_plan()
+    first = _amr_accepted_ledger([[0.1], [0.2]], 2.0, 2.1, 100, plan)
+    second = _amr_accepted_ledger(
+        [[0.1], [0.2]],
+        2.1,
+        2.2,
+        101,
+        plan,
+        start_version=second_versions[0],
+        end_version=second_versions[1],
+        start_evidence_version=second_versions[2],
+        end_evidence_version=second_versions[3],
+    )
+
+    with pytest.raises(Exception, match=message):
+        result = plan.aggregate_accepted_route(
+            (first, second),
+            first.blocks[0].route_id,
+        )
+        jax.block_until_ready(result)
+
+
+def test_amr_reflux_rejects_same_shaped_register_from_another_plan():
+    plan = _amr_conservation_plan()
+    coarse = _amr_accepted_ledger([[0.4], [0.8]], 2.0, 2.2, 50, plan)
+    fine = (
+        _amr_accepted_ledger([[0.05], [0.2]], 2.0, 2.1, 100, plan),
+        _amr_accepted_ledger([[0.15], [0.4]], 2.1, 2.2, 101, plan),
+    )
+    route = coarse.blocks[0].route_id
+    register = plan.flux_register(
+        coarse,
+        fine,
+        route,
+        route,
+        lambda value: value,
+        jnp.asarray([True, True]),
+    )
+    foreign = phx.discretization.FluxRegister(
+        register.coarse_flux,
+        register.fine_flux,
+        register.interface_mask,
+        accumulated_time=register.accumulated_time,
+        orientation=register.orientation,
+        refinement_ratio=register.refinement_ratio,
+        register_id=register.register_id,
+        owner_id="foreign-amr-plan",
+    )
+
+    with pytest.raises(ValueError, match="another AMR conservation plan"):
+        plan.reflux((jnp.zeros((1, 2, 1)),), foreign)

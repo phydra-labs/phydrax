@@ -87,11 +87,48 @@ def test_accounting_event_certificate_and_release_ledger_are_content_verified():
     assert charged.register("model-root", certificate) is charged
     assert charged.spent is not None
     assert charged.spent.epsilon == certificate.guarantee.epsilon
-    assert phx.privacy.PrivacyReleaseLedger.from_record(charged.to_record()) == charged
+    assert (
+        phx.privacy.PrivacyReleaseLedger.from_record(charged.to_record(), previous=ledger)
+        == charged
+    )
+    with pytest.raises(ValueError, match="exact previous head"):
+        phx.privacy.PrivacyReleaseLedger.from_record(charged.to_record())
+    fork_record = copy.deepcopy(charged.to_record())
+    fork_record.pop("ledger_id")
+    fork_record["receipts"][0].pop("receipt_id")
+    fork_record["receipts"][0]["release_root_id"] = "forked-root"
+    with pytest.raises(ValueError, match="monotonically extend"):
+        phx.privacy.PrivacyReleaseLedger.from_record(fork_record, previous=charged)
 
     with pytest.raises(ValueError, match="exceeds budget"):
         charged.register("independent-root", certificate)
     assert len(charged.receipts) == 1
+    charged.require_successor(ledger)
+    with pytest.raises(ValueError, match="monotonically extend"):
+        ledger.require_successor(charged)
+    with pytest.raises(ValueError, match="monotonically extend"):
+        phx.privacy.PrivacyReleaseLedger.from_record(ledger.to_record(), previous=charged)
+
+    forged_guarantee = replace(
+        certificate.guarantee,
+        epsilon=certificate.guarantee.epsilon / 2.0,
+    )
+    with pytest.raises(ValueError, match="exact native accounting"):
+        replace(certificate, guarantee=forged_guarantee)
+
+
+def test_privacy_records_reject_coerced_counts_and_flags():
+    prepared = _prepared()
+    definition_record = prepared.training_plan.scope.definition.to_record()
+    definition_record.pop("definition_id")
+    definition_record["population_size_public"] = "false"
+    with pytest.raises(TypeError, match="must be a boolean"):
+        phx.privacy.PrivacyDefinition.from_record(definition_record)
+
+    with pytest.raises(TypeError, match="repetitions must be an integer"):
+        phx.privacy.MechanismTrace(prepared.per_step_trace.event_json, 1.5)
+    with pytest.raises(TypeError, match="iterations must be an integer"):
+        replace(prepared.training_plan.mechanism, iterations=1.5)
 
 
 def test_private_plan_rejects_mismatched_definition_and_unsafe_policies():

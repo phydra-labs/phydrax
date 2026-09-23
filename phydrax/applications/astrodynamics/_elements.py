@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import math
+
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
@@ -43,7 +45,9 @@ class ModifiedEquinoctialElements(StrictModule):
     ):
         if not isinstance(context, AstrodynamicsContext):
             raise TypeError("context must be an AstrodynamicsContext.")
-        factor = int(retrograde_factor)
+        if isinstance(retrograde_factor, bool) or not isinstance(retrograde_factor, int):
+            raise TypeError("retrograde_factor must be an integer.")
+        factor = retrograde_factor
         if factor not in (-1, 1):
             raise ValueError("retrograde_factor must be -1 or +1.")
         values_ = jnp.asarray(values)
@@ -139,7 +143,9 @@ def cartesian_to_modified_equinoctial(
 
     if not isinstance(state, CartesianOrbitState):
         raise TypeError("state must be a CartesianOrbitState.")
-    factor = int(retrograde_factor)
+    if isinstance(retrograde_factor, bool) or not isinstance(retrograde_factor, int):
+        raise TypeError("retrograde_factor must be an integer.")
+    factor = retrograde_factor
     if factor not in (-1, 1):
         raise ValueError("retrograde_factor must be -1 or +1.")
     (
@@ -260,8 +266,8 @@ def cartesian_to_classical(
     if not isinstance(state, CartesianOrbitState):
         raise TypeError("state must be a CartesianOrbitState.")
     tolerance = float(singularity_tolerance)
-    if tolerance <= 0.0:
-        raise ValueError("singularity_tolerance must be positive.")
+    if not math.isfinite(tolerance) or tolerance <= 0.0:
+        raise ValueError("singularity_tolerance must be finite and positive.")
     (
         coupling,
         _,

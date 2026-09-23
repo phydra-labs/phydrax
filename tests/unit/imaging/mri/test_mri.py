@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -10,6 +11,8 @@ def test_cartesian_encoding_adjoint_and_cg_sense_recover_image():
         field_id="uniform-coil",
     )
     plan = phx.imaging.mri.CartesianMRIEncodingPlan(coils)
+    alternate = phx.imaging.mri.CartesianMRIEncodingPlan(coils, np.eye(4, dtype=np.bool_))
+    assert alternate.operator_id != plan.operator_id
     image = np.zeros((4, 4), dtype=np.complex64)
     image[1, 2] = 1.0 + 0.5j
     data, evidence = plan.forward(image)
@@ -81,6 +84,23 @@ def test_coil_prewhitening_regularization_and_timed_off_resonance():
         outer_iterations=2,
     ).reconstruct(data)
     assert bool(regularized.successful)
+    milliseconds = phx.measurement.SampleTimeAxis(
+        "readout-ms",
+        np.asarray((0.0, 100.0, 200.0)),
+        phx.units.MILLISECOND,
+    )
+    millisecond_support = phx.imaging.mri.KSpaceSupport(
+        np.asarray(((-1.0, 0.0), (0.0, 0.0), (1.0, 0.0))),
+        ("coil-0",),
+        "timed-trajectory-ms",
+        "scanner",
+        milliseconds,
+    )
+    millisecond_plan = phx.imaging.mri.OffResonanceMRIEncodingPlan(
+        phx.imaging.mri.NonuniformMRIEncodingPlan(coils, millisecond_support),
+        np.zeros((4, 4)),
+    )
+    np.testing.assert_allclose(millisecond_plan.sample_times_seconds, (0.0, 0.1, 0.2))
 
 
 def test_phase_contrast_quantitative_and_bloch_models_keep_physics_explicit():
@@ -92,6 +112,9 @@ def test_phase_contrast_quantitative_and_bloch_models_keep_physics_explicit():
     quantitative = phx.imaging.mri.QuantitativeMRIPlan(1.0, 0.1)
     value = quantitative.signal(np.ones(2), np.ones(2), np.ones(2))
     assert np.all(np.asarray(np.abs(value)) > 0.0)
+    assert np.isnan(
+        np.asarray(quantitative.signal(np.ones(1), np.zeros(1), np.ones(1)))[0]
+    )
 
     bloch = phx.imaging.mri.BlochSequencePlan(0.1, 1.0).simulate(
         np.asarray((1.0, 0.0, 0.0)),
@@ -102,3 +125,33 @@ def test_phase_contrast_quantitative_and_bloch_models_keep_physics_explicit():
     assert bool(bloch.successful)
     assert bloch.magnetization[0] < 1.0
     assert bloch.magnetization[2] > 0.0
+
+
+def test_mri_plans_refuse_invalid_identity_covariance_and_scalar_contracts():
+    values = np.ones((2, 2, 2), dtype=np.complex64)
+    with pytest.raises(ValueError, match="coil_ids"):
+        phx.imaging.mri.CoilSensitivityField(
+            values, ("coil", "coil"), field_id="duplicate"
+        )
+    with pytest.raises(ValueError, match="finite Hermitian"):
+        phx.imaging.mri.CoilNoiseCovariance(
+            np.asarray(((1.0, np.nan), (np.nan, 1.0))),
+            ("a", "b"),
+        )
+    coils = phx.imaging.mri.CoilSensitivityField(
+        np.ones((1, 2, 2), dtype=np.complex64),
+        ("coil",),
+        field_id="coil",
+    )
+    encoding = phx.imaging.mri.CartesianMRIEncodingPlan(coils)
+    with pytest.raises(ValueError, match="iteration_count"):
+        phx.imaging.mri.CGSensePlan(encoding, 0)
+    with pytest.raises(ValueError, match="shrinkage"):
+        phx.imaging.mri.RegularizedMRIPlan(
+            phx.imaging.mri.CGSensePlan(encoding, 1),
+            -1.0,
+        )
+    with pytest.raises(ValueError, match="velocity_encoding"):
+        phx.imaging.mri.PhaseContrastMRIPlan(0.0)
+    with pytest.raises(ValueError, match="physical domain"):
+        phx.imaging.mri.QuantitativeMRIPlan(np.nan, 0.1)

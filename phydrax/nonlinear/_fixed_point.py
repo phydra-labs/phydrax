@@ -923,17 +923,26 @@ class SteffensenIteration(StrictModule):
             )
 
         run = jax.lax.while_loop(condition, body, run)
+        evaluation_exhausted = (
+            jnp.asarray(False)
+            if termination_.maximum_evaluations is None
+            else run.evaluations + 3 > termination_.maximum_evaluations
+        )
         status = jnp.where(
             run.status == int(NonlinearStatus.ITERATING),
-            int(NonlinearStatus.MAXIMUM_STEPS_REACHED),
+            jnp.where(
+                evaluation_exhausted,
+                int(NonlinearStatus.MAXIMUM_EVALUATIONS_REACHED),
+                int(NonlinearStatus.MAXIMUM_STEPS_REACHED),
+            ),
             run.status,
         ).astype(jnp.int32)
         final_state = space.unflatten(run.state)
-        final_mapped = problem.mapping(final_state, args)
-        final_residual = jax.tree.map(
-            lambda mapped, value: mapped - value,
-            final_mapped,
+        final_residual = space.unflatten(run.residual)
+        final_mapped = jax.tree.map(
+            lambda value, residual_value: value + residual_value,
             final_state,
+            final_residual,
         )
         output_state = jax.tree.map(self.precision.output, final_state)
         result = NonlinearResult(
@@ -946,7 +955,7 @@ class SteffensenIteration(StrictModule):
                 final_residual_norm=run.norm,
                 final_step_norm=run.step_norm,
                 iterations=run.iteration,
-                residual_evaluations=run.evaluations + 1,
+                residual_evaluations=run.evaluations,
                 accepted_steps=run.accepted_steps,
                 rejected_steps=run.rejected_steps,
                 nonfinite_trials=run.nonfinite,
@@ -1240,6 +1249,29 @@ class PicardIteration(StrictModule):
             raise TypeError("termination must be NonlinearTermination or None.")
         _validate_fixed_point_iteration(iteration)
         self.precision.validate_tolerance(termination_.absolute_residual)
+        if (
+            termination_.maximum_evaluations is not None
+            and termination_.maximum_evaluations < 3
+        ):
+            raise ValueError(
+                "Picard iteration requires at least three residual evaluations "
+                "to solve and certify the physical problem."
+            )
+        fixed_termination = NonlinearTermination(
+            absolute_residual=termination_.absolute_residual,
+            relative_residual=termination_.relative_residual,
+            maximum_residual=termination_.maximum_residual,
+            absolute_step=termination_.absolute_step,
+            relative_step=termination_.relative_step,
+            maximum_steps=termination_.maximum_steps,
+            maximum_evaluations=(
+                None
+                if termination_.maximum_evaluations is None
+                else termination_.maximum_evaluations - 2
+            ),
+            maximum_linear_iterations=termination_.maximum_linear_iterations,
+            divergence_factor=termination_.divergence_factor,
+        )
 
         def mapping(state, current_args):
             residual = problem.residual(state, current_args)
@@ -1261,19 +1293,27 @@ class PicardIteration(StrictModule):
         ).solve(
             fixed_problem,
             initial_state,
-            termination=termination_,
+            termination=fixed_termination,
             args=args,
             iteration=iteration,
         )
         model_state = self.precision.state(result.state)
         physical_residual, auxiliary = problem.evaluate(model_state, args)
+        initial_model_state = self.precision.state(initial_state)
+        initial_physical_residual, _ = problem.evaluate(initial_model_state, args)
+        problem_ = problem.bind_spaces(model_state, physical_residual)
         self.precision.validate_trees(model_state, physical_residual)
+        assert problem_.residual_space is not None
         physical_norm = self.precision.norm(
-            PyTreeSpace(physical_residual),
+            problem_.residual_space,
             physical_residual,
         )
-        successful = physical_norm <= termination_.residual_threshold(
-            result.diagnostics.initial_residual_norm
+        initial_physical_norm = self.precision.norm(
+            problem_.residual_space,
+            initial_physical_residual,
+        )
+        successful = problem_.valid(model_state, physical_residual, auxiliary, args) & (
+            physical_norm <= termination_.residual_threshold(initial_physical_norm)
         )
         status = jnp.where(
             successful,
@@ -1285,9 +1325,17 @@ class PicardIteration(StrictModule):
             ),
         ).astype(jnp.int32)
         diagnostics = eqx.tree_at(
-            lambda item: (item.final_residual_norm, item.residual_evaluations),
+            lambda item: (
+                item.initial_residual_norm,
+                item.final_residual_norm,
+                item.residual_evaluations,
+            ),
             result.diagnostics,
-            (physical_norm, result.diagnostics.residual_evaluations + 1),
+            (
+                initial_physical_norm,
+                physical_norm,
+                result.diagnostics.residual_evaluations + 2,
+            ),
         )
         output_state = jax.tree.map(self.precision.output, model_state)
         children = (

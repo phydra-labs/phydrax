@@ -15,6 +15,7 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ..dynamics import TimeGrid
 from ..optim._programming import (
@@ -191,6 +192,14 @@ class RecedingHorizonMPC(StrictModule):
         if warm_start is not None and self.warm_start_policy is None:
             raise ValueError("warm_start requires an explicit MPCWarmStartPolicy.")
         specification = self.specification
+        if (
+            warm_start is not None
+            and warm_start.compilation.specification.specification_id
+            != specification.specification_id
+        ):
+            raise ValueError(
+                "warm_start specification does not match this MPC controller."
+            )
         if initial_state is None:
             current_state = specification.initial_state
         else:
@@ -307,7 +316,27 @@ class RecedingHorizonMPC(StrictModule):
             status,
         ).astype(jnp.int32)
 
-        policy_id = f"{self.controller_id}:policy"
+        run_id = "control-mpc-result:" + canonical_fingerprint(
+            {
+                "controller": self.controller_id,
+                "specification": specification.specification_id,
+                "prediction_horizon": self.prediction_horizon,
+                "terminal_policy": self.terminal_policy,
+                "method": self.qp_policy.method.method_id,
+                "subproblems": [
+                    solution.solution_id for solution in subproblem_solutions
+                ],
+                "realized": array_tree_fingerprint(
+                    {
+                        "states": states,
+                        "controls": controls,
+                        "stage_valid": stage_valid,
+                        "status": status,
+                    }
+                ),
+            }
+        )
+        policy_id = f"{run_id}:policy"
         policy = PiecewiseConstantControlParameterization(
             specification.time_grid,
             (specification.control_size,),
@@ -356,7 +385,7 @@ class RecedingHorizonMPC(StrictModule):
             status=status,
             prediction_horizon=self.prediction_horizon,
             terminal_policy=self.terminal_policy,
-            result_id=f"{self.controller_id}:result",
+            result_id=run_id,
             method_id=f"control:mpc:{self.qp_policy.method.method_id}",
         )
 

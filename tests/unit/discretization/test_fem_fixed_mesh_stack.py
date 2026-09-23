@@ -30,14 +30,16 @@ def test_action_ir_and_packed_facet_routes_are_explicit():
         discretization.interior_facet_domain,
         (),
     )
-    compiled = phx.equations.compile_finite_element_problem(form, discretization)
+    action_ir = phx.equations.fem.lower_finite_element_form(form, discretization)
+    workset_program = phx.equations.fem.compile_workset_program(
+        action_ir, form, discretization
+    )
     facet = tuple(
         workset
-        for workset in compiled._workset_program.worksets
+        for workset in workset_program.worksets
         if workset.signature.region_kind == "interior-facet"
     )[0]
 
-    assert compiled._action_ir.actions
     assert facet.action_indices.shape == (1,)
     assert facet.owner_local_entities.shape == facet.entity_indices.shape
     assert facet.neighbor_local_entities.shape == facet.entity_indices.shape

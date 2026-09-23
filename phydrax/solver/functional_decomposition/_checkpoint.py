@@ -10,11 +10,11 @@ import equinox as eqx
 
 from ..._model._structure import deserialize_model_leaf, serialize_model_leaf
 from ..._training_checkpoint import (
+    _open_verified_state,
     _prune_state_files,
     _publish_manifest,
     _publish_state,
     _read_manifest,
-    _verify_state,
 )
 from ._prepare import PreparedFunctionalDecomposition
 from ._solve import FunctionalDecompositionState
@@ -111,15 +111,16 @@ def load_functional_decomposition_checkpoint(
     if manifest["strategy"] != state_like.strategy:
         raise ValueError("Decomposition checkpoint strategy mismatch.")
     state_name = manifest["state_file"]
-    if not isinstance(state_name, str) or not state_name:
-        raise ValueError("Decomposition checkpoint state_file must be non-empty.")
-    state_path = source / state_name
-    _verify_state(state_path, manifest["state_sha256"])
-    restored = eqx.tree_deserialise_leaves(
-        state_path,
-        state_like,
-        filter_spec=deserialize_model_leaf,
-    )
+    with _open_verified_state(
+        source,
+        state_name,
+        manifest["state_sha256"],
+    ) as state_stream:
+        restored = eqx.tree_deserialise_leaves(
+            state_stream,
+            state_like,
+            filter_spec=deserialize_model_leaf,
+        )
     if restored.completed_sweeps != int(manifest["completed_sweeps"]):
         raise ValueError("Decomposition checkpoint sweep count is inconsistent.")
     return restored

@@ -21,7 +21,7 @@ from ._ct import (
     HUToMaterialCalibration,
     HUToMaterialResult,
 )
-from ._nibabel import NibabelImageProvider
+from ._nibabel import NibabelImageProvider, NiftiExportResult
 from ._plane import ImagePlaneSupport
 from ._providers import (
     ANTsRegistrationProvider,
@@ -143,6 +143,7 @@ __all__ = [
     "MedicalToolProvider",
     "MedicalToolResult",
     "NibabelImageProvider",
+    "NiftiExportResult",
     "MultisliceEvidence",
     "MultisliceRefractivePlan",
     "MultisliceResult",

@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -10,7 +11,6 @@ import phydrax as phx
 from phydrax.control.games import (
     DeterministicFeedbackGameProblem,
     evaluate_game_policy,
-    GamePolicyEvaluation,
     GamePolicyEvaluationStatus,
     ILQGameScaling,
     nominal_nash_residual,
@@ -206,9 +206,9 @@ def _affine_problem(initial_state, *, permuted=False, failing_policy=False):
             )
         return control
 
-    policy = phx.dynamics.CallableInputPolicy(
+    policy = phx.control.games.BoundGameInputPolicy(
         feedback_policy,
-        input_layout=input_layout,
+        problem,
         policy_id="permuted-affine-feedback" if permuted else "affine-feedback",
     )
     return problem, policy
@@ -444,6 +444,58 @@ def test_mixed_case_failure_is_local_and_preserves_the_first_cause():
     assert np.all(np.isnan(np.asarray(evaluation.total_costs[1])))
 
 
+def test_explicit_transition_failure_stops_game_callbacks_and_preserves_status():
+    grid = phx.dynamics.TimeGrid(
+        jnp.asarray([0.0, 1.0, 2.0]), time_id="failed-game-transition-grid"
+    )
+    input_layout = phx.dynamics.InputLayout((1,), roles="control")
+
+    def transition(context, state, control, args):
+        del control, args
+        invalid_later_call = context.source > 0.0
+        checked = eqx.error_if(
+            state,
+            invalid_later_call,
+            "transition evaluated after path failure",
+        )
+        return phx.dynamics.DiscreteTransitionResult(
+            checked + 1.0,
+            checked,
+            jnp.asarray(False),
+            jnp.asarray(91, dtype=jnp.int32),
+        )
+
+    problem = DeterministicFeedbackGameProblem(
+        phx.control.DiscreteControlDynamics(
+            phx.dynamics.DiscreteSystem(
+                transition,
+                state_layout=phx.dynamics.StateLayout((1,)),
+                input_layout=input_layout,
+                system_id="failed-game-transition-system",
+            )
+        ),
+        grid,
+        jnp.zeros((1,)),
+        phx.control.games.PlayerControlPartition(("player",), (1,)),
+        stage_costs=(lambda context, state, control, args: jnp.asarray(0.0),),
+        terminal_costs=(lambda time, state, args: jnp.asarray(0.0),),
+        problem_id="failed-game-transition",
+    )
+    policy = phx.control.games.BoundGameInputPolicy(
+        lambda context, state, args: jnp.zeros((1,)),
+        problem,
+        policy_id="failed-game-transition-policy",
+    )
+    evaluation = evaluate_game_policy(problem, policy)
+
+    assert int(evaluation.status) == int(GamePolicyEvaluationStatus.TRANSITION_FAILED)
+    np.testing.assert_array_equal(
+        evaluation.trajectory.transition_evidence.attempted,
+        jnp.asarray([True, False]),
+    )
+    assert int(evaluation.trajectory.backend_status) == 91
+
+
 def test_certificate_is_only_local_nominal_stationarity_evidence():
     problem, policy = _affine_problem(jnp.asarray([0.35, -0.25]))
     evaluation = evaluate_game_policy(problem, policy)
@@ -454,6 +506,5 @@ def test_certificate_is_only_local_nominal_stationarity_evidence():
     )
 
     assert residual.certificate == "LOCAL_NOMINAL_NASH_STATIONARY"
-    assert "equilibrium" not in (GamePolicyEvaluation.__doc__ or "").lower()
     assert "equilibrium" not in evaluation.evaluation_id.lower()
     assert "equilibrium" not in evaluation.method_id.lower()

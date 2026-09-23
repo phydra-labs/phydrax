@@ -246,8 +246,10 @@ class MoistColumnPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Column timescales/temperatures must be positive and mixing nonnegative."
             )
-        if int(forcing_cadence) != forcing_cadence or forcing_cadence < 1:
-            raise ValueError("forcing_cadence must be a positive integer.")
+        if isinstance(forcing_cadence, bool) or not isinstance(forcing_cadence, int):
+            raise TypeError("forcing_cadence must be an integer.")
+        if forcing_cadence < 1:
+            raise ValueError("forcing_cadence must be positive.")
         self.thermodynamics = (
             MoistThermodynamicPlan() if thermodynamics is None else thermodynamics
         )
@@ -256,7 +258,7 @@ class MoistColumnPlan(StrictModule, NonTrainableState):
         self.radiation_temperature = float(radiation_temperature)
         self.mixing_rate = float(mixing_rate)
         self.surface_temperature = float(surface_temperature)
-        self.forcing_cadence = int(forcing_cadence)
+        self.forcing_cadence = forcing_cadence
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "fixed-volume-moist-column",

@@ -93,6 +93,34 @@ def test_sparse_dense_lowered_and_differentiated_products_agree():
     assert bool(report.passed)
 
 
+def test_lowered_algebra_product_preserves_nonfinal_coordinate_axis():
+    algebra = phx.metrix.algebra.QuaternionAlgebraSpec()
+    layout = phx.metrix.algebra.AlgebraElementLayout(algebra, algebra_axis=0)
+    product = phx.metrix.algebra.AlgebraProductPlan(
+        algebra,
+        layout=layout,
+        backend="sparse",
+    )
+    left = jnp.asarray([[1.0, 0.5], [0.2, -0.1], [-0.3, 0.7], [0.4, 0.2]])
+    right = jnp.asarray([[0.3, 1.0], [-0.4, 0.2], [0.2, -0.5], [0.8, 0.1]])
+    lowered = product.lower((2,), jnp.float64)
+    report = phx.discretization.compare_lowered_backends(
+        lowered,
+        {
+            "left": left,
+            "right": right,
+            "output": jnp.zeros_like(left),
+        },
+    )
+
+    output = phx.discretization.LoweredJAXBackend(lowered)(
+        {"left": left, "right": right, "output": jnp.zeros_like(left)}
+    )["output"]
+    assert bool(report.passed)
+    assert output.shape == (4, 2)
+    assert jnp.allclose(output, product(left, right))
+
+
 def test_custom_rational_table_and_resource_failures_are_exact():
     budget = phx.metrix.algebra.AlgebraResourceBudget(maximum_coordinates=2)
     algebra = phx.metrix.algebra.FiniteRealAlgebraSpec(

@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 import pytest
@@ -13,6 +15,10 @@ from phydrax.applications.lattice_field._continuum_study import (
     RenormalizationCondition,
     run_continuum_study,
     ScaleSettingCondition,
+)
+from phydrax.applications.lattice_field._distributed_qcd import (
+    DeflationPlan,
+    prepare_deflation,
 )
 from phydrax.applications.lattice_field._qcd_ensembles import (
     EnsembleManifest,
@@ -27,11 +33,14 @@ from phydrax.applications.lattice_field._qcd_observables import (
     measure_hypercubic_gauge_observables,
     meson_correlator,
     point_source_vectors,
+    point_to_all_propagator,
     prepare_propagator_solve,
     PropagatorSolvePlan,
+    realize_stochastic_sources,
     run_wilson_flow,
     solve_propagators,
     stochastic_source_plan_for_measurement,
+    StochasticSourcePlan,
     WilsonFlowPlan,
 )
 from phydrax.applications.lattice_field._qcd_recipes import (
@@ -45,35 +54,48 @@ from phydrax.applications.lattice_field._qcd_recipes import (
 )
 from phydrax.discretization._cell_complex import polygonal_cell_complex
 from phydrax.discretization._lattice_boundary import LatticeBoundaryPhasePlan
+from phydrax.discretization._lattice_distribution import LatticeDecompositionPlan
 from phydrax.discretization._oriented_path import prepare_cell_boundary_paths
 from phydrax.discretization._topology import TensorTopology
 from phydrax.graph._matrix_gauge import MatrixGaugeLinkSpace
 from phydrax.metrix._complex_matrix_manifold import SpecialUnitaryGroup
 
 
-def _su3_square_geometry():
-    shape = (2, 2)
+def _su3_square_geometry(*, decomposition=None, shape=(2, 2)):
     boundary = LatticeBoundaryPhasePlan(
         TensorTopology(("x", "t"), shape, periodic=(True, True)),
         jnp.ones((2,), dtype=jnp.complex128),
         maximum_displacement=3,
     )
-    topology = polygonal_cell_complex(
-        None,
-        jnp.asarray([[0, 1, 3, 2]], dtype=jnp.int32),
-        4,
-    )
+    if shape == (2, 2):
+        faces = np.asarray([[0, 1, 3, 2]], dtype=np.int32)
+    else:
+        faces = np.asarray(
+            [
+                [
+                    np.ravel_multi_index((x, t), shape),
+                    np.ravel_multi_index((x, (t + 1) % shape[1]), shape),
+                    np.ravel_multi_index(((x + 1) % shape[0], (t + 1) % shape[1]), shape),
+                    np.ravel_multi_index(((x + 1) % shape[0], t), shape),
+                ]
+                for x, t in np.ndindex(shape)
+            ],
+            dtype=np.int32,
+        )
+    topology = polygonal_cell_complex(None, jnp.asarray(faces), int(np.prod(shape)))
     link_space = MatrixGaugeLinkSpace(topology, SpecialUnitaryGroup(3))
     plaquettes = prepare_cell_boundary_paths(topology)
+    site_count = int(np.prod(shape))
     coordinates = np.stack(
-        np.unravel_index(np.arange(4), boundary.topology.axis_sizes), axis=-1
+        np.unravel_index(np.arange(site_count), boundary.topology.axis_sizes),
+        axis=-1,
     )
     tails = np.asarray(link_space.tail_vertices)
     heads = np.asarray(link_space.head_vertices)
-    forward_sites = np.empty((4, 2), dtype=np.int32)
-    forward_edges = np.empty((4, 2), dtype=np.int32)
-    forward_orientations = np.empty((4, 2), dtype=np.int32)
-    for site in range(4):
+    forward_sites = np.empty((site_count, 2), dtype=np.int32)
+    forward_edges = np.empty((site_count, 2), dtype=np.int32)
+    forward_orientations = np.empty((site_count, 2), dtype=np.int32)
+    for site in range(site_count):
         for axis, size in enumerate(shape):
             neighbor_coordinate = coordinates[site].copy()
             neighbor_coordinate[axis] = (neighbor_coordinate[axis] + 1) % size
@@ -94,6 +116,7 @@ def _su3_square_geometry():
         forward_sites,
         forward_edges,
         forward_orientations,
+        decomposition=decomposition,
     )
 
 
@@ -206,6 +229,18 @@ def test_measurement_streams_and_segment_merge_exclude_thermalization():
     assert source_plan.configuration_id == work[0].configuration_id
     assert source_plan.randomness_id == work[0].source_randomness_id
     assert source_plan.randomness_id != work[0].update_randomness_id
+    z2 = realize_stochastic_sources(
+        StochasticSourcePlan(
+            (2,),
+            1,
+            configuration_id="configuration",
+            measurement_id="measurement",
+            randomness_id="randomness",
+            noise_kind="z2",
+        ),
+        jax.random.key(9),
+    )
+    assert z2.sources.dtype == jnp.dtype(jnp.complex128)
 
     first = EnsembleSegment(
         manifest.manifest_id,
@@ -327,8 +362,39 @@ def test_correlated_continuum_fit_and_resolution_volume_abstention():
             (32, 32, 32, 32),
         ),
     )
-    assert volume_failure.status == "abstained"
-    assert "insufficient-distinct-spatial-volumes" in volume_failure.abstention_reasons
+    assert "insufficient-distinct-spatial-volumes" in (volume_failure.abstention_reasons)
+    mixed_plan = ContinuumStudyPlan(
+        _continuum_plan().scale_setting,
+        _continuum_plan().renormalization,
+        (
+            ContinuumSystematicVariation(
+                cutoff_power=2.0,
+                finite_volume_power=None,
+                variation_id="cutoff-only",
+            ),
+            ContinuumSystematicVariation(
+                cutoff_power=2.0,
+                finite_volume_power=1.0,
+                variation_id="finite-volume",
+            ),
+        ),
+        minimum_distinct_spacings=3,
+        minimum_distinct_volumes=2,
+    )
+    mixed = run_continuum_study(
+        mixed_plan,
+        _continuum_data(
+            (0.12, 0.10, 0.08, 0.06, 0.05),
+            (32, 32, 32, 32, 32),
+        ),
+    )
+    assert any(fit.variation_id == "cutoff-only" for fit in mixed.fits)
+    assert (
+        "finite-volume",
+        "fit-window-volume-evidence-insufficient",
+    ) in mixed.evidence.rejected_variations
+
+    assert "insufficient-distinct-spatial-volumes" not in mixed.abstention_reasons
 
 
 def test_small_volume_dynamical_recipes_lower_to_native_contracts():
@@ -369,6 +435,46 @@ def test_small_volume_dynamical_recipes_lower_to_native_contracts():
     )
     assert bool(jnp.all(propagator.status == 0))
     assert float(jnp.max(propagator.relative_residual)) < 1.0e-6
+    point_to_all = point_to_all_propagator(propagator, geometry.lattice_shape)
+    assert point_to_all.shape[:2] == geometry.lattice_shape
+    failed = eqx.tree_at(
+        lambda item: item.status,
+        propagator,
+        jnp.ones_like(propagator.status),
+    )
+    with pytest.raises(eqx.EquinoxRuntimeError, match="successful finite"):
+        point_to_all_propagator(failed, geometry.lattice_shape)
+
+    too_many_modes = prepared_nf2.dirac.source.size + 1
+    with pytest.raises(ValueError, match="operator dimension"):
+        prepare_deflation(
+            DeflationPlan(too_many_modes),
+            prepared_nf2.dirac,
+            jnp.zeros(
+                prepared_nf2.dirac.source.shape + (too_many_modes,),
+                dtype=prepared_nf2.dirac.source.dtype,
+            ),
+        )
+
+    bounded_modes = 2
+    bounded_candidates = jnp.zeros(
+        prepared_nf2.dirac.source.shape + (bounded_modes,),
+        dtype=prepared_nf2.dirac.source.dtype,
+    )
+    old_linear_estimate = 3 * bounded_candidates.size * bounded_candidates.dtype.itemsize
+    with pytest.raises(ValueError, match="coarse factors"):
+        prepare_deflation(
+            DeflationPlan(
+                bounded_modes,
+                maximum_basis_bytes=old_linear_estimate,
+            ),
+            prepared_nf2.dirac,
+            bounded_candidates,
+        )
+
+    decomposition = LatticeDecompositionPlan((3, 3), (1, 1), periodic=(False, False))
+    with pytest.raises(ValueError, match="fermion routes"):
+        _su3_square_geometry(decomposition=decomposition, shape=(3, 3))
     clover = WilsonCloverNf2Recipe(
         geometry,
         schedule,

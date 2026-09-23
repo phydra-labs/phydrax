@@ -8,8 +8,10 @@ import pytest
 
 from phydrax.metrix import (
     AbstractStateGeometry,
+    AffineInvariantSPDManifold,
     EmbeddedStateGeometry,
     EuclideanStateGeometry,
+    GeodesicManifoldStateGeometry,
     LocalRetraction,
     PointwiseStateGeometry,
     SpecialOrthogonalStateGeometry,
@@ -489,3 +491,30 @@ def test_state_geometry_benchmark_records_manifold_residuals():
     assert record["so_exponential"]["determinant"] > 0.0
     assert record["spd_congruence_exponential"]["minimum_eigenvalue"] > 0.0
     assert record["so_exponential"]["geometry_id"].startswith("state-geometry:so")
+
+
+def test_geodesic_state_transport_uses_the_manifold_metric_for_isometry():
+    manifold = AffineInvariantSPDManifold(2)
+    geometry = GeodesicManifoldStateGeometry(manifold)
+    source = jnp.asarray([[2.0, 0.4], [0.4, 1.1]])
+    tangent = manifold.project_tangent(
+        source,
+        jnp.asarray([[0.3, -0.2], [-0.2, 0.1]]),
+    )
+    step = 0.2 * manifold.project_tangent(
+        source,
+        jnp.asarray([[0.1, 0.25], [0.25, -0.15]]),
+    )
+    target = manifold.exp(source, step)
+    cotangent = jnp.asarray([[0.2, -0.1], [-0.1, 0.4]])
+
+    evidence = geometry.transport_evidence(
+        source,
+        target,
+        tangent,
+        cotangent,
+        require_isometry=True,
+    )
+
+    assert evidence.valid
+    assert evidence.isometry_residual < 1e-6

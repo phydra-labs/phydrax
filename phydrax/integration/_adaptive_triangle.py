@@ -32,6 +32,7 @@ from .._strict import StrictModule
 from ..geometry import CubatureAtlasProvider
 from ._adaptive_callable import (
     _error_norm,
+    _meets_plan_tolerance,
     adaptive_triangle_callable,
 )
 from ._estimates import (
@@ -260,14 +261,23 @@ def _ratio_estimate(
     valid_mass = jnp.all(jnp.isfinite(denominator_data)) & jnp.all(
         denominator_data != 0.0
     )
-    successful = numerator.successful & denominator.successful & valid_mass
     status = jnp.where(
         valid_mass,
         jnp.where(numerator.successful, denominator.status, numerator.status),
         int(IntegrationStatus.INVALID_NORMALIZATION_MASS),
     ).astype(jnp.int32)
+    safe_denominator = jnp.where(
+        valid_mass,
+        denominator_data,
+        jnp.ones_like(denominator_data),
+    )
     value_data = precision.accumulation(
-        precision.accumulation(numerator.value.data) / denominator_data
+        precision.accumulation(numerator.value.data) / safe_denominator
+    )
+    value_data = jnp.where(
+        valid_mass,
+        value_data,
+        jnp.full_like(value_data, jnp.nan),
     )
     value = cx.AxisArray(value_data, dims=numerator.value.dims)
     denominator_norm = precision.decision(
@@ -282,6 +292,13 @@ def _ratio_estimate(
         * denominator.error_estimate
         / denominator_norm**2
     )
+    ratio_converged = _meets_plan_tolerance(value_data, error, plan, precision)
+    status = jnp.where(
+        (status == int(IntegrationStatus.CONVERGED)) & (~ratio_converged),
+        int(IntegrationStatus.REFINEMENT_STAGNATION),
+        status,
+    ).astype(jnp.int32)
+    successful = status == int(IntegrationStatus.CONVERGED)
     if plan.throw:
         value_data = eqx.error_if(
             value_data,

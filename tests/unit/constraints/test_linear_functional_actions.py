@@ -1,6 +1,6 @@
 import jax.numpy as jnp
 
-from phydrax.conditions import LinearFunctional, PointJetAction
+from phydrax.conditions import LinearFunctional, MatrixLinearFunctional, PointJetAction
 from phydrax.domain import Interval1d
 
 
@@ -26,3 +26,12 @@ def test_point_jet_actions_compose_value_and_derivative_rows():
     action = LinearFunctional((value, derivative))
     result = action.linear_action({"u": field})
     assert jnp.allclose(result, jnp.asarray([-1.0, -2.0]))
+
+
+def test_matrix_linear_functional_content_participates_in_composite_identity():
+    first = MatrixLinearFunctional(("u",), ((1,),), (jnp.asarray([[1.0]]),))
+    second = MatrixLinearFunctional(("u",), ((1,),), (jnp.asarray([[2.0]]),))
+
+    assert (
+        LinearFunctional((first,)).operator_id != LinearFunctional((second,)).operator_id
+    )

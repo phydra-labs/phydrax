@@ -8,6 +8,7 @@ from ._completion import (
     TensorCompletionEvidence,
     TensorCompletionPlan,
     TensorCompletionResult,
+    TensorCompletionStatus,
     weighted_tensor_completion,
 )
 from ._core import (
@@ -18,12 +19,20 @@ from ._core import (
     TensorTrainOperatorCompressionResult,
     tt_svd,
     TTRoundingEvidence,
+    TTRoundingStatus,
 )
-from ._cross import tensor_train_cross, TTCrossEvidence, TTCrossPlan, TTCrossResult
+from ._cross import (
+    tensor_train_cross,
+    TTCrossEvidence,
+    TTCrossPlan,
+    TTCrossResult,
+    TTCrossStatus,
+)
 from ._eigen import (
     BlockTensorTrainEigenEvidence,
     BlockTensorTrainEigenPlan,
     BlockTensorTrainEigenResult,
+    BlockTensorTrainEigenStatus,
     smallest_eigenpairs,
 )
 from ._linear import TensorTrainLinear, TensorTrainLinearCompressionEvidence
@@ -67,6 +76,7 @@ __all__ = [
     "BlockTensorTrainEigenEvidence",
     "BlockTensorTrainEigenPlan",
     "BlockTensorTrainEigenResult",
+    "BlockTensorTrainEigenStatus",
     "BoundaryKind",
     "BoundaryPolicy",
     "DigitOrdering",
@@ -76,10 +86,13 @@ __all__ = [
     "TTCrossEvidence",
     "TTCrossPlan",
     "TTCrossResult",
+    "TTCrossStatus",
     "TTRoundingEvidence",
+    "TTRoundingStatus",
     "TensorCompletionEvidence",
     "TensorCompletionPlan",
     "TensorCompletionResult",
+    "TensorCompletionStatus",
     "TensorFunction",
     "TensorTrain",
     "TensorTrainCompressionResult",

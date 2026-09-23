@@ -424,8 +424,8 @@ class OperatorNormalizationPolicy:
                 axes = tuple(transformed_axes)
             elif coordinates is not None:
                 coordinates = operation(coordinates)
-                if weights is not None:
-                    weights = weights * jacobian if inverse else weights / jacobian
+            if weights is not None:
+                weights = weights * jacobian if inverse else weights / jacobian
 
         return FunctionSamples(
             values=values,

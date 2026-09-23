@@ -15,6 +15,7 @@ import numpy as np
 import scipy.io
 
 from ..._external_resource import read_bounded_resource, ResourceLimits
+from ..._physical import SpatialCoordinateContract
 from ..._publication import publish_bytes
 from ...interchange import (
     AdapterError,
@@ -22,6 +23,14 @@ from ...interchange import (
     AdapterReport,
     AdapterStatus,
     require_lossless,
+)
+from ...units import (
+    conversion_factor,
+    derived_unit,
+    METER,
+    SECOND,
+    TIME,
+    UnitDefinition,
 )
 from ..imaging import DenseDisplacementField2D
 from ..piv import PhysicalPIVResult2D
@@ -38,6 +47,8 @@ def read_pivlab(
     /,
     *,
     geometry_id: str | None = None,
+    coordinate_contract: SpatialCoordinateContract | None = None,
+    time_unit: UnitDefinition | None = None,
     y_axis: PIVlabYAxis,
     stage: PIVlabStage = "original",
     delta_t: float | None = None,
@@ -83,11 +94,21 @@ def read_pivlab(
         )
     units = _text(variables, "units")
     unit_mode = _unit_mode(units)
-    if unit_mode == "physical-velocity":
+    if unit_mode != "pixel-displacement":
+        if not isinstance(coordinate_contract, SpatialCoordinateContract):
+            raise AdapterError(
+                AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC,
+                "Physical PIVlab data require coordinate_contract.",
+            )
+        if not isinstance(time_unit, UnitDefinition) or time_unit.dimension != TIME:
+            raise AdapterError(
+                AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC,
+                "Physical PIVlab data require a time UnitDefinition.",
+            )
         if delta_t is None:
             raise AdapterError(
                 AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC,
-                "PIVlab physical velocity requires explicit delta_t to preserve displacement and velocity separately.",
+                "Physical PIVlab data require explicit delta_t.",
             )
         time = float(delta_t)
         if not np.isfinite(time) or time <= 0.0:
@@ -161,14 +182,31 @@ def read_pivlab(
                 physical_v,
                 valid,
             )
+            assert coordinate_contract is not None
+            assert time_unit is not None
+            length_factor = float(
+                conversion_factor(METER, coordinate_contract.length_unit)
+            )
+            positions = positions * length_factor
             if unit_mode == "physical-displacement":
-                displacement = vectors
-                velocity = vectors
-                time_unit = "frame"
+                displacement = vectors * length_factor
+                velocity = displacement / time
             else:
-                velocity = vectors
-                displacement = vectors * time
-                time_unit = "s"
+                source_speed_unit = derived_unit(
+                    "pivlab-meter-per-second",
+                    ((METER, 1), (SECOND, -1)),
+                )
+                target_speed_unit = derived_unit(
+                    "pivlab-target-length-per-time",
+                    (
+                        (coordinate_contract.length_unit, 1),
+                        (time_unit, -1),
+                    ),
+                )
+                velocity = vectors * float(
+                    conversion_factor(source_speed_unit, target_speed_unit)
+                )
+                displacement = velocity * time
             fields.append(
                 PhysicalPIVResult2D(
                     positions,
@@ -177,8 +215,9 @@ def read_pivlab(
                     validity,
                     frame_source_id,
                     f"pivlab-physical:{source_id}",
-                    "m",
+                    coordinate_contract.length_unit,
                     time_unit,
+                    coordinate_contract.reference_frame,
                 )
             )
     losses = [
@@ -284,6 +323,24 @@ def write_pivlab(
         raise TypeError(
             "PIVlab export cannot mix pixel-displacement and physical-velocity fields."
         )
+    if physical_fields:
+        physical_values = tuple(
+            field for field in fields_ if isinstance(field, PhysicalPIVResult2D)
+        )
+        if any(
+            field.spatial_unit.unit_id != METER.unit_id
+            or field.time_unit.unit_id != SECOND.unit_id
+            for field in physical_values
+        ):
+            raise AdapterError(
+                AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC,
+                "PIVlab physical export requires meter and second units.",
+            )
+        if len({field.frame_id for field in physical_values}) != 1:
+            raise AdapterError(
+                AdapterStatus.UNSUPPORTED_REQUIRED_SEMANTIC,
+                "PIVlab physical export requires one common coordinate frame.",
+            )
     destination = Path(path)
     use_hdf5 = (
         destination.suffix.lower() in (".h5", ".hdf5") if hdf5 is None else bool(hdf5)

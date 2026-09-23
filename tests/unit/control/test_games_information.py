@@ -2,7 +2,6 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
-import inspect
 
 import jax.numpy as jnp
 import numpy as np
@@ -141,9 +140,6 @@ def test_information_values_preserve_only_the_declared_identity():
     assert centralized.information_id == "fusion-center-observation"
     assert full_state.timing == "pre-action"
     assert centralized.timing == "pre-action"
-    assert tuple(inspect.signature(centralized.policy_input).parameters) == (
-        "observation",
-    )
     with pytest.raises(TypeError):
         centralized.policy_input(observation, latent_private_state=object())
 

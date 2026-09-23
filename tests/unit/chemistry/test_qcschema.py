@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -48,6 +49,7 @@ def test_qcschema_roundtrip_preserves_state_order_units_and_force_sign():
         "return_result": gradient.tolist(),
         "properties": {"return_energy": -1.1},
         "molecule": payload["molecule"],
+        "extras": payload["extras"],
         "provenance": {"creator": "analytic-qcschema-fixture", "version": "1"},
     }
     result, imported = phx.chemistry.interchange.electronic_evaluation_from_qcschema(
@@ -69,7 +71,7 @@ def test_qcschema_roundtrip_preserves_state_order_units_and_force_sign():
     )
 
 
-def test_qcschema_missing_stable_ids_is_declared_not_silently_lossless():
+def test_qcschema_missing_native_identity_fails_closed():
     calculation = _calculation()
     positions = np.asarray([[0.0, 0.0, -0.35], [0.0, 0.0, 0.35]])
     record = {
@@ -80,12 +82,10 @@ def test_qcschema_missing_stable_ids_is_declared_not_silently_lossless():
         "provenance": {"creator": "fixture", "version": "1"},
     }
 
-    _, report = phx.chemistry.interchange.electronic_evaluation_from_qcschema(
-        calculation,
-        "qcschema-fixture",
-        positions,
-        record,
-    )
-
-    assert report.status == phx.interchange.AdapterStatus.DECLARED_LOSS
-    assert [loss.path for loss in report.losses] == ["extras.phydrax.stable_particle_ids"]
+    with pytest.raises(ValueError, match="exact calculation"):
+        phx.chemistry.interchange.electronic_evaluation_from_qcschema(
+            calculation,
+            "qcschema-fixture",
+            positions,
+            record,
+        )

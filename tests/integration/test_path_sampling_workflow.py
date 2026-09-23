@@ -7,6 +7,7 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from phydrax.stochastic.path_sampling import (
     DeterministicPathAction,
@@ -181,7 +182,45 @@ def test_tis_and_retis_prepared_workflows_preserve_interface_assignments(
         restored.state.replicas[1].lineage.accepted,
         exchange.state.replicas[1].lineage.accepted,
     )
+    assert restored.state.prepared_id == retis_prepared.prepared_id
     assert int(restored.state.accepted_exchange_count) == 1
+
+
+def test_tis_and_retis_reject_top_level_state_owner_mismatches() -> None:
+    kernel = _kernel()
+    action = DeterministicPathAction(kernel)
+    first_plan = TISPlan(
+        _network(),
+        kernel,
+        action,
+        move_kind="two-way-shooting",
+        lineage_capacity=8,
+    )
+    second_plan = TISPlan(
+        _network(),
+        kernel,
+        action,
+        move_kind="two-way-shooting",
+        lineage_capacity=16,
+    )
+    paths = (_reactive_path(), _reactive_path())
+    first = prepare_tis(first_plan, paths)
+    second = prepare_tis(second_plan, paths)
+    state = initialize_tis(first)
+    with pytest.raises(ValueError, match="different prepared runtime"):
+        tis_step(second, state, jax.random.key(23))
+
+    minus_path = PathBuffer.from_trajectory(
+        jnp.asarray([[0.0], [1.0], [2.0], [1.0], [0.0]]),
+        jnp.arange(5.0),
+        capacity=8,
+    )
+    retis_paths = (minus_path, *paths)
+    first_retis = prepare_retis(RETISPlan(first_plan), retis_paths)
+    second_retis = prepare_retis(RETISPlan(second_plan), retis_paths)
+    retis_state = initialize_retis(first_retis)
+    with pytest.raises(ValueError, match="different prepared runtime"):
+        retis_step(second_retis, retis_state, jax.random.key(24))
 
 
 def test_tps_step_has_a_fixed_shape_compiled_runtime() -> None:

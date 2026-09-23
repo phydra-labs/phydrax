@@ -268,20 +268,25 @@ class FiniteElementGeometryActions(LocalGeometryActions):
         coordinates = jnp.asarray(runtime.coordinates)[self.coordinate_gathers]
         points = ein.contract("qi,cid->cqd", self.coordinate_basis, coordinates)
         jacobian = ein.contract("qir,cid->cqdr", self.coordinate_gradients, coordinates)
+        metric = ein.contract("cqdi,cqdj->cqij", jacobian, jacobian)
         inverse_result = inverse_small_linear(
-            SmallLinearSolvePlan(jacobian.shape[-1]),
-            jacobian,
+            SmallLinearSolvePlan(metric.shape[-1]),
+            metric,
         )
-        determinant = inverse_result.determinant
-        measure = jnp.abs(determinant)
+        gram_determinant = jnp.where(
+            inverse_result.successful,
+            inverse_result.determinant,
+            0.0,
+        )
+        measure = jnp.sqrt(gram_determinant)
         measure = eqx.error_if(
             measure,
             jnp.any(
                 ~inverse_result.successful | ~jnp.isfinite(measure) | (measure <= 0.0)
             ),
-            "Finite-element metric determinant must be positive and finite.",
+            "Finite-element metric measure must be positive and finite.",
         )
-        inverse = inverse_result.value
+        inverse = ein.contract("cqij,cqdj->cqid", inverse_result.value, jacobian)
         inverse_hessian = None
         if self.coordinate_hessians.size:
             mapping_hessian = ein.contract(
@@ -434,6 +439,11 @@ class FiniteElementLocalProvider(StrictModule):
         discretization = self.discretization
         if not isinstance(domain, IntegrationDomain) or domain.kind != "cell":
             raise ValueError("The generic FE local provider currently prepares cells.")
+        if (
+            domain.support_id != discretization.cell_domain.support_id
+            or domain.entity_set_id != discretization.cell_domain.entity_set_id
+        ):
+            raise ValueError("Finite-element cell domain belongs to another support.")
         names = tuple(str(name) for name in field_names)
         bindings = tuple(discretization.local_field_binding(name) for name in names)
         if any(binding.conformity != "H1" for binding in bindings):

@@ -343,7 +343,9 @@ class PreparedImplicitMPMDynamics(StrictModule, NonTrainableState):
             (~active_particles) | (material.successful & material.admissible)
         )
         tangent_ok = jnp.all((~active_particles) | linearized.tangent_successful)
-        jnp.all((~active_particles) | (jnp.isfinite(determinant) & (determinant > 0.0)))
+        determinant_ok = jnp.all(
+            (~active_particles) | (jnp.isfinite(determinant) & (determinant > 0.0))
+        )
         candidate_particle = MPMParticleState(
             particle.position + dt * gathered.velocity,
             gathered.velocity,
@@ -362,6 +364,8 @@ class PreparedImplicitMPMDynamics(StrictModule, NonTrainableState):
             & external_ok
             & gathered.successful
             & material_ok
+            & tangent_ok
+            & determinant_ok
             & finite
         )
         candidate_input = dynamics.splat.plan.assignment.update_input(

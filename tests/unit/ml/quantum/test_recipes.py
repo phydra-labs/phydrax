@@ -78,6 +78,12 @@ def test_variational_circuit_classifier_fit_returns_finite_probabilities():
     assert probabilities.shape == (4,)
     assert jnp.all(jnp.isfinite(probabilities))
     assert jnp.all((probabilities > 0.0) & (probabilities < 1.0))
+    probability_matrix = model.predict_proba(features)
+    log_probability = model.predict_log_proba(features)
+    assert probability_matrix.shape == (4, 2)
+    assert log_probability.shape == (4, 2)
+    assert jnp.allclose(jnp.sum(probability_matrix, axis=-1), jnp.ones((4,)))
+    assert jnp.allclose(jnp.exp(log_probability), probability_matrix)
 
 
 def test_variational_circuit_classifier_requires_key_and_single_case():

@@ -225,6 +225,9 @@ class TammDancoffPlan(StrictModule, NonTrainableState):
                 self.energy_unit,
                 self.transition_dipole_unit,
                 symmetry_sector=self.manifold.symmetry_sector,
+                provider_id="native-tda",
+                request_id=self.plan_id,
+                state_space_id=self.manifold.plan_id,
             )
 
         result = build_result(

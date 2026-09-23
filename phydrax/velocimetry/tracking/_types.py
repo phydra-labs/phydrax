@@ -28,6 +28,7 @@ class AssociationStatus(IntEnum):
     CANDIDATE_OVERFLOW = 2
     HEURISTIC_NOT_CERTIFIED = 3
     NONFINITE_INPUT = 4
+    TRIANGULATION_FAILED = 5
 
 
 class ReconstructionStatus(IntEnum):
@@ -36,8 +37,10 @@ class ReconstructionStatus(IntEnum):
     SUCCESS = 0
     NOT_SELECTED = 1
     INSUFFICIENT_VIEWS = 2
-    DEGENERATE = 3
-    NONFINITE_INPUT = 4
+    RANK_DEFICIENT = 3
+    ILL_CONDITIONED = 4
+    NONFINITE_INPUT = 5
+    NONCONVERGENCE = 6
 
 
 class TrackStatus(IntEnum):

@@ -2,10 +2,14 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import hashlib
+
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
+from phydrax._external_runtime import PinnedExecutable
 from phydrax.applications.conformal_bootstrap import (
     assemble_scalar_crossing_cone,
     compare_known_gap_bound,
@@ -14,6 +18,8 @@ from phydrax.applications.conformal_bootstrap import (
     prepare_crossing_cone,
     prepare_scalar_blocks,
     ScalarBlockPlan,
+    SDPBJobPlan,
+    SDPBProvider,
     solve_crossing_cone,
 )
 
@@ -85,3 +91,39 @@ def test_frontier_scalar_blocks_lower_to_fixed_crossing_matrix():
         -jnp.flip(plan.block_vectors, axis=0),
         atol=1e-11,
     )
+
+
+def test_sdpb_resource_counts_require_exact_integer_contracts(tmp_path):
+    executable = tmp_path / "sdpb"
+    executable.write_text("#!/bin/sh\nexit 0\n")
+    executable.chmod(0o700)
+    digest = hashlib.sha256(executable.read_bytes()).hexdigest()
+    pinned = PinnedExecutable(
+        str(executable),
+        digest,
+        "test-release",
+        "test-license",
+    )
+    provider = SDPBProvider(pinned, pinned)
+    with pytest.raises(TypeError, match="precision_bits"):
+        SDPBJobPlan(
+            provider,
+            64.5,
+            10,
+            1.0,
+            1024,
+            "1e-10",
+            "1e-10",
+            "1e-10",
+        )
+    with pytest.raises(TypeError, match="maximum_output_bytes"):
+        SDPBJobPlan(
+            provider,
+            64,
+            10,
+            1.0,
+            True,
+            "1e-10",
+            "1e-10",
+            "1e-10",
+        )

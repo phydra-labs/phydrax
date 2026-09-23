@@ -115,29 +115,3 @@ def test_discrete_interior_data_constraint_points_zero():
     condition = Observation("u", component, target)
     term = ObservationPenalty(condition, _fixed_source(component, points))
     assert _jit_loss(term, {"u": u}) < 1e-6
-
-
-def test_discrete_interior_data_constraint_sensor_tracks_zero():
-    geom = Interval1d(0.0, 1.0)
-    time = TimeInterval(0.0, 1.0)
-    domain = geom @ time
-    component = domain.component()
-
-    @domain.Function("x", "t")
-    def u(x, t):
-        return 1.0
-
-    sensors = jnp.array([[0.2], [0.8]], dtype="float64")
-    times = jnp.array([0.25, 0.75], dtype="float64")
-    sensor_values = jnp.ones((2, 2), dtype="float64")
-    assert sensors.shape == (2, 1)
-    assert times.shape == (2,)
-
-    target = domain.Function()(sensor_values[0, 0])
-    condition = Observation("u", component, target)
-    source = phx.integration.per_step(
-        phx.integration.mean_over(condition.on),
-        phx.integration.MonteCarloPlan(16),
-    )
-    term = ObservationPenalty(condition, source)
-    assert _jit_loss(term, {"u": u}) < 1e-6

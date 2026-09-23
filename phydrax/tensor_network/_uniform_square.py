@@ -11,7 +11,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
 from .. import ein
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._precision import PrecisionEvidenceEnvelope
 from .._strict import StrictModule
 from ..linalg import hermitian_sqrt, HermitianPrecisionPolicy
@@ -29,6 +29,7 @@ class UniformSquareTensor(StrictModule):
     vertical_bond_dimension: int = eqx.field(static=True)
     horizontal_bond_dimension: int = eqx.field(static=True)
     precision: TensorNetworkPrecisionPolicy
+    structure_id: str = eqx.field(static=True)
     tensor_id: str = eqx.field(static=True)
     numeric_version: Array
 
@@ -67,12 +68,20 @@ class UniformSquareTensor(StrictModule):
         self.vertical_bond_dimension = array.shape[0]
         self.horizontal_bond_dimension = array.shape[1]
         self.precision = precision_
-        self.tensor_id = canonical_fingerprint(
+        self.structure_id = canonical_fingerprint(
             {
-                "kind": "uniform-square-tensor",
+                "kind": "uniform-square-tensor-structure",
                 "shape": tuple(array.shape),
                 "dtype": str(array.dtype),
                 "precision": precision_.policy_id,
+            }
+        )
+        self.tensor_id = canonical_fingerprint(
+            {
+                "kind": "uniform-square-tensor",
+                "value": array_tree_fingerprint(array),
+                "precision": precision_.policy_id,
+                "numeric_version": int(version),
             }
         )
         self.numeric_version = version

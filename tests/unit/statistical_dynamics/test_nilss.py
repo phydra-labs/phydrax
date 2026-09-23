@@ -59,6 +59,23 @@ def test_nilss_solves_matrix_free_parameter_directional_gradient():
     np.testing.assert_allclose(result.directional_gradient, expected, atol=1e-12)
 
 
+def test_nilss_prepared_identity_binds_exact_trajectory_content():
+    problem, trajectory, args = _affine_shadowing_case(steps=4)
+    other = phx.dynamics.evolve(
+        problem.evolution,
+        jnp.asarray([3.0]),
+        trajectory.grid,
+        args=args,
+    )
+    plan = phx.statistical_dynamics.NILSSPlan(1, 0, 0, 2, 2)
+
+    first = plan.prepare(problem, trajectory, jnp.asarray([1.0]), args=args)
+    second = plan.prepare(problem, other, jnp.asarray([1.0]), args=args)
+
+    assert trajectory.trajectory_id != other.trajectory_id
+    assert first.prepared_id != second.prepared_id
+
+
 def test_nilss_projects_flow_neutral_direction_and_records_time_dilation():
     matrix = jnp.diag(jnp.asarray([1.0, 0.5]))
     system = phx.dynamics.DiscreteSystem(

@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
@@ -161,6 +162,33 @@ def test_fixed_pool_insertion_grows_epoch_and_retires_identity_once():
     assert jnp.sum(result.epoch.ever_occupied) == 3
     inserted = result.insertion.owner_slots[0]
     assert result.epoch.state.body_properties.active[inserted]
+    failed = phx.discretization.insert_reactive_particles_with_growth(
+        phx.discretization.ParticleInsertionPlan(
+            jnp.asarray([2.0, -0.5]),
+            jnp.asarray([3.0, 0.5]),
+            1,
+        ),
+        phx.discretization.ReactiveParticleTemplateDistributionPlan(
+            (template,),
+            jnp.asarray([1.0]),
+        ),
+        epoch,
+        batch,
+        internal,
+        jnp.asarray([2.0]),
+        jr.key(0),
+        jnp.asarray(0.0),
+        phx.discretization.ParticleCapacityGrowthPolicy(
+            minimum_increment=2,
+            maximum_capacity=8,
+        ),
+    )
+    assert failed.transition is not None
+    assert not bool(failed.successful)
+    np.testing.assert_array_equal(
+        failed.epoch.ever_occupied,
+        failed.transition.accepted_epoch.ever_occupied,
+    )
 
 
 def test_fragmentation_grows_epoch_and_conserves_inventory():
@@ -186,6 +214,54 @@ def test_fragmentation_grows_epoch_and_conserves_inventory():
     assert result.epoch.retired[0]
     assert jnp.abs(result.fragmentation.mass_residual) < 1.0e-12
     assert jnp.abs(result.fragmentation.energy_residual) < 1.0e-12
+
+
+def test_fragmentation_rejects_duplicate_children_and_rolls_back_epoch_metadata():
+    epoch = _dem_epoch()
+    batch, internal = _internal_epoch_state(epoch)
+    inactive_child = eqx.tree_at(
+        lambda value: value.active,
+        internal,
+        jnp.asarray((True, False)),
+    )
+    duplicate = phx.discretization.fragment_particle_internal_batch(
+        phx.discretization.ThermochemicalFragmentationPlan(2),
+        inactive_child,
+        jnp.asarray(0),
+        jnp.asarray((1, 1)),
+        jnp.asarray((True, True)),
+        jnp.asarray((0.5, 0.5)),
+        jnp.asarray((0.25, 0.25)),
+        jnp.asarray((1.0,)),
+    )
+    assert not bool(duplicate.successful)
+
+    failed = phx.discretization.fragment_particle_with_growth(
+        phx.discretization.ThermochemicalFragmentationPlan(2),
+        epoch,
+        batch,
+        internal,
+        jnp.asarray(0),
+        jnp.asarray((0.6, 0.6)),
+        jnp.asarray((0.25, 0.25)),
+        jnp.asarray((True, True)),
+        jnp.asarray((1.0,)),
+        jnp.asarray(0.0),
+        phx.discretization.ParticleCapacityGrowthPolicy(
+            minimum_increment=2,
+            maximum_capacity=8,
+        ),
+    )
+    assert failed.transition is not None
+    assert not bool(failed.successful)
+    np.testing.assert_array_equal(
+        failed.epoch.ever_occupied,
+        failed.transition.accepted_epoch.ever_occupied,
+    )
+    np.testing.assert_array_equal(
+        failed.epoch.retired,
+        failed.transition.accepted_epoch.retired,
+    )
 
 
 def test_segmented_epoch_execution_records_growth_and_routes():
@@ -278,6 +354,21 @@ def test_unstructured_internal_mesh_measures_and_transport_are_conservative():
         batch, state, material, boundary
     )
     assert evaluation.successful
+    invalid_boundary = phx.equations.ParticleTransportBoundary(
+        jnp.asarray([400.0]),
+        jnp.zeros((1, 1)),
+        jnp.asarray([1.0]),
+        -jnp.ones((1, 1)),
+        jnp.zeros((1,)),
+        jnp.zeros((1, 1)),
+    )
+    invalid = phx.equations.evaluate_particle_transport(
+        batch,
+        state,
+        material,
+        invalid_boundary,
+    )
+    assert not bool(invalid.successful)
     assert jnp.abs(evaluation.internal_energy_residual) < 1.0e-12
 
 

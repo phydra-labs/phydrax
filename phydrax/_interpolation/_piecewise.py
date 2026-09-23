@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from numbers import Integral
 from typing import Any
 
 import equinox as eqx
@@ -18,6 +19,17 @@ from ._types import (
     MaskMode,
     NearestTiePolicy,
 )
+
+
+def _derivative_order(value: int, maximum: int, family: str, /) -> int:
+    if isinstance(value, bool) or not isinstance(value, Integral):
+        raise TypeError("derivative_order must be an integer.")
+    order = int(value)
+    if order < 0 or order > maximum:
+        raise ValueError(
+            f"{family} interpolation supports derivatives only through order {maximum}."
+        )
+    return order
 
 
 NEAREST_CAPABILITIES = InterpolationCapabilities(
@@ -146,10 +158,10 @@ def linear_stencil_from_indices(
     fraction_ = jnp.asarray(fraction, dtype=jnp.float64)
     if lower_.shape != upper_.shape or fraction_.shape != lower_.shape:
         raise ValueError("Linear indices and fractions must have matching shapes.")
-    order = int(derivative_order)
+    order = _derivative_order(derivative_order, 1, "Linear")
     if order == 0:
         weights = jnp.stack((1.0 - fraction_, fraction_), axis=-1)
-    elif order == 1:
+    else:
         if interval_width is None:
             raise ValueError("Linear derivative stencils require interval_width.")
         width = jnp.asarray(interval_width, dtype=jnp.float64)
@@ -161,10 +173,6 @@ def linear_stencil_from_indices(
             "Linear interpolation interval widths must be finite and positive.",
         )
         weights = jnp.stack((-1.0 / width, 1.0 / width), axis=-1)
-    else:
-        raise ValueError(
-            "Linear interpolation supports derivatives only through order 1."
-        )
     return GatherStencil(
         indices=jnp.stack((lower_, upper_), axis=-1),
         weights=weights,
@@ -240,7 +248,14 @@ def _source_axis(values: ArrayLike, nodes: Array, axis: int, /) -> tuple[Array, 
     array = jnp.asarray(values)
     if array.ndim < 1:
         raise ValueError("Piecewise values must contain a source-node axis.")
-    axis_ = int(axis) % array.ndim
+    if isinstance(axis, bool) or not isinstance(axis, Integral):
+        raise TypeError("axis must be an integer.")
+    axis_value = int(axis)
+    if axis_value < -array.ndim or axis_value >= array.ndim:
+        raise ValueError(
+            f"Piecewise source axis {axis_value} is out of bounds for rank {array.ndim}."
+        )
+    axis_ = axis_value % array.ndim
     if array.shape[axis_] != nodes.shape[0]:
         raise ValueError("Piecewise values source axis must match the node count.")
     if not jnp.issubdtype(array.dtype, jnp.inexact):
@@ -413,14 +428,12 @@ def linear_segment(
 ) -> Array:
     y0_ = jnp.asarray(y0)
     y1_ = jnp.asarray(y1)
-    order = int(derivative_order)
+    order = _derivative_order(derivative_order, 1, "Linear")
     if order == 0:
         fraction_ = _expand_for_payload(fraction, y0_)
         return (1.0 - fraction_) * y0_ + fraction_ * y1_
-    if order == 1:
-        width = _expand_for_payload(interval_width, y0_)
-        return (y1_ - y0_) / width
-    raise ValueError("Linear interpolation supports derivatives only through order 1.")
+    width = _expand_for_payload(interval_width, y0_)
+    return (y1_ - y0_) / width
 
 
 def cubic_hermite_segment(
@@ -441,7 +454,7 @@ def cubic_hermite_segment(
     slope1_ = jnp.asarray(slope1)
     s = _expand_for_payload(fraction, y0_)
     width = _expand_for_payload(interval_width, y0_)
-    order = int(derivative_order)
+    order = _derivative_order(derivative_order, 2, "Cubic Hermite")
     s2 = s * s
 
     if order == 0:
@@ -459,16 +472,12 @@ def cubic_hermite_segment(
         return (
             h00 * y0_ + h10 * width * slope0_ + h01 * y1_ + h11 * width * slope1_
         ) / width
-    if order == 2:
-        h00 = 12.0 * s - 6.0
-        h10 = 6.0 * s - 4.0
-        h01 = -12.0 * s + 6.0
-        h11 = 6.0 * s - 2.0
-        return (h00 * y0_ + h10 * width * slope0_ + h01 * y1_ + h11 * width * slope1_) / (
-            width * width
-        )
-    raise ValueError(
-        "Cubic Hermite interpolation supports derivatives only through order 2."
+    h00 = 12.0 * s - 6.0
+    h10 = 6.0 * s - 4.0
+    h01 = -12.0 * s + 6.0
+    h11 = 6.0 * s - 2.0
+    return (h00 * y0_ + h10 * width * slope0_ + h01 * y1_ + h11 * width * slope1_) / (
+        width * width
     )
 
 
@@ -485,6 +494,7 @@ def cubic_hermite_interpolate(
     snap_tolerance: float = 0.0,
     fill_value: Any = 0.0,
 ) -> InterpolationResult:
+    order = _derivative_order(derivative_order, 2, "Cubic Hermite")
     nodes_, query_, lower, upper, fraction, support = _piecewise_geometry(
         nodes, query, bounds=bounds
     )
@@ -498,7 +508,7 @@ def cubic_hermite_interpolate(
 
     if nodes_.shape[0] == 1:
         output = jnp.broadcast_to(source[0], query_.shape + source.shape[1:])
-        if int(derivative_order) > 0:
+        if order > 0:
             output = jnp.zeros_like(output)
     else:
         width = nodes_[upper] - nodes_[lower]
@@ -509,12 +519,12 @@ def cubic_hermite_interpolate(
             slopes_source[upper],
             fraction,
             width,
-            derivative_order=derivative_order,
+            derivative_order=order,
         )
         snap = float(snap_tolerance)
         if snap < 0.0:
             raise ValueError("snap_tolerance must be non-negative.")
-        if snap > 0.0 and int(derivative_order) == 0:
+        if snap > 0.0 and order == 0:
             lower_distance = jnp.abs(query_ - nodes_[lower])
             upper_distance = jnp.abs(nodes_[upper] - query_)
             use_upper = upper_distance < lower_distance

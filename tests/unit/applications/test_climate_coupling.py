@@ -158,7 +158,14 @@ def test_epoch_transition_cannot_relabel_foreign_physical_state_or_budgets(reque
     incompatible = _typed_exchange(
         source_kind="temperature-inventory", target_kind="temperature-inventory"
     )
-    epoch = PreparedCouplingEpoch(incompatible, ("a-epoch", "b-epoch"), ())
+    epoch = PreparedCouplingEpoch(
+        incompatible,
+        ("a-epoch", "b-epoch"),
+        (),
+        participant_epoch_codes=(0, 0),
+        waveform_required_samples=(0, 0),
+        topology_code=0,
+    )
     identity = IdentityCouplingEpochTransfer()
     transition = CouplingEpochTransitionPlan(
         (identity, identity),

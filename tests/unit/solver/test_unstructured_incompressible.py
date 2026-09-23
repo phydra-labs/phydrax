@@ -139,6 +139,29 @@ def test_pressure_projection_recovers_discrete_gradient_and_removes_divergence()
     )
 
 
+def test_pressure_projection_rejects_incompatible_boundary_flux():
+    operators = _collocated_operators()
+    discretization = operators.discretization
+    projection = phx.solver.UnstructuredPressureProjectionPlan(
+        operators, tolerance=1e-10, maximum_iterations=500
+    )
+    boundary = ~operators.interior_faces
+    boundary_face = int(np.flatnonzero(np.asarray(boundary))[0])
+    boundary_velocity = (
+        jnp.zeros_like(discretization.face_measures).at[boundary_face].set(1.0)
+    )
+    result = projection.project(
+        jnp.zeros((discretization.cell_count, discretization.cell_dimension)),
+        0.1,
+        face_normal_velocity=jnp.zeros_like(boundary_velocity),
+        boundary_normal_velocity=boundary_velocity,
+    )
+    assert result.linear.successful
+    assert result.compatibility_defect > 0.0
+    assert result.divergence_norm > 0.0
+    assert not bool(result.converged)
+
+
 def test_pressure_projection_refreshes_nonuniform_momentum_inverse():
     operators = _collocated_operators()
     discretization = operators.discretization

@@ -163,6 +163,10 @@ class VirtualElementFieldSpec(StrictModule, NonTrainableState):
             raise ValueError("Declare vector values on the element or field, not both.")
         if any(value <= 0 for value in shape):
             raise ValueError("Virtual-element field dimensions must be positive.")
+        if shape:
+            raise NotImplementedError(
+                "Component-replicated virtual-element fields are not supported."
+            )
         self.name = name_
         self.element = element
         self.component_shape = shape

@@ -10,11 +10,12 @@ from typing import Any
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jaxtyping import Array, ArrayLike
 
 import phydrax.linalg as la
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...observation import CholeskyCovarianceAction, CoordinateLayout
@@ -25,6 +26,12 @@ from ...uq import (
     gaussian_factor_from_covariance,
 )
 from ._status import AstrodynamicsStatus
+
+
+_COVARIANCE_POLICY = la.DensePropertyVerificationPolicy(
+    require_hermitian=True,
+    require_positive_semidefinite=True,
+)
 
 
 class OrbitDeterminationResult(StrictModule):
@@ -58,23 +65,47 @@ class BatchOrbitDeterminationPlan(StrictModule, NonTrainableState):
     ):
         if not callable(observation_model):
             raise TypeError("observation_model must be callable.")
-        observed_ = jnp.asarray(observed)
-        root = jnp.asarray(covariance_cholesky)
-        if root.shape != (observed_.size, observed_.size):
-            raise ValueError("Observation covariance root has incompatible shape.")
+        observed_host = np.asarray(observed, dtype=np.float64)
+        root_host = np.asarray(covariance_cholesky, dtype=np.float64)
+        if observed_host.size < 1 or np.any(~np.isfinite(observed_host)):
+            raise ValueError("Observed values must be nonempty and finite.")
+        if (
+            root_host.shape != (observed_host.size, observed_host.size)
+            or np.any(~np.isfinite(root_host))
+            or not np.allclose(root_host, np.tril(root_host))
+            or np.any(np.diag(root_host) <= 0.0)
+        ):
+            raise ValueError("Observation covariance root must be finite lower Cholesky.")
+        if isinstance(maximum_iterations, bool) or not isinstance(
+            maximum_iterations, int
+        ):
+            raise TypeError("maximum_iterations must be an integer.")
+        tolerance_ = float(tolerance)
+        identifier = str(model_id).strip()
+        if maximum_iterations < 1:
+            raise ValueError("maximum_iterations must be positive.")
+        if not np.isfinite(tolerance_) or tolerance_ <= 0.0:
+            raise ValueError("tolerance must be finite and positive.")
+        if not identifier:
+            raise ValueError("model_id must be non-empty.")
+        observed_ = jnp.asarray(observed_host)
+        root = jnp.asarray(root_host)
         layout = CoordinateLayout(
-            tuple(f"{model_id}:observation:{index}" for index in range(observed_.size))
+            tuple(f"{identifier}:observation:{index}" for index in range(observed_.size))
         )
         self.observation_model = observation_model
         self.observed = observed_
         self.covariance = CholeskyCovarianceAction(root, layout)
-        self.maximum_iterations = int(maximum_iterations)
-        self.tolerance = float(tolerance)
+        self.maximum_iterations = maximum_iterations
+        self.tolerance = tolerance_
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "batch-orbit-determination",
-                "model": str(model_id),
-                "observations": observed_.size,
+                "model": identifier,
+                "observed": array_tree_fingerprint(observed_host),
+                "covariance_cholesky": array_tree_fingerprint(root_host),
+                "maximum_iterations": maximum_iterations,
+                "tolerance": tolerance_,
             }
         )
 
@@ -168,15 +199,58 @@ class SequentialOrbitDeterminationPlan(StrictModule, NonTrainableState):
         /,
         *,
         model_id="sequential-od",
+        transition_id,
+        observation_id,
     ):
         if not callable(transition) or not callable(observation):
             raise TypeError("Sequential OD models must be callable.")
+        process = jnp.asarray(process_covariance)
+        measurement = jnp.asarray(measurement_covariance)
+        if (
+            process.ndim != 2
+            or process.shape[0] != process.shape[1]
+            or measurement.ndim != 2
+            or measurement.shape[0] != measurement.shape[1]
+        ):
+            raise ValueError("Sequential OD covariances must be square matrices.")
+        process_evidence = la.verify_dense_properties(process, policy=_COVARIANCE_POLICY)
+        measurement_evidence = la.verify_dense_properties(
+            measurement, policy=_COVARIANCE_POLICY
+        )
+        process = eqx.error_if(
+            process_evidence.matrix,
+            ~process_evidence.successful,
+            "Sequential OD process covariance must be finite positive semidefinite.",
+        )
+        measurement = eqx.error_if(
+            measurement_evidence.matrix,
+            ~measurement_evidence.successful,
+            "Sequential OD measurement covariance must be finite positive semidefinite.",
+        )
+        declared = tuple(
+            str(value).strip() for value in (model_id, transition_id, observation_id)
+        )
+        if any(not value for value in declared):
+            raise ValueError(
+                "Sequential OD model and callable identities must be non-empty."
+            )
         self.transition = transition
         self.observation = observation
-        self.process_covariance = jnp.asarray(process_covariance)
-        self.measurement_covariance = jnp.asarray(measurement_covariance)
+        self.process_covariance = process
+        self.measurement_covariance = measurement
         self.plan_id = canonical_fingerprint(
-            {"kind": "sequential-orbit-determination", "model": str(model_id)}
+            {
+                "kind": "sequential-orbit-determination",
+                "model": declared[0],
+                "transition": declared[1],
+                "observation": declared[2],
+                "process_covariance": array_tree_fingerprint(
+                    np.asarray(process_covariance)
+                ),
+                "measurement_covariance": array_tree_fingerprint(
+                    np.asarray(measurement_covariance)
+                ),
+            }
         )
 
     def filter(
@@ -186,6 +260,30 @@ class SequentialOrbitDeterminationPlan(StrictModule, NonTrainableState):
         covariance0 = jnp.asarray(initial_covariance)
         observed = jnp.asarray(observations)
         times_ = jnp.asarray(times)
+        if (
+            state0.ndim != 1
+            or state0.size != self.process_covariance.shape[0]
+            or covariance0.shape != self.process_covariance.shape
+            or observed.ndim != 2
+            or observed.shape[1] != self.measurement_covariance.shape[0]
+            or times_.shape != (observed.shape[0],)
+            or observed.shape[0] < 1
+        ):
+            raise ValueError(
+                "Sequential OD state, covariance, observations, and times are incompatible."
+            )
+        initial_evidence = la.verify_dense_properties(
+            covariance0, policy=_COVARIANCE_POLICY
+        )
+        covariance0 = eqx.error_if(
+            initial_evidence.matrix,
+            ~initial_evidence.successful
+            | jnp.any(~jnp.isfinite(state0))
+            | jnp.any(~jnp.isfinite(observed))
+            | jnp.any(~jnp.isfinite(times_))
+            | jnp.any(jnp.diff(times_) <= 0.0),
+            "Sequential OD inputs must be finite with valid covariance and increasing times.",
+        )
 
         def step(carry, item):
             state, covariance, previous_time = carry

@@ -335,7 +335,11 @@ class SR3Regression(AbstractSparseRegression):
             output_names=design.output_names,
             method_id=(
                 f"sr3:penalty={self.penalty}:regularization={self.regularization:g}:"
-                f"relaxation={self.relaxation_strength:g}:unbiased={self.unbiased_refit}"
+                f"relaxation={self.relaxation_strength:g}:"
+                f"max-iterations={self.max_iterations}:tolerance={self.tolerance:g}:"
+                f"rcond={self.rcond}:scale-features={self.scale_features}:"
+                f"scale-targets={self.scale_targets}:unbiased={self.unbiased_refit}:"
+                f"zero-tolerance={self.zero_tolerance}:max-features={self.max_features}"
             ),
             design_id=design.design_id,
         )

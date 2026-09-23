@@ -36,6 +36,15 @@ def _central(value, axis, spacing, periodic):
     return derivative
 
 
+def _forward_neighbor(value, axis, periodic):
+    neighbor = jnp.roll(value, -1, axis=axis)
+    if periodic:
+        return neighbor
+    upper = [slice(None)] * value.ndim
+    upper[axis] = value.shape[axis] - 1
+    return neighbor.at[tuple(upper)].set(value[tuple(upper)])
+
+
 class ParticleLevelSetPlan(StrictModule, NonTrainableState):
     """Fixed-band union-of-particle-spheres level-set reconstruction."""
 
@@ -164,9 +173,9 @@ class ParticleLevelSetPlan(StrictModule, NonTrainableState):
         interfaces = []
         clamped = jnp.asarray(0, dtype=jnp.int32)
         minimum_unclamped = jnp.asarray(jnp.inf, dtype=phi.dtype)
-        for axis in range(len(shape)):
-            neighbor_phi = jnp.roll(phi, -1, axis=axis)
-            neighbor_fraction = jnp.roll(cell_fraction, -1, axis=axis)
+        for axis, grid_axis in enumerate(self.grid.structured_axes):
+            neighbor_phi = _forward_neighbor(phi, axis, grid_axis.periodic)
+            neighbor_fraction = _forward_neighbor(cell_fraction, axis, grid_axis.periodic)
             face_fraction.append(0.5 * (cell_fraction + neighbor_fraction))
             crossing = (phi <= 0.0) != (neighbor_phi <= 0.0)
             raw = jnp.abs(phi) / jnp.maximum(

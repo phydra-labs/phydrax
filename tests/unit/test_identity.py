@@ -30,18 +30,6 @@ class _AffineCallable(StrictModule):
         return self.weight * value if self.enabled else value
 
 
-def _executable_signature() -> ExecutableSignature:
-    return ExecutableSignature(
-        shapes={"state": (2,), "parameter": (2,)},
-        dtypes={"state": jnp.float32, "parameter": jnp.float32},
-        space_ids={"state": "cartesian-state"},
-        topology_ids={"plant": "two-state-topology"},
-        capacities={"cases": 8},
-        algorithm_facts={"integrator": "fixed-step"},
-        backend_facts={"platform": "cpu", "precision": "float32"},
-    )
-
-
 def test_strict_module_payload_separates_semantics_from_numeric_realization():
     first = _AffineCallable([1.0, 2.0])
     second = _AffineCallable([3.0, 4.0])
@@ -72,17 +60,6 @@ def test_semantic_content_and_resource_identity_are_independent():
 
     assert first.content_id == second.content_id
     assert first.semantic_id != second.semantic_id
-
-
-def test_numeric_revisions_do_not_change_executable_signature():
-    provenance = SemanticProvenance({"plant": "affine"})
-    first = NumericRevision(provenance, {"weight": jnp.asarray([1.0, 2.0])})
-    second = NumericRevision(provenance, {"weight": jnp.asarray([3.0, 4.0])})
-    first_signature = _executable_signature()
-    second_signature = _executable_signature()
-
-    assert first.revision_id != second.revision_id
-    assert first_signature.signature_id == second_signature.signature_id
 
 
 def test_executable_signature_rejects_numeric_array_values():

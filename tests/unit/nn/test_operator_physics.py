@@ -84,6 +84,15 @@ def test_physical_quadrature_predicate_accepts_tensor_and_case_shaped_measures()
 
     assert tensor.has_physical_quadrature
     assert point_cloud.has_physical_quadrature
+    explicit_grid = phx.nn.operator.FunctionSamples(
+        values=None,
+        axes=(
+            phx.nn.operator.OperatorAxis("x", jnp.linspace(0.0, 1.0, 2)),
+            phx.nn.operator.OperatorAxis("y", jnp.linspace(-1.0, 1.0, 3)),
+        ),
+        quadrature_weights=jnp.full((2, 3), 1.0 / 6.0),
+    )
+    assert explicit_grid.has_physical_quadrature
 
 
 def test_conservation_projection_is_exact_and_differentiable():

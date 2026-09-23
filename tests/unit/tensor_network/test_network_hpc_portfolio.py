@@ -20,7 +20,11 @@ from phydrax.tensor_network._contraction import (
     plan_contraction,
     prepare_contraction,
 )
-from phydrax.tensor_network._ctmrg import contract_peps_ctmrg, CTMRGPolicy
+from phydrax.tensor_network._ctmrg import (
+    contract_peps_ctmrg,
+    CTMRGPolicy,
+    CTMRGStatus,
+)
 from phydrax.tensor_network._mera import (
     BinaryMERA,
     contract_mera,
@@ -31,6 +35,7 @@ from phydrax.tensor_network._network_bp import (
     FactorGraphNetwork,
     FactorTensor,
     NetworkBPPolicy,
+    NetworkBPStatus,
     run_network_belief_propagation,
 )
 from phydrax.tensor_network._peps import contract_peps_exact, PEPS
@@ -44,6 +49,7 @@ from phydrax.tensor_network._placement import (
     execute_distributed_slices,
     plan_slice_placement,
 )
+from phydrax.tensor_network._schedule import build_contraction_schedule
 from phydrax.tensor_network._slicing import (
     checkpoint_slice_ranges,
     execute_sliced_contraction,
@@ -160,6 +166,22 @@ def test_slicing_order_serial_batch_equality_resource_refusal_and_reverse():
     merged = merge_slice_checkpoints(sliced, partials)
     assert merged.evidence.accepted
     assert jnp.allclose(merged.value, direct.value)
+    refreshed = prepare_contraction(plan, (left + 1.0, right))
+    incompatible = execute_sliced_contraction(
+        refreshed,
+        sliced,
+        slice_range=ranges[1],
+        logarithmic_scaling=True,
+    ).checkpoint
+    with pytest.raises(ValueError, match="numeric preparation"):
+        merge_slice_checkpoints(sliced, (partials[0], incompatible))
+    with pytest.raises(MemoryError, match="maximum_batch_elements"):
+        plan_sliced_contraction(
+            plan,
+            ("j",),
+            batch_size=2,
+            resources=SlicingResourcePolicy(maximum_batch_elements=8),
+        )
     with pytest.raises(MemoryError, match="maximum_slices"):
         plan_sliced_contraction(
             plan,
@@ -235,6 +257,7 @@ def test_exact_2x2_peps_boundary_and_ctm_evidence():
     assert ctm.evidence.convergence_mask.shape == (6,)
     assert ctm.evidence.converged
     assert ctm.evidence.exact
+    assert int(ctm.evidence.status) == int(CTMRGStatus.SUCCESS)
     assert not ctm.evidence.global_error_bound_claimed
 
 
@@ -275,6 +298,30 @@ def test_ttn_messages_equal_direct_exact_contraction():
     assert jnp.allclose(result.value, expected)
 
 
+def test_tree_claim_rejects_output_hyperedges_and_user_unary_steps():
+    output_hyperedge = ContractionStructure(
+        (
+            ContractionOperand("left", (ContractionLeg("open", 2),)),
+            ContractionOperand("right", (ContractionLeg("open", 2),)),
+        ),
+        ("open",),
+    )
+    with pytest.raises(ValueError, match="output labels"):
+        TreeTensorNetwork(
+            output_hyperedge,
+            (
+                jnp.ones((2,), dtype=jnp.float32),
+                jnp.ones((2,), dtype=jnp.float32),
+            ),
+        )
+    with pytest.raises(ValueError, match="at least two"):
+        build_contraction_schedule(
+            output_hyperedge,
+            ((0,),),
+            dtype="float32",
+        )
+
+
 def test_loopy_bp_residual_and_binary_mera_isometry():
     pair = jnp.asarray([[2.0, 1.0], [1.0, 2.0]], dtype=jnp.float32)
     graph = FactorGraphNetwork(
@@ -292,6 +339,22 @@ def test_loopy_bp_residual_and_binary_mera_isometry():
     assert bp.evidence.residual_history[-1] <= 1e-6
     assert not bp.evidence.exact
     assert jnp.allclose(bp.variable_beliefs[0], jnp.asarray([0.5, 0.5]))
+    assert int(bp.evidence.status) == int(NetworkBPStatus.SUCCESS)
+    changed_graph = FactorGraphNetwork(
+        {"a": 2, "b": 2, "c": 2},
+        (
+            FactorTensor("ab", ("a", "b"), pair.at[0, 0].set(3.0)),
+            FactorTensor("bc", ("b", "c"), pair),
+            FactorTensor("ca", ("c", "a"), pair),
+        ),
+    )
+    assert changed_graph.network_id != graph.network_id
+    limited = run_network_belief_propagation(
+        changed_graph,
+        NetworkBPPolicy(1, tolerance=1e-30),
+    )
+    assert int(limited.evidence.status) == int(NetworkBPStatus.ITERATION_LIMIT)
+    assert not limited.evidence.accepted
 
     isometry = jnp.eye(4, dtype=jnp.float32)[:, :2].reshape((2, 2, 2))
     disentangler = jnp.eye(4, dtype=jnp.float32).reshape((2, 2, 2, 2))

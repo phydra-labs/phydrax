@@ -186,3 +186,25 @@ def test_dimension_u_statistic_rejects_dependent_without_replacement_draws():
             dimension_policy=DimensionSamplingPolicy(10, 4),
             loss_mode="u_statistic",
         )
+
+
+def test_randomized_product_keeps_realizations_before_deterministic_event_axes():
+    dimension = 3
+    field = phx.equations.PDEExpression.field("u")
+    coordinate = phx.equations.PDEExpression.coordinate_value("x")
+    expression = (field.laplacian("x") * coordinate).component(0)
+    domain = _domain(dimension)
+    compiled = _compile(
+        _problem(dimension, expression),
+        domain,
+        RandomizedDifferentialPlan(
+            trace_policy=phx.operators.StochasticTracePolicy(5),
+        ),
+        num_points=4,
+    )
+    function = domain.Function("x")(lambda x: jnp.dot(x, x))
+
+    diagnostics = compiled.term.diagnostics({"u": function}, key=jr.key(29))
+
+    assert diagnostics.num_realizations == 5
+    assert bool(diagnostics.finite)

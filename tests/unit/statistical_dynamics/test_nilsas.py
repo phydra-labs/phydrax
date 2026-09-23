@@ -60,6 +60,7 @@ def test_nilsas_store_and_recompute_match_exact_discrete_gradient():
     assert int(stored.parameter_action_count) == 100
     assert int(stored.replay_action_count) == 0
     assert int(recomputed.replay_action_count) == 100
+    assert recomputed.cost.retained_bytes < stored.cost.retained_bytes
     np.testing.assert_allclose(
         stored.parameter_gradient["offset"],
         expected,
@@ -72,6 +73,46 @@ def test_nilsas_store_and_recompute_match_exact_discrete_gradient():
             stored.parameter_gradient[name],
             atol=1e-12,
         )
+
+
+def test_nilsas_prepared_identity_binds_exact_trajectory_content():
+    system = phx.dynamics.DiscreteSystem(
+        lambda coordinate, state, args: 0.5 * state + args,
+        state_layout=phx.dynamics.StateLayout((1,)),
+        system_id="adjoint-trajectory-identity-map",
+    )
+    evolution = phx.dynamics.DiscreteEvolution(system)
+    args = jnp.asarray([1.0])
+    grid = phx.dynamics.IterationGrid.from_steps(
+        4,
+        iteration_id="adjoint-trajectory-identity-grid",
+    )
+    first_trajectory = phx.dynamics.evolve(
+        evolution,
+        jnp.asarray([2.0]),
+        grid,
+        args=args,
+    )
+    second_trajectory = phx.dynamics.evolve(
+        evolution,
+        jnp.asarray([3.0]),
+        grid,
+        args=args,
+    )
+    problem = phx.dynamics.analysis.ShadowingSensitivityProblem(
+        evolution,
+        lambda coordinate, state, parameters: state[0],
+        parameter_id="adjoint-trajectory-offset",
+        observable_id="adjoint-trajectory-average",
+        problem_id="adjoint-trajectory-identity-problem",
+    )
+    plan = phx.statistical_dynamics.NILSASPlan(1, 0, 0, 2, 2)
+
+    first = plan.prepare(problem, first_trajectory, args=args)
+    second = plan.prepare(problem, second_trajectory, args=args)
+
+    assert first_trajectory.trajectory_id != second_trajectory.trajectory_id
+    assert first.prepared_id != second.prepared_id
 
 
 def test_nilsas_enforces_declared_flow_neutral_constraint():

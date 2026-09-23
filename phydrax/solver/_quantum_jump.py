@@ -269,36 +269,42 @@ def _trajectory(
     def advance(state, index):
         decision_key = derive_key(key, decision_address, index)
         channel_key = derive_key(key, channel_address, index)
-        collapsed = temporal_precision.stage(
-            jnp.stack([operator(state) for operator in problem.collapse_operators])
-        )
-        collapsed_ = geometry_precision.accumulation(collapsed)
-        rates = geometry_precision.decision(
-            jnp.real(
-                geometry_precision.sum(
-                    jnp.conj(collapsed_) * collapsed_,
-                    axis=1,
+        if channel_count:
+            collapsed = temporal_precision.stage(
+                jnp.stack([operator(state) for operator in problem.collapse_operators])
+            )
+            collapsed_ = geometry_precision.accumulation(collapsed)
+            rates = geometry_precision.decision(
+                jnp.real(
+                    geometry_precision.sum(
+                        jnp.conj(collapsed_) * collapsed_,
+                        axis=1,
+                    )
                 )
             )
-        )
-        probabilities = temporal_precision.decision(step * rates)
-        total = temporal_precision.decision(geometry_precision.sum(probabilities))
-        probabilities = eqx.error_if(
-            probabilities,
-            total > 0.1,
-            "Fixed-step jump probability exceeds the 0.1 validity limit.",
-        )
-        jump = jax.random.uniform(decision_key) < total
-        safe_total = jnp.maximum(total, jnp.finfo(probabilities.dtype).tiny)
-        channel = jax.random.categorical(
-            channel_key,
-            jnp.log(jnp.maximum(probabilities / safe_total, 1e-30)),
-        )
-        selected = collapsed[jnp.minimum(channel, max(channel_count - 1, 0))]
-        jump_state = jnp.asarray(
-            selected / jnp.maximum(geometry_precision.norm(selected), 1e-30),
-            dtype=state.dtype,
-        )
+            probabilities = temporal_precision.decision(step * rates)
+            total = temporal_precision.decision(geometry_precision.sum(probabilities))
+            probabilities = eqx.error_if(
+                probabilities,
+                total > 0.1,
+                "Fixed-step jump probability exceeds the 0.1 validity limit.",
+            )
+            jump = jax.random.uniform(decision_key) < total
+            safe_total = jnp.maximum(total, jnp.finfo(probabilities.dtype).tiny)
+            channel = jax.random.categorical(
+                channel_key,
+                jnp.log(jnp.maximum(probabilities / safe_total, 1e-30)),
+            )
+            selected = collapsed[channel]
+            jump_state = jnp.asarray(
+                selected / jnp.maximum(geometry_precision.norm(selected), 1e-30),
+                dtype=state.dtype,
+            )
+        else:
+            collapsed = jnp.empty((0, *state.shape), dtype=state.dtype)
+            jump = jnp.asarray(False)
+            channel = jnp.asarray(-1, dtype=jnp.int32)
+            jump_state = state
         effective = temporal_precision.stage(-1j * problem.hamiltonian(state))
         for operator, collapsed_state in zip(
             problem.collapse_operators,
@@ -356,12 +362,15 @@ def solve_quantum_jump_ensemble(
     trajectories = int(trajectory_count)
     if count < 0 or trajectories < 1 or float(step) <= 0.0:
         raise ValueError("Trajectory count, steps, and step size must be positive.")
-    initial_collapsed = jnp.stack(
-        [operator(problem.initial_state) for operator in problem.collapse_operators]
-    )
-    initial_rates = jnp.real(
-        ein.contract("ki,ki->k", jnp.conj(initial_collapsed), initial_collapsed)
-    )
+    if problem.collapse_operators:
+        initial_collapsed = jnp.stack(
+            [operator(problem.initial_state) for operator in problem.collapse_operators]
+        )
+        initial_rates = jnp.real(
+            ein.contract("ki,ki->k", jnp.conj(initial_collapsed), initial_collapsed)
+        )
+    else:
+        initial_rates = jnp.zeros((0,), dtype=problem.initial_state.real.dtype)
     if float(step * jnp.sum(initial_rates)) > 0.1:
         raise ValueError("Fixed-step jump probability exceeds the 0.1 validity limit.")
     keys = jax.random.split(key, trajectories)

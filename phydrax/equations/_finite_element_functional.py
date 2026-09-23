@@ -189,16 +189,36 @@ class FiniteElementFunctional(StrictModule, NonTrainableState):
                 data.weights,
             )
             local = values[dofs]
-            field_values = ein.contract(
-                "qi,ci...->cq...",
-                geometry.basis_values,
-                local,
+            orientations = discretization.dof_maps[field_index].orientations[block_index]
+            local = local * orientations.reshape(
+                orientations.shape + (1,) * (local.ndim - orientations.ndim)
             )
-            gradients = ein.contract(
-                "cqid,ci...->cqd...",
-                geometry.physical_gradients,
-                local,
-            )
+            if geometry.basis_values.ndim == 2:
+                field_values = ein.contract(
+                    "qi,ci...->cq...",
+                    geometry.basis_values,
+                    local,
+                )
+                gradients = ein.contract(
+                    "cqid,ci...->cqd...",
+                    geometry.physical_gradients,
+                    local,
+                )
+            else:
+                if local.ndim != 2 or geometry.physical_gradients.ndim != 5:
+                    raise ValueError(
+                        "Mapped vector finite-element functionals require scalar moment coefficients."
+                    )
+                field_values = ein.contract(
+                    "cqiv,ci->cqv",
+                    geometry.basis_values,
+                    local,
+                )
+                gradients = ein.contract(
+                    "cqivd,ci->cqvd",
+                    geometry.physical_gradients,
+                    local,
+                )
             density = jnp.asarray(
                 self.density(
                     field_values,

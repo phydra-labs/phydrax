@@ -1,4 +1,5 @@
 import os
+import sys
 
 import manifold3d
 import numpy as np
@@ -40,6 +41,8 @@ def test_real_vorocrust_preserves_closed_cube_volume():
     )
     assert result.audit.passed
     assert result.compliance.passed
+    assert "native_output_entities_preallocation" in result.runtime.unenforced_limits
+    assert "native_output_connectivity_preallocation" in result.runtime.unenforced_limits
     assert result.derivative_mode is phx.meshing.MeshingDerivativeMode.NONDIFFERENTIABLE
     coordinates = phx.interchange.GeospatialContract.local_cartesian(
         result.coordinate_contract,
@@ -131,3 +134,80 @@ def test_vorocrust_porous_qualification_certifies_consumed_geometry_not_tpfa():
     assert not qualified.tpfa_certified
     with pytest.raises(ValueError, match="does not certify TPFA"):
         qualified.require_tpfa()
+
+
+def test_vorocrust_version_probe_maps_nonzero_exit_to_meshing_failure(tmp_path):
+    extractor = tmp_path / "extractor"
+    extractor.write_text("#!/bin/sh\nexit 7\n", encoding="utf-8")
+    extractor.chmod(0o755)
+    provider = phx.meshing.VoroCrustProvider(sys.executable, extractor)
+
+    with pytest.raises(phx.meshing.MeshingFailure) as failure:
+        provider.info()
+
+    assert (
+        failure.value.category
+        is phx.meshing.MeshingFailureCategory.PROVIDER_EXECUTION_FAILED
+    )
+
+
+def test_vorocrust_version_probe_requires_protocol_and_binary_identities(tmp_path):
+    extractor = tmp_path / "extractor"
+    digest = "a" * 64
+    extractor.write_text(
+        "#!/bin/sh\n"
+        f"echo 'phydrax-vorocrust/1 vorocrust/r1 source-sha256/{digest} "
+        f"config-sha256/{digest} library-sha256/{digest}'\n",
+        encoding="utf-8",
+    )
+    extractor.chmod(0o755)
+
+    info = phx.meshing.VoroCrustProvider(sys.executable, extractor).info()
+
+    assert info.version == "r1"
+
+
+def test_vorocrust_version_probe_bounds_output_before_decoding(tmp_path):
+    extractor = tmp_path / "extractor"
+    extractor.write_text(
+        f"#!{sys.executable}\nprint('x' * 20000)\n",
+        encoding="utf-8",
+    )
+    extractor.chmod(0o755)
+    provider = phx.meshing.VoroCrustProvider(sys.executable, extractor)
+
+    with pytest.raises(phx.meshing.MeshingFailure) as failure:
+        provider.info()
+
+    assert failure.value.category is phx.meshing.MeshingFailureCategory.RESOURCE_EXHAUSTED
+
+
+def test_vorocrust_fails_closed_when_native_preallocation_is_required(tmp_path):
+    extractor = tmp_path / "extractor"
+    extractor.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    extractor.chmod(0o755)
+    arrays = manifold3d.Manifold.cube().to_mesh64()
+    source = phx.geometry.SurfaceModel.from_triangles(
+        arrays.vert_properties[:, :3],
+        arrays.tri_verts,
+        phx.geometry.SurfaceMetadata(
+            source_id="cube",
+            source_revision="0",
+            coordinate_contract=phx.SpatialCoordinateContract.si(),
+            provenance=("qualification",),
+        ),
+    )
+
+    with pytest.raises(phx.meshing.MeshingFailure) as failure:
+        phx.meshing.VoroCrustProvider(sys.executable, extractor).execute(
+            source,
+            phx.meshing.VoroCrustOptions(
+                1.0,
+                require_native_output_preallocation=True,
+            ),
+        )
+
+    assert (
+        failure.value.category
+        is phx.meshing.MeshingFailureCategory.UNSUPPORTED_CAPABILITY
+    )

@@ -18,6 +18,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, Key
 
 import phydrax.ein as ein
+from phydrax._model import register_artifact_value
 from phydrax._strict import StrictModule
 
 from ...._doc import DOC_KEY0
@@ -650,6 +651,20 @@ class WeakOperatorLoss(AbstractOperatorLossTerm):
             separators=(",", ":"),
         )
         return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+register_artifact_value(
+    "phydrax.operator.output:HardConstraintTransform",
+    HardConstraintTransform,
+)
+register_artifact_value(
+    "phydrax.operator.output:ConservationProjection",
+    ConservationProjection,
+)
+register_artifact_value(
+    "phydrax.operator.output:OperatorOutputPipeline",
+    OperatorOutputPipeline,
+)
 
 
 __all__ = [

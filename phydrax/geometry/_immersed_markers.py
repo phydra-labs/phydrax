@@ -115,8 +115,13 @@ class ImmersedMarkerQuadraturePlan(StrictModule, NonTrainableState):
             raise TypeError("atlas must be a BoundaryAtlas.")
         if atlas.reference_dimension != self.reference_coordinates.shape[1]:
             raise ValueError("Atlas and marker reference dimensions differ.")
-        positions = atlas.map(self.chart_indices, self.reference_coordinates)
-        jacobian = atlas.jacobian(self.chart_indices, self.reference_coordinates)
+        chart_indices = eqx.error_if(
+            self.chart_indices,
+            jnp.any((self.chart_indices < 0) | (self.chart_indices >= atlas.num_charts)),
+            "Marker chart indices must identify existing atlas charts.",
+        )
+        positions = atlas.map(chart_indices, self.reference_coordinates)
+        jacobian = atlas.jacobian(chart_indices, self.reference_coordinates)
         physical_weights = self.reference_weights * jacobian
         if velocity is None:
             velocities = jnp.zeros_like(positions)
@@ -126,7 +131,7 @@ class ImmersedMarkerQuadraturePlan(StrictModule, NonTrainableState):
             velocities = jnp.asarray(velocity, dtype=positions.dtype)
         if velocities.shape != positions.shape:
             raise ValueError("Marker velocities must have the position shape.")
-        source_entity = atlas.source_entity_ids[self.chart_indices]
+        source_entity = atlas.source_entity_ids[chart_indices]
         finite = (
             jnp.all(jnp.isfinite(positions))
             & jnp.all(jnp.isfinite(velocities))

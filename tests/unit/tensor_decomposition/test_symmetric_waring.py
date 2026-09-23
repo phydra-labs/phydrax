@@ -150,6 +150,27 @@ def test_resource_policy_rejects_before_hankel_or_provider_work():
     assert not result.evidence.path_accepted
 
 
+def test_all_chart_resource_cost_multiplies_per_chart_work():
+    _, _, tensor = _real_rank_two_tensor()
+    problem = td.SymmetricWaringProblem(tensor, 2)
+    single = td.prepare_symmetric_waring(
+        problem,
+        chart_axis=0,
+        refinement=td.SymmetricWaringRefinement(enabled=False),
+    )
+    all_charts = td.prepare_symmetric_waring(
+        problem,
+        refinement=td.SymmetricWaringRefinement(enabled=False),
+    )
+    chart_count = problem.dimension
+    assert all_charts.cost.hankel_entries == chart_count * single.cost.hankel_entries
+    assert (
+        all_charts.cost.vandermonde_entries
+        == chart_count * single.cost.vandermonde_entries
+    )
+    assert all_charts.cost.basis_subsets == chart_count * single.cost.basis_subsets
+
+
 def test_invalid_nonsymmetric_tensor_and_zero_factor_are_rejected():
     nonsymmetric = jnp.zeros((2, 2, 2), dtype=jnp.float32).at[0, 1, 1].set(1.0)
     with pytest.raises(ValueError, match="not symmetric"):

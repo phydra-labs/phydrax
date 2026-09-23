@@ -66,8 +66,10 @@ evaluation = phx.equations.evaluate_unresolved_cfd_dem(
     jnp.asarray([0.01]),
     jnp.asarray(1.0e-3),
 )
+if not bool(evaluation.successful):
+    raise RuntimeError("CFD-DEM coupling evaluation failed")
 
-print(f"successful={bool(evaluation.successful)}")
+print("successful=True")
 print(f"particle_force={evaluation.particle_force.tolist()}")
 print(f"fluid_source={evaluation.fluid_momentum_source_rate.tolist()}")
 print(f"momentum_residual={evaluation.momentum_residual.tolist()}")

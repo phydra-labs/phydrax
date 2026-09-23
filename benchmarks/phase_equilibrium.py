@@ -9,6 +9,7 @@ import json
 import time
 from pathlib import Path
 
+import jax
 import jax.numpy as jnp
 
 import phydrax as phx
@@ -56,6 +57,7 @@ def main() -> None:
     plan = phx.solver.FixedTwoPhaseTPFlashPlan(model, tolerance=1.0e-6, maximum_steps=40)
     start = time.perf_counter()
     result = plan.solve(jnp.asarray(180.0), jnp.asarray(1.0e6), jnp.asarray((0.5, 0.5)))
+    jax.block_until_ready(result)
     elapsed_ms = 1000.0 * (time.perf_counter() - start)
     payload = {
         "elapsed_ms": elapsed_ms,
@@ -65,11 +67,15 @@ def main() -> None:
         "maximum_fugacity_residual": float(jnp.max(jnp.abs(result.fugacity_residual))),
         "phase_fraction": [float(value) for value in result.phase_fraction],
     }
-    encoded = json.dumps(payload, indent=2)
+    encoded = json.dumps(payload, allow_nan=False, indent=2)
     if arguments.output is None:
         print(encoded)
     else:
-        arguments.output.write_text(encoded + "\n")
+        from benchmarks._io import write_json_atomic
+
+        write_json_atomic(arguments.output, payload)
+    if not payload["successful"]:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

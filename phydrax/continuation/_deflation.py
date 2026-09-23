@@ -310,8 +310,31 @@ class RootDeflation(StrictModule):
         return tree_scale(self.factor(state), residual)
 
     def as_problem(self, /) -> NonlinearSystemProblem:
+        def residual(state, args):
+            original_residual, original_auxiliary = self.problem.evaluate(state, args)
+            return (
+                tree_scale(self.factor(state), original_residual),
+                (original_residual, original_auxiliary),
+            )
+
+        def validity(state, transformed_residual, auxiliary, args):
+            del transformed_residual
+            original_residual, original_auxiliary = auxiliary
+            return self.problem.valid(
+                state,
+                original_residual,
+                original_auxiliary,
+                args,
+            )
+
         return NonlinearSystemProblem(
-            lambda state, args: self.residual(state, args),
+            residual,
+            state_space=self.problem.state_space,
+            residual_space=self.problem.residual_space,
+            has_aux=True,
+            validity=validity,
+            trial_validity=self.problem.trial_validity_function,
+            trial_validity_id=self.problem.trial_validity_id,
             problem_id=self.problem_id,
         )
 
@@ -335,15 +358,23 @@ class RootDeflation(StrictModule):
             args=args,
         )
         state = nonlinear_result.state
-        original_residual = self.problem.residual(state, args)
+        original_residual, original_auxiliary = self.problem.evaluate(state, args)
         original_norm = tree_norm(original_residual)
+        original_valid = self.problem.valid(
+            state,
+            original_residual,
+            original_auxiliary,
+            args,
+        )
         distances = self.distances(state)
         nearest = jnp.argmin(distances)
         minimum_distance = distances[nearest]
         finite_distance = jnp.all(jnp.isfinite(distances))
         known = minimum_distance <= self.policy.known_root_tolerance
-        residual_converged = jnp.isfinite(original_norm) & (
-            original_norm <= self.policy.original_residual_tolerance
+        residual_converged = (
+            original_valid
+            & jnp.isfinite(original_norm)
+            & (original_norm <= self.policy.original_residual_tolerance)
         )
         status = jnp.where(
             ~finite_distance,

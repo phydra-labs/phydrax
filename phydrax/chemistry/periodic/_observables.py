@@ -67,6 +67,8 @@ class PeriodicDensityOfStatesPlan(StrictModule, NonTrainableState):
     ):
         if not isinstance(spectrum, PeriodicSpectrumResult):
             raise TypeError("spectrum must be PeriodicSpectrumResult.")
+        if not bool(spectrum.successful):
+            raise ValueError("DOS requires a successful periodic spectrum.")
         grid = np.asarray(energy_grid)
         width = float(broadening)
         multiplicity = float(states_per_band)
@@ -111,7 +113,11 @@ class PeriodicDensityOfStatesPlan(StrictModule, NonTrainableState):
         count = jnp.trapezoid(density, self.energy_grid)
         expected = self.states_per_band * self.spectrum.energies.shape[1]
         residual = jnp.abs(count - expected)
-        successful = jnp.all(jnp.isfinite(density)) & jnp.all(density >= 0.0)
+        successful = (
+            self.spectrum.successful
+            & jnp.all(jnp.isfinite(density))
+            & jnp.all(density >= 0.0)
+        )
         return PeriodicDensityOfStatesResult(
             self.energy_grid,
             density,
@@ -223,6 +229,8 @@ class PeriodicProjectedDOSPlan(StrictModule, NonTrainableState):
             raise TypeError(
                 "PDOS requires a prepared pencil, spectrum, and projector groups."
             )
+        if not bool(spectrum.successful):
+            raise ValueError("PDOS requires a successful periodic spectrum.")
         if (
             spectrum.pencil_id != pencil.plan.pencil_id
             or groups.basis_id != pencil.plan.basis.basis_id
@@ -279,7 +287,8 @@ class PeriodicProjectedDOSPlan(StrictModule, NonTrainableState):
         total = jnp.sum(grouped, axis=0)
         partition = jnp.max(jnp.abs(jnp.sum(group_weights, axis=-1) - 1.0), initial=0.0)
         successful = (
-            pencil_evaluation.successful
+            self.spectrum.successful
+            & pencil_evaluation.successful
             & jnp.all(jnp.isfinite(grouped))
             & (partition <= 1.0e-8)
         )

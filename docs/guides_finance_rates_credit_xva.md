@@ -2,7 +2,16 @@
 
 ## Resolve obligations before modeling
 
-Rates and credit products live under `phydrax.finance.contracts`. Host resolution uses `ContractResolutionContext`, `ContractResolutionPlan`, and `resolve_contract`, yielding `ResolvedContract` or an explicit `ContractResolutionStatus`. Resolved deposits, FRAs, futures, fixed/floating/inflation legs, OIS/IBOR/basis/cross-currency swaps, and fixed/floating/zero-coupon bonds expose known `CashflowBatch` obligations. `ContractResolutionReplay` checks the same calendar, fixing, reference-data, and convention identities.
+Rates and credit products live under `phydrax.finance.contracts`. Host resolution
+uses `ContractResolutionContext`, `ContractResolutionPlan`, and `resolve_contract`,
+yielding `ResolvedContract` or an explicit `ContractResolutionStatus`. Resolved
+deposits, FRAs, futures, fixed/floating/inflation legs, OIS/IBOR/basis/cross-currency
+swaps, and fixed/floating/zero-coupon bonds expose known `CashflowBatch` obligations.
+A `ResolvedFXForward` is a deliverable two-leg contract: its replay carries fixed base
+and quote currency legs, and `slot_currency_ids` retains exact currency identity.
+There is no settlement-fixing argument or single cash-settled replacement leg.
+`ContractResolutionReplay` checks the same calendar, fixing, reference-data, and
+convention identities.
 
 Credit obligations are separate from models. `CreditDefaultSwapContract` and `DefaultableBondContract` resolve contractual terms; `cds_leg_values`, `cds_par_spread`, `credit_event_cashflows`, and `defaultable_bond_cashflows` expose typed premium, protection, recovery, and timing semantics.
 
@@ -14,7 +23,14 @@ Credit obligations are separate from models. `CreditDefaultSwapContract` and `De
 
 ## Exposure and separate XVA components
 
-`NettingSet` and `CollateralAgreement` are host legal/operational inputs. `prepare_collateral_agreement`, `collateral_target`, `evolve_collateral`, `net_trade_values`, and `resolve_closeout` retain timing, thresholds, disputes, simultaneous-default rule, and close-out source. `ExposureProfile` carries fixed-shape pathwise values, masks, and identities.
+`NettingSet` and `CollateralAgreement` are host legal/operational inputs.
+Exposure plans bind a `CloseoutIdentityBinding` for the exact legal close-out
+semantics. `simulate_exposure` consumes typed scenario factors together with a
+`DiscountFactorPath`; it does not infer discounting from untyped factor arrays.
+`prepare_collateral_agreement`, `collateral_target`, `evolve_collateral`,
+`net_trade_values`, and `resolve_closeout` retain timing, thresholds, disputes,
+simultaneous-default rule, and close-out source. `ExposureProfile` carries fixed-shape
+pathwise values, masks, and identities.
 
 `compute_cva`, `compute_dva`, `compute_fva`, `compute_mva`, and `compute_kva` produce distinct typed results. `FundingPolicy`, `MarginFundingPolicy`, and `EconomicCapitalPolicy` are caller-supplied assumptions. `assemble_xva` sums only compatible components; economic KVA is not a regulatory-capital claim. `evaluate_exposure_bsde` is a separately identified route, not a replacement for legal-set resolution.
 

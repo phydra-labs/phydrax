@@ -348,6 +348,7 @@ def write_native_gauge_archive(
             "field_id": field.field_id,
         },
         arrays={"links": field.links},
+        limits=plan.archive_limits,
     )
     checksum, byte_count = _file_sha256(
         destination,

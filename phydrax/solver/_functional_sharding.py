@@ -61,13 +61,22 @@ class FunctionalShardingPolicy(StrictModule, NonTrainableState):
         identifier = str(policy_id)
         if not identifier:
             raise ValueError("policy_id must be non-empty.")
-        if coordinator_process < 0:
-            raise ValueError("coordinator_process must be non-negative.")
+        if not isinstance(coordinator_process, int) or isinstance(
+            coordinator_process, bool
+        ):
+            raise TypeError("coordinator_process must be an integer.")
+        mesh_processes = {
+            int(device.process_index) for device in np.asarray(mesh_.devices).flat
+        }
+        if coordinator_process not in mesh_processes:
+            raise ValueError(
+                "coordinator_process must be represented by the sharding mesh."
+            )
         self.mesh = mesh_
         self.axis_mapping = mapping
         self.policy_id = identifier
         self.execution_group_id = execution_group_id
-        self.coordinator_process = int(coordinator_process)
+        self.coordinator_process = coordinator_process
 
     @classmethod
     def from_execution_group(

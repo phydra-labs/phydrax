@@ -49,6 +49,24 @@ def test_coupled_fbsde_explicit_replays_one_wiener_realization():
     assert jnp.all(first.successful)
 
 
+def test_coupled_fbsde_rejects_scalar_state_shape():
+    with pytest.raises(ValueError, match="state_shape"):
+        phx.solver.CoupledFBSDEProblem(
+            jnp.asarray([0.0, 1.0]),
+            jnp.asarray(0.0),
+            lambda time, state, value, control, args: state,
+            lambda time, state, value, control, args: jnp.asarray([1.0]),
+            lambda time, state, value, control, args: value,
+            lambda state, args: state,
+            state_shape=(),
+            noise_shape=(1,),
+            output_shape=(1,),
+            num_paths=1,
+            problem_id="scalar-state",
+            process_id="wiener",
+        )
+
+
 def _jump_problem(*, status=None, realization=None):
     sample_shape = (2,)
     times = jnp.asarray([0.0, 0.5, 1.0])
@@ -127,6 +145,84 @@ def test_compensated_poisson_bsde_is_exact_on_grid():
     diagnostics = phx.stochastic.jump_bsde_diagnostics(evaluation)
     assert diagnostics.passed
     assert diagnostics.num_valid == 2
+
+
+@pytest.mark.parametrize("output_shape", [(), (2, 2)])
+def test_jump_bsde_reduces_the_declared_step_axis(output_shape):
+    _, paths = _jump_problem()
+
+    def output(value):
+        return jnp.asarray(value) if not output_shape else jnp.full(output_shape, value)
+
+    base = phx.stochastic.BSDEProblem(
+        lambda _key: paths,
+        lambda _time, _state, _args: jnp.zeros((1,)),
+        lambda _time, _state, _args: jnp.zeros((1, 1)),
+        lambda _time, _state, value, _control, _args: jnp.zeros_like(value),
+        lambda state, _args: output(state[0]),
+        state_shape=(1,),
+        noise_shape=(1,),
+        output_shape=output_shape,
+        problem_id=f"jump-axis-{len(output_shape)}",
+        process_id="wiener",
+    )
+    problem = phx.stochastic.JumpBSDEProblem(
+        base,
+        lambda _label, _time, _state, _control, _args: output(1.0),
+        {"jump": "poisson"},
+    )
+    evaluation = phx.stochastic.evaluate_jump_bsde(
+        problem,
+        paths,
+        lambda time, state: output(state[0] + 1.0 - time),
+        lambda _label, _time, _state, _channel, _mark, _args, *, key: output(
+            jr.uniform(key)
+        ),
+        control_predictor=lambda _time, _state: jnp.zeros(output_shape + (1,)),
+        key=jr.key(44),
+    )
+    diagnostics = phx.stochastic.jump_bsde_diagnostics(evaluation)
+
+    assert evaluation.global_residual.shape == (2,) + output_shape
+    assert diagnostics.compensated_increment_mean.shape == output_shape
+
+
+def test_jump_bsde_random_streams_are_namespaced_by_label():
+    template_problem, template_paths = _jump_problem()
+    events = template_paths.jump_events["jump"]
+
+    def evaluate(label):
+        paths = phx.stochastic.BSDEPathBatch(
+            template_paths.times,
+            template_paths.states,
+            template_paths.wiener_increments,
+            sample_shape=template_paths.sample_shape,
+            state_shape=template_paths.state_shape,
+            noise_shape=template_paths.noise_shape,
+            path_id=f"label-{label}",
+            process_id=template_paths.process_id,
+            jump_events={label: events},
+        )
+        problem = phx.stochastic.JumpBSDEProblem(
+            template_problem.base,
+            template_problem.compensator_rate,
+            {label: "poisson"},
+        )
+        return phx.stochastic.evaluate_jump_bsde(
+            problem,
+            paths,
+            lambda time, state: jnp.asarray([state[0] + 1.0 - time]),
+            lambda _label, _time, _state, _channel, _mark, _args, *, key: jr.uniform(
+                key,
+                (1,),
+            ),
+            control_predictor=lambda _time, _state: jnp.zeros((1, 1)),
+            key=jr.key(45),
+        )
+
+    first = evaluate("first")
+    second = evaluate("second")
+    assert not jnp.array_equal(first.jump_sums, second.jump_sums)
 
 
 def test_jump_bsde_propagates_event_failure_status():

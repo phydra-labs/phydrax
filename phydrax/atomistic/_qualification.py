@@ -55,10 +55,15 @@ class AtomisticDynamicsClaimEvidence(StrictModule, NonTrainableState):
         identifier = str(evidence_id)
         if not identifier:
             raise ValueError("evidence_id must be non-empty.")
+        residual_ = np.asarray(residual)
+        if residual_.shape != () or not np.isfinite(residual_) or residual_ < 0.0:
+            raise ValueError(
+                "Qualification residual must be a finite non-negative scalar."
+            )
         self.claim = claim
         self.evidence_id = identifier
         self.satisfied = jnp.asarray(satisfied, dtype=jnp.bool_).reshape(())
-        self.residual = jnp.asarray(residual).reshape(())
+        self.residual = jnp.asarray(residual_).reshape(())
 
 
 class AtomisticDynamicsQualificationProfile(StrictModule, NonTrainableState):
@@ -68,6 +73,9 @@ class AtomisticDynamicsQualificationProfile(StrictModule, NonTrainableState):
     constraint_tolerance: float = eqx.field(static=True)
     ensemble_tolerance: float = eqx.field(static=True)
     stress_tolerance: float = eqx.field(static=True)
+    required_claims: tuple[AtomisticDynamicsQualificationClaim, ...] = eqx.field(
+        static=True
+    )
     profile_id: str = eqx.field(static=True)
 
     def __init__(
@@ -79,6 +87,7 @@ class AtomisticDynamicsQualificationProfile(StrictModule, NonTrainableState):
         constraint_tolerance: float = 1.0e-8,
         ensemble_tolerance: float = 5.0e-2,
         stress_tolerance: float = 1.0e-5,
+        required_claims: tuple[AtomisticDynamicsQualificationClaim, ...] | None = None,
     ):
         values = tuple(
             float(value)
@@ -93,6 +102,20 @@ class AtomisticDynamicsQualificationProfile(StrictModule, NonTrainableState):
         )
         if any(not np.isfinite(value) or value <= 0.0 for value in values):
             raise ValueError("Qualification tolerances must be finite and positive.")
+        required = (
+            tuple(AtomisticDynamicsQualificationClaim)
+            if required_claims is None
+            else tuple(required_claims)
+        )
+        if (
+            not required
+            or any(
+                not isinstance(value, AtomisticDynamicsQualificationClaim)
+                for value in required
+            )
+            or len(set(required)) != len(required)
+        ):
+            raise ValueError("required_claims must be unique typed qualification claims.")
         (
             self.energy_drift_tolerance,
             self.force_gradient_tolerance,
@@ -101,10 +124,12 @@ class AtomisticDynamicsQualificationProfile(StrictModule, NonTrainableState):
             self.ensemble_tolerance,
             self.stress_tolerance,
         ) = values
+        self.required_claims = tuple(sorted(required, key=lambda value: value.value))
         self.profile_id = canonical_fingerprint(
             {
                 "kind": "atomistic-dynamics-qualification-profile",
                 "tolerances": list(values),
+                "required_claims": [value.value for value in self.required_claims],
             }
         )
 
@@ -134,12 +159,36 @@ class AtomisticDynamicsQualificationResult(StrictModule, NonTrainableState):
             not isinstance(value, AtomisticDynamicsClaimEvidence) for value in evidence
         ):
             raise TypeError("evidence must contain AtomisticDynamicsClaimEvidence.")
-        execution = jnp.asarray(execution_successful, dtype=jnp.bool_).reshape(())
+        claims = tuple(value.claim for value in evidence)
+        if len(set(claims)) != len(claims):
+            raise ValueError("Qualification evidence claims must be unique.")
+        thresholds = {
+            AtomisticDynamicsQualificationClaim.NVE_INVARIANT: profile.energy_drift_tolerance,
+            AtomisticDynamicsQualificationClaim.CONSERVATIVE_FORCE: profile.force_gradient_tolerance,
+            AtomisticDynamicsQualificationClaim.RIGID_MOTION_EQUIVARIANT: profile.momentum_tolerance,
+            AtomisticDynamicsQualificationClaim.PERMUTATION_EQUIVARIANT: profile.momentum_tolerance,
+            AtomisticDynamicsQualificationClaim.CONSTRAINT_SATISFACTION: profile.constraint_tolerance,
+            AtomisticDynamicsQualificationClaim.CANONICAL_SAMPLING: profile.ensemble_tolerance,
+            AtomisticDynamicsQualificationClaim.STRESS_ACCURACY: profile.stress_tolerance,
+        }
+        evidence_valid = tuple(
+            value.satisfied
+            & jnp.isfinite(value.residual)
+            & (value.residual <= thresholds.get(value.claim, jnp.inf))
+            for value in evidence
+        )
+        required_covered = set(profile.required_claims).issubset(claims)
         satisfied = (
-            jnp.all(jnp.stack(tuple(value.satisfied for value in evidence)))
-            if evidence
+            jnp.all(jnp.stack(evidence_valid))
+            if evidence_valid
             else jnp.asarray(maturity is ParticleMethodMaturity.EXPERIMENTAL)
         )
+        if maturity in (
+            ParticleMethodMaturity.PRODUCTION,
+            ParticleMethodMaturity.CERTIFIED,
+        ):
+            satisfied = satisfied & jnp.asarray(required_covered)
+        execution = jnp.asarray(execution_successful, dtype=jnp.bool_).reshape(())
         production = (
             execution
             & satisfied
@@ -160,9 +209,15 @@ class AtomisticDynamicsQualificationResult(StrictModule, NonTrainableState):
                 "maturity": maturity.value,
                 "profile": profile.profile_id,
                 "evidence": [
-                    {"claim": value.claim.value, "id": value.evidence_id}
+                    {
+                        "claim": value.claim.value,
+                        "id": value.evidence_id,
+                        "residual": float(value.residual).hex(),
+                        "satisfied": bool(value.satisfied),
+                    }
                     for value in evidence
                 ],
+                "claims_satisfied": bool(satisfied),
             }
         )
 

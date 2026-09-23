@@ -158,11 +158,16 @@ def main() -> None:
             "tangent_adjoint_residual": float(jnp.abs(jnp.sum(tangent) - adjoint)),
         },
     }
-    encoded = json.dumps(payload, indent=2)
+    payload["passed"] = payload["physics"]["successful"] and payload["physics"]["finite"]
+    encoded = json.dumps(payload, allow_nan=False, indent=2)
     if args.output is None:
         print(encoded)
     else:
-        args.output.write_text(encoded + "\n")
+        from benchmarks._io import write_json_atomic
+
+        write_json_atomic(args.output, payload)
+    if not payload["passed"]:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

@@ -14,10 +14,10 @@ import numpy as np
 
 from benchmarks._runtime import (
     capture_environment,
+    CompilationTiming,
     compiler_evidence,
     logical_array_bytes,
     measure_host,
-    measure_lower_and_compile,
     measure_repeated,
     measure_synchronized,
 )
@@ -55,10 +55,9 @@ def benchmark_case(dofs: int, rank: int, q_count: int, repeats: int):
     derivative = jax.jit(
         lambda q: differentiate_periodic_translation_family(prepared, q, order=1)
     )
-    lowered = sparse.lower(points, vectors)
-    executable, compilation = measure_lower_and_compile(
-        lambda: sparse.lower(points, vectors), lambda value: value.compile()
-    )
+    lowered, lowering_seconds = measure_host(lambda: sparse.lower(points, vectors))
+    executable, compilation_seconds = measure_host(lowered.compile)
+    compilation = CompilationTiming(lowering_seconds, compilation_seconds)
     warm_value, warm_seconds = measure_synchronized(lambda: executable(points, vectors))
     steady_value, steady = measure_repeated(
         lambda: executable(points, vectors), warmup=0, repeats=repeats

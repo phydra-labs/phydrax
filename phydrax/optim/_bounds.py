@@ -987,10 +987,19 @@ def _run_bound_iterations(
         iteration_body,
         (initial_state, initial_method_state),
     )
+    exhausted_evaluations = (
+        jnp.asarray(False)
+        if termination.maximum_evaluations is None
+        else state.objective_evaluations >= termination.maximum_evaluations
+    )
     return state._replace(
         status=jnp.where(
             state.status == int(OptimizationStatus.ITERATING),
-            int(OptimizationStatus.MAXIMUM_STEPS_REACHED),
+            jnp.where(
+                exhausted_evaluations,
+                int(OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED),
+                int(OptimizationStatus.MAXIMUM_STEPS_REACHED),
+            ),
             state.status,
         ).astype(jnp.int32)
     )
@@ -1633,7 +1642,6 @@ def _solve_bound_constrained(
     eligible_for_final_success = (
         (state.status == int(OptimizationStatus.ITERATING))
         | (state.status == int(OptimizationStatus.MAXIMUM_STEPS_REACHED))
-        | (state.status == int(OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED))
         | (state.status == int(OptimizationStatus.STAGNATION))
     )
     status = jnp.where(

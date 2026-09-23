@@ -288,8 +288,69 @@ class _ConstantPowerPeriodicNonlinearDrift(StrictModule):
         )
 
     def __call__(self, time: Array, state: Array, args: Any) -> Array:
-        return (
-            self.base.nonlinear(time, state, args) + self.forcing.evaluate(state).forcing
+        evaluated = self.forcing.evaluate(state)
+        forcing = jnp.where(
+            evaluated.successful,
+            evaluated.forcing,
+            jnp.full_like(evaluated.forcing, jnp.nan),
+        )
+        return self.base.nonlinear(time, state, args) + forcing
+
+
+class _PreparedConstantPowerPeriodicMethod(AbstractFixedStepMethod):
+    """ETDRK adapter that makes constant-power forcing evidence transactional."""
+
+    base_method: PreparedETDRKMethod
+    forcing: ConstantPowerFourierForcingPlan
+    method_id: str = eqx.field(static=True)
+
+    def __init__(
+        self,
+        base_method: PreparedETDRKMethod,
+        forcing: ConstantPowerFourierForcingPlan,
+        /,
+    ):
+        self.base_method = base_method
+        self.forcing = forcing
+        self.method_id = canonical_fingerprint(
+            {
+                "kind": "constant-power-periodic-etdrk",
+                "base_method": base_method.method_id,
+                "forcing": forcing.forcing_id,
+            }
+        )
+
+    def step(
+        self,
+        step_index: Array,
+        time: Array,
+        state: Array,
+        step_size: Array,
+        args: Any,
+        /,
+    ) -> FixedStepResult:
+        source_forcing = self.forcing.evaluate(state)
+        base = self.base_method.step(step_index, time, state, step_size, args)
+        candidate_forcing = self.forcing.evaluate(base.candidate_state)
+        forcing_successful = source_forcing.successful & candidate_forcing.successful
+        successful = base.successful & forcing_successful
+        return FixedStepResult(
+            candidate_state=base.candidate_state,
+            accepted_state=jnp.where(successful, base.accepted_state, state),
+            successful=successful,
+            residual=jnp.where(
+                forcing_successful,
+                base.residual,
+                jnp.asarray(jnp.inf, dtype=base.residual.dtype),
+            ),
+            iterations=base.iterations,
+            work=base.work,
+            transform_applied=base.transform_applied & successful,
+            transform_correction_norm=jnp.where(
+                successful,
+                base.transform_correction_norm,
+                jnp.zeros_like(base.transform_correction_norm),
+            ),
         )
 
 
@@ -297,7 +358,7 @@ def prepare_constant_power_periodic_method(
     method: PreparedETDRKMethod,
     forcing: ConstantPowerFourierForcingPlan,
     /,
-) -> PreparedETDRKMethod:
+) -> _PreparedConstantPowerPeriodicMethod:
     """Explicitly add constant-power forcing to one already prepared ETDRK drift."""
 
     if not isinstance(method, PreparedETDRKMethod):
@@ -324,7 +385,8 @@ def prepare_constant_power_periodic_method(
         compatible_noise_eigenvalues=base.compatible_noise_eigenvalues,
         compatible_noise_basis_id=base.compatible_noise_basis_id,
     )
-    return ETDRKMethod(method.order).prepare(drift, coordinates=coordinates)
+    prepared = ETDRKMethod(method.order).prepare(drift, coordinates=coordinates)
+    return _PreparedConstantPowerPeriodicMethod(prepared, forcing)
 
 
 class OUForcedPeriodicState(StrictModule):
@@ -1029,6 +1091,7 @@ class _PeriodicStatisticsEvaluator(StrictModule):
         /,
     ) -> PeriodicModalTurbulenceStatistics:
         continuation = None
+        constant_power_result = None
         if isinstance(state, OUForcedPeriodicState):
             if self.ou_forcing is None:
                 raise TypeError("OU periodic state requires an OU statistics binding.")
@@ -1039,15 +1102,21 @@ class _PeriodicStatisticsEvaluator(StrictModule):
                 raise TypeError("OU forcing and dynamic continuation are not composable.")
             value = state.velocity
             continuation = state.continuation_state
+            constant_power_result = (
+                None if self.forcing is None else self.forcing.evaluate(value)
+            )
             additive_forcing = (
-                None if self.forcing is None else self.forcing.evaluate(value).forcing
+                None if constant_power_result is None else constant_power_result.forcing
             )
         else:
             if self.ou_forcing is not None:
                 raise TypeError("OU statistics require OUForcedPeriodicState.")
             value = jnp.asarray(state)
+            constant_power_result = (
+                None if self.forcing is None else self.forcing.evaluate(value)
+            )
             additive_forcing = (
-                None if self.forcing is None else self.forcing.evaluate(value).forcing
+                None if constant_power_result is None else constant_power_result.forcing
             )
         stage = self.statistics.dynamics.stage(
             jnp.asarray(time),
@@ -1056,7 +1125,7 @@ class _PeriodicStatisticsEvaluator(StrictModule):
             continuation_state=continuation,
             accepted_update_mask=False,
         )
-        return self.statistics.evaluate(
+        result = self.statistics.evaluate(
             time,
             value,
             args,
@@ -1064,6 +1133,13 @@ class _PeriodicStatisticsEvaluator(StrictModule):
             additive_forcing_rate=additive_forcing,
             continuation_state=continuation,
         )
+        if constant_power_result is not None:
+            result = eqx.tree_at(
+                lambda item: item.successful,
+                result,
+                result.successful & constant_power_result.successful,
+            )
+        return result
 
     def __call__(
         self,

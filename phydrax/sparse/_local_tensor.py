@@ -10,7 +10,7 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ..linalg import (
@@ -21,7 +21,7 @@ from ..linalg import (
     OperatorProperties,
 )
 from ._execution import RelationExecutionPlan, RelationExecutionState
-from ._linear import SparseCoordinateOperator
+from ._linear import _properties_payload, SparseCoordinateOperator
 from ._relation import EdgeRelation
 
 
@@ -147,11 +147,13 @@ class ElementTensorOperator(StrictModule, NonTrainableState):
             {
                 "kind": "element-tensor-operator",
                 "matrix_shape": list(matrices.shape),
-                "input_shape": list(inputs.shape),
-                "output_shape": list(outputs.shape),
+                "input_gathers": array_tree_fingerprint(inputs),
+                "output_gathers": array_tree_fingerprint(outputs),
+                "valid": array_tree_fingerprint(valid_),
                 "source_size": source,
                 "target_size": target,
                 "accumulation": accumulation_,
+                "properties": _properties_payload(properties_),
             }
         )
 

@@ -35,6 +35,7 @@ from phydrax.solver._variable_sector_vmc import (
     SectorTailEvidence,
     solve_stochastic_reconfiguration,
     VARIABLE_SECTOR_VMC_CUTOFF_TAIL_REFUSED,
+    VARIABLE_SECTOR_VMC_INSUFFICIENT_TAIL_SAMPLES,
     VariableSectorTDVPPlan,
     VariableSectorVMCPlan,
 )
@@ -213,8 +214,12 @@ def test_stochastic_reconfiguration_solves_finite_reference_systems() -> None:
     assert result.residual_norm < 1e-5
 
 
-def _tail_evidence(*, accepted: bool) -> SectorTailEvidence:
-    status = 0 if accepted else VARIABLE_SECTOR_VMC_CUTOFF_TAIL_REFUSED
+def _tail_evidence(*, accepted: bool, status: int | None = None) -> SectorTailEvidence:
+    status = (
+        0
+        if accepted
+        else (VARIABLE_SECTOR_VMC_CUTOFF_TAIL_REFUSED if status is None else status)
+    )
     return SectorTailEvidence(
         total_histogram=jnp.asarray((128, 0, 0)),
         species_histogram=jnp.asarray(((128, 0, 0),)),
@@ -223,7 +228,9 @@ def _tail_evidence(*, accepted: bool) -> SectorTailEvidence:
         cutoff_probability=jnp.asarray(0.0 if accepted else 0.0625),
         cutoff_standard_error=jnp.asarray(0.0 if accepted else 0.02),
         cutoff_upper_bound=jnp.asarray(0.01 if accepted else 0.12),
-        sufficient_samples=jnp.asarray(True),
+        sufficient_samples=jnp.asarray(
+            status != VARIABLE_SECTOR_VMC_INSUFFICIENT_TAIL_SAMPLES
+        ),
         below_tolerance=jnp.asarray(accepted),
         status=jnp.asarray(status),
         capacity=2,
@@ -261,6 +268,16 @@ def test_real_and_imaginary_time_tdvp_evolution_and_tail_refusal() -> None:
     assert not refused.valid
     assert refused.status == VARIABLE_SECTOR_VMC_CUTOFF_TAIL_REFUSED
     assert np.allclose(refused.final_parameters, initial)
+    insufficient = evolve_variable_sector_tdvp(
+        lambda parameters, time: -parameters,
+        initial,
+        imaginary_plan,
+        _tail_evidence(
+            accepted=False,
+            status=VARIABLE_SECTOR_VMC_INSUFFICIENT_TAIL_SAMPLES,
+        ),
+    )
+    assert insufficient.status == VARIABLE_SECTOR_VMC_INSUFFICIENT_TAIL_SAMPLES
 
 
 def test_reversible_jump_vmc_preserves_chain_state_and_reports_tail() -> None:

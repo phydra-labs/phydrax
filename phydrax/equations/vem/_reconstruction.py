@@ -30,6 +30,29 @@ class VirtualElementReconstruction(StrictModule):
     reconstruction_id: str = eqx.field(static=True)
 
 
+def _runtime_matches_discretization(
+    runtime: VirtualElementRuntimeData,
+    discretization: VirtualElementDiscretization,
+    /,
+) -> bool:
+    expected_runtime_id = canonical_fingerprint(
+        {
+            "kind": "virtual-element-runtime",
+            "topology": discretization.mesh.topology_id,
+            "geometry_layout": discretization.mesh.geometry_layout_id,
+            "numeric_version": runtime.numeric_version,
+            "field": discretization.field.field_spec_id,
+        }
+    )
+    family = discretization.field.element.family
+    return (
+        runtime.runtime_id == expected_runtime_id
+        and runtime.topology_id == discretization.mesh.topology_id
+        and runtime.geometry_layout_id == discretization.mesh.geometry_layout_id
+        and all(projection.family == family for projection in runtime.projections)
+    )
+
+
 def project_virtual_element_field(
     discretization: VirtualElementDiscretization,
     state: ArrayLike,
@@ -43,12 +66,7 @@ def project_virtual_element_field(
     runtime_ = discretization.default_runtime if runtime is None else runtime
     if not isinstance(runtime_, VirtualElementRuntimeData):
         raise TypeError("runtime must be VirtualElementRuntimeData.")
-    family = discretization.field.element.family
-    if (
-        runtime_.topology_id != discretization.mesh.topology_id
-        or runtime_.geometry_layout_id != discretization.mesh.geometry_layout_id
-        or any(projection.family != family for projection in runtime_.projections)
-    ):
+    if not _runtime_matches_discretization(runtime_, discretization):
         raise ValueError("VEM reconstruction runtime is incompatible with the space.")
     values = discretization.field_space.vector_space.validate(state)
     l2 = []

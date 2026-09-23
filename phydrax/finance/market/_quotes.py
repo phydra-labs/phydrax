@@ -289,7 +289,9 @@ class FixingSeries(StrictModule, NonTrainableState):
         tie_policy: QuoteTiePolicy = QuoteTiePolicy.REJECT,
     ) -> QuoteSelection:
         event_ns = _event_ns(event_time, "event_time")
-        decision_ns = _event_ns(decision_time, "decision_time")
+        if not isinstance(decision_time, FinancialTimestamp):
+            raise TypeError("decision_time must be a FinancialTimestamp.")
+        decision_ns = int(decision_time.available_ns)
         if not isinstance(tie_policy, QuoteTiePolicy):
             raise TypeError("tie_policy must be a QuoteTiePolicy.")
         event_matches = [

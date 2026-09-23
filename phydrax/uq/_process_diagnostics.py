@@ -22,7 +22,7 @@ from .._strict import StrictModule
 from .._uncertainty import UNCERTAINTY_SOURCES, UncertaintySource
 from ..stochastic._process import AbstractMarginalTransitionLaw, semigroup_objective
 from ._metrics import energy_score, ensemble_crps
-from ._predictive import PredictiveField
+from ._predictive import _broadcast_field_data, PredictiveField
 
 
 ProcessScoreReduction = Literal["mean", "sum", "none"]
@@ -239,8 +239,18 @@ def horizon_score_diagnostics(
     )
     if declared_weights is None:
         declared_weights = jnp.ones_like(target_values)
-    if bool(jnp.any(jnp.where(declared_mask, declared_weights < 0.0, False))):
-        raise ValueError("weights must be nonnegative at active target locations.")
+    if bool(
+        jnp.any(
+            jnp.where(
+                declared_mask,
+                ~jnp.isfinite(declared_weights) | (declared_weights < 0.0),
+                False,
+            )
+        )
+    ):
+        raise ValueError(
+            "weights must be finite and nonnegative at active target locations."
+        )
 
     finite_samples = jnp.all(jnp.isfinite(sample_values), axis=0)
     finite_targets = jnp.isfinite(target_values)
@@ -821,13 +831,11 @@ def predictive_variance_decomposition(
 
     values = jnp.asarray(prediction.samples.data, dtype=jnp.float64)
     if prediction.valid is not None:
-        valid = jnp.asarray(prediction.valid.data, dtype=jnp.bool_)
-        valid_dims = prediction.valid.dims
-        reshape = tuple(
-            valid.shape[valid_dims.index(dim)] if dim in valid_dims else 1
-            for dim in prediction.samples.dims
-        )
-        values = jnp.where(valid.reshape(reshape), values, jnp.nan)
+        valid = _broadcast_field_data(
+            prediction.valid,
+            prediction.samples,
+        ).astype(jnp.bool_)
+        values = jnp.where(valid, values, jnp.nan)
     sample_dims = tuple(axis.dim for axis in prediction.sample_axes)
     event_dims = tuple(dim for dim in prediction.samples.dims if dim not in sample_dims)
     current_dims = list(prediction.samples.dims)
@@ -835,15 +843,10 @@ def predictive_variance_decomposition(
     components: dict[str, Array] = {}
 
     if prediction.conditional_variance is not None:
-        conditional = jnp.asarray(prediction.conditional_variance.data, dtype=jnp.float64)
-        conditional_dims = prediction.conditional_variance.dims
-        reshape = tuple(
-            conditional.shape[conditional_dims.index(dim)]
-            if dim in conditional_dims
-            else 1
-            for dim in prediction.samples.dims
-        )
-        conditional = jnp.broadcast_to(conditional.reshape(reshape), values.shape)
+        conditional = _broadcast_field_data(
+            prediction.conditional_variance,
+            prediction.samples,
+        ).astype(jnp.float64)
         sample_positions = tuple(current_dims.index(dim) for dim in sample_dims)
         observation_component = jnp.nanmean(conditional, axis=sample_positions)
         components["observation"] = observation_component

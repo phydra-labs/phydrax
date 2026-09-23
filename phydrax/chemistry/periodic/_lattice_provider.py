@@ -111,6 +111,8 @@ class LatticeDynamicsRequest(StrictModule, NonTrainableState):
             raise ValueError(
                 "requested_orders must be a unique non-empty subset of (2,3)."
             )
+        if request_polar_tensors and 2 not in orders:
+            raise ValueError("Polar lattice tensors require a requested IFC2 artifact.")
         if int(maximum_ifc2_routes) < (1 if 2 in orders else 0) or int(
             maximum_ifc3_routes
         ) < (1 if 3 in orders else 0):

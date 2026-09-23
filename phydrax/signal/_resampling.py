@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from math import gcd
+from numbers import Integral
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -277,9 +278,9 @@ class RationalResamplingPlan(StrictModule, NonTrainableState):
         self.chunk_length = _positive_int(chunk_length, "chunk_length")
         if self.chunk_length % self.down != 0:
             raise ValueError("chunk_length must be divisible by the reduced down factor.")
-        if isinstance(axis, bool) or not isinstance(axis, int):
+        if isinstance(axis, bool) or not isinstance(axis, Integral):
             raise TypeError("axis must be an integer.")
-        self.axis = axis
+        self.axis = int(axis)
         self.history_length = (self.tap_count + self.up - 1) // self.up - 1
         self.output_capacity = self.chunk_length * self.up // self.down
         self.tail_capacity = (self.tap_count - 1 + self.down - 1) // self.down + 1
@@ -370,7 +371,16 @@ class RationalResamplingPlan(StrictModule, NonTrainableState):
         )
         extended = jnp.concatenate((history, active_values), axis=-1)
         next_input_count = state.input_count + valid
-        next_output_count = (next_input_count * self.up + self.down - 1) // self.down
+        causal_output_count = (next_input_count * self.up + self.down - 1) // self.down
+        finite_output_count = jnp.where(
+            next_input_count > 0,
+            ((next_input_count - 1) * self.up + self.tap_count - 1) // self.down + 1,
+            0,
+        )
+        next_output_count = jnp.minimum(
+            causal_output_count,
+            finite_output_count,
+        )
         output_indices = state.output_count + jnp.arange(
             self.output_capacity,
             dtype=state.output_count.dtype,

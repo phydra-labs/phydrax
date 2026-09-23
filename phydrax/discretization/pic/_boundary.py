@@ -206,11 +206,38 @@ class PICOpenBoundaryPlan(StrictModule, NonTrainableState):
                 surface.collected_kinetic_energy,
             ),
         )
+        accepted_population = ParticlePopulationState(
+            jnp.where(
+                successful,
+                deactivation.candidate_state.active,
+                population.active,
+            ),
+            jnp.where(
+                successful,
+                deactivation.candidate_state.mass,
+                population.mass,
+            ),
+            jnp.where(
+                successful,
+                deactivation.candidate_state.incarnation,
+                population.incarnation,
+            ),
+            jnp.where(
+                successful,
+                deactivation.candidate_state.ever_occupied,
+                population.ever_occupied,
+            ),
+            jnp.where(
+                successful,
+                deactivation.candidate_state.retired,
+                population.retired,
+            ),
+        )
         return PICBoundaryResult(
             candidate_particles,
             accepted_particles,
             deactivation.candidate_state,
-            deactivation.accepted_state,
+            accepted_population,
             candidate_surface,
             accepted_surface,
             hit,

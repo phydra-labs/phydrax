@@ -180,6 +180,21 @@ def fit_sing(
                 batch=None,
             )
             audits.append(audit.objective)
+    posterior = sing_smoother(
+        current_problem,
+        key=jr.fold_in(key, policy.max_outer_iterations),
+        max_iterations=policy.posterior_steps,
+    )
+    final_audit = sing_objective(
+        current_problem,
+        posterior.state,
+        transition_plan=policy.transition_plan,
+        observation_factor=observation_factor,
+        batch=None,
+    )
+    audits[-1] = final_audit.objective
+    objective_values[-1] = final_audit.objective
+    objective_kind = final_audit.objective_kind
     history = jnp.stack(objective_values)
     full_history = jnp.stack(audits)
     valid = (

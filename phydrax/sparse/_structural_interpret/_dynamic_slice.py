@@ -96,8 +96,9 @@ def _prop_dynamic_slice(
     starts = _resolve_starts(eqn, 1, state_consts)
     if starts is not None:
         in_shape = _atom_shape(operand)
+        clamped = _clamp_starts(tuple(starts), in_shape, slice_sizes)
         slices = tuple(
-            slice(s, s + sz) for s, sz in zip(starts, slice_sizes, strict=True)
+            slice(s, s + sz) for s, sz in zip(clamped, slice_sizes, strict=True)
         )
         state_indices[eqn.outvars[0]] = _transform_indices(
             in_indices, in_shape, lambda p: p[slices]

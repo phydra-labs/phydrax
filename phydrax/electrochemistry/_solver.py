@@ -6,7 +6,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 
+import equinox as eqx
+import jax
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -25,6 +28,7 @@ class PorousElectrodeState:
 @dataclass(frozen=True, slots=True)
 class PorousElectrodeStep:
     state: PorousElectrodeState
+    candidate_state: PorousElectrodeState
     faradaic_current_a: Array
     reaction_rate_mol_s: Array
     species_balance_residual_mol: Array
@@ -45,6 +49,7 @@ class PorousElectrodeSystem:
     temperature_k: Array
     electron_count: int
     transfer_coefficient: float
+    tolerance: float
 
     @classmethod
     def create(
@@ -72,6 +77,24 @@ class PorousElectrodeSystem:
         equilibrium = np.asarray(equilibrium_potential_v, dtype=np.float64)
         temperature = np.asarray(temperature_k, dtype=np.float64)
         cells = volumes.size
+        if (
+            not isfinite(tolerance)
+            or tolerance <= 0
+            or not all(
+                np.all(np.isfinite(value))
+                for value in (
+                    volumes,
+                    transport,
+                    potential,
+                    stoichiometry,
+                    area,
+                    exchange,
+                    equilibrium,
+                    temperature,
+                )
+            )
+        ):
+            raise ValueError("Porous-electrode data and tolerance must be finite.")
         if volumes.ndim != 1 or cells == 0 or np.any(volumes <= 0):
             raise ValueError("Porous-electrode volumes must be a positive vector.")
         if transport.ndim != 3 or transport.shape[1:] != (cells, cells):
@@ -102,7 +125,13 @@ class PorousElectrodeSystem:
             raise ValueError("Porous-electrode reaction fields must be cell aligned.")
         if np.any(area < 0) or np.any(exchange < 0) or np.any(temperature <= 0):
             raise ValueError("Porous-electrode reaction fields are inadmissible.")
-        if electron_count == 0 or not 0 < transfer_coefficient < 1:
+        if (
+            isinstance(electron_count, bool)
+            or not isinstance(electron_count, int)
+            or electron_count == 0
+            or not isfinite(transfer_coefficient)
+            or not 0 < transfer_coefficient < 1
+        ):
             raise ValueError(
                 "Electrochemical electron count or transfer coefficient is invalid."
             )
@@ -117,6 +146,7 @@ class PorousElectrodeSystem:
             jnp.asarray(temperature),
             int(electron_count),
             float(transfer_coefficient),
+            float(tolerance),
         )
 
     def _faradaic(self, potential: Array) -> tuple[Array, Array]:
@@ -150,31 +180,77 @@ class PorousElectrodeSystem:
         current_tolerance_a: float = 1e-10,
     ) -> PorousElectrodeStep:
         concentration = jnp.asarray(state.concentration_mol_m3)
-        potential = jnp.asarray(state.potential_v)
+        source_potential = jnp.asarray(state.potential_v)
         applied = jnp.asarray(applied_current_a)
         species = self.species_transport_generators_s_inv.shape[0]
         cells = self.cell_volumes_m3.size
         if concentration.shape != (cells, species):
             raise ValueError("Porous-electrode concentrations have incompatible shape.")
-        if potential.shape != (cells,) or applied.shape != (cells,) or step_size_s <= 0:
-            raise ValueError("Porous-electrode electrical state or step size is invalid.")
-        if bool(jnp.any(concentration < 0)):
-            raise ValueError("Porous-electrode concentrations must be non-negative.")
-        completed = 0
-        for iteration in range(nonlinear_iterations):
+        if source_potential.shape != (cells,) or applied.shape != (cells,):
+            raise ValueError("Porous-electrode electrical state has incompatible shape.")
+        if (
+            not isfinite(step_size_s)
+            or step_size_s <= 0
+            or isinstance(nonlinear_iterations, bool)
+            or not isinstance(nonlinear_iterations, int)
+            or nonlinear_iterations <= 0
+            or not isfinite(current_tolerance_a)
+            or current_tolerance_a <= 0
+        ):
+            raise ValueError("Porous-electrode iteration/step controls are invalid.")
+        concentration = eqx.error_if(
+            concentration,
+            jnp.any(
+                ~jnp.isfinite(concentration)
+                | ~jnp.isfinite(source_potential[:, None])
+                | ~jnp.isfinite(applied[:, None])
+                | (concentration < 0)
+            ),
+            "Porous-electrode state/current must be finite with nonnegative concentrations.",
+        )
+
+        def nonlinear_step(iteration, loop_state):
+            potential, converged, failed, completed = loop_state
             faradaic, derivative = self._faradaic(potential)
             residual = self.potential_operator_s @ potential + faradaic - applied
-            if bool(jnp.max(jnp.abs(residual)) <= current_tolerance_a):
-                completed = iteration
-                break
+            residual_norm = jnp.max(jnp.abs(residual))
+            current_converged = jnp.isfinite(residual_norm) & (
+                residual_norm <= current_tolerance_a
+            )
+            active = ~converged & ~failed & ~current_converged
             jacobian = self.potential_operator_s + jnp.diag(derivative)
             correction = solve(
                 LinearSystem(DenseLinearOperator(jacobian)),
                 -residual,
                 policy=LinearSolvePolicy(DenseLU()),
             )
-            potential = potential + correction.value
-            completed = iteration + 1
+            correction_valid = (
+                correction.successful
+                & jnp.all(jnp.isfinite(correction.value))
+                & jnp.all(jnp.isfinite(faradaic))
+                & jnp.all(jnp.isfinite(derivative))
+                & jnp.isfinite(residual_norm)
+            )
+            commit = active & correction_valid
+            candidate = potential + correction.value
+            return (
+                jnp.where(commit, candidate, potential),
+                converged | current_converged,
+                failed | (active & ~correction_valid),
+                jnp.where(active, iteration + 1, completed),
+            )
+
+        potential, _, nonlinear_failed, completed = jax.lax.fori_loop(
+            0,
+            nonlinear_iterations,
+            nonlinear_step,
+            (
+                source_potential,
+                jnp.asarray(False),
+                jnp.asarray(False),
+                jnp.asarray(0, dtype=jnp.int32),
+            ),
+        )
         faradaic, _ = self._faradaic(potential)
         current_residual = self.potential_operator_s @ potential + faradaic - applied
         current_norm = jnp.sqrt(
@@ -184,6 +260,7 @@ class PorousElectrodeSystem:
         source_amount_rate = reaction_rate[:, None] * self.reaction_stoichiometry[None, :]
         next_species = []
         balance = []
+        transport_success = []
         for species_index in range(species):
             generator = self.species_transport_generators_s_inv[species_index]
             matrix = jnp.eye(cells) - float(step_size_s) * generator
@@ -196,6 +273,7 @@ class PorousElectrodeSystem:
                 policy=LinearSolvePolicy(DenseLU()),
             )
             next_species.append(transported.value)
+            transport_success.append(transported.successful)
             balance.append(
                 contract(
                     "q,q->",
@@ -207,12 +285,25 @@ class PorousElectrodeSystem:
         next_concentration = jnp.stack(next_species, axis=1)
         species_balance = jnp.stack(balance)
         successful = (
-            jnp.all(next_concentration >= -1e-12)
+            ~nonlinear_failed
+            & jnp.all(jnp.stack(transport_success))
+            & jnp.all(next_concentration >= -self.tolerance)
             & jnp.all(jnp.isfinite(next_concentration))
+            & jnp.all(jnp.isfinite(potential))
+            & jnp.all(jnp.isfinite(faradaic))
+            & jnp.isfinite(current_norm)
             & (current_norm <= current_tolerance_a)
+            & jnp.all(jnp.isfinite(species_balance))
+            & (jnp.linalg.norm(species_balance) <= self.tolerance)
+        )
+        candidate = PorousElectrodeState(next_concentration, potential)
+        accepted = PorousElectrodeState(
+            jnp.where(successful, next_concentration, concentration),
+            jnp.where(successful, potential, source_potential),
         )
         return PorousElectrodeStep(
-            PorousElectrodeState(next_concentration, potential),
+            accepted,
+            candidate,
             faradaic,
             reaction_rate,
             species_balance,

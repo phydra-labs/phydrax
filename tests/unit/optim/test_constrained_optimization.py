@@ -409,3 +409,35 @@ def test_native_bound_methods_support_jvp_vmap_and_pytree_parameters(method):
     np.testing.assert_allclose(mapped, targets, atol=2e-6)
     np.testing.assert_allclose(value, 0.75, atol=2e-6)
     np.testing.assert_allclose(derivative, 0.2, atol=2e-6)
+
+
+def test_augmented_lagrangian_refuses_outer_subsolve_without_remaining_budget():
+    problem = phx.optim.MinimizationProblem(
+        lambda value, _: jnp.sum((value - 2.0) ** 2),
+        constraints=(
+            phx.optim.NonlinearConstraint(
+                lambda value, _: value,
+                lower=0.0,
+                constraint_id="nonnegative",
+            ),
+        ),
+    )
+    result = phx.optim.minimize(
+        problem,
+        jnp.asarray([1.0]),
+        method=phx.optim.AugmentedLagrangian(
+            maximum_outer_steps=4,
+            inner_maximum_steps=8,
+        ),
+        termination=phx.optim.OptimizationTermination(
+            absolute_optimality=0.0,
+            relative_optimality=0.0,
+            maximum_steps=4,
+            maximum_evaluations=1,
+        ),
+    )
+
+    assert int(result.status) == int(
+        phx.optim.OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED
+    )
+    assert int(result.diagnostics.iterations) == 0

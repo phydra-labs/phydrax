@@ -10,7 +10,7 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ._base import AbstractPositiveDefiniteKernel
+from ._base import _as_real_array, AbstractPositiveDefiniteKernel
 from ._spectral import AbstractSpectralMultiplier
 
 
@@ -20,7 +20,7 @@ def _hamming_points(
     alphabet_size: int,
     /,
 ) -> Array:
-    array = jnp.asarray(points, dtype=jnp.float64)
+    array = _as_real_array(points, name="Hamming points")
     if array.ndim == 1:
         array = array[None, :]
     if array.ndim != 2 or array.shape[1] != dimension:

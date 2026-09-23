@@ -86,16 +86,36 @@ def _prop_dot_general(
         rhs_val_flat = np.broadcast_to(rhs_val_flat, int(np.prod(rhs_shape)))
 
     if not out_shape:
-        # Scalar output (e.g., vector dot product).
-        # Skip terms where either factor is a known zero.
+        # Scalar contractions still follow the declared axis correspondence;
+        # flattened positions need not align when rhs axes are permuted.
+        contract_sizes = tuple(lhs_shape[axis] for axis in lhs_contract)
+        contract_coords = (
+            np.indices(contract_sizes).reshape(len(contract_sizes), -1)
+            if contract_sizes
+            else np.empty((0, 1), dtype=int)
+        )
         result: IndexSet = _empty_index_set()
-        for i in range(len(lhs_indices)):
-            lhs_zero = lhs_val_flat is not None and lhs_val_flat[i] == 0
-            rhs_zero = rhs_val_flat is not None and rhs_val_flat[i] == 0
+        for position in range(contract_coords.shape[1]):
+            lhs_coord = [0] * len(lhs_shape)
+            rhs_coord = [0] * len(rhs_shape)
+            for coordinate_axis, (lhs_axis, rhs_axis) in enumerate(
+                zip(lhs_contract, rhs_contract, strict=True)
+            ):
+                coordinate = int(contract_coords[coordinate_axis, position])
+                lhs_coord[lhs_axis] = coordinate
+                rhs_coord[rhs_axis] = coordinate
+            lhs_flat = (
+                int(np.ravel_multi_index(tuple(lhs_coord), lhs_shape)) if lhs_shape else 0
+            )
+            rhs_flat = (
+                int(np.ravel_multi_index(tuple(rhs_coord), rhs_shape)) if rhs_shape else 0
+            )
+            lhs_zero = lhs_val_flat is not None and lhs_val_flat[lhs_flat] == 0
+            rhs_zero = rhs_val_flat is not None and rhs_val_flat[rhs_flat] == 0
             if lhs_zero or rhs_zero:
                 continue
-            result |= lhs_indices[i]
-            result |= rhs_indices[i]
+            result |= lhs_indices[lhs_flat]
+            result |= rhs_indices[rhs_flat]
         state_indices[eqn.outvars[0]] = [result]
         return
 

@@ -12,7 +12,7 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from ..._model import AbstractArrayModel
+from ..._model import AbstractArrayModel, ModelBinding
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from .._batch import MLBatch, WeightPolicy
@@ -220,6 +220,7 @@ class FittedSimpleImputer(AbstractArrayModel):
     input_schema: FeatureSchema = eqx.field(static=True)
     output_schema: FeatureSchema = eqx.field(static=True)
     case_shape: tuple[int, ...] = eqx.field(static=True)
+    _input_binding: ModelBinding = eqx.field(static=True)  # ty: ignore[invalid-attribute-override]
 
     def __init__(
         self,
@@ -242,6 +243,11 @@ class FittedSimpleImputer(AbstractArrayModel):
         self.input_schema = input_schema
         self.output_schema = output_schema
         self.case_shape = tuple(case_shape)
+        self._input_binding = (
+            ModelBinding.blockwise("flat", pass_key=False)
+            if self.case_shape
+            else ModelBinding.pointwise("flat", pass_key=False)
+        )
 
     def _missing(self, values: Array, mask: Any | None) -> Array:
         missing = jnp.asarray(
@@ -281,6 +287,18 @@ class FittedSimpleImputer(AbstractArrayModel):
                 (imputed, missing.astype(imputed.real.dtype)), axis=-1
             )
         return imputed
+
+    def transform_batch(self, batch: MLBatch, /, *, key: Any = None) -> MLBatch:
+        values = self.transform(
+            _dense_batch(batch),
+            mask=batch.feature_mask,
+            key=key,
+        )
+        return batch.with_features(
+            values,
+            feature_schema=self.output_schema,
+            feature_mask=jnp.ones(values.shape, dtype=jnp.bool_),
+        )
 
     def inverse_transform(self, x: Any, /, *, key: Any = None) -> Array:
         del x, key

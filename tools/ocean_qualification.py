@@ -160,7 +160,7 @@ def main():
     parser.add_argument("--steps", type=int, default=10)
     parser.add_argument("--dt", type=float, default=0.01)
     arguments = parser.parse_args()
-    shape = tuple(arguments.shape.split(","))
+    shape = tuple(int(value.strip()) for value in arguments.shape.split(","))
     if len(shape) != 3 or any(value < 2 for value in shape):
         raise ValueError("Ocean qualification shape must contain three counts >= 2.")
     if arguments.steps <= 0 or arguments.dt <= 0.0:

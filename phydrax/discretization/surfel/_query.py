@@ -92,19 +92,17 @@ class SurfelRayQueryPlan(StrictModule):
             raise ValueError("Surfel ray-query limits are invalid.")
         if bounds.item_lower.shape != geometry.position.shape:
             raise ValueError("Surfel bounds and geometry capacities disagree.")
+        storage_to_logical = np.asarray(bounds.hierarchy.storage_to_logical)
+        geometry_ids = np.asarray(geometry.discretization.surfel_ids)
+        geometry_active = np.asarray(geometry.active_mask)
         if not np.array_equal(
-            np.sort(
-                np.asarray(bounds.hierarchy.sorted_stable_ids)[
-                    np.asarray(bounds.hierarchy.sorted_active)
-                ]
-            ),
-            np.sort(
-                np.asarray(geometry.discretization.surfel_ids)[
-                    np.asarray(geometry.active_mask)
-                ]
-            ),
+            np.asarray(bounds.hierarchy.sorted_stable_ids),
+            geometry_ids[storage_to_logical],
+        ) or not np.array_equal(
+            np.asarray(bounds.hierarchy.sorted_active),
+            geometry_active[storage_to_logical],
         ):
-            raise ValueError("Surfel bounds and geometry identities disagree.")
+            raise ValueError("Surfel bounds and geometry slot identities disagree.")
         maximum_depth = int(np.max(np.asarray(bounds.hierarchy.node_levels)))
         branching = bounds.hierarchy.node_children.shape[1]
         self.bounds = bounds

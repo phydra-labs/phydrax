@@ -155,6 +155,13 @@ class ComputationAwareSparseVariationalGaussianProcessELBO(StrictModule):
     ) -> Array:
         _validate_variational_capacity(state, self.action_count)
         safe_ids = jnp.where(batch.factor_mask, batch.factor_ids, 0)
+        safe_ids = eqx.error_if(
+            safe_ids,
+            jnp.any(
+                batch.factor_mask & (batch.factor_ids >= self.observation_points.shape[0])
+            ),
+            "Active factor_ids must lie within the prepared observation design.",
+        )
         features = self.observation_features[safe_ids]
         prior = self.prior_diagonal[safe_ids]
         mean = ein.contract("bi,i->b", features, state.mean)

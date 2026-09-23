@@ -257,3 +257,52 @@ def test_prepared_function_update_follows_filtered_jit_pattern():
     )
     assert jnp.allclose(state, jnp.asarray([2.0]))
     assert next_prepared.plan.plan_id == prepared.plan.plan_id
+
+
+def test_residual_optimal_composition_preflights_and_accounts_coefficient_solve():
+    problem = nl.NonlinearSystemProblem(lambda state, target: state - target)
+    updates = (
+        nl.FunctionNonlinearUpdate(
+            lambda state, target: state + 0.25 * (target - state),
+            update_id="coefficient-quarter",
+        ),
+        nl.FunctionNonlinearUpdate(
+            lambda state, target: state + 0.5 * (target - state),
+            update_id="coefficient-half",
+        ),
+    )
+    update = nl.CompositeNonlinearUpdate(
+        updates,
+        kind="residual-optimal",
+        regularization=0.0,
+    )
+    prepared = nl.prepare_nonlinear_update(
+        problem,
+        jnp.zeros(1),
+        update,
+        args=jnp.ones(1),
+    )
+
+    refused, _ = nl.apply_prepared_nonlinear_update(
+        prepared,
+        jnp.zeros(1),
+        args=jnp.ones(1),
+        control=nl.NonlinearUpdateControl(maximum_linear_solves=0),
+    )
+    applied, _ = nl.apply_prepared_nonlinear_update(
+        prepared,
+        jnp.zeros(1),
+        args=jnp.ones(1),
+        control=nl.NonlinearUpdateControl(
+            maximum_linear_solves=1,
+            maximum_linear_setups=1,
+            maximum_linear_iterations=1,
+        ),
+    )
+
+    assert refused.status == int(nl.NonlinearUpdateStatus.BUDGET_EXHAUSTED)
+    assert int(refused.diagnostics.linear_solves) == 0
+    assert bool(applied.applied)
+    assert int(applied.diagnostics.linear_setups) == 1
+    assert int(applied.diagnostics.linear_solves) == 1
+    assert int(applied.diagnostics.linear_iterations) <= 1

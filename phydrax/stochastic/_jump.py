@@ -121,6 +121,7 @@ class PoissonClockRealization(StrictModule):
         label: str | None = None,
         coupling_id: str | None = None,
         _path_indices: Array | None = None,
+        _realization_id: str | None = None,
     ):
         key = _key(root_key, owner="PoissonClockRealization")
         channels = int(num_channels)
@@ -138,6 +139,10 @@ class PoissonClockRealization(StrictModule):
             not isinstance(coupling_id, str) or not coupling_id
         ):
             raise ValueError("coupling_id must be a non-empty string or None.")
+        if _realization_id is not None and (
+            not isinstance(_realization_id, str) or not _realization_id
+        ):
+            raise ValueError("_realization_id must be non-empty or None.")
         expected = samples
         if _path_indices is None:
             count = prod(samples) if samples else 1
@@ -154,15 +159,19 @@ class PoissonClockRealization(StrictModule):
             channels,
             process_id,
         )
-        realization_id = _hash_parts(
-            b"phydrax-poisson-realization\0",
-            jr.key_data(key),
-            support_value,
-            channels,
-            capacity,
-            samples,
-            indices,
-            process_id,
+        realization_id = (
+            _hash_parts(
+                b"phydrax-poisson-realization\0",
+                jr.key_data(key),
+                support_value,
+                channels,
+                capacity,
+                samples,
+                indices,
+                process_id,
+            )
+            if _realization_id is None
+            else _realization_id
         )
         self.root_key = key
         self.path_indices = indices

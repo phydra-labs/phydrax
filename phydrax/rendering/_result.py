@@ -60,6 +60,7 @@ class RenderEvidence(StrictModule, NonTrainableState):
             & self.coverage_complete
             & self.capacity_sufficient
             & self.visibility_exact
+            & self.route_stable
             & (self.status == 0)
         )
 

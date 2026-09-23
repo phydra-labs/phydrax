@@ -168,17 +168,19 @@ motion = phx.discretization.FiniteElementMeshMotionPlan(
     discretization,
     projection,
 )
-realization = motion.realize(candidate_state)
+realization = motion.realize(candidate_state, numeric_version="shape-design-7")
 context = phx.equations.FiniteElementExecutionContext(
     realization.runtime,
 )
 ```
 
-The execution runtime always contains finite accepted coordinates. On a failed
-proposal it contains the base coordinates, while `realization.accepted` remains
-false. State-design line searches must include `accepted` in both
-`state_admissibility` and `state_realization`; fallback physics must never make
-an invalid candidate acceptable.
+The caller-supplied nonempty `numeric_version` identifies the proposed numeric
+coordinate state and participates in runtime identity; it is not inferred from array
+values or a display label. The execution runtime always contains finite accepted
+coordinates. On a failed proposal it contains the base coordinates, while
+`realization.accepted` remains false. State-design line searches must include
+`accepted` in both `state_admissibility` and `state_realization`; fallback physics
+must never make an invalid candidate acceptable.
 
 Boundary entity membership is static during an epoch. Reclassifying a boundary,
 changing connectivity, or rebuilding a volume mesh is a topology event. Phydrax

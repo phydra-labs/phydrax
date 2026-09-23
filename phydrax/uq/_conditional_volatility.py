@@ -17,12 +17,13 @@ from ..optim import minimize, NewtonTrustRegion, OptimizationTermination
 
 
 ConditionalVolatilityKind: TypeAlias = Literal["garch", "gjr-garch", "egarch"]
-ConditionalVolatilityStatus: TypeAlias = Literal[0, 1, 2, 3]
+ConditionalVolatilityStatus: TypeAlias = Literal[0, 1, 2, 3, 4]
 
 CONDITIONAL_VOLATILITY_SUCCESS = 0
 CONDITIONAL_VOLATILITY_INSUFFICIENT = 1
 CONDITIONAL_VOLATILITY_UNSTABLE = 2
 CONDITIONAL_VOLATILITY_NONFINITE = 3
+CONDITIONAL_VOLATILITY_OPTIMIZER_FAILURE = 4
 
 
 def _univariate(values: ArrayLike, mask: ArrayLike | None) -> tuple[Array, Array]:
@@ -288,9 +289,13 @@ def fit_garch(
             count < 8,
             CONDITIONAL_VOLATILITY_INSUFFICIENT,
             jnp.where(
-                ~model.stable,
-                CONDITIONAL_VOLATILITY_UNSTABLE,
-                CONDITIONAL_VOLATILITY_SUCCESS,
+                ~optimization.successful,
+                CONDITIONAL_VOLATILITY_OPTIMIZER_FAILURE,
+                jnp.where(
+                    ~model.stable,
+                    CONDITIONAL_VOLATILITY_UNSTABLE,
+                    CONDITIONAL_VOLATILITY_SUCCESS,
+                ),
             ),
         ),
     ).astype(jnp.int32)
@@ -437,6 +442,7 @@ def fit_har(
 __all__ = [
     "CONDITIONAL_VOLATILITY_INSUFFICIENT",
     "CONDITIONAL_VOLATILITY_NONFINITE",
+    "CONDITIONAL_VOLATILITY_OPTIMIZER_FAILURE",
     "CONDITIONAL_VOLATILITY_SUCCESS",
     "CONDITIONAL_VOLATILITY_UNSTABLE",
     "ConditionalVolatilityKind",

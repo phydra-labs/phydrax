@@ -322,7 +322,7 @@ def test_array_discrete_system_adapter_has_legacy_transition_parity():
     )
     plant = ArrayDiscreteSystemPlant(
         system,
-        lambda key: jnp.asarray([1.0, -2.0], dtype=jnp.float32),
+        lambda key: jax.random.normal(key, (2,), dtype=jnp.float32),
         reset_fallback=jnp.zeros((2,), dtype=jnp.float32),
         semantic_provenance=semantic,
         numeric_revision=numeric,
@@ -339,6 +339,13 @@ def test_array_discrete_system_adapter_has_legacy_transition_parity():
         numeric,
     )
     reset = plant.reset(jax.random.key(3), parameters)
+    legacy_reset = plant.reset(jax.random.key_data(jax.random.key(3)), parameters)
+    np.testing.assert_array_equal(
+        legacy_reset.accepted_state.payload,
+        reset.accepted_state.payload,
+    )
+    checkpoint = plant.checkpoint(legacy_reset.accepted_state)
+    assert checkpoint.state_digest
     commands = jnp.asarray([2.0, 1.0], dtype=jnp.float32)
     context = PlantStepContext(0.0, 0.5, 0)
     adapted = plant.step(context, reset.accepted_state, commands, parameters)

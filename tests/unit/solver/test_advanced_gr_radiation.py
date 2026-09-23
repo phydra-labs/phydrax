@@ -258,6 +258,37 @@ def test_multigroup_and_neutrino_uniform_transport_preserve_all_groups_and_lepto
         multigroup_result.state.densitized_moments,
         multigroup_state.densitized_moments,
     )
+    identity = jnp.broadcast_to(jnp.eye(3), tuple(grid.shape) + (3, 3))
+    scaled_geometry = ADMGridGeometry(
+        jnp.ones(tuple(grid.shape)),
+        jnp.zeros(tuple(grid.shape) + (3,)),
+        4.0 * identity,
+        0.25 * identity,
+        8.0 * jnp.ones(tuple(grid.shape)),
+        jnp.zeros(tuple(grid.shape) + (3, 3)),
+        jnp.ones(tuple(grid.shape), dtype="bool"),
+        jnp.ones(tuple(grid.shape), dtype="bool"),
+        snapshot_token=jnp.asarray(1, dtype=jnp.int32),
+        chart_id="cartesian",
+        convention_id=convention.convention_id,
+        scale_id=scale.scale_id,
+        topology_id=grid.topology.topology_id,
+        geometry_lineage_id="scaled",
+    )
+    rejected_stages = (
+        lower_valencia_stage_geometry(discretization, geometry, 0.0),
+        lower_valencia_stage_geometry(discretization, scaled_geometry, 0.0),
+        lower_valencia_stage_geometry(discretization, scaled_geometry, 0.0),
+    )
+    rejected = multigroup_transport.advance(
+        multigroup_state,
+        0.0,
+        0.0,
+        rejected_stages,
+    )
+    assert not bool(rejected.accepted)
+    assert bool(rejected.stress_energy.compatible_with(rejected_stages[0].cell))
+    assert not bool(rejected.stress_energy.compatible_with(rejected_stages[-1].cell))
 
     neutrinos = GRNeutrinoM1System(scale, convention, jnp.asarray((1.0, 2.0, 4.0)))
     species_transport = tuple(

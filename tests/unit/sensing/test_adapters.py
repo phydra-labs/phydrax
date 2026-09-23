@@ -155,6 +155,17 @@ def test_normalized_ros_image_camera_imu_odometry_and_joint_profiles():
         "positions",
         "velocities",
     } <= names
+    angular = next(
+        asset
+        for asset in result.collection.assets
+        if asset.field.quantity.name == "angular-velocity"
+    )
+    assert angular.field.support.sample_shape == (1,)
+    assert angular.field.layout.component_shape == (3,)
+    assert angular.field.layout.component_frame_id == "sensor"
+    assert angular.acquisition.clock_id == "ros-header:/imu"
+    assert angular.metadata["ros_sensor_time_seconds"] == 2.0
+    assert angular.metadata["ros_frame_id"] == "sensor"
 
 
 def test_e57_collection_preserves_scan_pose_invalidity_and_image_links():
@@ -284,14 +295,21 @@ def test_actual_e57_and_cfradial_adapters_are_bounded(tmp_path):
     radar_source = tmp_path / "radar.nc"
     dataset = xarray.Dataset(
         data_vars={
-            "reflectivity": (("ray", "range"), np.asarray(((1.0, 2.0), (3.0, 4.0)))),
+            "reflectivity": (
+                ("ray", "range"),
+                np.asarray(((1.0, 2.0), (3.0, 4.0))),
+                {"units": "1"},
+            ),
         },
         coords={
-            "azimuth": (("ray",), np.asarray((0.0, 1.0))),
-            "elevation": (("ray",), np.asarray((0.1, 0.1))),
-            "range": (("range",), np.asarray((100.0, 200.0))),
+            "azimuth": (("ray",), np.asarray((0.0, 1.0)), {"units": "rad"}),
+            "elevation": (("ray",), np.asarray((0.1, 0.1)), {"units": "rad"}),
+            "range": (("range",), np.asarray((100.0, 200.0)), {"units": "m"}),
         },
-        attrs={"instrument_name": "synthetic-radar"},
+        attrs={
+            "instrument_name": "synthetic-radar",
+            "coordinate_frame": "synthetic-radar",
+        },
     )
     dataset.to_netcdf(radar_source)
     dataset.close()
@@ -315,12 +333,15 @@ def test_actual_e57_and_cfradial_adapters_are_bounded(tmp_path):
         radar_reference,
         campaign_id="actual-radar",
         quantity_units={"reflectivity": phx.units.ONE},
+        angle_unit=phx.units.RADIAN,
+        range_unit=phx.units.METER,
+        frame_id="synthetic-radar",
         maximum_gates=8,
     )
     assert radar.assets[0].field.values.shape == (2, 2)
 
 
-def test_actual_rosbag_laser_scan_admission(tmp_path):
+def test_actual_rosbag_laser_scan_and_rgb_image_admission(tmp_path):
     rosbags = pytest.importorskip("rosbags")
     from rosbags.rosbag2 import Writer
     from rosbags.typesys import get_typestore, Stores
@@ -330,7 +351,9 @@ def test_actual_rosbag_laser_scan_admission(tmp_path):
     time_type = typestore.types["builtin_interfaces/msg/Time"]
     header_type = typestore.types["std_msgs/msg/Header"]
     scan_type = typestore.types["sensor_msgs/msg/LaserScan"]
+    image_type = typestore.types["sensor_msgs/msg/Image"]
     message_type = "sensor_msgs/msg/LaserScan"
+    image_message_type = "sensor_msgs/msg/Image"
     message = scan_type(
         header_type(time_type(0, 0), "sensor"),
         0.0,
@@ -343,6 +366,35 @@ def test_actual_rosbag_laser_scan_admission(tmp_path):
         np.asarray((1.0, 2.0), dtype=np.float32),
         np.asarray((), dtype=np.float32),
     )
+    image_message = image_type(
+        header_type(time_type(0, 1), "camera"),
+        2,
+        2,
+        "rgb8",
+        0,
+        8,
+        np.asarray(
+            (
+                1,
+                2,
+                3,
+                4,
+                5,
+                6,
+                0,
+                0,
+                7,
+                8,
+                9,
+                10,
+                11,
+                12,
+                0,
+                0,
+            ),
+            dtype=np.uint8,
+        ),
+    )
     source = tmp_path / "bag"
     with Writer(source, version=9) as writer:
         connection = writer.add_connection("/scan", message_type, typestore=typestore)
@@ -350,6 +402,14 @@ def test_actual_rosbag_laser_scan_admission(tmp_path):
             connection,
             0,
             typestore.serialize_cdr(message, message_type),
+        )
+        image_connection = writer.add_connection(
+            "/image", image_message_type, typestore=typestore
+        )
+        writer.write(
+            image_connection,
+            1,
+            typestore.serialize_cdr(image_message, image_message_type),
         )
     members = tuple(sorted(value for value in source.rglob("*") if value.is_file()))
     digest = sha256()
@@ -373,16 +433,44 @@ def test_actual_rosbag_laser_scan_admission(tmp_path):
         uncertainty={"range": 0.0},
         lineage_ids=("synthetic",),
     )
-    profile = phx.sensing.RosTopicProfile(
-        "/scan",
-        message_type,
-        phx.sensing.RosMessageKind.LASER_SCAN,
-        "sensor",
+    profiles = (
+        phx.sensing.RosTopicProfile(
+            "/scan",
+            message_type,
+            phx.sensing.RosMessageKind.LASER_SCAN,
+            "sensor",
+        ),
+        phx.sensing.RosTopicProfile(
+            "/image",
+            image_message_type,
+            phx.sensing.RosMessageKind.IMAGE,
+            "camera",
+        ),
     )
-    result = phx.sensing.RosbagImportPlan((profile,)).read(
+    result = phx.sensing.RosbagImportPlan(profiles).read(
         source, reference, campaign_id="actual-ros"
     )
-    np.testing.assert_allclose(result.collection.assets[0].field.values, (1.0, 2.0))
+    range_asset = next(
+        asset
+        for asset in result.collection.assets
+        if asset.field.quantity.name == "range"
+    )
+    image_asset = next(
+        asset
+        for asset in result.collection.assets
+        if asset.field.quantity.name == "values"
+    )
+    np.testing.assert_allclose(range_asset.field.values, (1.0, 2.0))
+    np.testing.assert_array_equal(
+        image_asset.field.values,
+        np.asarray(
+            (
+                ((1.0, 2.0, 3.0), (4.0, 5.0, 6.0)),
+                ((7.0, 8.0, 9.0), (10.0, 11.0, 12.0)),
+            )
+        ),
+    )
+    assert image_asset.field.support.frame_id == "camera"
 
 
 def test_actual_xtf_side_scan_admission(tmp_path):
@@ -429,8 +517,13 @@ def test_actual_xtf_side_scan_admission(tmp_path):
         np.zeros(3),
         np.zeros((1, 3)),
         1500.0,
+        phx.units.derived_unit("m/s", ((phx.units.METER, 1), (phx.units.SECOND, -1))),
         axis,
-        "sonar",
+        phx.SpatialCoordinateContract(
+            phx.units.METER,
+            coordinate_system="cartesian",
+            reference_frame="sonar",
+        ),
         "xtf-acquisition",
     )
     result = phx.sensing.XtfSideScanProvider().read(
@@ -445,11 +538,30 @@ def test_actual_xtf_side_scan_admission(tmp_path):
 
 
 def test_fmcw_and_sonar_signal_profiles_preserve_acquisition_axes():
+    radar_contract = phx.SpatialCoordinateContract(
+        phx.units.METER,
+        coordinate_system="cartesian",
+        reference_frame="radar-frame",
+    )
+    speed_unit = phx.units.derived_unit(
+        "m/s", ((phx.units.METER, 1), (phx.units.SECOND, -1))
+    )
     acquisition = phx.sensing.FMCWAcquisition(
-        77e9, 1e12, 1e-6, 1e-3, np.zeros((2, 3)), "radar"
+        77e9,
+        1e12,
+        1e-6,
+        1e-3,
+        np.zeros((2, 3)),
+        "radar",
+        radar_contract,
+        phx.units.SECOND,
     )
     radar = phx.sensing.FMCWTransformPlan(
-        acquisition, 8, 4, propagation_speed=3e8
+        acquisition,
+        8,
+        4,
+        propagation_speed=3e8,
+        propagation_speed_unit=speed_unit,
     ).evaluate(np.ones((4, 8, 2), dtype=np.complex64))
     assert radar.range_doppler_channels.shape == (4, 4, 2)
     assert bool(radar.successful)
@@ -458,7 +570,7 @@ def test_fmcw_and_sonar_signal_profiles_preserve_acquisition_axes():
         "m/s", ((phx.units.METER, 1), (phx.units.SECOND, -1))
     )
     radar_profile = phx.sensing.AutomotiveRadarProfile(
-        "radar-frame", phx.units.METER, velocity_unit
+        "radar-frame", phx.units.METER, velocity_unit, phx.units.BARN
     ).lower(
         np.asarray(((10.0, 0.1, -2.0, 3.0),)),
         _manifest(),
@@ -476,7 +588,17 @@ def test_fmcw_and_sonar_signal_profiles_preserve_acquisition_axes():
         "sonar-time", np.linspace(0.0, 1.0, 8), phx.units.SECOND
     )
     sonar = phx.sensing.SonarAcquisition(
-        np.zeros(3), np.asarray(((0, 0, 0), (0.1, 0, 0))), 1.0, axis, "tank", "sonar"
+        np.zeros(3),
+        np.asarray(((0, 0, 0), (0.1, 0, 0))),
+        1.0,
+        speed_unit,
+        axis,
+        phx.SpatialCoordinateContract(
+            phx.units.METER,
+            coordinate_system="cartesian",
+            reference_frame="tank",
+        ),
+        "sonar",
     )
     plan = phx.sensing.DelayAndSumBeamformingPlan(sonar, np.asarray(((0.5, 0.0, 0.0),)))
     waveforms = np.zeros((2, 8))
@@ -484,3 +606,53 @@ def test_fmcw_and_sonar_signal_profiles_preserve_acquisition_axes():
     image = plan.evaluate(waveforms)
     assert image.image.shape == (1,)
     assert bool(image.successful)
+
+
+def test_sensing_plans_refuse_invalid_physical_and_capacity_contracts():
+    contract = phx.SpatialCoordinateContract(
+        phx.units.METER,
+        coordinate_system="cartesian",
+        reference_frame="sensor",
+    )
+    speed_unit = phx.units.derived_unit(
+        "m/s", ((phx.units.METER, 1), (phx.units.SECOND, -1))
+    )
+    acquisition = phx.sensing.FMCWAcquisition(
+        77e9,
+        1e12,
+        1e-6,
+        1e-3,
+        np.zeros((1, 3)),
+        "radar",
+        contract,
+        phx.units.SECOND,
+    )
+    with pytest.raises(ValueError, match="fast_samples"):
+        phx.sensing.FMCWTransformPlan(
+            acquisition,
+            0,
+            4,
+            propagation_speed=3e8,
+            propagation_speed_unit=speed_unit,
+        )
+    with pytest.raises(ValueError, match="propagation_speed"):
+        phx.sensing.FMCWTransformPlan(
+            acquisition,
+            8,
+            4,
+            propagation_speed=np.nan,
+            propagation_speed_unit=speed_unit,
+        )
+    axis = phx.measurement.SampleTimeAxis(
+        "sonar", np.asarray((0.0, 1.0)), phx.units.SECOND
+    )
+    with pytest.raises(ValueError, match="sound speed"):
+        phx.sensing.SonarAcquisition(
+            np.zeros(3),
+            np.zeros((1, 3)),
+            np.nan,
+            speed_unit,
+            axis,
+            contract,
+            "sonar",
+        )

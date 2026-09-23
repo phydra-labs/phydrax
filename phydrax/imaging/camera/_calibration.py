@@ -380,7 +380,7 @@ def _masked_rms(residual: Array, mask: Array) -> Array:
     count = jnp.sum(mask).astype(jnp.int32)
     squared = jnp.sum(residual * residual, axis=-1)
     value = jnp.sqrt(jnp.sum(jnp.where(mask, squared, 0.0)) / jnp.maximum(count, 1))
-    return jnp.where(count > 0, value, jnp.nan)
+    return jnp.where(count > 0, value, jnp.zeros((), dtype=value.dtype))
 
 
 def _calibration_evidence(
@@ -549,8 +549,12 @@ def calibrate_camera_rig(
         parameter_delta,
         plan.free_parameter_mask,
     )
-    finite = jnp.all(jnp.isfinite(parameter_delta)) & jnp.isfinite(
-        diagnostics.training_rms
+    finite = (
+        jnp.all(jnp.isfinite(parameter_delta))
+        & jnp.isfinite(diagnostics.training_rms)
+        & jnp.isfinite(diagnostics.holdout_rms)
+        & jnp.all(jnp.isfinite(diagnostics.per_camera_training_rms))
+        & jnp.all(jnp.isfinite(diagnostics.per_camera_holdout_rms))
     )
     optimization_success = optimization.status == int(OptimizationStatus.SUCCESS)
     valid = optimization_success & diagnostics.observable & finite

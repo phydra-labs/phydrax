@@ -188,3 +188,31 @@ def test_unit_octonion_geometry_moufang_brackets_and_algebra_matrix_semantics():
     spectrum = phx.metrix.algebra.AlgebraRegularSpectrum(quaternion, jnp.eye(4)[1])
     assert spectrum.side == "left"
     assert bool(spectrum.valid)
+
+
+def test_clifford_metric_signature_and_cochain_plan_fail_closed():
+    with pytest.raises(ValueError, match="signature"):
+        phx.metrix.clifford.CliffordMetricField(
+            lambda coordinates: jnp.eye(2) + 0.0 * coordinates[0],
+            dimension=2,
+            signature=(-1, 3),
+            field_id="invalid-signature",
+        )
+
+    field = phx.metrix.clifford.CliffordMetricField(
+        lambda coordinates: jnp.eye(2) + 0.0 * coordinates[0],
+        dimension=2,
+        signature=(2, 0),
+        field_id="empty-cochain-plan",
+    )
+    product = phx.metrix.clifford.PreparedCliffordMetricProduct(field)
+    empty = jnp.zeros((0,))
+    with pytest.raises(ValueError, match="at least one diagonal term"):
+        phx.metrix.clifford.CliffordCochainProductPlan(
+            product,
+            empty,
+            empty,
+            empty,
+            empty,
+            plan_id="empty",
+        )

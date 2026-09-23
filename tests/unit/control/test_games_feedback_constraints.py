@@ -93,9 +93,9 @@ def _local_suggestion(
         args=args,
         problem_id=f"{suggestion_id}:game",
     )
-    nominal = phx.dynamics.CallableInputPolicy(
+    nominal = phx.control.games.BoundGameInputPolicy(
         lambda context, state, callback_args: jnp.zeros((controls,)),
-        input_layout=input_layout,
+        game,
         policy_id=f"{suggestion_id}:nominal",
     )
     evaluation = evaluate_game_policy(game, nominal)

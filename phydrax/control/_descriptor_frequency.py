@@ -82,7 +82,7 @@ def descriptor_frequency_response(
         case_shape + system.feedthrough_matrix.shape[-2:],
     )
     frequency = omega.reshape((1,) * len(system.batch_shape) + omega.shape)
-    pencil = -1j * frequency[..., None, None] * mass - state
+    pencil = 1j * frequency[..., None, None] * mass - state
     inputs = inputs.astype(pencil.dtype)
     outputs = outputs.astype(pencil.dtype)
     feedthrough = feedthrough.astype(pencil.dtype)

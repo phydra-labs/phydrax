@@ -104,6 +104,9 @@ class DirectNBodyGravityPlan(StrictModule, NonTrainableState):
                 "kind": "direct-nbody-gravity",
                 "particles": particles.prepared_id,
                 "context": context.context_id,
+                "gravitational_constant": coupling,
+                "softening": smoothing,
+                "collision_distance": collision,
             }
         )
 

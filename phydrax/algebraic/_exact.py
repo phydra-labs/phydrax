@@ -362,6 +362,11 @@ class ExactSymbolicPlan(StrictModule):
     maximum_input_bytes: int = eqx.field(static=True)
     maximum_output_bytes: int = eqx.field(static=True)
     timeout_seconds: float = eqx.field(static=True)
+    maximum_variable_count: int = eqx.field(static=True)
+    maximum_equation_count: int = eqx.field(static=True)
+    maximum_term_count: int = eqx.field(static=True)
+    maximum_exponent_entries: int = eqx.field(static=True)
+    maximum_storage_bytes: int = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -374,6 +379,11 @@ class ExactSymbolicPlan(StrictModule):
         maximum_input_bytes: int = 1 << 20,
         maximum_output_bytes: int = 8 << 20,
         timeout_seconds: float = 120.0,
+        maximum_variable_count: int = 4_096,
+        maximum_equation_count: int = 100_000,
+        maximum_term_count: int = 1_000_000,
+        maximum_exponent_entries: int = 10_000_000,
+        maximum_storage_bytes: int = 256 * 1024 * 1024,
     ):
         if not isinstance(system, ExactSparsePolynomialSystem):
             raise TypeError("system must be ExactSparsePolynomialSystem.")
@@ -381,15 +391,58 @@ class ExactSymbolicPlan(StrictModule):
         _validate_arguments(system, operation_, arguments)
         input_limit = _positive_integer(maximum_input_bytes, "maximum_input_bytes")
         output_limit = _positive_integer(maximum_output_bytes, "maximum_output_bytes")
+        resource_limits = (
+            _positive_integer(maximum_variable_count, "maximum_variable_count"),
+            _positive_integer(maximum_equation_count, "maximum_equation_count"),
+            _positive_integer(maximum_term_count, "maximum_term_count"),
+            _positive_integer(maximum_exponent_entries, "maximum_exponent_entries"),
+            _positive_integer(maximum_storage_bytes, "maximum_storage_bytes"),
+        )
+        hard_limits = (4_096, 100_000, 1_000_000, 10_000_000, 256 * 1024 * 1024)
+        if any(
+            value > hard for value, hard in zip(resource_limits, hard_limits, strict=True)
+        ):
+            raise ValueError("Exact symbolic resource limits exceed worker bounds.")
         timeout = float(timeout_seconds)
         if not np.isfinite(timeout) or timeout <= 0.0:
             raise ValueError("timeout_seconds must be positive and finite.")
+        systems = [system]
+        if isinstance(arguments, NormalFormArguments):
+            systems.append(arguments.polynomial)
+        term_count = sum(item.term_count for item in systems)
+        exponent_entries = sum(item.term_count * item.variable_count for item in systems)
+        estimated_storage = (
+            sum(item.variable_count * 64 + item.equation_count * 64 for item in systems)
+            + term_count * 40
+            + exponent_entries * 8
+            + sum(
+                sum(len(value.encode("ascii")) for value in item.coefficients)
+                for item in systems
+            )
+        )
+        checks = (
+            (system.variable_count, resource_limits[0], "variable_count"),
+            (system.equation_count, resource_limits[1], "equation_count"),
+            (term_count, resource_limits[2], "term_count"),
+            (exponent_entries, resource_limits[3], "exponent_entries"),
+            (estimated_storage, resource_limits[4], "estimated_storage_bytes"),
+        )
+        for observed, maximum, name in checks:
+            if observed > maximum:
+                raise ValueError(f"Exact symbolic {name}={observed} exceeds {maximum}.")
         self.system = system
         self.operation = operation_
         self.arguments = arguments
         self.maximum_input_bytes = input_limit
         self.maximum_output_bytes = output_limit
         self.timeout_seconds = timeout
+        (
+            self.maximum_variable_count,
+            self.maximum_equation_count,
+            self.maximum_term_count,
+            self.maximum_exponent_entries,
+            self.maximum_storage_bytes,
+        ) = resource_limits
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "exact-symbolic-plan",
@@ -399,6 +452,11 @@ class ExactSymbolicPlan(StrictModule):
                 "maximum_input_bytes": input_limit,
                 "maximum_output_bytes": output_limit,
                 "timeout_seconds": timeout,
+                "maximum_variable_count": resource_limits[0],
+                "maximum_equation_count": resource_limits[1],
+                "maximum_term_count": resource_limits[2],
+                "maximum_exponent_entries": resource_limits[3],
+                "maximum_storage_bytes": resource_limits[4],
             }
         )
 
@@ -504,11 +562,14 @@ class ExactSymbolicResult(StrictModule):
         diagnostic: str = "",
     ):
         status_ = ExactSymbolicStatus(status)
-        if (status_ is ExactSymbolicStatus.SUCCESS) != (
-            output is not None and evidence is not None
-        ):
+        if status_ is ExactSymbolicStatus.SUCCESS:
+            if output is None or evidence is None:
+                raise ValueError(
+                    "Successful exact symbolic results require output and evidence."
+                )
+        elif output is not None or evidence is not None:
             raise ValueError(
-                "Successful exact symbolic results require output and evidence."
+                "Failed exact symbolic results cannot carry output or exactness evidence."
             )
         self.status = status_
         self.output = output
@@ -530,7 +591,11 @@ class ExactSymbolicResult(StrictModule):
 
     @property
     def externally_claimed_exact(self) -> bool:
-        return self.evidence is not None
+        return (
+            self.status is ExactSymbolicStatus.SUCCESS
+            and self.output is not None
+            and self.evidence is not None
+        )
 
 
 ExactPolynomialResult = ExactSymbolicResult
@@ -545,6 +610,11 @@ def plan_exact_symbolic(
     maximum_input_bytes: int = 1 << 20,
     maximum_output_bytes: int = 8 << 20,
     timeout_seconds: float = 120.0,
+    maximum_variable_count: int = 4_096,
+    maximum_equation_count: int = 100_000,
+    maximum_term_count: int = 1_000_000,
+    maximum_exponent_entries: int = 10_000_000,
+    maximum_storage_bytes: int = 256 * 1024 * 1024,
 ) -> ExactSymbolicPlan:
     operation_ = ExactSymbolicOperation(operation)
     selected = _default_arguments(operation_) if arguments is None else arguments
@@ -555,6 +625,11 @@ def plan_exact_symbolic(
         maximum_input_bytes=maximum_input_bytes,
         maximum_output_bytes=maximum_output_bytes,
         timeout_seconds=timeout_seconds,
+        maximum_variable_count=maximum_variable_count,
+        maximum_equation_count=maximum_equation_count,
+        maximum_term_count=maximum_term_count,
+        maximum_exponent_entries=maximum_exponent_entries,
+        maximum_storage_bytes=maximum_storage_bytes,
     )
 
 

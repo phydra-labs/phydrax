@@ -264,6 +264,7 @@ class LinearCorrectionEvidence(StrictModule):
     field_names: tuple[str, ...] = eqx.field(static=True)
     exactness_scope: AffineExactnessScope = eqx.field(static=True)
     generalized: bool = eqx.field(static=True)
+    exact: bool = eqx.field(static=True)
     has_adjoint: bool = eqx.field(static=True)
     has_derivative: bool = eqx.field(static=True)
     rank: int = eqx.field(static=True)
@@ -278,6 +279,7 @@ class LinearCorrectionEvidence(StrictModule):
         field_names: Sequence[str],
         exactness_scope: AffineExactnessScope,
         generalized: bool,
+        exact: bool,
         numeric_version: int,
         identity_defect: Any = 0.0,
         range_defect: Any = 0.0,
@@ -301,6 +303,7 @@ class LinearCorrectionEvidence(StrictModule):
         self.field_names = _field_names(field_names)
         self.exactness_scope = exactness_scope
         self.generalized = bool(generalized)
+        self.exact = bool(exact)
         self.numeric_version = jnp.asarray(version)
         self.identity_defect = identity
         self.range_defect = range_
@@ -653,6 +656,7 @@ class PreparedLinearCorrection(StrictModule):
                 field_names=names,
                 exactness_scope=exactness_scope,
                 generalized=generalized,
+                exact=False,
                 numeric_version=version,
                 has_adjoint=adjoint_action is not None,
                 has_derivative=derivative_action is not None,
@@ -806,6 +810,7 @@ class ConstraintLinearCorrectionProvider(AbstractLinearCorrectionProvider):
             field_names=assembly.correction_fields,
             exactness_scope=policy.exactness_scope,
             generalized=generalized,
+            exact=not generalized,
             numeric_version=numeric_version,
             identity_defect=prepared.evidence.strict_right_inverse_residual_norm,
             range_defect=prepared.evidence.generalized_right_inverse_residual_norm,
@@ -996,11 +1001,19 @@ class PreparedAffineProjector(AbstractFieldRealization):
                 message="Evaluation context condition is not a member of this joint projector.",
                 evidence=self.evidence,
             )
+        if context.exact_required and not self.correction.evidence.exact:
+            return FieldRealizationResult.failure(
+                RealizationStatus.UNSUPPORTED,
+                state=current,
+                message="Prepared affine projection does not certify exact semantics.",
+                evidence=self.evidence,
+            )
         projected = self.apply(fields, context=context, key=context.prng_key)
         defect = self.constraint_defect(projected, context=context, key=context.prng_key)
         residual_norm = jnp.asarray(0.0) if defect is None else defect
         tolerance = self.policy.absolute_tolerance + self.policy.relative_tolerance
         verified = jnp.asarray(True) if defect is None else residual_norm <= tolerance
+        exact = self.correction.evidence.exact and bool(np.asarray(residual_norm == 0.0))
         source_id = canonical_fingerprint(
             {
                 "kind": "affine-projection-source",
@@ -1015,7 +1028,7 @@ class PreparedAffineProjector(AbstractFieldRealization):
             self.prepared_id,
             self.correction.provider_id,
             quantifier=context.quantifier,
-            exact=True,
+            exact=exact,
         )
         certificate = AffineProjectionCertificate(
             stamp,
@@ -1033,6 +1046,13 @@ class PreparedAffineProjector(AbstractFieldRealization):
             rank=self.correction.evidence.rank,
             nullity=self.correction.evidence.nullity,
         )
+        if context.exact_required and not exact:
+            return FieldRealizationResult.failure(
+                RealizationStatus.VALIDATION_FAILED,
+                state=current,
+                message="Prepared affine projection retained a nonzero residual.",
+                evidence=certificate,
+            )
         if self.policy.verify_projection and not bool(np.asarray(verified)):
             return FieldRealizationResult.failure(
                 RealizationStatus.VALIDATION_FAILED,
@@ -1070,6 +1090,10 @@ class ExactAffineProjector(AbstractFieldRealization):
     def __init__(self, prepared: PreparedAffineProjector, /):
         if not isinstance(prepared, PreparedAffineProjector):
             raise TypeError("ExactAffineProjector requires a PreparedAffineProjector.")
+        if not prepared.correction.evidence.exact:
+            raise ValueError(
+                "ExactAffineProjector requires correction evidence that certifies exact semantics."
+            )
         self.prepared = prepared
 
     @property

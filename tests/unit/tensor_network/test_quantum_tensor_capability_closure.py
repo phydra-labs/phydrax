@@ -19,10 +19,14 @@ from phydrax.solver import (
     prepare_mps_quantum_program,
 )
 from phydrax.tensor_network import (
+    CausalProcessStatus,
+    CausalProcessTensor,
+    CombLegSpec,
     compress_lpdo,
     LocallyPurifiedDensity,
     LPDOCompressionPlan,
     product_mps,
+    QuantumInstrument,
 )
 
 
@@ -104,6 +108,7 @@ def test_lpdo_compression_remains_psd_by_factor_construction_with_bound():
         LPDOCompressionPlan(
             maximum_bond_dimension=2,
             maximum_purification_dimension=1,
+            tolerance=1.0,
         ),
     )
     density = result.state.to_dense_density()
@@ -112,3 +117,50 @@ def test_lpdo_compression_remains_psd_by_factor_construction_with_bound():
     assert result.positive_by_construction
     assert jnp.min(eigenvalues) >= -1e-6
     assert result.trace_distance_upper_bound >= 0.0
+
+
+def test_lpdo_compression_tolerance_controls_acceptance():
+    state = LocallyPurifiedDensity(
+        (jnp.array([[[[1.0], [0.5]], [[0.0], [0.5]]]], dtype=jnp.complex64),)
+    )
+    result = compress_lpdo(
+        state,
+        LPDOCompressionPlan(
+            maximum_bond_dimension=2,
+            maximum_purification_dimension=1,
+            tolerance=0.0,
+        ),
+    )
+    assert not result.tolerance_satisfied
+    assert not result.valid
+    assert result.trace_distance_upper_bound > result.requested_tolerance
+
+
+def test_impossible_causal_process_outcome_returns_zero_with_status():
+    spec = CombLegSpec(2, 1, 1)
+    initial = jnp.asarray([[1.0, 0.0], [0.0, 0.0]], dtype=jnp.complex64)
+    identity_channel = (jnp.eye(2, dtype=jnp.complex64)[None, ...],)
+    process = CausalProcessTensor(
+        spec,
+        initial,
+        identity_channel,
+        process_id="one-slot",
+    )
+    projectors = jnp.asarray(
+        (
+            (((1.0, 0.0), (0.0, 0.0)),),
+            (((0.0, 0.0), (0.0, 1.0)),),
+        ),
+        dtype=jnp.complex64,
+    )
+    instrument = QuantumInstrument(
+        projectors,
+        jnp.asarray((True, True)),
+        jnp.asarray(((True,), (True,))),
+        instrument_id="computational",
+    )
+    result = process.contract((instrument,), (1,))
+    assert int(result.status) == int(CausalProcessStatus.ZERO_PROBABILITY)
+    assert not result.valid
+    assert result.probability == 0.0
+    assert jnp.array_equal(result.final_system_state, jnp.zeros((2, 2)))

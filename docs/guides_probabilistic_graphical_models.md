@@ -279,9 +279,13 @@ bound, and their gap. `perturb_and_map_log_normalizer` reports its unary-Gumbel
 estimate and Monte Carlo standard error without presenting samples as exact.
 
 Checkpointing uses `write_factor_graph_checkpoint` and
-`read_factor_graph_checkpoint`. The archive is pickle-free and checksum-validated.
-Built-in factor groups and optional BP/Gibbs states round-trip; callable kernels are
-rejected because executable code cannot be reconstructed from a neutral archive.
+`read_factor_graph_checkpoint`. The writer receives `belief_prepared` together with
+`belief_state`, and the exact `gibbs_root_key` together with `gibbs_state`; state
+cannot be archived without its owning preparation or semantic RNG root. The
+pickle-free checksum-validated `FactorGraphCheckpoint` exposes the restored
+`gibbs_root_key`. Built-in factor groups and optional BP/Gibbs states round-trip;
+callable kernels are rejected because executable code cannot be reconstructed from a
+neutral archive.
 
 ## Advanced sampling and discrete transport
 

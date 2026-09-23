@@ -37,6 +37,17 @@ class BatchTransformModel(Protocol):
 
 
 @runtime_checkable
+class CaseDependentModel(Protocol):
+    """Structural marker for models whose parameters carry explicit case axes."""
+
+    case_shape: tuple[int, ...]
+
+
+def _is_case_dependent(model: AbstractArrayModel, /) -> bool:
+    return isinstance(model, CaseDependentModel) and bool(model.case_shape)
+
+
+@runtime_checkable
 class ReversibleTransformModel(Protocol):
     """Structural contract for a fitted transform with a true mathematical inverse."""
 
@@ -248,6 +259,10 @@ def _call_blockwise_cases(
             )
         return model(_prepare_input(values, model.in_size), key=key)
     array = jnp.asarray(values)
+    if _is_case_dependent(model):
+        if tuple(model.case_shape) != tuple(case_shape):
+            raise ValueError("Model case_shape does not match the composed batch.")
+        return model(_prepare_input(array, model.in_size), key=key)
     if not case_shape:
         return model(_prepare_input(array, model.in_size), key=key)
     sample_count, width = array.shape[-2], array.shape[-1]
@@ -355,7 +370,7 @@ def _transform_batch(
         raise TypeError("ML feature composition requires flat model inputs.")
     if binding.batch_mode == "axis":
         raise TypeError("Axis-bound models cannot be used as ML feature transforms.")
-    if binding.batch_mode == "pointwise":
+    if binding.batch_mode == "pointwise" and not _is_case_dependent(model):
         if isinstance(batch.features, SparseFeatures):
             raise TypeError(
                 "Pointwise transforms of SparseFeatures are unsupported; no dense fallback is performed."
@@ -412,7 +427,11 @@ def _transform_values(
     else:
         array = jnp.asarray(values)
         leading = tuple(array.shape[:-1])
-        if composed_blockwise and binding.batch_mode == "pointwise":
+        if (
+            composed_blockwise
+            and binding.batch_mode == "pointwise"
+            and not _is_case_dependent(model)
+        ):
             output = _call_pointwise(model, array, key=key)
         else:
             output = model(_prepare_input(array, model.in_size), key=key)
@@ -445,7 +464,11 @@ def _predict_values(
             )
         return model(values, key=key)
     array = jnp.asarray(values)
-    if composed_blockwise and binding.batch_mode == "pointwise":
+    if (
+        composed_blockwise
+        and binding.batch_mode == "pointwise"
+        and not _is_case_dependent(model)
+    ):
         return _call_pointwise(model, array, key=key)
     return model(_prepare_input(array, model.in_size), key=key)
 
@@ -462,7 +485,9 @@ def _composition_binding(
             raise TypeError("ML composition requires flat model inputs.")
         if binding.batch_mode == "axis":
             raise TypeError("Axis-bound models cannot be used in ML composition.")
-        blockwise = blockwise or binding.batch_mode == "blockwise"
+        blockwise = (
+            blockwise or binding.batch_mode == "blockwise" or _is_case_dependent(model)
+        )
     return ModelBinding.blockwise("flat") if blockwise else ModelBinding.pointwise("flat")
 
 
@@ -477,7 +502,7 @@ def _combine_results(
     status = jnp.asarray(0, dtype=jnp.int32)
     for result in results_:
         valid = valid & result.valid
-        status = jnp.where(status == 0, result.status, status)
+        status = jnp.maximum(status, result.status)
 
     level_order = {"none": 0, "conditional": 1, "almost-everywhere": 2, "smooth": 3}
 

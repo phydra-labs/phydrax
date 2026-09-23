@@ -4,6 +4,7 @@
 
 import jax.numpy as jnp
 
+import phydrax as phx
 import phydrax.axes as cx
 from phydrax._frozendict import frozendict
 from phydrax.domain import Interval1d, TimeInterval
@@ -105,3 +106,27 @@ def test_delay_vector_valued_time_only_point():
     )
     assert y.shape == (2,)
     assert jnp.allclose(y, jnp.array([0.75, 1.5]))
+
+
+def test_spatially_varying_delay_preserves_coord_separable_axes():
+    spatial = phx.domain.GeometryDomain(
+        phx.geometry.Square(
+            center=(0.0, 0.0),
+            side=2.0,
+            feature_id="delay-grid",
+        ).compile()
+    )
+    domain = spatial @ TimeInterval(0.0, 2.0)
+    field = domain.Function("t")(lambda t: t)
+    tau = domain.Function("x")(lambda x: 0.1 * (1.0 + x[0] - x[1]))
+    delayed = delay(field, tau)
+    x_axis = jnp.asarray([-0.5, 0.5])
+    y_axis = jnp.asarray([-0.25, 0.0, 0.25])
+    times = jnp.asarray([0.5, 1.0, 1.5, 2.0])
+
+    values = delayed.func((x_axis, y_axis), times)
+    x_grid, y_grid = jnp.meshgrid(x_axis, y_axis, indexing="ij")
+    expected = times[None, None, :] - 0.1 * (1.0 + x_grid - y_grid)[..., None]
+
+    assert values.shape == (2, 3, 4)
+    assert jnp.allclose(values, expected)

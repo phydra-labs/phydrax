@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
+import equinox as eqx
 import jax
+import jax.core as jax_core
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
@@ -46,7 +48,24 @@ def solve_tridiagonal_lines(
     b = jnp.moveaxis(diagonal_, axis_, 0)
     c = jnp.moveaxis(upper_, axis_, 0)
     d = jnp.moveaxis(rhs_, axis_, 0)
-    tolerance = jnp.asarray(pivot_tolerance, dtype=b.dtype)
+    tolerance_value = jnp.asarray(pivot_tolerance)
+    if not jnp.issubdtype(tolerance_value.dtype, jnp.number) or jnp.issubdtype(
+        tolerance_value.dtype,
+        jnp.complexfloating,
+    ):
+        raise TypeError("pivot_tolerance must be real numeric.")
+    tolerance = tolerance_value.astype(b.real.dtype)
+    if tolerance.shape != ():
+        raise ValueError("pivot_tolerance must be scalar.")
+    invalid_tolerance = ~jnp.isfinite(tolerance) | (tolerance < 0.0)
+    if isinstance(invalid_tolerance, jax_core.Tracer):
+        tolerance = eqx.error_if(
+            tolerance,
+            invalid_tolerance,
+            "pivot_tolerance must be finite and non-negative.",
+        )
+    elif bool(invalid_tolerance):
+        raise ValueError("pivot_tolerance must be finite and non-negative.")
 
     first_pivot = b[0]
     first_safe = jnp.where(jnp.abs(first_pivot) > tolerance, first_pivot, 1.0)

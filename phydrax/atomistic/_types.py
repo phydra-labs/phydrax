@@ -233,6 +233,7 @@ class AtomicStructure(StrictModule, NonTrainableState):
             raise ValueError("Active atom positions must be finite.")
         if np.any(~np.isfinite(mass_host[active])) or np.any(mass_host[active] <= 0.0):
             raise ValueError("Active atom masses must be finite and positive.")
+        mass_host = np.where(active, mass_host, 1.0)
         ids = (
             np.arange(numbers.size, dtype=np.int64)
             if particle_ids is None
@@ -439,6 +440,7 @@ class AtomisticBatch(StrictModule, NonTrainableState):
             raise ValueError("Active atom positions must be finite.")
         if np.any(~np.isfinite(mass_host[mask])) or np.any(mass_host[mask] <= 0.0):
             raise ValueError("Active atom masses must be finite and positive.")
+        mass_host = np.where(mask, mass_host, 1.0)
         case_count, atom_capacity = numbers.shape
         ids = (
             np.broadcast_to(

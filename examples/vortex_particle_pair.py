@@ -52,10 +52,12 @@ loss = lambda positions: jnp.sum(
     compiled.dynamics.initialize_state(positions, initial_circulation) ** 2
 )
 gradient = jax.grad(loss)(initial_position)
+if not bool(solution.backend_successful & diagnostics.finite):
+    raise RuntimeError("Vortex-pair integration or diagnostics failed")
 
 print("solver", solution.resolved_method)
 print("final positions", final.position)
 print("total circulation", diagnostics.total_strength)
 print("impulse", diagnostics.linear_impulse)
 print("gradient norm", jnp.linalg.norm(gradient))
-print("successful", bool(solution.backend_successful & diagnostics.finite))
+print("successful", True)

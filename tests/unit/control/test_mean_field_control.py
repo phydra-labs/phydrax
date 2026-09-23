@@ -272,6 +272,16 @@ def test_invalid_law_low_ess_and_wrong_path_identity_have_distinct_statuses():
     assert not bool(mismatch.path_identity_valid)
     assert int(mismatch.status) == int(MeanFieldControlStatus.PATH_IDENTITY_MISMATCH)
 
+    different_count = _paths(
+        path_id=paths.path_id,
+        particles=jnp.ones((3, 2, 1)),
+    )
+    count_mismatch = _evaluate(_problem(paths), different_count)
+    assert not bool(count_mismatch.path_identity_valid)
+    assert int(count_mismatch.status) == int(
+        MeanFieldControlStatus.PATH_IDENTITY_MISMATCH
+    )
+
 
 def test_terminal_residual_includes_terminal_measure_externality():
     paths = _paths()

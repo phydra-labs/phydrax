@@ -75,10 +75,16 @@ def _certify_minimization(problem, parameters, args, termination, backend_succes
                 policy=LinearSolvePolicy(DenseSVD()),
             ).value
             stationarity = flat_gradient + multiplier_matrix @ multipliers
+            inequality_multipliers = multipliers[equality_jacobian.shape[0] :]
+            dual_violation = jnp.max(
+                jnp.maximum(-inequality_multipliers, 0.0),
+                initial=0.0,
+            )
         else:
             stationarity = flat_gradient
+            dual_violation = jnp.asarray(0.0, dtype=flat_gradient.dtype)
         optimality = jnp.maximum(
-            jnp.linalg.norm(stationarity, ord=jnp.inf),
+            jnp.maximum(jnp.linalg.norm(stationarity, ord=jnp.inf), dual_violation),
             feasibility,
         )
     else:
@@ -321,6 +327,7 @@ def ceres_least_squares(
     if not isinstance(backend, tuple) or len(backend) != 3:
         raise TypeError("Ceres boundary must return (parameters, success, summary).")
     parameters, backend_success, summary = backend
+    parameters = validate_real_inexact_tree(parameters, name="parameters")
     residual, auxiliary = problem.value(parameters, args)
     residual_vector, _ = ravel_pytree(residual)
     gradient = jax.grad(
@@ -334,12 +341,31 @@ def ceres_least_squares(
             )
         )
     )(parameters)
-    gradient_vector, _ = ravel_pytree(gradient)
+    projected_gradient = (
+        gradient
+        if problem.bounds is None
+        else problem.bounds.projected_gradient(parameters, gradient)
+    )
+    gradient_vector, _ = ravel_pytree(projected_gradient)
     optimality = jnp.linalg.norm(gradient_vector, ord=jnp.inf)
+    feasibility = (
+        jnp.asarray(0.0, dtype=optimality.dtype)
+        if problem.bounds is None
+        else problem.bounds.violation(parameters)
+    )
+    parameters_finite = jnp.all(
+        jnp.stack(
+            tuple(jnp.all(jnp.isfinite(leaf)) for leaf in jax.tree.leaves(parameters))
+        )
+    )
     certified = (
         jnp.asarray(backend_success)
+        & parameters_finite
         & jnp.all(jnp.isfinite(residual_vector))
+        & jnp.isfinite(optimality)
+        & jnp.isfinite(feasibility)
         & (optimality <= termination_.absolute_optimality)
+        & (feasibility <= termination_.absolute_optimality)
     )
     return LeastSquaresResult(
         parameters,
@@ -355,6 +381,7 @@ def ceres_least_squares(
             residual_evaluations=1,
             vjp_evaluations=1,
             final_optimality_norm=optimality,
+            primal_feasibility=feasibility,
         ),
         OptimizationProvenance(
             problem_id=problem.problem_id,

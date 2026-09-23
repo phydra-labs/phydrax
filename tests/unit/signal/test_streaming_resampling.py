@@ -48,6 +48,21 @@ def test_streaming_chunks_and_flush_equal_causal_raw_upfirdn():
     assert int(reset.output_count) == 0
 
 
+def test_short_causal_filter_emits_only_finite_record_outputs():
+    plan = RationalResamplingPlan(3, 1, 1, 1)
+    taps = jnp.ones((1,))
+    state = plan.initial_state((1,), dtype=jnp.float64)
+
+    state, first = plan.step(state, jnp.asarray([2.0]), taps)
+    state, second = plan.step(state, jnp.asarray([5.0]), taps)
+    _, tail = plan.flush(state, taps)
+
+    assert np.array_equal(_active_values(first), np.asarray([6.0]))
+    assert np.array_equal(_active_values(second), np.asarray([0.0, 0.0, 15.0]))
+    assert _active_values(tail).size == 0
+    assert int(state.output_count) == 4
+
+
 def test_zero_valid_resampling_chunk_is_a_state_preserving_noop():
     prototype = kaiser_sinc_resampling_filter(3, 2, half_width=2)
     plan = RationalResamplingPlan(3, 2, prototype.size, 4)

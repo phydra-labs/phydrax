@@ -327,6 +327,11 @@ ROUTES: dict[str, RouteDefinition] = {
                 "Locked equilibrium states match governed references.",
             ),
             _RESOURCE_GATE,
+            _gate(
+                "equilibrium-route-execution",
+                "operational",
+                "The prepared equilibrium route reports explicit convergence evidence.",
+            ),
         ),
         (
             "phydrax.solver._chemical_equilibrium:ChemicalEquilibriumPlan",
@@ -347,6 +352,11 @@ ROUTES: dict[str, RouteDefinition] = {
                 "Shock and detonation branches match governed references.",
             ),
             _RESOURCE_GATE,
+            _gate(
+                "jump-route-execution",
+                "operational",
+                "The prepared jump route reports its selected physical branch.",
+            ),
         ),
         (
             "phydrax.applications.reacting_flow._jump_relations:EquilibriumShockPlan",
@@ -367,6 +377,11 @@ ROUTES: dict[str, RouteDefinition] = {
                 "Tracked explosive modes match governed references.",
             ),
             _RESOURCE_GATE,
+            _gate(
+                "cema-route-execution",
+                "operational",
+                "The prepared CEMA route reports explicit mode-tracking evidence.",
+            ),
         ),
         (
             "phydrax.applications.reacting_flow._cema:ChemicalExplosiveModePlan",

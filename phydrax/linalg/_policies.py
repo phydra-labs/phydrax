@@ -14,6 +14,7 @@ from jax import core as jax_core
 from jax.typing import DTypeLike
 from jaxtyping import Array
 
+from .._model import register_artifact_value
 from .._precision import precision_dtype_name
 from .._strict import StrictModule
 from ._certificates import StabilityLowerBound
@@ -797,6 +798,12 @@ class LinearSolvePolicy(StrictModule):
         self.precision = precision
         self.resources = resources_
         self.require_device_binding = bool(require_device_binding)
+
+
+register_artifact_value(
+    "phydrax.linalg.policy:DifferentiationPolicy",
+    DifferentiationPolicy,
+)
 
 
 __all__ = [

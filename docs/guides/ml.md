@@ -31,7 +31,10 @@ prediction = result.model(query)
 The recipe is unchanged by fitting. The returned `FitResult` contains:
 
 - `model`: a `FrozenModel` that is excluded from Phydrax solver parameter
-  partitions but remains an ordinary differentiable JAX PyTree when called;
+  partitions but remains an ordinary differentiable JAX PyTree when called. The
+  wrapper preserves the fitted model's exact input binding and exposes only named
+  prediction capabilities that the wrapped model actually implements:
+  `decision_function`, `predict`, `predict_log_proba`, and `predict_proba`;
 - `diagnostics`: family-specific numerical evidence;
 - `valid` and `status`: scalar or case-shaped fit validity;
 - `method`: the resolved numerical method, not an ambiguous `"auto"` policy;

@@ -7,6 +7,7 @@ from ._core import (
     archard_wear_depth,
     hertz_point_contact_radius,
     reynolds_1d_pressure,
+    ReynoldsPressureResult,
     tribology_candidate_profiles,
 )
 from ._ehl import hamrock_dowson_central_film
@@ -17,6 +18,7 @@ __all__ = [
     "EHLState",
     "EHLStep",
     "MassConservingEHLSolver",
+    "ReynoldsPressureResult",
     "archard_wear_depth",
     "hertz_point_contact_radius",
     "reynolds_1d_pressure",

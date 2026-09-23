@@ -7,6 +7,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from itertools import permutations
 from math import factorial
+from numbers import Integral
 
 import equinox as eqx
 import jax
@@ -83,11 +84,22 @@ class CliffordMetricField(StrictModule):
         if not callable(metric):
             raise TypeError("metric must be callable.")
         dimension_ = int(dimension)
-        signature_ = tuple(signature)
+        signature_values = tuple(signature)
+        signature_integral = all(
+            isinstance(value, Integral) and not isinstance(value, bool)
+            for value in signature_values
+        )
+        signature_ = (
+            tuple(int(value) for value in signature_values)
+            if signature_integral
+            else signature_values
+        )
         if (
             dimension_ < 1
             or dimension_ > 6
             or len(signature_) != 2
+            or not signature_integral
+            or any(value < 0 for value in signature_)
             or sum(signature_) != dimension_
         ):
             raise ValueError(
@@ -437,6 +449,10 @@ class CliffordCochainProductPlan(StrictModule):
             raise ValueError(
                 "Clifford cochain diagonal arrays must be equal rank-1 arrays."
             )
+        if arrays[0].size == 0:
+            raise ValueError("Clifford cochain plans require at least one diagonal term.")
+        if not plan_id:
+            raise ValueError("plan_id must be non-empty.")
         self.product = product
         self.source_cells = arrays[0].astype(jnp.int32)
         self.left_cells = arrays[1].astype(jnp.int32)

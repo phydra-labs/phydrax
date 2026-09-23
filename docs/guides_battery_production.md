@@ -181,10 +181,12 @@ and harness identities.
 ## Deployment and channel state
 
 The circuit ECM and SPMe examples require either `--development` or externally
-authenticated inputs. The separate optimization demonstration is development-only:
+authenticated inputs. They are checkout-only scripts with repository support imports,
+so run them from the repository root with that root on the import path. The separate
+optimization demonstration is development-only:
 
 ```text
-python examples/battery_circuit_ecm.py --deployment deployment.json --trust-roots public-roots.json --runtime-attestation runtime.json --profile-id PROFILE_ID --distribution-id DISTRIBUTION_ID
+PYTHONPATH=. python examples/battery_circuit_ecm.py --deployment deployment.json --trust-roots public-roots.json --runtime-attestation runtime.json --profile-id PROFILE_ID --distribution-id DISTRIBUTION_ID
 ```
 
 No example validates a historical gate at its issue time instead of current UTC

@@ -489,7 +489,8 @@ def _min_value(value: Array, /) -> Array:
 def _fraction_to_boundary(value: Array, direction: Array, step_fraction: float) -> Array:
     candidates = jnp.where(direction < 0, -value / direction, jnp.inf)
     return jnp.minimum(
-        jnp.asarray(1.0, dtype=value.dtype), step_fraction * jnp.min(candidates)
+        jnp.asarray(1.0, dtype=value.dtype),
+        step_fraction * jnp.min(candidates, initial=jnp.inf),
     )
 
 

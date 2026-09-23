@@ -978,7 +978,7 @@ def write_monodomain_checkpoint(
     path: str | Path,
     /,
     *,
-    parent_checkpoint_id: str | None = None,
+    parent: LifecycleArchive | None = None,
 ) -> LifecycleArchive:
     """Create one complete checksum-bound serial checkpoint archive."""
 
@@ -1005,6 +1005,26 @@ def write_monodomain_checkpoint(
     tolerance = 64.0 * np.finfo(np.float64).eps * max(float(time), expected_time, 1.0)
     if abs(float(time) - expected_time) > tolerance:
         raise ValueError("Cannot checkpoint time inconsistent with step_index * dt_ms.")
+    parent_checkpoint_id = None
+    parent_manifest_id = None
+    parent_archive = None
+    if parent is not None:
+        if not isinstance(parent, LifecycleArchive):
+            raise TypeError("parent must be a LifecycleArchive or None.")
+        parent_archive = parent
+        parent_manifest = parent.manifest
+        if (
+            not isinstance(parent_manifest, CheckpointManifest)
+            or not parent_manifest.complete
+            or parent_manifest.analysis_plan_id != runtime.plan.plan_id
+            or parent_manifest.numeric_revision_id != runtime.runtime_id
+            or parent_manifest.execution_plan_id != runtime.execution_plan_id
+        ):
+            raise ValueError(
+                "Parent checkpoint does not match the prepared monodomain runtime."
+            )
+        parent_checkpoint_id = parent_manifest.checkpoint_id
+        parent_manifest_id = parent_manifest.manifest_id
     arrays = {
         "activation": np.asarray(activation),
         "recovery": np.asarray(recovery),
@@ -1026,6 +1046,7 @@ def write_monodomain_checkpoint(
             "runtime": runtime.runtime_id,
             "state": monodomain_state_identity(runtime, state),
             "parent_checkpoint_id": parent_checkpoint_id,
+            "parent_manifest_id": parent_manifest_id,
         }
     )
     manifest = CheckpointManifest(
@@ -1036,20 +1057,30 @@ def write_monodomain_checkpoint(
         shards,
         complete=True,
         parent_checkpoint_id=parent_checkpoint_id,
+        parent_manifest_id=parent_manifest_id,
     )
-    return create_lifecycle_archive(path, manifest=manifest, arrays=arrays)
+    return create_lifecycle_archive(
+        path,
+        manifest=manifest,
+        arrays=arrays,
+        parent=parent_archive,
+    )
 
 
 def read_monodomain_checkpoint(
     runtime: PreparedPhenomenologicalMonodomain,
     path: str | Path,
     /,
+    *,
+    parent: LifecycleArchive | None = None,
 ) -> MonodomainState:
-    """Open and validate a serial checkpoint, failing closed on any mismatch."""
+    """Open and validate a serial checkpoint and its exact parent lineage."""
 
     if not isinstance(runtime, PreparedPhenomenologicalMonodomain):
         raise TypeError("runtime must be PreparedPhenomenologicalMonodomain.")
-    archive = open_lifecycle_archive(path)
+    if parent is not None and not isinstance(parent, LifecycleArchive):
+        raise TypeError("parent must be a LifecycleArchive or None.")
+    archive = open_lifecycle_archive(path, parent=parent)
     manifest = archive.manifest
     if not isinstance(manifest, CheckpointManifest):
         raise ValueError("Archive does not contain a checkpoint manifest.")
@@ -1100,6 +1131,7 @@ def read_monodomain_checkpoint(
             "runtime": runtime.runtime_id,
             "state": monodomain_state_identity(runtime, state),
             "parent_checkpoint_id": manifest.parent_checkpoint_id,
+            "parent_manifest_id": manifest.parent_manifest_id,
         }
     )
     if manifest.checkpoint_id != expected_checkpoint_id:

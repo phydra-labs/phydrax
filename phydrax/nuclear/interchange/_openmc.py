@@ -39,7 +39,14 @@ from ...measurement import (
     ValueLayout,
 )
 from ...qualification import ReferenceArtifactManifest
-from ...units import derived_unit, METER, SECOND
+from ...units import (
+    conversion_factor,
+    derived_unit,
+    LENGTH,
+    METER,
+    SECOND,
+    UnitDefinition,
+)
 from .._energy import EnergyGroupStructure
 from .._identity import NuclearParticleKind, NuclearSpeciesKey
 from .._quantity import resolve_nuclear_quantity
@@ -55,6 +62,7 @@ class OpenMCStatepointProfile:
     value_shape: tuple[int, ...]
     axis_labels: tuple[str, ...]
     source_rate_s: float
+    tally_length_unit: UnitDefinition
     profile_id: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -78,10 +86,16 @@ class OpenMCStatepointProfile:
             )
         if not math.isfinite(rate) or rate <= 0.0:
             raise ValueError("source_rate_s must be finite and positive.")
+        if (
+            not isinstance(self.tally_length_unit, UnitDefinition)
+            or self.tally_length_unit.dimension != LENGTH
+        ):
+            raise ValueError("tally_length_unit must have physical length dimension.")
         object.__setattr__(self, "tally_id", tally)
         object.__setattr__(self, "value_shape", shape)
         object.__setattr__(self, "axis_labels", labels)
         object.__setattr__(self, "source_rate_s", rate)
+        object.__setattr__(self, "tally_length_unit", self.tally_length_unit)
         object.__setattr__(
             self,
             "profile_id",
@@ -92,6 +106,7 @@ class OpenMCStatepointProfile:
                     "shape": list(shape),
                     "axes": list(labels),
                     "source_rate_s": rate,
+                    "tally_length_unit": self.tally_length_unit.unit_id,
                     "result_semantics": "sum-sum_sq-per-source-volume-normalized-flux",
                 }
             ),
@@ -171,6 +186,10 @@ def import_openmc_multigroup_flux(
             raise ValueError("HDF5 resource is not an OpenMC statepoint.")
         openmc_version = _text_attribute(handle, "openmc_version")
         realizations = _scalar_integer(handle, "n_realizations")
+        if realizations < 2:
+            raise ValueError(
+                "OpenMC scalar-flux uncertainty requires at least two realizations."
+            )
         path = f"tallies/tally {profile.tally_id}/results"
         if path not in handle:
             raise ValueError("Requested OpenMC tally result is absent.")
@@ -201,9 +220,13 @@ def import_openmc_multigroup_flux(
     variance_tolerance = 512.0 * np.finfo(np.float64).eps * variance_scale
     if np.any(variance_numerator < -variance_tolerance):
         raise ValueError("OpenMC tally sum of squares implies negative variance.")
-    variance_of_mean = np.maximum(variance_numerator, 0.0) / max(realizations - 1, 1)
-    mean = profile.source_rate_s * mean_per_source
-    standard_error = profile.source_rate_s * np.sqrt(variance_of_mean)
+    variance_of_mean = np.maximum(variance_numerator, 0.0) / (realizations - 1)
+    length_scale_m = float(conversion_factor(profile.tally_length_unit, METER))
+    inverse_area_scale = length_scale_m**-2
+    mean = profile.source_rate_s * mean_per_source * inverse_area_scale
+    standard_error = (
+        profile.source_rate_s * np.sqrt(variance_of_mean) * inverse_area_scale
+    )
     if np.any(mean < 0.0) or np.any(~np.isfinite(standard_error)):
         raise ValueError(
             "OpenMC flux mean and uncertainty must be finite and nonnegative."
@@ -240,11 +263,13 @@ def import_openmc_multigroup_flux(
             "tally sum of squares",
             "realization count",
             "OpenMC release identity",
+            "explicit tally length-unit identity",
         ),
         assumptions=(
             "tally is a dedicated cell-average scalar-flux score",
             "tally values are volume-normalized per source particle",
             "source_rate_s converts per-source tally values to physical scalar flux",
+            "tally area units are converted to canonical square metres",
         ),
     )
     support = IndexSampleSupport(
@@ -283,6 +308,7 @@ def import_openmc_multigroup_flux(
             "tally_id": profile.tally_id,
             "realization_count": realizations,
             "source_rate_s": profile.source_rate_s,
+            "tally_length_unit_id": profile.tally_length_unit.unit_id,
         },
     )
     neutron = NuclearSpeciesKey.from_particle(NuclearParticleKind.NEUTRON)

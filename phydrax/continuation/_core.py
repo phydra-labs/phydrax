@@ -1532,10 +1532,16 @@ class ContinuationBranch(StrictModule):
         points_ = tuple(points)
         events_ = tuple(events)
         brackets_ = tuple(brackets)
+        status_ = jnp.asarray(status, dtype=jnp.int32)
+        if not points_ and int(status_) in (
+            int(ContinuationStatus.SUCCESS),
+            int(ContinuationStatus.COORDINATE_BOUND_REACHED),
+        ):
+            raise ValueError("A successful continuation branch requires a point.")
         if not isinstance(geometry, ContinuationGeometry):
             raise TypeError("geometry must be a ContinuationGeometry.")
-        if not points_ or any(not isinstance(point, BranchPoint) for point in points_):
-            raise ValueError("A continuation branch requires BranchPoint values.")
+        if any(not isinstance(point, BranchPoint) for point in points_):
+            raise TypeError("points must contain BranchPoint values.")
         for point in points_:
             geometry.public_state_space.validate(point.state)
             geometry.public_state_space.validate(point.tangent_state)
@@ -1573,7 +1579,7 @@ class ContinuationBranch(StrictModule):
         self.events = events_
         self.brackets = brackets_
         self.geometry = geometry
-        self.status = jnp.asarray(status, dtype=jnp.int32)
+        self.status = status_
         self.branch_id, self.problem_id, self.method = identifiers
         self.termination_reason = str(termination_reason)
 
@@ -2295,6 +2301,27 @@ def _tangent_residual_norm(
     return geometry.residual_norm(residual)
 
 
+def _bordered_tangent_policy(
+    method: PseudoArclengthContinuation,
+    /,
+) -> LinearSolvePolicy:
+    tangent_policy, _ = method.derivative_policy.resolve(method.corrector)
+    if method.derivative_policy.tangent_linear_policy is not None:
+        return tangent_policy
+    return LinearSolvePolicy(
+        tangent_policy.method,
+        tolerance=tangent_policy.tolerance,
+        rank=tangent_policy.rank,
+        materialization=tangent_policy.materialization,
+        differentiation=tangent_policy.differentiation,
+        derivative_solve=tangent_policy.derivative_solve,
+        failure=tangent_policy.failure,
+        resources=tangent_policy.resources,
+        precision=tangent_policy.precision,
+        require_device_binding=tangent_policy.require_device_binding,
+    )
+
+
 def _bordered_tangent(
     problem: ContinuationCurveProblem,
     geometry: ContinuationGeometry,
@@ -2365,7 +2392,7 @@ def _bordered_tangent(
             jnp.ones((), dtype=geometry.coordinate_dtype),
         )
     )
-    tangent_policy, _ = method.derivative_policy.resolve(method.corrector)
+    tangent_policy = _bordered_tangent_policy(method)
     linear_result = solve_linear(
         LinearSystem(coordinate_operator),
         right_hand_side,
@@ -3955,19 +3982,9 @@ def run_continuation(
     iteration_emitter.emit(initial_step, IterationPhase.START)
     if initial_accepted_state is not None:
         accepted_application_state = initial_accepted_state
-    points.append(initial_point)
-    _record_stability_events(events, brackets, None, initial_point)
-    if tangent_attempted and not tangent_usable:
-        events.append(
-            ContinuationEvent(
-                "tangent-retry",
-                coordinate,
-                indicator=tangent_residual_norm,
-                source_status=tangent_status,
-                point_id=initial_point.point_id,
-                message="Initial tangent solve failed its residual contract.",
-            )
-        )
+    if bool(initial_step.accepted):
+        points.append(initial_point)
+        _record_stability_events(events, brackets, None, initial_point)
     if not initial_success:
         return iteration_emitter.finish(
             _continuation_result(

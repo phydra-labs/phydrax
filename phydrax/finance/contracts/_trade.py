@@ -97,7 +97,11 @@ class Trade(StrictModule, NonTrainableState):
                 "transaction_price": None
                 if transaction_price is None
                 else {
-                    "currency": transaction_price.currency.code,
+                    "currency": {
+                        "code": transaction_price.currency.code,
+                        "minor_unit": transaction_price.currency.minor_unit,
+                        "currency_id": transaction_price.currency.currency_id,
+                    },
                     "atoms": int(np.asarray(transaction_price.atoms)),
                 },
             }
@@ -113,7 +117,11 @@ class Trade(StrictModule, NonTrainableState):
             "transaction_price": None
             if self.transaction_price is None
             else {
-                "currency": self.transaction_price.currency.code,
+                "currency": {
+                    "code": self.transaction_price.currency.code,
+                    "minor_unit": self.transaction_price.currency.minor_unit,
+                    "currency_id": self.transaction_price.currency.currency_id,
+                },
                 "atoms": int(np.asarray(self.transaction_price.atoms)),
             },
             "trade_key": self.trade_key,

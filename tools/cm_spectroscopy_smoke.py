@@ -26,7 +26,7 @@ from phydrax.chemistry.spectroscopy._response import (
 from phydrax.observation import CoordinateLayout, LinearObservationPlan
 
 
-def main() -> None:
+def main() -> int:
     raw = SpectralResponseProduct(
         [1.0, 2.0],
         [[1.0, 2.0]],
@@ -67,22 +67,23 @@ def main() -> None:
         convolved.theory.layout,
         selected_layout,
     ).apply(convolved.theory)
-    print(
-        json.dumps(
-            {
-                "raw_product_id": raw.product_id,
-                "instrument_result_id": convolved.result_id,
-                "theory_product_id": convolved.theory.product_id,
-                "integrated_response": float(observed.values[0]),
-                "expected_response": 3.0,
-                "area_residual": float(convolved.evidence.area_residual),
-                "successful": bool(convolved.evidence.successful),
-            },
-            indent=2,
-            sort_keys=True,
-        )
-    )
+    report = {
+        "raw_product_id": raw.product_id,
+        "instrument_result_id": convolved.result_id,
+        "theory_product_id": convolved.theory.product_id,
+        "integrated_response": float(observed.values[0]),
+        "expected_response": 3.0,
+        "area_residual": float(convolved.evidence.area_residual),
+        "successful": bool(
+            convolved.evidence.successful
+            and np.isfinite(observed.values[0])
+            and np.abs(observed.values[0] - 3.0) <= 1.0e-8
+            and np.isfinite(convolved.evidence.area_residual)
+        ),
+    }
+    print(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
+    return 0 if report["successful"] else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

@@ -620,3 +620,53 @@ def test_batched_spectral_subspaces_have_fixed_shapes_mixed_status_and_exact_der
     assert jnp.all(explicit.successful)
     assert jnp.allclose(tangent, explicit.projector, rtol=1e-9, atol=1e-10)
     assert jnp.all(explicit.diagnostics.relative_residual < 1e-12)
+
+    mixed_selection = eigen.SpectralSelection.real_below(
+        2.5,
+        expected_dimension=2,
+    )
+
+    def mixed_projector(current):
+        current_problem = eigen.Eigenproblem(
+            la.DenseLinearOperator(
+                current,
+                properties=_self_adjoint_properties(),
+            )
+        )
+        return eigen.self_adjoint_spectral_subspace(
+            current_problem,
+            mixed_selection,
+            policy=derivative_policy,
+        ).projector
+
+    _, mixed_tangent = jax.jvp(
+        mixed_projector,
+        (matrices,),
+        (perturbations,),
+    )
+    _, first_tangent = jax.jvp(
+        lambda matrix: mixed_projector(matrix[None])[0],
+        (matrices[0],),
+        (perturbations[0],),
+    )
+    assert jnp.allclose(mixed_tangent[0], first_tangent, rtol=1e-10, atol=1e-11)
+    assert jnp.linalg.norm(mixed_tangent[0]) > 0.0
+    assert jnp.array_equal(mixed_tangent[1], jnp.zeros_like(mixed_tangent[1]))
+
+    multi_axis_matrices = jnp.broadcast_to(matrices, (2,) + matrices.shape)
+    multi_axis_problem = eigen.Eigenproblem(
+        la.DenseLinearOperator(
+            multi_axis_matrices,
+            properties=_self_adjoint_properties(),
+        )
+    )
+    multi_axis = eigen.self_adjoint_spectral_subspace(
+        multi_axis_problem,
+        selection,
+    )
+    vector = jnp.asarray([1.0, -2.0, 0.5])
+    assert multi_axis.projector.shape == (2, 2, 3, 3)
+    assert jnp.allclose(
+        multi_axis.project_coordinates(vector),
+        multi_axis.projector @ vector,
+    )

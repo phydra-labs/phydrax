@@ -48,8 +48,10 @@ def run():
     before = ocean.state_view(continuation.coordinates)
     after = ocean.state_view(result.accepted_state.coordinates)
     volume = discretization.cell_volumes
+    if not bool(result.successful):
+        raise RuntimeError("Ocean surface-flux column step failed")
     return {
-        "successful": bool(result.successful),
+        "successful": True,
         "temperature_content_change": float(
             jnp.sum(volume * (after.temperature - before.temperature))
         ),

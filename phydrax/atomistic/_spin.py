@@ -444,7 +444,11 @@ def evaluate_classical_spin_hamiltonian(
     if isinstance(state, ClassicalSpinState):
         if state.hamiltonian_id != prepared.prepared_id:
             raise ValueError("Classical spin state belongs to another Hamiltonian.")
-        directions = state.directions
+        directions = eqx.error_if(
+            state.directions,
+            ~jnp.array_equal(state.active_mask, prepared.plan.site_mask),
+            "Classical spin state active mask differs from its Hamiltonian support.",
+        )
     else:
         state = ClassicalSpinState(
             state,
@@ -453,6 +457,7 @@ def evaluate_classical_spin_hamiltonian(
             tolerance=prepared.plan.validation_tolerance * 10.0,
         )
         directions = state.directions
+    directions = jnp.where(prepared.plan.site_mask[:, None], directions, 0.0)
     senders = prepared.plan.bond_senders
     receivers = prepared.plan.bond_receivers
     left = directions[senders]

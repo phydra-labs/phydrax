@@ -301,12 +301,18 @@ class _BlockAMREdgeRoute(StrictModule, NonTrainableState):
         return target.at[self.fine_to_coarse].add(values * factor)
 
 
+SpecialistSynchronization = Callable[
+    [int, BlockHierarchyState, Array, Array, Any],
+    BlockHierarchyState | tuple[BlockHierarchyState, ArrayLike],
+]
+
+
 class BlockAMRRuntimePlan(StrictModule, NonTrainableState):
     """Solver-owned fixed-topology block finite-volume advancement policy."""
 
     finite_volume: BlockAMRFiniteVolumePlan
     schedule: AMRTimeSchedulePlan
-    specialist_synchronization: Callable[..., Any] | None = eqx.field(static=True)
+    specialist_synchronization: SpecialistSynchronization | None = eqx.field(static=True)
     specialist_id: str | None = eqx.field(static=True)
     indicator: Callable[..., Any] | None = eqx.field(static=True)
     indicator_id: str | None = eqx.field(static=True)
@@ -321,7 +327,7 @@ class BlockAMRRuntimePlan(StrictModule, NonTrainableState):
         /,
         *,
         subcycling: bool | None = None,
-        specialist_synchronization: Callable[..., Any] | None = None,
+        specialist_synchronization: SpecialistSynchronization | None = None,
         specialist_id: str | None = None,
         indicator: Callable[..., Any] | None = None,
         indicator_id: str | None = None,
@@ -728,6 +734,7 @@ class PreparedBlockAMRRuntime(StrictModule, NonTrainableState):
             orientation=register.orientation,
             refinement_ratio=register.refinement_ratio,
             register_id=register.register_id,
+            owner_id=register.owner_id,
         )
 
     def _composite_integral(self, state: BlockHierarchyState, /) -> Array:
@@ -1100,6 +1107,7 @@ class PreparedBlockAMRRuntime(StrictModule, NonTrainableState):
                     level,
                     working,
                     interval_time + interval_dt,
+                    interval_dt,
                     args,
                 )
                 if isinstance(specialist_result, BlockHierarchyState):
@@ -1162,7 +1170,7 @@ class PreparedBlockAMRRuntime(StrictModule, NonTrainableState):
         next_status = jnp.where(
             accepted,
             int(BlockAMRAdvancePhase.SUCCESS),
-            state.last_status,
+            failed_phase,
         )
         next_state = BlockAMRRuntimeState(
             selected_hierarchy,

@@ -99,8 +99,10 @@ def run(directory="commercial_mpm_run"):
         output_plan=output,
     )
     result = supervisor.advance(0.001)
+    if not bool(result.numerical_result.successful):
+        raise RuntimeError("Commercial MPM supervised step failed")
     return {
-        "successful": bool(result.numerical_result.successful),
+        "successful": True,
         "claim_id": compiled.claim_id,
         "generation": result.generation,
         "output_complete": result.output_complete,

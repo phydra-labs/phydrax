@@ -248,9 +248,10 @@ def _measure(
     num_samples: int,
     order: int,
     max_backtracks: int,
+    seed: int,
 ) -> dict[str, object]:
     problem, reference_problem = _problem(scenario, num_steps, state_size)
-    key = jr.key(918) if expectation_method == "monte-carlo" else None
+    key = jr.key(seed) if expectation_method == "monte-carlo" else None
     compiled = jax.jit(
         lambda: phx.uq.sing_smoother(
             problem,
@@ -273,6 +274,7 @@ def _measure(
         "requested_execution_method": execution_method,
         "resolved_execution_method": result.execution_method,
         "num_samples": num_samples,
+        "seed": seed,
         "gauss_hermite_order": order,
         "first_execution_seconds": first_seconds,
         "minimum_warm_seconds": min(durations),
@@ -290,6 +292,7 @@ def _measure(
         "valid": bool(jnp.all(result.valid)),
         "converged": bool(jnp.all(result.converged)),
         "status": np.asarray(result.status).tolist(),
+        "passed": bool(jnp.all(result.valid)) and bool(jnp.all(result.converged)),
         "sequential_conversion": _conversion_timing(result, "sequential"),
         "parallel_conversion": _conversion_timing(result, "parallel"),
     }
@@ -347,6 +350,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--samples", type=int, default=64)
     parser.add_argument("--order", type=int, default=3)
     parser.add_argument("--max-backtracks", type=int, default=4)
+    parser.add_argument("--seed", type=int, default=918)
     args = parser.parse_args(argv)
     positive = (
         args.steps,
@@ -366,28 +370,47 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.scenario == "all"
         else (args.scenario,)
     )
-    reports = [
-        _measure(
-            scenario,
-            num_steps=args.steps,
-            state_size=args.state_size,
-            iterations=args.iterations,
-            repeats=args.repeats,
-            expectation_method=args.expectation_method,
-            execution_method=args.execution_method,
-            num_samples=args.samples,
-            order=args.order,
-            max_backtracks=args.max_backtracks,
-        )
-        for scenario in scenarios
-    ]
+    reports: list[dict[str, object]] = []
+    for scenario_index, scenario in enumerate(scenarios):
+        seed = args.seed + scenario_index
+        try:
+            report = _measure(
+                scenario,
+                num_steps=args.steps,
+                state_size=args.state_size,
+                iterations=args.iterations,
+                repeats=args.repeats,
+                expectation_method=args.expectation_method,
+                execution_method=args.execution_method,
+                num_samples=args.samples,
+                order=args.order,
+                max_backtracks=args.max_backtracks,
+                seed=seed,
+            )
+            report["error"] = None
+        except Exception as error:
+            report = {
+                "scenario": scenario,
+                "seed": seed,
+                "passed": False,
+                "error": {"type": type(error).__name__, "message": str(error)},
+            }
+        reports.append(report)
+    passed = bool(reports) and all(bool(report["passed"]) for report in reports)
     print(
         json.dumps(
-            {"benchmark_id": "sing-native", "reports": reports},
+            {
+                "benchmark_id": "sing-native",
+                "root_seed": args.seed,
+                "rng_algorithm": "jax.random.threefry2x32",
+                "reports": reports,
+                "passed": passed,
+            },
             sort_keys=True,
+            allow_nan=False,
         )
     )
-    return 0
+    return 0 if passed else 1
 
 
 if __name__ == "__main__":

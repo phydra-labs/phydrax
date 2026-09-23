@@ -14,6 +14,7 @@ from phydrax.geometry.complex import (
 from phydrax.integration import (
     CalabiYauModuliObservablePlan,
     evaluate_calabi_yau_moduli_observables,
+    integrate_projective_samples,
     PreparedCalabiYauModuliSamples,
     ProjectiveMeasureTarget,
 )
@@ -153,3 +154,37 @@ def test_algebraic_representatives_never_promote_to_harmonic_authority():
     assert bool(result.accepted)
     assert not bool(result.authoritative)
     assert "not-harmonic" in result.claim
+
+
+def test_projective_integral_masks_invalid_sample_values_before_reduction():
+    points = jnp.asarray(
+        (
+            (1.0 + 0.0j, 0.0j),
+            (0.0j, 1.0 + 0.0j),
+            (1.0 + 0.0j, 1.0 + 0.0j),
+        )
+    )
+    samples = ProjectiveLineSamples(
+        homogeneous_points=points,
+        chart_indices=(0, 1, 0),
+        pivot_indices=(1, 0, 1),
+        polynomial_residuals=jnp.zeros((3,)),
+        smoothness_margins=jnp.ones((3,)),
+        valid=jnp.asarray((True, False, True)),
+        line_ids=(0, 1, 2),
+        root_ids=(0, 0, 0),
+    )
+    target = ProjectiveMeasureTarget(
+        samples,
+        jnp.zeros((3,)),
+        measure_kind="canonical",
+    )
+
+    result = integrate_projective_samples(
+        target,
+        lambda point: jnp.where(point[0] == 0.0, jnp.nan, 1.0),
+    )
+
+    assert result.valid
+    assert jnp.allclose(result.normalized_value, 1.0)
+    assert jnp.isfinite(result.physical_value)

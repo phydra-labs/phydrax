@@ -28,12 +28,14 @@ def catenary_campaign(count):
         for index in range(count)
     ]
     jax.block_until_ready(states[-1].minimum_tension)
+    successful_count = int(sum(bool(state.valid) for state in states))
     return {
-        "count": count,
+        "expected_count": count,
+        "successful_count": successful_count,
+        "passed": successful_count == count,
         "wall_seconds": time.perf_counter() - started,
         "minimum_tension": float(min(state.minimum_tension for state in states)),
         "maximum_sag": float(max(state.sag for state in states)),
-        "successful": int(sum(bool(state.valid) for state in states)),
     }
 
 
@@ -106,7 +108,7 @@ def sequence_campaign(operation_count):
     }
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--smoke", action="store_true")
     parser.add_argument(
@@ -121,10 +123,24 @@ def main():
         "reliability": reliability_campaign(1_000 if args.smoke else 100_000),
         "sequence": sequence_campaign(5 if args.smoke else 20),
     }
+    reliability = payload["reliability"]
+    passed = bool(
+        payload["catenary"]["passed"]
+        and payload["finite_strip"]["successful"]
+        and payload["sequence"]["successful"]
+        and 0.0 <= reliability["failure_probability"] <= 1.0
+        and jnp.isfinite(reliability["standard_error"])
+    )
+    payload["passed"] = passed
     args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
-    print(json.dumps(payload, indent=2, sort_keys=True))
+    temporary = args.output.with_name(f".{args.output.name}.tmp")
+    temporary.write_text(
+        json.dumps(payload, indent=2, sort_keys=True, allow_nan=False) + "\n"
+    )
+    temporary.replace(args.output)
+    print(json.dumps(payload, indent=2, sort_keys=True, allow_nan=False))
+    return 0 if passed else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

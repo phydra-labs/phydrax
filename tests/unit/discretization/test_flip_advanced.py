@@ -45,6 +45,19 @@ def test_particle_level_set_capillarity_and_ghost_projection():
     assert result.projection.air_pressure_defect == 0.0
 
 
+def test_nonperiodic_level_set_faces_do_not_compare_opposite_boundaries():
+    grid, _, _ = _mac(count=4)
+    geometry = phx.discretization.flip.ParticleLevelSetPlan(grid, 0.1).evaluate(
+        jnp.asarray(((0.05, 0.5),)),
+        jnp.asarray((True,)),
+    )
+    assert not bool(jnp.any(geometry.interface_faces[0][-1, :]))
+    np.testing.assert_allclose(
+        geometry.face_fraction[0][-1, :],
+        geometry.cell_fraction[-1, :],
+    )
+
+
 def test_cut_cell_and_variational_viscosity_are_finite_and_dissipative():
     grid, finite_volume, mac = _mac()
     position = jnp.asarray([[0.35, 0.35], [0.55, 0.35], [0.35, 0.55], [0.55, 0.55]])
@@ -120,6 +133,35 @@ def test_flip_reseeding_preserves_mass_and_momentum():
     assert result.successful
     np.testing.assert_allclose(result.mass_defect, 0.0, atol=1e-12)
     np.testing.assert_allclose(result.momentum_defect, 0.0, atol=1e-12)
+
+
+def test_flip_reseeding_merges_the_complete_cell_excess():
+    count = 10
+    support = phx.discretization.ParticleSetPlan(
+        jnp.arange(count),
+        jnp.ones((count,)),
+        ambient_dimension=2,
+    ).prepare()
+    population = phx.discretization.ParticlePopulationPlan(support).initialize()
+    particles = phx.discretization.flip.FLIPParticleState(
+        jnp.zeros((count, 2)),
+        jnp.ones((count, 2)),
+    )
+    result = phx.discretization.flip.FLIPReseedingPlan(
+        1,
+        target_per_cell=2,
+        minimum_per_cell=2,
+        maximum_per_cell=4,
+        maximum_events=8,
+    ).apply(
+        population,
+        particles,
+        jnp.zeros((count,), dtype=jnp.int32),
+        jnp.zeros((1, 2)),
+    )
+    assert bool(result.successful)
+    assert int(jnp.sum(result.accepted_population.active)) == 2
+    assert int(jnp.sum(result.accepted_population.active)) <= 4
 
 
 def test_flip_solid_collision_reports_wall_work_without_penetration():

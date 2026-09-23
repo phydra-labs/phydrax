@@ -7,8 +7,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from numbers import Integral, Real
 from typing import Literal, TypeAlias
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -17,14 +19,63 @@ from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
 from .._interpolation import linear_interpolate
+from .._strict import StrictModule
 
 
 IIRDesignKind: TypeAlias = Literal["butterworth", "chebyshev1", "chebyshev2", "elliptic"]
 
 
-@dataclass(frozen=True, slots=True)
-class SOSFilterState:
+def _positive_static_int(value: int, name: str, /) -> int:
+    if isinstance(value, bool) or not isinstance(value, Integral):
+        raise TypeError(f"{name} must be an integer.")
+    resolved = int(value)
+    if resolved <= 0:
+        raise ValueError(f"{name} must be positive.")
+    return resolved
+
+
+def _nonnegative_static_int(value: int, name: str, /) -> int:
+    if isinstance(value, bool) or not isinstance(value, Integral):
+        raise TypeError(f"{name} must be an integer.")
+    resolved = int(value)
+    if resolved < 0:
+        raise ValueError(f"{name} must be nonnegative.")
+    return resolved
+
+
+def _positive_finite_real(value: float, name: str, /) -> float:
+    if isinstance(value, bool) or not isinstance(value, Real):
+        raise TypeError(f"{name} must be a real scalar.")
+    resolved = float(value)
+    if not np.isfinite(resolved) or resolved <= 0.0:
+        raise ValueError(f"{name} must be finite and positive.")
+    return resolved
+
+
+def _multitaper_parameters(
+    sample_count: int,
+    time_bandwidth: float,
+    taper_count: int | None,
+    sample_spacing: float,
+    /,
+) -> tuple[float, int, float]:
+    bandwidth = _positive_finite_real(time_bandwidth, "time_bandwidth")
+    spacing = _positive_finite_real(sample_spacing, "sample_spacing")
+    if bandwidth >= 0.5 * sample_count:
+        raise ValueError("time_bandwidth must be less than half the signal length.")
+    count = (
+        max(1, int(2.0 * bandwidth) - 1)
+        if taper_count is None
+        else _positive_static_int(taper_count, "taper_count")
+    )
+    if count > sample_count:
+        raise ValueError("taper_count must not exceed the signal length.")
+    return bandwidth, count, spacing
+
+
+class SOSFilterState(StrictModule):
     delays: Array
+    plan_id: str = eqx.field(static=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,11 +103,20 @@ class SOSFilterPlan:
         object.__setattr__(self, "sections", jnp.asarray(sections_))
         object.__setattr__(self, "plan_id", canonical_fingerprint(payload))
 
-    def initial_state(self, sample_shape: tuple[int, ...] = ()) -> SOSFilterState:
+    def initial_state(
+        self,
+        sample_shape: tuple[int, ...] = (),
+        *,
+        dtype: jnp.dtype | None = None,
+    ) -> SOSFilterState:
+        resolved_dtype = (
+            self.sections.dtype
+            if dtype is None
+            else jnp.result_type(self.sections.dtype, dtype)
+        )
         return SOSFilterState(
-            jnp.zeros(
-                (self.sections.shape[0], 2, *sample_shape), dtype=self.sections.dtype
-            )
+            jnp.zeros((self.sections.shape[0], 2, *sample_shape), dtype=resolved_dtype),
+            self.plan_id,
         )
 
     def apply(
@@ -69,9 +129,17 @@ class SOSFilterPlan:
         signal = jnp.asarray(values)
         if signal.ndim < 1:
             raise ValueError("SOS input must begin with a time axis.")
-        state_ = self.initial_state(signal.shape[1:]) if state is None else state
+        dtype = jnp.result_type(signal.dtype, self.sections.dtype)
+        signal = signal.astype(dtype)
+        state_ = (
+            self.initial_state(signal.shape[1:], dtype=dtype) if state is None else state
+        )
+        if not isinstance(state_, SOSFilterState) or state_.plan_id != self.plan_id:
+            raise ValueError("SOS state was created by a different filter plan.")
         if state_.delays.shape != (self.sections.shape[0], 2, *signal.shape[1:]):
             raise ValueError("SOS state does not match sections and sample shape.")
+        if state_.delays.dtype != dtype:
+            raise TypeError("SOS state dtype does not match the promoted signal dtype.")
 
         def sample_step(delays, sample):
             output = sample
@@ -93,7 +161,9 @@ class SOSFilterPlan:
 
         final, filtered = jax.lax.scan(sample_step, state_.delays, signal)
         return SOSFilterResult(
-            filtered, SOSFilterState(final), jnp.all(jnp.isfinite(filtered))
+            filtered,
+            SOSFilterState(final, self.plan_id),
+            jnp.all(jnp.isfinite(filtered)),
         )
 
 
@@ -109,9 +179,7 @@ def design_iir_sos(
 ) -> SOSFilterPlan:
     """Design a normalized-digital IIR filter and return one stable SOS plan."""
 
-    order_ = int(order)
-    if order_ <= 0:
-        raise ValueError("IIR order must be positive.")
+    order_ = _positive_static_int(order, "IIR order")
     if kind == "butterworth":
         sections = scipy_signal.butter(order_, cutoff, btype=btype, output="sos")
     elif kind == "chebyshev1":
@@ -141,9 +209,7 @@ def design_fir(
 ) -> Array:
     """Design one normalized-digital linear-phase FIR response."""
 
-    count = int(taps)
-    if count <= 0:
-        raise ValueError("FIR tap count must be positive.")
+    count = _positive_static_int(taps, "FIR tap count")
     return jnp.asarray(
         scipy_signal.firwin(count, cutoff, pass_zero=pass_zero, window=window)
     )
@@ -160,11 +226,15 @@ class STFTPlan:
         self, window: ArrayLike, hop_size: int, /, *, fft_size: int | None = None
     ):
         window_ = np.asarray(window, dtype=np.float64)
-        hop = int(hop_size)
-        fft = int(window_.size if fft_size is None else fft_size)
+        hop = _positive_static_int(hop_size, "hop_size")
+        fft = (
+            window_.size
+            if fft_size is None
+            else _positive_static_int(fft_size, "fft_size")
+        )
         if window_.ndim != 1 or window_.size == 0 or not np.all(np.isfinite(window_)):
             raise ValueError("STFT window must be a finite non-empty vector.")
-        if hop <= 0 or hop > window_.size or fft < window_.size:
+        if hop > window_.size or fft < window_.size:
             raise ValueError("STFT hop/FFT sizes are incompatible with the window.")
         payload = {
             "kind": "stft-plan",
@@ -207,12 +277,15 @@ class STFTPlan:
             )
         safe = jnp.where(normalization > jnp.finfo(output.dtype).eps, normalization, 1.0)
         reconstructed = output / safe
-        return reconstructed if length is None else reconstructed[: int(length)]
+        if length is None:
+            return reconstructed
+        output_size = _nonnegative_static_int(length, "length")
+        return reconstructed[:output_size]
 
 
-@dataclass(frozen=True, slots=True)
-class FFTConvolutionState:
+class FFTConvolutionState(StrictModule):
     history: Array
+    plan_id: str = eqx.field(static=True)
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,12 +296,13 @@ class StreamingFFTConvolutionPlan:
     plan_id: str
 
     def __init__(self, kernel: ArrayLike, block_size: int, /):
-        kernel_ = np.asarray(kernel, dtype=np.float64)
-        block = int(block_size)
+        raw_kernel = np.asarray(kernel)
+        if np.iscomplexobj(raw_kernel):
+            raise TypeError("Streaming convolution kernel must be real-valued.")
+        kernel_ = np.asarray(raw_kernel, dtype=np.float64)
+        block = _positive_static_int(block_size, "block_size")
         if kernel_.ndim != 1 or kernel_.size == 0 or not np.all(np.isfinite(kernel_)):
             raise ValueError("Streaming convolution kernel must be a finite vector.")
-        if block <= 0:
-            raise ValueError("block_size must be positive.")
         fft = 1
         while fft < block + kernel_.size - 1:
             fft *= 2
@@ -244,22 +318,41 @@ class StreamingFFTConvolutionPlan:
 
     def initial_state(self) -> FFTConvolutionState:
         return FFTConvolutionState(
-            jnp.zeros((self.kernel.size - 1,), dtype=self.kernel.dtype)
+            jnp.zeros((self.kernel.size - 1,), dtype=self.kernel.dtype),
+            self.plan_id,
         )
 
     def apply(self, block: ArrayLike, state: FFTConvolutionState, /):
         values = jnp.asarray(block)
         if values.shape != (self.block_size,):
             raise ValueError("Streaming block shape does not match the plan.")
+        if jnp.issubdtype(values.dtype, jnp.complexfloating):
+            raise TypeError("Streaming FFT convolution requires real-valued blocks.")
+        if not isinstance(state, FFTConvolutionState) or state.plan_id != self.plan_id:
+            raise ValueError("FFT convolution state was created by a different plan.")
+        expected_dtype = jnp.result_type(values.dtype, self.kernel.dtype)
+        if state.history.shape != (self.kernel.size - 1,):
+            raise ValueError(
+                "FFT convolution state history shape does not match the plan."
+            )
+        if state.history.dtype != expected_dtype:
+            raise TypeError(
+                "FFT convolution state dtype does not match the promoted signal dtype."
+            )
+        values = values.astype(expected_dtype)
         extended = jnp.concatenate((state.history, values))
         transformed = jnp.fft.rfft(extended, self.fft_size) * jnp.fft.rfft(
             self.kernel, self.fft_size
         )
         full = jnp.fft.irfft(transformed, self.fft_size)
-        start = self.kernel.size - 1
-        output = full[start : start + self.block_size]
-        next_state = FFTConvolutionState(extended[-(self.kernel.size - 1) :])
-        return output, next_state
+        history_length = self.kernel.size - 1
+        output = full[history_length : history_length + self.block_size]
+        next_history = (
+            jnp.zeros((0,), dtype=extended.dtype)
+            if history_length == 0
+            else extended[-history_length:]
+        )
+        return output, FFTConvolutionState(next_history, self.plan_id)
 
 
 @dataclass(frozen=True, slots=True)
@@ -281,16 +374,14 @@ def multitaper_spectrum(
     signal = jnp.asarray(values)
     if signal.ndim != 1 or signal.size < 2:
         raise ValueError("Multitaper input must be a one-dimensional signal.")
-    count = (
-        max(1, int(2 * time_bandwidth) - 1) if taper_count is None else int(taper_count)
+    bandwidth, count, spacing = _multitaper_parameters(
+        signal.size, time_bandwidth, taper_count, sample_spacing
     )
-    tapers = jnp.asarray(
-        scipy_signal.windows.dpss(signal.size, time_bandwidth, Kmax=count)
-    )
+    tapers = jnp.asarray(scipy_signal.windows.dpss(signal.size, bandwidth, Kmax=count))
     transformed = jnp.fft.rfft(tapers * signal[None, :], axis=-1)
     individual = jnp.abs(transformed) ** 2
     spectrum = jnp.mean(individual, axis=0)
-    frequencies = jnp.fft.rfftfreq(signal.size, d=sample_spacing)
+    frequencies = jnp.fft.rfftfreq(signal.size, d=spacing)
     return MultitaperSpectrumResult(frequencies, spectrum, individual, float(2 * count))
 
 
@@ -305,14 +396,12 @@ def cross_spectrum_and_coherence(
 ):
     left_ = jnp.asarray(left)
     right_ = jnp.asarray(right)
-    if left_.shape != right_.shape or left_.ndim != 1:
-        raise ValueError("Cross-spectrum signals must be aligned vectors.")
-    count = (
-        max(1, int(2 * time_bandwidth) - 1) if taper_count is None else int(taper_count)
+    if left_.shape != right_.shape or left_.ndim != 1 or left_.size < 2:
+        raise ValueError("Cross-spectrum signals must be aligned nontrivial vectors.")
+    bandwidth, count, spacing = _multitaper_parameters(
+        left_.size, time_bandwidth, taper_count, sample_spacing
     )
-    tapers = jnp.asarray(
-        scipy_signal.windows.dpss(left_.size, time_bandwidth, Kmax=count)
-    )
+    tapers = jnp.asarray(scipy_signal.windows.dpss(left_.size, bandwidth, Kmax=count))
     left_fft = jnp.fft.rfft(tapers * left_[None, :], axis=-1)
     right_fft = jnp.fft.rfft(tapers * right_[None, :], axis=-1)
     cross = jnp.mean(left_fft * jnp.conj(right_fft), axis=0)
@@ -320,7 +409,7 @@ def cross_spectrum_and_coherence(
     right_power = jnp.mean(jnp.abs(right_fft) ** 2, axis=0)
     denominator = jnp.maximum(left_power * right_power, jnp.finfo(left_power.dtype).tiny)
     coherence = jnp.clip(jnp.abs(cross) ** 2 / denominator, 0.0, 1.0)
-    frequencies = jnp.fft.rfftfreq(left_.size, d=sample_spacing)
+    frequencies = jnp.fft.rfftfreq(left_.size, d=spacing)
     return frequencies, cross, coherence
 
 
@@ -337,9 +426,11 @@ def resample_nonuniform(
     target = jnp.asarray(target_times)
     if source.ndim != 1 or target.ndim != 1 or field.shape[0] != source.size:
         raise ValueError("Nonuniform resampling requires aligned leading sample axes.")
-    host = np.asarray(source)
-    if not np.all(np.isfinite(host)) or np.any(np.diff(host) <= 0.0):
-        raise ValueError("source_times must be finite and strictly increasing.")
+    source = eqx.error_if(
+        source,
+        jnp.any(~jnp.isfinite(source)) | jnp.any(jnp.diff(source) <= 0.0),
+        "source_times must be finite and strictly increasing.",
+    )
     return linear_interpolate(
         source,
         field,

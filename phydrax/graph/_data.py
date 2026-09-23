@@ -204,9 +204,13 @@ class Batch(StrictModule):
             axis=0,
         )
 
-        has_graph_labels = all(data.y is not None for data in data_list)
-        if has_graph_labels:
-            y = jnp.stack([jnp.asarray(data.y).reshape(-1)[0] for data in data_list])
+        labels = tuple(data.y for data in data_list)
+        if all(label is not None for label in labels):
+            arrays = tuple(jnp.asarray(label) for label in labels)
+            if all(array.ndim >= 1 and array.shape[0] == 1 for array in arrays):
+                y = jnp.concatenate(arrays, axis=0)
+            else:
+                y = jnp.stack(arrays, axis=0)
         else:
             y = None
 

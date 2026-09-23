@@ -182,7 +182,7 @@ class RadauIIAIntegrator:
         self.residual_tolerance = tolerance
         self.method_id = f"temporal:radau-iia-integrator:{tableau.method_id}"
         self.capabilities = TemporalMethodCapabilities(
-            equation_forms=("explicit-ode", "implicit-residual"),
+            equation_forms=("explicit-ode",),
             method_class="irk",
             order=tableau.order,
             stage_order=stage_count,

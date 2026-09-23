@@ -353,7 +353,10 @@ def finite_temperature_response(
             )
             row.append(target_hamiltonian.source.inner(left, target_action.value))
             flags.append(source_action.successful & target_action.successful)
-            errors.append(source_action.diagnostics.error_estimate + target_action.diagnostics.error_estimate)
+            errors.append(
+                source_action.diagnostics.error_estimate
+                + target_action.diagnostics.error_estimate
+            )
         forward_rows.append(jnp.stack(row))
         forward_converged.append(jnp.stack(flags))
         forward_errors.append(jnp.stack(errors))
@@ -382,7 +385,10 @@ def finite_temperature_response(
             )
             row.append(source_hamiltonian.source.inner(left, source_action.value))
             flags.append(target_action.successful & source_action.successful)
-            errors.append(target_action.diagnostics.error_estimate + source_action.diagnostics.error_estimate)
+            errors.append(
+                target_action.diagnostics.error_estimate
+                + source_action.diagnostics.error_estimate
+            )
         reverse_rows.append(jnp.stack(row))
         reverse_converged.append(jnp.stack(flags))
         reverse_errors.append(jnp.stack(errors))

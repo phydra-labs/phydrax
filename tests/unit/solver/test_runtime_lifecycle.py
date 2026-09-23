@@ -10,6 +10,7 @@ import phydrax as phx
 import phydrax.solver._runtime_lifecycle as lifecycle_module
 from phydrax.solver._runtime_lifecycle import (
     AcceptedStepTrigger,
+    AcceptedStepTriggerGraph,
     BoundedAsyncPublisher,
     ByteBoundedAsyncPublisher,
     ExactTimeSchedule,
@@ -21,6 +22,28 @@ from phydrax.solver._runtime_lifecycle import (
     StreamingObservablePlan,
     write_runtime_checkpoint,
 )
+
+
+def test_trigger_graph_debounces_persistent_conditions_and_staggered_crossings():
+    graph = AcceptedStepTriggerGraph(
+        (
+            AcceptedStepTrigger(1.0),
+            AcceptedStepTrigger(2.0),
+        ),
+        operation="all",
+        debounce_steps=1,
+    )
+    state = graph.initial_state()
+    fires = []
+    for values in ((1.1, 0.0), (1.1, 2.1), (1.1, 2.1)):
+        fire, state = graph.evaluate(
+            tuple(jnp.asarray(value) for value in values),
+            state,
+            accepted=True,
+        )
+        fires.append(bool(fire))
+    assert fires == [False, False, True]
+    assert state.fire_count == 1
 
 
 def test_runtime_checkpoint_roundtrip_binds_all_compatibility_ids(tmp_path):

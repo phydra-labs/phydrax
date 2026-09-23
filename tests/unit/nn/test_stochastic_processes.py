@@ -81,6 +81,19 @@ def test_gaussian_pathwise_cocycle_and_marginal_semigroup_contracts():
     assert jnp.isfinite(marginal.log_prob(marginal.mean))
 
 
+def test_scalar_gaussian_process_distribution_preserves_batch_axes():
+    distribution = phx.stochastic.GaussianProcessDistribution(
+        jnp.asarray([1.0, -2.0, 0.5]),
+        jnp.asarray([[[2.0]], [[3.0]], [[4.0]]]),
+        event_shape=(),
+    )
+    samples = distribution.sample(jr.key(101), sample_shape=(5,))
+
+    assert distribution.batch_shape == (3,)
+    assert samples.shape == (5, 3)
+    assert distribution.log_prob(distribution.mean).shape == (3,)
+
+
 def test_gaussian_process_diagnostics_match_marginal_moments():
     process = _gaussian_process()
     realization = process.realize(

@@ -102,13 +102,18 @@ def prepare_symmetric_waring(
         else ()
     )
     basis_size = len(quotient_exponents)
-    basis_subsets = comb(basis_size, problem.rank) if basis_size >= problem.rank else 0
-    hankel_entries = (
+    chart_count = len(chart_axes)
+    per_chart_subsets = (
+        comb(basis_size, problem.rank) if basis_size >= problem.rank else 0
+    )
+    basis_subsets = chart_count * per_chart_subsets
+    per_chart_hankel_entries = (
         basis_size * basis_size + affine_dimension * problem.rank * problem.rank
         if algebraically_admissible
         else 0
     )
-    vandermonde_entries = problem.independent_entry_count * problem.rank
+    hankel_entries = chart_count * per_chart_hankel_entries
+    vandermonde_entries = chart_count * problem.independent_entry_count * problem.rank
     complex_multiplier = (
         2 if jnp.issubdtype(problem.tensor.dtype, jnp.complexfloating) else 1
     )

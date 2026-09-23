@@ -8,6 +8,8 @@ import hashlib
 import io
 import json
 import math
+import os
+import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,6 +30,7 @@ from .._array_archive import (
 )
 from .._execution_plan import ExecutionPlan
 from .._fingerprint import canonical_fingerprint, canonical_json
+from .._host_io import open_regular_file
 from .._publication import publish_bytes
 from ..diagnostics import Diagnostic, DiagnosticError
 from ..logging import emit
@@ -440,6 +443,7 @@ def create(
     *,
     manifest: LifecycleRecord,
     arrays: Mapping[str, Any],
+    parent: LifecycleArchive | None = None,
 ) -> LifecycleArchive:
     """Atomically create and reopen one checksum-bound lifecycle archive."""
 
@@ -461,6 +465,7 @@ def create(
     if any(not name for name in arrays_):
         raise ValueError("Lifecycle payload names must be non-empty.")
     _validate_payloads(manifest, arrays_)
+    _validate_parent_archive(manifest, parent)
     record = _encode_record(manifest)
     record_digest = canonical_fingerprint(record)
     archive_id = canonical_fingerprint(
@@ -480,7 +485,7 @@ def create(
         },
         arrays=arrays_,
     )
-    archive = open(path, allow_incomplete=True, limits=None)
+    archive = open(path, allow_incomplete=True, limits=None, parent=parent)
     emit(
         "INFO",
         "lifecycle.archive.created",
@@ -497,6 +502,7 @@ def open(
     path: str | Path,
     /,
     *,
+    parent: LifecycleArchive | None = None,
     allow_incomplete: bool = False,
     limits: ArrayArchiveLimits | None = DEFAULT_ARRAY_ARCHIVE_LIMITS,
 ) -> LifecycleArchive:
@@ -514,6 +520,7 @@ def open(
         raise ArrayArchiveCorruptionError("Lifecycle record checksum failed.")
     manifest = _decode_record(record)
     _validate_payloads(manifest, arrays)
+    _validate_parent_archive(manifest, parent)
     archive_id = canonical_fingerprint(
         {
             "kind": "lifecycle-archive",
@@ -553,10 +560,15 @@ def open(
     return archive
 
 
-def list_fields(source: str | Path | LifecycleArchive, /) -> tuple[str, ...]:
+def list_fields(
+    source: str | Path | LifecycleArchive,
+    /,
+    *,
+    parent: LifecycleArchive | None = None,
+) -> tuple[str, ...]:
     """List stable result-field names or generic named payloads."""
 
-    archive = _as_archive(source)
+    archive = _as_archive(source, parent=parent)
     manifest = _result_manifest(archive.manifest)
     if manifest is not None:
         return tuple(record[0] for record in manifest.fields)
@@ -568,10 +580,11 @@ def query(
     /,
     *,
     fields: Sequence[str] = (),
+    parent: LifecycleArchive | None = None,
 ) -> LifecycleQuery:
     """Select metadata-bound sampled fields without provider-specific logic."""
 
-    archive = _as_archive(source)
+    archive = _as_archive(source, parent=parent)
     requested = tuple(str(name).strip() for name in fields)
     if any(not name for name in requested) or len(set(requested)) != len(requested):
         raise ValueError("Queried field names must be non-empty and unique.")
@@ -623,13 +636,14 @@ def export(
     *,
     format: str,
     fields: Sequence[str] = (),
+    parent: LifecycleArchive | None = None,
 ) -> Path:
     """Export selected sampled payloads through a registered generic exporter."""
 
     key = str(format).strip().lower()
     if key not in _EXPORTERS:
         raise ValueError(f"No sampled exporter is registered for {key!r}.")
-    query_ = query(source, fields=fields)
+    query_ = query(source, fields=fields, parent=parent)
     destination_ = _EXPORTERS[key](query_, Path(destination))
     emit(
         "INFO",
@@ -709,6 +723,7 @@ def support_bundle(
     /,
     *,
     authorization: SupportBundleAuthorization | None = None,
+    parent: LifecycleArchive | None = None,
     archive_limits: ArrayArchiveLimits | None = DEFAULT_ARRAY_ARCHIVE_LIMITS,
 ) -> Path:
     """Create a sanitized support bundle, or an explicitly authorized full copy.
@@ -721,7 +736,7 @@ def support_bundle(
         authorization, SupportBundleAuthorization
     ):
         raise TypeError("authorization must be SupportBundleAuthorization or None.")
-    archive = _as_archive(source, limits=archive_limits)
+    archive = _as_archive(source, limits=archive_limits, parent=parent)
     telemetry = _sanitized_support_telemetry(archive)
     if authorization is None:
         output = write_array_archive(
@@ -745,7 +760,7 @@ def support_bundle(
     if authorization.source_archive_id != archive.archive_id:
         raise ValueError("Support authorization is not bound to the source archive.")
 
-    payload = archive.path.read_bytes()
+    payload = _verified_archive_snapshot(archive, limits=archive_limits)
     record = _encode_record(archive.manifest)
     authorization_record = {
         "authorization_id": authorization.authorization_id,
@@ -820,10 +835,12 @@ def _as_archive(
     /,
     *,
     limits: ArrayArchiveLimits | None = DEFAULT_ARRAY_ARCHIVE_LIMITS,
+    parent: LifecycleArchive | None = None,
 ) -> LifecycleArchive:
     if isinstance(source, LifecycleArchive):
+        _validate_parent_archive(source.manifest, parent)
         return source
-    return open(source, limits=limits)
+    return open(source, limits=limits, parent=parent)
 
 
 def _result_manifest(record: LifecycleRecord, /) -> ResultManifest | None:
@@ -854,7 +871,9 @@ def _validate_payloads(
             (name, digest, None) for name, digest in manifest.manifest.payloads
         )
     elif isinstance(manifest, NumericRevision):
-        if arrays and array_collection_digest(arrays) != manifest.content_digest:
+        if not arrays:
+            raise ValueError("Numeric revision archives require materialized payloads.")
+        if array_collection_digest(arrays) != manifest.content_digest:
             raise ValueError("Numeric revision content digest does not match payloads.")
         return
     else:
@@ -872,6 +891,148 @@ def _validate_payloads(
             raise ValueError(f"Lifecycle payload {name!r} byte count mismatch.")
 
 
+def _validate_parent_archive(
+    manifest: LifecycleRecord,
+    parent: LifecycleArchive | None,
+    /,
+) -> None:
+    if parent is not None and not isinstance(parent, LifecycleArchive):
+        raise TypeError("parent must be a LifecycleArchive or None.")
+    if isinstance(manifest, NumericRevision):
+        has_parent = manifest.parent_digest is not None
+        if has_parent != (parent is not None):
+            raise ValueError("Numeric revision parent archive is required exactly once.")
+        if parent is not None and (
+            not isinstance(parent.manifest, NumericRevision)
+            or manifest.parent_digest != parent.manifest.content_digest
+            or manifest.parent_revision_id != parent.manifest.revision_id
+        ):
+            raise ValueError("Numeric revision parent archive identity is invalid.")
+        return
+    if isinstance(manifest, CheckpointManifest):
+        has_parent = manifest.parent_checkpoint_id is not None
+        if has_parent != (parent is not None):
+            raise ValueError("Checkpoint parent archive is required exactly once.")
+        if parent is not None and (
+            not isinstance(parent.manifest, CheckpointManifest)
+            or not parent.manifest.complete
+            or manifest.parent_checkpoint_id != parent.manifest.checkpoint_id
+            or manifest.parent_manifest_id != parent.manifest.manifest_id
+            or manifest.analysis_plan_id != parent.manifest.analysis_plan_id
+            or manifest.numeric_revision_id != parent.manifest.numeric_revision_id
+            or manifest.execution_plan_id != parent.manifest.execution_plan_id
+        ):
+            raise ValueError("Checkpoint parent archive identity is invalid.")
+        return
+    if isinstance(manifest, ResultRevision):
+        has_parent = manifest.parent_result_id is not None
+        if has_parent != (parent is not None):
+            raise ValueError("Result revision parent archive is required exactly once.")
+        parent_revision = (
+            None
+            if parent is None
+            else parent.manifest
+            if isinstance(parent.manifest, ResultRevision)
+            else None
+        )
+        if parent is not None and (
+            parent_revision is None
+            or manifest.parent_result_id != parent_revision.manifest.result_id
+            or manifest.parent_revision_id != parent_revision.revision_id
+            or manifest.manifest.run_id != parent_revision.manifest.run_id
+        ):
+            raise ValueError("Result revision parent archive identity is invalid.")
+        return
+    if parent is not None:
+        raise ValueError("This lifecycle record cannot declare a parent archive.")
+
+
+def _verified_archive_snapshot(
+    archive: LifecycleArchive,
+    /,
+    *,
+    limits: ArrayArchiveLimits | None,
+) -> bytes:
+    """Read one bounded descriptor-held snapshot and revalidate its archive identity."""
+
+    admitted_limits = DEFAULT_ARRAY_ARCHIVE_LIMITS if limits is None else limits
+    try:
+        with open_regular_file(archive.path) as stream:
+            before = os.fstat(stream.fileno())
+            if before.st_size > admitted_limits.max_container_bytes:
+                raise ArrayArchiveCorruptionError(
+                    "Lifecycle archive exceeds the container byte limit."
+                )
+            payload = stream.read(admitted_limits.max_container_bytes + 1)
+            after = os.fstat(stream.fileno())
+    except ValueError as error:
+        raise ArrayArchiveCorruptionError(
+            "Lifecycle archive source must remain a regular file."
+        ) from error
+    if len(payload) > admitted_limits.max_container_bytes:
+        raise ArrayArchiveCorruptionError(
+            "Lifecycle archive exceeds the container byte limit."
+        )
+    before_identity = (
+        before.st_dev,
+        before.st_ino,
+        before.st_size,
+        before.st_mtime_ns,
+        before.st_ctime_ns,
+    )
+    after_identity = (
+        after.st_dev,
+        after.st_ino,
+        after.st_size,
+        after.st_mtime_ns,
+        after.st_ctime_ns,
+    )
+    if before_identity != after_identity or len(payload) != before.st_size:
+        raise ArrayArchiveCorruptionError(
+            "Lifecycle archive changed while its support snapshot was read."
+        )
+    with tempfile.TemporaryDirectory(prefix="phydrax-lifecycle-snapshot-") as directory:
+        snapshot = Path(directory) / "archive.zip"
+        descriptor = os.open(
+            snapshot,
+            os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+            0o600,
+        )
+        try:
+            view = memoryview(payload)
+            while view:
+                written = os.write(descriptor, view)
+                if written <= 0:
+                    raise OSError("Cannot write lifecycle archive snapshot.")
+                view = view[written:]
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        container, arrays = read_array_archive(snapshot, limits=admitted_limits)
+    record = container.get("record")
+    if container.get("kind") != "lifecycle-archive" or not isinstance(record, Mapping):
+        raise ArrayArchiveCorruptionError("Support source is not a lifecycle archive.")
+    record_digest = canonical_fingerprint(record)
+    manifest = _decode_record(record)
+    _validate_payloads(manifest, arrays)
+    snapshot_id = canonical_fingerprint(
+        {
+            "kind": "lifecycle-archive",
+            "record_digest": record_digest,
+            "payload_digest": array_collection_digest(arrays),
+        }
+    )
+    if (
+        container.get("record_digest") != record_digest
+        or container.get("archive_id") != snapshot_id
+        or snapshot_id != archive.archive_id
+    ):
+        raise ArrayArchiveCorruptionError(
+            "Lifecycle archive changed after support-bundle admission."
+        )
+    return payload
+
+
 def _encode_record(record: LifecycleRecord, /) -> dict[str, Any]:
     if isinstance(record, NumericRevision):
         return {
@@ -879,6 +1040,7 @@ def _encode_record(record: LifecycleRecord, /) -> dict[str, Any]:
             "content_digest": record.content_digest,
             "label": record.label,
             "parent_digest": record.parent_digest,
+            "parent_revision_id": record.parent_revision_id,
             "metadata": [list(item) for item in record.metadata],
             "revision_id": record.revision_id,
         }
@@ -901,6 +1063,7 @@ def _encode_record(record: LifecycleRecord, /) -> dict[str, Any]:
                 for shard in record.shards
             ],
             "complete": record.complete,
+            "parent_manifest_id": record.parent_manifest_id,
             "parent_checkpoint_id": record.parent_checkpoint_id,
             "diagnostic_ids": list(record.diagnostic_ids),
             "manifest_id": record.manifest_id,
@@ -951,6 +1114,7 @@ def _encode_record(record: LifecycleRecord, /) -> dict[str, Any]:
             "kind": "result-revision",
             "manifest": _encode_result_manifest(record.manifest),
             "parent_result_id": record.parent_result_id,
+            "parent_revision_id": record.parent_revision_id,
             "revision_id": record.revision_id,
         }
     raise TypeError("Unknown lifecycle record.")
@@ -981,6 +1145,7 @@ def _decode_record(record: Mapping[str, Any], /) -> LifecycleRecord:
             record["content_digest"],
             label=record["label"],
             parent_digest=record["parent_digest"],
+            parent_revision_id=record["parent_revision_id"],
             metadata=record["metadata"],
         )
         _identity(record, "revision_id", value.revision_id)
@@ -994,6 +1159,7 @@ def _decode_record(record: Mapping[str, Any], /) -> LifecycleRecord:
             record["execution_plan_id"],
             shards,
             complete=record["complete"],
+            parent_manifest_id=record["parent_manifest_id"],
             parent_checkpoint_id=record["parent_checkpoint_id"],
             diagnostic_ids=record["diagnostic_ids"],
         )
@@ -1049,6 +1215,7 @@ def _decode_record(record: Mapping[str, Any], /) -> LifecycleRecord:
         value = ResultRevision(
             _decode_result_manifest(nested),
             record["parent_result_id"],
+            parent_revision_id=record["parent_revision_id"],
         )
         _identity(record, "revision_id", value.revision_id)
         return value

@@ -99,6 +99,29 @@ class MACDiffuseSDFGeometryPlan(StrictModule, NonTrainableState):
         previous: MACDiffuseSDFGeometryState | None = None,
         step_size: ArrayLike | None = None,
     ) -> MACDiffuseSDFGeometryState:
+        if (previous is None) != (step_size is None):
+            raise ValueError("previous and step_size must be supplied together.")
+        if previous is not None:
+            if not isinstance(previous, MACDiffuseSDFGeometryState):
+                raise TypeError("previous must be a MACDiffuseSDFGeometryState.")
+            if previous.geometry_id != self.plan_id:
+                raise ValueError("Previous diffuse geometry belongs to another plan.")
+            if (
+                previous.cell_fluid_fraction.shape
+                != self.operators.discretization.cell_shape
+                or len(previous.face_open_fraction) != len(self.face_points)
+                or len(previous.wall_velocity) != len(self.face_points)
+                or any(
+                    fraction.shape != layout.shape or wall.shape != layout.shape
+                    for fraction, wall, layout in zip(
+                        previous.face_open_fraction,
+                        previous.wall_velocity,
+                        self.operators.discretization.face_layouts,
+                        strict=True,
+                    )
+                )
+            ):
+                raise ValueError("Previous diffuse geometry has a stale operator layout.")
         time_ = jnp.asarray(time)
         phi = jnp.asarray(self.signed_distance(self.cell_points, time_, args))
         if phi.shape != self.operators.discretization.cell_shape:
@@ -123,10 +146,20 @@ class MACDiffuseSDFGeometryPlan(StrictModule, NonTrainableState):
         normal = jnp.stack(gradients, axis=-1)
         norm = jnp.sqrt(jnp.sum(normal**2, axis=-1))
         normal = normal / jnp.maximum(norm[..., None], 1.0e-30)
-        if previous is None or step_size is None:
+        if previous is None:
             swept = jnp.zeros_like(cell_fraction)
         else:
-            dt = jnp.asarray(step_size, dtype=cell_fraction.dtype).reshape(())
+            step = jnp.asarray(step_size)
+            if step.shape != () or step.dtype.kind not in "iuf":
+                raise ValueError("step_size must be a real scalar.")
+            dt = step.astype(cell_fraction.dtype)
+            dt = eqx.error_if(
+                dt,
+                ~jnp.isfinite(dt)
+                | (dt <= 0.0)
+                | ~jnp.asarray(previous.successful, dtype=jnp.bool_),
+                "step_size must be finite and positive and previous geometry successful.",
+            )
             swept = (cell_fraction - previous.cell_fluid_fraction) / dt
         face_flux = []
         for axis, (fraction, wall) in enumerate(

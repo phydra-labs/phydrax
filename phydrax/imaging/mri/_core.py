@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from numbers import Integral
 
 import equinox as eqx
 import jax
@@ -23,6 +24,7 @@ from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...ein import contract
 from ...measurement import MeasurementAsset, SampleTimeAxis
+from ...units import SECOND
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,29 +95,49 @@ class KSpaceAsset:
             raise TypeError("K-space measurements require complex storage.")
 
 
+def _coil_identities(coil_ids: tuple[str, ...], /) -> tuple[str, ...]:
+    if isinstance(coil_ids, str):
+        raise TypeError("coil_ids must be a tuple of identifiers.")
+    identifiers = tuple(coil_ids)
+    if (
+        not identifiers
+        or any(
+            not isinstance(identifier, str)
+            or not identifier
+            or identifier != identifier.strip()
+            for identifier in identifiers
+        )
+        or len(identifiers) != len(set(identifiers))
+    ):
+        raise ValueError("coil_ids must be canonical, nonempty, and unique.")
+    return identifiers
+
+
 class CoilSensitivityField(StrictModule, NonTrainableState):
     values: Array
     coil_ids: tuple[str, ...] = eqx.field(static=True)
     field_id: str = eqx.field(static=True)
 
     def __init__(self, values: ArrayLike, coil_ids: tuple[str, ...], /, *, field_id: str):
-        values_ = jnp.asarray(values)
+        identifiers = _coil_identities(coil_ids)
+        values_ = np.asarray(values)
         if (
             values_.ndim != 3
-            or values_.shape[0] != len(coil_ids)
-            or not jnp.issubdtype(values_.dtype, jnp.complexfloating)
+            or values_.shape[0] != len(identifiers)
+            or not np.issubdtype(values_.dtype, np.complexfloating)
+            or not np.all(np.isfinite(values_))
         ):
             raise ValueError(
-                "Coil sensitivities require complex shape (coils, rows, columns)."
+                "Coil sensitivities require finite complex shape (coils, rows, columns)."
             )
-        self.values = values_
-        self.coil_ids = tuple(coil_ids)
+        self.values = jnp.asarray(values_)
+        self.coil_ids = identifiers
         self.field_id = canonical_fingerprint(
             {
                 "kind": "coil-sensitivity-field",
                 "name": field_id,
-                "coils": list(coil_ids),
-                "shape": list(values_.shape),
+                "coils": list(identifiers),
+                "values": array_tree_fingerprint(values_),
             }
         )
 
@@ -127,24 +149,28 @@ class CoilNoiseCovariance(StrictModule, NonTrainableState):
     covariance_id: str = eqx.field(static=True)
 
     def __init__(self, covariance: ArrayLike, coil_ids: tuple[str, ...], /):
+        identifiers = _coil_identities(coil_ids)
         matrix = np.asarray(covariance)
-        if matrix.shape != (len(coil_ids), len(coil_ids)) or not np.allclose(
-            matrix, matrix.conj().T
+        if (
+            matrix.shape != (len(identifiers), len(identifiers))
+            or not np.issubdtype(matrix.dtype, np.number)
+            or not np.all(np.isfinite(matrix))
+            or not np.allclose(matrix, matrix.conj().T)
         ):
             raise ValueError(
-                "Coil covariance must be Hermitian with one row/column per coil."
+                "Coil covariance must be finite Hermitian with one row/column per coil."
             )
         eigenvalues, eigenvectors = np.linalg.eigh(matrix)
-        if np.any(eigenvalues <= 0.0):
+        if np.any(~np.isfinite(eigenvalues)) or np.any(eigenvalues <= 0.0):
             raise ValueError("Coil covariance must be positive definite.")
         whitening = (eigenvectors / np.sqrt(eigenvalues)[None, :]) @ eigenvectors.conj().T
         self.covariance = jnp.asarray(matrix)
         self.whitening = jnp.asarray(whitening)
-        self.coil_ids = tuple(coil_ids)
+        self.coil_ids = identifiers
         self.covariance_id = canonical_fingerprint(
             {
                 "kind": "coil-noise-covariance",
-                "coils": list(coil_ids),
+                "coils": list(identifiers),
                 "matrix": array_tree_fingerprint(matrix),
             }
         )
@@ -171,19 +197,19 @@ class CartesianMRIEncodingPlan(StrictModule, NonTrainableState):
     ):
         shape = coils.values.shape[1:]
         mask = (
-            jnp.ones(shape, dtype=jnp.bool_)
+            np.ones(shape, dtype=np.bool_)
             if sampling_mask is None
-            else jnp.asarray(sampling_mask, dtype=jnp.bool_)
+            else np.asarray(sampling_mask, dtype=np.bool_)
         )
         if mask.shape != shape:
             raise ValueError("sampling_mask must match the image shape.")
         self.coils = coils
-        self.sampling_mask = mask
+        self.sampling_mask = jnp.asarray(mask)
         self.operator_id = canonical_fingerprint(
             {
                 "kind": "cartesian-mri-encoding",
                 "coils": coils.field_id,
-                "mask_shape": list(mask.shape),
+                "mask": array_tree_fingerprint(mask),
             }
         )
 
@@ -304,6 +330,23 @@ class CGSensePlan:
     iteration_count: int
     l2_regularization: float = 0.0
 
+    def __post_init__(self) -> None:
+        if not isinstance(
+            self.encoding, (CartesianMRIEncodingPlan, NonuniformMRIEncodingPlan)
+        ):
+            raise TypeError("encoding must be a supported MRI encoding plan.")
+        if isinstance(self.iteration_count, bool) or not isinstance(
+            self.iteration_count, Integral
+        ):
+            raise TypeError("iteration_count must be an integer.")
+        if self.iteration_count < 1:
+            raise ValueError("iteration_count must be positive.")
+        regularization = float(self.l2_regularization)
+        if not np.isfinite(regularization) or regularization < 0.0:
+            raise ValueError("l2_regularization must be finite and nonnegative.")
+        object.__setattr__(self, "iteration_count", int(self.iteration_count))
+        object.__setattr__(self, "l2_regularization", regularization)
+
     def reconstruct(
         self, kspace: ArrayLike, /, *, initial: ArrayLike | None = None
     ) -> MRIReconstructionResult:
@@ -359,6 +402,21 @@ class RegularizedMRIPlan:
     shrinkage: float
     outer_iterations: int = 4
 
+    def __post_init__(self) -> None:
+        if not isinstance(self.base, CGSensePlan):
+            raise TypeError("base must be CGSensePlan.")
+        if isinstance(self.outer_iterations, bool) or not isinstance(
+            self.outer_iterations, Integral
+        ):
+            raise TypeError("outer_iterations must be an integer.")
+        shrinkage = float(self.shrinkage)
+        if not np.isfinite(shrinkage) or shrinkage < 0.0 or self.outer_iterations < 1:
+            raise ValueError(
+                "shrinkage must be finite and nonnegative and outer_iterations positive."
+            )
+        object.__setattr__(self, "shrinkage", shrinkage)
+        object.__setattr__(self, "outer_iterations", int(self.outer_iterations))
+
     def reconstruct(self, kspace: ArrayLike, /) -> MRIReconstructionResult:
         image = jnp.zeros(
             self.base.encoding.coils.values.shape[1:], dtype=jnp.asarray(kspace).dtype
@@ -382,6 +440,8 @@ class OffResonanceMRIEncodingPlan(StrictModule, NonTrainableState):
     base: NonuniformMRIEncodingPlan
     off_resonance_hz: Array
     translations: Array
+    sample_times_seconds: Array
+    operator_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -391,31 +451,45 @@ class OffResonanceMRIEncodingPlan(StrictModule, NonTrainableState):
         *,
         translations: ArrayLike | None = None,
     ):
-        field = jnp.asarray(off_resonance_hz)
+        field = np.asarray(off_resonance_hz)
         if (
             field.shape != base.coils.values.shape[1:]
             or base.support.sample_times is None
+            or not np.all(np.isfinite(field))
         ):
             raise ValueError(
-                "Off-resonance encoding requires an image-shaped field and k-space sample times."
+                "Off-resonance encoding requires a finite image-shaped field and k-space sample times."
             )
         translation = (
-            jnp.zeros((base.support.sample_shape[0], 2))
+            np.zeros((base.support.sample_shape[0], 2), dtype=np.float64)
             if translations is None
-            else jnp.asarray(translations)
+            else np.asarray(translations)
         )
-        if translation.shape != (base.support.sample_shape[0], 2):
-            raise ValueError("translations must have shape (sample_count, 2).")
+        if translation.shape != (base.support.sample_shape[0], 2) or not np.all(
+            np.isfinite(translation)
+        ):
+            raise ValueError("translations must be finite with shape (sample_count, 2).")
+        sample_times = base.support.sample_times
+        assert sample_times is not None
+        times_seconds = sample_times.values_in(SECOND)
         self.base = base
-        self.off_resonance_hz = field
-        self.translations = translation
+        self.off_resonance_hz = jnp.asarray(field)
+        self.translations = jnp.asarray(translation)
+        self.sample_times_seconds = jnp.asarray(times_seconds)
+        self.operator_id = canonical_fingerprint(
+            {
+                "kind": "off-resonance-mri-encoding",
+                "base": base.operator_id,
+                "field": array_tree_fingerprint(field),
+                "translations": array_tree_fingerprint(translation),
+                "sample_times_seconds": array_tree_fingerprint(times_seconds),
+            }
+        )
 
     def forward(self, image: ArrayLike, /) -> Array:
         value = jnp.asarray(image)
         coordinates = jnp.asarray(self.base.support.k_vectors)
-        sample_times = self.base.support.sample_times
-        assert sample_times is not None
-        times = jnp.asarray(sample_times.sample_times)
+        times = self.sample_times_seconds
         rows, columns = value.shape
         yy, xx = jnp.meshgrid(
             jnp.arange(rows) - rows / 2, jnp.arange(columns) - columns / 2, indexing="ij"
@@ -439,6 +513,12 @@ class OffResonanceMRIEncodingPlan(StrictModule, NonTrainableState):
 class PhaseContrastMRIPlan:
     velocity_encoding: float
 
+    def __post_init__(self) -> None:
+        encoding = float(self.velocity_encoding)
+        if not np.isfinite(encoding) or encoding <= 0.0:
+            raise ValueError("velocity_encoding must be finite and positive.")
+        object.__setattr__(self, "velocity_encoding", encoding)
+
     def encode(self, magnitude: ArrayLike, velocity: ArrayLike, /) -> Array:
         magnitude_, velocity_ = jnp.asarray(magnitude), jnp.asarray(velocity)
         if magnitude_.shape != velocity_.shape:
@@ -454,10 +534,17 @@ class QuantitativeMRIPlan(StrictModule, NonTrainableState):
     echo_time: float = eqx.field(static=True)
 
     def __init__(self, repetition_time: float, echo_time: float, /):
-        self.repetition_time = float(repetition_time)
-        self.echo_time = float(echo_time)
-        if self.repetition_time <= 0.0 or self.echo_time < 0.0:
+        repetition = float(repetition_time)
+        echo = float(echo_time)
+        if (
+            not np.isfinite(repetition)
+            or not np.isfinite(echo)
+            or repetition <= 0.0
+            or echo < 0.0
+        ):
             raise ValueError("MRI sequence times are outside their physical domain.")
+        self.repetition_time = repetition
+        self.echo_time = echo
 
     def signal(
         self,
@@ -467,13 +554,29 @@ class QuantitativeMRIPlan(StrictModule, NonTrainableState):
         phase: ArrayLike = 0.0,
         /,
     ) -> Array:
-        density, t1_, t2_ = jnp.asarray(proton_density), jnp.asarray(t1), jnp.asarray(t2)
-        return (
-            density
-            * (1.0 - jnp.exp(-self.repetition_time / t1_))
-            * jnp.exp(-self.echo_time / t2_)
-            * jnp.exp(1j * jnp.asarray(phase))
+        density = jnp.asarray(proton_density)
+        t1_ = jnp.asarray(t1)
+        t2_ = jnp.asarray(t2)
+        phase_ = jnp.asarray(phase)
+        valid = (
+            jnp.isfinite(density)
+            & (density >= 0.0)
+            & jnp.isfinite(t1_)
+            & (t1_ > 0.0)
+            & jnp.isfinite(t2_)
+            & (t2_ > 0.0)
+            & jnp.isfinite(phase_)
         )
+        safe_t1 = jnp.where(valid, t1_, 1.0)
+        safe_t2 = jnp.where(valid, t2_, 1.0)
+        value = (
+            density
+            * (1.0 - jnp.exp(-self.repetition_time / safe_t1))
+            * jnp.exp(-self.echo_time / safe_t2)
+            * jnp.exp(1j * phase_)
+        )
+        invalid = jnp.asarray(jnp.nan + 1j * jnp.nan, dtype=value.dtype)
+        return jnp.where(valid, value, invalid)
 
 
 class BlochResult(StrictModule, NonTrainableState):
@@ -488,6 +591,23 @@ class BlochSequencePlan:
     time_step: float
     gyromagnetic_ratio: float
     equilibrium_magnetization: float = 1.0
+
+    def __post_init__(self) -> None:
+        time_step = float(self.time_step)
+        ratio = float(self.gyromagnetic_ratio)
+        equilibrium = float(self.equilibrium_magnetization)
+        if (
+            not np.isfinite(time_step)
+            or time_step <= 0.0
+            or not np.isfinite(ratio)
+            or not np.isfinite(equilibrium)
+        ):
+            raise ValueError(
+                "Bloch sequence scalars must be finite with positive time_step."
+            )
+        object.__setattr__(self, "time_step", time_step)
+        object.__setattr__(self, "gyromagnetic_ratio", ratio)
+        object.__setattr__(self, "equilibrium_magnetization", equilibrium)
 
     def simulate(
         self,

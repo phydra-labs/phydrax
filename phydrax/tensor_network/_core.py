@@ -60,6 +60,8 @@ class MatrixProductState(StrictModule):
         precision_.validate_storage(values)
         if not values or any(tensor.ndim != 3 for tensor in values):
             raise ValueError("MPS tensors must have shape (left, physical, right).")
+        if any(any(dimension <= 0 for dimension in tensor.shape) for tensor in values):
+            raise ValueError("MPS tensor dimensions must all be positive.")
         if values[0].shape[0] != 1 or values[-1].shape[-1] != 1:
             raise ValueError("Open-boundary MPS edge bonds must be one.")
         for left, right in pairwise(values):
@@ -137,6 +139,8 @@ class MatrixProductOperator(StrictModule):
         precision_.validate_storage(values)
         if not values or any(tensor.ndim != 4 for tensor in values):
             raise ValueError("MPO tensors require (left, output, input, right).")
+        if any(any(dimension <= 0 for dimension in tensor.shape) for tensor in values):
+            raise ValueError("MPO tensor dimensions must all be positive.")
         if values[0].shape[0] != 1 or values[-1].shape[-1] != 1:
             raise ValueError("Open-boundary MPO edge bonds must be one.")
         for left, right in pairwise(values):
@@ -198,6 +202,8 @@ class LocallyPurifiedDensity(StrictModule):
             raise ValueError(
                 "Purification tensors require (left, physical, kraus, right)."
             )
+        if any(any(dimension <= 0 for dimension in tensor.shape) for tensor in values):
+            raise ValueError("Purification tensor dimensions must all be positive.")
         if values[0].shape[0] != 1 or values[-1].shape[-1] != 1:
             raise ValueError("Purification edge bonds must be one.")
         for left, right in pairwise(values):

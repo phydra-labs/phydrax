@@ -335,6 +335,9 @@ def test_generic_periodic_provider_binds_method_task_result_and_provenance():
             band_energies=[[-1.0, 0.5], [-0.8, 0.7]],
             cell_vectors=cell_vectors,
             artifact_ids=(provenance.manifest_id,),
+            convergence=phx.chemistry.ElectronicConvergenceEvidence(
+                True, energy_residual=0.0, density_residual=0.0
+            ),
         )
 
     result = (

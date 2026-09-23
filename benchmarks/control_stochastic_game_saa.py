@@ -375,14 +375,17 @@ def main() -> None:
             and case["certificate"]["training_holdout_realization_ids_disjoint"]
             and case["certificate"]["training_holdout_coupling_ids_distinct"]
             and case["certificate"]["training_holdout_bundle_ids_distinct"]
+            and case["certificate"]["frozen_training_ids_reproduced"]
+            and case["certificate"]["frozen_holdout_ids_reproduced"]
             and case["certificate"]["all_holdout_clusters_valid"]
-            for case in cases
         ),
     }
     if arguments.output is None:
         print(json.dumps(payload, allow_nan=False, indent=2, sort_keys=True))
     else:
         write_json_atomic(arguments.output, payload)
+    if not payload["all_valid"]:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

@@ -533,6 +533,7 @@ class _StageJacobian(StrictModule):
 def _dae_stage_method(problem, structure, time):
     system, initial = problem.system, problem.initial_state
     arguments = ImplicitStageArguments(
+        rate_reference=initial,
         time=time,
         shift=jnp.max(system.state_rate_scale),
         rate_offset=-jnp.max(system.state_rate_scale) * initial,

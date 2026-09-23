@@ -91,16 +91,26 @@ class VirtualElementProductPlan(StrictModule, NonTrainableState):
             len(fields) < 2
             or len(fields) != len(field_sizes)
             or not all(isinstance(v, VirtualElementFieldSpec) for v in fields)
+            or not all(type(value) is int and value > 0 for value in field_sizes)
         ):
             raise ValueError(
-                "Mixed VEM products require aligned field specifications/sizes."
+                "Mixed VEM products require aligned field specifications and positive sizes."
             )
-        offsets = np.cumsum((0, *field_sizes))
+        offsets = np.cumsum((0, *field_sizes), dtype=np.int64)
         matrix = np.asarray(block_matrix)
+        margin = float(inf_sup_margin)
+        defect = float(commuting_defect)
+        maximum_defect = float(maximum_commuting_defect)
         if (
             matrix.shape != (offsets[-1], offsets[-1])
-            or float(inf_sup_margin) <= 0
-            or float(commuting_defect) > float(maximum_commuting_defect)
+            or np.any(~np.isfinite(matrix))
+            or not np.isfinite(margin)
+            or margin <= 0.0
+            or not np.isfinite(defect)
+            or defect < 0.0
+            or not np.isfinite(maximum_defect)
+            or maximum_defect < 0.0
+            or defect > maximum_defect
         ):
             raise ValueError(
                 "Mixed VEM block/rank/commuting evidence is outside its envelope."
@@ -113,9 +123,9 @@ class VirtualElementProductPlan(StrictModule, NonTrainableState):
                 {"kind": "vem-product-operator", "matrix": array_tree_fingerprint(matrix)}
             ),
         )
-        self.field_offsets = tuple(offsets)
-        self.inf_sup_margin = float(inf_sup_margin)
-        self.commuting_defect = float(commuting_defect)
+        self.field_offsets = tuple(int(value) for value in offsets)
+        self.inf_sup_margin = margin
+        self.commuting_defect = defect
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "vem-product-plan",
@@ -213,11 +223,23 @@ def adapt_virtual_element_p(
     transfer: ArrayLike,
     policy: VirtualElementAdaptivityPolicy,
     /,
+    *,
+    maximum_conservation_defect: float = 1.0e-10,
 ) -> VirtualElementAdaptationResult:
     values = np.asarray(indicators, dtype=np.float64)
     matrix = np.asarray(transfer)
-    if values.shape != epoch.degrees.shape or np.any(values < 0) or matrix.ndim != 2:
-        raise ValueError("VEM adaptation indicators/transfer are invalid.")
+    tolerance = float(maximum_conservation_defect)
+    if (
+        values.shape != epoch.degrees.shape
+        or np.any(~np.isfinite(values))
+        or np.any(values < 0)
+        or matrix.ndim != 2
+        or min(matrix.shape) <= 0
+        or np.any(~np.isfinite(matrix))
+        or not np.isfinite(tolerance)
+        or tolerance <= 0.0
+    ):
+        raise ValueError("VEM adaptation indicators, transfer, or tolerance are invalid.")
     order = np.lexsort((np.asarray(epoch.cell_global_ids), -values))
     total = np.sum(values**2)
     cumulative = np.cumsum(values[order] ** 2)
@@ -239,6 +261,8 @@ def adapt_virtual_element_p(
     defect = float(
         np.linalg.norm(matrix @ constant - np.ones((matrix.shape[0],)), ord=np.inf)
     )
+    if not np.isfinite(defect) or defect > tolerance:
+        raise ValueError("VEM p-transfer does not preserve constants.")
     return VirtualElementAdaptationResult(
         epoch,
         target,
@@ -251,6 +275,8 @@ def adapt_virtual_element_p(
                 "source": epoch.epoch_id,
                 "target": target.epoch_id,
                 "marked": marked.tolist(),
+                "policy": policy.policy_id,
+                "maximum_conservation_defect": tolerance,
                 "transfer": array_tree_fingerprint(matrix),
             }
         ),

@@ -86,8 +86,31 @@ def apply_isotropic_monte_carlo_barostat(
     if not isinstance(plan, IsotropicMonteCarloBarostatPlan):
         raise TypeError("plan must be IsotropicMonteCarloBarostatPlan.")
     thermodynamic.validate_dynamics(dynamics)
-    if state.thermodynamic_table_id != thermodynamic.table_id:
-        raise ValueError("State belongs to another thermodynamic state table.")
+    if (
+        state.prepared_dynamics_id != dynamics.prepared_id
+        or state.thermodynamic_table_id != thermodynamic.table_id
+    ):
+        raise ValueError("State belongs to another dynamics runtime or state table.")
+    if state.force.program_id != dynamics.potential.prepared_id:
+        raise ValueError("State force cache belongs to another potential program.")
+    expected_neighborhood_epoch = (
+        jnp.zeros((), dtype=jnp.int32)
+        if state.neighborhood_cache is None
+        else state.neighborhood_cache.epoch
+    )
+    force_valid = (
+        state.force.successful
+        & (state.force.position_epoch == state.step_index)
+        & (state.force.neighborhood_epoch == expected_neighborhood_epoch)
+    )
+    checked_positions = eqx.error_if(
+        state.kinematics.positions,
+        ~force_valid,
+        "Barostat requires a current successful force cache.",
+    )
+    state = eqx.tree_at(
+        lambda value: value.kinematics.positions, state, checked_positions
+    )
     row = thermodynamic.state_at_replica(state.thermodynamic_state_index)
     if dynamics.system.cell is None or not dynamics.system.cell.fully_periodic:
         raise ValueError("Isotropic barostat requires a fully periodic cell.")

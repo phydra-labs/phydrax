@@ -207,14 +207,14 @@ def main() -> None:
 
     for _ in range(arguments.warmup):
         warmup = assemble_full_dark_sector_stress(components, stage)
-        jax.block_until_ready(warmup.total.energy_density)
+        jax.block_until_ready(warmup)
 
     durations = []
     result = assemble_full_dark_sector_stress(components, stage)
     for _ in range(arguments.repeats):
         started = time.perf_counter()
         result = assemble_full_dark_sector_stress(components, stage)
-        jax.block_until_ready(result.total.energy_density)
+        jax.block_until_ready(result)
         durations.append(time.perf_counter() - started)
 
     component_bytes = sum(
@@ -289,16 +289,20 @@ def main() -> None:
             "matrix_element_revision_id": stage.matrix_element_revision_id,
         },
     }
-    if (
-        not payload["evidence"]["successful"]
-        or not payload["evidence"]["four_force_exact"]
-    ):
-        raise SystemExit(1)
-    serialized = json.dumps(payload, indent=2, sort_keys=True)
+    serialized = json.dumps(payload, allow_nan=False, indent=2, sort_keys=True)
     if arguments.output is None:
         print(serialized)
     else:
-        arguments.output.write_text(serialized + "\n", encoding="utf-8")
+        from benchmarks._io import write_json_atomic
+
+        write_json_atomic(arguments.output, payload)
+    if (
+        not payload["evidence"]["successful"]
+        or not payload["evidence"]["stage_consistent"]
+        or not payload["evidence"]["finite"]
+        or not payload["evidence"]["four_force_exact"]
+    ):
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

@@ -15,6 +15,7 @@ from ..._model import AbstractArrayModel
 from ..._strict import StrictModule
 from .._batch import MLBatch
 from .._contracts import (
+    _protocol_model,
     AbstractRecipe,
     DecisionFunctionModel,
     FitResult,
@@ -86,15 +87,16 @@ def _subbatch(
 
 
 def _binary_score(model: AbstractArrayModel, x: Any) -> Array:
-    if isinstance(model, DecisionFunctionModel):
-        score = model.decision_function(x)
-        if model.out_size == 2:
+    protocol_model = _protocol_model(model)
+    if isinstance(protocol_model, DecisionFunctionModel):
+        score = protocol_model.decision_function(x)
+        if protocol_model.out_size == 2:
             return score[..., 1] - score[..., 0]
         if score.ndim > 0 and score.shape[-1] == 1:
             return score[..., 0]
         return score
-    if isinstance(model, LogProbabilityModel):
-        log_probability = model.predict_log_proba(x)
+    if isinstance(protocol_model, LogProbabilityModel):
+        log_probability = protocol_model.predict_log_proba(x)
         return log_probability[..., 1] - log_probability[..., 0]
     probability = model(x)
     if model.out_size == 2:

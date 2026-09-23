@@ -63,7 +63,7 @@ def _measure(
     problem,
     method: Literal["sequential", "parallel", "auto"],
     repeats: int,
-) -> dict[str, float | str]:
+) -> dict[str, object]:
     def operation():
         filtered = phx.uq.kalman_filter(problem, method=method)
         return filtered, phx.uq.rts_smoother(filtered, method=method)
@@ -73,10 +73,20 @@ def _measure(
         warmup=1,
         repeats=repeats,
     )
+    filter_valid = bool(jnp.all(filtered.valid))
+    smoother_valid = bool(jnp.all(smoothed.valid))
+    requested_resolved = method == "auto" or (
+        filtered.execution_method == method and smoothed.execution_method == method
+    )
     return {
         "requested_method": method,
         "resolved_filter_method": filtered.execution_method,
         "resolved_smoother_method": smoothed.execution_method,
+        "filter_valid": filter_valid,
+        "smoother_valid": smoother_valid,
+        "filter_status": jnp.asarray(filtered.status).tolist(),
+        "smoother_status": jnp.asarray(smoothed.status).tolist(),
+        "passed": filter_valid and smoother_valid and requested_resolved,
         "minimum_seconds": float(distribution.minimum_seconds),
         "mean_seconds": float(distribution.mean_seconds),
     }
@@ -92,17 +102,31 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.steps <= 0 or args.state_size <= 0 or args.repeats <= 0:
         parser.error("steps, state-size, and repeats must be positive")
-    problem = _problem(args.steps, args.state_size)
-    report = {
-        "benchmark_id": "linear-gaussian-chain",
-        "num_steps": args.steps,
-        "state_size": args.state_size,
-        "repeats": args.repeats,
-        "sequential": _measure(problem, "sequential", args.repeats),
-        "parallel": _measure(problem, "parallel", args.repeats),
-    }
-    print(json.dumps(report, sort_keys=True))
-    return 0
+    try:
+        problem = _problem(args.steps, args.state_size)
+        sequential = _measure(problem, "sequential", args.repeats)
+        parallel = _measure(problem, "parallel", args.repeats)
+        report = {
+            "benchmark_id": "linear-gaussian-chain",
+            "num_steps": args.steps,
+            "state_size": args.state_size,
+            "repeats": args.repeats,
+            "sequential": sequential,
+            "parallel": parallel,
+            "passed": bool(sequential["passed"] and parallel["passed"]),
+            "error": None,
+        }
+    except Exception as error:
+        report = {
+            "benchmark_id": "linear-gaussian-chain",
+            "num_steps": args.steps,
+            "state_size": args.state_size,
+            "repeats": args.repeats,
+            "passed": False,
+            "error": {"type": type(error).__name__, "message": str(error)},
+        }
+    print(json.dumps(report, sort_keys=True, allow_nan=False))
+    return 0 if report["passed"] else 1
 
 
 if __name__ == "__main__":

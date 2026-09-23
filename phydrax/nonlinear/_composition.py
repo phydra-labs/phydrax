@@ -58,12 +58,17 @@ def _component_control(
     count: int,
     *,
     residual_reserve: int,
+    validity_reserve: int,
+    linear_iteration_reserve: int,
 ) -> NonlinearUpdateControl:
     return control.split(
         count,
         reserve=NonlinearWork(
             residual_evaluations=residual_reserve,
-            validity_evaluations=1,
+            validity_evaluations=validity_reserve,
+            linear_setups=(1 if linear_iteration_reserve else 0),
+            linear_solves=(1 if linear_iteration_reserve else 0),
+            linear_iterations=linear_iteration_reserve,
         ),
     )
 
@@ -168,9 +173,21 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
 
     @property
     def maximum_work(self) -> NonlinearWork:
+        linear_iterations = (
+            (
+                1
+                if isinstance(self.linear.method, DenseSVD)
+                else (self.linear.tolerance.max_steps or len(self.updates))
+            )
+            if self.kind == "residual-optimal"
+            else 0
+        )
         reserve = NonlinearWork(
             residual_evaluations=(4 if self.kind == "residual-optimal" else 2),
-            validity_evaluations=1,
+            validity_evaluations=(2 if self.kind == "residual-optimal" else 1),
+            linear_setups=(1 if self.kind == "residual-optimal" else 0),
+            linear_solves=(1 if self.kind == "residual-optimal" else 0),
+            linear_iterations=linear_iterations,
         )
         return work_sum(tuple(update.maximum_work for update in self.updates)) + reserve
 
@@ -199,35 +216,108 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
         control: NonlinearUpdateControl,
         /,
     ):
-        children = tuple(prepared.internal_state)
+        child_partitions = tuple(
+            eqx.partition(child, eqx.is_array) for child in prepared.internal_state
+        )
+        children_dynamic = tuple(dynamic for dynamic, _ in child_partitions)
+        children_static = tuple(static for _, static in child_partitions)
+        children = tuple(
+            eqx.combine(dynamic, static)
+            for dynamic, static in zip(
+                children_dynamic,
+                children_static,
+                strict=True,
+            )
+        )
+        state_ = prepared.plan.state_space.validate(state)
+        linear_iteration_reserve = (
+            (
+                1
+                if isinstance(self.linear.method, DenseSVD)
+                else (self.linear.tolerance.max_steps or len(children))
+            )
+            if self.kind == "residual-optimal"
+            else 0
+        )
         child_control = _component_control(
             control,
             len(children),
             residual_reserve=(4 if self.kind == "residual-optimal" else 2),
+            validity_reserve=(2 if self.kind == "residual-optimal" else 1),
+            linear_iteration_reserve=linear_iteration_reserve,
         )
-        if self.kind == "multiplicative":
-            components, next_children, candidate = self._apply_multiplicative(
-                children,
-                prepared.plan.state_space.validate(state),
-                args,
-                child_control,
+
+        def execute(_):
+            if self.kind == "multiplicative":
+                components, next_children, candidate = self._apply_multiplicative(
+                    children,
+                    state_,
+                    args,
+                    child_control,
+                )
+                coefficient_work = NonlinearWork.zero()
+            else:
+                (
+                    components,
+                    next_children,
+                    candidate,
+                    coefficient_work,
+                ) = self._apply_additive(
+                    prepared,
+                    children,
+                    state_,
+                    args,
+                    child_control,
+                    residual_optimal=self.kind == "residual-optimal",
+                )
+            return (
+                self._package(
+                    prepared,
+                    state_,
+                    candidate,
+                    args,
+                    components,
+                    coefficient_work,
+                ),
+                tuple(
+                    eqx.partition(next_child, eqx.is_array)[0]
+                    for next_child in next_children
+                ),
             )
-        else:
-            components, next_children, candidate = self._apply_additive(
+
+        def reject(_):
+            skipped = skipped_nonlinear_update_result(
                 prepared,
-                children,
-                prepared.plan.state_space.validate(state),
-                args,
-                child_control,
-                residual_optimal=self.kind == "residual-optimal",
+                state_,
+                status=NonlinearUpdateStatus.BUDGET_EXHAUSTED,
+                failure_origin="composition-budget",
             )
-        return self._package(
-            prepared,
-            state,
-            candidate,
-            args,
-            components,
-        ), next_children
+            skipped = eqx.tree_at(
+                lambda value: value.provenance,
+                skipped,
+                NonlinearUpdateProvenance(
+                    problem_id=prepared.problem.problem_id,
+                    update_id=self.update_id,
+                    plan_id=prepared.plan.plan_id,
+                    notes=(
+                        f"composition={self.kind};"
+                        f"precision-policy={self.precision.policy_id}"
+                    ),
+                ),
+            )
+            return skipped, children_dynamic
+
+        result, next_dynamic = jax.lax.cond(
+            control.permits(self.maximum_work),
+            execute,
+            reject,
+            operand=None,
+        )
+        next_children = tuple(
+            eqx.combine(dynamic, static)
+            for dynamic, static in zip(next_dynamic, children_static, strict=True)
+        )
+        return result, next_children
 
     def _apply_multiplicative(self, children, state, args, control, /):
         current = state
@@ -299,8 +389,9 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
             components.append(result)
             next_children.append(next_child)
         components_ = tuple(components)
+        coefficient_work = NonlinearWork.zero()
         if residual_optimal:
-            candidate = self._residual_optimal_candidate(
+            candidate, coefficient_work = self._residual_optimal_candidate(
                 prepared,
                 state,
                 components_,
@@ -317,7 +408,7 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
                     component.state,
                     state,
                 )
-        return components_, tuple(next_children), candidate
+        return components_, tuple(next_children), candidate, coefficient_work
 
     def _residual_optimal_candidate(
         self,
@@ -365,11 +456,12 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
                 for delta in residual_differences
             ]
         )
-        coefficients = solve_linear(
+        linear_result = solve_linear(
             LeastSquaresProblem(DenseLinearOperator(gram)),
             right,
             policy=self.precision.bind_linear(self.linear),
-        ).value
+        )
+        coefficients = linear_result.value
         accelerated = state
         for coefficient, component in zip(coefficients, components, strict=True):
             accelerated = jax.tree.map(
@@ -449,13 +541,31 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
             accelerated,
             best_state,
         )
-        return jax.tree.map(
+        selected = jax.tree.map(
             lambda proposed, base: jnp.where(all_applied, proposed, base),
             selected,
             state,
         )
+        coefficient_work = NonlinearWork(
+            linear_setups=1,
+            linear_solves=1,
+            linear_iterations=jnp.sum(
+                linear_result.diagnostics.iterations,
+                dtype=jnp.int32,
+            ),
+        )
+        return selected, coefficient_work
 
-    def _package(self, prepared, initial_state, candidate, args, components, /):
+    def _package(
+        self,
+        prepared,
+        initial_state,
+        candidate,
+        args,
+        components,
+        coefficient_work,
+        /,
+    ):
         problem = prepared.problem
         initial_residual, _ = problem.evaluate(initial_state, args)
         candidate = prepared.plan.state_space.validate(candidate)
@@ -493,9 +603,12 @@ class CompositeNonlinearUpdate(AbstractNonlinearUpdate):
         component_work = work_sum(
             tuple(component.diagnostics.work for component in components)
         )
-        wrapper_work = NonlinearWork(
-            residual_evaluations=(4 if self.kind == "residual-optimal" else 2),
-            validity_evaluations=(2 if self.kind == "residual-optimal" else 1),
+        wrapper_work = (
+            NonlinearWork(
+                residual_evaluations=(4 if self.kind == "residual-optimal" else 2),
+                validity_evaluations=(2 if self.kind == "residual-optimal" else 1),
+            )
+            + coefficient_work
         )
         diagnostics = NonlinearUpdateDiagnostics(
             initial_residual_norm=initial_norm,

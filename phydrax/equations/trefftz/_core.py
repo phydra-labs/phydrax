@@ -433,7 +433,7 @@ class TrialSpaceAuditReport(StrictModule, NonTrainableState):
         self.admissibility_report_id = (
             None if admissibility_report_id is None else str(admissibility_report_id)
         )
-        self.valid = finite_ & membership & (maximum <= tolerance_)
+        self.valid = finite_ & membership & accuracy & (maximum <= tolerance_)
         self.point_count = count
         self.certificate_id = str(certificate_id)
         self.audit_id = canonical_fingerprint(

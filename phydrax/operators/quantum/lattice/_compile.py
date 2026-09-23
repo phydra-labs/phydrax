@@ -321,16 +321,16 @@ def certify_charge_map(
             charge_map.target.target_charges,
             charge_map.source.target_charges,
         )
-        delta_by_label = dict(
-            zip(charge_map.source.charge_labels, deltas, strict=True)
-        )
+        delta_by_label = dict(zip(charge_map.source.charge_labels, deltas, strict=True))
         expected = np.asarray(
             [delta_by_label.get(label, 0) for label in labels],
             dtype=np.int32,
         )
     else:
         if charge_map.charge_label not in labels:
-            raise ValueError("Sector charge label is absent from the lattice specification.")
+            raise ValueError(
+                "Sector charge label is absent from the lattice specification."
+            )
         expected = np.asarray(
             [
                 charge_map.charge_delta if label == charge_map.charge_label else 0

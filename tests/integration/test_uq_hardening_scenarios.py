@@ -4,6 +4,7 @@
 
 import jax.numpy as jnp
 import jax.random as jr
+import numpy as np
 
 import phydrax as phx
 import phydrax.axes as cx
@@ -164,9 +165,19 @@ def test_fixed_physics_residual_likelihood_identifies_hidden_source():
         min_tail_ess=40,
     )
 
-    assert jnp.array_equal(
+    expected_residual = jnp.full(
+        residual_points["x"].data.shape[:-1],
+        physics_mode.parameters["amplitude"] - physics_mode.parameters["source"],
+    )
+    expected_log_prob = phx.uq.GaussianLikelihood(residual_scale).log_prob(
+        expected_residual,
+        jnp.zeros_like(expected_residual),
+    )
+    np.testing.assert_allclose(
         physics_term.per_case_log_prob(physics_mode.parameters),
-        physics_term.per_case_log_prob(physics_mode.parameters),
+        expected_log_prob,
+        rtol=1e-6,
+        atol=1e-6,
     )
     assert jnp.abs(data_mode.parameters["source"] - true_source) > 1.0
     assert jnp.abs(physics_mode.parameters["source"] - true_source) < 3e-3

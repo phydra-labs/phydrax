@@ -86,11 +86,27 @@ def run(*, smoke=False):
     viscous = phx.solver.MACVariationalViscosityPlan(mac, tolerance=1.0e-7).solve(
         projected.velocity, measures, 1.0e-3
     )
+    evidence_values = jnp.asarray(
+        (
+            capillary.surface_energy,
+            projected.projection.active_divergence_norm,
+            projected.projection.air_pressure_defect,
+            viscous.dissipation,
+            viscous.energy_increase,
+        )
+    )
     successful = bool(
         interface.successful
+        and capillary.successful
         and projected.successful
         and viscous.successful
+        and int(jnp.sum(interface.liquid_mask)) > 0
+        and int(jnp.sum(interface.valid_band)) > 0
+        and jnp.all(jnp.isfinite(evidence_values))
+        and capillary.surface_energy >= 0.0
+        and projected.projection.active_divergence_norm < 1.0e-8
         and projected.projection.air_pressure_defect < 1.0e-8
+        and viscous.dissipation >= 0.0
         and viscous.energy_increase < 1.0e-8
     )
     return AdvancedFLIPQualification(
@@ -113,7 +129,7 @@ def main():
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     report = run(smoke=args.smoke)
-    payload = json.dumps(asdict(report), indent=2)
+    payload = json.dumps(asdict(report), indent=2, allow_nan=False)
     print(payload)
     if args.output is not None:
         args.output.write_text(payload + "\n", encoding="utf-8")

@@ -27,6 +27,16 @@ from ...dynamics import (
 from ._process import HydraulicPortSpec, ThermofluidComponent
 
 
+def _residual_numeric_id(semantic_id: str, parameters, /) -> str:
+    return canonical_fingerprint(
+        {
+            "kind": "thermofluid-residual-binding",
+            "semantic": semantic_id,
+            "parameters": parameters,
+        }
+    )
+
+
 class HydraulicReason(IntFlag):
     CAVITATION_MARGIN_EXCEEDED = 1 << 8
     REYNOLDS_LIMIT_EXCEEDED = 1 << 9
@@ -581,7 +591,14 @@ def hydraulic_pressure_boundary_component(
         return jet.value("pressure") - target
 
     equation = DAEEquationBlock(
-        "prescribed_pressure", residual, (DAEDerivativeIncidence("pressure"),)
+        "prescribed_pressure",
+        residual,
+        (DAEDerivativeIncidence("pressure"),),
+        residual_semantic_id="thermofluids.hydraulics.pressure-boundary",
+        residual_numeric_id=_residual_numeric_id(
+            "thermofluids.hydraulics.pressure-boundary",
+            {"pressure": target},
+        ),
     )
     port = DAEPort("hydraulic", ("pressure",), ("volume_flow",))
     return ThermofluidComponent(
@@ -614,6 +631,11 @@ def hydraulic_flow_boundary_component(
         "prescribed_volume_flow",
         residual,
         (DAEDerivativeIncidence("volume_flow"),),
+        residual_semantic_id="thermofluids.hydraulics.flow-boundary",
+        residual_numeric_id=_residual_numeric_id(
+            "thermofluids.hydraulics.flow-boundary",
+            {"volume_flow": target},
+        ),
     )
     port = DAEPort("hydraulic", ("pressure",), ("volume_flow",))
     return ThermofluidComponent(
@@ -674,6 +696,11 @@ def hydraulic_channel_component(
                 DAEDerivativeIncidence("right_pressure"),
                 DAEDerivativeIncidence("left_volume_flow"),
             ),
+            residual_semantic_id="thermofluids.hydraulics.channel.pressure-drop",
+            residual_numeric_id=_residual_numeric_id(
+                "thermofluids.hydraulics.channel.pressure-drop",
+                {"law_id": law.plan_id},
+            ),
         ),
         DAEEquationBlock(
             "volume_conservation",
@@ -681,6 +708,11 @@ def hydraulic_channel_component(
             (
                 DAEDerivativeIncidence("left_volume_flow"),
                 DAEDerivativeIncidence("right_volume_flow"),
+            ),
+            residual_semantic_id="thermofluids.hydraulics.two-port.volume-conservation",
+            residual_numeric_id=_residual_numeric_id(
+                "thermofluids.hydraulics.two-port.volume-conservation",
+                {},
             ),
         ),
     )
@@ -745,6 +777,11 @@ def hydraulic_compliance_component(
                 DAEDerivativeIncidence("pressure", 1),
                 DAEDerivativeIncidence("volume_flow"),
             ),
+            residual_semantic_id="thermofluids.hydraulics.compliance.storage",
+            residual_numeric_id=_residual_numeric_id(
+                "thermofluids.hydraulics.compliance.storage",
+                {"compliance": compliance_},
+            ),
         ),
         DAEEquationBlock(
             "compliance_constitutive",
@@ -752,6 +789,15 @@ def hydraulic_compliance_component(
             (
                 DAEDerivativeIncidence("volume"),
                 DAEDerivativeIncidence("pressure"),
+            ),
+            residual_semantic_id="thermofluids.hydraulics.compliance.constitutive",
+            residual_numeric_id=_residual_numeric_id(
+                "thermofluids.hydraulics.compliance.constitutive",
+                {
+                    "compliance": compliance_,
+                    "reference_pressure": pressure_,
+                    "reference_volume": volume_,
+                },
             ),
         ),
     )
@@ -805,6 +851,11 @@ def hydraulic_inertance_component(
                 DAEDerivativeIncidence("right_pressure"),
                 DAEDerivativeIncidence("left_volume_flow", 1),
             ),
+            residual_semantic_id="thermofluids.hydraulics.inertance.momentum",
+            residual_numeric_id=_residual_numeric_id(
+                "thermofluids.hydraulics.inertance.momentum",
+                {"inertance": inertance_},
+            ),
         ),
         DAEEquationBlock(
             "volume_conservation",
@@ -812,6 +863,11 @@ def hydraulic_inertance_component(
             (
                 DAEDerivativeIncidence("left_volume_flow"),
                 DAEDerivativeIncidence("right_volume_flow"),
+            ),
+            residual_semantic_id="thermofluids.hydraulics.two-port.volume-conservation",
+            residual_numeric_id=_residual_numeric_id(
+                "thermofluids.hydraulics.two-port.volume-conservation",
+                {},
             ),
         ),
     )
@@ -870,6 +926,11 @@ def hydraulic_junction_component(
                 DAEDerivativeIncidence(f"port_{index}_pressure"),
                 DAEDerivativeIncidence("port_0_pressure"),
             ),
+            residual_semantic_id="thermofluids.hydraulics.junction.equal-pressure",
+            residual_numeric_id=_residual_numeric_id(
+                "thermofluids.hydraulics.junction.equal-pressure",
+                {"port_index": index},
+            ),
         )
         for index in range(1, count)
     ]
@@ -885,6 +946,11 @@ def hydraulic_junction_component(
             tuple(
                 DAEDerivativeIncidence(f"port_{index}_volume_flow")
                 for index in range(count)
+            ),
+            residual_semantic_id="thermofluids.hydraulics.junction.volume-conservation",
+            residual_numeric_id=_residual_numeric_id(
+                "thermofluids.hydraulics.junction.volume-conservation",
+                {"port_count": count},
             ),
         )
     )

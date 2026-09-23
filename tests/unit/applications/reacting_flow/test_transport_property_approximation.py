@@ -87,7 +87,23 @@ def test_reuse_state_commits_atomically_and_refreshes_after_bound():
 
     committed = plan.commit(accepted, candidate, True)
     assert float(committed.temperature) == 1001.0
-    assert int(committed.reuse_count) == 1
+    np.testing.assert_array_equal(committed.reuse_count, jnp.ones((3,), dtype=jnp.int32))
     refreshed = plan.propose(committed, 1200.0, 101325.0)
     assert not bool(refreshed.viscosity_reused)
     assert not bool(refreshed.diffusion_reused)
+
+    accumulated_plan = TransportPropertyReusePlan(
+        _reference(),
+        temperature_bounds=(200.0, 3000.0),
+        pressure_bounds=(1.0e4, 1.0e7),
+        logarithmic_sensitivities=((0.7, 0.0), (0.7, 0.0), (1.75, 1.0)),
+        maximum_relative_errors=(0.02, 0.02, 0.04),
+        maximum_reuse_count=10,
+    )
+    accumulated = accumulated_plan.initialize(1000.0, 101325.0)
+    for temperature in (1010.0, 1020.0):
+        proposal = accumulated_plan.propose(accumulated, temperature, 101325.0)
+        assert bool(proposal.viscosity_reused)
+        accumulated = accumulated_plan.commit(accumulated, proposal, True)
+    exceeds_reference = accumulated_plan.propose(accumulated, 1030.0, 101325.0)
+    assert not bool(exceeds_reference.viscosity_reused)

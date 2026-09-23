@@ -39,6 +39,7 @@ def test_relaxed_chemical_jump_reports_continuous_bias_evidence():
                 {"A": 1.0},
                 {"B": 1.0},
                 phx.equations.ArrheniusRatePlan(0.5),
+                reverse_rate=phx.equations.ArrheniusRatePlan(0.25),
             ),
         ),
     ).prepare()
@@ -54,6 +55,7 @@ def test_relaxed_chemical_jump_reports_continuous_bias_evidence():
     )
 
     assert result.evidence.successful
-    assert result.evidence.event_count > 0
+    assert result.evidence.intensity_valid
+    assert result.evidence.event_count > 1
     assert jnp.all(jnp.isfinite(result.final_state))
     assert jnp.isclose(jnp.sum(result.final_state), 20.0)

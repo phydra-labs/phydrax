@@ -24,6 +24,8 @@ def run_benchmark_matrix(
     """Run selected scenarios in stable registry order and retain failures in JSON."""
     configuration = get_configuration(profile)
     selected = _selected_scenarios(scenario_names)
+    expected_names = tuple(SCENARIOS)
+    selected_names = tuple(name for name, _ in selected)
     started_at = utc_now_iso()
     started = time.perf_counter()
     results: list[ScenarioResult] = []
@@ -46,14 +48,28 @@ def run_benchmark_matrix(
                 error_message=str(error),
             )
         results.append(result)
+    try:
+        environment = collect_environment()
+        environment_complete = True
+    except Exception as error:
+        environment = {
+            "collection_error": {"type": type(error).__name__, "message": str(error)}
+        }
+        environment_complete = False
     duration = time.perf_counter() - started
     return BenchmarkReport(
         profile=configuration.profile,
         root_seed=int(root_seed),
         started_at_utc=started_at,
         duration_seconds=duration,
-        configuration=configuration.as_dict(),
-        environment=collect_environment(),
+        configuration={
+            **configuration.as_dict(),
+            "expected_scenarios": list(expected_names),
+            "selected_scenarios": list(selected_names),
+            "matrix_complete": selected_names == expected_names,
+            "environment_complete": environment_complete,
+        },
+        environment=environment,
         scenarios=tuple(results),
     )
 

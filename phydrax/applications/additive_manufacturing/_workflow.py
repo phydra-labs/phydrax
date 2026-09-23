@@ -163,13 +163,15 @@ class SpatialDEDWorkflow:
             icme.field.state.phase_fractions,
         )
         successful = (
-            thermal.successful
+            runtime_step.successful
+            & thermal.successful
             & jnp.all(jnp.isfinite(thermal.value))
             & jnp.all(thermal.value > 0)
             & icme.field.state.admissible
         )
+        committed_state = next_state if bool(np.asarray(successful)) else state
         return SpatialDEDStep(
-            next_state,
+            committed_state,
             icme.effective_properties,
             stress,
             thermal_residual_norm,

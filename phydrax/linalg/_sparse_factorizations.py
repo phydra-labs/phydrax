@@ -246,14 +246,29 @@ class PreparedSparseFactorization(StrictModule):
             triangular_success = (lower.status == int(SparseTriangularStatus.SUCCESS)) & (
                 upper.status == int(SparseTriangularStatus.SUCCESS)
             )
+            triangular_zero_pivot = (
+                lower.status == int(SparseTriangularStatus.ZERO_PIVOT)
+            ) | (upper.status == int(SparseTriangularStatus.ZERO_PIVOT))
+            triangular_nonfinite = (
+                lower.status == int(SparseTriangularStatus.NONFINITE)
+            ) | (upper.status == int(SparseTriangularStatus.NONFINITE))
+            triangular_status = jnp.where(
+                triangular_success,
+                int(SparseFactorizationStatus.SUCCESS),
+                jnp.where(
+                    triangular_zero_pivot,
+                    int(SparseFactorizationStatus.ZERO_PIVOT),
+                    jnp.where(
+                        triangular_nonfinite,
+                        int(SparseFactorizationStatus.NONFINITE),
+                        int(SparseFactorizationStatus.ZERO_PIVOT),
+                    ),
+                ),
+            )
             result_status = jnp.where(
                 factor_status != int(SparseFactorizationStatus.SUCCESS),
                 factor_status,
-                jnp.where(
-                    triangular_success,
-                    int(SparseFactorizationStatus.SUCCESS),
-                    int(SparseFactorizationStatus.ZERO_PIVOT),
-                ),
+                triangular_status,
             ).astype(jnp.int32)
             return solution, result_status, lower.status, upper.status
 

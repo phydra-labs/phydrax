@@ -8,13 +8,16 @@ import contextlib
 import io
 import json
 import runpy
+from pathlib import Path
 
 import jax.numpy as jnp
 
 
 output = io.StringIO()
 with contextlib.redirect_stdout(output):
-    namespace = runpy.run_path("examples/superquadric_triangle_wall.py")
+    namespace = runpy.run_path(
+        Path(__file__).resolve().parents[1] / "examples/superquadric_triangle_wall.py"
+    )
 result = namespace["result"]
 response = result.evaluation.walls[0]
 force_residual = jnp.linalg.norm(

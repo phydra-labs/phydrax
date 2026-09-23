@@ -502,6 +502,7 @@ class OperatorPredictiveField(StrictModule):
             predictive.sample_axes,
             conditional_variance=predictive.conditional_variance,
             valid=valid,
+            precision=predictive.precision,
         )
         self.query = query
         self.output_spec = output_spec
@@ -552,6 +553,7 @@ class OperatorPredictiveField(StrictModule):
             predictive.sample_axes + extra_axes,
             conditional_variance=predictive.conditional_variance,
             valid=predictive.valid,
+            precision=predictive.precision,
         )
         return cls(
             augmented,
@@ -616,7 +618,11 @@ class OperatorPredictiveField(StrictModule):
                 f"Operator statistic retained unexpected dimensions: expected {expected_dims!r}, got {field.dims!r}."
             )
         return OperatorPredictiveField(
-            PredictiveField(field, remaining_axes),
+            PredictiveField(
+                field,
+                remaining_axes,
+                precision=self.predictive.precision,
+            ),
             self.query,
             self.output_spec,
             case_axes=self.case_axes,

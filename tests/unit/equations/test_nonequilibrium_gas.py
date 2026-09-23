@@ -116,3 +116,17 @@ def test_two_temperature_navier_stokes_diffuses_modal_energy_consistently():
         rtol=4.0e-5,
         atol=4.0e-5,
     )
+
+
+def test_system_thermal_recovery_uses_its_iteration_limit():
+    system = phx.equations.TwoTemperatureMixtureEulerSystem(
+        _thermodynamics(),
+        1,
+        maximum_thermal_iterations=7,
+    )
+    primitive = jnp.asarray((0.6, 0.2, 10.0, 1200.0, 1800.0))
+    conserved = system.primitive_to_conserved(primitive)
+
+    recovered = system.recover_thermodynamics(conserved)
+
+    assert int(recovered.iteration_count) == 7

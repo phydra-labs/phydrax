@@ -45,6 +45,8 @@ class VibrationalAnalysisResult(StrictModule, NonTrainableState):
     successful: Array
     stationary_point: StationaryPointKind = eqx.field(static=True)
     units: AtomisticUnitSystem
+    source_system_id: str = eqx.field(static=True)
+    source_geometry_id: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
 
@@ -63,6 +65,8 @@ class VibrationalAnalysisResult(StrictModule, NonTrainableState):
         successful: ArrayLike,
         stationary_point: StationaryPointKind,
         units: AtomisticUnitSystem,
+        source_system_id: str,
+        source_geometry_id: str,
         plan_id: str,
     ):
         values = jnp.asarray(eigenvalues)
@@ -89,6 +93,12 @@ class VibrationalAnalysisResult(StrictModule, NonTrainableState):
             raise TypeError("stationary_point must be StationaryPointKind.")
         if not isinstance(units, AtomisticUnitSystem):
             raise TypeError("units must be AtomisticUnitSystem.")
+        system_id = str(source_system_id).strip()
+        geometry_id = str(source_geometry_id).strip()
+        if not system_id or not geometry_id:
+            raise ValueError(
+                "Vibrational source system and geometry identities must be non-empty."
+            )
         residual = jnp.asarray(external_projection_residual, dtype=values.dtype).reshape(
             ()
         )
@@ -105,11 +115,15 @@ class VibrationalAnalysisResult(StrictModule, NonTrainableState):
         self.successful = successful_
         self.stationary_point = stationary_point
         self.units = units
+        self.source_system_id = system_id
+        self.source_geometry_id = geometry_id
         self.plan_id = str(plan_id)
         self.result_id = canonical_fingerprint(
             {
                 "kind": "vibrational-analysis-result",
                 "plan": self.plan_id,
+                "system": system_id,
+                "geometry": geometry_id,
                 "stationary_point": stationary_point.value,
                 "external_modes": external,
                 "internal_modes": count,
@@ -186,6 +200,11 @@ class VibrationalAnalysisPlan(StrictModule, NonTrainableState):
         _require_structure_matches_system(structure, self.system)
         if hessian.units.unit_system_id != self.system.units.unit_system_id:
             raise ValueError("Hessian and vibration unit systems differ.")
+        if (
+            hessian.system_id != self.system.system_id
+            or hessian.geometry_id != structure.structure_id
+        ):
+            raise ValueError("Hessian belongs to another system or geometry.")
         active = np.asarray(self.system.active_mask, dtype=np.bool_)
         if not np.array_equal(
             active, np.asarray(self.system.mobile_mask, dtype=np.bool_)
@@ -300,6 +319,8 @@ class VibrationalAnalysisPlan(StrictModule, NonTrainableState):
             successful=successful,
             stationary_point=stationary,
             units=self.system.units,
+            source_system_id=self.system.system_id,
+            source_geometry_id=structure.structure_id,
             plan_id=self.plan_id,
         )
 

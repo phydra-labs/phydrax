@@ -126,7 +126,7 @@ class PointInTimePanel(StrictModule, NonTrainableState):
             [value.epoch_nanoseconds for value in events], dtype=np.int64
         )
         decision_ns = np.asarray(
-            [value.epoch_nanoseconds for value in decisions], dtype=np.int64
+            [value.available_ns for value in decisions], dtype=np.int64
         )
         shape = (len(events), layout.factor_count)
         values = np.zeros(shape, dtype=np.float64)
@@ -231,9 +231,7 @@ class MarketEventStream(StrictModule, NonTrainableState):
         values = tuple(observations)
         if not values or not all(isinstance(value, QuoteObservation) for value in values):
             raise TypeError("observations must contain at least one QuoteObservation.")
-        if any(
-            value.available_time_ns > archive_time.epoch_nanoseconds for value in values
-        ):
+        if any(value.available_time_ns > archive_time.available_ns for value in values):
             raise ValueError("An event stream cannot contain data beyond archive_time.")
         ordered = tuple(
             sorted(
@@ -253,7 +251,8 @@ class MarketEventStream(StrictModule, NonTrainableState):
             {
                 "kind": "financial-market-event-stream",
                 "observations": [value.observation_id for value in ordered],
-                "archive_time_ns": int(archive_time.epoch_nanoseconds),
+                "archive_event_time_ns": int(archive_time.event_ns),
+                "archive_available_time_ns": int(archive_time.available_ns),
             }
         )
 
@@ -387,9 +386,7 @@ class PreparedMarketEventStream(StrictModule, NonTrainableState):
             status = status | self.preparation_status
         event = jnp.stack(tuple(state.event_time_ns for state in states))
         available = jnp.stack(tuple(state.availability_time_ns for state in states))
-        clocks = jnp.asarray(
-            [value.epoch_nanoseconds for value in decisions], dtype=jnp.int64
-        )
+        clocks = jnp.asarray([value.available_ns for value in decisions], dtype=jnp.int64)
         replay_id = canonical_fingerprint(
             {
                 "kind": "financial-market-replay",

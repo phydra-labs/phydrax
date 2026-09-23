@@ -122,17 +122,17 @@ class GradientNoiseCovarianceConfig(StrictModule):
         phase: Literal["pilot", "all"] = "pilot",
         rank: int = 0,
     ):
-        if kind not in ("diagonal", "blocks", "diagonal_low_rank"):
-            raise ValueError("Unknown gradient-noise covariance kind.")
+        if kind != "diagonal":
+            raise ValueError(
+                "Advanced SGHMC currently supports diagonal gradient-noise covariance only."
+            )
         if phase not in ("pilot", "all"):
             raise ValueError("Gradient-noise phase must be 'pilot' or 'all'.")
-        if kind == "diagonal_low_rank" and int(rank) <= 0:
-            raise ValueError("Diagonal-low-rank covariance requires rank > 0.")
-        if kind != "diagonal_low_rank" and int(rank) != 0:
-            raise ValueError("rank is valid only for diagonal-low-rank covariance.")
+        if int(rank) != 0:
+            raise ValueError("rank is unavailable for diagonal covariance.")
         self.kind = kind
         self.phase = phase
-        self.rank = int(rank)
+        self.rank = 0
 
 
 class SGMCMCNoiseCovarianceState(StrictModule):
@@ -242,6 +242,7 @@ class AdvancedSGMCMCResult(StrictModule):
     approximation: str = eqx.field(static=True)
     schedule_id: str = eqx.field(static=True)
     source_fingerprint: str = eqx.field(static=True)
+    problem_fingerprint: str = eqx.field(static=True)
 
 
 def sample_sghmc(
@@ -339,6 +340,14 @@ def _sample_advanced(
 ) -> AdvancedSGMCMCResult:
     if not isinstance(problem, MinibatchPosteriorProblem):
         raise TypeError("problem must be MinibatchPosteriorProblem.")
+    from ._sgmcmc import (
+        _materialize_source_epoch,
+        _problem_fingerprint,
+        _validate_problem_source,
+    )
+
+    _, initial_batches = _validate_problem_source(problem, source)
+    problem_fingerprint = _problem_fingerprint(problem, initial_batches[0])
     if not isinstance(schedule, SGMCMCStepSchedule):
         raise TypeError("schedule must be SGMCMCStepSchedule.")
     chains, burnin, draws, thinning = map(
@@ -362,6 +371,8 @@ def _sample_advanced(
     if continuation is not None:
         if continuation.algorithm != algorithm:
             raise ValueError("Continuation algorithm changed.")
+        if continuation.problem_fingerprint != problem_fingerprint:
+            raise ValueError("Continuation posterior problem changed.")
         if continuation.source_fingerprint != source.fingerprint:
             raise ValueError("Continuation minibatch source changed.")
         if continuation.schedule_id != schedule.schedule_id:
@@ -404,13 +415,13 @@ def _sample_advanced(
     retained: list[Array] = []
     step_trace: list[Array] = []
     gradient_fn = jax.grad(problem.log_density_estimate)
-    epoch_cache: dict[int, tuple[Any, ...]] = {}
+    epoch_cache: dict[int, tuple[Any, ...]] = {0: initial_batches}
     for local_update in range(total_updates):
         update = start_update + local_update
         epoch = update // source.batches_per_epoch
         batch_index = update % source.batches_per_epoch
         if epoch not in epoch_cache:
-            epoch_cache[epoch] = tuple(source.epoch(epoch))
+            epoch_cache[epoch] = _materialize_source_epoch(source, epoch)
         batch = epoch_cache[epoch][batch_index]
         epsilon = schedule(update)
         step_trace.append(epsilon)
@@ -521,6 +532,7 @@ def _sample_advanced(
         approximation=approximation,
         schedule_id=schedule.schedule_id,
         source_fingerprint=source.fingerprint,
+        problem_fingerprint=problem_fingerprint,
     )
 
 

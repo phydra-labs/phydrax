@@ -102,7 +102,7 @@ def test_fixed_step_jump_probability_guard():
     problem = phx.solver.amplitude_damping_trajectory_problem(
         100.0, jnp.asarray([0j, 1.0 + 0j])
     )
-    with pytest.raises(Exception):
+    with pytest.raises(ValueError, match="jump probability exceeds"):
         phx.solver.solve_quantum_jump_ensemble(
             problem,
             jax.random.PRNGKey(0),

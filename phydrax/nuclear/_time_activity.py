@@ -138,6 +138,20 @@ def _reduced_support(asset: MeasurementAsset, time_dimension: int, /):
     return IndexSampleSupport(shape, labels, frame_id=support.frame_id)
 
 
+def _reduced_quantity_axes(
+    asset: MeasurementAsset, time_dimension: int, /
+) -> tuple[str, ...]:
+    axes = asset.field.quantity.axes
+    support = asset.field.support
+    if isinstance(support, IndexSampleSupport):
+        time_axis_label = support.axis_labels[time_dimension]
+    elif len(axes) == asset.field.values.ndim:
+        time_axis_label = axes[time_dimension]
+    else:
+        return axes
+    return tuple(axis for axis in axes if axis != time_axis_label)
+
+
 def _reference_ids(asset: MeasurementAsset, /) -> frozenset[str]:
     return frozenset(value.manifest_id for value in asset.references)
 
@@ -183,6 +197,13 @@ class TimeActivitySeries:
         if self.transition.data.reference.manifest_id not in _reference_ids(self.asset):
             raise ValueError(
                 "The activity asset references must include the transition data artifact."
+            )
+        if (
+            self.asset.metadata.get("radionuclide_id")
+            != self.transition.parent.nuclide_id
+        ):
+            raise ValueError(
+                "Time-activity asset radionuclide identity must match the transition."
             )
         object.__setattr__(
             self,
@@ -457,7 +478,7 @@ class TimeActivityIntegrationPlan:
             f"{field_.quantity.name}-time-integral",
             output_kind,
             _INTEGRATED_UNIT[activity_kind],
-            axes=field_.quantity.axes,
+            axes=_reduced_quantity_axes(source, series.time_dimension),
             sign_convention=field_.quantity.sign_convention,
             support_association=field_.quantity.support_association,
             reference_configuration=field_.quantity.reference_configuration,

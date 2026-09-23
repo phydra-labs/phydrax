@@ -11,7 +11,9 @@ from phydrax.integration._vegas import (
     FrozenVegasGrid,
     prepare_vegas,
     run_vegas,
+    transform_frozen_vegas,
     VegasPlan,
+    VegasPreparationEvidence,
     VegasStatus,
 )
 
@@ -65,3 +67,26 @@ def test_vegas_plan_enforces_fixed_evaluation_guard():
             production_samples=100,
             max_evaluations=799,
         )
+
+
+def test_frozen_vegas_rejects_points_outside_the_unit_cube():
+    evidence = VegasPreparationEvidence(
+        iteration_estimates=jnp.zeros((1,)),
+        marginal_weights=jnp.ones((1, 2)),
+        finite_iterations=jnp.ones((1,), dtype=jnp.bool_),
+        status=jnp.asarray(VegasStatus.CONVERGED, dtype=jnp.int32),
+        num_evaluations=jnp.asarray(2, dtype=jnp.int32),
+    )
+    grid = FrozenVegasGrid(
+        jnp.asarray([[0.0, 0.5, 1.0]]),
+        evidence,
+        plan_id="vegas-unit-domain-test",
+    )
+
+    for invalid in (
+        jnp.asarray([[-0.1]]),
+        jnp.asarray([[1.1]]),
+        jnp.asarray([[jnp.inf]]),
+    ):
+        with pytest.raises(Exception, match=r"finite coordinates in \[0, 1\]"):
+            transform_frozen_vegas(grid, invalid)

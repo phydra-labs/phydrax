@@ -64,6 +64,8 @@ def _points_and_weights(
         raise ValueError(
             f"Intrinsic samples must have shape (samples, {expected}); got {values.shape}."
         )
+    if values.shape[0] == 0:
+        raise ValueError("Intrinsic statistics require at least one sample.")
     precision.validate_coordinates(values)
     if weights is None:
         probabilities = jnp.full(

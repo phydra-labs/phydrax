@@ -8,6 +8,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.solver._maxwell_frequency import FrequencyMaxwellSolveResult
 
 
 def _bridge(shape):
@@ -134,6 +135,81 @@ def test_prepared_paired_source_substep_phases_and_charge_continuity():
         stepped.primary.charge, 1.0e-3 * expected_charge_rate, atol=1e-13
     )
     np.testing.assert_allclose(unstructured.constraints(stepped)[0], 0.0, atol=1e-13)
+
+
+def test_cochain_rate_partition_closes_repeated_incidence_routes():
+    cochain = _bridge((2, 2)).cochain
+    categories = [np.zeros((count,), dtype=np.int32) for count in cochain.cell_counts]
+    incidence = cochain.topology.incidences[0].relation
+    valid = np.asarray(incidence.valid, dtype=np.bool_)
+    lower = np.asarray(incidence.source_indices)[valid]
+    upper = np.asarray(incidence.target_indices)[valid]
+    repeated = next(index for index in np.unique(lower) if np.sum(lower == index) > 1)
+    positions = np.flatnonzero(lower == repeated)
+    categories[1][upper[positions[0]]] = 5
+    categories[1][upper[positions[-1]]] = 1
+
+    partition = phx.solver.CochainRatePartition(cochain, categories)
+
+    for degree, relation in enumerate(cochain.topology.incidences):
+        active = np.asarray(relation.relation.valid, dtype=np.bool_)
+        sources = np.asarray(relation.relation.source_indices)[active]
+        targets = np.asarray(relation.relation.target_indices)[active]
+        assert np.all(
+            np.abs(
+                np.asarray(partition.categories[degree])[sources]
+                - np.asarray(partition.categories[degree + 1])[targets]
+            )
+            <= 1
+        )
+
+
+def test_unstructured_maxwell_rejects_noninstantaneous_material():
+    bridge = _bridge((2, 2, 2))
+    plan = phx.solver.maxwell.UnstructuredMaxwellPlan(
+        bridge.cochain,
+        phx.solver.maxwell.ConductiveMaxwellConstitutivePlan(
+            electric_conductivity=0.2,
+            magnetic_conductivity=0.0,
+        ),
+        1000.0,
+    )
+
+    with pytest.raises(ValueError, match="instantaneous lossless"):
+        plan.prepare()
+
+
+def test_frequency_adjoint_retains_failed_primal_and_adjoint_evidence(monkeypatch):
+    bridge = _bridge((2, 2))
+    runtime = phx.solver.CompatibleMaxwellPlan(bridge, polarization="tez").prepare()
+    operator = phx.solver.maxwell.FrequencyMaxwellOperator(
+        bridge.cochain,
+        runtime.layout,
+        runtime.constitutive,
+        0.4,
+    )
+    failed = FrequencyMaxwellSolveResult(
+        jnp.zeros((operator.size,), dtype=jnp.complex128),
+        jnp.asarray(1.0),
+        jnp.asarray(False),
+        jnp.asarray(1, dtype=jnp.int32),
+        jnp.asarray(3, dtype=jnp.int32),
+        None,
+    )
+    monkeypatch.setattr(type(operator), "solve", lambda self, source: failed)
+    monkeypatch.setattr(type(operator), "adjoint_solve", lambda self, source: failed)
+
+    result = phx.solver.maxwell.frequency_maxwell_adjoint(
+        operator,
+        jnp.ones((operator.size,)),
+        lambda electric: jnp.sum(jnp.real(electric)),
+    )
+
+    assert not bool(result.valid)
+    assert result.primal_result is failed
+    assert result.adjoint_result is failed
+    assert int(result.primal_result.status) == 3
+    assert int(result.adjoint_result.status) == 3
 
 
 def test_harmonic_defects_and_independent_batch_match_serial():

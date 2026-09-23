@@ -15,6 +15,7 @@ from jaxtyping import Array, ArrayLike
 from phydrax.ein import contract
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._model import register_artifact_value
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._chemical_components import ChemicalComponentCatalog
@@ -322,6 +323,20 @@ class ChemicalSpeciesSchema(StrictModule, NonTrainableState):
         if value.ndim < 1 or value.shape[-1] != self.species_count:
             raise ValueError("species_amount must end in species axis.")
         return contract("s,...s->...", self.charges, value)
+
+
+register_artifact_value(
+    "phydrax.chemistry.species:ChemicalPhaseKind",
+    ChemicalPhaseKind,
+)
+register_artifact_value(
+    "phydrax.chemistry.species:ChemicalPhaseSpec",
+    ChemicalPhaseSpec,
+)
+register_artifact_value(
+    "phydrax.chemistry.species:ChemicalSpeciesSchema",
+    ChemicalSpeciesSchema,
+)
 
 
 __all__ = [

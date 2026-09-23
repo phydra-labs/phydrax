@@ -75,6 +75,8 @@ final = compiled.dynamics.diagnostics(
 )
 final_neighborhood = compiled.dynamics.neighborhood_state(final_position)
 energy_scale = jnp.maximum(jnp.abs(initial.total_energy), jnp.finfo(jnp.float64).tiny)
+if not bool(final_neighborhood.successful):
+    raise RuntimeError("Final SPH neighborhood construction failed")
 
 print("solver", solution.resolved_method)
 print("particle count", particle_count)
@@ -83,7 +85,7 @@ print("pair capacity", compiled.dynamics.neighborhood.pair_capacity)
 print("initial candidate pairs", int(initial_neighborhood.pair_count))
 print("final candidate pairs", int(final_neighborhood.pair_count))
 print("maximum final cell occupancy", int(final_neighborhood.maximum_cell_occupancy))
-print("neighborhood successful", bool(final_neighborhood.successful))
+print("neighborhood successful", True)
 print("active final pairs", int(final.active_pairs))
 print(
     "initial density range",

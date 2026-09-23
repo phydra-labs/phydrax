@@ -173,6 +173,8 @@ class KineticAerothermodynamicPlan(StrictModule, NonTrainableState):
                 state.gas.kinetic.frame_temperature_scale,
             ),
             state.gas.kinetic.layout,
+            state.gas.kinetic.model_id,
+            state.gas.kinetic.rule_id,
         )
         accepted_auxiliary = KineticAuxiliaryState(
             jnp.where(

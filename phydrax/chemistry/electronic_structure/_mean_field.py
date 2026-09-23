@@ -295,6 +295,19 @@ class SCFConvergenceEvidence(StrictModule):
         return self.converged & self.stable & self.finite
 
 
+def mean_field_owner_id(plan_id: str, positions: ArrayLike, /) -> str:
+    identifier = str(plan_id).strip()
+    if not identifier:
+        raise ValueError("Mean-field owner plan ID must be non-empty.")
+    return canonical_fingerprint(
+        {
+            "kind": "mean-field-state-owner",
+            "plan": identifier,
+            "positions": array_tree_fingerprint(np.asarray(positions)),
+        }
+    )
+
+
 class RestrictedMeanFieldState(StrictModule, NonTrainableState):
     density: Array
     coefficients: Array
@@ -308,6 +321,7 @@ class RestrictedMeanFieldState(StrictModule, NonTrainableState):
     free_energy: Array
     evidence: SCFConvergenceEvidence
     reference: ElectronicReferenceKind = eqx.field(static=True)
+    owner_id: str = eqx.field(static=True)
     state_id: str = eqx.field(static=True)
 
     def __init__(
@@ -323,6 +337,7 @@ class RestrictedMeanFieldState(StrictModule, NonTrainableState):
         entropy: ArrayLike,
         free_energy: ArrayLike,
         evidence: SCFConvergenceEvidence,
+        owner_id: str,
         /,
         *,
         reference: ElectronicReferenceKind = ElectronicReferenceKind.RESTRICTED,
@@ -359,6 +374,9 @@ class RestrictedMeanFieldState(StrictModule, NonTrainableState):
             raise ValueError(
                 "Restricted state requires restricted or restricted-open-shell reference."
             )
+        owner = str(owner_id).strip()
+        if not owner:
+            raise ValueError("Restricted mean-field owner_id must be non-empty.")
         self.density = density_
         self.coefficients = coefficients_
         self.orbital_energies = energies
@@ -373,10 +391,12 @@ class RestrictedMeanFieldState(StrictModule, NonTrainableState):
         self.free_energy = jnp.asarray(free_energy, dtype=energies.dtype).reshape(())
         self.evidence = evidence
         self.reference = reference
+        self.owner_id = owner
         self.state_id = canonical_fingerprint(
             {
                 "kind": "restricted-mean-field-state",
                 "reference": reference.value,
+                "owner": owner,
                 "evidence": evidence.plan_id,
                 "arrays": array_tree_fingerprint(
                     {
@@ -414,6 +434,7 @@ class UnrestrictedMeanFieldState(StrictModule, NonTrainableState):
     free_energy: Array
     evidence: SCFConvergenceEvidence
     reference: ElectronicReferenceKind = eqx.field(static=True)
+    owner_id: str = eqx.field(static=True)
     state_id: str = eqx.field(static=True)
 
     def __init__(
@@ -434,6 +455,7 @@ class UnrestrictedMeanFieldState(StrictModule, NonTrainableState):
         entropy: ArrayLike,
         free_energy: ArrayLike,
         evidence: SCFConvergenceEvidence,
+        owner_id: str,
         /,
         *,
         reference: ElectronicReferenceKind = ElectronicReferenceKind.UNRESTRICTED,
@@ -483,6 +505,9 @@ class UnrestrictedMeanFieldState(StrictModule, NonTrainableState):
             ElectronicReferenceKind.RESTRICTED_OPEN_SHELL,
         ):
             raise ValueError("Unrestricted state has an incompatible reference.")
+        owner = str(owner_id).strip()
+        if not owner:
+            raise ValueError("Unrestricted mean-field owner_id must be non-empty.")
         self.alpha_density, self.beta_density = alpha, beta
         self.alpha_coefficients = alpha_coefficients_
         self.beta_coefficients = beta_coefficients_
@@ -499,10 +524,12 @@ class UnrestrictedMeanFieldState(StrictModule, NonTrainableState):
         self.free_energy = jnp.asarray(free_energy, dtype=alpha.real.dtype).reshape(())
         self.evidence = evidence
         self.reference = reference
+        self.owner_id = owner
         self.state_id = canonical_fingerprint(
             {
                 "kind": "unrestricted-mean-field-state",
                 "reference": reference.value,
+                "owner": owner,
                 "evidence": evidence.plan_id,
                 "arrays": array_tree_fingerprint(
                     {
@@ -532,6 +559,7 @@ class GeneralizedMeanFieldState(StrictModule, NonTrainableState):
     electronic_energy: Array
     total_energy: Array
     evidence: SCFConvergenceEvidence
+    owner_id: str = eqx.field(static=True)
     state_id: str = eqx.field(static=True)
 
     def __init__(
@@ -545,6 +573,7 @@ class GeneralizedMeanFieldState(StrictModule, NonTrainableState):
         electronic_energy: ArrayLike,
         total_energy: ArrayLike,
         evidence: SCFConvergenceEvidence,
+        owner_id: str,
         /,
     ):
         density_ = jnp.asarray(density)
@@ -570,6 +599,9 @@ class GeneralizedMeanFieldState(StrictModule, NonTrainableState):
             raise ValueError(
                 "Generalized mean-field arrays do not share one spinor layout."
             )
+        owner = str(owner_id).strip()
+        if not owner:
+            raise ValueError("Generalized mean-field owner_id must be non-empty.")
         self.density = density_
         self.coefficients = coefficients_
         self.orbital_energies = energies
@@ -581,9 +613,11 @@ class GeneralizedMeanFieldState(StrictModule, NonTrainableState):
         ).reshape(())
         self.total_energy = jnp.asarray(total_energy, dtype=energies.dtype).reshape(())
         self.evidence = evidence
+        self.owner_id = owner
         self.state_id = canonical_fingerprint(
             {
                 "kind": "generalized-mean-field-state",
+                "owner": owner,
                 "evidence": evidence.plan_id,
                 "arrays": array_tree_fingerprint(
                     {
@@ -607,6 +641,7 @@ MeanFieldState = (
 __all__ = [
     "ElectronicOccupationKind",
     "ElectronicOccupationPlan",
+    "mean_field_owner_id",
     "GeneralizedMeanFieldState",
     "InitialGuessKind",
     "InitialGuessPlan",

@@ -510,6 +510,8 @@ def _sustained_crossover(
     fitc_metric: str,
 ) -> int | None:
     """Return the first size after which every measured FITC case is faster."""
+    if any(not scenario.passed for scenario in scenarios):
+        return None
     for index, scenario in enumerate(scenarios):
         if all(
             later.metrics[fitc_metric].value <= later.metrics[exact_metric].value
@@ -536,21 +538,46 @@ def run_gp_scaling_benchmark(
     jax.config.update("jax_enable_x64", True)
     started_at = utc_now_iso()
     started = time.perf_counter()
-    scenarios = tuple(
-        _case(
-            num_observations=num_observations,
-            num_inducing=num_inducing,
-            repetitions=repetitions,
-            seed=root_seed + index,
-        )
-        for index, (num_observations, num_inducing) in enumerate(cases)
-    )
+    scenario_values = []
+    for index, (num_observations, num_inducing) in enumerate(cases):
+        seed = root_seed + index
+        try:
+            scenario = _case(
+                num_observations=num_observations,
+                num_inducing=num_inducing,
+                repetitions=repetitions,
+                seed=seed,
+            )
+        except Exception as error:
+            scenario = ScenarioResult(
+                name=f"gp-scaling-{num_observations}-{num_inducing}",
+                description="GP scaling provider failure",
+                seed=seed,
+                metadata={
+                    "provider": "phydrax-native-gp",
+                    "num_observations": num_observations,
+                    "num_inducing": num_inducing,
+                },
+                error_type=type(error).__name__,
+                error_message=str(error),
+            )
+        scenario_values.append(scenario)
+    scenarios = tuple(scenario_values)
+    try:
+        environment = collect_environment()
+        environment_complete = True
+    except Exception as error:
+        environment = {
+            "collection_error": {"type": type(error).__name__, "message": str(error)}
+        }
+        environment_complete = False
     return BenchmarkReport(
         profile=profile,
         root_seed=root_seed,
         started_at_utc=started_at,
         duration_seconds=time.perf_counter() - started,
         configuration={
+            "environment_complete": environment_complete,
             "profile": profile,
             "cases": [
                 {
@@ -605,7 +632,7 @@ def run_gp_scaling_benchmark(
                 "maximum_cagp_conservative_violation": (_MAX_CAGP_CONSERVATIVE_VIOLATION),
             },
         },
-        environment=collect_environment(),
+        environment=environment,
         scenarios=scenarios,
         suite="phydrax-uq-gp-scaling",
     )

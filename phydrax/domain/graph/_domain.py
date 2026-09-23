@@ -346,17 +346,27 @@ class GraphDomain(JointFactor):
         )
 
     def _same_factor_support(self, other: object, /) -> bool:
-        """Return whether another domain has the same public graph-domain shape."""
+        """Return whether another domain has the same graph topology."""
         if not isinstance(other, GraphDomain):
             return False
         if self.measure_mode != other.measure_mode:
             return False
-        if self.graph.n_node.shape != other.graph.n_node.shape:
-            return False
-        if self.graph.n_edge.shape != other.graph.n_edge.shape:
-            return False
-        if self.graph.edge_index.shape != other.graph.edge_index.shape:
-            return False
+
+        topology_arrays = (
+            (self.graph.n_node, other.graph.n_node),
+            (self.graph.n_edge, other.graph.n_edge),
+            (self.graph.senders, other.graph.senders),
+            (self.graph.receivers, other.graph.receivers),
+            (self.graph.node_mask, other.graph.node_mask),
+            (self.graph.edge_mask, other.graph.edge_mask),
+            (self.graph.graph_mask, other.graph.graph_mask),
+        )
+        for left, right in topology_arrays:
+            if left is None or right is None:
+                if left is not right:
+                    return False
+            elif left.shape != right.shape or not bool(jnp.array_equal(left, right)):
+                return False
 
         for a, b in (
             (self.graph.nodes, other.graph.nodes),

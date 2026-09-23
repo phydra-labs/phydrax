@@ -69,8 +69,10 @@ def main() -> None:
         pixelization="HEALPix-RING",
         artifact=artifact,
     ).realize(jax.random.key(0))
+    if not bool(validity.successful):
+        raise RuntimeError("Local-curvature validity plan failed")
 
-    print("local_curvature_valid", bool(validity.successful))
+    print("local_curvature_valid", True)
     print("gaussian_log_probability", float(likelihood_result.log_probability))
     print("hod_total_mean", hod.total_mean)
     print("ewald_net_force", force.evidence.net_force)

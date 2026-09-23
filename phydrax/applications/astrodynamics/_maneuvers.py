@@ -106,7 +106,9 @@ class ManeuverSchedule(StrictModule, NonTrainableState):
     def apply_impulse(
         self, state: CartesianOrbitState, impulse_index: int, /
     ) -> CartesianOrbitState:
-        index = int(impulse_index)
+        if isinstance(impulse_index, bool) or not isinstance(impulse_index, int):
+            raise TypeError("impulse_index must be an integer.")
+        index = impulse_index
         if not 0 <= index < len(self.impulses):
             raise ValueError("impulse_index is outside schedule capacity.")
         return CartesianOrbitState(

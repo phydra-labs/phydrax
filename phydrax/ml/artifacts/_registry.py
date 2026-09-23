@@ -6,7 +6,7 @@ from __future__ import annotations
 
 import importlib
 
-from ..._model import register_artifact_value
+from ..._model import FrozenModel, register_artifact_value
 
 
 _ARTIFACT_FAMILIES = (
@@ -39,6 +39,7 @@ def register_native_ml_artifacts() -> None:
     global _REGISTERED
     if _REGISTERED:
         return
+    register_artifact_value("phydrax.ml.core:FrozenModel", FrozenModel)
     for family in _ARTIFACT_FAMILIES:
         module = importlib.import_module(f"phydrax.ml.{family}")
         namespace = vars(module)

@@ -7,7 +7,7 @@ from __future__ import annotations
 import jax.numpy as jnp
 from jaxtyping import ArrayLike
 
-from phydrax.domain import DomainFunction
+from phydrax.domain import DomainFunction, FunctionBinding, PointwiseEvaluator
 
 
 def delay(
@@ -71,7 +71,7 @@ def delay(
         t = jnp.asarray(args[t_pos])
 
         tau_args = [args[i] for i in tau_pos]
-        tau_val = jnp.asarray(tau2.func(*tau_args, key=key, **kwargs)).reshape(())
+        tau_val = jnp.asarray(tau2.func(*tau_args, key=key, **kwargs))
         t_delayed = t - tau_val
         if clip_time_min is not None:
             t_delayed = jnp.maximum(t_delayed, float(clip_time_min))
@@ -81,7 +81,15 @@ def delay(
             u_args[u_time_idx] = t_delayed
         return u2.func(*u_args, key=key, **kwargs)
 
-    return DomainFunction(domain=joined, deps=needed, func=_op, metadata=u.metadata)
+    return DomainFunction(
+        domain=joined,
+        deps=needed,
+        func=PointwiseEvaluator(
+            _op,
+            binding=FunctionBinding(pass_key=True, pass_iter=True),
+        ),
+        metadata=u.metadata,
+    )
 
 
 __all__ = [

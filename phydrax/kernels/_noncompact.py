@@ -17,6 +17,7 @@ import phydrax.ein as ein
 
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
+from ._base import _as_real_array
 from ._finite_feature import AbstractFiniteFeatureKernel
 
 
@@ -363,7 +364,7 @@ def _spd_log_plancherel_density(frequencies: Array, /) -> Array:
 
 
 def _hyperbolic_points(points: ArrayLike, dimension: int, /) -> Array:
-    array = jnp.asarray(points, dtype=jnp.float64)
+    array = _as_real_array(points, name="Hyperboloid points")
     if array.ndim == 1:
         array = array[None, :]
     if array.ndim != 2 or array.shape[1] != dimension + 1:
@@ -498,7 +499,7 @@ class HyperbolicRandomFeatureKernel(AbstractFiniteFeatureKernel):
 
 
 def _spd_points(points: ArrayLike, dimension: int, /) -> Array:
-    array = jnp.asarray(points, dtype=jnp.float64)
+    array = _as_real_array(points, name="SPD points")
     if array.shape == (dimension, dimension):
         array = array[None, :, :]
     elif array.ndim == 1 and array.size == dimension * dimension:

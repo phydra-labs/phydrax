@@ -243,34 +243,6 @@ class AxisArray:
     def with_data(self, data: ArrayLike, /) -> AxisArray:
         return AxisArray(data, axes=self.layout)
 
-    def _aligned(self, names: tuple[str, ...], sizes: dict[str, int]) -> Array:
-        dims = self.dims
-        named_positions = {
-            dim: index for index, dim in enumerate(dims) if dim is not None
-        }
-        positional_positions = [index for index, dim in enumerate(dims) if dim is None]
-        present = [name for name in names if name in named_positions]
-        permutation = [named_positions[name] for name in present] + positional_positions
-        value = (
-            self.data
-            if permutation == list(range(self.ndim))
-            else jnp.transpose(self.data, permutation)
-        )
-        present_sizes = [self.named_shape[name] for name in present]
-        positional = [self.shape[index] for index in positional_positions]
-        reshape: list[int] = []
-        cursor = 0
-        for name in names:
-            if name in named_positions:
-                reshape.append(present_sizes[cursor])
-                cursor += 1
-            else:
-                reshape.append(1)
-        reshape.extend(positional)
-        value = jnp.reshape(value, tuple(reshape))
-        target = tuple(sizes[name] for name in names) + tuple(positional)
-        return jnp.broadcast_to(value, target)
-
     def _aligned_refs(
         self,
         references: tuple[AxisRef, ...],
@@ -368,28 +340,63 @@ class AxisArray:
     def broadcast_like(self, other: AxisArray, /) -> AxisArray:
         if not isinstance(other, AxisArray):
             raise TypeError("broadcast_like expects an AxisArray.")
-        names = tuple(dict.fromkeys((*self.named_dims, *other.named_dims)))
-        sizes = dict(other.named_shape)
-        for name, size in self.named_shape.items():
-            if name in sizes and sizes[name] != size:
-                raise ValueError(f"Axis {name!r} has incompatible sizes.")
-            sizes.setdefault(name, size)
-        value = self._aligned(names, sizes)
+        references = tuple(
+            dict.fromkeys((*self.layout.named_axes, *other.layout.named_axes))
+        )
+        sizes: dict[AxisRef, int] = {}
+        for field in (self, other):
+            for reference in field.layout.named_axes:
+                previous = sizes.get(reference)
+                if previous is not None and previous != reference.axis.size:
+                    raise ValueError(
+                        f"Axis {reference.axis.key.identifier!r} has incompatible sizes."
+                    )
+                sizes[reference] = reference.axis.size
+        value = self._aligned_refs(references, sizes)
         positional_shape = jnp.broadcast_shapes(
-            value.shape[len(names) :],
+            value.shape[len(references) :],
             other.positional_shape,
         )
         value = jnp.broadcast_to(
-            value, tuple(sizes[name] for name in names) + positional_shape
+            value,
+            tuple(sizes[reference] for reference in references) + positional_shape,
         )
-        return AxisArray(value, dims=names + (None,) * len(positional_shape))
+        return AxisArray(
+            value,
+            axes=AxisLayout(
+                references + tuple(UnboundAxis(size) for size in positional_shape)
+            ),
+        )
 
-    def order_as(self, *dims: str) -> AxisArray:
-        if set(dims) != set(self.named_dims):
-            raise ValueError("order_as must name every bound axis exactly once.")
-        sizes = dict(self.named_shape)
-        value = self._aligned(tuple(dims), sizes)
-        return AxisArray(value, dims=tuple(dims) + (None,) * len(self.positional_shape))
+    def order_as(self, *dims: str | AxisRef) -> AxisArray:
+        by_name: dict[str, list[AxisRef]] = {}
+        for reference in self.layout.named_axes:
+            by_name.setdefault(reference.axis.key.name, []).append(reference)
+        resolved: list[AxisRef] = []
+        for dim in dims:
+            if isinstance(dim, AxisRef):
+                reference = dim
+            else:
+                candidates = by_name.get(str(dim), [])
+                if len(candidates) != 1:
+                    raise ValueError(
+                        f"Axis name {dim!r} is absent or ambiguous; pass an AxisRef."
+                    )
+                reference = candidates[0]
+            resolved.append(reference)
+        references = tuple(resolved)
+        if len(set(references)) != len(references) or set(references) != set(
+            self.layout.named_axes
+        ):
+            raise ValueError("order_as must identify every bound axis exactly once.")
+        sizes = {reference: reference.axis.size for reference in references}
+        value = self._aligned_refs(references, sizes)
+        return AxisArray(
+            value,
+            axes=AxisLayout(
+                references + tuple(UnboundAxis(size) for size in self.positional_shape)
+            ),
+        )
 
     def __add__(self, other):
         return self._binary(other, jnp.add)
@@ -465,15 +472,9 @@ class AxisAlignmentPlan:
     def apply(self, value: AxisArray, /) -> AxisArray:
         if value.layout != self.source:
             raise ValueError("Axis alignment input layout does not match its plan.")
-        target_names = tuple(
-            axis.axis.key.name for axis in self.target.axes if isinstance(axis, AxisRef)
-        )
-        target_sizes = {
-            axis.axis.key.name: axis.axis.size
-            for axis in self.target.axes
-            if isinstance(axis, AxisRef)
-        }
-        aligned = value._aligned(target_names, target_sizes)
+        references = tuple(axis for axis in self.target.axes if isinstance(axis, AxisRef))
+        sizes = {reference: reference.axis.size for reference in references}
+        aligned = value._aligned_refs(references, sizes)
         if aligned.shape != self.target.shape:
             aligned = jnp.broadcast_to(aligned, self.target.shape)
         return AxisArray(aligned, axes=self.target)
@@ -569,20 +570,25 @@ def cmap(function=None, /, *, out_axes: str = "leading"):
             fields = [leaf for leaf in leaves if isinstance(leaf, AxisArray)]
             if not fields:
                 return fn(*args, **kwargs)
-            names = tuple(
-                dict.fromkeys(name for field in fields for name in field.named_dims)
+            references = tuple(
+                dict.fromkeys(
+                    reference for field in fields for reference in field.layout.named_axes
+                )
             )
-            sizes: dict[str, int] = {}
+            sizes: dict[AxisRef, int] = {}
             for field in fields:
-                for name, size in field.named_shape.items():
-                    if name in sizes and sizes[name] != size:
-                        raise ValueError(f"Axis {name!r} has incompatible sizes.")
-                    sizes[name] = size
+                for reference in field.layout.named_axes:
+                    previous = sizes.get(reference)
+                    if previous is not None and previous != reference.axis.size:
+                        raise ValueError(
+                            f"Axis {reference.axis.key.identifier!r} has incompatible sizes."
+                        )
+                    sizes[reference] = reference.axis.size
 
             def unwrap(value):
                 if not isinstance(value, AxisArray):
                     return value
-                return value._aligned(names, sizes)
+                return value._aligned_refs(references, sizes)
 
             packed = jax.tree.map(
                 unwrap,
@@ -600,7 +606,7 @@ def cmap(function=None, /, *, out_axes: str = "leading"):
                 return fn(*positional, **keyword)
 
             mapped = call_packed
-            for _ in names:
+            for _ in references:
                 mapped = jax.vmap(mapped, in_axes=(packed_axes,))
             result = mapped(packed)
 
@@ -608,8 +614,15 @@ def cmap(function=None, /, *, out_axes: str = "leading"):
 
                 if not isinstance(value, (jax.Array, jnp.ndarray)):
                     return value
-                positional_rank = value.ndim - len(names)
-                return AxisArray(value, dims=names + (None,) * positional_rank)
+                return AxisArray(
+                    value,
+                    axes=AxisLayout(
+                        references
+                        + tuple(
+                            UnboundAxis(size) for size in value.shape[len(references) :]
+                        )
+                    ),
+                )
 
             return jax.tree.map(rewrap, result)
 

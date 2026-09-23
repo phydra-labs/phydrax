@@ -287,6 +287,11 @@ class ComputationAwareGaussianProcessFactor(StrictModule):
     ) -> tuple[Array, Array]:
         """Return mean and latent variance without a dense query covariance."""
         values = self._validated_residual(residual)
+        values = eqx.error_if(
+            values,
+            ~self.diagnostics.valid,
+            "Computation-aware GP factor is numerically invalid.",
+        )
         query = _validated_factor_points(query_points)
         geometry = _predictive_geometry(
             query,
@@ -316,6 +321,11 @@ class ComputationAwareGaussianProcessFactor(StrictModule):
         """Precompute low-rank residual geometry and full query covariance."""
         original_query = query_points
         query = _validated_factor_points(_field_data(query_points))
+        query = eqx.error_if(
+            query,
+            ~self.diagnostics.valid,
+            "Computation-aware GP factor is numerically invalid.",
+        )
         covariance_bytes = query.shape[0] ** 2 * query.dtype.itemsize
         if covariance_bytes > self.computation.max_condition_covariance_bytes:
             raise ValueError(

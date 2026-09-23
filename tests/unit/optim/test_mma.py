@@ -168,3 +168,22 @@ def test_mma_rejects_missing_finite_bounds_equalities_and_infeasible_start():
         args=None,
     )
     assert int(result.status) == int(phx.optim.OptimizationStatus.INFEASIBLE)
+
+
+def test_mma_reports_evaluation_budget_exhaustion_before_first_step():
+    result = phx.optim.minimize(
+        _problem(jnp.asarray((1.0, 2.0)), 1.0),
+        jnp.asarray((0.5, 0.5)),
+        method=phx.optim.MethodOfMovingAsymptotes(),
+        termination=phx.optim.OptimizationTermination(
+            absolute_optimality=0.0,
+            relative_optimality=0.0,
+            maximum_steps=20,
+            maximum_evaluations=1,
+        ),
+    )
+
+    assert int(result.status) == int(
+        phx.optim.OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED
+    )
+    assert int(result.diagnostics.iterations) == 0

@@ -580,6 +580,51 @@ def test_conservative_remap_identity_is_jittable_and_exact():
         )
 
 
+def test_average_remap_validates_active_volumes_and_masks_inactive_division():
+    discretization = _quad_plan().prepare()
+    count = discretization.cell_count
+    remap = phx.discretization.UnstructuredConservativeRemapPlan(
+        discretization,
+        discretization,
+        np.arange(count + 1, dtype=np.int32),
+        np.arange(count, dtype=np.int32),
+        discretization.cell_volumes,
+        method="identity-common-refinement",
+        provenance="dynamic-volume-test",
+    )
+    values = jnp.arange(count, dtype=discretization.cell_volumes.dtype)[:, None]
+    active = jnp.ones((count,), dtype=jnp.bool_)
+    invalid_volumes = discretization.cell_volumes.at[0].set(0.0)
+
+    with pytest.raises(Exception, match="positive and finite"):
+        result = eqx.filter_jit(remap.apply)(
+            values,
+            target_active_mask=active,
+            target_volumes=invalid_volumes,
+        )
+        jax.block_until_ready(result)
+
+    partially_active = active.at[0].set(False)
+    transferred = eqx.filter_jit(remap.apply)(
+        values,
+        target_active_mask=partially_active,
+        target_volumes=invalid_volumes,
+    )
+    derivative = jax.grad(
+        lambda state: jnp.sum(
+            remap.apply(
+                state,
+                target_active_mask=partially_active,
+                target_volumes=invalid_volumes,
+            )
+        )
+    )(values)
+
+    assert jnp.all(jnp.isfinite(transferred))
+    assert jnp.all(jnp.isfinite(derivative))
+    np.testing.assert_array_equal(transferred[0], jnp.zeros_like(transferred[0]))
+
+
 def test_topology_changing_common_refinement_remap_preserves_integral():
     source_vertices = np.asarray(
         ((0.0, 0.0), (1.0, 0.0), (2.0, 0.0), (0.0, 1.0), (1.0, 1.0), (2.0, 1.0))

@@ -27,12 +27,15 @@ The initial source is isotropic and line-energy. Thermal broadening, beam-target
 
 `phydrax.nuclear.interchange` uses the existing pinned external-energy runtime. `run_openmc` stages caller-provided inputs in a private directory, invokes an exact executable pin without a shell, and detaches bounded outputs.
 
-`import_openmc_multigroup_flux` supports one deliberately narrow statepoint profile:
+`import_openmc_multigroup_flux` supports one deliberately narrow statepoint profile.
+`OpenMCStatepointProfile` requires the typed physical length unit used by tally
+normalization; a label or implicit metre convention is insufficient. The profile
+admits:
 
 - one dedicated scalar-flux tally;
 - explicitly declared result shape and axis labels;
 - trailing energy-group axis;
-- volume-normalized per-source values;
+- volume-normalized per-source values in the declared tally length unit;
 - explicit physical source rate;
 - stored tally sum and sum of squares;
 - realization count and OpenMC release identity.

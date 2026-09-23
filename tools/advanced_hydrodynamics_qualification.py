@@ -140,7 +140,16 @@ def run_case(case, dt):
             "integral_defect": float(result.integral_defect),
             "limiter_cells": int(result.limiter_active_count),
             "maximum_displacement_cells": float(result.maximum_displacement_cell_widths),
-            "passed": bool(result.success) and float(error) <= 5.0e-2,
+            "passed": bool(
+                result.success
+                and result.donor_bounded
+                and jnp.isfinite(error)
+                and jnp.isfinite(result.integral_defect)
+                and jnp.isfinite(result.maximum_displacement_cell_widths)
+                and error <= 5.0e-2
+                and jnp.abs(result.integral_defect) <= 1.0e-8
+                and result.limiter_active_count >= 0
+            ),
         }
     if case == "two-phase":
         two_phase, method, continuation = _two_phase()
@@ -162,8 +171,18 @@ def run_case(case, dt):
             "alpha_maximum": float(evidence.alpha_maximum),
             "divergence_residual": float(evidence.divergence_residual),
             "topology_events": int(evidence.topology_event_count),
-            "passed": bool(result.successful)
-            and abs(float(final_volume - initial_volume)) <= 1.0e-8,
+            "passed": bool(
+                result.successful
+                and jnp.isfinite(final_volume)
+                and jnp.isfinite(evidence.alpha_minimum)
+                and jnp.isfinite(evidence.alpha_maximum)
+                and jnp.isfinite(evidence.divergence_residual)
+                and abs(float(final_volume - initial_volume)) <= 1.0e-8
+                and evidence.alpha_minimum >= 0.0
+                and evidence.alpha_maximum <= 1.0
+                and jnp.abs(evidence.divergence_residual) <= 1.0e-8
+                and evidence.topology_event_count >= 0
+            ),
         }
     hydro, continuation = _graph(case)
     if case == "rezone":
@@ -182,7 +201,16 @@ def run_case(case, dt):
             ),
             "momentum_defect": float(result.evidence.momentum_defect),
             "mesh_epoch": int(result.state.mesh_epoch),
-            "passed": bool(result.evidence.conservative),
+            "passed": bool(
+                result.evidence.successful
+                and result.evidence.conservative
+                and jnp.isfinite(result.evidence.momentum_defect)
+                and abs(float(result.evidence.momentum_defect)) <= 1.0e-8
+                and all(
+                    jnp.isfinite(value) and jnp.abs(value) <= 1.0e-8
+                    for value in result.evidence.scalar_content_defect.values()
+                )
+            ),
         }
     method = phx.applications.hydrodynamics.OnePhaseFreeSurfaceALEMethod(hydro)
     result = method.step(
@@ -201,7 +229,26 @@ def run_case(case, dt):
         "capillary_dual_residual": float(ledger.capillary_dual_residual),
         "wave_work": float(ledger.wave_work),
         "sponge_dissipation": float(ledger.sponge_dissipation),
-        "passed": bool(result.successful) and abs(float(ledger.volume_change)) <= 1.0e-7,
+        "passed": bool(
+            result.successful
+            and jnp.all(
+                jnp.isfinite(
+                    jnp.asarray(
+                        (
+                            ledger.volume_change,
+                            ledger.total_energy_residual,
+                            ledger.capillary_dual_residual,
+                            ledger.wave_work,
+                            ledger.sponge_dissipation,
+                        )
+                    )
+                )
+            )
+            and abs(float(ledger.volume_change)) <= 1.0e-7
+            and abs(float(ledger.total_energy_residual)) <= 1.0e-7
+            and abs(float(ledger.capillary_dual_residual)) <= 1.0e-7
+            and float(ledger.sponge_dissipation) >= 0.0
+        ),
     }
 
 
@@ -223,14 +270,10 @@ def main():
     arguments = parser.parse_args()
     if arguments.dt <= 0.0:
         raise ValueError("Advanced hydrodynamic qualification dt must be positive.")
-    print(
-        json.dumps(
-            run_case(arguments.case, arguments.dt),
-            indent=2,
-            sort_keys=True,
-        )
-    )
+    report = run_case(arguments.case, arguments.dt)
+    print(json.dumps(report, indent=2, sort_keys=True, allow_nan=False))
+    return 0 if report["passed"] else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

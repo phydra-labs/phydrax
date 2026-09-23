@@ -78,6 +78,15 @@ def test_distributed_ownership_migration_reduction_and_global_no_commit():
     )
     assert bool(migration.successful)
     assert int(jnp.sum(migration.per_device_count)) == 3
+    outside = phx.discretization.migrate_particles(
+        plan,
+        position.at[0, 0].set(-0.1),
+        jnp.asarray([[0.0, 0.0], [1.0, 1.0]]),
+        jnp.asarray((0, 0, 0)),
+        jnp.asarray((True, True, True)),
+    )
+    assert not bool(outside.successful)
+    assert not bool(outside.in_domain[0])
 
     reduced, defect = phx.discretization.distributed_p2g_reduce(
         jnp.asarray([[1.0, 2.0], [3.0, 4.0]])
@@ -90,6 +99,33 @@ def test_distributed_ownership_migration_reduction_and_global_no_commit():
     )
     assert not bool(transaction.global_success)
     assert int(transaction.commit_generation) == 7
+
+
+def test_distributed_halo_exchange_respects_axis_periodicity():
+    owner = jnp.zeros((2,), dtype=jnp.int32)
+    nonperiodic = phx.discretization.MPMDistributedPlan(
+        (2,),
+        (1,),
+        owner,
+        device_count=1,
+        particle_capacity_per_device=2,
+    )
+    periodic = phx.discretization.MPMDistributedPlan(
+        (2,),
+        (1,),
+        owner,
+        device_count=1,
+        particle_capacity_per_device=2,
+        periodic_axes=(True,),
+    )
+    values = jnp.asarray((1.0, 0.0))
+    nonperiodic_values, _ = phx.discretization.exchange_block_halo(
+        nonperiodic,
+        values,
+    )
+    periodic_values, _ = phx.discretization.exchange_block_halo(periodic, values)
+    np.testing.assert_allclose(nonperiodic_values, (1.0, 1.0))
+    np.testing.assert_allclose(periodic_values, (1.0, 2.0))
 
 
 def _particle_state():
@@ -115,6 +151,30 @@ def test_particle_split_merge_and_capacity_bucket_are_conservative():
     )
     assert bool(valid)
     particles = _particle_state()
+    duplicate_activation = plan.activate(
+        particles,
+        lifecycle,
+        jnp.asarray((2, 2)),
+        jnp.asarray((20, 21)),
+        jnp.asarray((0.5, 0.5)),
+    )
+    assert not bool(duplicate_activation.evidence.successful)
+    np.testing.assert_array_equal(
+        duplicate_activation.lifecycle.active,
+        lifecycle.active,
+    )
+    out_of_bounds_activation = plan.activate(
+        particles,
+        lifecycle,
+        jnp.asarray((2, 4)),
+        jnp.asarray((20, 21)),
+        jnp.asarray((0.5, 0.5)),
+    )
+    assert not bool(out_of_bounds_activation.evidence.successful)
+    np.testing.assert_array_equal(
+        out_of_bounds_activation.lifecycle.active,
+        lifecycle.active,
+    )
     split = plan.split(
         particles,
         lifecycle,

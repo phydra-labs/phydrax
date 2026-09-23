@@ -6,6 +6,7 @@ import optax
 import pytest
 
 import phydrax as phx
+import phydrax.solver._functional_checkpoint as functional_checkpoint
 from phydrax._trainable import partition_trainable
 from phydrax._training import DelayedTargetPolicy, TargetParameterState
 from phydrax.solver._functional_checkpoint import load_functional_training_checkpoint
@@ -65,6 +66,53 @@ def _rejected_update_solver():
         phx.integration.fixed(realization),
     )
     return phx.solver.FunctionalSolver(functions={"u": field}, terms=(term,))
+
+
+def _nonfinite_gradient_solver():
+    domain = phx.domain.Interval1d(0.0, 1.0)
+    field = domain.Parameter(jnp.asarray([0.0]))
+    component = domain.component()
+    condition = phx.conditions.Residual(
+        "u",
+        component,
+        lambda value: domain.Parameter(jnp.sqrt(value.func())),
+    )
+    batch = component.points({"x": jnp.asarray([[0.25], [0.75]])})
+    term = phx.terms.ResidualPenalty(
+        condition,
+        phx.integration.fixed(
+            phx.integration.from_samples(
+                phx.integration.mean_over(component),
+                batch,
+            )
+        ),
+    )
+    return phx.solver.FunctionalSolver(functions={"u": field}, terms=(term,))
+
+
+def test_optax_line_search_rejects_nonfinite_gradient_without_committing():
+    solver = _nonfinite_gradient_solver()
+    accepted_steps = []
+
+    trained = solver.solve(
+        num_iter=1,
+        optim=optax.chain(
+            optax.sgd(1.0),
+            optax.scale_by_backtracking_linesearch(max_backtracking_steps=1),
+        ),
+        keep_best=False,
+        log_every=0,
+        jit=False,
+        _accepted_update_hook=lambda step, _parameters: accepted_steps.append(step),
+    )
+
+    assert trained.training_state is not None
+    assert trained.training_state.progress.update_step == 0
+    assert accepted_steps == []
+    assert jnp.array_equal(
+        trained.training_state.current_functions["u"].func(),
+        jnp.asarray([0.0]),
+    )
 
 
 @pytest.mark.parametrize(
@@ -168,7 +216,10 @@ def test_prepared_update_separates_equal_physical_and_untransformed_surrogate():
     assert jnp.allclose(update.surrogate_loss(params, fixed), physical)
 
 
-def test_functional_checkpoint_resume_matches_uninterrupted_steps(tmp_path):
+def test_functional_checkpoint_resume_matches_uninterrupted_steps(
+    tmp_path,
+    monkeypatch,
+):
     plan = phx.solver.FunctionalTrainingPlan(
         checkpoint=phx.solver.FunctionalCheckpointPolicy(
             tmp_path / "functional",
@@ -192,6 +243,21 @@ def test_functional_checkpoint_resume_matches_uninterrupted_steps(tmp_path):
     assert int(interrupted.training_state.target_state.update_count) == 1
 
     template = interrupted.training_state
+    checkpoint_directory = tmp_path / "functional"
+    state_path = next(checkpoint_directory.glob("state-*.eqx"))
+    deserialize = functional_checkpoint.eqx.tree_deserialise_leaves
+
+    def replace_path_after_open(state_stream, *args, **kwargs):
+        replacement = checkpoint_directory / "replacement.eqx"
+        replacement.write_bytes(b"replacement")
+        replacement.replace(state_path)
+        return deserialize(state_stream, *args, **kwargs)
+
+    monkeypatch.setattr(
+        functional_checkpoint.eqx,
+        "tree_deserialise_leaves",
+        replace_path_after_open,
+    )
     restored = load_functional_training_checkpoint(
         tmp_path / "functional", interrupted, template, plan
     )

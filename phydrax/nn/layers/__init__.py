@@ -4,6 +4,7 @@
 
 """Reusable neural network layers."""
 
+from ..._model import register_artifact_value
 from ._adaptive_residual import AdaptiveResidual
 from ._causal_recurrent import (
     CausalRecurrentConfig,
@@ -164,3 +165,15 @@ __all__ = [
     "run_causal_recurrent",
     "run_recurrent",
 ]
+
+for _artifact_name in __all__:
+    _artifact_value = globals()[_artifact_name]
+    if isinstance(_artifact_value, type) and _artifact_value.__module__.startswith(
+        "phydrax.nn.layers."
+    ):
+        register_artifact_value(
+            f"phydrax.nn.layer:{_artifact_name}",
+            _artifact_value,
+        )
+
+del _artifact_name, _artifact_value

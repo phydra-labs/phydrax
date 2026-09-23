@@ -179,7 +179,7 @@ class NestedForcePlan(StrictModule):
         evaluations = 0
         for partition in values:
             multiplicity *= partition.substeps
-            evaluations += 2 * multiplicity
+            evaluations += 2 * multiplicity * len(partition.term_indices)
         self.partitions = values
         self.force_evaluations_per_step = evaluations
         self.plan_id = canonical_fingerprint(

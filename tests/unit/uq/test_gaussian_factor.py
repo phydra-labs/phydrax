@@ -284,6 +284,9 @@ def test_nonhermitian_dense_input_is_diagnosed_without_silent_symmetrization():
 
     assert not bool(factor.valid)
     assert int(factor.status) == phx.uq.GAUSSIAN_FACTOR_NON_HERMITIAN
+    compressed = phx.uq.compress_gaussian_factor(factor)
+    assert not bool(compressed.valid)
+    assert int(compressed.status) == phx.uq.GAUSSIAN_FACTOR_NON_HERMITIAN
 
 
 def test_qr_compression_has_dense_equivalent_gradients():

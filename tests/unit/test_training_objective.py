@@ -79,6 +79,6 @@ def test_gradient_accumulator_zero_support_cannot_leak_nonfinite_gradient():
 
     assert accumulator.microsteps == 1
     assert not bool(accumulator.has_positive_support)
-    assert bool(jnp.isfinite(accumulator.gradient_numerator[0]))
+    assert accumulator.gradient_numerator[0] == 0.0
     with pytest.raises((ValueError, eqx.EquinoxRuntimeError), match="zero-support"):
         accumulator.normalized_gradient(template)

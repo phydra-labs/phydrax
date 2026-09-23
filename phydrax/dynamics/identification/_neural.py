@@ -735,7 +735,7 @@ def _reference_window_values(
         jnp.asarray(objective.branch_length, dtype=jnp.int32),
     )
     total = jnp.zeros((batch.size,), dtype=endpoint_states.dtype)
-    coefficient_total = jnp.asarray(0.0, dtype=endpoint_states.dtype)
+    coefficient_total = jnp.zeros((batch.size,), dtype=endpoint_states.dtype)
     runtime_valid = jnp.asarray(True)
     reference = objective.reference
     assert reference.step_size is not None
@@ -821,7 +821,7 @@ def _reference_window_values(
                 coefficient = origin_coefficients[origin] * branch_coefficients[branch]
                 total = total + jnp.where(enabled, coefficient * value, 0.0)
                 coefficient_total = coefficient_total + jnp.where(
-                    jnp.any(enabled),
+                    enabled,
                     coefficient,
                     0.0,
                 )

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -130,7 +131,12 @@ def verify_external_candidate_artifact(
         for name, (expected, actual) in identity.items()
         if expected != actual
     )
-    if not verify_operator_checkpoint(checkpoint_path, manifest):
+    try:
+        verified = verify_operator_checkpoint(checkpoint_path, manifest)
+    except (OSError, ValueError, TypeError) as error:
+        verified = False
+        reasons.append(f"checkpoint verification failed: {type(error).__name__}: {error}")
+    if not verified:
         reasons.append("checkpoint bytes do not match manifest SHA-256")
     return ExternalCandidateAudit(
         candidate.name,
@@ -161,6 +167,8 @@ def select_benchmark_superior_external(
         raise ValueError("maximum_parameter_ratio must be positive.")
     if float(maximum_robustness_ratio) <= 0.0:
         raise ValueError("maximum_robustness_ratio must be positive.")
+    if audit.candidate != candidate.name:
+        raise ValueError("External candidate audit identity does not match candidate.")
     reasons = list(audit.reasons)
     if not audit.eligible:
         reasons.append("candidate failed provenance and license audit")
@@ -170,17 +178,33 @@ def select_benchmark_superior_external(
     robustness_passed = True
     efficiency_passed = True
     complexity_passed = True
-    native_by_regime: dict[tuple[str, str], list[OperatorBenchmarkAggregate]] = {}
-    for result in native_results:
-        native_by_regime.setdefault((result.scenario, result.evaluation), []).append(
-            result
-        )
     compared = 0
+    native_by_regime: dict[
+        tuple[str, str, str, str], list[OperatorBenchmarkAggregate]
+    ] = {}
+    for result in native_results:
+        regime = (result.scenario, result.evaluation, result.split, result.shift)
+        native_by_regime.setdefault(regime, []).append(result)
     for result in candidate_results:
-        regime = (result.scenario, result.evaluation)
+        regime = (result.scenario, result.evaluation, result.split, result.shift)
         native = native_by_regime.get(regime, [])
         if not native:
             reasons.append(f"no native comparison for {regime}")
+            continue
+        numeric = (
+            result.relative_l2_mean,
+            result.inference_seconds_mean,
+            result.parameter_count_mean,
+            *(row.relative_l2_mean for row in native),
+            *(row.inference_seconds_mean for row in native),
+            *(row.parameter_count_mean for row in native),
+        )
+        if not all(math.isfinite(float(value)) for value in numeric):
+            reasons.append(f"non-finite benchmark evidence for {regime}")
+            accuracy_passed = False
+            robustness_passed = False
+            efficiency_passed = False
+            complexity_passed = False
             continue
         compared += 1
         best = min(native, key=lambda row: row.relative_l2_mean)
@@ -199,20 +223,25 @@ def select_benchmark_superior_external(
         ):
             reasons.append(f"exceeds parameter-count budget for {regime}")
             complexity_passed = False
-    native_base = {}
-    candidate_base = {}
+    native_base: dict[tuple[str, str, str], list[OperatorBenchmarkAggregate]] = {}
+    candidate_base: dict[tuple[str, str, str], list[OperatorBenchmarkAggregate]] = {}
     for result in native_results:
         if result.shift == "in_distribution":
-            native_base.setdefault(result.scenario, []).append(result)
+            key = (result.scenario, result.evaluation, result.split)
+            native_base.setdefault(key, []).append(result)
     for result in candidate_results:
         if result.shift == "in_distribution":
-            candidate_base.setdefault(result.scenario, []).append(result)
+            key = (result.scenario, result.evaluation, result.split)
+            candidate_base.setdefault(key, []).append(result)
     for result in candidate_results:
         if result.shift == "in_distribution":
             continue
-        native_rows = native_by_regime.get((result.scenario, result.evaluation), ())
-        native_baselines = native_base.get(result.scenario, ())
-        candidate_baselines = candidate_base.get(result.scenario, ())
+        native_rows = native_by_regime.get(
+            (result.scenario, result.evaluation, result.split, result.shift), ()
+        )
+        base_key = (result.scenario, result.evaluation, result.split)
+        native_baselines = native_base.get(base_key, ())
+        candidate_baselines = candidate_base.get(base_key, ())
         if not native_rows or not native_baselines or not candidate_baselines:
             continue
         candidate_degradation = result.relative_l2_mean / max(
@@ -225,15 +254,19 @@ def select_benchmark_superior_external(
         )
         if candidate_degradation > maximum_robustness_ratio * native_degradation:
             reasons.append(
-                f"degrades more severely under shift for {(result.scenario, result.evaluation)}"
+                "degrades more severely under shift for "
+                f"{(result.scenario, result.evaluation, result.split, result.shift)}"
             )
             robustness_passed = False
     expected_regimes = set(native_by_regime)
     candidate_regimes = {
-        (result.scenario, result.evaluation) for result in candidate_results
+        (result.scenario, result.evaluation, result.split, result.shift)
+        for result in candidate_results
     }
     missing = sorted(expected_regimes.difference(candidate_regimes))
     reasons.extend(f"missing benchmark regime {regime}" for regime in missing)
+    extra = sorted(candidate_regimes.difference(expected_regimes))
+    reasons.extend(f"unexpected benchmark regime {regime}" for regime in extra)
     if not candidate_results:
         reasons.append("no candidate benchmark results")
     return ExternalCandidateDecision(

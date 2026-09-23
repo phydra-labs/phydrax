@@ -26,9 +26,13 @@ class ProcessHistory(StrictModule, NonTrainableState):
         if (
             t.ndim != 1
             or any(x.shape != t.shape for x in (m, e, a))
+            or t.size == 0
+            or not all(np.all(np.isfinite(x)) for x in (t, m, e, a))
             or np.any(np.diff(t) <= 0)
             or np.any(np.diff(m) < 0)
             or np.any(np.diff(e) < 0)
+            or m[0] < 0
+            or e[0] < 0
             or np.any(a < 0)
         ):
             raise ValueError("Process history is inadmissible.")

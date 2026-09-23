@@ -350,7 +350,11 @@ def main() -> None:
     payload = {
         "environment": capture_environment().to_dict(),
         "cases": cases,
-        "all_valid": all(case["certificate"]["valid"] for case in cases),
+        "all_valid": all(
+            case["certificate"]["valid"]
+            and case["bayes_evidence"]["all_common_beliefs_consistent"]
+            for case in cases
+        ),
         "all_bayes_consistent": all(
             case["bayes_evidence"]["all_common_beliefs_consistent"] for case in cases
         ),
@@ -359,6 +363,8 @@ def main() -> None:
         print(json.dumps(payload, indent=2, sort_keys=True))
     else:
         write_json_atomic(arguments.output, payload)
+    if not payload["all_valid"]:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

@@ -2,7 +2,9 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import equinox as eqx
 import jax.numpy as jnp
+import pytest
 
 import phydrax as phx
 
@@ -66,6 +68,15 @@ def test_heavy_ion_constraints_solve_declared_charge_ratio():
     assert bool(result.converged)
     assert jnp.linalg.norm(result.residual) < 1.0e-10
     assert jnp.allclose(result.chemical_potentials[1:], 0.0, atol=1.0e-10)
+    final_update = qcd.solve_heavy_ion_path(
+        prepared,
+        qcd.HeavyIonConstraintPlan(0.0, maximum_iterations=1),
+        0.2,
+        0.03,
+        initial_charge_strangeness=jnp.asarray([0.01, -0.01]),
+    )
+    assert bool(final_update.converged)
+    assert int(final_update.iterations) == 1
 
 
 def test_taylor_table_refuses_extrapolation_and_passes_stability_checks():
@@ -82,8 +93,8 @@ def test_taylor_table_refuses_extrapolation_and_passes_stability_checks():
     )
     qualification = qcd.qualify_eos_table(table)
     assert bool(qualification.passed)
-    inside = qcd.evaluate_eos_table(table, 0.2, 0.0)
-    outside = qcd.evaluate_eos_table(table, 0.3, 0.0)
+    inside = qcd.evaluate_eos_table(table, qualification, 0.2, 0.0)
+    outside = qcd.evaluate_eos_table(table, qualification, 0.3, 0.0)
     assert bool(inside.valid)
     assert not bool(outside.valid)
     assert jnp.isnan(outside.pressure_over_temperature4)
@@ -92,6 +103,25 @@ def test_taylor_table_refuses_extrapolation_and_passes_stability_checks():
         metadata["source_kind"]
         == qcd.FiniteDensitySourceKind.CONTINUUM_EXTRAPOLATED.value
     )
+    unqualified = eqx.tree_at(
+        lambda item: item.qualified_cells,
+        qualification,
+        jnp.zeros_like(qualification.qualified_cells),
+    )
+    refused = qcd.evaluate_eos_table(table, unqualified, 0.2, 0.0)
+    assert not bool(refused.valid)
+    assert int(refused.status) == int(qcd.FiniteDensityStatus.UNQUALIFIED_SOURCE)
+
+    with pytest.raises(ValueError, match="finite increasing"):
+        qcd.QCDTransportTable(
+            jnp.asarray([0.1, jnp.inf]),
+            jnp.asarray([0.0, 0.1]),
+            jnp.ones((2, 2)),
+            jnp.ones((2, 2)),
+            jnp.ones((2, 2)),
+            source_kind=qcd.QCDTransportSourceKind.LATTICE_INFERRED,
+            source_id="nonfinite-axis",
+        )
 
 
 def test_multi_charge_canonical_transform_reports_finite_support():

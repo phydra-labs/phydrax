@@ -104,8 +104,10 @@ class MoistThermodynamicPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Temperature domain must contain the reference freezing point."
             )
-        if int(maximum_steps) != maximum_steps or maximum_steps < 1:
-            raise ValueError("maximum_steps must be a positive integer.")
+        if isinstance(maximum_steps, bool) or not isinstance(maximum_steps, int):
+            raise TypeError("maximum_steps must be an integer.")
+        if maximum_steps < 1:
+            raise ValueError("maximum_steps must be positive.")
         cp_v = vapor_cv + vapor_gas_constant
         # Positive latent internal energies make each stable caloric branch monotone.
         for t in (minimum_temperature, maximum_temperature):
@@ -137,7 +139,7 @@ class MoistThermodynamicPlan(StrictModule, NonTrainableState):
         self.minimum_temperature = constants["minimum_temperature"]
         self.maximum_temperature = constants["maximum_temperature"]
         self.energy_tolerance = constants["energy_tolerance"]
-        self.maximum_steps = int(maximum_steps)
+        self.maximum_steps = maximum_steps
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "stable-moist-caloric-equilibrium",

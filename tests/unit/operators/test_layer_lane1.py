@@ -1,5 +1,6 @@
 import jax
 import jax.numpy as jnp
+import numpy as np
 import pytest
 
 import phydrax as phx
@@ -360,7 +361,7 @@ def test_helmholtz_directional_terms_match_order_three_ad_oracle(field_kind):
     )
 
 
-def test_direct_near_far_backend_matches_direct_representation():
+def test_direct_near_far_backend_matches_circle_double_layer_identity():
     panelization = _circle_panelization()
     potential = phx.operators.LaplaceLayerPotential2D(
         panelization,
@@ -372,7 +373,7 @@ def test_direct_near_far_backend_matches_direct_representation():
     reference = backend.evaluate(potential, targets, near_ratio=3.0)
 
     assert backend.backend_id == "direct-near-far-reference-2d"
-    assert jnp.allclose(reference.values, potential._evaluate_direct(targets))
+    np.testing.assert_allclose(reference.values, -jnp.ones(2), rtol=0.0, atol=1e-10)
     assert bool(reference.accuracy_supported)
     assert reference.near_panel_count + reference.far_panel_count == (
         targets.shape[0] * panelization.panel_count
@@ -476,7 +477,11 @@ def test_laplace_fmm_order_sweep_matches_direct_far_field():
         (jnp.linspace(2.8, 3.2, 32), jnp.zeros((32,))),
         axis=-1,
     )
-    direct = potential._evaluate_direct(targets)
+    direct = (
+        phx.operators.DirectNearFarReferenceBackend2D()
+        .evaluate(potential, targets, near_ratio=3.0)
+        .values
+    )
     errors = []
     for expansion_order in (2, 4, 8):
         backend = phx.operators.LaplaceFMMBackend2D(

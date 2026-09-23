@@ -96,7 +96,7 @@ class CorporateAction(StrictModule, NonTrainableState):
                 "event_time_ns": int(timestamp.epoch_nanoseconds),
                 "available_time_ns": int(timestamp.available_ns),
                 "vintage_id": timestamp.vintage_id,
-                "currency": None if currency is None else currency.code,
+                "currency_id": None if currency is None else currency.currency_id,
                 "lineage": lineage.lineage_id,
             }
         )
@@ -144,7 +144,7 @@ class CorporateActionSeries(StrictModule, NonTrainableState):
             raise TypeError("decision_time must be a FinancialTimestamp.")
         if not isinstance(tie_policy, QuoteTiePolicy):
             raise TypeError("tie_policy must be a QuoteTiePolicy.")
-        decision_ns = int(decision_time.epoch_nanoseconds)
+        decision_ns = int(decision_time.available_ns)
         grouped: dict[str, list[CorporateAction]] = {}
         for action in self.actions:
             if action.timestamp.available_ns <= decision_ns:
@@ -409,10 +409,19 @@ def build_time_bars(
         raise ValueError("Bar observations must be equal-length vectors.")
     if price_values.dtype.kind not in "fiu" or volume_values.dtype.kind not in "fiu":
         raise ValueError("Bar prices and volumes must be real.")
-    if starts.ndim != 1 or ends.shape != starts.shape or np.any(ends <= starts):
-        raise ValueError("Bar windows must be equal-length vectors with start < end.")
+    if (
+        starts.ndim != 1
+        or ends.shape != starts.shape
+        or np.any(ends <= starts)
+        or np.any(np.diff(starts) <= 0)
+    ):
+        raise ValueError(
+            "Bar windows must be ordered equal-length vectors with start < end."
+        )
     if np.any(starts[1:] < ends[:-1]):
         raise ValueError("Bar windows must not overlap.")
+    if np.any(np.diff(times) <= 0):
+        raise ValueError("event_time_ns must be strictly increasing.")
     if not isinstance(lineage, DataLineage):
         raise TypeError("lineage must be DataLineage.")
     count = starts.size

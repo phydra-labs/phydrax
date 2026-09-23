@@ -2,6 +2,8 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import json
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
@@ -121,3 +123,19 @@ def test_variational_training_checkpoint_roundtrip(tmp_path):
     assert resumed.resumed_from_step == 1
     assert jnp.allclose(first.coordinate_model(point), resumed.coordinate_model(point))
     assert jnp.array_equal(first.history.steps, resumed.history.steps)
+
+    manifest_path = checkpoint / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["state_file"] = "../outside.eqx"
+    manifest_path.write_text(json.dumps(manifest))
+    with pytest.raises(ValueError, match="canonical basename"):
+        phx.dynamics.identification.fit_variational_kinetic_model(
+            _LinearEncoder(),
+            data,
+            jax.random.key(5),
+            model_id="checkpointed-encoder",
+            policy=policy,
+            n_modes=1,
+            checkpoint_path=checkpoint,
+            resume=True,
+        )

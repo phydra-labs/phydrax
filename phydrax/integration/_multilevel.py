@@ -634,6 +634,13 @@ def advance_multilevel(
                 )
                 sampled = True
         current = _replace_state(current, rounds=current.rounds + 1)
+        terminal_targets, terminal = _allocation(realization, current)
+        current = _replace_state(
+            current,
+            allocation_target=jnp.asarray(terminal_targets, dtype=jnp.int64),
+        )
+        if terminal is not None:
+            return _replace_state(current, finished=True, status=terminal)
         if not sampled:
             counts = _sample_counts(current)
             status = (
@@ -723,12 +730,12 @@ def finalize_multilevel(
     if state.realization_id != realization.realization_id:
         raise ValueError("Estimator state does not belong to this realization.")
     counts = _sample_counts(state)
-    if any(count < 2 for count in counts):
-        raise ValueError("Every MLMC level requires at least two valid corrections.")
     diagnostics = _final_diagnostics(realization, state)
     value = diagnostics.correction_means[0]
     for correction_mean in diagnostics.correction_means[1:]:
         value = realization.precision.accumulation(value + correction_mean)
+    if any(count < 2 for count in counts):
+        value = jnp.full_like(value, jnp.nan)
     status = (
         state.status if state.finished else int(IntegrationStatus.REFINEMENT_STAGNATION)
     )
@@ -762,13 +769,20 @@ def integrate_multilevel(
 ) -> IntegrationEstimate:
     """Run or resume MLMC through its plan's bounded adaptive allocation."""
     current = initialize_multilevel(realization) if state is None else state
-    remaining = max(realization.plan.max_rounds - current.rounds, 1)
-    current = advance_multilevel(
-        observable,
-        realization,
-        current,
-        num_rounds=remaining,
-    )
+    remaining = max(realization.plan.max_rounds - current.rounds, 0)
+    if remaining:
+        current = advance_multilevel(
+            observable,
+            realization,
+            current,
+            num_rounds=remaining,
+        )
+    if not current.finished:
+        current = _replace_state(
+            current,
+            finished=True,
+            status=int(IntegrationStatus.MAXIMUM_ROUNDS_REACHED),
+        )
     return finalize_multilevel(realization, current)
 
 

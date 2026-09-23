@@ -16,7 +16,11 @@ def test_ct_and_mri_predictions_compare_in_native_measurement_spaces():
     )
     support = phx.imaging.tomography.ProjectionSupport(rays, (1,), ("view",))
     transform = phx.imaging.tomography.VoxelXRayTransformPlan(
-        support, (2, 1, 1), (0, 0, 0), (1, 1, 1)
+        support,
+        (2, 1, 1),
+        (0, 0, 0),
+        (1, 1, 1),
+        support.rays.coordinate_contract,
     )
     predicted_values = transform.forward(np.ones((2, 1, 1))).values
     quantity = phx.measurement.QuantitySpec(

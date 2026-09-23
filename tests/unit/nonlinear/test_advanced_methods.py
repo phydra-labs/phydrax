@@ -994,3 +994,39 @@ def test_newton_keeps_nonfinite_trials_distinct_from_domain_rejections():
     assert int(result.status) == int(nl.NonlinearStatus.NONFINITE_EVALUATION)
     assert int(result.diagnostics.domain_failures) == 0
     assert int(result.diagnostics.nonfinite_trials) == 3
+
+
+def test_projected_vi_caps_each_inner_linear_solve_by_remaining_budget():
+    matrix = jnp.diag(jnp.asarray([1.0, 2.0, 4.0, 8.0]))
+    target = jnp.ones(4)
+    problem = nl.VariationalInequalityProblem(
+        lambda state, args: matrix @ state - target,
+        nl.Bounds(0.0, 10.0),
+    )
+    method = nl.SemismoothNewton(
+        feasibility="preserve-box",
+        newton=nl.NewtonKrylov(
+            linear_policy=la.LinearSolvePolicy(
+                la.GMRES(restart=4),
+                tolerance=la.TolerancePolicy(
+                    relative=0.0,
+                    absolute=0.0,
+                    max_steps=4,
+                ),
+            )
+        ),
+    )
+    result = method.solve(
+        problem,
+        jnp.full(4, 0.5),
+        termination=nl.NonlinearTermination(
+            absolute_residual=0.0,
+            relative_residual=0.0,
+            maximum_steps=4,
+            maximum_evaluations=10,
+            maximum_linear_iterations=1,
+        ),
+    )
+
+    assert int(result.diagnostics.linear_iterations) <= 1
+    assert int(result.status) == int(nl.NonlinearStatus.MAXIMUM_LINEAR_ITERATIONS_REACHED)

@@ -10,6 +10,7 @@ from typing import Any
 
 import equinox as eqx
 import jax.numpy as jnp
+import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._array_archive import array_collection_digest
@@ -332,6 +333,9 @@ class AbelianTensor(StrictModule):
         expected = tuple(leg.size for leg in layout.legs)
         if array.shape != expected:
             raise ValueError("Dense tensor shape does not match the Abelian layout.")
+        tolerance = float(forbidden_tolerance)
+        if not np.isfinite(tolerance) or tolerance < 0.0:
+            raise ValueError("forbidden_tolerance must be finite and non-negative.")
         offsets = []
         for leg in layout.legs:
             starts = []
@@ -350,12 +354,15 @@ class AbelianTensor(StrictModule):
             block = array[slices]
             blocks.append(block)
             reconstruction = reconstruction.at[slices].set(block)
-        violation = jnp.max(jnp.abs(array - reconstruction)) > float(forbidden_tolerance)
-        blocks[0] = eqx.error_if(
-            blocks[0],
-            violation,
-            "Dense tensor contains charge-forbidden entries.",
-        )
+        violation = jnp.max(jnp.abs(array - reconstruction)) > tolerance
+        if blocks:
+            blocks[0] = eqx.error_if(
+                blocks[0],
+                violation,
+                "Dense tensor contains charge-forbidden entries.",
+            )
+        elif bool(np.asarray(violation)):
+            raise ValueError("Dense tensor contains charge-forbidden entries.")
         return cls(layout, tuple(blocks), precision=precision)
 
     @classmethod

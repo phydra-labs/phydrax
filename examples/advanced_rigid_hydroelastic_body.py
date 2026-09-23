@@ -64,8 +64,10 @@ def run():
         jnp.asarray(0.001),
         None,
     )
+    if not bool(result.successful):
+        raise RuntimeError("Rigid hydroelastic ALE step failed")
     return {
-        "successful": bool(result.successful),
+        "successful": True,
         "body_work": float(result.accepted_state.body_work),
         "modal_norm": float(
             jnp.linalg.norm(result.accepted_state.body.modal_coordinates)

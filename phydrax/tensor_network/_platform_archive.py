@@ -583,6 +583,8 @@ def write_tensor_network_archive(
     arrays: dict[str, object] = {}
     tree_record = pack_array_tree("artifact", tree, arrays)
     _check_array_bounds(arrays, limits_)
+    if any(array_payload_byte_count(value_) <= 0 for value_ in arrays.values()):
+        raise ValueError("Tensor-network archive leaves must have nonzero payloads.")
     payload_bytes = sum(array_payload_byte_count(value_) for value_ in arrays.values())
     array_digest = array_collection_digest(arrays)
     content: dict[str, Any] = {

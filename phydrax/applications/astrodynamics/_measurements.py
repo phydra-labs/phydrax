@@ -12,7 +12,7 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._context import AstrodynamicsContext
@@ -96,7 +96,9 @@ class OrbitMeasurementPlan(StrictModule, NonTrainableState):
                 "declared_id": identifier,
                 "measurement_kind": kind,
                 "context": context.context_id,
-                "count": count,
+                "schedule": array_tree_fingerprint(
+                    (times_host, position_host, velocity_host, covariance_host)
+                ),
             }
         )
 

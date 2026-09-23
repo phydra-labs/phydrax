@@ -36,6 +36,36 @@ def _shape(value: Sequence[int], name: str, /) -> tuple[int, ...]:
     return shape
 
 
+def _validate_trajectory_problem(
+    problem: ControlProblem, trajectory: ControlTrajectory, /
+) -> ControlTrajectory:
+    if trajectory.problem_id != problem.problem_id:
+        raise ValueError("trajectory problem_id does not match the ControlProblem.")
+    if trajectory.dynamics_id != problem.dynamics.dynamics_id:
+        raise ValueError("trajectory dynamics_id does not match the ControlProblem.")
+    if trajectory.case_shape != problem.case_shape:
+        raise ValueError("trajectory case_shape does not match the ControlProblem.")
+    if trajectory.state_shape != problem.state_shape:
+        raise ValueError("trajectory state_shape does not match the ControlProblem.")
+    if trajectory.control_shape != problem.control_shape:
+        raise ValueError("trajectory control_shape does not match the ControlProblem.")
+    if (
+        trajectory.time_grid.time_id != problem.time_grid.time_id
+        or trajectory.time_grid.times.shape != problem.time_grid.times.shape
+    ):
+        raise ValueError("trajectory time grid does not match the ControlProblem.")
+    checked_times = eqx.error_if(
+        trajectory.time_grid.times,
+        jnp.any(trajectory.time_grid.times != problem.time_grid.times),
+        "trajectory time grid does not match the ControlProblem.",
+    )
+    return eqx.tree_at(
+        lambda value: value.time_grid.times,
+        trajectory,
+        checked_times,
+    )
+
+
 class ControlProblem(StrictModule):
     """Finite-horizon control problem with explicit physical and case axes."""
 
@@ -126,7 +156,10 @@ class ControlProblem(StrictModule):
         **solver_options: Any,
     ) -> ControlTrajectory:
         """Roll out one parameterized control without evaluating objective terms."""
-        from ._parameterization import AbstractControlParameterization
+        from ._parameterization import (
+            _validate_parameterization_grid,
+            AbstractControlParameterization,
+        )
 
         if not isinstance(parameterization, AbstractControlParameterization):
             raise TypeError(
@@ -136,6 +169,9 @@ class ControlProblem(StrictModule):
             raise ValueError(
                 "Control parameterization control_shape does not match the problem."
             )
+        parameterization = _validate_parameterization_grid(
+            parameterization, self.time_grid
+        )
         return self.dynamics.rollout(
             self.time_grid,
             self.initial_state,
@@ -166,7 +202,7 @@ class ControlProblem(StrictModule):
             parameters=coefficients,
             sampled_loss=sampled_loss,
             feasibility=feasibility,
-            result_id=f"control-result:{self.problem_id}",
+            result_namespace=f"control-result:{self.problem_id}",
             method_id=trajectory.method_id,
         )
 

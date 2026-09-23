@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 from dataclasses import replace
@@ -175,6 +176,26 @@ def test_iree_export_rejects_dynamic_key_empty_inputs_and_invalid_policy(tmp_pat
         )
 
 
+def test_iree_load_requires_an_out_of_band_module_pin(tmp_path):
+    module_bytes = b"self-checksummed but not independently trusted"
+    manifest = replace(
+        _manifest(),
+        module_sha256=hashlib.sha256(module_bytes).hexdigest(),
+    )
+    bundle = tmp_path / "untrusted.phxiree"
+    bundle.mkdir()
+    (bundle / manifest.module_file).write_bytes(module_bytes)
+    (bundle / "manifest.json").write_text(
+        json.dumps(manifest.to_dict()), encoding="utf-8"
+    )
+
+    with pytest.raises(PermissionError, match="caller-supplied trusted pin"):
+        phx.export.load_iree(
+            bundle,
+            trusted_module_sha256=hashlib.sha256(b"different authority").hexdigest(),
+        )
+
+
 _HAS_IREE = importlib.util.find_spec("iree") is not None
 if _HAS_IREE:
     _HAS_IREE = (
@@ -199,7 +220,10 @@ def test_iree_compiles_validates_loads_and_rejects_wrong_inputs(tmp_path):
         input_names=("x",),
         validate=True,
     )
-    executable = phx.export.load_iree(destination)
+    executable = phx.export.load_iree(
+        destination,
+        trusted_module_sha256=result.manifest.module_sha256,
+    )
     expected = np.asarray(model(inputs[0]))
     actual = executable(np.asarray(inputs[0]))
 
@@ -216,7 +240,10 @@ def test_iree_compiles_validates_loads_and_rejects_wrong_inputs(tmp_path):
     payload[len(payload) // 2] ^= 0xFF
     module.write_bytes(payload)
     with pytest.raises(ValueError, match="checksum"):
-        phx.export.load_iree(destination)
+        phx.export.load_iree(
+            destination,
+            trusted_module_sha256=result.manifest.module_sha256,
+        )
 
 
 @pytest.mark.skipif(not _HAS_IREE, reason="IREE optional packages are not installed")
@@ -239,7 +266,10 @@ def test_iree_compiles_ordered_heterogeneous_outputs_without_packing(tmp_path):
         output_names=("values", "finite", "count"),
         validate=True,
     )
-    deployed = phx.export.load_iree(destination)
+    deployed = phx.export.load_iree(
+        destination,
+        trusted_module_sha256=result.manifest.module_sha256,
+    )
     actual = deployed(np.asarray(sample))
     expected = model(sample)
 

@@ -386,6 +386,8 @@ class BandedLinearOperator(AbstractLinearOperator):
             bands_ = bands_.astype("float64")
         size = bands_.shape[-1]
         space_ = _space(size, bands_.dtype, space)
+        _validate_action_dtype(bands_.dtype, space_, space_, "bands")
+        _validate_action_dtype(bands_.dtype, space_, space_, "transposed bands")
         batch = tuple(bands_.shape[:-2])
         if batch and not isinstance(space_, ArraySpace):
             raise ValueError("Batched banded operators require ArraySpace values.")

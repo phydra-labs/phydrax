@@ -359,12 +359,16 @@ after the external call has completed.
 
 Every executable is a `PinnedExecutable`: the caller supplies its path, lowercase
 SHA-256 digest, release, and license identifier; `source_url` records optional
-provenance. The executable bytes are checked for each run, but this does not
-transitively pin dynamic libraries or make the process a sandbox. Runs use private
-directories with bounded exact-byte inputs, logs, and named outputs and positive
-finite timeouts. A launch error, timeout, nonzero
-exit, absent output, changed executable, or resource-bound violation raises with the
-bounded run evidence; it never becomes an optimization penalty or a skipped success.
+provenance. Each run hashes an opened regular file and executes that same held
+descriptor, preventing pathname replacement between verification and launch.
+This pins neither dynamic libraries nor a sandbox. Runs use private directories
+with bounded exact-byte inputs, descriptor-held logs, named outputs, and positive
+finite timeouts. `ExternalExecutionPolicy` supports only truthful
+`trusted-local` direct execution with ordinary host filesystem, process, and
+network access; container/sandbox selectors and network denial fail closed
+without an enforcing launcher. A launch error, timeout, nonzero exit, absent
+output, pin mismatch, or resource-bound violation raises with the bounded run
+evidence; it never becomes an optimization penalty or a skipped success.
 
 The repository's parser and boundary tests are not live engine qualifications. The
 local development host used for this work has no DAFoam runtime, Windows

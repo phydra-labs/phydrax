@@ -9,6 +9,7 @@ from collections.abc import Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
+import numpy as np
 from jaxtyping import Array
 
 from .._fingerprint import canonical_fingerprint
@@ -20,6 +21,7 @@ from ..measurement._operations import (
     OperationalCoordinate,
     ResolvedConditionSnapshot,
 )
+from ..units import ENERGY, LENGTH, UnitDefinition
 
 
 def _identifier(value: str, name: str, /) -> str:
@@ -36,8 +38,8 @@ class BeamConditionSnapshot(StrictModule, NonTrainableState):
     crossing_angle: float = eqx.field(static=True)
     beam_spot_mean: Array
     beam_spot_covariance: Array
-    energy_unit_id: str = eqx.field(static=True)
-    length_unit_id: str = eqx.field(static=True)
+    energy_unit: UnitDefinition = eqx.field(static=True)
+    length_unit: UnitDefinition = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
     snapshot_id: str = eqx.field(static=True)
 
@@ -50,16 +52,27 @@ class BeamConditionSnapshot(StrictModule, NonTrainableState):
         crossing_angle: float,
         beam_spot_mean,
         beam_spot_covariance,
-        energy_unit_id: str,
-        length_unit_id: str,
+        energy_unit: UnitDefinition,
+        length_unit: UnitDefinition,
         source_id: str,
     ):
+        int32 = np.iinfo(np.int32)
+        if len(species_pdg_ids) != 2 or any(
+            isinstance(value, bool)
+            or not isinstance(value, int)
+            or value < int32.min
+            or value > int32.max
+            for value in species_pdg_ids
+        ):
+            raise ValueError("Beam species must contain two signed-int32 PDG identities.")
         species = tuple(species_pdg_ids)
         energies = tuple(float(value) for value in beam_energies)
         intensities = tuple(float(value) for value in bunch_intensities)
         angle = float(crossing_angle)
-        mean = jnp.asarray(beam_spot_mean)
-        covariance = jnp.asarray(beam_spot_covariance, dtype=mean.dtype)
+        mean_host = np.asarray(beam_spot_mean, dtype=np.float64)
+        covariance_host = np.asarray(beam_spot_covariance, dtype=np.float64)
+        mean = jnp.asarray(mean_host)
+        covariance = jnp.asarray(covariance_host)
         if len(species) != 2 or len(energies) != 2 or len(intensities) != 2:
             raise ValueError("Beam snapshots require two beam entries.")
         if any(
@@ -69,24 +82,35 @@ class BeamConditionSnapshot(StrictModule, NonTrainableState):
                 "Beam energies/intensities must be positive finite and angle finite."
             )
         if (
-            mean.shape != (4,)
-            or covariance.shape != (4, 4)
-            or not bool(jnp.all(jnp.isfinite(mean)))
-            or not bool(jnp.all(jnp.isfinite(covariance)))
+            mean_host.shape != (4,)
+            or covariance_host.shape != (4, 4)
+            or np.any(~np.isfinite(mean_host))
+            or np.any(~np.isfinite(covariance_host))
         ):
             raise ValueError(
                 "Beam-spot mean/covariance must be finite four-dimensional values."
             )
-        if not bool(jnp.allclose(covariance, covariance.T)):
+        if not np.allclose(covariance_host, covariance_host.T):
             raise ValueError("Beam-spot covariance must be symmetric.")
+        tolerance = (
+            512.0
+            * np.finfo(covariance_host.dtype).eps
+            * max(1.0, float(np.linalg.norm(covariance_host, ord=2)))
+        )
+        if np.min(np.linalg.eigvalsh(covariance_host)) < -tolerance:
+            raise ValueError("Beam-spot covariance must be positive semidefinite.")
+        if not isinstance(energy_unit, UnitDefinition) or energy_unit.dimension != ENERGY:
+            raise ValueError("energy_unit must have physical energy dimension.")
+        if not isinstance(length_unit, UnitDefinition) or length_unit.dimension != LENGTH:
+            raise ValueError("length_unit must have physical length dimension.")
         self.species_pdg_ids = species
         self.beam_energies = energies
         self.bunch_intensities = intensities
         self.crossing_angle = angle
         self.beam_spot_mean = mean
         self.beam_spot_covariance = covariance
-        self.energy_unit_id = _identifier(energy_unit_id, "Energy unit ID")
-        self.length_unit_id = _identifier(length_unit_id, "Length unit ID")
+        self.energy_unit = energy_unit
+        self.length_unit = length_unit
         self.source_id = _identifier(source_id, "Source ID")
         self.snapshot_id = canonical_fingerprint(
             {
@@ -97,7 +121,7 @@ class BeamConditionSnapshot(StrictModule, NonTrainableState):
                 "crossing_angle": angle,
                 "mean": mean.tolist(),
                 "covariance": covariance.tolist(),
-                "units": [self.energy_unit_id, self.length_unit_id],
+                "units": [self.energy_unit.unit_id, self.length_unit.unit_id],
                 "source": self.source_id,
             }
         )

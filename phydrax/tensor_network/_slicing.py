@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from math import prod
+from numbers import Integral
 
 import equinox as eqx
 import jax
@@ -38,6 +39,16 @@ class SlicingResourcePolicy(StrictModule):
         maximum_batch_elements: int = 100_000_000,
         maximum_checkpoint_bytes: int = 2**30,
     ):
+        raw_values = (
+            maximum_slices,
+            maximum_batch_elements,
+            maximum_checkpoint_bytes,
+        )
+        if any(
+            not isinstance(value, Integral) or isinstance(value, bool)
+            for value in raw_values
+        ):
+            raise TypeError("Slicing resource limits must be integers.")
         values = (
             int(maximum_slices),
             int(maximum_batch_elements),
@@ -62,6 +73,11 @@ class SliceRange(StrictModule):
     range_id: str = eqx.field(static=True)
 
     def __init__(self, start: int, stop: int, total: int, /):
+        if any(
+            not isinstance(value, Integral) or isinstance(value, bool)
+            for value in (start, stop, total)
+        ):
+            raise TypeError("Slice range bounds must be integers.")
         values = (int(start), int(stop), int(total))
         if not 0 <= values[0] < values[1] <= values[2]:
             raise ValueError("Slice ranges require 0 <= start < stop <= total.")
@@ -91,6 +107,8 @@ class SlicedContractionPlan(StrictModule):
 
 class SliceExecutionEvidence(StrictModule):
     plan_id: str = eqx.field(static=True)
+    prepared_id: str = eqx.field(static=True)
+    operand_id: str = eqx.field(static=True)
     replay_id: str = eqx.field(static=True)
     range_id: str = eqx.field(static=True)
     order: str = eqx.field(static=True)
@@ -105,6 +123,7 @@ class SliceExecutionEvidence(StrictModule):
     accepted: Array
     exact: Array
     claim: str = eqx.field(static=True)
+    numeric_version: Array
 
 
 class SliceCheckpoint(StrictModule):
@@ -112,6 +131,9 @@ class SliceCheckpoint(StrictModule):
     log_scale: Array
     finite: Array
     plan_id: str = eqx.field(static=True)
+    prepared_id: str = eqx.field(static=True)
+    operand_id: str = eqx.field(static=True)
+    numeric_version: Array
     range: SliceRange
     checkpoint_id: str = eqx.field(static=True)
 
@@ -132,7 +154,19 @@ def mixed_radix_assignments(
 ) -> Array:
     """Enumerate deterministic lexicographic assignments, last label fastest."""
 
-    dimensions_ = tuple(dimensions)
+    raw_dimensions = tuple(dimensions)
+    integer_values = (
+        raw_dimensions
+        + (start,)
+        + (() if stop is None else (stop,))
+        + (maximum_assignments,)
+    )
+    if any(
+        not isinstance(value, Integral) or isinstance(value, bool)
+        for value in integer_values
+    ):
+        raise TypeError("Mixed-radix dimensions, bounds, and capacity must be integers.")
+    dimensions_ = tuple(int(value) for value in raw_dimensions)
     if not dimensions_ or any(value < 1 for value in dimensions_):
         raise ValueError("Mixed-radix dimensions must be a nonempty positive tuple.")
     total = prod(dimensions_)
@@ -166,6 +200,11 @@ def checkpoint_slice_ranges(
     *,
     maximum_ranges: int = 1_000_000,
 ) -> tuple[SliceRange, ...]:
+    if any(
+        not isinstance(value, Integral) or isinstance(value, bool)
+        for value in (slice_count, checkpoint_size, maximum_ranges)
+    ):
+        raise TypeError("Slice checkpoint counts and capacity must be integers.")
     count = int(slice_count)
     size = int(checkpoint_size)
     maximum = int(maximum_ranges)
@@ -202,6 +241,8 @@ def plan_sliced_contraction(
     resources_ = SlicingResourcePolicy() if resources is None else resources
     if not isinstance(resources_, SlicingResourcePolicy):
         raise TypeError("resources must be SlicingResourcePolicy or None.")
+    if not isinstance(batch_size, Integral) or isinstance(batch_size, bool):
+        raise TypeError("batch_size must be an integer.")
     batch = int(batch_size)
     if batch < 1:
         raise ValueError("batch_size must be positive.")
@@ -209,12 +250,7 @@ def plan_sliced_contraction(
     slice_count = prod(dimensions)
     if slice_count > resources_.maximum_slices:
         raise MemoryError("Sliced contraction exceeds maximum_slices.")
-    peak_batch_elements = min(batch, slice_count) * plan.structure.output_elements
-    if peak_batch_elements > resources_.maximum_batch_elements:
-        raise MemoryError("Sliced contraction exceeds maximum_batch_elements.")
-    checkpoint_bytes = plan.structure.output_elements * precision_itemsize(plan.dtype)
-    if checkpoint_bytes > resources_.maximum_checkpoint_bytes:
-        raise MemoryError("Slice checkpoint exceeds maximum_checkpoint_bytes.")
+    active_batch = min(batch, slice_count)
 
     operands = tuple(
         ContractionOperand(
@@ -232,6 +268,21 @@ def plan_sliced_contraction(
         optimizer=plan.optimizer,
         dtype=plan.dtype,
     )
+    peak_batch_elements = (
+        plan.cost.operand_elements
+        + active_batch * residual.cost.peak_live_elements
+        + active_batch * plan.structure.output_elements
+    )
+    if peak_batch_elements > resources_.maximum_batch_elements:
+        raise MemoryError("Sliced contraction exceeds maximum_batch_elements.")
+    output_probe = plan.precision.output(
+        plan.precision.contraction(jnp.empty((), dtype=plan.dtype))
+    )
+    checkpoint_bytes = plan.structure.output_elements * precision_itemsize(
+        str(output_probe.dtype)
+    )
+    if checkpoint_bytes > resources_.maximum_checkpoint_bytes:
+        raise MemoryError("Slice checkpoint exceeds maximum_checkpoint_bytes.")
     plan_id = canonical_fingerprint(
         {
             "kind": "exact-sliced-contraction",
@@ -310,6 +361,7 @@ def _scaled_add(
 
 
 def _checkpoint(
+    prepared: PreparedContraction,
     plan: SlicedContractionPlan,
     range_: SliceRange,
     scaled_sum: Array,
@@ -323,11 +375,22 @@ def _checkpoint(
         {
             "kind": "slice-checkpoint",
             "plan": plan.plan_id,
+            "prepared": prepared.prepared_id,
+            "operands": prepared.operand_id,
+            "numeric_version": int(prepared.numeric_version),
             "range": range_.range_id,
         }
     )
     return SliceCheckpoint(
-        scaled_sum, log_scale, finite, plan.plan_id, range_, checkpoint_id
+        scaled_sum,
+        log_scale,
+        finite,
+        plan.plan_id,
+        prepared.prepared_id,
+        prepared.operand_id,
+        prepared.numeric_version,
+        range_,
+        checkpoint_id,
     )
 
 
@@ -401,7 +464,7 @@ def execute_sliced_contraction(
         if not logarithmic_scaling:
             log_scale = jnp.asarray(0.0, dtype=jnp.real(scaled_sum).dtype)
 
-    checkpoint = _checkpoint(plan, range_, scaled_sum, log_scale)
+    checkpoint = _checkpoint(prepared, plan, range_, scaled_sum, log_scale)
     value = jnp.where(
         jnp.isfinite(log_scale), scaled_sum * jnp.exp(log_scale), scaled_sum
     )
@@ -412,6 +475,9 @@ def execute_sliced_contraction(
         {
             "kind": "sliced-contraction-replay",
             "plan": plan.plan_id,
+            "prepared": prepared.prepared_id,
+            "operands": prepared.operand_id,
+            "numeric_version": int(prepared.numeric_version),
             "range": range_.range_id,
             "mode": mode,
             "logarithmic_scaling": bool(logarithmic_scaling),
@@ -419,6 +485,8 @@ def execute_sliced_contraction(
     )
     evidence = SliceExecutionEvidence(
         plan.plan_id,
+        prepared.prepared_id,
+        prepared.operand_id,
         replay_id,
         range_.range_id,
         "lexicographic-last-label-fastest",
@@ -434,6 +502,7 @@ def execute_sliced_contraction(
         accepted,
         accepted,
         "exact only when the complete admitted slice range is finite",
+        prepared.numeric_version,
     )
     return SlicedContractionResult(value, checkpoint, evidence)
 
@@ -447,10 +516,19 @@ def merge_slice_checkpoints(
     if not checkpoints_:
         raise ValueError("At least one slice checkpoint is required.")
     expected = 0
+    prepared_id = checkpoints_[0].prepared_id
+    operand_id = checkpoints_[0].operand_id
+    numeric_version = checkpoints_[0].numeric_version
     for checkpoint in checkpoints_:
-        if checkpoint.plan_id != plan.plan_id or checkpoint.range.start != expected:
+        if (
+            checkpoint.plan_id != plan.plan_id
+            or checkpoint.prepared_id != prepared_id
+            or checkpoint.operand_id != operand_id
+            or not bool(jnp.array_equal(checkpoint.numeric_version, numeric_version))
+            or checkpoint.range.start != expected
+        ):
             raise ValueError(
-                "Slice checkpoints must be plan-matched, contiguous, and ordered."
+                "Slice checkpoints must share one numeric preparation and be contiguous and ordered."
             )
         expected = checkpoint.range.stop
     if expected != plan.slice_count:
@@ -468,7 +546,14 @@ def merge_slice_checkpoints(
         scaled = scaled * old_factor + checkpoint.scaled_sum * checkpoint_factor
         scale = new_scale
     merged_range = SliceRange(0, plan.slice_count, plan.slice_count)
-    merged = _checkpoint(plan, merged_range, scaled, scale)
+    representative = PreparedContraction(
+        plan.original,
+        (),
+        numeric_version,
+        prepared_id,
+        operand_id,
+    )
+    merged = _checkpoint(representative, plan, merged_range, scaled, scale)
     value = jnp.where(jnp.isfinite(scale), scaled * jnp.exp(scale), scaled)
     finite = jnp.all(
         jnp.stack(tuple(checkpoint.finite for checkpoint in checkpoints_))
@@ -476,12 +561,17 @@ def merge_slice_checkpoints(
     replay_id = canonical_fingerprint(
         {
             "kind": "merged-slice-replay",
+            "prepared": prepared_id,
+            "operands": operand_id,
+            "numeric_version": int(numeric_version),
             "plan": plan.plan_id,
             "checkpoints": tuple(checkpoint.checkpoint_id for checkpoint in checkpoints_),
         }
     )
     evidence = SliceExecutionEvidence(
         plan.plan_id,
+        prepared_id,
+        operand_id,
         replay_id,
         merged_range.range_id,
         "lexicographic-last-label-fastest",
@@ -496,6 +586,7 @@ def merge_slice_checkpoints(
         finite,
         finite,
         "exact exhaustive checkpoint merge when every range is finite",
+        numeric_version,
     )
     return SlicedContractionResult(value, merged, evidence)
 

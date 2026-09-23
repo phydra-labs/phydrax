@@ -13,11 +13,16 @@ from jaxtyping import Array
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...imaging.camera import CameraRig, pixels_to_rays, triangulate_weighted_rays
+from ...imaging.camera import (
+    CameraRig,
+    pixels_to_rays,
+    triangulate_weighted_rays,
+    TriangulationStatus,
+)
 from ...linalg import SmallLinearSolvePlan
 from ...optim import AbstractRobustLoss
 from ._association import MultiViewAssociationResult
-from ._types import ParticleDetections
+from ._types import ParticleDetections, ReconstructionStatus
 
 
 class TriangulationPlan(StrictModule, NonTrainableState):
@@ -130,7 +135,7 @@ def reconstruct_particles(
         camera_indices = indices[:, camera_index]
         safe_indices = jnp.clip(camera_indices, 0, detection_capacity - 1)
         rays = pixels_to_rays(camera, detections.positions_rc[safe_indices])
-        selected = association.valid & (camera_indices >= 0)
+        selected = association.selected & (camera_indices >= 0)
         valid = (
             selected
             & jnp.asarray(detections.valid, dtype=jnp.bool_)[safe_indices]
@@ -153,7 +158,7 @@ def reconstruct_particles(
     stacked_valid = jnp.stack(ray_valid, axis=1)
     stacked_weights = jnp.stack(ray_weights, axis=1)
     view_count = jnp.sum(stacked_valid, axis=-1, dtype=jnp.int32)
-    usable = association.valid & (view_count >= triangulation_plan.minimum_views)
+    usable = association.selected & (view_count >= triangulation_plan.minimum_views)
     stacked_valid = stacked_valid & usable[:, None]
     triangulation = triangulate_weighted_rays(
         stacked_origins,
@@ -166,6 +171,36 @@ def reconstruct_particles(
         small_solve_plan=triangulation_plan.small_solve_plan,
     )
     valid = usable & triangulation.valid
+    mapped_status = jnp.where(
+        triangulation.status == int(TriangulationStatus.SUCCESS),
+        int(ReconstructionStatus.SUCCESS),
+        jnp.where(
+            triangulation.status == int(TriangulationStatus.NONFINITE_INPUT),
+            int(ReconstructionStatus.NONFINITE_INPUT),
+            jnp.where(
+                triangulation.status == int(TriangulationStatus.INSUFFICIENT_RAYS),
+                int(ReconstructionStatus.INSUFFICIENT_VIEWS),
+                jnp.where(
+                    triangulation.status == int(TriangulationStatus.RANK_DEFICIENT),
+                    int(ReconstructionStatus.RANK_DEFICIENT),
+                    jnp.where(
+                        triangulation.status == int(TriangulationStatus.ILL_CONDITIONED),
+                        int(ReconstructionStatus.ILL_CONDITIONED),
+                        int(ReconstructionStatus.NONCONVERGENCE),
+                    ),
+                ),
+            ),
+        ),
+    ).astype(jnp.int32)
+    status = jnp.where(
+        ~association.selected,
+        int(ReconstructionStatus.NOT_SELECTED),
+        jnp.where(
+            view_count < triangulation_plan.minimum_views,
+            int(ReconstructionStatus.INSUFFICIENT_VIEWS),
+            mapped_status,
+        ),
+    ).astype(jnp.int32)
     intensity_values = jnp.stack(intensities, axis=1)
     intensity_weight = stacked_valid.astype(intensity_values.dtype)
     reconstructed_intensity = jnp.sum(intensity_values, axis=-1) / jnp.maximum(
@@ -183,8 +218,8 @@ def reconstruct_particles(
         covariance_xyz=jnp.where(valid[:, None, None], triangulation.covariance, 0.0),
         intensity=jnp.where(valid, reconstructed_intensity, 0.0),
         valid=valid,
-        status=triangulation.status,
-        detection_indices=jnp.where(valid[:, None], indices, -1),
+        status=status,
+        detection_indices=jnp.where(association.selected[:, None], indices, -1),
         reprojection_residual=triangulation.residuals,
         reconstruction_id=reconstruction_id,
     )

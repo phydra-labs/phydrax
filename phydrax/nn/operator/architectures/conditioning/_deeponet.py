@@ -16,7 +16,7 @@ import jax.numpy as jnp
 from jaxtyping import Array
 
 from phydrax._frozendict import frozendict
-from phydrax._model import AbstractArrayModel
+from phydrax._model import AbstractArrayModel, register_artifact_value
 from phydrax._strict import StrictModule
 from phydrax._trainable import NonTrainableState
 from phydrax.nn._keys import EvalKey, split_eval_key
@@ -738,6 +738,20 @@ class DeepONet(AbstractOperatorModel):
                 return output.reshape(point_shape)
             return output.reshape(point_shape + (_get_size(self.out_size),))
         return output
+
+
+register_artifact_value(
+    "phydrax.operator.internal:FixedBranchEncoder",
+    FixedBranchEncoder,
+)
+register_artifact_value(
+    "phydrax.operator.internal:IntegralBranchEncoder",
+    IntegralBranchEncoder,
+)
+register_artifact_value(
+    "phydrax.operator.internal:PODBasis",
+    PODBasis,
+)
 
 
 __all__ = [

@@ -16,6 +16,13 @@ from phydrax.applications.atmosphere._column import (
 from phydrax.applications.atmosphere._moist import MoistThermodynamicPlan
 
 
+def test_atmosphere_fixed_capacity_controls_require_exact_integers():
+    with pytest.raises(TypeError, match="maximum_steps"):
+        MoistThermodynamicPlan(maximum_steps=True)
+    with pytest.raises(TypeError, match="forcing_cadence"):
+        MoistColumnPlan(forcing_cadence=1.0)
+
+
 def test_dry_limit_loading_and_both_caloric_constraints():
     thermo = MoistThermodynamicPlan()
     temperature = jnp.asarray((240.0, thermo.reference_temperature, 290.0, 330.0))

@@ -6,6 +6,9 @@
 
 from __future__ import annotations
 
+from math import isfinite
+
+import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
@@ -18,9 +21,23 @@ def solution_diffusion_flux(
     permeate_fugacity_pa: ArrayLike,
     /,
 ) -> Array:
-    return jnp.asarray(permeance_mol_m2_s_pa) * (
-        jnp.asarray(feed_fugacity_pa) - jnp.asarray(permeate_fugacity_pa)
+    permeance = jnp.asarray(permeance_mol_m2_s_pa)
+    feed = jnp.asarray(feed_fugacity_pa)
+    permeate = jnp.asarray(permeate_fugacity_pa)
+    permeance, feed, permeate = jnp.broadcast_arrays(permeance, feed, permeate)
+    permeance = eqx.error_if(
+        permeance,
+        jnp.any(
+            ~jnp.isfinite(permeance)
+            | ~jnp.isfinite(feed)
+            | ~jnp.isfinite(permeate)
+            | (permeance < 0)
+            | (feed < 0)
+            | (permeate < 0)
+        ),
+        "Membrane permeance/fugacities must be finite and nonnegative.",
     )
+    return permeance * (feed - permeate)
 
 
 def reverse_osmosis_flux(
@@ -30,11 +47,23 @@ def reverse_osmosis_flux(
     reflection_coefficient: float = 1.0,
     /,
 ) -> Array:
-    if hydraulic_permeability_m_pa_s < 0.0 or not 0.0 <= reflection_coefficient <= 1.0:
+    if (
+        not isfinite(hydraulic_permeability_m_pa_s)
+        or hydraulic_permeability_m_pa_s < 0.0
+        or not isfinite(reflection_coefficient)
+        or not 0.0 <= reflection_coefficient <= 1.0
+    ):
         raise ValueError("RO permeability/reflection coefficient are outside bounds.")
+    pressure = jnp.asarray(pressure_difference_pa)
+    osmotic = jnp.asarray(osmotic_pressure_difference_pa)
+    pressure, osmotic = jnp.broadcast_arrays(pressure, osmotic)
+    pressure = eqx.error_if(
+        pressure,
+        jnp.any(~jnp.isfinite(pressure) | ~jnp.isfinite(osmotic)),
+        "RO pressure differences must be finite.",
+    )
     return float(hydraulic_permeability_m_pa_s) * (
-        jnp.asarray(pressure_difference_pa)
-        - float(reflection_coefficient) * jnp.asarray(osmotic_pressure_difference_pa)
+        pressure - float(reflection_coefficient) * osmotic
     )
 
 
@@ -48,14 +77,45 @@ def nernst_planck_membrane_flux(
     velocity_m_s: ArrayLike = 0.0,
     /,
 ) -> Array:
+    if (
+        not isfinite(diffusivity_m2_s)
+        or diffusivity_m2_s < 0
+        or not isfinite(mobility_m2_v_s)
+        or mobility_m2_v_s < 0
+        or isinstance(charge_number, bool)
+        or not isinstance(charge_number, int)
+    ):
+        raise ValueError("Nernst-Planck transport parameters are invalid.")
     concentration = jnp.asarray(concentration_mol_m3)
+    gradient = jnp.asarray(concentration_gradient_mol_m4)
+    field = jnp.asarray(electric_field_v_m)
+    velocity = jnp.asarray(velocity_m_s)
+    if gradient.ndim == 0:
+        raise ValueError("Nernst-Planck gradients require a component axis.")
+    expected = concentration.shape + (gradient.shape[-1],)
+    if (
+        gradient.shape != expected
+        or field.shape != expected
+        or velocity.shape not in ((), expected)
+    ):
+        raise ValueError(
+            "Nernst-Planck concentration and vector fields are incompatible."
+        )
+    concentration = eqx.error_if(
+        concentration,
+        jnp.any(
+            ~jnp.isfinite(concentration)
+            | ~jnp.isfinite(gradient)
+            | ~jnp.isfinite(field)
+            | ~jnp.isfinite(velocity)
+            | (concentration < 0)
+        ),
+        "Nernst-Planck fields must be finite with nonnegative concentration.",
+    )
     return (
-        -float(diffusivity_m2_s) * jnp.asarray(concentration_gradient_mol_m4)
-        + int(charge_number)
-        * float(mobility_m2_v_s)
-        * concentration[..., None]
-        * jnp.asarray(electric_field_v_m)
-        + concentration[..., None] * jnp.asarray(velocity_m_s)
+        -float(diffusivity_m2_s) * gradient
+        + int(charge_number) * float(mobility_m2_v_s) * concentration[..., None] * field
+        + concentration[..., None] * velocity
     )
 
 

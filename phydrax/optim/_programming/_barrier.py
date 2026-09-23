@@ -34,7 +34,9 @@ class ConeBarrierOracle(StrictModule):
     def gradient(self, point: Array, /) -> Array:
         point_ = self.cone._validate(point)
         gradient = jax.grad(lambda value: _barrier_value(self.cone, value))
-        return _map_leading_axes(gradient, point_)
+        result = _map_leading_axes(gradient, point_)
+        valid = _barrier_margin(self.cone, point_) > 0.0
+        return jnp.where(valid[..., None], result, jnp.full_like(result, jnp.nan))
 
     def hessian_action(self, point: Array, vector: Array, /) -> Array:
         point_ = self.cone._validate(point)
@@ -44,12 +46,20 @@ class ConeBarrierOracle(StrictModule):
         def action(value, direction):
             return jax.jvp(gradient, (value,), (direction,))[1]
 
-        return _map_leading_axes(action, point_, vector_)
+        result = _map_leading_axes(action, point_, vector_)
+        valid = _barrier_margin(self.cone, point_) > 0.0
+        return jnp.where(valid[..., None], result, jnp.full_like(result, jnp.nan))
 
     def hessian(self, point: Array, /) -> Array:
         point_ = self.cone._validate(point)
         hessian = jax.hessian(lambda value: _barrier_value(self.cone, value))
-        return _map_leading_axes(hessian, point_)
+        result = _map_leading_axes(hessian, point_)
+        valid = _barrier_margin(self.cone, point_) > 0.0
+        return jnp.where(
+            valid[..., None, None],
+            result,
+            jnp.full_like(result, jnp.nan),
+        )
 
     def centrality_residual(self, slack: Array, dual: Array, mu: Array, /) -> Array:
         return dual + mu * self.gradient(slack)
@@ -124,12 +134,21 @@ def _barrier_value(cone, point):
         return -jnp.sum(jnp.log(value), axis=-1)
     if isinstance(cone, SecondOrderCone):
         determinant = value[..., 0] ** 2 - jnp.sum(value[..., 1:] ** 2, axis=-1)
-        return -jnp.log(determinant)
+        interior = cone.interior_margin(value) > 0.0
+        safe_determinant = jnp.where(interior, determinant, 1.0)
+        return jnp.where(interior, -jnp.log(safe_determinant), jnp.inf)
     if isinstance(cone, RotatedSecondOrderCone):
         return _barrier_value(cone._soc, cone._to_soc(value))
     if isinstance(cone, PositiveSemidefiniteCone):
-        sign, logdet = jnp.linalg.slogdet(cone.unpack(value))
-        return jnp.where(sign > 0.0, -logdet, jnp.inf)
+        matrix = cone.unpack(value)
+        interior = cone.interior_margin(value) > 0.0
+        safe_matrix = jnp.where(
+            interior[..., None, None],
+            matrix,
+            jnp.eye(cone.matrix_size, dtype=matrix.dtype),
+        )
+        _, logdet = jnp.linalg.slogdet(safe_matrix)
+        return jnp.where(interior, -logdet, jnp.inf)
     if isinstance(cone, ExponentialCone):
         x, y, z = value[..., 0], value[..., 1], value[..., 2]
         gap = y * jnp.log(z / y) - x

@@ -13,7 +13,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
 from ..._fingerprint import canonical_fingerprint
-from ..._probability import AbstractProbabilityLaw
+from ..._probability import _leading_shape, AbstractProbabilityLaw
 from ..._strict import StrictModule
 
 
@@ -114,16 +114,22 @@ class InjectiveContinuousFlowLaw(AbstractProbabilityLaw):
 
     def sample(self, key: Key[Array, ""], sample_shape: tuple[int, ...] = ()) -> Array:
         latent = jnp.asarray(self.latent_law.sample(key, sample_shape))
-        leading = latent.shape[: -len(self.latent_law.event_shape)]
+        leading = _leading_shape(
+            latent.shape,
+            self.latent_law.event_shape,
+            owner="InjectiveContinuousFlowLaw latent sample",
+        )
         flat = latent.reshape((-1,) + self.latent_law.event_shape)
         mapped = jax.vmap(self.map)(flat)
         return mapped.reshape(leading + self.event_shape)
 
     def log_prob_with_diagnostics(self, value: ArrayLike, /) -> InjectiveDensityResult:
         values = jnp.asarray(value)
-        if values.shape[-len(self.event_shape) :] != self.event_shape:
-            raise ValueError("value does not end in the injective law event_shape.")
-        leading = values.shape[: -len(self.event_shape)]
+        leading = _leading_shape(
+            values.shape,
+            self.event_shape,
+            owner="InjectiveContinuousFlowLaw value",
+        )
         flat = values.reshape((-1,) + self.event_shape)
         latent_size = prod(self.latent_law.event_shape)
         target_size = prod(self.event_shape)

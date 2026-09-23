@@ -171,9 +171,22 @@ def execute_spin_foam_provider(
             error="Spin-foam output fields do not match the protocol.",
         )
     if (
+        isinstance(record["delta_l"], bool)
+        or not isinstance(record["delta_l"], int)
+        or isinstance(record["precision_bits"], bool)
+        or not isinstance(record["precision_bits"], int)
+    ):
+        return _result(
+            "invalid-output",
+            plan,
+            provider,
+            run,
+            error="Spin-foam cutoff metadata must contain exact integers.",
+        )
+    if (
         record["plan_id"] != plan.plan_id
-        or int(record["delta_l"]) != plan.delta_l
-        or int(record["precision_bits"]) != plan.precision_bits
+        or record["delta_l"] != plan.delta_l
+        or record["precision_bits"] != plan.precision_bits
     ):
         return _result(
             "semantic-mismatch",

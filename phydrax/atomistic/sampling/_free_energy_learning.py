@@ -576,6 +576,10 @@ class PreparedLearnedFreeEnergyBias(AbstractPreparedAtomisticBias):
         time: Array,
         /,
     ):
+        if not isinstance(state, LearnedFreeEnergyBiasState):
+            raise TypeError("state must be a LearnedFreeEnergyBiasState.")
+        if state.bias_id != self.plan.bias_id:
+            raise ValueError("Learned bias state belongs to another bias plan.")
         del time
         values, valid = self.plan.variables.evaluate(
             positions, cell=self.dynamics.system.cell
@@ -636,6 +640,16 @@ class PreparedLearnedFreeEnergyBias(AbstractPreparedAtomisticBias):
         physical_forces: Array,
         /,
     ) -> LearnedFreeEnergyBiasState:
+        if not isinstance(state, LearnedFreeEnergyBiasState):
+            raise TypeError("state must be a LearnedFreeEnergyBiasState.")
+        if state.bias_id != self.plan.bias_id:
+            raise ValueError("Learned bias state belongs to another bias plan.")
+        if not isinstance(evaluation, AtomisticBiasEvaluation):
+            raise TypeError("evaluation must be an AtomisticBiasEvaluation.")
+        if evaluation.bias_id != self.prepared_id:
+            raise ValueError(
+                "Learned bias evaluation belongs to another prepared runtime."
+            )
         del physical_forces
         return LearnedFreeEnergyBiasState(
             successful=state.successful & evaluation.successful,

@@ -157,3 +157,24 @@ def test_identity_ale_manufactured_projection_records_epoch_and_metric_evidence(
     assert result.gcl_identity_residual < 1.0e-7
     assert result.mapped_adjoint_residual < 1.0e-7
     assert result.gauge_defect < 1.0e-7
+    zero_velocity = tuple(jnp.zeros_like(value) for value in geometry.face_measures)
+    wrong_velocity = tuple(jnp.ones_like(value) for value in zero_velocity)
+    zero_pressure = jnp.zeros_like(geometry.cell_volumes)
+    mismatched = plan._result(
+        geometry,
+        zero_velocity,
+        zero_velocity,
+        zero_velocity,
+        jnp.asarray(1.0),
+        wrong_velocity,
+        zero_pressure,
+        zero_pressure,
+        zero_pressure,
+        geometry.divergence(wrong_velocity),
+        jnp.asarray(True),
+        zero_pressure,
+        jnp.asarray(True),
+        energy_before=jnp.asarray(0.0),
+    )
+    assert mismatched.state_transition_residual > 0.0
+    assert not mismatched.success

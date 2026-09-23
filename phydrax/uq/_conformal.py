@@ -234,10 +234,13 @@ class FunctionalConformal(StrictModule):
                     raise ValueError("weights must be finite and non-negative.")
                 weight_array = jnp.broadcast_to(weight_array, center_array.shape)
                 weight_flat = jnp.moveaxis(weight_array, axis, 0).reshape(flat.shape)
-            effective = weight_flat * mask_flat
+            effective = jnp.where(mask_flat, weight_flat, 0.0)
+            safe_residual = jnp.where(mask_flat, flat, 0.0)
             denominator = jnp.sum(effective, axis=1)
             valid_case = valid_case & (denominator > 0.0)
-            case_scores = jnp.sqrt(jnp.sum(effective * flat**2, axis=1) / denominator)
+            case_scores = jnp.sqrt(
+                jnp.sum(effective * safe_residual**2, axis=1) / denominator
+            )
         else:
             raise ValueError("score must be 'max' or 'l2'.")
         case_scores = case_scores[valid_case]

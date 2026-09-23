@@ -24,6 +24,7 @@ from ..discretization import (
     AbstractPreparedParticleNeighborhood,
     ParticleNeighborhoodState,
     ParticleVerletState,
+    PeriodicCell,
     PreparedVerletParticleNeighborhood,
 )
 from ._constraints import PreparedDistanceConstraints
@@ -210,6 +211,19 @@ class AtomisticDynamicsPlan(StrictModule, NonTrainableState):
             raise TypeError("neighborhood must be a prepared particle neighborhood.")
         if neighborhood.particle_discretization_id != system.particles.prepared_id:
             raise ValueError("Neighborhood belongs to another particle support.")
+        neighborhood_box = neighborhood.box
+        if system.cell is not None:
+            if (
+                not isinstance(neighborhood_box, PeriodicCell)
+                or neighborhood_box.cell_id != system.cell.cell_id
+            ):
+                raise ValueError(
+                    "Neighborhood periodic cell must exactly match the atomistic system cell."
+                )
+        elif neighborhood_box is not None and any(neighborhood_box.periodic_axes):
+            raise ValueError(
+                "A finite atomistic system cannot use a periodic neighborhood box."
+            )
         if not isinstance(integrator, (VelocityVerletPlan, BAOABLangevinPlan)):
             raise TypeError("integrator must be VelocityVerletPlan or BAOABLangevinPlan.")
         if constraints is not None:
@@ -518,6 +532,7 @@ class PreparedAtomisticDynamics(StrictModule):
             raise TypeError("thermodynamic must be PreparedThermodynamicStateTable.")
         thermodynamic.validate_dynamics(self)
         thermodynamic_index = jnp.asarray(state_index, dtype=jnp.int32).reshape(())
+        time_ = jnp.asarray(time, dtype=self.system.plan.coordinate_dtype).reshape(())
         thermodynamic_row = thermodynamic.state_at_replica(thermodynamic_index)
         if (velocity is None) == (momentum is None):
             raise ValueError("Supply exactly one of velocity or momentum.")
@@ -612,7 +627,8 @@ class PreparedAtomisticDynamics(StrictModule):
             & evaluation.successful
             & constraint_successful
             & ensemble_valid
-            & tree_allfinite((kinematics, ledger))
+            & jnp.isfinite(time_)
+            & tree_allfinite((kinematics, ledger, species_, cell_vectors))
         )
         checked = eqx.error_if(
             wrapped,
@@ -620,7 +636,7 @@ class PreparedAtomisticDynamics(StrictModule):
             "Initial atomistic dynamics state is not admissible.",
         )
         return AtomisticDynamicsState(
-            time=jnp.asarray(time, dtype=position.dtype).reshape(()),
+            time=time_,
             step_index=jnp.zeros((), dtype=jnp.int32),
             kinematics=AtomisticKinematics(checked, momenta, image_counts),
             species=species_,
@@ -664,6 +680,18 @@ class PreparedAtomisticDynamics(StrictModule):
             or state.thermodynamic_table_id != thermodynamic.table_id
         ):
             raise ValueError("State and thermodynamic table identities do not match.")
+        if state.force.program_id != self.potential.prepared_id:
+            raise ValueError("State force cache belongs to another potential program.")
+        expected_neighborhood_epoch = (
+            jnp.zeros((), dtype=jnp.int32)
+            if state.neighborhood_cache is None
+            else state.neighborhood_cache.epoch
+        )
+        incoming_force_valid = (
+            state.force.successful
+            & (state.force.position_epoch == state.step_index)
+            & (state.force.neighborhood_epoch == expected_neighborhood_epoch)
+        )
         next_index = jnp.asarray(state_index, dtype=jnp.int32).reshape(())
         previous_row = thermodynamic.state_at_replica(state.thermodynamic_state_index)
         next_row = thermodynamic.state_at_replica(next_index)
@@ -732,7 +760,8 @@ class PreparedAtomisticDynamics(StrictModule):
             accepted_steps=state.energy.accepted_steps,
         )
         successful = (
-            previous_row.valid
+            incoming_force_valid
+            & previous_row.valid
             & next_row.valid
             & force_successful
             & tree_allfinite((kinematics, force, ledger))
@@ -1030,7 +1059,11 @@ class PreparedAtomisticDynamics(StrictModule):
         status = jnp.where(
             successful,
             int(AtomisticDynamicsStatus.SUCCESS),
-            int(AtomisticDynamicsStatus.REJECTED),
+            jnp.where(
+                candidate_finite,
+                int(AtomisticDynamicsStatus.REJECTED),
+                int(AtomisticDynamicsStatus.NONFINITE),
+            ),
         ).astype(jnp.int32)
         candidate = AtomisticDynamicsState(
             time=state.time + dt,

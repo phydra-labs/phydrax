@@ -24,6 +24,7 @@ from s2fft.transforms import spherical as s2fft_spherical
 from s2fft.utils import quadrature as s2fft_quadrature
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._model import register_artifact_value
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 
@@ -573,6 +574,22 @@ class SphericalHarmonicPlan(StrictModule, NonTrainableState):
             return values.reshape(leading_shape + self.sample_shape)
         result = values.reshape(leading_shape + (channels, *self.sample_shape))
         return jnp.moveaxis(result, -3, -1)
+
+
+register_artifact_value(
+    "phydrax.spectral.internal:RecursiveSphericalExecution",
+    _RecursiveSphericalExecution,
+)
+register_artifact_value(
+    "phydrax.spectral.internal:PrecomputedSphericalExecution",
+    _PrecomputedSphericalExecution,
+)
+
+
+register_artifact_value(
+    "phydrax.spectral:SphericalHarmonicPlan",
+    SphericalHarmonicPlan,
+)
 
 
 __all__ = [

@@ -15,7 +15,7 @@ from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
-from .._evolution import AbstractEvolution, EvolutionTrajectory
+from .._evolution import AbstractEvolution, DiscreteEvolution, EvolutionTrajectory
 from .._layout import StateLayout
 from .._trajectory import TrajectoryData
 
@@ -240,7 +240,7 @@ def _source_arrays(
             transitions,
             (),
             trajectory.state_layout,
-            f"evolution:{trajectory.evolution_id}",
+            f"evolution-trajectory:{trajectory.trajectory_id}",
         )
     if isinstance(trajectory, TrajectoryData):
         return (
@@ -398,6 +398,11 @@ def find_section_crossings(
         raise TypeError("evolution must be an AbstractEvolution or None.")
     if refinement == "evolution" and evolution is None:
         raise ValueError("evolution refinement requires an evolution.")
+    if refinement == "evolution" and isinstance(evolution, DiscreteEvolution):
+        raise ValueError(
+            "Evolution refinement is unavailable for fixed-step DiscreteEvolution; "
+            "use refinement='interpolation'."
+        )
     capacity = int(max_crossings)
     iteration_limit = int(max_iterations)
     coordinate_tol = float(coordinate_tolerance)
@@ -433,11 +438,14 @@ def find_section_crossings(
     output_detected_counts = []
     output_overflow = []
     for case in range(case_count):
-        crossing_coordinates = jnp.full((capacity,), jnp.nan)
-        crossing_states = jnp.full((capacity,) + layout.shape, jnp.nan)
-        crossing_values = jnp.full((capacity,), jnp.nan)
-        bracket_starts = jnp.full((capacity,), jnp.nan)
-        bracket_ends = jnp.full((capacity,), jnp.nan)
+        value_dtype = jnp.result_type(coordinates.dtype, states.dtype)
+        crossing_coordinates = jnp.full((capacity,), jnp.nan, dtype=coordinates.dtype)
+        crossing_states = jnp.full(
+            (capacity,) + layout.shape, jnp.nan, dtype=states.dtype
+        )
+        crossing_values = jnp.full((capacity,), jnp.nan, dtype=value_dtype)
+        bracket_starts = jnp.full((capacity,), jnp.nan, dtype=coordinates.dtype)
+        bracket_ends = jnp.full((capacity,), jnp.nan, dtype=coordinates.dtype)
         detected = jnp.zeros((capacity,), dtype=jnp.bool_)
         valid = jnp.zeros((capacity,), dtype=jnp.bool_)
         converged = jnp.zeros((capacity,), dtype=jnp.bool_)
@@ -458,6 +466,8 @@ def find_section_crossings(
             right_state = states[case, interval + 1]
             left_value = section.evaluate(left_coordinate, left_state, args)
             right_value = section.evaluate(right_coordinate, right_state, args)
+            if not bool(jnp.isfinite(left_value) & jnp.isfinite(right_value)):
+                continue
             if not _crossed(float(left_value), float(right_value), direction):
                 continue
             detected_total += 1

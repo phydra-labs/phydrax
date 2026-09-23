@@ -106,8 +106,9 @@ def _precision(dtype, domain, children=None):
 
 def _replay(*, event=0.0, disagreement=0.0, observable=0.0):
     return SemanticReplayEvidence(
-        variates_equal=True,
-        address_schema_equal=True,
+        independently_replayed=False,
+        variates_equal=False,
+        address_schema_equal=False,
         event_time_difference=event,
         channel_disagreement_probability=disagreement,
         observable_difference=observable,
@@ -130,7 +131,6 @@ def _record(
     artifact_arrays,
     work,
     capacity_evidence,
-    precision_policy_ids,
     unsupported=(),
 ):
     approximation = OpenSystemApproximationEvidence(
@@ -139,7 +139,7 @@ def _record(
         tuple(quantities),
         execution_valid=execution,
         precision_evidence=precision.evidence,
-        precision_policy_ids=tuple(precision_policy_ids),
+        precision_policy_ids=(precision.policy_id,),
     )
     return OpenSystemCampaignRecord(
         campaign_id,
@@ -207,7 +207,7 @@ def gaussian_campaign():
         physicality,
         precision,
         _replay(),
-        fine.valid,
+        fine.valid & coarse.valid,
         artifact_arrays={
             "coarse-covariances": coarse.covariances,
             "fine-covariances": fine.covariances,
@@ -217,18 +217,14 @@ def gaussian_campaign():
         work={"coarse-steps": 10, "fine-steps": 20},
         capacity_evidence=(
             CampaignCapacityEvidence(
-                "state-dimension",
-                fine.means.shape[-1],
-                fine.means.shape[-1],
-                saturated=False,
+                "state-dimension", fine.means.shape[-1], fine.means.shape[-1]
             ),
         ),
-        precision_policy_ids=(fine.precision.policy_id,),
-        unsupported=("arbitrary-non-gaussian-dynamics",),
+        unsupported=("exact-general-interacting-bosonic-dynamics",),
     )
 
 
-def dense_trajectory_campaign():
+def dense_trajectory_campaign(root_seed: int = 3):
     lowering = jnp.asarray([[0, 1], [0, 0]], dtype="complex128")
     raising = jnp.conj(lowering.T)
     down = StateVectorOperator.from_matrix(lowering, operator_id="thermal-down")
@@ -247,7 +243,7 @@ def dense_trajectory_campaign():
     save_times = jnp.asarray([0.0, 0.4])
     coarse = solve_quantum_jump_generic(
         problem,
-        jax.random.PRNGKey(3),
+        jax.random.PRNGKey(root_seed),
         t0=0.0,
         t1=0.4,
         save_times=save_times,
@@ -259,7 +255,7 @@ def dense_trajectory_campaign():
     )
     fine = solve_quantum_jump_generic(
         problem,
-        jax.random.PRNGKey(3),
+        jax.random.PRNGKey(root_seed),
         t0=0.0,
         t1=0.4,
         save_times=save_times,
@@ -290,7 +286,7 @@ def dense_trajectory_campaign():
     dense_density = dense.states[-1]
     coupled_difference = jnp.linalg.norm(coarse_density - fine_density)
     reference_difference = jnp.linalg.norm(fine_density - dense_density)
-    execution_valid = jnp.all(fine.valid) & dense.valid
+    execution_valid = jnp.all(coarse.valid) & jnp.all(fine.valid) & dense.valid
     precision = _precision(fine.states.dtype, "trajectory-campaign")
     trace_residual = jnp.abs(jnp.trace(fine_density) - 1.0)
     hermiticity_residual = jnp.max(jnp.abs(fine_density - jnp.conj(fine_density.T)))
@@ -343,21 +339,19 @@ def dense_trajectory_campaign():
             "dense-reference-density": dense_density,
             "fine-states": fine.states,
         },
-        work={"trajectories": 64, "dense-steps": 40},
+        work={"trajectories": 64, "dense-steps": 40, "root-seed": root_seed},
         capacity_evidence=(
             CampaignCapacityEvidence(
                 "maximum-events-per-path",
                 int(jnp.max(fine.events.counts)),
                 fine.events.max_events,
-                saturated=jnp.any(fine.events.overflow),
             ),
         ),
-        precision_policy_ids=(precision.evidence.evidence_id,),
-        unsupported=("pathwise-event-identity-under-refinement",),
+        unsupported=("exact-neural-unravelling-without-closure",),
     )
 
 
-def mps_campaign():
+def mps_campaign(root_seed: int = 5):
     state = product_mps(jnp.asarray([[0.0, 1.0], [1.0, 0.0]], dtype="complex128"))
     hamiltonian = NearestNeighborHamiltonian(
         (jnp.zeros((4, 4), dtype="complex128"),),
@@ -371,7 +365,7 @@ def mps_campaign():
         state,
         problem_id="eventful-mps-amplitude-damping",
     )
-    root_key = jax.random.PRNGKey(5)
+    root_key = jax.random.PRNGKey(root_seed)
     result = solve_mps_quantum_jump(
         problem,
         root_key,
@@ -457,23 +451,16 @@ def mps_campaign():
             "root-residuals": result.root_residuals,
             "discarded-weight": result.discarded_weight_history,
         },
-        work={"steps": 20, "events": result.event_count},
+        work={"steps": 20, "events": result.event_count, "root-seed": root_seed},
         capacity_evidence=(
             CampaignCapacityEvidence(
-                "maximum-events",
-                result.event_count,
-                result.maximum_events,
-                saturated=result.event_capacity_saturated,
+                "maximum-events", result.event_count, result.maximum_events
             ),
             CampaignCapacityEvidence(
-                "bond-dimension",
-                max(result.final_state.bond_dimensions, default=1),
-                4,
-                saturated=discarded > 1e-6,
+                "bond-dimension", max(result.final_state.bond_dimensions, default=1), 4
             ),
         ),
-        precision_policy_ids=(result.final_state.precision.policy_id,),
-        unsupported=("exact-mps-unravelling",),
+        unsupported=("exact-mps-unravelling-without-closure",),
     )
 
 
@@ -517,7 +504,6 @@ def lpdo_campaign():
         certified_properties=("trace", "positivity", "representation-closure"),
         precision_evidence=precision.evidence,
     )
-    truncation_saturated = (bond_discarded > 1e-6) | (kraus_discarded > 1e-6)
     return _record(
         "lpdo-xxz",
         "locally-purified-density",
@@ -589,17 +575,12 @@ def lpdo_campaign():
                     default=1,
                 ),
                 4,
-                saturated=truncation_saturated,
             ),
             CampaignCapacityEvidence(
-                "purification-rank",
-                max(result.final_state.purification_dimensions),
-                8,
-                saturated=truncation_saturated,
+                "purification-rank", max(result.final_state.purification_dimensions), 8
             ),
         ),
-        precision_policy_ids=(result.final_state.precision.policy_id,),
-        unsupported=("global-steady-state-uniqueness",),
+        unsupported=("global-steady-state-uniqueness-from-finite-window",),
     )
 
 
@@ -690,7 +671,6 @@ def heom_campaign():
         certified_properties=("trace", "hermiticity", "positivity"),
         precision_evidence=precision.evidence,
     )
-    hierarchy_saturated = top_tier_norm > 0.1
     return _record(
         "heom-spin-boson",
         "adaptive-heom",
@@ -765,16 +745,9 @@ def heom_campaign():
                 "adaptive-attempts",
                 tight.evidence.attempted_step_sizes.shape[0],
                 tight.maximum_attempts,
-                saturated=tight.evidence.capacity_saturated,
             ),
-            CampaignCapacityEvidence(
-                "hierarchy-depth",
-                2,
-                2,
-                saturated=hierarchy_saturated,
-            ),
+            CampaignCapacityEvidence("hierarchy-depth", 2, 2),
         ),
-        precision_policy_ids=(tight.solution.temporal_precision.policy_id,),
         unsupported=("infinite-depth-heom-proof",),
     )
 
@@ -862,25 +835,12 @@ def memory_campaign():
             "trace-preservation-residuals": (certification.trace_preservation_residuals),
         },
         work={"coarse-steps": 10, "fine-steps": 20, "basis-solves": 4},
-        capacity_evidence=(
-            CampaignCapacityEvidence(
-                "memory-steps",
-                20,
-                20,
-                saturated=False,
-            ),
-        ),
-        precision_policy_ids=(
-            result.temporal_precision.policy_id,
-            result.geometry_precision.policy_id,
-            result.hermitian_precision.policy_id,
-            result.integration_precision.policy_id,
-        ),
+        capacity_evidence=(CampaignCapacityEvidence("memory-steps", 20, 20),),
         unsupported=("universal-direct-memory-kernel-complete-positivity",),
     )
 
 
-def process_recovery_campaign():
+def process_recovery_campaign(root_seed: int = 0):
     spec = CombLegSpec(2, 1, 1)
     angle = 0.15
     source_isometry = jnp.asarray(
@@ -908,13 +868,13 @@ def process_recovery_campaign():
     training = informationally_complete_process_experiments(
         source,
         shots=200.0,
-        design_seed=0,
+        design_seed=root_seed,
         experiment_id="process-recovery-training",
     )
     held_out = informationally_complete_process_experiments(
         source,
         shots=160.0,
-        design_seed=1,
+        design_seed=root_seed + 1,
         experiment_id="process-recovery-held-out",
     )
     if not tomography_designs_disjoint(training, held_out):
@@ -1013,27 +973,17 @@ def process_recovery_campaign():
             "optimization-iterations": 5,
             "training-experiments": len(training),
             "held-out-experiments": len(held_out),
+            "root-seed": root_seed,
         },
         capacity_evidence=(
-            CampaignCapacityEvidence(
-                "intervention-settings",
-                len(training),
-                100_000,
-                saturated=False,
-            ),
-            CampaignCapacityEvidence(
-                "memory-dimension",
-                1,
-                1,
-                saturated=False,
-            ),
+            CampaignCapacityEvidence("intervention-settings", len(training), 100_000),
+            CampaignCapacityEvidence("memory-dimension", 1, 1),
         ),
-        precision_policy_ids=(precision.evidence.evidence_id,),
         unsupported=("unique-process-recovery-outside-gauge-and-design",),
     )
 
 
-def distillation_campaign():
+def distillation_campaign(root_seed: int = 0):
     def swap_with_first_memory(memory_dimension):
         matrix = jnp.zeros(
             (2 * memory_dimension, 2 * memory_dimension), dtype="complex128"
@@ -1091,13 +1041,13 @@ def distillation_campaign():
     training = informationally_complete_process_experiments(
         source,
         shots=200.0,
-        design_seed=0,
+        design_seed=root_seed,
         experiment_id="distillation-training",
     )
     held_out = informationally_complete_process_experiments(
         source,
         shots=160.0,
-        design_seed=1,
+        design_seed=root_seed + 1,
         experiment_id="distillation-held-out",
     )
     result = fit_causal_process_memory(
@@ -1179,36 +1129,21 @@ def distillation_campaign():
             "identifiability-singular-values": (result.tomography.singular_values),
         },
         work={
-            "optimization-iterations": 8,
+            "optimization-iterations": 5,
             "training-experiments": len(training),
             "held-out-experiments": len(held_out),
+            "root-seed": root_seed,
         },
         capacity_evidence=(
-            CampaignCapacityEvidence(
-                "source-memory",
-                4,
-                4,
-                saturated=False,
-            ),
-            CampaignCapacityEvidence(
-                "retained-memory",
-                2,
-                2,
-                saturated=False,
-            ),
-            CampaignCapacityEvidence(
-                "intervention-settings",
-                len(training),
-                100_000,
-                saturated=False,
-            ),
+            CampaignCapacityEvidence("source-memory", 4, 4),
+            CampaignCapacityEvidence("retained-memory", 2, 2),
+            CampaignCapacityEvidence("intervention-settings", len(training), 100_000),
         ),
-        precision_policy_ids=(precision.evidence.evidence_id,),
         unsupported=("physical-arbitrary-mpo-compression",),
     )
 
 
-def neural_campaign():
+def neural_campaign(root_seed: int = 0):
     gamma = 1.0
 
     def connected(configurations, matrix_elements, valid):
@@ -1287,7 +1222,7 @@ def neural_campaign():
         projection_residual_tolerance=1e-12,
         require_projected_jump=True,
     )
-    result = solve_connected_vmc_neural_trajectory(problem, policy, jr.key(0))
+    result = solve_connected_vmc_neural_trajectory(problem, policy, jr.key(root_seed))
     rate_error = jnp.max(result.rate_standard_error_history, initial=0.0)
     rate_bias = jnp.abs(result.rate_history[0, 0] - gamma * initial_populations[1])
     projection_error = audit.residual
@@ -1353,22 +1288,15 @@ def neural_campaign():
             "audit-projected-coordinates": audit.projected_coordinates,
             "audit-projection-residual": audit.residual,
         },
-        work={"steps": 20, "sample-count": 256},
+        work={"steps": 20, "sample-count": 256, "root-seed": root_seed},
         capacity_evidence=(
             CampaignCapacityEvidence(
                 "parameter-dimension",
                 result.final_state.parameter_coordinates.size,
                 result.final_state.parameter_coordinates.size,
-                saturated=False,
             ),
-            CampaignCapacityEvidence(
-                "sample-count",
-                256,
-                256,
-                saturated=False,
-            ),
+            CampaignCapacityEvidence("sample-count", 256, 256),
         ),
-        precision_policy_ids=(precision.evidence.evidence_id,),
         unsupported=("exact-neural-unravelling-without-closure",),
     )
 

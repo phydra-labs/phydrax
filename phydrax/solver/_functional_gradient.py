@@ -758,7 +758,6 @@ def solve_gradient(
                 return params_, opt_state, loss_val, terms, None, None, None
 
             if is_linesearch:
-                import jax.tree_util as jtu
 
                 def _value_fn(p):
                     return _loss_wrt_params(
@@ -767,20 +766,26 @@ def solve_gradient(
                         prepared_,
                     )[0]
 
-                (value, _term_values0), grads = loss_fn(
+                (value, term_values), grads = loss_fn(
                     params_,
                     non_trainable_,
                     prepared_,
                 )
-                grads = jtu.tree_map(
-                    lambda a: (
-                        jnp.nan_to_num(a, nan=0.0, posinf=0.0, neginf=0.0)
-                        if eqx.is_inexact_array(a)
-                        else a
-                    ),
-                    grads,
-                    is_leaf=eqx.is_inexact_array,
+                gradients_finite = all(
+                    bool(jnp.all(jnp.isfinite(leaf)))
+                    for leaf in jax.tree.leaves(grads)
+                    if eqx.is_inexact_array(leaf)
                 )
+                if not gradients_finite:
+                    return (
+                        params_,
+                        opt_state,
+                        value,
+                        term_values,
+                        None,
+                        None,
+                        jnp.asarray(False),
+                    )
                 assert _opt_linesearch is not None
                 updates, opt_state = _opt_linesearch.update(
                     grads,
@@ -796,7 +801,15 @@ def solve_gradient(
                     non_trainable_,
                     prepared_,
                 )
-                return params_, opt_state, loss_val, term_values, None, None, None
+                return (
+                    params_,
+                    opt_state,
+                    loss_val,
+                    term_values,
+                    None,
+                    None,
+                    jnp.asarray(True),
+                )
 
             if gradient_composition is None and update_alignment is None:
                 (loss_val, term_values), grads = loss_fn(
@@ -1000,11 +1013,7 @@ def solve_gradient(
             )
         selection_policy = None if training is None else training.selection
         initial_progress = (
-            resume_state.progress
-            if resume_state is not None
-            else TrainingProgress(
-                best_value=None if selection_policy is not None else float("inf")
-            )
+            resume_state.progress if resume_state is not None else TrainingProgress()
         )
         control = TrainingController(
             total_steps=int(num_iter),
@@ -1339,7 +1348,10 @@ def solve_gradient(
                         if iterative_step_metrics is not None
                         else bool(riemannian_linesearch_metrics.line_search_accepted)
                         if riemannian_linesearch_metrics is not None
-                        else optax_linesearch_accepted(opt_state)
+                        else (
+                            optax_linesearch_accepted(opt_state)
+                            and bool(constructed_conflict)
+                        )
                         if is_linesearch
                         else True
                     )

@@ -4,7 +4,9 @@
 
 from __future__ import annotations
 
-from math import prod
+from enum import IntEnum
+from math import isfinite, prod
+from numbers import Integral
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -17,6 +19,13 @@ from .._precision import precision_itemsize
 from .._strict import StrictModule
 from ..linalg import DenseLinearOperator, FactorizationPolicy, factorize
 from ._peps import PEPS
+
+
+class CTMRGStatus(IntEnum):
+    SUCCESS = 0
+    NONFINITE = 1
+    ITERATION_LIMIT = 2
+    GAUGE_INVALID = 3
 
 
 class CTMRGPolicy(StrictModule):
@@ -37,6 +46,16 @@ class CTMRGPolicy(StrictModule):
         maximum_tensor_elements: int = 100_000_000,
         maximum_workspace_bytes: int = 2**31,
     ):
+        if any(
+            not isinstance(value, Integral) or isinstance(value, bool)
+            for value in (
+                environment_dimension,
+                maximum_iterations,
+                maximum_tensor_elements,
+                maximum_workspace_bytes,
+            )
+        ):
+            raise TypeError("CTMRG dimensions, iterations, and budgets must be integers.")
         chi = int(environment_dimension)
         iterations = int(maximum_iterations)
         tolerance_ = float(tolerance)
@@ -45,6 +64,7 @@ class CTMRGPolicy(StrictModule):
         if (
             chi < 1
             or iterations < 1
+            or not isfinite(tolerance_)
             or tolerance_ <= 0.0
             or tensor_limit < 1
             or workspace < 1
@@ -86,6 +106,7 @@ class CTMRGEvidence(StrictModule):
     converged: Array
     finite: Array
     accepted: Array
+    status: Array
     exact: Array
     claim: str = eqx.field(static=True)
     global_error_bound_claimed: bool = eqx.field(static=True)
@@ -147,7 +168,10 @@ def contract_peps_ctmrg(state: PEPS, policy: CTMRGPolicy, /) -> CTMRGResult:
     dimension = max(max(shape) for shape in doubled_shapes)
     transfer_elements = sum(prod(shape) for shape in doubled_shapes)
     environment_elements = 8 * dimension * dimension
-    peak_elements = transfer_elements + environment_elements * 3
+    factorization_workspace_elements = 8 * dimension * dimension
+    peak_elements = (
+        transfer_elements + environment_elements + factorization_workspace_elements
+    )
     if (
         transfer_elements > policy.maximum_tensor_elements
         or peak_elements > policy.maximum_tensor_elements
@@ -155,7 +179,17 @@ def contract_peps_ctmrg(state: PEPS, policy: CTMRGPolicy, /) -> CTMRGResult:
         raise MemoryError(
             "CTMRG tensors exceed maximum_tensor_elements before allocation."
         )
-    peak_bytes = peak_elements * precision_itemsize(str(state.tensors[0].dtype))
+    precision_probe = jnp.empty((), dtype=state.tensors[0].dtype)
+    itemsize = max(
+        precision_itemsize(str(role(precision_probe).dtype))
+        for role in (
+            state.precision.storage,
+            state.precision.contraction,
+            state.precision.factorization,
+            state.precision.accumulation,
+        )
+    )
+    peak_bytes = peak_elements * itemsize
     if peak_bytes > policy.maximum_workspace_bytes:
         raise MemoryError("CTMRG exceeds maximum_workspace_bytes before allocation.")
 
@@ -234,7 +268,21 @@ def contract_peps_ctmrg(state: PEPS, policy: CTMRGPolicy, /) -> CTMRGResult:
         & jnp.all(jnp.isfinite(truncation))
         & jnp.isfinite(gauge)
     )
-    accepted = finite & converged
+    gauge_valid = gauge <= policy.tolerance
+    status = jnp.where(
+        ~finite,
+        int(CTMRGStatus.NONFINITE),
+        jnp.where(
+            ~converged,
+            int(CTMRGStatus.ITERATION_LIMIT),
+            jnp.where(
+                ~gauge_valid,
+                int(CTMRGStatus.GAUGE_INVALID),
+                int(CTMRGStatus.SUCCESS),
+            ),
+        ),
+    ).astype(jnp.int32)
+    accepted = status == int(CTMRGStatus.SUCCESS)
     exact = accepted & jnp.asarray(dimension == 1)
     environment_id = canonical_fingerprint(
         {"kind": "ctmrg-environment", "state": state.state_id, "policy": policy.policy_id}
@@ -259,6 +307,7 @@ def contract_peps_ctmrg(state: PEPS, policy: CTMRGPolicy, /) -> CTMRGResult:
         converged,
         finite,
         accepted,
+        status,
         exact,
         "finite CTMRG approximation; exact only for unit virtual dimension; no global error bound",
         False,
@@ -273,5 +322,6 @@ __all__ = [
     "CTMRGEnvironment",
     "CTMRGPolicy",
     "CTMRGResult",
+    "CTMRGStatus",
     "contract_peps_ctmrg",
 ]

@@ -195,9 +195,9 @@ def _affine_problem(*, permuted=False):
         step = context.step_index
         return args["nominal_K"][step] @ state + args["nominal_k"][step]
 
-    policy = phx.dynamics.CallableInputPolicy(
+    policy = phx.control.games.BoundGameInputPolicy(
         nominal_policy,
-        input_layout=input_layout,
+        problem,
         policy_id="permuted-nominal" if permuted else "nominal",
     )
     return problem, evaluate_game_policy(problem, policy)
@@ -496,9 +496,9 @@ def _one_player_problem():
         args=args,
         problem_id="one-player-local",
     )
-    policy = phx.dynamics.CallableInputPolicy(
+    policy = phx.control.games.BoundGameInputPolicy(
         lambda context, state, data: jnp.asarray([0.2 * state[0] - 0.1]),
-        input_layout=input_layout,
+        problem,
         policy_id="one-player-nominal",
     )
     return problem, evaluate_game_policy(problem, policy)
@@ -603,9 +603,9 @@ def _failure_problem(control_costs):
         args=control_costs,
         problem_id="local-failure-problem",
     )
-    policy = phx.dynamics.CallableInputPolicy(
+    policy = phx.control.games.BoundGameInputPolicy(
         lambda context, state, args: jnp.zeros((2,)),
-        input_layout=input_layout,
+        problem,
         policy_id="zero-nominal",
     )
     evaluation = evaluate_game_policy(problem, policy)

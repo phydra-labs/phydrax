@@ -172,6 +172,29 @@ class _MeanRegressor(phx.ml.AbstractRecipe):
         )
 
 
+class _StatusRecipe(phx.ml.AbstractRecipe):
+    status: int = eqx.field(static=True)
+
+    def __init__(self, status):
+        self.status = int(status)
+
+    def fit_batch(self, batch, /, *, key=None):
+        del key
+        valid = self.status == phx.ml.ML_SUCCESS
+        return phx.ml.FitResult(
+            _IdentityModel(batch.feature_count),
+            phx.ml.FitDiagnostics(
+                valid=valid,
+                status=self.status,
+                method="status-test",
+            ),
+            valid=valid,
+            status=self.status,
+            method="status-test",
+            gradient_contract=phx.ml.GradientContract(),
+        )
+
+
 def _batch():
     return phx.ml.MLBatch(
         jnp.array([[1.0, 2.0], [3.0, 5.0], [8.0, 13.0]]),
@@ -228,6 +251,55 @@ def test_pipeline_is_leakage_safe_deterministic_and_preserves_batch_metadata():
     assert jnp.allclose(jax.jit(lambda value: fitted(value))(point), fitted(point))
     gradient = jax.grad(lambda value: jnp.sum(fitted(value)))(point)
     assert jnp.allclose(gradient, jnp.ones_like(point))
+
+
+def test_pipeline_propagates_feature_masks_and_case_dependent_bindings():
+    masked = phx.ml.MLBatch(
+        jnp.asarray([[1.0, 2.0], [3.0, 99.0], [5.0, 6.0]]),
+        feature_mask=jnp.asarray([[True, True], [True, False], [True, True]]),
+    )
+    imputed = Pipeline(
+        (
+            ("impute", phx.ml.preprocessing.SimpleImputer()),
+            ("scale", StandardScaler()),
+            ("audit", _AuditRecipe()),
+        )
+    ).fit_batch(masked)
+    audit = imputed.as_trainable().fit_results[-1].diagnostics
+    transformed = imputed.as_trainable().transform_batch(masked)
+
+    assert jnp.all(audit.feature_mask)
+    assert jnp.all(transformed.feature_mask)
+    assert jnp.all(jnp.isfinite(transformed.features))
+
+    case_batch = phx.ml.MLBatch(
+        jnp.asarray(
+            [
+                [[1.0], [2.0], [3.0]],
+                [[10.0], [20.0], [30.0]],
+            ]
+        )
+    )
+    case_result = Pipeline(
+        (("scale", StandardScaler()), ("audit", _AuditRecipe()))
+    ).fit_batch(case_batch)
+    case_model = case_result.as_trainable()
+    expected = case_model.steps[0][1](case_batch.features)
+
+    assert case_model.input_binding().batch_mode == "blockwise"
+    assert jnp.allclose(case_model(case_batch.features), expected)
+
+
+def test_pipeline_reports_the_most_severe_child_status():
+    result = Pipeline(
+        (
+            ("first", _StatusRecipe(phx.ml.ML_INSUFFICIENT_DATA)),
+            ("second", _StatusRecipe(phx.ml.ML_CAPACITY_EXHAUSTED)),
+        )
+    ).fit_batch(phx.ml.MLBatch(jnp.ones((3, 1))))
+
+    assert int(result.status) == phx.ml.ML_CAPACITY_EXHAUSTED
+    assert int(result.diagnostics.status) == phx.ml.ML_CAPACITY_EXHAUSTED
 
 
 def test_transformed_target_regressor_uses_fitted_inverse_and_composes_contracts():

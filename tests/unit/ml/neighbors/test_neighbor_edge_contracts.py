@@ -111,7 +111,7 @@ def test_exact_classifier_weights_labels_and_weight_policy_are_observable():
     assert jnp.allclose(model.support_weight, sample_weight * measure_weight)
     assert jnp.array_equal(model.support_mask, jnp.array([True, True, False]))
     assert jnp.allclose(
-        model.probabilities(jnp.array([[1.0]])), jnp.array([[4.0 / 7.0, 3.0 / 7.0]])
+        model.predict_proba(jnp.array([[1.0]])), jnp.array([[4.0 / 7.0, 3.0 / 7.0]])
     )
     assert model.predict(jnp.array([[1.0]]))[0] == 0
 

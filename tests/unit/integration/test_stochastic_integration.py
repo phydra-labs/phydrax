@@ -508,3 +508,29 @@ def test_raw_weighted_reduction_rejects_log_weight_overflow():
     assert jnp.isinf(estimate.diagnostics.normalizer_estimate)
     assert estimate.status == int(phx.integration.IntegrationStatus.INVALID_WEIGHTS)
     assert not estimate.successful
+
+
+def test_direct_sobol_materialization_enforces_declared_count_policy():
+    restricted = phx.sampling.RandomizedQMCDesign(
+        sequence="sobol",
+        allow_arbitrary_count=False,
+    )
+    with pytest.raises(ValueError, match="power of two"):
+        phx.sampling.materialize_design(
+            restricted,
+            count=6,
+            dimension=2,
+            key=jr.key(42),
+        )
+
+    arbitrary = phx.sampling.RandomizedQMCDesign(
+        sequence="sobol",
+        allow_arbitrary_count=True,
+    )
+    points = phx.sampling.materialize_design(
+        arbitrary,
+        count=6,
+        dimension=2,
+        key=jr.key(42),
+    )
+    assert points.shape == (6, 2)

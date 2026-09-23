@@ -63,3 +63,20 @@ def test_landau_de_gennes_molecular_field_and_electric_activity_are_finite():
     assert constitutive.successful
     np.testing.assert_allclose(fields.trace_residual, 0.0, atol=2e-15)
     assert jnp.all(jnp.isfinite(constitutive.active_stress))
+
+
+def test_fixed_anchoring_does_not_require_boundary_normals():
+    basis = phx.equations.NematicTensorBasis(3)
+    preferred = jnp.zeros((2, basis.component_count))
+    plan = phx.equations.NematicAnchoringPlan(
+        basis,
+        phx.equations.NematicAnchoringKind.FIXED,
+        jnp.asarray([True, True]),
+        preferred_compact=preferred,
+        normals=None,
+    )
+
+    evaluated = plan.evaluate(preferred)
+
+    assert bool(evaluated.successful)
+    assert jnp.allclose(evaluated.energy_density, 0.0)

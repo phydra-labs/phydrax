@@ -5,6 +5,7 @@
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -66,6 +67,52 @@ def test_two_dimensional_subcell_geometry_keeps_disconnected_components():
     )
     np.testing.assert_allclose(areas, (0.34, 0.34), atol=2.0e-6)
     np.testing.assert_allclose(centers, (0.17, 0.83), atol=2.0e-6)
+
+
+def test_two_dimensional_cut_capacity_is_enforced_per_cell_face():
+    body = phx.discretization.EmbeddedLevelSetBody(
+        lambda points, time, args: (points[:, 0] - 0.3) * (points[:, 0] - 0.7),
+        "locally-overfull-slab",
+        5,
+    )
+    plan = phx.discretization.MultivaluedCutCell2DPlan(
+        _topology(),
+        lambda points, time, args: points,
+        "identity-2d-local-capacity",
+        phx.discretization.EmbeddedLevelSetBodySet((body,)),
+        phx.discretization.BlockAMRResourcePlan(
+            maximum_components_per_cell=4,
+            maximum_apertures_per_face=1,
+            maximum_embedded_faces_per_cell=128,
+        ),
+        subdivision=4,
+    )
+
+    with pytest.raises(ValueError, match="local physical-face aperture capacity"):
+        plan.prepare()
+
+
+def test_two_dimensional_embedded_capacity_is_enforced_per_cell():
+    body = phx.discretization.EmbeddedLevelSetBody(
+        lambda points, time, args: (points[:, 0] - 0.3) * (points[:, 0] - 0.7),
+        "locally-overfull-embedded-slab",
+        5,
+    )
+    plan = phx.discretization.MultivaluedCutCell2DPlan(
+        _topology(),
+        lambda points, time, args: points,
+        "identity-2d-local-embedded-capacity",
+        phx.discretization.EmbeddedLevelSetBodySet((body,)),
+        phx.discretization.BlockAMRResourcePlan(
+            maximum_components_per_cell=4,
+            maximum_apertures_per_face=64,
+            maximum_embedded_faces_per_cell=1,
+        ),
+        subdivision=4,
+    )
+
+    with pytest.raises(ValueError, match="local embedded-face capacity"):
+        plan.prepare()
 
 
 def test_two_dimensional_multivalued_fv_preserves_uniform_wall_state():

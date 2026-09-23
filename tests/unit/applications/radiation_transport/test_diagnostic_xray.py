@@ -2,9 +2,11 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import equinox as eqx
 import jax.numpy as jnp
 import jax.random as jr
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -99,6 +101,39 @@ def test_diagnostic_xray_source_transport_detector_pipeline_and_hit_adapter():
     hits = detector.to_sensitive_hits(
         result.transport, result.detector, conditions_id="synthetic-conditions"
     )
+    mismatched_transport = eqx.tree_at(
+        lambda item: item.history_ids,
+        result.transport,
+        result.transport.history_ids + jnp.asarray(1, dtype=jnp.uint32),
+    )
+    with pytest.raises(eqx.EquinoxRuntimeError, match="different transport histories"):
+        detector.to_sensitive_hits(
+            mismatched_transport,
+            result.detector,
+            conditions_id="synthetic-conditions",
+        )
+    with pytest.raises(ValueError, match="uint32 support"):
+        source.sample(
+            jr.key(8),
+            2,
+            first_history_id=int(np.iinfo(np.uint32).max),
+        )
+    addressed_spectrum = phx.applications.radiation_transport.AliasSpectrumPlan(
+        jnp.arange(1.0, 257.0),
+        jnp.ones((256,)),
+        phx.units.ELECTRONVOLT,
+        _manifest("addressed-spectrum", "8"),
+    )
+    low_ids = jnp.arange(64, dtype=jnp.uint32)
+    high_ids = low_ids + jnp.asarray(2**31, dtype=jnp.uint32)
+    low_energy = addressed_spectrum.sample(jr.key(9), low_ids)
+    high_energy = addressed_spectrum.sample(jr.key(9), high_ids)
+    assert not jnp.array_equal(low_energy, high_energy)
+    with pytest.raises(eqx.EquinoxRuntimeError, match="fit uint32"):
+        addressed_spectrum.sample(
+            jr.key(10),
+            jnp.asarray([2**32], dtype=jnp.uint64),
+        )
     run_manifest = _manifest("native-run", "7")
     artifact = phx.artifacts.ScientificArtifactEnvelope(
         artifact_kind="native-photon-transport",

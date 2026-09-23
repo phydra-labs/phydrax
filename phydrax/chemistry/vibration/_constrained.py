@@ -429,6 +429,14 @@ class ConstrainedVibrationalAnalysisPlan(StrictModule, NonTrainableState):
         if not isinstance(hessian, MolecularHessianResult):
             raise TypeError("hessian must be MolecularHessianResult.")
         _require_structure_matches_system(structure, self.system)
+        if (
+            hessian.units.unit_system_id != self.system.units.unit_system_id
+            or hessian.system_id != self.system.system_id
+            or hessian.geometry_id != structure.structure_id
+        ):
+            raise ValueError(
+                "Constrained vibration Hessian units, system, or geometry do not match."
+            )
         active = np.asarray(self.system.active_mask, dtype=np.bool_)
         indices = np.flatnonzero(active)
         positions = jnp.asarray(structure.positions)
@@ -631,6 +639,8 @@ class ConstrainedVibrationalAnalysisPlan(StrictModule, NonTrainableState):
             successful=successful,
             stationary_point=stationary,
             units=self.system.units,
+            source_system_id=self.system.system_id,
+            source_geometry_id=structure.structure_id,
             plan_id=self.plan_id,
         )
         return ConstrainedVibrationalAnalysisResult(

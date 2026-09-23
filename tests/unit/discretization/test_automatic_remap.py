@@ -6,9 +6,11 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from phydrax.discretization.finite_volume._automatic_remap import (
     build_unstructured_conservative_remap,
+    UnstructuredConservativeRemapEvidence,
     UnstructuredConservativeRemapStatus,
 )
 from phydrax.discretization.finite_volume._unstructured import (
@@ -212,3 +214,48 @@ def test_explicit_unsupported_geometry_returns_failure_artifact():
     assert result.status is UnstructuredConservativeRemapStatus.UNSUPPORTED_GEOMETRY
     assert result.plan is None
     assert not result.passed
+
+
+def test_remap_evidence_derives_passed_from_validated_status_and_counts():
+    evidence = UnstructuredConservativeRemapEvidence(
+        target_coverage_defects=jnp.asarray((0.25,)),
+        source_coverage_defects=jnp.asarray((0.0,)),
+        target_coverage_tolerance=jnp.asarray((0.1,)),
+        source_coverage_tolerance=jnp.asarray((0.1,)),
+        candidate_count=2,
+        accepted_count=1,
+        predicate_uncertain_count=1,
+        status=UnstructuredConservativeRemapStatus.COVERAGE_FAILURE,
+    )
+
+    assert not bool(evidence.passed)
+    with pytest.raises(TypeError, match="status"):
+        UnstructuredConservativeRemapEvidence(
+            target_coverage_defects=jnp.asarray((0.0,)),
+            source_coverage_defects=jnp.asarray((0.0,)),
+            target_coverage_tolerance=jnp.asarray((0.0,)),
+            source_coverage_tolerance=jnp.asarray((0.0,)),
+            candidate_count=1,
+            accepted_count=1,
+            status=0,
+        )
+    with pytest.raises(ValueError, match="counts"):
+        UnstructuredConservativeRemapEvidence(
+            target_coverage_defects=jnp.asarray((0.0,)),
+            source_coverage_defects=jnp.asarray((0.0,)),
+            target_coverage_tolerance=jnp.asarray((0.0,)),
+            source_coverage_tolerance=jnp.asarray((0.0,)),
+            candidate_count=0,
+            accepted_count=1,
+            status=UnstructuredConservativeRemapStatus.SUCCESS,
+        )
+    with pytest.raises(Exception, match="finite"):
+        UnstructuredConservativeRemapEvidence(
+            target_coverage_defects=jnp.asarray((jnp.nan,)),
+            source_coverage_defects=jnp.asarray((0.0,)),
+            target_coverage_tolerance=jnp.asarray((0.0,)),
+            source_coverage_tolerance=jnp.asarray((0.0,)),
+            candidate_count=0,
+            accepted_count=0,
+            status=UnstructuredConservativeRemapStatus.NUMERICAL_FAILURE,
+        )

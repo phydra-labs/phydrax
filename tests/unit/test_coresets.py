@@ -56,6 +56,17 @@ def test_moment_recombination_respects_mask_and_rank_deficiency():
     assert float(selection.diagnostics.minimum_weight) >= 0.0
 
 
+def test_failed_moment_recombination_evidence_matches_cleared_selection():
+    selection = phx.coresets.moment_recombine(
+        jnp.asarray([[0.0], [1.0], [jnp.nan], [3.0]]),
+    )
+
+    assert not bool(selection.diagnostics.valid)
+    assert not bool(jnp.any(selection.mask))
+    assert int(selection.diagnostics.active_points) == 0
+    assert jnp.isinf(selection.diagnostics.minimum_weight)
+
+
 def test_weighted_mmd_matches_dense_kernel_evaluation():
     source = jnp.linspace(-1.0, 1.0, 17)[:, None]
     comparison = jnp.asarray([[-0.75], [0.0], [0.9]])

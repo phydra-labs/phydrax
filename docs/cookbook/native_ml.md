@@ -45,7 +45,9 @@ prediction = jax.jit(closure)(jnp.array([0.25, -0.1]))
 
 `result.model` is an immutable `FrozenModel`: ordinary JAX differentiation still
 works through its prediction, but Phydrax solvers keep its leaves outside the
-trainable partition.
+trainable partition. Freezing preserves the wrapped model's exact input binding and
+forwards its available named prediction capabilities (`decision_function`, `predict`,
+`predict_log_proba`, and `predict_proba`) without inventing unsupported methods.
 
 ```python
 input_sensitivity = jax.grad(closure)(jnp.array([0.25, -0.1]))

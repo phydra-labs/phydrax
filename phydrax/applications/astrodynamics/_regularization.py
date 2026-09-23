@@ -134,7 +134,11 @@ class CloseEncounterRegularizationPlan(StrictModule, NonTrainableState):
                 gravitational_constant,
             )
         )
-        capacity = int(maximum_fictitious_steps)
+        if isinstance(maximum_fictitious_steps, bool) or not isinstance(
+            maximum_fictitious_steps, int
+        ):
+            raise TypeError("maximum_fictitious_steps must be an integer.")
+        capacity = maximum_fictitious_steps
         if (
             any(not np.isfinite(value) for value in values)
             or values[0] <= 0.0

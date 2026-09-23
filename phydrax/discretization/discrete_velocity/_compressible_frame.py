@@ -62,7 +62,7 @@ class KineticFrameRemapEvidence(StrictModule):
 
 class KineticFrameRemapResult(StrictModule):
     candidate: CompressibleKineticPopulationState
-    accepted: CompressibleKineticPopulationState
+    previous: CompressibleKineticPopulationState
     evidence: KineticFrameRemapEvidence
 
 
@@ -81,6 +81,8 @@ def remap_kinetic_frame(
         raise ValueError("Frame remapping requires equal kinetic model kinds.")
     if source_model.rule.dual_dimension != target_model.rule.dual_dimension:
         raise ValueError("Frame remapping requires equal guided feature dimensions.")
+    if source_model.layout.layout_id != target_model.layout.layout_id:
+        raise ValueError("Frame remapping requires identical population layouts.")
     source_macro = source_model.moments(state)
     source_particle = state.population("particle")
     source_mean = (
@@ -108,6 +110,8 @@ def remap_kinetic_frame(
         frame,
         state.frame_temperature_scale,
         target_model.layout,
+        target_model.model_id,
+        target_model.rule.rule_id,
     )
     target_macro = target_model.moments(candidate)
     feature_reconstruction = (
@@ -148,21 +152,6 @@ def remap_kinetic_frame(
         & (jnp.abs(energy_defect) <= tolerance)
         & (feature_defect <= tolerance)
     )
-    accepted = CompressibleKineticPopulationState(
-        tuple(
-            jnp.where(successful[..., None], target, source)
-            for target, source in zip(target_populations, state.populations, strict=True)
-        ),
-        jnp.where(
-            successful[..., None],
-            solved.conversion.natural.values,
-            state.equilibrium_dual,
-        ),
-        jnp.where(successful, 2.0, state.stabilizer),
-        jnp.where(successful[..., None], frame, state.frame_velocity),
-        state.frame_temperature_scale,
-        target_model.layout,
-    )
     evidence = KineticFrameRemapEvidence(
         mass_defect=mass_defect,
         momentum_defect=momentum_defect,
@@ -170,10 +159,10 @@ def remap_kinetic_frame(
         feature_defect=feature_defect,
         entropy_change=target_entropy - source_entropy,
         minimum_population=minimum,
-        retained_guided_moments=jnp.asarray(True),
+        retained_guided_moments=successful & (feature_defect <= tolerance),
         successful=successful,
     )
-    return KineticFrameRemapResult(candidate, accepted, evidence)
+    return KineticFrameRemapResult(candidate, state, evidence)
 
 
 class AdaptiveGaugePlan(StrictModule, NonTrainableState):

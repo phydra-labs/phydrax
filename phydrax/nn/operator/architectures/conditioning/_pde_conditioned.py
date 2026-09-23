@@ -44,7 +44,6 @@ def _pde_conditioned_contract(model):
         raise ValueError(
             f"PDE condition source {input_name!r} already exists in the wrapped contract."
         )
-    maximum_sources = capability.maximum_sources
     return ConfiguredOperatorContract(
         architecture="PDEConditionedOperator",
         configuration=wrapped.configuration
@@ -56,8 +55,6 @@ def _pde_conditioned_contract(model):
         capabilities=replace(
             capability,
             global_condition_sources=capability.global_condition_sources + (input_name,),
-            minimum_sources=capability.minimum_sources + 1,
-            maximum_sources=(None if maximum_sources is None else maximum_sources + 1),
         ),
         training=wrapped.training,
     )

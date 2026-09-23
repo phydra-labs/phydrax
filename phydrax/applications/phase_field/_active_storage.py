@@ -150,6 +150,11 @@ class ActivePhaseStoragePlan(StrictModule, NonTrainableState):
             )
         physical = jax.vmap(self._project_simplex)(dense) if project_simplex else dense
         finite = jnp.all(jnp.isfinite(physical))
+        nonnegative = (
+            jnp.asarray(True)
+            if project_simplex
+            else jnp.all(dense >= -self.pruning_tolerance)
+        )
         simplex_defect = jnp.max(jnp.abs(jnp.sum(physical, axis=1) - 1.0))
         valid = physical > self.activation_tolerance
         required = jnp.sum(valid, axis=1, dtype=jnp.int32)
@@ -172,6 +177,7 @@ class ActivePhaseStoragePlan(StrictModule, NonTrainableState):
         cell_overflow = jnp.any(required_cell > self.cell_phase_capacity)
         successful = (
             finite
+            & nonnegative
             & (simplex_defect <= 1.0e-10)
             & ~dof_overflow
             & ~cell_overflow
@@ -231,6 +237,38 @@ class ActivePhaseStoragePlan(StrictModule, NonTrainableState):
     ) -> ActivePhaseTransition:
         self._validate(previous)
         candidate = self.from_dense(dense_candidate)
+        matches = (
+            (candidate.phase_ids[:, :, None] == previous.phase_ids[:, None, :])
+            & candidate.active[:, :, None]
+            & previous.active[:, None, :]
+        )
+        previous_dwell = jnp.max(
+            jnp.where(matches, previous.dwell[:, None, :], -1),
+            axis=-1,
+        )
+        persisted = previous_dwell >= 0
+        maximum_dwell = jnp.asarray(np.iinfo(np.int32).max, dtype=jnp.int32)
+        candidate_dwell = jnp.where(
+            candidate.active,
+            jnp.where(
+                persisted,
+                jnp.minimum(previous_dwell, maximum_dwell - 1) + 1,
+                0,
+            ),
+            0,
+        )
+        candidate = ActivePhaseFieldState(
+            candidate.phase_ids,
+            candidate.values,
+            candidate.active,
+            candidate_dwell,
+            candidate.evidence,
+            candidate.storage_id,
+        )
+        retained = jnp.any(matches, axis=1)
+        premature_pruning = (
+            previous.active & ~retained & (previous.dwell < self.minimum_dwell)
+        )
         previous_groups = self.cell_groups(previous)
         candidate_groups = self.cell_groups(candidate)
         aligned = align_key_groups(previous_groups, candidate_groups)
@@ -246,6 +284,7 @@ class ActivePhaseStoragePlan(StrictModule, NonTrainableState):
             previous.evidence.successful
             & candidate.evidence.successful
             & jnp.all(aligned.successful)
+            & ~jnp.any(premature_pruning)
         )
         return ActivePhaseTransition(
             previous,

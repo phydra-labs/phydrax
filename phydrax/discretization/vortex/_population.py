@@ -141,6 +141,13 @@ class VortexPopulationPlan(StrictModule, NonTrainableState):
         ):
             raise ValueError("Vortex population active/ID/source shapes are invalid.")
         ids = jnp.where(active, ids, -1)
+        duplicate_ids = (
+            active[:, None]
+            & active[None, :]
+            & (ids[:, None] == ids[None, :])
+            & ~jnp.eye(self.capacity, dtype=jnp.bool_)
+        )
+        ids_valid = jnp.all(jnp.where(active, ids >= 0, True)) & ~jnp.any(duplicate_ids)
         finite = (
             jnp.all(jnp.where(active[:, None], jnp.isfinite(position), True))
             & jnp.all(
@@ -163,8 +170,8 @@ class VortexPopulationPlan(StrictModule, NonTrainableState):
         )
         position = eqx.error_if(
             position,
-            ~finite,
-            "Active vortex population values must be finite and positive where required.",
+            ~finite | ~ids_valid,
+            "Active vortex population values or stable IDs are invalid.",
         )
         state = VortexPopulationState(
             jnp.where(active[:, None], position, 0.0),

@@ -34,11 +34,13 @@ velocity = (
     jnp.full(finite_volume.face_layouts[1].shape, -0.10),
 )
 result = transport.advance(tracer, velocity, jnp.asarray(0.01))
+if not bool(result.success & result.donor_bounded):
+    raise RuntimeError("MacCormack tracer step failed or violated donor bounds")
 
 print(
     {
-        "successful": bool(result.success),
-        "bounded": bool(result.donor_bounded),
+        "successful": True,
+        "bounded": True,
         "limiter_cells": int(result.limiter_active_count),
         "integral_defect": float(result.integral_defect),
         "maximum_displacement_cells": float(result.maximum_displacement_cell_widths),

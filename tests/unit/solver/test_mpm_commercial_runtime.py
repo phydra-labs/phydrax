@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import zipfile
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -127,6 +128,34 @@ def test_checkpoint_corruption_is_rejected(tmp_path):
             target.writestr(name, payload)
     with pytest.raises(ValueError, match="checksum"):
         plan.read(corrupt)
+
+
+def test_checkpoint_writer_rejects_runtime_leaf_shape_mismatch(tmp_path):
+    compiled, _, state = _case()
+    plan = phx.solver.MPMCheckpointPlan(compiled, state)
+    incompatible = eqx.tree_at(
+        lambda value: value.particles.position,
+        state,
+        jnp.concatenate((state.particles.position, state.particles.position[:1])),
+    )
+
+    with pytest.raises(ValueError, match="shape or dtype"):
+        plan.write(tmp_path / "incompatible.mpmckpt", incompatible)
+
+
+def test_quarantined_run_cannot_complete_or_release():
+    compiled, arguments, state = _case()
+    supervisor = phx.solver.MPMRunSupervisor(
+        compiled.dynamics,
+        state,
+        arguments,
+    )
+    supervisor.quarantine("failed release qualification")
+
+    with pytest.raises(RuntimeError, match="cannot be completed"):
+        supervisor.complete()
+    with pytest.raises(RuntimeError, match="Only completed"):
+        supervisor.release("release-bundle")
 
 
 def test_hdf5_xdmf_vtk_output_and_backpressure(tmp_path):

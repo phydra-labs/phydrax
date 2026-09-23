@@ -65,6 +65,7 @@ def test_particle_state_statistics_and_decisions_use_distinct_dtypes(tmp_path):
         state_storage_dtype="float32",
         statistics_dtype="float64",
         decision_dtype="float64",
+        output_dtype="float32",
     )
 
     result = phx.uq.bootstrap_particle_filter(
@@ -75,8 +76,17 @@ def test_particle_state_statistics_and_decisions_use_distinct_dtypes(tmp_path):
     )
 
     assert result.particles.dtype == jnp.float32
-    assert result.log_weights.dtype == jnp.float64
-    assert result.effective_sample_sizes.dtype == jnp.float64
+    assert result.log_weights.dtype == jnp.float32
+    assert result.effective_sample_sizes.dtype == jnp.float32
+    assert result.final_state.log_weights.dtype == jnp.float64
+    ancestry = phx.uq.sample_particle_ancestry_paths(
+        jr.key(4),
+        result,
+        sample_shape=(2,),
+    )
+    predictive = phx.uq.particle_filter_predictive(jr.key(5), result)
+    assert ancestry.dtype == jnp.float32
+    assert predictive.samples.data.dtype == jnp.float32
     assert result.precision_evidence.evidence_id
 
     checkpoint = phx.uq.write_particle_filter_checkpoint(

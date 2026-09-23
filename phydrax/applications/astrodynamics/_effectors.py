@@ -82,13 +82,17 @@ class ReactionWheelEffector(StrictModule, NonTrainableState):
     def __init__(
         self, axes_body: ArrayLike, maximum_torque: ArrayLike, /, *, command_offset=0
     ):
+        if isinstance(command_offset, bool) or not isinstance(command_offset, int):
+            raise TypeError("command_offset must be an integer.")
+        if command_offset < 0:
+            raise ValueError("command_offset must be nonnegative.")
         axes = jnp.asarray(axes_body)
         torque = jnp.asarray(maximum_torque)
         if axes.ndim != 2 or axes.shape[1] != 3 or torque.shape != (axes.shape[0],):
             raise ValueError("Reaction-wheel arrays are inconsistent.")
         self.axes_body = axes / jnp.sqrt(jnp.sum(axes * axes, axis=1))[:, None]
         self.maximum_torque = torque
-        self.command_offset = int(command_offset)
+        self.command_offset = command_offset
 
     def __call__(self, time, state: VehicleState, command, /):
         del time

@@ -75,10 +75,13 @@ A benchmark notebook for the coupled 3-DOF spring-mass system in matrix form, wi
 
 ## Battery equation models and admission
 
+These checkout-only scripts import repository support modules. Run them from the
+repository root with that root on the import path:
+
 ```text
-python examples/battery_simulation_and_optimization.py --development
-python examples/battery_circuit_ecm.py --development
-python examples/battery_spme.py --development
+PYTHONPATH=. python examples/battery_simulation_and_optimization.py --development
+PYTHONPATH=. python examples/battery_circuit_ecm.py --development
+PYTHONPATH=. python examples/battery_spme.py --development
 ```
 
 These scripts explicitly select unreleased development candidates. They execute
@@ -396,27 +399,6 @@ python tools/cardiovascular_runtime_qualification.py
 python tools/cardiovascular_release_qualification.py
 ```
 
-Cardiovascular benchmark entry points:
-
-```text
-python benchmarks/cardiovascular_geometry.py
-python benchmarks/cardiovascular_high_order.py
-python benchmarks/cardiovascular_monodomain.py
-python benchmarks/cardiovascular_ep_integration.py
-python benchmarks/cardiovascular_bidomain.py
-python benchmarks/cardiovascular_mechanics.py
-python benchmarks/cardiovascular_electromechanics.py
-python benchmarks/cardiovascular_circulation.py
-python benchmarks/cardiovascular_vascular_1d.py
-python benchmarks/cardiovascular_hemodynamics.py
-python benchmarks/cardiovascular_fsi.py
-python benchmarks/cardiovascular_observations.py
-python benchmarks/cardiovascular_learning.py
-python benchmarks/cardiovascular_runtime.py
-```
-
-These commands emit evidence for their declared bounded route; benchmark
-performance or qualification output must not be generalized beyond that route.
 
 ## Omniphysics candidate workflows
 

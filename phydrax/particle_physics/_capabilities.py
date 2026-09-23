@@ -45,7 +45,7 @@ class HEPProviderBinding(StrictModule, NonTrainableState):
         input_profile_ids: Sequence[str],
         output_profile_ids: Sequence[str],
         unit_ids: Sequence[str],
-        frame_ids: Sequence[str] = (),
+        frame_ids: Sequence[str],
         devices: Sequence[str],
         dtypes: Sequence[str],
         side_effects: Sequence[str],
@@ -88,7 +88,7 @@ class HEPProviderBinding(StrictModule, NonTrainableState):
         inputs = identifiers(input_profile_ids, "input_profile_ids")
         outputs = identifiers(output_profile_ids, "output_profile_ids")
         units = identifiers(unit_ids, "unit_ids")
-        frames = identifiers(frame_ids, "frame_ids", required=False)
+        frames = identifiers(frame_ids, "frame_ids")
         devices_ = identifiers(devices, "devices")
         dtypes_ = identifiers(dtypes, "dtypes")
         effects = identifiers(side_effects, "side_effects")

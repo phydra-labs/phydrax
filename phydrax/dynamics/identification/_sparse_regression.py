@@ -357,7 +357,16 @@ class SequentialThresholdedLeastSquares(AbstractSparseRegression):
             feature_names=design.feature_names,
             output_names=design.output_names,
             method_id=(
-                f"stlsq:threshold-space={self.threshold_space}:ridge={self.ridge:g}:unbiased={self.unbiased_refit}"
+                "stlsq:"
+                f"thresholds={self.thresholds}:"
+                f"threshold-space={self.threshold_space}:"
+                f"ridge={self.ridge:g}:"
+                f"max-iterations={self.max_iterations}:"
+                f"rcond={self.rcond}:"
+                f"scale-features={self.scale_features}:"
+                f"scale-targets={self.scale_targets}:"
+                f"unbiased={self.unbiased_refit}:"
+                f"zero-tolerance={self.zero_tolerance}"
             ),
             design_id=design.design_id,
         )

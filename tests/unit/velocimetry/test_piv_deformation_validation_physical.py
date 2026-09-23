@@ -4,6 +4,7 @@
 
 import jax.numpy as jnp
 
+import phydrax as phx
 from phydrax.imaging import image_coordinates, ImagePlaneSupport
 from phydrax.velocimetry.imaging import DenseDisplacementField2D, ImagePair2D
 from phydrax.velocimetry.piv import (
@@ -96,25 +97,40 @@ def test_affine_and_homography_use_right_handed_xy_endpoints_and_units():
         jnp.asarray([[True]]),
         geometry_id="geometry",
     )
+    millimeter_contract = phx.SpatialCoordinateContract(
+        phx.units.MILLIMETER,
+        coordinate_system="cartesian",
+        reference_frame="laboratory",
+    )
     affine = AffinePixelMap2D(
         jnp.asarray([[2.0, 0.0, 10.0], [0.0, -3.0, 20.0]]),
-        spatial_unit="mm",
+        millimeter_contract,
     )
-    physical = convert_to_physical(field, affine, delta_t=2.0, time_unit="s")
+    physical = convert_to_physical(field, affine, delta_t=2.0, time_unit=phx.units.SECOND)
 
     assert jnp.allclose(physical.positions_xy[0, 0], jnp.asarray([16.0, 14.0]))
     assert jnp.allclose(physical.displacement_xy[0, 0], jnp.asarray([4.0, -3.0]))
     assert jnp.allclose(physical.velocity_xy[0, 0], jnp.asarray([2.0, -1.5]))
-    assert physical.spatial_unit == "mm"
-    assert physical.time_unit == "s"
+    assert physical.spatial_unit == phx.units.MILLIMETER
+    assert physical.time_unit == phx.units.SECOND
+    assert physical.frame_id == "laboratory"
 
     homography = HomographyPixelMap2D(
         jnp.asarray([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.1, 0.0, 1.0]]),
-        spatial_unit="m",
+        phx.SpatialCoordinateContract(
+            phx.units.METER,
+            coordinate_system="cartesian",
+            reference_frame="laboratory",
+        ),
     )
     start, start_valid = map_pixels_to_physical(homography, positions)
     end, end_valid = map_pixels_to_physical(homography, positions + displacement)
-    nonlinear = convert_to_physical(field, homography, delta_t=1.0, time_unit="s")
+    nonlinear = convert_to_physical(
+        field,
+        homography,
+        delta_t=1.0,
+        time_unit=phx.units.SECOND,
+    )
 
     assert start_valid[0, 0] & end_valid[0, 0]
     assert jnp.allclose(nonlinear.displacement_xy, end - start)

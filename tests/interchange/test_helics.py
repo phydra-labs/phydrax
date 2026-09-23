@@ -47,12 +47,16 @@ def test_real_two_federate_typed_delivery_and_time_grants():
             sink.request_time_async(1)
             source_grant = source.complete_time()
             sink_grant = sink.complete_time()
-            assert 0 <= sink_grant.granted_time <= sink_grant.requested_time
-            assert 0 <= source_grant.granted_time <= source_grant.requested_time
+            assert source_grant.requested_time == sink_grant.requested_time == 1
+            assert source_grant.granted_time == sink_grant.granted_time == 1
+            assert not source_grant.terminated
+            assert not sink_grant.terminated
             values = {sample.channel: sample for sample in sink.read_values()}
             assert values["power"].has_value and values["power"].value == 125.0
-            assert values["enabled"].value is True
-            assert values["power"].last_update_time <= values["power"].granted_time
+            assert values["enabled"].has_value and values["enabled"].value is True
+            assert values["power"].granted_time == values["enabled"].granted_time == 1
+            assert values["power"].last_update_time == values["enabled"].last_update_time
+            assert values["power"].last_update_time <= 1
             assert sink.artifact.status == "complete"
         assert sink.closed
     assert source.closed

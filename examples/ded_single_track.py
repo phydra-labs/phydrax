@@ -41,10 +41,12 @@ state = phx.applications.additive_manufacturing.SpatialDEDState(
     jnp.asarray(((1.0, 0.0), (1.0, 0.0))),
 )
 result = workflow.advance(state, 1.0, jnp.asarray(((0.0, 1.0), (0.0, 1.0))))
+if not bool(result.successful):
+    raise RuntimeError("Single-track DED workflow failed")
 print(
     json.dumps(
         {
-            "successful": bool(result.successful),
+            "successful": True,
             "maximum_temperature_k": float(jnp.max(result.state.temperature_k)),
             "deposited_mass_kg": float(jnp.sum(result.state.runtime.deposited_mass_kg)),
             "energy_balance_residual_j": float(result.energy_balance_residual_j),

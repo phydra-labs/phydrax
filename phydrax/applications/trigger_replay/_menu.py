@@ -183,8 +183,11 @@ def replay_trigger_menu(
             seeded &= post[:, line_indices[seed_name]]
         pre = pre.at[:, index].set(seeded)
         keep = (_mix_uint32(event_ids_, index + 1) % jnp.uint32(line.prescale)) == 0
-        valid_resource = (latency[:, index] <= line.maximum_latency) & (
-            resources[:, index] <= line.maximum_resource_units
+        valid_resource = (
+            (latency[:, index] >= 0)
+            & (latency[:, index] <= line.maximum_latency)
+            & (resources[:, index] >= 0)
+            & (resources[:, index] <= line.maximum_resource_units)
         )
         resource_valid = resource_valid.at[:, index].set(valid_resource)
         post = post.at[:, index].set(seeded & keep & valid_resource)
@@ -201,6 +204,8 @@ def replay_trigger_menu(
         jnp.all(jnp.isfinite(weights))
         & jnp.all(jnp.isfinite(latency))
         & jnp.all(jnp.isfinite(resources))
+        & jnp.all(latency >= 0)
+        & jnp.all(resources >= 0)
     )
     return TriggerReplayResult(
         pre,

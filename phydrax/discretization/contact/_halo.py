@@ -19,6 +19,8 @@ class ContactHaloExchangePlan(StrictModule, NonTrainableState):
     send_route_indices: Array
     send_target_ranks: Array
     send_valid: Array
+    required_counts: Array
+    overflow: Array
     rank_count: int = eqx.field(static=True)
     halo_capacity: int = eqx.field(static=True)
     route_count: int = eqx.field(static=True)
@@ -57,12 +59,15 @@ class ContactHaloExchangePlan(StrictModule, NonTrainableState):
                 send_targets[owner, slot] = target
                 send_valid[owner, slot] = True
             counts[owner] += 1
-        if np.any(counts > capacity):
+        overflow = counts > capacity
+        if np.any(overflow):
             send_valid[:] = False
         return cls(
             jnp.asarray(send_indices),
             jnp.asarray(send_targets),
             jnp.asarray(send_valid),
+            jnp.asarray(counts),
+            jnp.asarray(overflow),
             ranks,
             capacity,
             route_owner.size,
@@ -128,7 +133,7 @@ def pack_contact_halo(
         plan.send_target_ranks,
         mask,
         finite,
-        finite,
+        finite & ~jnp.any(plan.overflow),
         plan.plan_id,
     )
 
@@ -155,23 +160,32 @@ def reduce_contact_halo(
         raise ValueError("Received contact halo shapes are invalid.")
     if received.shape[1:] != local.shape[1:]:
         raise ValueError("Received contact halo value shape is incompatible.")
-    safe = jnp.clip(indices, 0, plan.route_count - 1)
-    condition = valid
-    while condition.ndim < received.ndim:
-        condition = condition[..., None]
-    contribution = jnp.where(condition, received, 0.0)
+    in_range = (indices >= 0) & (indices < plan.route_count)
+    safe = jnp.clip(indices, 0, max(plan.route_count - 1, 0))
+    requested_condition = valid
+    while requested_condition.ndim < received.ndim:
+        requested_condition = requested_condition[..., None]
+    accepted_condition = valid & in_range
+    while accepted_condition.ndim < received.ndim:
+        accepted_condition = accepted_condition[..., None]
+    requested_contribution = jnp.where(requested_condition, received, 0.0)
+    contribution = jnp.where(accepted_condition, received, 0.0)
     reduced = local.at[safe].add(contribution)
     equality = (
         (indices[:, None] == indices[None, :])
-        & valid[:, None]
-        & valid[None, :]
+        & (valid & in_range)[:, None]
+        & (valid & in_range)[None, :]
         & ~jnp.eye(indices.size, dtype=jnp.bool_)
     )
     duplicates = jnp.sum(jnp.any(equality, axis=1), dtype=jnp.int32)
-    expected_change = jnp.sum(contribution, axis=0)
+    expected_change = jnp.sum(requested_contribution, axis=0)
     actual_change = jnp.sum(reduced - local, axis=0)
     conservation = jnp.max(jnp.abs(actual_change - expected_change), initial=0.0)
-    finite = jnp.all(jnp.isfinite(reduced)) & jnp.isfinite(conservation)
+    finite = (
+        jnp.all(jnp.where(requested_condition, jnp.isfinite(received), True))
+        & jnp.all(jnp.isfinite(reduced))
+        & jnp.isfinite(conservation)
+    )
     tolerance = (
         128.0
         * jnp.finfo(local.dtype).eps
@@ -183,7 +197,11 @@ def reduce_contact_halo(
         duplicates,
         conservation,
         finite,
-        finite & (duplicates == 0) & (conservation <= tolerance),
+        finite
+        & ~jnp.any(plan.overflow)
+        & jnp.all(~valid | in_range)
+        & (duplicates == 0)
+        & (conservation <= tolerance),
         plan.plan_id,
     )
     return ContactHaloReduction(reduced, evidence)

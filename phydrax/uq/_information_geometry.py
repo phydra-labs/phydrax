@@ -50,6 +50,12 @@ class ExponentialFamilyInformationGeometry(StrictModule):
         natural: NaturalCoordinates,
         /,
     ) -> NaturalCoordinates:
+        if not isinstance(natural, NaturalCoordinates):
+            raise TypeError("natural must be NaturalCoordinates.")
+        if natural.signature.key != self.family.signature.key:
+            raise ValueError(
+                "Natural-coordinate signature does not match the geometry family."
+            )
         self.precision.validate_coordinates(natural.values)
         return NaturalCoordinates(
             self.precision.compute(natural.values),

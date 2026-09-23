@@ -25,28 +25,37 @@ function are rejected.
   complete/failed status. Output identity does not certify physical model validity.
   Source URLs record provenance, not authorization or correctness.
 - A pinned executable requires the expected SHA-256, declared release, and an
-  explicit caller-supplied license identifier. Its bytes are checked before and
-  after execution. `pin_energy_executable` computes the pin for a selected file;
-  independent release/digest qualification remains the caller's responsibility.
+  explicit caller-supplied license identifier. Each run hashes an opened regular
+  file and executes that exact held descriptor, so replacing its path cannot
+  substitute code between verification and launch. `pin_energy_executable`
+  computes the pin for a selected file; independent release/digest qualification
+  remains the caller's responsibility.
 - Native sessions record installed distribution versions, manifests and native
   binary digests. `expected_version` (FMI: `expected_fmpy_version`) enforces a
   caller-selected package release. OpenDSS additionally identifies its DSS-Python
   binding and native backend build. No adapter invents redistribution permission
   for the engine, FMU, weather file, model, or reference outputs.
 - Wall-clock timeout kills the owned process group and removes the work directory.
-  Optional native libraries run in a separate Python process using the current
-  interpreter, not inside JAX or the parent's mutable working directory. These
-  isolated native sessions currently require POSIX (macOS/Linux).
-- The default detached/log budget is 64 MiB. Input and output collections are
-  bounded; logs are monitored while the process runs. This is **not a sandbox**
-  or a hard disk/CPU/memory quota: trusted native engines/FMU code/model directives
-  can access the host, generate other files, or grow logs between polls. Execute
-  untrusted native code only inside a separately provisioned OS/container sandbox.
-  Executable pinning does not pin every dynamically loaded system dependency.
-- The command environment inherits the host and applies recorded explicit
-  overrides; HOME/TMP default to the private directory. Reproducible qualification
-  must pin the engine's full installation and relevant environment/resources, not
-  just its executable. Pass Radiance `RAYPATH` explicitly.
+  Optional native libraries run in a separate trusted-local Python process using
+  the current interpreter, not inside JAX or the parent's mutable working directory.
+  These native sessions currently require POSIX (macOS/Linux).
+- The default detached/log/message budget is 64 MiB. Input and output collections
+  are bounded, worker responses are cardinality- and byte-bounded before sending,
+  and logs are monitored and later read through the descriptors opened before
+  launch.
+- This is **trusted-local direct execution**, not a sandbox or a hard
+  disk/CPU/memory quota. The child has ordinary host filesystem, process, and
+  network access. `ExternalExecutionPolicy` rejects container/sandbox selectors
+  and `network_access=False` because this runtime has no enforcing launcher.
+  Execute untrusted native code only inside a separately provisioned
+  OS/container sandbox and firewall boundary. Executable pinning does not pin
+  every dynamically loaded system dependency.
+- By default the command environment inherits the host and applies recorded
+  explicit overrides; HOME/TMP point to the private directory. Inheritance can
+  be disabled and overrides allowlisted, but that is not process isolation.
+  Reproducible qualification must pin the engine's full installation and relevant
+  environment/resources, not just its executable. Pass Radiance `RAYPATH`
+  explicitly.
 
 ## EnergyPlus and Radiance command workflows
 

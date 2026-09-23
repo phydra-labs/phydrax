@@ -74,6 +74,17 @@ def _qmc_engine(
     return Sobol(dimension, scramble=scrambled, seed=seed)
 
 
+def _validate_design_count(design: DesignLike, count: int, /) -> None:
+    if (
+        isinstance(design, RandomizedQMCDesign)
+        and design.sequence == "sobol"
+        and not design.allow_arbitrary_count
+        and count > 0
+        and count & (count - 1)
+    ):
+        raise ValueError("Sobol design count must be a power of two by default.")
+
+
 def host_design(
     design: DesignLike,
     *,
@@ -93,6 +104,7 @@ def host_design(
         raise ValueError("dimension must be positive.")
     if start_ < 0:
         raise ValueError("start must be non-negative.")
+    _validate_design_count(resolved, count_)
     capabilities = design_capabilities(resolved)
     if start_ and not capabilities.random_access:
         raise ValueError(f"{design_name(resolved)} does not support a start index.")
@@ -133,27 +145,55 @@ def host_design_factory(
     dimension_ = int(dimension)
     if dimension_ < 1:
         raise ValueError("dimension must be positive.")
+
+    def checked_count(count: int, /) -> int:
+        count_ = int(count)
+        if count_ < 0:
+            raise ValueError("count must be non-negative.")
+        _validate_design_count(resolved, count_)
+        return count_
+
     if isinstance(resolved, IIDDesign):
         generator = (
             seed if isinstance(seed, np.random.Generator) else np.random.default_rng(seed)
         )
         return lambda count: np.asarray(
-            generator.random((int(count), dimension_)), dtype=np.float64
+            generator.random((checked_count(count), dimension_)), dtype=np.float64
         )
     if isinstance(resolved, HammersleyDesign):
-        return lambda count: host_design(
-            resolved,
-            count=int(count),
-            dimension=dimension_,
-            seed=seed,
-        )
+        materialized = False
+
+        def materialize_hammersley(count: int, /) -> np.ndarray:
+            nonlocal materialized
+            count_ = checked_count(count)
+            if count_ == 0:
+                return np.empty((0, dimension_), dtype=np.float64)
+            if materialized:
+                raise ValueError(
+                    "Hammersley is count-dependent and cannot extend a rejected "
+                    "design; use a prefix-stable or randomized sampler."
+                )
+            materialized = True
+            return host_design(
+                resolved,
+                count=count_,
+                dimension=dimension_,
+                seed=seed,
+            )
+
+        return materialize_hammersley
     if isinstance(resolved, LatinHypercubeDesign):
         engine = LatinHypercube(dimension_, seed=seed)
     else:
         engine = _qmc_engine(resolved, dimension_, seed)
-    return lambda count: np.asarray(engine.random(int(count)), dtype=np.float64).reshape(
-        (int(count), dimension_)
-    )
+
+    def materialize_next(count: int, /) -> np.ndarray:
+        count_ = checked_count(count)
+        return np.asarray(engine.random(count_), dtype=np.float64).reshape(
+            (count_, dimension_)
+        )
+
+    return materialize_next
 
 
 def materialize_design(
@@ -175,6 +215,7 @@ def materialize_design(
         raise ValueError("dimension must be positive.")
     if start_ < 0:
         raise ValueError("start must be non-negative.")
+    _validate_design_count(resolved, count_)
     capabilities = design_capabilities(resolved)
     if start_ and not capabilities.random_access:
         raise ValueError(f"{design_name(resolved)} does not support a start index.")

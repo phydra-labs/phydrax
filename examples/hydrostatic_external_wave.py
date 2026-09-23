@@ -42,8 +42,10 @@ def run():
     view = phx.applications.ocean.hydrostatic_diagnostic_view(
         ocean, result.accepted_state
     )
+    if not bool(result.successful):
+        raise RuntimeError("Hydrostatic external-wave step failed")
     return {
-        "successful": bool(result.successful),
+        "successful": True,
         "volume_residual": float(result.accepted_state.ledger.volume_change),
         "maximum_eta": float(jnp.max(jnp.abs(view.eta))),
         "free_surface_energy": float(view.free_surface_energy),

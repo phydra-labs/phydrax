@@ -458,6 +458,17 @@ class PreparedAtomisticPotentialProgram(AbstractPreparedAtomisticHamiltonian):
         cutoff = plan.requirements.cutoff
         if cutoff is not None and system.cell is not None:
             system.cell.require_unique_image(cutoff)
+        active_virtual_sites = np.asarray(
+            system.coordinate_map.plan.sites.active_mask
+        ) & ~np.asarray(system.coordinate_map.plan.sites.physical_mask)
+        if (
+            plan.requirements.interaction_site_geometry
+            and np.any(active_virtual_sites)
+            and system.topology.exception_keys.shape[0] > 0
+        ):
+            raise ValueError(
+                "Virtual interaction sites require an explicit site-space pair-exception contract."
+            )
         terms = tuple(value.prepare(system) for value in plan.terms)
         self.plan = plan
         self.system = system
@@ -514,12 +525,54 @@ class PreparedAtomisticPotentialProgram(AbstractPreparedAtomisticHamiltonian):
         if species_.shape != (self.system.capacity,):
             raise ValueError("species must match the particle capacity.")
         selected_cell = self.system.cell if cell is None else cell
-        if cell_vectors is not None and (
-            selected_cell is None or fractional_positions is None
-        ):
-            raise ValueError(
-                "Dynamic cell vectors require a cell and fractional_positions."
+        if cell is not None:
+            if not isinstance(cell, PeriodicCell):
+                raise TypeError("cell must be a PeriodicCell or None.")
+            if self.system.cell is None or cell.cell_id != self.system.cell.cell_id:
+                raise ValueError("Potential cell must exactly match the prepared system.")
+        neighborhood_box = neighborhood.box
+        if selected_cell is not None:
+            if (
+                not isinstance(neighborhood_box, PeriodicCell)
+                or neighborhood_box.cell_id != selected_cell.cell_id
+            ):
+                raise ValueError(
+                    "Neighborhood and potential must share the exact periodic cell."
+                )
+        elif neighborhood_box is not None and any(neighborhood_box.periodic_axes):
+            raise ValueError("A finite potential cannot consume a periodic neighborhood.")
+        if cell_vectors is not None:
+            if selected_cell is None or fractional_positions is None:
+                raise ValueError(
+                    "Dynamic cell vectors require a cell and fractional_positions."
+                )
+            vectors = jnp.asarray(cell_vectors, dtype=position.dtype)
+            if vectors.shape != (3, 3):
+                raise ValueError("cell_vectors must have shape (3, 3).")
+            base_vectors = selected_cell.vectors.astype(position.dtype)
+            scale = jnp.sum(vectors * base_vectors) / jnp.sum(base_vectors * base_vectors)
+            residual = jnp.max(jnp.abs(vectors - scale * base_vectors))
+            tolerance = (
+                64.0
+                * jnp.finfo(position.dtype).eps
+                * jnp.maximum(jnp.max(jnp.abs(vectors)), 1.0)
             )
+            cutoff = self.plan.requirements.cutoff
+            image_valid = (
+                jnp.asarray(True)
+                if cutoff is None
+                else scale * selected_cell.unique_image_radius
+                > jnp.asarray(cutoff, dtype=position.dtype)
+            )
+            vectors = eqx.error_if(
+                vectors,
+                jnp.any(~jnp.isfinite(vectors))
+                | ~(scale > 0.0)
+                | (residual > tolerance)
+                | ~image_valid,
+                "Dynamic cell vectors exceed the prepared isotropic cell certificate.",
+            )
+            cell_vectors = vectors
         site_state = self.system.coordinate_map.realize(
             position,
             cell=selected_cell,
@@ -535,9 +588,16 @@ class PreparedAtomisticPotentialProgram(AbstractPreparedAtomisticHamiltonian):
             & self.system.coordinate_map.plan.sites.active_mask[site_right]
         )
         if self.plan.requirements.interaction_site_geometry:
-            site_ids = self.system.coordinate_map.plan.sites.site_ids
-            site_left_ids = site_ids[site_left]
-            site_right_ids = site_ids[site_right]
+            site_plan = self.system.coordinate_map.plan
+            physical_indices = site_plan.physical_dof_indices
+            safe_physical_indices = jnp.maximum(physical_indices, 0)
+            physical_ids = site_plan.dof_particle_ids[safe_physical_indices]
+            site_left_ids = physical_ids[site_left]
+            site_right_ids = physical_ids[site_right]
+            exception_supported = (
+                site_plan.sites.physical_mask[site_left]
+                & site_plan.sites.physical_mask[site_right]
+            )
             site_zeros = jnp.zeros_like(site_left_ids)
             site_keys = jnp.stack(
                 (
@@ -549,8 +609,12 @@ class PreparedAtomisticPotentialProgram(AbstractPreparedAtomisticHamiltonian):
                 ),
                 axis=-1,
             )
-            site_lj_scales, site_electrostatic_scales = self.system.topology.pair_scales(
+            resolved_lj, resolved_electrostatic = self.system.topology.pair_scales(
                 site_keys
+            )
+            site_lj_scales = jnp.where(exception_supported, resolved_lj, 1.0)
+            site_electrostatic_scales = jnp.where(
+                exception_supported, resolved_electrostatic, 1.0
             )
         else:
             site_lj_scales = jnp.ones(site_left.shape, dtype=position.dtype)
@@ -690,6 +754,24 @@ class PreparedAtomisticPotentialProgram(AbstractPreparedAtomisticHamiltonian):
         ):
             if value.shape != shape:
                 raise ValueError(f"interaction_scales.{field} must have shape {shape}.")
+        scale_invalid = jnp.asarray(False)
+        for value in scale_values:
+            scale_invalid = scale_invalid | jnp.any(
+                ~jnp.isfinite(value) | (value < 0.0) | (value > 1.0)
+            )
+        scale_invalid = (
+            scale_invalid
+            | ~jnp.isfinite(scales.lennard_jones_softcore_alpha)
+            | (scales.lennard_jones_softcore_alpha < 0.0)
+            | ~jnp.isfinite(scales.electrostatic_softcore_alpha)
+            | (scales.electrostatic_softcore_alpha < 0.0)
+        )
+        checked_lj_scales = eqx.error_if(
+            scales.lennard_jones,
+            scale_invalid,
+            "Interaction scales must be finite in [0, 1] with non-negative finite soft-core values.",
+        )
+        scales = eqx.tree_at(lambda value: value.lennard_jones, scales, checked_lj_scales)
         if (
             scales.lennard_jones_softcore_alpha.shape != ()
             or scales.electrostatic_softcore_alpha.shape != ()

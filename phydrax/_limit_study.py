@@ -34,6 +34,11 @@ def _finite(value: float, name: str, /) -> float:
     return result
 
 
+def _canonical_optional_float(value: float, /) -> float | None:
+    scalar = float(value)
+    return scalar if math.isfinite(scalar) else None
+
+
 @dataclass(frozen=True, slots=True)
 class ScientificLimitAxis:
     """One declared coordinate approaching a finite or asymptotic target."""
@@ -306,12 +311,19 @@ def run_scientific_limit_study(
     by_id = {item.datum_id: item for item in values}
     fits: list[ScientificLimitFit] = []
     for variation in plan.variations:
+        unknown = tuple(
+            datum_id for datum_id in variation.included_datum_ids if datum_id not in by_id
+        )
+        if unknown:
+            raise ValueError(
+                f"Variation {variation.variation_id!r} references unknown datum IDs "
+                f"{unknown!r}."
+            )
+    for variation in plan.variations:
         selected = (
             values
             if not variation.included_datum_ids
-            else tuple(
-                by_id[item] for item in variation.included_datum_ids if item in by_id
-            )
+            else tuple(by_id[item] for item in variation.included_datum_ids)
         )
         design = _design(plan, variation, selected) if selected else np.empty((0, 0))
         required = max(variation.minimum_points, design.shape[1] + 1)
@@ -327,8 +339,12 @@ def run_scientific_limit_study(
             reason = "insufficient-points"
         else:
             spans = {
-                axis.name: max(item.coordinate_map()[axis.name] for item in selected)
-                - min(item.coordinate_map()[axis.name] for item in selected)
+                axis.name: max(
+                    axis.coordinate(item.coordinate_map()[axis.name]) for item in selected
+                )
+                - min(
+                    axis.coordinate(item.coordinate_map()[axis.name]) for item in selected
+                )
                 for axis in plan.axes
             }
             if any(spans[axis.name] < axis.minimum_span for axis in plan.axes):
@@ -339,7 +355,10 @@ def run_scientific_limit_study(
                 errors = np.asarray([item.standard_error for item in selected])
                 weighted = design / errors[:, None]
                 target = observations / errors
-                condition = float(np.linalg.cond(weighted))
+                try:
+                    condition = float(np.linalg.cond(weighted))
+                except np.linalg.LinAlgError:
+                    condition = math.inf
                 if (
                     not math.isfinite(condition)
                     or condition > plan.maximum_condition_number
@@ -347,20 +366,46 @@ def run_scientific_limit_study(
                     status = "abstained"
                     reason = "ill-conditioned-design"
                 else:
-                    coefficients, _, rank, _ = np.linalg.lstsq(
-                        weighted, target, rcond=None
-                    )
-                    if rank != design.shape[1]:
+                    try:
+                        coefficients, _, rank, _ = np.linalg.lstsq(
+                            weighted, target, rcond=None
+                        )
+                    except np.linalg.LinAlgError:
                         status = "abstained"
-                        reason = "rank-deficient-design"
+                        reason = "linear-solve-failed"
                     else:
-                        normal = weighted.T @ weighted
-                        covariance = np.linalg.inv(normal)
-                        residual = (design @ coefficients - observations) / errors
-                        estimate = float(coefficients[0])
-                        standard_error = float(math.sqrt(max(covariance[0, 0], 0.0)))
-                        chi_square = float(residual @ residual)
-                        degrees = len(selected) - design.shape[1]
+                        if rank != design.shape[1]:
+                            status = "abstained"
+                            reason = "rank-deficient-design"
+                        else:
+                            intercept = np.zeros((design.shape[1],), dtype=np.float64)
+                            intercept[0] = 1.0
+                            try:
+                                influence, _, covariance_rank, _ = np.linalg.lstsq(
+                                    weighted.T,
+                                    intercept,
+                                    rcond=None,
+                                )
+                            except np.linalg.LinAlgError:
+                                status = "abstained"
+                                reason = "covariance-solve-failed"
+                            else:
+                                variance = float(influence @ influence)
+                                if (
+                                    covariance_rank != design.shape[1]
+                                    or not math.isfinite(variance)
+                                    or variance < 0.0
+                                ):
+                                    status = "abstained"
+                                    reason = "covariance-solve-failed"
+                                else:
+                                    residual = (
+                                        design @ coefficients - observations
+                                    ) / errors
+                                    estimate = float(coefficients[0])
+                                    standard_error = float(math.sqrt(variance))
+                                    chi_square = float(residual @ residual)
+                                    degrees = len(selected) - design.shape[1]
         fits.append(
             ScientificLimitFit(
                 variation.variation_id,
@@ -390,18 +435,18 @@ def run_scientific_limit_study(
         "kind": "scientific-limit-study-result",
         "study_id": plan.study_id,
         "status": status,
-        "estimate": estimate,
-        "statistical_error": statistical,
-        "systematic_error": systematic,
+        "estimate": _canonical_optional_float(estimate),
+        "statistical_error": _canonical_optional_float(statistical),
+        "systematic_error": _canonical_optional_float(systematic),
         "fits": [
             {
                 "variation_id": item.variation_id,
                 "status": item.status,
-                "estimate": item.estimate,
-                "standard_error": item.standard_error,
-                "chi_square": item.chi_square,
+                "estimate": _canonical_optional_float(item.estimate),
+                "standard_error": _canonical_optional_float(item.standard_error),
+                "chi_square": _canonical_optional_float(item.chi_square),
                 "degrees_of_freedom": item.degrees_of_freedom,
-                "condition_number": item.condition_number,
+                "condition_number": _canonical_optional_float(item.condition_number),
                 "datum_ids": list(item.datum_ids),
                 "reason": item.reason,
             }

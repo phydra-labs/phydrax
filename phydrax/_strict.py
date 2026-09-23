@@ -130,7 +130,7 @@ class Strict(metaclass=_StrictMeta):
        must not start with these prefixes.
     3. Abstract Elements: Use `abc.abstractmethod` for methods and
        `equinox.AbstractVar[Type]` for instance attributes subclasses must define.
-    4. Method Overriding: Concrete methods from base classes cannot be overridden.
+       Abstract bases may also provide ordinary overridable default behavior.
     """
 
     _strict_initialized: bool = False

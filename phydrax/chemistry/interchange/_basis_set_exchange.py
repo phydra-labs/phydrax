@@ -90,8 +90,16 @@ def import_basis_set_exchange(
     if not isinstance(system, AtomisticSystemPlan):
         raise TypeError("system must be AtomisticSystemPlan.")
     identifiers = tuple(particle_ids)
+    if any(
+        isinstance(value, (bool, np.bool_)) or not isinstance(value, (int, np.integer))
+        for value in identifiers
+    ):
+        raise TypeError("Basis import particle IDs must be exact integers.")
+    active = np.asarray(system.active_mask, dtype=np.bool_)
     id_to_index = {
-        int(value): index for index, value in enumerate(np.asarray(system.particle_ids))
+        int(value): index
+        for index, value in enumerate(np.asarray(system.particle_ids))
+        if active[index]
     }
     if (
         not identifiers

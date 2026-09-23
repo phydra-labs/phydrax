@@ -1,12 +1,23 @@
 """Project one provider-native MuJoCo muscle through the MJX adapter."""
 
+import importlib
+
 import equinox as eqx
 import jax
 import jax.numpy as jnp
-import mujoco
 
-from phydrax.applications.robotics import prepare_mjx_adapter
+from phydrax.applications.robotics import mjx_availability, prepare_mjx_adapter
 from phydrax.dynamics import PlantStepContext
+
+
+availability = mjx_availability()
+if not availability.available:
+    raise RuntimeError(
+        f"MJX provider unavailable: {availability.reason} "
+        f"(requires {availability.requirement})"
+    )
+
+mujoco = importlib.import_module("mujoco")
 
 
 xml = """
@@ -55,7 +66,11 @@ stepped = adapter.step(
     complete_control,
     adapter.parameters,
 )
+if not bool(stepped.successful):
+    raise RuntimeError(f"MJX step failed with status {int(stepped.status)}")
 refreshed = adapter.refresh(stepped.accepted_state)
+if not bool(refreshed.successful):
+    raise RuntimeError(f"MJX refresh failed with status {int(refreshed.status)}")
 snapshot = muscles.snapshot(refreshed.accepted_state)
 
 print("muscles", snapshot.names)

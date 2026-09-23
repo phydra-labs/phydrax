@@ -374,3 +374,84 @@ def test_stochastic_adam_supports_jvp_vmap_and_pytree_parameters():
     np.testing.assert_allclose(mapped, independent, atol=1e-10)
     assert jnp.isfinite(value)
     np.testing.assert_allclose(derivative, finite_difference, rtol=2e-4, atol=2e-6)
+
+
+def test_consensus_does_not_promote_failed_local_solve_to_success():
+    problem = phx.optim.StochasticProblem(
+        lambda parameter, _scenario, _: (parameter[0] - 3.0) ** 4,
+        phx.optim.FixedSampling(jnp.asarray([0.0])),
+        bounds=phx.optim.Bounds(-5.0, 5.0),
+    )
+    result = phx.optim.minimize_stochastic(
+        problem,
+        jnp.asarray([0.0]),
+        method=phx.optim.ConsensusADMM(
+            maximum_outer_steps=2,
+            inner_maximum_steps=1,
+            inner_method=phx.optim.ProjectedGradient(),
+        ),
+        termination=phx.optim.OptimizationTermination(
+            absolute_optimality=0.0,
+            relative_optimality=0.0,
+            maximum_steps=2,
+        ),
+    )
+
+    assert int(result.status) == int(phx.optim.OptimizationStatus.BACKEND_FAILED)
+    assert not bool(result.successful)
+
+
+def test_consensus_global_budget_stops_before_another_scenario_subsolve():
+    problem = phx.optim.StochasticProblem(
+        lambda parameter, scenario, _: (parameter[0] - scenario) ** 4,
+        phx.optim.FixedSampling(jnp.asarray([1.0, 2.0, 3.0])),
+        bounds=phx.optim.Bounds(-5.0, 5.0),
+    )
+    result = phx.optim.minimize_stochastic(
+        problem,
+        jnp.asarray([0.0]),
+        method=phx.optim.ConsensusADMM(
+            maximum_outer_steps=3,
+            inner_maximum_steps=8,
+            inner_method=phx.optim.ProjectedGradient(),
+        ),
+        termination=phx.optim.OptimizationTermination(
+            absolute_optimality=0.0,
+            relative_optimality=0.0,
+            maximum_steps=3,
+            maximum_evaluations=1,
+        ),
+    )
+
+    assert int(result.status) == int(
+        phx.optim.OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED
+    )
+    assert jnp.isfinite(result.objective)
+    assert int(result.diagnostics.objective_evaluations) == 1
+
+
+def test_consensus_reserves_final_objective_evaluation_before_success():
+    problem = phx.optim.StochasticProblem(
+        lambda parameter, scenario, _: (parameter[0] - scenario) ** 2,
+        phx.optim.FixedSampling(jnp.asarray([1.0])),
+        bounds=phx.optim.Bounds(-5.0, 5.0),
+    )
+    result = phx.optim.minimize_stochastic(
+        problem,
+        jnp.asarray([1.0]),
+        method=phx.optim.ConsensusADMM(
+            maximum_outer_steps=2,
+            inner_maximum_steps=4,
+            inner_method=phx.optim.ProjectedGradient(),
+        ),
+        termination=phx.optim.OptimizationTermination(
+            absolute_optimality=1e-8,
+            relative_optimality=0.0,
+            maximum_steps=2,
+            maximum_evaluations=3,
+        ),
+    )
+
+    assert bool(result.successful)
+    assert jnp.isfinite(result.objective)
+    assert int(result.diagnostics.objective_evaluations) == 3

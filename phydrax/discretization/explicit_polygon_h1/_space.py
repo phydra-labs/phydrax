@@ -108,6 +108,7 @@ class ExplicitPolygonH1RuntimeData(StrictModule):
     coordinates: Array
     geometries: tuple[PolygonGeometry, ...]
     bases: tuple[ExplicitPolygonH1BlockData, ...]
+    plan_id: str = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
     geometry_layout_id: str = eqx.field(static=True)
     numeric_version: str = eqx.field(static=True)
@@ -421,6 +422,7 @@ class ExplicitPolygonH1Discretization(AbstractPreparedLocalDiscretization):
             coordinates=points,
             geometries=tuple(geometries),
             bases=tuple(bases),
+            plan_id=self.plan_id,
             topology_id=self.mesh.topology_id,
             geometry_layout_id=self.mesh.geometry_layout_id,
             numeric_version=str(numeric_version),
@@ -498,7 +500,8 @@ class ExplicitPolygonH1Discretization(AbstractPreparedLocalDiscretization):
         if not isinstance(runtime, ExplicitPolygonH1RuntimeData):
             raise TypeError("Explicit polygon execution requires its runtime data.")
         if (
-            runtime.topology_id != self.mesh.topology_id
+            runtime.plan_id != self.plan_id
+            or runtime.topology_id != self.mesh.topology_id
             or runtime.geometry_layout_id != self.mesh.geometry_layout_id
             or runtime.coordinates.shape != self.default_runtime.coordinates.shape
         ):

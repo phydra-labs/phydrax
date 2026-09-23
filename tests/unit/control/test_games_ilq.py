@@ -203,6 +203,7 @@ def test_compatible_local_affine_initial_profile_is_preserved_by_preparation():
         time_grid=problem.time_grid,
         input_layout=problem.dynamics.system.input_layout,
         partition=problem.partition,
+        dynamics_id=problem.dynamics.dynamics_id,
         policy_id="local-affine-initial-profile",
     )
     plan = plan_ilq_feedback_game(problem, scaling, maximum_iterations=2)

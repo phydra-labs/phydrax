@@ -154,7 +154,7 @@ def main():
         raise ValueError(
             "Qualification resolution and steps must be positive and nontrivial."
         )
-    resolutions = tuple(arguments.resolutions.split(","))
+    resolutions = tuple(int(value.strip()) for value in arguments.resolutions.split(","))
     if any(value < 8 for value in resolutions):
         raise ValueError("Convergence resolutions must be at least eight.")
     if arguments.case == "lake":

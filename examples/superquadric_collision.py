@@ -44,7 +44,9 @@ state = dynamics.initialize_state(
 )
 result = dynamics.step(state, jnp.asarray(0.0), jnp.asarray(1.0e-5))
 evaluation = result.evaluation
-print(f"successful={bool(result.successful)}")
+if not bool(result.successful):
+    raise RuntimeError("Superquadric collision step failed")
+print("successful=True")
 print(f"gap={float(evaluation.geometry.gap[0]):.6e}")
 print(f"contact_residual={float(evaluation.geometry.residual[0]):.6e}")
 print(f"normal_force={float(evaluation.contact.normal_force[0, 0]):.6e}")

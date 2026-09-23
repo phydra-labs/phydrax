@@ -16,7 +16,8 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._assignment_core import hungarian_assignment_one
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._identity import callable_payload
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 from ._differential_algebraic import DAEStructure, DifferentialAlgebraicSystem
@@ -179,6 +180,8 @@ class DAEEquationBlock(StrictModule, NonTrainableState):
     residual: DAEEquationResidual
     incidence: tuple[DAEDerivativeIncidence, ...]
     residual_scale: Array
+    residual_semantic_id: str = eqx.field(static=True)
+    residual_numeric_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -187,6 +190,8 @@ class DAEEquationBlock(StrictModule, NonTrainableState):
         incidence: Sequence[DAEDerivativeIncidence],
         /,
         *,
+        residual_semantic_id: str | None = None,
+        residual_numeric_id: str | None = None,
         residual_scale: ArrayLike = 1.0,
     ):
         edges = tuple(incidence)
@@ -199,12 +204,19 @@ class DAEEquationBlock(StrictModule, NonTrainableState):
         identities = tuple((edge.variable_name, edge.derivative_order) for edge in edges)
         if len(set(identities)) != len(identities):
             raise ValueError("DAEEquationBlock incidence edges must be unique.")
+        residual_identity = callable_payload(
+            residual,
+            semantic_id=residual_semantic_id,
+            numeric_id=residual_numeric_id,
+        )
         self.name = _identifier(name, "DAEEquationBlock name")
         self.residual = residual
         self.incidence = edges
         self.residual_scale = _unshaped_positive_scale(
             residual_scale, "DAEEquationBlock residual_scale"
         )
+        self.residual_semantic_id = residual_identity["semantic_content_id"]
+        self.residual_numeric_id = residual_identity["numeric_content_id"]
 
 
 class DAEPort(StrictModule, NonTrainableState):
@@ -280,6 +292,18 @@ class DAEComponent(StrictModule, NonTrainableState):
                 raise ValueError(
                     f"Equation {equation.name!r} references unknown variables {sorted(unknown)}."
                 )
+            variable_by_name = {value.name: value for value in variables_}
+            excessive = tuple(
+                (edge.variable_name, edge.derivative_order)
+                for edge in equation.incidence
+                if edge.derivative_order
+                > variable_by_name[edge.variable_name].maximum_derivative_order
+            )
+            if excessive:
+                raise ValueError(
+                    f"Equation {equation.name!r} derivative incidence exceeds the "
+                    f"declared variable maximum order: {excessive}."
+                )
         for port in ports_:
             unknown = set(port.potentials + port.flows) - variables_set
             if unknown:
@@ -336,10 +360,56 @@ class AcausalDAESource(StrictModule, NonTrainableState):
         self.source_id = canonical_fingerprint(
             {
                 "kind": "acausal-dae-source",
-                "components": sorted(names),
-                "connections": sorted(
-                    tuple(sorted(value.port_ids)) for value in connections_
-                ),
+                "components": [
+                    {
+                        "name": component.name,
+                        "variables": [
+                            {
+                                "name": variable.name,
+                                "shape": list(variable.shape),
+                                "maximum_derivative_order": variable.maximum_derivative_order,
+                                "scales": array_tree_fingerprint(
+                                    {
+                                        "state": variable.state_scale,
+                                        "rate": variable.rate_scale,
+                                    }
+                                ),
+                            }
+                            for variable in component.variables
+                        ],
+                        "equations": [
+                            {
+                                "name": equation.name,
+                                "incidence": [
+                                    [edge.variable_name, edge.derivative_order]
+                                    for edge in equation.incidence
+                                ],
+                                "residual_semantic_id": equation.residual_semantic_id,
+                                "residual_numeric_id": equation.residual_numeric_id,
+                                "residual_scale": array_tree_fingerprint(
+                                    equation.residual_scale
+                                ),
+                            }
+                            for equation in component.equations
+                        ],
+                        "ports": [
+                            {
+                                "name": port.name,
+                                "potentials": list(port.potentials),
+                                "flows": list(port.flows),
+                            }
+                            for port in component.ports
+                        ],
+                    }
+                    for component in components_
+                ],
+                "connections": [
+                    {
+                        "port_ids": list(connection.port_ids),
+                        "orientations": list(connection.orientations),
+                    }
+                    for connection in connections_
+                ],
                 "input_layout": (
                     None if input_layout is None else input_layout.layout_id
                 ),
@@ -360,7 +430,7 @@ class DAEStructuralPolicy(StrictModule, NonTrainableState):
         maximum_tears: int,
         /,
         *,
-        tearing: DAETearingPolicy = "automatic",
+        tearing: DAETearingPolicy = "none",
         declared_tears: Sequence[str] = (),
     ):
         if any(
@@ -1156,6 +1226,8 @@ def compile_acausal_dae(
             f"{analysis.unmatched_equations}, unmatched variables="
             f"{analysis.unmatched_variables}."
         )
+    if analysis.selected_tears:
+        raise ValueError("DAE tearing is not executable; compile with tearing='none'.")
     assembly = _assemble(source)
     sample_inputs = _sample_inputs(source, inputs)
     execution_variables = tuple(

@@ -14,9 +14,21 @@ import numpy as np
 from jaxtyping import Array, Key
 
 from .._atlas import BoundaryAtlas
-from .._capabilities import ClosestPointProvider, GeometryCapability
+from .._capabilities import (
+    ClosestPointProvider,
+    ContactCurvatureProvider,
+    GeometryCapability,
+    SeamDiagnosticsProvider,
+    SupportMapProvider,
+)
 from .._certificate import FieldCertificate, sharp_union_certificate
-from .._contracts import ClosestPointResult, GeometryKernel, GeometryKind, GeometrySource
+from .._contracts import (
+    ClosestPointResult,
+    ContactCurvatureResult,
+    GeometryKernel,
+    GeometryKind,
+    GeometrySource,
+)
 from .._cubature import CubatureAtlas, CubatureComponent
 from .._sampling import (
     bounded_rejection_sample,
@@ -151,6 +163,26 @@ class _TranslationKernel(GeometryKernel):
             ),
             exact_to_physical=result.exact_to_physical,
         )
+
+    def contact_curvature(self, state: DesignState, points: Array, /):
+        if not isinstance(self.child, ContactCurvatureProvider):
+            raise TypeError("Translated child lacks a contact-curvature provider.")
+        result = self.child.contact_curvature(
+            state, jnp.asarray(points) - self._offset(state)
+        )
+        if not isinstance(result, ContactCurvatureResult):
+            raise TypeError("Child contact-curvature query returned an invalid result.")
+        return result
+
+    def support_map(self, state: DesignState, directions: Array, /) -> Array:
+        if not isinstance(self.child, SupportMapProvider):
+            raise TypeError("Translated child lacks a support-map provider.")
+        return self.child.support_map(state, directions) + self._offset(state)
+
+    def seam_residual(self, state: DesignState, /) -> Array:
+        if not isinstance(self.child, SeamDiagnosticsProvider):
+            raise TypeError("Translated child lacks a seam-diagnostics provider.")
+        return self.child.seam_residual(state)
 
     def bounds(self, state: DesignState, /) -> Array:
         return self.child.bounds(state) + self._offset(state)

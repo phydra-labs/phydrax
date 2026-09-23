@@ -330,6 +330,16 @@ def finite_time_lyapunov_spectrum(
         raise TypeError("evolution must be an AbstractDifferentiableEvolution.")
     if not isinstance(grid, (TimeGrid, IterationGrid)):
         raise TypeError("grid must be a TimeGrid or IterationGrid.")
+    layout = evolution.state_layout
+    if (
+        not layout.geometry.trivial
+        or layout.size != layout.local_size
+        or layout.size != layout.tangent_size
+    ):
+        raise ValueError(
+            "Lyapunov spectrum requires a trivial geometry with identical "
+            "point, local, and tangent dimensions."
+        )
     cadence = int(qr_interval)
     burn = int(burn_in)
     accumulation = (
@@ -337,8 +347,8 @@ def finite_time_lyapunov_spectrum(
     )
     _schedule(cadence, burn, accumulation)
     provenance = _provenance(evolution, grid)
-    state_shape = evolution.state_layout.shape
-    dimension = evolution.state_layout.size
+    state_shape = layout.shape
+    dimension = layout.size
 
     if checkpoint is None:
         if initial_state is None:

@@ -277,6 +277,20 @@ def test_checkpoint_resume_replays_fixed_steps_deterministically():
 
     assert jnp.array_equal(full.means, resumed.means)
     assert jnp.array_equal(full.standard_deviations, resumed.standard_deviations)
+    incompatible_problem = _exponential_problem(
+        rate=0.9,
+        t0=0.5,
+        t1=1.0,
+        initial=first.means[-1],
+    )
+    with pytest.raises(ValueError, match="does not belong"):
+        phx.solver.solve_probabilistic_ode(
+            incompatible_problem,
+            save_times=jnp.asarray([1.0]),
+            method=method,
+            step_size=0.05,
+            checkpoint=first.checkpoint,
+        )
     assert jnp.array_equal(full.diffusion_scale, resumed.diffusion_scale)
 
 

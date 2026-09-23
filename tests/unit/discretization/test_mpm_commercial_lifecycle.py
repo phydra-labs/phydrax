@@ -113,3 +113,28 @@ def test_runtime_lifecycle_mass_and_activity_are_authoritative():
         detail.accepted_state.lifecycle_state.particle_ids,
         lifecycle.particle_ids,
     )
+
+
+def test_cpic_coverage_ignores_runtime_inactive_particles():
+    grid = phx.discretization.TensorGridPlan(
+        (phx.discretization.UniformAxisSpec(8, periodic=True, endpoint=False),),
+        axis_names=("x",),
+    ).prepare(jnp.asarray(((0.0,), (1.0,))))
+    particles = phx.discretization.ParticleSetPlan(
+        jnp.arange(2),
+        jnp.ones((2,)),
+        ambient_dimension=1,
+    ).prepare()
+    splat = phx.discretization.ParticleGridSplatPlan(grid).prepare(particles)
+    routes = splat.build(
+        jnp.asarray(((0.25,), (0.75,))),
+        active_mask=jnp.asarray((True, False)),
+    )
+    compatibility = phx.discretization.CPICFracturePlan(2).build(
+        routes,
+        jnp.asarray((0, 0)),
+        jnp.zeros((routes.stencil.source_size,), dtype=jnp.int32),
+        0,
+    )
+    assert bool(compatibility.successful)
+    assert not bool(jnp.any(compatibility.compatible[1]))

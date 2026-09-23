@@ -117,6 +117,10 @@ def main() -> None:
         raise ValueError(
             "Cells, steps and repeats must be positive; warmup must be nonnegative."
         )
+    modes = {
+        mode: _measure(args.cells, args.steps, mode, args.warmup, args.repeats)
+        for mode in args.modes
+    }
     payload = {
         "environment": capture_environment().to_dict(),
         "configuration": {
@@ -127,16 +131,22 @@ def main() -> None:
             "warmup": args.warmup,
             "repeats": args.repeats,
         },
-        "modes": {
-            mode: _measure(args.cells, args.steps, mode, args.warmup, args.repeats)
-            for mode in args.modes
-        },
+        "modes": modes,
+        "passed": all(
+            value["all_steps_successful"]
+            and value["all_event_sensitivities_valid"]
+            for value in modes.values()
+        ),
     }
-    encoded = json.dumps(payload, indent=2)
+    encoded = json.dumps(payload, allow_nan=False, indent=2)
     if args.output is None:
         print(encoded)
     else:
-        args.output.write_text(encoded + "\n")
+        from benchmarks._io import write_json_atomic
+
+        write_json_atomic(args.output, payload)
+    if not payload["passed"]:
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

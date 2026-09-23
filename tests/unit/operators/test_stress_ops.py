@@ -101,6 +101,31 @@ def test_maxwell_stress_E_only():
     assert jnp.allclose(T0, jnp.array([[0.5 * eps, 0.0], [0.0, -0.5 * eps]]))
 
 
+def test_maxwell_stress_broadcasts_material_fields_over_matrix_axes():
+    geom = phx.domain.GeometryDomain(
+        phx.geometry.Square(
+            center=(0.0, 0.0),
+            side=2.0,
+            feature_id="maxwell-stress-grid",
+        ).compile()
+    )
+    electric = geom.Function("x")(lambda x: jnp.asarray([1.0 + x[0], -1.0 + x[1]]))
+    epsilon = geom.Function("x")(lambda x: 2.0 + x[0])
+    stress = maxwell_stress(E=electric, epsilon=epsilon)
+    x_axis = jnp.asarray([-0.5, 0.5])
+    y_axis = jnp.asarray([-0.25, 0.0, 0.25])
+
+    values = stress.func((x_axis, y_axis))
+    x_grid, y_grid = jnp.meshgrid(x_axis, y_axis, indexing="ij")
+    vectors = jnp.stack((1.0 + x_grid, -1.0 + y_grid), axis=-1)
+    dyads = vectors[..., :, None] * vectors[..., None, :]
+    squared = jnp.sum(vectors * vectors, axis=-1)[..., None, None]
+    expected = (2.0 + x_grid)[..., None, None] * (dyads - 0.5 * squared * jnp.eye(2))
+
+    assert values.shape == (2, 3, 2, 2)
+    assert jnp.allclose(values, expected)
+
+
 def test_linear_isotropic_plane_stress_simple():
     geom = phx.domain.GeometryDomain(
         phx.geometry.Square(center=(0.0, 0.0), side=2.0).compile()

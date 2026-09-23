@@ -124,6 +124,7 @@ class ThermalFusionReactionPlan(StrictModule, NonTrainableState):
 
     reactivity: TabulatedMaxwellianReactivity
     product_kinetic_energy_j: Array
+    q_value_j: float = eqx.field(static=True)
     reactant_species_ids: tuple[str, str] = eqx.field(static=True)
     product_species_ids: tuple[str, str] = eqx.field(static=True)
     identical_reactants: bool = eqx.field(static=True)
@@ -145,6 +146,8 @@ class ThermalFusionReactionPlan(StrictModule, NonTrainableState):
             raise TypeError("species must be NuclearSpeciesTable.")
         if reactivity.channel_id != channel.channel_id:
             raise ValueError("Reactivity and reaction channel identities disagree.")
+        if channel.mass_table_id != species.table_id:
+            raise ValueError("Fusion channel and species mass-table identities disagree.")
         if (
             len(channel.reactants) != 2
             or len(channel.products) != 2
@@ -157,18 +160,36 @@ class ThermalFusionReactionPlan(StrictModule, NonTrainableState):
             )
         if channel.q_value_j <= 0.0:
             raise ValueError("Thermal fusion branch requires positive released energy.")
-        product_masses = jnp.asarray(
+        for participant in (*channel.reactants, *channel.products):
+            species.index(participant.species)
+        product_masses = np.asarray(
             [
                 species.rest_masses_kg[species.index(item.species)]
                 for item in channel.products
-            ]
+            ],
+            dtype=np.float64,
         )
-        total_product_mass = jnp.sum(product_masses)
-        kinetic = channel.q_value_j * product_masses[::-1] / total_product_mass
+        if np.any(~np.isfinite(product_masses)) or np.any(product_masses <= 0.0):
+            raise ValueError(
+                "Thermal two-body fusion requires finite positive product rest masses."
+            )
+        total_product_mass = float(np.sum(product_masses))
+        kinetic_host = channel.q_value_j * product_masses[::-1] / total_product_mass
+        if not np.isclose(
+            np.sum(kinetic_host),
+            channel.q_value_j,
+            rtol=0.0,
+            atol=512.0 * np.finfo(np.float64).eps * max(1.0, channel.q_value_j),
+        ):
+            raise ValueError(
+                "Fusion product kinematics do not close the channel Q value."
+            )
+        kinetic = jnp.asarray(kinetic_host)
         reactant_ids = tuple(item.species.species_id for item in channel.reactants)
         product_ids = tuple(item.species.species_id for item in channel.products)
         self.reactivity = reactivity
         self.product_kinetic_energy_j = kinetic
+        self.q_value_j = channel.q_value_j
         self.reactant_species_ids = reactant_ids
         self.product_species_ids = product_ids
         self.identical_reactants = reactant_ids[0] == reactant_ids[1]
@@ -213,7 +234,7 @@ class ThermalFusionReactionPlan(StrictModule, NonTrainableState):
         nonnegative = (
             jnp.all(density_a >= 0.0) & jnp.all(density_b >= 0.0) & jnp.all(rate >= 0.0)
         )
-        energy_residual = total_power - rate * jnp.sum(self.product_kinetic_energy_j)
+        energy_residual = total_power - rate * self.q_value_j
         scale = jnp.maximum(1.0, jnp.max(jnp.abs(total_power)))
         conservation = jnp.all(
             jnp.abs(energy_residual) <= 256.0 * jnp.finfo(rate.dtype).eps * scale
@@ -243,7 +264,7 @@ class ThermalFusionReactionPlan(StrictModule, NonTrainableState):
             evaluation.valid,
             finite,
             conservation,
-            successful,
+            jnp.asarray(False),
             successful,
         )
 

@@ -17,6 +17,7 @@ from phydrax.velocimetry.imaging import DenseDisplacementField2D
 from phydrax.velocimetry.io import (
     read_learned_piv_artifact,
     read_velocimetry_archive,
+    register_learned_piv_model,
     save_learned_piv_artifact,
     write_velocimetry_archive,
 )
@@ -221,3 +222,18 @@ def test_learned_artifact_restores_prediction_identity(tmp_path):
         np.testing.assert_array_equal(actual_valid, expected_valid)
     assert artifact.manifest.training_data_id == "synthetic-split:test"
     assert artifact.manifest.coordinate_convention == "row-down-column-right"
+    assert artifact.manifest.architecture_id == model.architecture_id
+    assert artifact.manifest.plan_id == model.plan.plan_id
+
+
+def test_learned_artifact_registration_refuses_unrelated_types(tmp_path):
+    with pytest.raises(TypeError, match="AbstractDensePIVModel"):
+        register_learned_piv_model("unrelated", dict)
+    with pytest.raises(TypeError, match="AbstractDensePIVModel"):
+        save_learned_piv_artifact(
+            tmp_path / "invalid.phxv",
+            {},
+            normalization={},
+            training_data_id="training",
+            qualification={},
+        )

@@ -77,6 +77,8 @@ for step in range(20):
         jnp.asarray(step * 1.0e-4),
         jnp.asarray(1.0e-4),
     )
+    if not bool(result.successful):
+        raise RuntimeError(f"Particle internal-heating step {step} failed")
     state = result.accepted_state
 
 metrics = batch.mesh.metrics(state.batches[0].outer_scale)
@@ -86,6 +88,6 @@ final = thermodynamics.state(
     metrics.cell_measures,
     state.batches[0].porosity,
 )
-print(f"successful={bool(result.successful)}")
+print("successful=True")
 print(f"surface_temperature={float(final.temperature[0, -1]):.6f}")
 print(f"energy_residual={float(result.replay.internal_energy_residual):.6e}")

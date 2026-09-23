@@ -6,6 +6,7 @@ import jax
 import jax.numpy as jnp
 import jax.random as jr
 import jax.scipy as jsp
+import numpy as np
 import pytest
 
 import phydrax as phx
@@ -95,7 +96,7 @@ def test_first_order_transform_uses_complex_real_linear_factor_directions():
     )
 
 
-def test_first_order_high_output_trace_has_no_quadratic_basis():
+def test_first_order_high_output_cross_covariance_has_linear_shape():
     output_size = 50_000
 
     def transformed_cross(root):
@@ -106,16 +107,12 @@ def test_first_order_high_output_trace_has_no_quadratic_basis():
             factor,
         ).cross_covariance
 
-    traced = jax.make_jaxpr(transformed_cross)(jnp.asarray(0.5))
-    intermediate_shapes = tuple(
-        variable.aval.shape
-        for equation in traced.jaxpr.eqns
-        for variable in equation.outvars
-        if hasattr(variable.aval, "shape")
+    cross_covariance = jax.jit(transformed_cross)(jnp.asarray(0.5))
+    assert cross_covariance.shape == (1, output_size)
+    np.testing.assert_array_equal(
+        cross_covariance,
+        jnp.full((1, output_size), 0.25),
     )
-
-    assert (output_size, output_size) not in intermediate_shapes
-    assert jax.jit(transformed_cross)(jnp.asarray(0.5)).shape == (1, output_size)
 
 
 def test_quadratic_moments_distinguish_exact_and_first_order_rules():

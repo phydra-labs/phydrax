@@ -143,6 +143,7 @@ class CompartmentComplex:
                 "interfaces must contain CompartmentInterfaceDefinition values."
             )
         interface_ids = [value.interface_id for value in self.interfaces]
+        interface_pairs = tuple(value.ordered_pair for value in self.interfaces)
         expected = tuple(
             sorted(value.ordered_pair for value in self.interfaces if value.required)
         )
@@ -152,7 +153,9 @@ class CompartmentComplex:
             raise ValueError(
                 "Interface identifiers and required compartment pairs must be unique."
             )
-        if any(first not in known or second not in known for first, second in expected):
+        if any(
+            first not in known or second not in known for first, second in interface_pairs
+        ):
             raise ValueError("Interface endpoints must identify declared compartments.")
         measures = tuple(
             sorted((str(name), float(value)) for name, value in self.compartment_measures)

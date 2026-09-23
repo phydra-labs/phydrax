@@ -562,7 +562,7 @@ def _evaluate_held_control(
         parameters=values,
         sampled_loss=sampled_loss,
         feasibility=feasibility,
-        result_id=f"control-result:{problem.problem_id}",
+        result_namespace=f"control-result:{problem.problem_id}:multiple-shooting",
         method_id=trajectory.method_id,
     )
 

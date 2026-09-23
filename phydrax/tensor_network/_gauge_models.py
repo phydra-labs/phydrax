@@ -134,6 +134,8 @@ class GaugeProjectorMPOEvidence(StrictModule):
     hermiticity_residual: Array
     finite: Array
     valid: Array
+    structurally_proven: bool = eqx.field(static=True)
+    verification_method: str = eqx.field(static=True)
     fusion_path_count: int = eqx.field(static=True)
     maximum_bond_dimension: int = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
@@ -376,17 +378,25 @@ def build_gauge_projector_mpo(
         identity_residual = jnp.linalg.norm(dense @ dense - dense)
         hermiticity = jnp.linalg.norm(dense - jnp.conj(dense.T))
         finite = jnp.all(jnp.isfinite(dense))
+        structurally_proven = False
+        verification_method = "dense"
     else:
+        # Each physical configuration follows at most one deterministic charge-flow
+        # path and every tensor entry is real 0/1, proving a diagonal Hermitian
+        # projector without materializing its dense matrix.
         identity_residual = jnp.asarray(0.0)
         hermiticity = jnp.asarray(0.0)
         finite = jnp.all(
             jnp.stack(tuple(jnp.all(jnp.isfinite(tensor)) for tensor in tensors))
         )
+        structurally_proven = True
+        verification_method = "deterministic-charge-flow"
     evidence_id = canonical_fingerprint(
         {
             "kind": "gauge-projector-mpo-evidence",
             "fusion_basis": fusion_basis.basis_id,
             "operator_structure": operator.structure_id,
+            "verification_method": verification_method,
         }
     )
     evidence = GaugeProjectorMPOEvidence(
@@ -394,6 +404,8 @@ def build_gauge_projector_mpo(
         hermiticity,
         finite,
         finite & (identity_residual <= 1e-10) & (hermiticity <= 1e-10),
+        structurally_proven,
+        verification_method,
         fusion_basis.configuration_count,
         max((1,) + operator.bond_dimensions),
         evidence_id,

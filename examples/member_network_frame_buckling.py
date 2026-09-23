@@ -46,10 +46,12 @@ local = mn.local_euler_buckling(
     jnp.asarray((2.0,)),
     result.state.assembly.switching_margin * 0.0 + 1.0,
 )
+if not bool(result.successful & stability.modal_valid & jnp.all(local.valid)):
+    raise RuntimeError("Frame equilibrium, modal stability, or buckling evidence failed")
 print("status", int(result.status), result.message)
 print("tip", result.state.kinematics.positions[1])
 print("bending moment", result.state.assembly.bending_moment[0])
 print("minimum tangent eigenvalue", stability.minimum_eigenvalue)
 print("first angular frequency", stability.angular_frequencies[0])
-print("modal evidence valid", bool(stability.modal_valid))
+print("modal evidence valid", True)
 print("Euler critical load", local.critical_load[0])

@@ -152,10 +152,16 @@ def private_api_contract(symbols: Sequence[str], /) -> tuple[dict[str, object], 
             value = getattr(value, component)
         canonical_module = _identifier(value.__module__, "private API module")
         canonical_name = _identifier(value.__qualname__, "private API qualified name")
+        module = importlib.import_module(canonical_module)
+        module_path = Path(str(module.__file__)).resolve()
+        module_sha256 = hashlib.sha256(module_path.read_bytes()).hexdigest()
         records.append(
             _identified(
                 "private-api-contract",
-                {"symbol": f"{canonical_module}:{canonical_name}"},
+                {
+                    "symbol": f"{canonical_module}:{canonical_name}",
+                    "module_sha256": module_sha256,
+                },
                 "api_id",
             )
         )
@@ -803,7 +809,7 @@ def verify_candidate_artifact(record: Mapping[str, object], /) -> None:
     evidence_values = _mapping(
         value.get("qualification_evidence"), "qualification_evidence"
     )
-    if tuple(gates) != GATE_CATEGORIES or tuple(evidence_values) != GATE_CATEGORIES:
+    if set(gates) != set(GATE_CATEGORIES) or set(evidence_values) != set(GATE_CATEGORIES):
         raise ValueError(
             "Candidate must separate all four qualification gate categories."
         )

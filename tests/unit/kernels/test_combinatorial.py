@@ -124,3 +124,16 @@ def test_hamming_kernel_rejects_invalid_symbols_and_level_cutoffs():
             kernel.matrix(invalid, invalid)
     with pytest.raises(ValueError, match="one Hamming point"):
         kernel.pairwise(jnp.asarray([[0, 0, 0], [1, 1, 1]]), jnp.zeros((3,)))
+
+
+def test_hamming_kernel_rejects_complex_coordinates_before_integer_projection():
+    kernel = phx.kernels.HammingSpectralKernel(
+        2,
+        3,
+        phx.kernels.HeatSpectralMultiplier(0.2),
+    )
+    with pytest.raises(TypeError, match="real coordinates"):
+        kernel.matrix(
+            jnp.asarray([[0.0 + 1.0j, 1.0 + 0.0j]]),
+            jnp.asarray([[0, 1]]),
+        )

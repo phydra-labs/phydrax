@@ -24,10 +24,15 @@ class MaterialHistory(StrictModule, NonTrainableState):
         if (
             t.ndim != 1
             or t.size < 1
+            or not np.all(np.isfinite(t))
+            or not np.all(np.isfinite(T))
+            or not np.all(np.isfinite(p))
             or np.any(np.diff(t) <= 0)
             or T.shape[0] != t.size
             or p.shape[0] != t.size
             or np.any(T <= 0)
+            or p.ndim < 2
+            or p.shape[-1] == 0
             or np.any(p < 0)
             or not np.allclose(p.sum(axis=-1), 1)
         ):

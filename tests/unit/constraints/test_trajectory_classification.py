@@ -446,6 +446,42 @@ def test_physical_measure_requires_sum_and_preserves_trajectory_mass():
     assert jnp.allclose(jnp.sum(batch.geometry_weight), 3.0)
 
 
+def test_observation_uniform_grid_uses_global_inverse_proposal_weights():
+    domain = TrajectoryDatasetDomain(
+        jnp.asarray([[0.0], [1.0], [2.0]]),
+        jnp.asarray([2, 5, 3]),
+        dt=0.5,
+        measure="time_integral_sum",
+    )
+    term = RaggedTimeSeriesClassificationTerm(
+        "classify",
+        domain.component(),
+        jnp.zeros((domain.size, domain.max_length), dtype=jnp.bool_),
+        TargetSchema("binary", class_labels=(0, 1)),
+        sampling=phx.domain.PointSampling(
+            (4, 6),
+            layout=SampleLayout((("data",), ("t",))),
+            design="uniform",
+        ),
+        selection="observation_uniform",
+        measure="physical",
+        reduction="sum",
+    )
+
+    batch = term.sample(key=jr.key(18))
+    case_grid = jnp.broadcast_to(batch.case_indices[:, None], batch.time_indices.shape)
+    lengths = domain.lengths[case_grid]
+    terminal = lengths - 1
+    widths = jnp.where(
+        (batch.time_indices == 0) | (batch.time_indices == terminal),
+        0.5 * domain.dt,
+        domain.dt,
+    )
+    expected = float(term.observation_count) * widths / float(batch.times.size)
+
+    assert jnp.allclose(batch.geometry_weight, expected)
+
+
 def test_classification_and_physics_terms_share_one_trajectory_function_mapping():
     domain = _regular_domain()
     classification = _binary_case_term(domain)

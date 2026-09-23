@@ -68,7 +68,9 @@
 
 `FiniteElementMeshMotionPlan` consumes a fixed-route boundary coordinate provider,
 solves a graph-harmonic interior extension, and returns `FiniteElementMeshRealization`.
-Its runtime preserves the prepared topology and coordinate layout. Signed-Jacobian,
+`realize(design, numeric_version=...)` requires a nonempty caller-owned identifier for
+the proposed numeric coordinate state. That version participates in runtime identity
+without changing prepared topology or coordinate layout. Signed-Jacobian,
 displacement, boundary-provider, and linear-solve evidence determine acceptance;
 rejected proposals expose the base runtime and remain explicitly rejected.
 

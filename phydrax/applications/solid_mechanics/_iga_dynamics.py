@@ -67,11 +67,16 @@ class IGADynamicsPlan(StrictModule, NonTrainableState):
         self.lifecycle_state_id = _identifier(lifecycle_state_id, "lifecycle_state_id")
         self.temporal_method = temporal
         self.profile_id = profile
+        formulation_id = (
+            formulation.formulation_id
+            if isinstance(formulation, IGASolidFormulation)
+            else formulation.plan_id
+        )
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "iga-dynamics-plan",
                 "profile": profile,
-                "formulation": formulation.plan_id,
+                "formulation": formulation_id,
                 "method": method.method_id,
                 "lifecycle_plan": self.lifecycle_plan_id,
                 "lifecycle_state": self.lifecycle_state_id,

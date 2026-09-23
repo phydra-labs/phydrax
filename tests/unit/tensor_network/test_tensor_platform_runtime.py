@@ -178,6 +178,20 @@ def test_pickle_free_archive_round_trips_explicit_supported_kinds(tmp_path) -> N
         )
 
 
+def test_archive_rejects_zero_payload_before_publication(tmp_path) -> None:
+    path = tmp_path / "empty.phx"
+    with pytest.raises(ValueError, match="nonzero payload"):
+        write_tensor_network_archive(
+            path,
+            {"empty": jnp.empty((0,), dtype=jnp.float32)},
+            kind=TensorNetworkArchiveKind.ARRAY_PYTREE,
+            source_id="empty-source",
+            structure_id="empty-structure",
+            precision_policy_id="empty-policy",
+        )
+    assert not path.exists()
+
+
 def test_resource_refusal_is_explicit_and_typed() -> None:
     state = _mps()
     support = _support(state)

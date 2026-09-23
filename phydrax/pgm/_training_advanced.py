@@ -100,7 +100,12 @@ def bethe_negative_log_likelihood(
     if states.ndim == 1:
         states = states[None, :]
     scores = factor_graph_log_score(graph, states)
-    objective = inference.log_normalizer - jnp.mean(scores)
+    log_normalizer = eqx.error_if(
+        inference.log_normalizer,
+        ~inference.successful | ~inference.converged,
+        "Bethe likelihood requires converged successful inference.",
+    )
+    objective = log_normalizer - jnp.mean(scores)
     return objective, FactorGraphTrainingDiagnostics(
         objective=objective,
         positive_mean_log_score=jnp.mean(scores),

@@ -114,6 +114,21 @@ def adaptive_interval_callable(
             )
         return values
 
+    discovery_static_cost = (
+        0
+        if plan.discovery is None
+        else plan.discovery.pilot_count
+        + plan.discovery.refinement_rounds * plan.discovery.max_candidates
+    )
+    discovery_preflight_cost = 1 + discovery_static_cost
+    if (
+        plan.max_evaluations is not None
+        and plan.max_evaluations < discovery_preflight_cost
+    ):
+        raise ValueError(
+            "max_evaluations cannot fund breakpoint discovery and its output prototype."
+        )
+
     prototype = evaluate_points(jnp.asarray([0.5 * (bounds_[0] + bounds_[1])]))
     output_shape = prototype.shape[1:]
     discovery = None
@@ -150,12 +165,6 @@ def adaptive_interval_callable(
     )
 
     high, low, local_cost = _local_rule(plan)
-    discovery_static_cost = (
-        0
-        if plan.discovery is None
-        else plan.discovery.pilot_count
-        + plan.discovery.refinement_rounds * plan.discovery.max_candidates
-    )
     initial_cost = initial_count * local_cost + 1 + discovery_static_cost
     if plan.max_evaluations is not None and plan.max_evaluations < initial_cost:
         bounds_valid = (bounds_[1] > bounds_[0]) & jnp.all(jnp.diff(endpoints) >= 0.0)

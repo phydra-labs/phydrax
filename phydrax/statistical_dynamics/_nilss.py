@@ -329,7 +329,7 @@ class PreparedNILSS(StrictModule, NonTrainableState):
                 "kind": "prepared-nilss",
                 "plan": plan.plan_id,
                 "problem": problem.problem_id,
-                "trajectory": trajectory.evolution_id,
+                "trajectory": trajectory.trajectory_id,
                 "args": array_tree_fingerprint(args),
                 "direction": array_tree_fingerprint(direction),
                 "initial_basis": array_tree_fingerprint(initial_basis),

@@ -76,22 +76,6 @@ def _workflow():
         observer_id="observer",
         orientation_id="future-right-handed",
     )
-    runtime = DarkSectorEpochPlan(
-        packet_capacity=1,
-        event_capacity=4,
-        product_capacity=8,
-        radiation_capacity=1,
-        work_capacity=8,
-        frontier_capacity=8,
-        packet_width=1,
-        event_width=8,
-        product_width=4,
-        radiation_width=1,
-        work_width=8,
-        frontier_width=8,
-        species_revision_id="9" * 64,
-        topology_revision_id="a" * 64,
-    )
     catalog = ParticleCatalogReference(
         source_id="workflow-species",
         provider_release="test",
@@ -105,6 +89,22 @@ def _workflow():
         catalog=catalog,
         energy_unit=units.energy_unit,
         charge_unit=COULOMB,
+    )
+    runtime = DarkSectorEpochPlan(
+        packet_capacity=1,
+        event_capacity=4,
+        product_capacity=8,
+        radiation_capacity=1,
+        work_capacity=8,
+        frontier_capacity=8,
+        packet_width=1,
+        event_width=8,
+        product_width=4,
+        radiation_width=1,
+        work_width=8,
+        frontier_width=8,
+        species_revision_id=species.table_id,
+        topology_revision_id="a" * 64,
     )
     shower = DarkShowerEpochPlan(
         runtime,
@@ -205,7 +205,10 @@ def _workflow():
 def test_dark_shower_color_chain_fragments_with_end_to_end_conservation_and_identity():
     shower, string, hard = _workflow()
     showered = evolve_dark_shower_epoch(
-        shower, hard, jnp.asarray([[[0.0, 0.6, 0.4, 0.0]]])
+        shower,
+        hard,
+        jnp.asarray([[[0.0, 0.6, 0.4, 0.0]]]),
+        draw_id="workflow-shower-draw",
     )
     assert bool(showered.accepted[0, 0])
     hadrons = fragment_dark_string_chain(
@@ -216,6 +219,7 @@ def test_dark_shower_color_chain_fragments_with_end_to_end_conservation_and_iden
         showered.frontier[0],
         jnp.asarray((0.2, 0.4, 0.8)),
         parent_entity_id="showered-color-singlet",
+        draw_id="workflow-hadronization-draw",
     )
     assert bool(hadrons.successful)
     initial_total = hard.momenta[0, 0] + hard.momenta[0, 1]

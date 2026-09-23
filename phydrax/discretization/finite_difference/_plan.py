@@ -85,6 +85,16 @@ class FiniteDifferencePlan(AbstractDiscretizationPlan):
         names = tuple(request.name for request in requests_)
         if len(set(names)) != len(names):
             raise ValueError("Derivative request names must be unique.")
+        boundary_by_axis: dict[str, str] = {}
+        for request in requests_:
+            previous_boundary = boundary_by_axis.setdefault(
+                request.axis,
+                request.boundary,
+            )
+            if previous_boundary != request.boundary:
+                raise ValueError(
+                    "Derivative requests on one axis must share boundary semantics."
+                )
         field = str(field_name)
         if not field:
             raise ValueError("field_name must be non-empty.")

@@ -627,19 +627,6 @@ def query_host_aabb_overlaps(
     source_upper = upper[source_order_np]
     sgids = sgids[source_order_np]
     slids = slids[source_order_np]
-    query_identity = _fingerprint(
-        "host-aabb-overlap-query",
-        source_lower,
-        source_upper,
-        sgids,
-        slids,
-        absolute_tolerance=atol,
-        relative_tolerance=rtol,
-        limits=resolved_limits,
-        extra=(bvh.content_identity,),
-    )
-
-    inherited_limits = (bvh.max_candidates, bvh.max_memory_bytes, bvh.max_time_seconds)
     effective_candidates = (
         resolved_limits[0] if resolved_limits[0] is not None else bvh.max_candidates
     )
@@ -649,19 +636,18 @@ def query_host_aabb_overlaps(
     effective_time = (
         resolved_limits[2] if resolved_limits[2] is not None else bvh.max_time_seconds
     )
-    if inherited_limits != (None, None, None):
-        query_identity = _fingerprint(
-            "host-aabb-overlap-query",
-            source_lower,
-            source_upper,
-            sgids,
-            slids,
-            absolute_tolerance=atol,
-            relative_tolerance=rtol,
-            include_zero_measure=include_zero_measure,
-            limits=(effective_candidates, effective_memory, effective_time),
-            extra=(bvh.content_identity,),
-        )
+    query_identity = _fingerprint(
+        "host-aabb-overlap-query",
+        source_lower,
+        source_upper,
+        sgids,
+        slids,
+        absolute_tolerance=atol,
+        relative_tolerance=rtol,
+        include_zero_measure=include_zero_measure,
+        limits=(effective_candidates, effective_memory, effective_time),
+        extra=(bvh.content_identity,),
+    )
 
     records: list[tuple[Any, Any, Any, Any]] = []
     checks = 0

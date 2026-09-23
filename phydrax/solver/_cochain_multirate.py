@@ -45,13 +45,15 @@ class CochainRatePartition(StrictModule, NonTrainableState):
                 lower = np.asarray(incidence.relation.source_indices)[valid]
                 upper = np.asarray(incidence.relation.target_indices)[valid]
                 required = np.maximum(values[degree][lower], values[degree + 1][upper])
-                lower_new = np.maximum(values[degree][lower], required - 1)
-                upper_new = np.maximum(values[degree + 1][upper], required - 1)
-                if np.any(lower_new != values[degree][lower]) or np.any(
-                    upper_new != values[degree + 1][upper]
+                lower_values = values[degree].copy()
+                upper_values = values[degree + 1].copy()
+                np.maximum.at(lower_values, lower, required - 1)
+                np.maximum.at(upper_values, upper, required - 1)
+                if not np.array_equal(lower_values, values[degree]) or not np.array_equal(
+                    upper_values, values[degree + 1]
                 ):
-                    values[degree][lower] = lower_new
-                    values[degree + 1][upper] = upper_new
+                    values[degree] = lower_values
+                    values[degree + 1] = upper_values
                     changed = True
         maximum = max(int(np.max(value, initial=0)) for value in values)
         self.categories = tuple(jnp.asarray(value) for value in values)

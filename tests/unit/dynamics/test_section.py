@@ -4,6 +4,7 @@
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -102,3 +103,28 @@ def test_callable_sections_preserve_case_axes_and_report_overflow():
     np.testing.assert_array_equal(np.asarray(crossings.count), [2, 2])
     np.testing.assert_array_equal(np.asarray(crossings.overflow), [True, True])
     assert bool(jnp.all(jnp.abs(crossings.section_values) < 1e-9))
+
+
+def test_discrete_evolution_refinement_is_rejected_before_bisection():
+    layout = phx.dynamics.StateLayout((1,))
+    evolution = phx.dynamics.DiscreteEvolution(
+        phx.dynamics.DiscreteSystem(
+            lambda context, state, args: -state,
+            state_layout=layout,
+            system_id="section-discrete-map",
+        )
+    )
+    grid = phx.dynamics.IterationGrid.from_steps(2, iteration_id="section-discrete-grid")
+    trajectory = phx.dynamics.evolve(evolution, jnp.asarray([1.0]), grid)
+    section = phx.dynamics.analysis.AffineSection(
+        jnp.asarray([1.0]),
+        state_layout=layout,
+    )
+
+    with pytest.raises(ValueError, match="fixed-step DiscreteEvolution"):
+        phx.dynamics.analysis.find_section_crossings(
+            trajectory,
+            section,
+            refinement="evolution",
+            evolution=evolution,
+        )

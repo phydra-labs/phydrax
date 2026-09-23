@@ -80,6 +80,31 @@ class PrecedenceSpace(StrictModule, NonTrainableState):
                 raise ValueError("Every predecessor must identify a declared operation.")
             if operation.operation_id in operation.predecessors:
                 raise ValueError("An operation may not precede itself.")
+        simultaneous_groups: dict[str, list[PrecedenceOperation]] = {}
+        for operation in operations_:
+            if operation.simultaneous_group is not None:
+                simultaneous_groups.setdefault(operation.simultaneous_group, []).append(
+                    operation
+                )
+        for group in simultaneous_groups.values():
+            members = {operation.operation_id for operation in group}
+            if any(members.intersection(operation.predecessors) for operation in group):
+                raise ValueError(
+                    "Simultaneous operations may not depend on another group member."
+                )
+            if len({operation.mandatory for operation in group}) != 1:
+                raise ValueError(
+                    "A simultaneous group must have one shared mandatory policy."
+                )
+            exclusive = [
+                operation.exclusive_group
+                for operation in group
+                if operation.exclusive_group is not None
+            ]
+            if len(exclusive) != len(set(exclusive)):
+                raise ValueError(
+                    "Simultaneous operations may not share an exclusive group."
+                )
         limits = tuple(
             sorted(
                 (str(key), int(value)) for key, value in (resource_limits or {}).items()
@@ -115,37 +140,94 @@ class PrecedenceSpace(StrictModule, NonTrainableState):
             for value in self.operations
             if value.operation_id in completed and value.exclusive_group is not None
         }
+        undecided = tuple(
+            operation
+            for operation in self.operations
+            if operation.operation_id not in completed
+            and operation.operation_id not in skipped
+        )
+        ready = tuple(
+            operation
+            for operation in undecided
+            if set(operation.predecessors).issubset(completed)
+            and operation.exclusive_group not in selected_groups
+        )
+        ready_ids = {operation.operation_id for operation in ready}
+        limits = dict(self.resource_limits)
         available = []
-        for operation in self.operations:
-            if operation.operation_id in completed or operation.operation_id in skipped:
+        for operation in ready:
+            group = (
+                (operation,)
+                if operation.simultaneous_group is None
+                else tuple(
+                    candidate
+                    for candidate in undecided
+                    if candidate.simultaneous_group == operation.simultaneous_group
+                )
+            )
+            if any(candidate.operation_id not in ready_ids for candidate in group):
                 continue
-            if not set(operation.predecessors).issubset(completed):
-                continue
-            if operation.exclusive_group in selected_groups:
-                continue
-            demand = dict(operation.resource_demand)
-            if any(demand.get(name, 0) > limit for name, limit in self.resource_limits):
+            demand: dict[str, int] = {}
+            for candidate in group:
+                for name, value in candidate.resource_demand:
+                    demand[name] = demand.get(name, 0) + value
+            if any(demand.get(name, 0) > limit for name, limit in limits.items()):
                 continue
             available.append(operation)
         return tuple(sorted(available, key=lambda value: value.operation_id))
 
     def branch(self, node: PrecedenceNode, /) -> tuple[PrecedenceNode, ...]:
-        children = [
-            PrecedenceNode(node.completed + (operation.operation_id,), node.skipped)
-            for operation in self.available(node)
-        ]
-        optional = [
-            value
-            for value in self.operations
-            if not value.mandatory
-            and value.operation_id not in node.completed
-            and value.operation_id not in node.skipped
-            and set(value.predecessors).issubset(node.completed)
-        ]
-        children.extend(
-            PrecedenceNode(node.completed, node.skipped + (operation.operation_id,))
-            for operation in optional
-        )
+        available = self.available(node)
+        children = []
+        emitted: set[str] = set()
+        for operation in available:
+            key = (
+                operation.operation_id
+                if operation.simultaneous_group is None
+                else operation.simultaneous_group
+            )
+            if key in emitted:
+                continue
+            emitted.add(key)
+            group = (
+                (operation,)
+                if operation.simultaneous_group is None
+                else tuple(
+                    candidate
+                    for candidate in available
+                    if candidate.simultaneous_group == operation.simultaneous_group
+                )
+            )
+            completed = node.completed + tuple(
+                candidate.operation_id
+                for candidate in sorted(group, key=lambda value: value.operation_id)
+            )
+            children.append(PrecedenceNode(completed, node.skipped))
+        optional = [value for value in available if not value.mandatory]
+        emitted.clear()
+        for operation in optional:
+            key = (
+                operation.operation_id
+                if operation.simultaneous_group is None
+                else operation.simultaneous_group
+            )
+            if key in emitted:
+                continue
+            emitted.add(key)
+            group = (
+                (operation,)
+                if operation.simultaneous_group is None
+                else tuple(
+                    candidate
+                    for candidate in optional
+                    if candidate.simultaneous_group == operation.simultaneous_group
+                )
+            )
+            skipped = node.skipped + tuple(
+                candidate.operation_id
+                for candidate in sorted(group, key=lambda value: value.operation_id)
+            )
+            children.append(PrecedenceNode(node.completed, skipped))
         return tuple(children)
 
     def complete(self, node: PrecedenceNode, /) -> bool:

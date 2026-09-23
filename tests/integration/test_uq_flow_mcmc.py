@@ -44,7 +44,6 @@ def test_flow_nuts_recovers_conjugate_posterior_and_predictive_axes():
         num_global_steps=1,
         history_capacity_per_chain=32,
         flow_layers=2,
-        num_knots=6,
         nn_width=16,
         nn_depth=1,
         max_epochs=8,

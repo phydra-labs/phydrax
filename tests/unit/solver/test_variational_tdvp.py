@@ -106,6 +106,22 @@ def test_imaginary_time_tdvp_decreases_exact_energy():
     assert result.times.shape == (3,)
     assert result.parameter_trajectory.shape == (3, 4)
     assert _exact_energy(result.final_state.model) < _exact_energy(problem.model)
+    resumed = phx.solver.solve_variational_tdvp(
+        problem,
+        phx.solver.VariationalTDVPPolicy(
+            "imaginary-time",
+            num_steps=1,
+            step_size=0.03,
+            draws_per_step=24,
+            transitions_per_draw=2,
+            final_evaluation_draws=16,
+            damping=0.1,
+            final_chain_diagnostics=False,
+        ),
+        state=result.final_state,
+    )
+    assert resumed.completed_steps == 3
+    assert jnp.allclose(resumed.times, jnp.asarray([0.06, 0.09]))
 
 
 @pytest.mark.parametrize("mode", ["real-time", "imaginary-time"])

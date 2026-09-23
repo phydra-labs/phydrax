@@ -14,7 +14,7 @@ import jax.random as jr
 from jaxtyping import Array, ArrayLike, Key
 
 from ..._fingerprint import canonical_fingerprint
-from ..._probability import AbstractProbabilityLaw
+from ..._probability import _leading_shape, AbstractProbabilityLaw
 from ..._strict import StrictModule
 from ...stochastic._path_diffusion import TrajectoryEventLayout
 
@@ -88,7 +88,11 @@ class HybridFlowLaw(StrictModule):
     def log_prob(self, mode: ArrayLike, value: ArrayLike, /) -> Array:
         modes = jnp.asarray(mode, dtype=jnp.int32)
         values = jnp.asarray(value)
-        leading = values.shape[: -len(self.event_shape)]
+        leading = _leading_shape(
+            values.shape,
+            self.event_shape,
+            owner="HybridFlowLaw value",
+        )
         if modes.shape != leading:
             raise ValueError("mode must align value leading sample axes.")
         flat_values = values.reshape((-1,) + self.event_shape)

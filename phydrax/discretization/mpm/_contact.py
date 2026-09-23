@@ -188,7 +188,8 @@ class RigidMPMContactPlan(StrictModule, NonTrainableState):
         relative = velocity_ - wall
         normal_speed = jnp.sum(relative * normal, axis=-1)
         occupied = mass_ > 0.0
-        candidate = occupied & reliable_normal & (distance <= self.contact_band)
+        contact_required = occupied & (distance <= self.contact_band)
+        candidate = contact_required & reliable_normal
         if self.smooth_normal_regularization is None:
             normal_impulse_magnitude = mass_ * jnp.maximum(-normal_speed, 0.0)
         else:
@@ -245,7 +246,7 @@ class RigidMPMContactPlan(StrictModule, NonTrainableState):
         )
         mode = jnp.where(active, jnp.where(sticking, 1, 2), 0).astype(jnp.int32)
         successful = (
-            jnp.all(~candidate | reliable_normal)
+            jnp.all(~contact_required | reliable_normal)
             & jnp.all(jnp.isfinite(next_velocity))
             & jnp.all(jnp.isfinite(total_impulse))
             & jnp.isfinite(work)

@@ -89,11 +89,13 @@ def main() -> None:
         lambda control: runtime.evaluate(runtime.initialize(), control[0]).total_force
     )(result.controls)
     replay_result = replay.evaluate(result.controls, surrogate)
+    if not bool(result.successful & replay_result.accepted):
+        raise RuntimeError("Sampling MPC or causal replay qualification failed")
     payload = {
-        "sampling_mpc_successful": bool(result.successful),
+        "sampling_mpc_successful": True,
         "action": result.action.tolist(),
         "objective": float(result.objective),
-        "causal_replay_accepted": bool(replay_result.accepted),
+        "causal_replay_accepted": True,
         "observation_operator_id": replay_result.observation_operator_id,
         "source_problem_id": replay_result.source_problem_id,
         "maximum_replay_error": float(replay_result.maximum_absolute_error),

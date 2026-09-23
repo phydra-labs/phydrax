@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from numbers import Integral
 
 import jax.numpy as jnp
 import numpy as np
@@ -46,20 +47,48 @@ class SlabSNTransportPlan:
         widths = np.asarray(cell_widths, dtype=np.float64)
         total = np.asarray(total_cross_section, dtype=np.float64)
         scatter = np.asarray(scattering_cross_section, dtype=np.float64)
-        if widths.ndim != 1 or widths.size == 0 or np.any(widths <= 0.0):
-            raise ValueError("Transport cell widths must be a positive vector.")
-        if total.ndim != 2 or total.shape[0] != widths.size or np.any(total <= 0.0):
+        if (
+            widths.ndim != 1
+            or widths.size == 0
+            or np.any(~np.isfinite(widths))
+            or np.any(widths <= 0.0)
+        ):
+            raise ValueError("Transport cell widths must be a finite positive vector.")
+        if (
+            total.ndim != 2
+            or total.shape[0] != widths.size
+            or np.any(~np.isfinite(total))
+            or np.any(total <= 0.0)
+        ):
             raise ValueError(
-                "Total cross sections must have shape (cell, group) and be positive."
+                "Total cross sections must have shape (cell, group) and be finite positive."
             )
         groups = total.shape[1]
-        if scatter.shape != (widths.size, groups, groups) or np.any(scatter < 0.0):
+        if (
+            scatter.shape != (widths.size, groups, groups)
+            or np.any(~np.isfinite(scatter))
+            or np.any(scatter < 0.0)
+        ):
             raise ValueError(
-                "Scattering cross sections must have shape (cell, to, from)."
+                "Scattering cross sections must have finite nonnegative shape (cell, to, from)."
             )
+        tolerance = 512.0 * np.finfo(np.float64).eps * np.maximum(total, 1.0)
+        if np.any(np.sum(scatter, axis=1) > total + tolerance):
+            raise ValueError("Scattering removal cannot exceed total cross section.")
+        if isinstance(ordinates, bool) or not isinstance(ordinates, Integral):
+            raise TypeError("ordinates must be an integer.")
         count = int(ordinates)
         if count < 2 or count % 2:
             raise ValueError("S_N ordinate count must be positive and even.")
+        if (
+            isinstance(maximum_iterations, bool)
+            or not isinstance(maximum_iterations, Integral)
+            or int(maximum_iterations) < 1
+        ):
+            raise ValueError("maximum_iterations must be a positive integer.")
+        relative_tolerance_ = float(relative_tolerance)
+        if not np.isfinite(relative_tolerance_) or relative_tolerance_ <= 0.0:
+            raise ValueError("relative_tolerance must be finite and positive.")
         directions, weights = leggauss(count)
         self.cell_widths = jnp.asarray(widths)
         self.total_cross_section = jnp.asarray(total)
@@ -67,7 +96,7 @@ class SlabSNTransportPlan:
         self.directions = jnp.asarray(directions)
         self.weights = jnp.asarray(weights)
         self.maximum_iterations = int(maximum_iterations)
-        self.relative_tolerance = float(relative_tolerance)
+        self.relative_tolerance = relative_tolerance_
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "slab-sn-transport",
@@ -75,6 +104,8 @@ class SlabSNTransportPlan:
                 "total_cross_section": total.tolist(),
                 "scattering_cross_section": scatter.tolist(),
                 "ordinates": count,
+                "maximum_iterations": self.maximum_iterations,
+                "relative_tolerance": self.relative_tolerance,
             }
         )
 
@@ -117,20 +148,34 @@ class SlabSNTransportPlan:
         left_boundary: ArrayLike | None = None,
         right_boundary: ArrayLike | None = None,
     ) -> SNTransportResult:
-        source = jnp.asarray(external_source)
-        if source.shape != self.total_cross_section.shape:
+        source_host = np.asarray(external_source)
+        if source_host.shape != self.total_cross_section.shape:
             raise ValueError("External source must have shape (cell, group).")
+        if np.any(~np.isfinite(source_host)) or np.any(source_host < 0.0):
+            raise ValueError("External source must be finite and nonnegative.")
+        source = jnp.asarray(source_host)
         groups = source.shape[1]
-        left = (
-            jnp.zeros((groups,), dtype=source.dtype)
+        left_host = (
+            np.zeros((groups,), dtype=source_host.dtype)
             if left_boundary is None
-            else jnp.asarray(left_boundary)
+            else np.asarray(left_boundary)
         )
-        right = (
-            jnp.zeros((groups,), dtype=source.dtype)
+        right_host = (
+            np.zeros((groups,), dtype=source_host.dtype)
             if right_boundary is None
-            else jnp.asarray(right_boundary)
+            else np.asarray(right_boundary)
         )
+        if left_host.shape != (groups,) or right_host.shape != (groups,):
+            raise ValueError("Boundary inflows must have exact shape (group,).")
+        if (
+            np.any(~np.isfinite(left_host))
+            or np.any(left_host < 0.0)
+            or np.any(~np.isfinite(right_host))
+            or np.any(right_host < 0.0)
+        ):
+            raise ValueError("Boundary inflows must be finite and nonnegative.")
+        left = jnp.asarray(left_host)
+        right = jnp.asarray(right_host)
         scalar = jnp.ones_like(source)
         angular = jnp.zeros((self.directions.size, *source.shape), dtype=source.dtype)
         residual = jnp.asarray(jnp.inf)
@@ -165,13 +210,34 @@ class SlabSNTransportPlan:
         *,
         initial_factor: float = 1.0,
     ) -> SNTransportResult:
-        nu_fission = jnp.asarray(nu_fission_cross_section)
-        chi = jnp.asarray(spectrum)
-        if nu_fission.shape != self.total_cross_section.shape or chi.shape != (
-            nu_fission.shape[1],
+        nu_fission_host = np.asarray(nu_fission_cross_section)
+        chi_host = np.asarray(spectrum)
+        if nu_fission_host.shape != self.total_cross_section.shape or chi_host.shape != (
+            nu_fission_host.shape[1],
         ):
             raise ValueError("Criticality data do not match transport groups.")
-        factor = jnp.asarray(initial_factor)
+        if (
+            np.any(~np.isfinite(nu_fission_host))
+            or np.any(nu_fission_host < 0.0)
+            or not np.any(nu_fission_host > 0.0)
+        ):
+            raise ValueError(
+                "Fission cross sections must be finite, nonnegative, and productive."
+            )
+        if (
+            np.any(~np.isfinite(chi_host))
+            or np.any(chi_host < 0.0)
+            or not np.isclose(np.sum(chi_host), 1.0, rtol=1.0e-10, atol=1.0e-12)
+        ):
+            raise ValueError(
+                "Fission spectrum must be finite, nonnegative, and normalized."
+            )
+        factor_host = float(initial_factor)
+        if not np.isfinite(factor_host) or factor_host <= 0.0:
+            raise ValueError("initial_factor must be finite and positive.")
+        nu_fission = jnp.asarray(nu_fission_host)
+        chi = jnp.asarray(chi_host)
+        factor = jnp.asarray(factor_host)
         scalar = jnp.ones_like(nu_fission)
         angular = jnp.zeros((self.directions.size, *scalar.shape))
         residual = jnp.asarray(jnp.inf)
@@ -247,8 +313,24 @@ class BatemanDepletionPlan:
             if conserved_weights is None
             else np.asarray(conserved_weights, dtype=np.float64)
         )
-        if weights.shape != (matrix.shape[0],) or np.any(weights <= 0.0):
-            raise ValueError("conserved_weights must be positive and match nuclides.")
+        if (
+            weights.shape != (matrix.shape[0],)
+            or np.any(~np.isfinite(weights))
+            or np.any(weights <= 0.0)
+        ):
+            raise ValueError(
+                "conserved_weights must be finite, positive, and match nuclides."
+            )
+        conservation_scale = np.maximum(
+            1.0, np.linalg.norm(weights) * np.linalg.norm(matrix)
+        )
+        if not np.allclose(
+            weights @ matrix,
+            0.0,
+            rtol=0.0,
+            atol=512.0 * np.finfo(np.float64).eps * conservation_scale,
+        ):
+            raise ValueError("conserved_weights must be a left null vector.")
         self.transition_matrix = jnp.asarray(matrix)
         self.conserved_weights = jnp.asarray(weights)
         self.plan_id = canonical_fingerprint(
@@ -260,11 +342,23 @@ class BatemanDepletionPlan:
         )
 
     def evolve(self, inventory: ArrayLike, duration_s: ArrayLike, /) -> DepletionResult:
-        initial = jnp.asarray(inventory)
-        if initial.shape != self.conserved_weights.shape or jnp.any(initial < 0.0):
+        initial_host = np.asarray(inventory)
+        duration_host = np.asarray(duration_s)
+        if (
+            initial_host.shape != self.conserved_weights.shape
+            or np.any(~np.isfinite(initial_host))
+            or np.any(initial_host < 0.0)
+        ):
             raise ValueError(
-                "Initial depletion inventory must be nonnegative and aligned."
+                "Initial depletion inventory must be finite, nonnegative, and aligned."
             )
+        if (
+            duration_host.shape != ()
+            or not np.isfinite(duration_host)
+            or float(duration_host) <= 0.0
+        ):
+            raise ValueError("duration_s must be a finite positive scalar.")
+        initial = jnp.asarray(initial_host)
         space = ArraySpace(initial.shape, dtype=initial.dtype)
         operator = DenseLinearOperator(
             self.transition_matrix,
@@ -272,7 +366,7 @@ class BatemanDepletionPlan:
             target=space,
         )
         evolved = matrix_exponential_action(
-            operator, initial, jnp.asarray(duration_s)
+            operator, initial, jnp.asarray(duration_host)
         ).value
         total = self.conserved_weights @ evolved
         initial_total = self.conserved_weights @ initial
@@ -299,6 +393,15 @@ def decay_heat_w(
     energy = jnp.asarray(recoverable_energy_j)
     if inventory_.shape != decay.shape or inventory_.shape != energy.shape:
         raise ValueError("Decay heat arrays must align.")
+    if (
+        np.any(~np.isfinite(np.asarray(inventory_)))
+        or np.any(np.asarray(inventory_) < 0.0)
+        or np.any(~np.isfinite(np.asarray(decay)))
+        or np.any(np.asarray(decay) < 0.0)
+        or np.any(~np.isfinite(np.asarray(energy)))
+        or np.any(np.asarray(energy) < 0.0)
+    ):
+        raise ValueError("Decay heat inputs must be finite and nonnegative.")
     return jnp.sum(inventory_ * decay * energy)
 
 

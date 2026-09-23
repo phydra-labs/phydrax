@@ -503,6 +503,8 @@ def write_tis_restart(
 
     if not isinstance(prepared, PreparedTIS) or not isinstance(state, TISState):
         raise TypeError("write_tis_restart requires PreparedTIS and TISState.")
+    if state.prepared_id != prepared.prepared_id:
+        raise ValueError("TIS restart state belongs to another prepared runtime.")
     if len(state.replicas) != len(prepared.replicas):
         raise ValueError("TIS restart replica count changed.")
     for replica_prepared, replica_state in zip(
@@ -561,7 +563,11 @@ def read_tis_restart(path: str | Path, prepared: PreparedTIS, /) -> TISRestart:
         not bool(state.path.valid()) for state in replicas
     ):
         raise ValueError("TIS restart trajectory identity or invariants changed.")
-    state = TISState(replicas, jnp.asarray(arrays["state/step_index"]))
+    state = TISState(
+        replicas,
+        jnp.asarray(arrays["state/step_index"]),
+        prepared.prepared_id,
+    )
     _validate_tis_counters(state)
     return TISRestart(
         state,
@@ -582,6 +588,8 @@ def write_retis_restart(
 
     if not isinstance(prepared, PreparedRETIS) or not isinstance(state, RETISState):
         raise TypeError("write_retis_restart requires PreparedRETIS and RETISState.")
+    if state.prepared_id != prepared.prepared_id:
+        raise ValueError("RETIS restart state belongs to another prepared runtime.")
     if len(state.replicas) != len(prepared.replicas):
         raise ValueError("RETIS restart replica count changed.")
     for replica_prepared, replica_state in zip(
@@ -659,6 +667,7 @@ def read_retis_restart(
         jnp.asarray(arrays["state/step_index"]),
         jnp.asarray(arrays["state/exchange_count"]),
         jnp.asarray(arrays["state/accepted_exchange_count"]),
+        prepared.prepared_id,
     )
     _validate_retis_counters(state)
     return RETISRestart(

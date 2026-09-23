@@ -126,6 +126,7 @@ class ProcessExperimentPlan(StrictModule):
                 "count_shape": counts.shape,
                 "input_dtype": str(inputs.dtype),
                 "effect_dtype": str(measurements.dtype),
+                "arrays": array_tree_fingerprint((inputs, measurements, counts)),
                 "tolerance": tolerance_,
             }
         )
@@ -180,6 +181,7 @@ class StinespringProcessModel(StrictModule):
                 "dtype": str(matrix.dtype),
                 "dimension": dimension_,
                 "environment_dimension": environment,
+                "isometry": array_tree_fingerprint(matrix),
                 "tolerance": tolerance_,
             }
         )

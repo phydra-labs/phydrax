@@ -166,6 +166,8 @@ class ExternalAtomisticPotentialEnergySurface(AbstractPreparedPotentialEnergySur
         /,
     ) -> PotentialEnergySurfaceEvaluation:
         value = self.provider.evaluate(self.system, positions, cell_vectors)
+        if value.provider_id != self.provider_id:
+            raise ValueError("External atomistic provider changed its bound identity.")
         source_id = canonical_fingerprint(
             {
                 "kind": "external-atomistic-surface-evaluation",
@@ -186,7 +188,7 @@ class ExternalAtomisticPotentialEnergySurface(AbstractPreparedPotentialEnergySur
             value.forces,
             None,
             value.successful,
-            provider_id=value.provider_id,
+            provider_id=self.provider_id,
             source_result_id=source_id,
         )
 

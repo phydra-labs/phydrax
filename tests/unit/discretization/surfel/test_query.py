@@ -4,6 +4,7 @@ import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -36,6 +37,34 @@ def _indexed_geometry():
         positions + geometry.footprint_half_width,
     )
     return geometry, hierarchy, bounds
+
+
+def test_surfel_ray_query_rejects_permuted_bvh_slot_identity():
+    geometry, _, _ = _indexed_geometry()
+    permutation = jnp.asarray((1, 0, 2))
+    positions = geometry.position[permutation]
+    identifiers = geometry.discretization.surfel_ids[permutation]
+    hierarchy = phx.discretization.MortonPointHierarchyPlan(
+        phx.discretization.MortonAddressPlan(
+            (-2.0, -2.0, -2.0),
+            (2.0, 2.0, 2.0),
+            4,
+        ),
+        3,
+        target_leaf_occupancy=1,
+    ).build(positions, stable_ids=identifiers)
+    lower = (geometry.position - geometry.footprint_half_width)[permutation]
+    upper = (geometry.position + geometry.footprint_half_width)[permutation]
+    bounds = phx.discretization.MortonPrimitiveBoundsPlan(hierarchy, 3).refit(
+        lower,
+        upper,
+    )
+    with pytest.raises(ValueError, match="slot identities"):
+        phx.discretization.SurfelRayQueryPlan(
+            bounds,
+            geometry,
+            maximum_hits_per_ray=3,
+        )
 
 
 def test_morton_primitive_bounds_contain_items_and_children() -> None:

@@ -11,9 +11,7 @@ from jaxtyping import Array, ArrayLike
 from .._fingerprint import canonical_fingerprint
 
 
-ProcessEventKind: TypeAlias = Literal[
-    "move", "deposit", "remove", "dwell", "heat", "fixture", "transfer"
-]
+ProcessEventKind: TypeAlias = Literal["move", "deposit", "remove", "dwell", "heat"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,14 +27,18 @@ class ToolpathEvent:
     mass_rate_kg_s: float = 0.0
 
     def __post_init__(self):
+        supported = {"move", "deposit", "remove", "dwell", "heat"}
         if (
             not self.event_id
+            or self.kind not in supported
             or not self.frame_id
+            or not np.isfinite(self.start_time_s)
+            or not np.isfinite(self.end_time_s)
             or self.end_time_s < self.start_time_s
             or len(self.start) != len(self.end)
             or not self.start
         ):
-            raise ValueError("Toolpath event is invalid.")
+            raise ValueError("Toolpath event is invalid or uses an unsupported kind.")
         if (
             any(
                 not np.isfinite(v)
@@ -44,8 +46,11 @@ class ToolpathEvent:
             )
             or self.power_w < 0
             or self.mass_rate_kg_s < 0
+            or (self.kind in {"move", "dwell", "heat"} and self.mass_rate_kg_s != 0)
+            or (self.kind in {"deposit", "remove"} and self.mass_rate_kg_s <= 0)
+            or (self.kind == "heat" and self.power_w <= 0)
         ):
-            raise ValueError("Toolpath event data are invalid.")
+            raise ValueError("Toolpath event data are incompatible with its kind.")
 
     @property
     def event_fingerprint(self):

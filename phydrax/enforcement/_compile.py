@@ -2105,7 +2105,7 @@ class EnforcementProgram(StrictModule):
                 raise RuntimeError("Successful realization lost its committed fields.")
             out = frozendict(result.fields)
             realization_states[condition_id] = result.state
-        unchanged = all(
+        unchanged = not self.pipelines and all(
             result.status is RealizationStatus.UNCHANGED for result in results.values()
         )
         return PreparedEnforcementStep.success(

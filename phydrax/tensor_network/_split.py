@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+from numbers import Integral
 from typing import Any, Literal, TypeAlias
 
 import equinox as eqx
@@ -37,6 +38,13 @@ class TensorTruncationEvidence(StrictModule):
         precision_evidence: PrecisionEvidenceEnvelope,
         precision_policy_id: str,
     ):
+        if (
+            not isinstance(retained_rank, Integral)
+            or isinstance(retained_rank, bool)
+            or not isinstance(available_rank, Integral)
+            or isinstance(available_rank, bool)
+        ):
+            raise TypeError("Truncation ranks must be integers.")
         retained = int(retained_rank)
         available = int(available_rank)
         if available < 1 or not 1 <= retained <= available:
@@ -68,6 +76,8 @@ def truncated_svd(
 
     if not isinstance(precision, TensorNetworkPrecisionPolicy):
         raise TypeError("precision must be TensorNetworkPrecisionPolicy.")
+    if not isinstance(maximum_rank, Integral) or isinstance(maximum_rank, bool):
+        raise TypeError("maximum_rank must be an integer.")
     capacity = int(maximum_rank)
     if capacity < 1:
         raise ValueError("maximum_rank must be positive.")

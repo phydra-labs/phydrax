@@ -14,12 +14,12 @@ from jaxtyping import Array, Key
 from ..._training import TrainingProgress
 from ..._training_checkpoint import (
     _deserialize_root_key,
+    _open_verified_state,
     _prune_state_files,
     _publish_manifest,
     _publish_state,
     _read_manifest,
     _serialize_root_key,
-    _verify_state,
 )
 
 
@@ -104,13 +104,18 @@ def _load_variational_training_checkpoint(
     state_name = manifest["state_file"]
     if not isinstance(state_name, str) or not state_name:
         raise ValueError("Variational checkpoint state_file must be nonempty.")
-    state_path = path / state_name
-    _verify_state(state_path, manifest["state_sha256"])
-    model, optimizer_state, best_model, progress = eqx.tree_deserialise_leaves(
-        state_path,
-        (model_like, optimizer_state_like, best_model_like, progress_like),
-    )
-    _prune_state_files(path, state_path.name)
+    with _open_verified_state(
+        path,
+        state_name,
+        manifest["state_sha256"],
+    ) as stream:
+        model, optimizer_state, best_model, progress = eqx.tree_deserialise_leaves(
+            stream,
+            (model_like, optimizer_state_like, best_model_like, progress_like),
+        )
+        if stream.read(1):
+            raise ValueError("Variational checkpoint state has trailing payload.")
+    _prune_state_files(path, state_name)
     return _VariationalTrainingCheckpoint(
         model=model,
         optimizer_state=optimizer_state,

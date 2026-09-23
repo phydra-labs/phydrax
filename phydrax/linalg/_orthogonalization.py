@@ -37,15 +37,35 @@ def orthonormal_frame(matrix: ArrayLike, /) -> OrthonormalFrameResult:
         )
 
     complete, triangular = jnp.linalg.qr(value, mode="complete")
-    diagonal = jnp.diagonal(triangular[..., :intrinsic_dimension, :], axis1=-2, axis2=-1)
-    diagonal_sign = jnp.where(diagonal < 0.0, -1.0, 1.0)
-    tangents = complete[..., :, :intrinsic_dimension] * diagonal_sign[..., None, :]
+    diagonal = jnp.diagonal(
+        triangular[..., :intrinsic_dimension, :],
+        axis1=-2,
+        axis2=-1,
+    )
+    diagonal_magnitude = jnp.abs(diagonal)
+    diagonal_phase = diagonal / jnp.where(
+        diagonal_magnitude > 0.0, diagonal_magnitude, 1.0
+    )
+    diagonal_phase = jnp.where(diagonal_magnitude > 0.0, diagonal_phase, 1.0)
+    tangents = complete[..., :, :intrinsic_dimension] * diagonal_phase[..., None, :]
     normal_basis = complete[..., :, intrinsic_dimension:]
 
     frame = jnp.concatenate((tangents, normal_basis), axis=-1)
     orientation = jnp.linalg.det(frame)
-    first_normal_sign = jnp.where(orientation < 0.0, -1.0, 1.0)
-    normal_basis = normal_basis.at[..., :, 0].multiply(first_normal_sign[..., None])
+    if jnp.issubdtype(value.dtype, jnp.complexfloating):
+        orientation_magnitude = jnp.abs(orientation)
+        first_normal_phase = jnp.conj(
+            orientation
+            / jnp.where(orientation_magnitude > 0.0, orientation_magnitude, 1.0)
+        )
+        first_normal_phase = jnp.where(
+            orientation_magnitude > 0.0,
+            first_normal_phase,
+            1.0,
+        )
+    else:
+        first_normal_phase = jnp.where(orientation < 0.0, -1.0, 1.0)
+    normal_basis = normal_basis.at[..., :, 0].multiply(first_normal_phase[..., None])
 
     singular_values = jnp.linalg.svd(value, full_matrices=False, compute_uv=False)
     largest = singular_values[..., 0]

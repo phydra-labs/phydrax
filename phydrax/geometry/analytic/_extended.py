@@ -37,6 +37,7 @@ from .._sampling import (
     RejectionSamplingPlan,
     SamplingResult,
 )
+from .._validity import combine_validity, GeometryValidityEvidence
 from ..design._schema import (
     _ParameterCollector,
     DesignState,
@@ -178,6 +179,28 @@ def _angle_membership(x: Array, y: Array, angle: Array) -> tuple[Array, Array]:
     edge_distance = jnp.minimum(distance0, distance1)
     signed = jnp.where(inside, -edge_distance, edge_distance)
     return inside, jnp.where(radial > 0.0, signed, -jnp.zeros_like(signed))
+
+
+def _angle_topology_validity(
+    angle: Array, /, *, full: bool, contract_id: str
+) -> GeometryValidityEvidence:
+    distance_from_full = jnp.abs(angle - jnp.asarray(_TWO_PI, dtype=angle.dtype))
+    classification_margin = -distance_from_full if full else distance_from_full
+    finite = jnp.isfinite(angle)
+    classification_valid = distance_from_full == 0.0 if full else distance_from_full > 0.0
+    conditions = (angle > 0.0) & (angle <= _TWO_PI) & classification_valid
+    return GeometryValidityEvidence(
+        finite=finite,
+        conditions_satisfied=conditions,
+        resolved=True,
+        margins=jnp.stack((angle, _TWO_PI - angle, classification_margin)),
+        margin_names=(
+            "angle_positive",
+            "angle_at_most_full",
+            "full_sector_classification",
+        ),
+        contract_id=contract_id,
+    )
 
 
 class _EllipseBoundaryMap(AbstractBoundaryMap):
@@ -505,16 +528,29 @@ class Polygon(GeometrySource):
             role="position",
             physical_scale=float(np.max(np.ptp(np.asarray(self.vertices), axis=0))),
         )
-        return _PolygonKernel(vertices, source_id=self.feature_id)
+        return _PolygonKernel(
+            vertices,
+            vertex_count=self.vertices.shape[0],
+            source_id=self.feature_id,
+        )
 
 
 class _PolygonKernel(GeometryKernel):
     vertices: ParameterBinding = eqx.field(static=True)
     source_id: str = eqx.field(static=True)
+    intersection_pairs: Array
 
-    def __init__(self, vertices: ParameterBinding, *, source_id: str):
+    def __init__(self, vertices: ParameterBinding, *, vertex_count: int, source_id: str):
+        pairs = [
+            (first, second)
+            for first in range(vertex_count)
+            for second in range(first + 1, vertex_count)
+            if (first + 1) % vertex_count != second
+            and (second + 1) % vertex_count != first
+        ]
         self.vertices = vertices
         self.source_id = source_id
+        self.intersection_pairs = jnp.asarray(pairs, dtype=jnp.int32).reshape((-1, 2))
 
     @property
     def ambient_dimension(self) -> int:
@@ -535,6 +571,67 @@ class _PolygonKernel(GeometryKernel):
     @property
     def field_certificate(self) -> FieldCertificate:
         return exact_signed_distance_certificate(smooth=False)
+
+    def geometry_validity(self, state: DesignState, /) -> GeometryValidityEvidence:
+        vertices = self._vertices(state)
+        finite = jnp.all(jnp.isfinite(vertices))
+        scale = jnp.maximum(jnp.max(jnp.ptp(vertices, axis=0)), 1.0)
+        area_tolerance = 128.0 * jnp.finfo(vertices.dtype).eps * scale * scale
+        edge_tolerance = jnp.sqrt(area_tolerance)
+        successors = jnp.roll(vertices, -1, axis=0)
+        edge_lengths = jnp.linalg.norm(successors - vertices, axis=-1)
+        area2 = jnp.sum(
+            vertices[:, 0] * successors[:, 1] - successors[:, 0] * vertices[:, 1]
+        )
+
+        segments = jnp.stack((vertices, successors), axis=1)
+        first_segments = segments[self.intersection_pairs[:, 0]]
+        second_segments = segments[self.intersection_pairs[:, 1]]
+        a, b = first_segments[:, 0], first_segments[:, 1]
+        c, d = second_segments[:, 0], second_segments[:, 1]
+        first_direction = b - a
+        second_direction = d - c
+
+        def cross2(left, right):
+            return left[:, 0] * right[:, 1] - left[:, 1] * right[:, 0]
+
+        first_c = cross2(first_direction, c - a)
+        first_d = cross2(first_direction, d - a)
+        second_a = cross2(second_direction, a - c)
+        second_b = cross2(second_direction, b - c)
+        overlaps = jnp.all(
+            jnp.maximum(jnp.minimum(a, b), jnp.minimum(c, d))
+            <= jnp.minimum(jnp.maximum(a, b), jnp.maximum(c, d)) + edge_tolerance,
+            axis=-1,
+        )
+        crosses = (first_c * first_d <= area_tolerance * area_tolerance) & (
+            second_a * second_b <= area_tolerance * area_tolerance
+        )
+        self_intersects = jnp.any(overlaps & crosses)
+
+        minimum_edge = jnp.min(edge_lengths)
+        return GeometryValidityEvidence(
+            finite=finite,
+            conditions_satisfied=(
+                (minimum_edge > edge_tolerance)
+                & (area2 > area_tolerance)
+                & ~self_intersects
+            ),
+            resolved=True,
+            margins=jnp.stack(
+                (
+                    minimum_edge - edge_tolerance,
+                    area2 - area_tolerance,
+                    jnp.where(self_intersects, -1.0, 1.0),
+                )
+            ),
+            margin_names=(
+                "minimum_edge_length",
+                "counter_clockwise_area",
+                "simple_topology",
+            ),
+            contract_id="simple_counter_clockwise_polygon",
+        )
 
     def _vertices(self, state: DesignState) -> Array:
         return self.vertices.read(state)
@@ -1085,9 +1182,7 @@ class Cylinder(GeometrySource):
             raise ValueError("axis must have non-zero length.")
         self.radius = _validate_positive_scalar(radius, name="radius")
         self.angle = _validate_angle(angle)
-        self.full = math.isclose(
-            float(self.angle), 2.0 * math.pi, rel_tol=0.0, abs_tol=1e-12
-        )
+        self.full = float(self.angle) == 2.0 * math.pi
         self.feature_id = _feature_id(feature_id, "cylinder")
 
     def _compile(self, context):
@@ -1148,6 +1243,28 @@ class _CylinderKernel(GeometryKernel):
             exact_signed_distance_certificate(smooth=False)
             if self.full
             else _LEVEL_SET_CERTIFICATE
+        )
+
+    def geometry_validity(self, state, /):
+        _, axis, radius, angle = self._parameters(state)
+        shape = GeometryValidityEvidence(
+            finite=jnp.all(jnp.isfinite(axis)) & jnp.isfinite(radius),
+            conditions_satisfied=(_finite_norm(axis) > 0.0) & (radius > 0.0),
+            resolved=True,
+            margins=jnp.stack((_finite_norm(axis), radius)),
+            margin_names=("axis_length_positive", "radius_positive"),
+            contract_id="cylinder_nondegenerate_shape",
+        )
+        return combine_validity(
+            (
+                _angle_topology_validity(
+                    angle,
+                    full=self.full,
+                    contract_id="cylinder_full_sector_topology",
+                ),
+                shape,
+            ),
+            contract_id="cylinder_geometry",
         )
 
     def _parameters(self, state):
@@ -1364,9 +1481,7 @@ class Cone(GeometrySource):
             raise ValueError("radius0 must be positive and radius1 must be non-negative.")
         self.radii = jnp.asarray([r0, r1], dtype=jnp.float64)
         self.angle = _validate_angle(angle)
-        self.full = math.isclose(
-            float(self.angle), 2.0 * math.pi, rel_tol=0.0, abs_tol=1e-12
-        )
+        self.full = float(self.angle) == 2.0 * math.pi
         self.feature_id = _feature_id(feature_id, "cone")
 
     def _compile(self, context):
@@ -1424,6 +1539,34 @@ class _ConeKernel(GeometryKernel):
     @property
     def field_certificate(self):
         return _LEVEL_SET_CERTIFICATE
+
+    def geometry_validity(self, state, /):
+        _, axis, radii, angle = self._parameters(state)
+        shape = GeometryValidityEvidence(
+            finite=jnp.all(jnp.isfinite(axis)) & jnp.all(jnp.isfinite(radii)),
+            conditions_satisfied=(
+                (_finite_norm(axis) > 0.0) & (radii[0] > 0.0) & (radii[1] >= 0.0)
+            ),
+            resolved=True,
+            margins=jnp.concatenate((_finite_norm(axis)[None], radii)),
+            margin_names=(
+                "axis_length_positive",
+                "base_radius_positive",
+                "top_radius_nonnegative",
+            ),
+            contract_id="cone_nondegenerate_shape",
+        )
+        return combine_validity(
+            (
+                _angle_topology_validity(
+                    angle,
+                    full=self.full,
+                    contract_id="cone_full_sector_topology",
+                ),
+                shape,
+            ),
+            contract_id="cone_geometry",
+        )
 
     def _parameters(self, state):
         return (
@@ -1618,9 +1761,7 @@ class Torus(GeometrySource):
         self.major_radius = jnp.asarray(0.5 * (inner + outer), dtype=jnp.float64)
         self.minor_radius = jnp.asarray(0.5 * (outer - inner), dtype=jnp.float64)
         self.angle = _validate_angle(angle)
-        self.full = math.isclose(
-            float(self.angle), 2.0 * math.pi, rel_tol=0.0, abs_tol=1e-12
-        )
+        self.full = float(self.angle) == 2.0 * math.pi
         self.feature_id = _feature_id(feature_id, "torus")
 
     def _compile(self, context):
@@ -1684,6 +1825,32 @@ class _TorusKernel(GeometryKernel):
             exact_signed_distance_certificate(smooth=False)
             if self.full
             else _LEVEL_SET_CERTIFICATE
+        )
+
+    def geometry_validity(self, state, /):
+        _, major, minor, angle = self._parameters(state)
+        shape = GeometryValidityEvidence(
+            finite=jnp.isfinite(major) & jnp.isfinite(minor),
+            conditions_satisfied=((major > 0.0) & (minor > 0.0) & (major >= minor)),
+            resolved=True,
+            margins=jnp.stack((major, minor, major - minor)),
+            margin_names=(
+                "major_radius_positive",
+                "minor_radius_positive",
+                "nonnegative_inner_radius",
+            ),
+            contract_id="torus_nondegenerate_shape",
+        )
+        return combine_validity(
+            (
+                _angle_topology_validity(
+                    angle,
+                    full=self.full,
+                    contract_id="torus_full_sector_topology",
+                ),
+                shape,
+            ),
+            contract_id="torus_geometry",
         )
 
     def _parameters(self, state):
@@ -1819,8 +1986,8 @@ class Wedge(GeometrySource):
         self.corner = _validate_vector(corner, 3, name="corner")
         self.extents = _validate_positive_vector(extents, 3, name="extents")
         top = float(np.asarray(top_extent))
-        if not np.isfinite(top) or top < 0.0 or top > float(self.extents[0]):
-            raise ValueError("top_extent must lie in [0, extents[0]].")
+        if not np.isfinite(top) or top <= 0.0 or top > float(self.extents[0]):
+            raise ValueError("top_extent must lie in (0, extents[0]].")
         self.top_extent = jnp.asarray(top, dtype=jnp.float64)
         self.feature_id = _feature_id(feature_id, "wedge")
 
@@ -1894,6 +2061,26 @@ class _WedgeKernel(GeometryKernel):
     @property
     def field_certificate(self):
         return _LEVEL_SET_CERTIFICATE
+
+    def geometry_validity(self, state, /):
+        _, extents, top = self._parameters(state)
+        finite = jnp.all(jnp.isfinite(extents)) & jnp.isfinite(top)
+        top_margin = jnp.minimum(top, extents[0] - top)
+        return GeometryValidityEvidence(
+            finite=finite,
+            conditions_satisfied=(
+                jnp.all(extents > 0.0) & (top > 0.0) & (top <= extents[0])
+            ),
+            resolved=True,
+            margins=jnp.concatenate((extents, top_margin[None])),
+            margin_names=(
+                "x_extent_positive",
+                "y_extent_positive",
+                "z_extent_positive",
+                "top_extent_nondegenerate",
+            ),
+            contract_id="nondegenerate_wedge_topology",
+        )
 
     def _parameters(self, state):
         return (

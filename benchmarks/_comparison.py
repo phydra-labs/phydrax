@@ -153,11 +153,7 @@ def compare_performance(
         decisions.append(_exceeds(absolute_interval[0], policy.absolute_tolerance))
     if policy.relative_tolerance is not None and relative_interval is not None:
         decisions.append(_exceeds(relative_interval[0], policy.relative_tolerance))
-    if (
-        policy.relative_tolerance is not None
-        and relative_interval is None
-        and policy.absolute_tolerance is None
-    ):
+    if policy.relative_tolerance is not None and relative_interval is None:
         return PerformanceComparison(
             baseline,
             candidate,
@@ -168,7 +164,7 @@ def compare_performance(
             None,
             True,
             None,
-            "zero baseline requires an absolute practical tolerance",
+            "declared relative criterion is unavailable because the baseline contains zero",
         )
     return PerformanceComparison(
         baseline,

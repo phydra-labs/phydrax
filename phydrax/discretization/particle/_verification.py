@@ -15,7 +15,7 @@ import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from ..._array_archive import read_array_archive, write_array_archive
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._publication import publish_bytes
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
@@ -201,8 +201,14 @@ class ParticleReplayPacket(StrictModule, NonTrainableState):
                 "problem": self.problem_id,
                 "method": self.method_id,
                 "failure": self.failure_status,
-                "state_shape": list(self.state.shape),
-                "state_dtype": str(self.state.dtype),
+                "payload": array_tree_fingerprint(
+                    (
+                        self.state,
+                        self.time,
+                        self.step_index,
+                        self.last_successful_state,
+                    )
+                ),
             }
         )
 

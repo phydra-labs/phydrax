@@ -212,8 +212,13 @@ class HawkesProcessResult(StrictModule):
     stored_event_count: Array
     proposal_count: Array
     overflow: Array
+    proposal_exhausted: Array
     stable: Array
     max_proposals: int = eqx.field(static=True)
+
+    @property
+    def successful(self) -> Array:
+        return self.stable & ~self.overflow & ~self.proposal_exhausted
 
 
 def prepare_hawkes_likelihood(
@@ -473,6 +478,7 @@ def simulate_hawkes(
         stored_event_count=stored,
         proposal_count=proposal_count,
         overflow=generated > capacity_,
+        proposal_exhausted=active,
         stable=process.stable,
         max_proposals=proposals,
     )

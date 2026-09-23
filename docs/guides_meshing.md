@@ -314,6 +314,11 @@ Backend vertices that differ only within `relative_merge_tolerance` times the
 output bounding-box diagonal are normalized to the lowest source vertex ID;
 coordinates are not averaged. Collapsed alias faces and merged vertex counts
 are reported in compliance. Set the tolerance to zero for exact aliases only.
+Upstream VoroCrust exposes no bounded native output allocator or callback. Runtime
+evidence therefore records native output entity/connectivity preallocation as
+unenforced. Set `VoroCrustOptions(require_native_output_preallocation=True)` only as a
+fail-closed capability requirement; execution returns `UNSUPPORTED_CAPABILITY`
+instead of pretending that preallocation was enforced.
 
 TIOGA distributes complete named parts among MPI ranks and preserves part-local
 ID namespaces. It does not partition one part or support curved/polyhedral donor

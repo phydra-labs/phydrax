@@ -265,15 +265,43 @@ def admit_external_artifact(
 
 def read_admitted_artifact(
     artifact: AdmittedExternalArtifact,
+    manifest: ArtifactManifest,
     /,
     *,
     policy: ExternalArtifactPolicy,
 ) -> bytes:
-    """Return raw bytes only after repeating bounded size and checksum admission."""
+    """Revalidate exact bytes against the caller's trusted manifest on every read."""
     if not isinstance(artifact, AdmittedExternalArtifact):
         raise TypeError("artifact must be an AdmittedExternalArtifact.")
+    from .artifacts import ArtifactManifest
+
+    if not isinstance(manifest, ArtifactManifest):
+        raise TypeError("manifest must be an ArtifactManifest.")
     if not isinstance(policy, ExternalArtifactPolicy):
         raise TypeError("policy must be an ExternalArtifactPolicy.")
+    if (
+        artifact.manifest_id != manifest.manifest_id
+        or artifact.sha256 != manifest.sha256
+        or artifact.byte_size != manifest.byte_size
+        or artifact.license_id != manifest.license_id
+    ):
+        raise PermissionError(
+            "External artifact admission does not match the trusted manifest."
+        )
+    expected_admission_id = canonical_fingerprint(
+        {
+            "kind": "admitted-external-artifact",
+            "relative_path": artifact.relative_path,
+            "resolved_path": artifact.resolved_path,
+            "sha256": artifact.sha256,
+            "byte_size": artifact.byte_size,
+            "license_id": artifact.license_id,
+            "manifest_id": artifact.manifest_id,
+            "policy_id": artifact.policy_id,
+        }
+    )
+    if artifact.admission_id != expected_admission_id:
+        raise PermissionError("External artifact admission record is not canonical.")
     if artifact.policy_id != policy.policy_id:
         raise PermissionError("External artifact was admitted under a different policy.")
     if artifact.license_id not in policy.allowed_license_ids:
@@ -294,9 +322,9 @@ def read_admitted_artifact(
         or resource.manifest.source_path != artifact.resolved_path
     ):
         raise ValueError("External artifact path changed after admission.")
-    if resource.manifest.size_bytes != artifact.byte_size:
-        raise ValueError("External artifact size does not match its manifest.")
-    if resource.manifest.content_sha256 != artifact.sha256:
+    if resource.manifest.size_bytes != manifest.byte_size:
+        raise ValueError("External artifact size does not match its trusted manifest.")
+    if resource.manifest.content_sha256 != manifest.sha256:
         raise ValueError("External artifact SHA-256 checksum mismatch.")
     return resource.data
 

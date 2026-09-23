@@ -181,14 +181,23 @@ class PDEDerivative(StrictModule):
         *,
         name: str | None = None,
     ):
+        if isinstance(component, bool) or not isinstance(component, (int, np.integer)):
+            raise TypeError("component must be an integer.")
         resolved_orders = tuple(orders)
-        if not resolved_orders or any(order < 0 for order in resolved_orders):
+        if not resolved_orders:
+            raise ValueError("orders must be a non-empty nonnegative multi-index.")
+        if any(
+            isinstance(order, bool) or not isinstance(order, (int, np.integer))
+            for order in resolved_orders
+        ):
+            raise TypeError("orders must contain integers, not booleans.")
+        if any(order < 0 for order in resolved_orders):
             raise ValueError("orders must be a non-empty nonnegative multi-index.")
         resolved_name = None if name is None else str(name)
         if resolved_name == "":
             raise ValueError("name must be non-empty or None.")
         self.component = int(component)
-        self.orders = resolved_orders
+        self.orders = tuple(int(order) for order in resolved_orders)
         self.name = resolved_name
 
 
@@ -300,13 +309,20 @@ class PDELibraryTerm(StrictModule):
         name: str,
     ):
         powers = tuple(state_powers)
-        if not powers or any(power < 0 for power in powers):
+        if not powers:
+            raise ValueError("state_powers must be a non-empty nonnegative tuple.")
+        if any(
+            isinstance(power, bool) or not isinstance(power, (int, np.integer))
+            for power in powers
+        ):
+            raise TypeError("state_powers must contain integers, not booleans.")
+        if any(power < 0 for power in powers):
             raise ValueError("state_powers must be a non-empty nonnegative tuple.")
         if derivative is not None and not isinstance(derivative, PDEDerivative):
             raise TypeError("derivative must be a PDEDerivative or None.")
         if not isinstance(name, str) or not name:
             raise ValueError("name must be a non-empty string.")
-        self.state_powers = powers
+        self.state_powers = tuple(int(power) for power in powers)
         self.derivative = derivative
         self.name = name
 

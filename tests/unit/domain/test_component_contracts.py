@@ -5,6 +5,7 @@
 import jax.numpy as jnp
 import pytest
 
+import phydrax as phx
 from phydrax.domain import (
     Boundary,
     ComponentSum,
@@ -57,6 +58,14 @@ def test_restriction_and_density_have_typed_mass_semantics():
     assert isinstance(normalized.mass, ExactMass)
     assert jnp.isclose(normalized.mass.value, 1.0)
     assert jnp.isclose(restricted.base_measure.mass.value, 2.0)
+
+    field = domain.Function("x")(lambda x: jnp.ones_like(x))
+    estimate = phx.integration.integrate(
+        field,
+        phx.integration.over(unnormalized),
+        phx.integration.FixedQuadraturePlan(phx.integration.GaussLegendreRule(8)),
+    )
+    assert jnp.allclose(jnp.asarray(estimate.value.data), 4.0)
 
 
 def test_component_sum_rejects_duplicates_and_uncertified_predicate_overlap():

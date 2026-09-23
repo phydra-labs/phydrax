@@ -118,8 +118,8 @@ def _random_wavevectors(
         raise ValueError("`sigma` must contain at least one value.")
     num_mu = len(mu_in)
     num_sigma = len(sigma_in)
-    means = mu_in * num_sigma
-    standard_deviations = sigma_in * num_mu
+    means = tuple(mean for mean in mu_in for _ in sigma_in)
+    standard_deviations = tuple(deviation for _ in mu_in for deviation in sigma_in)
     num_blocks = num_mu * num_sigma
     if feature_size % (2 * num_blocks) != 0:
         divisor = 2 * num_blocks

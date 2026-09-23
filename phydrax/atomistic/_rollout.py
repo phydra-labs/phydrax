@@ -222,6 +222,13 @@ class AtomisticRolloutPlan(StrictModule):
             or initial_state.thermodynamic_table_id != self.thermodynamic.table_id
         ):
             raise ValueError("Initial state belongs to another dynamics runtime.")
+        if initial_state.force.program_id != self.dynamics.potential.prepared_id:
+            raise ValueError("Initial force cache belongs to another potential program.")
+        initial_success = (
+            (initial_state.last_status == 0)
+            & initial_state.force.successful
+            & (initial_state.force.position_epoch == initial_state.step_index)
+        )
         state = initial_state
         observer_states = tuple(
             observer.initialize(self.dynamics, state) for observer in self.observers
@@ -259,11 +266,11 @@ class AtomisticRolloutPlan(StrictModule):
                     )
                 )
             )
-            valid = valid.at[0].set(True)
+            valid = valid.at[0].set(initial_success)
 
         initial_carry = (
             state,
-            jnp.asarray(True),
+            initial_success,
             times,
             positions,
             momenta,
@@ -276,7 +283,11 @@ class AtomisticRolloutPlan(StrictModule):
             jnp.zeros((), dtype=jnp.int32),
             jnp.zeros((), dtype=jnp.uint64),
             jnp.zeros((), dtype=jnp.uint64),
-            jnp.zeros((), dtype=jnp.uint64),
+            (
+                jnp.asarray(initial_state.random_key[0], dtype=jnp.uint64)
+                * jnp.uint64(1099511628211)
+                + jnp.asarray(initial_state.random_key[1], dtype=jnp.uint64)
+            ),
             observer_states,
         )
 
@@ -411,6 +422,12 @@ class AtomisticRolloutPlan(StrictModule):
             stochastic_digest = stochastic_digest * jnp.uint64(
                 1099511628211
             ) + jnp.asarray(next_state.step_index.astype(jnp.uint32), dtype=jnp.uint64)
+            stochastic_digest = stochastic_digest * jnp.uint64(
+                1099511628211
+            ) + jnp.asarray(next_state.random_key[0], dtype=jnp.uint64)
+            stochastic_digest = stochastic_digest * jnp.uint64(
+                1099511628211
+            ) + jnp.asarray(next_state.random_key[1], dtype=jnp.uint64)
             observer_states_ = tuple(
                 observer.update(
                     observer_state,
@@ -532,7 +549,8 @@ def atomistic_replay_matches(
     ):
         raise TypeError("Both values must be AtomisticReplayRecord instances.")
     return (
-        (left.accepted_steps == right.accepted_steps)
+        (left.replay_id == right.replay_id)
+        & (left.accepted_steps == right.accepted_steps)
         & (left.rejected_steps == right.rejected_steps)
         & (left.route_digest == right.route_digest)
         & (left.image_digest == right.image_digest)

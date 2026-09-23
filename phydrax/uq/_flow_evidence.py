@@ -262,8 +262,9 @@ def initialize_flow_nuts_from_tempered_smc(
         chosen = flat[jnp.asarray(selected)]
         squared = jnp.sum((flat[:, None, :] - chosen[None, :, :]) ** 2, axis=-1)
         nearest = jnp.sqrt(jnp.min(squared, axis=1))
-        nearest = nearest.at[jnp.asarray(selected)].set(-jnp.inf)
-        index = int(jnp.argmax(weights * jnp.maximum(nearest, 0.0)))
+        scores = weights * jnp.maximum(nearest, 0.0)
+        scores = scores.at[jnp.asarray(selected)].set(-jnp.inf)
+        index = int(jnp.argmax(scores))
         selected.append(index)
         distances.append(nearest[index])
     indices = jnp.asarray(selected, dtype=jnp.int32)

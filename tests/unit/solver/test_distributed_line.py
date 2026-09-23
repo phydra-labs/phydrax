@@ -85,6 +85,24 @@ def test_uneven_partitioned_thomas_matches_dense_reference():
     np.testing.assert_allclose(result.value, expected, rtol=1.0e-10, atol=1.0e-11)
 
 
+def test_distributed_line_preserves_complex_right_hand_sides_with_real_factors():
+    lower, diagonal, upper = _poisson_line(11)
+    prepared = DistributedLineSolvePlan(
+        StructuredSolveTopologyPlan(11, 3),
+        lower,
+        diagonal,
+        upper,
+    ).prepare()
+    rhs = jnp.linspace(-1.0, 1.0, 11) + 1.0j * jnp.cos(jnp.arange(11))
+
+    result = prepared.solve(rhs)
+    expected = jnp.linalg.solve(_dense_tridiagonal(lower, diagonal, upper), rhs)
+
+    assert bool(result.converged)
+    assert jnp.issubdtype(result.value.dtype, jnp.complexfloating)
+    np.testing.assert_allclose(result.value, expected, rtol=1.0e-10, atol=1.0e-11)
+
+
 def test_spike_matches_reference_and_reports_bounded_interface():
     lower, diagonal, upper = _poisson_line(12)
     topology = StructuredSolveTopologyPlan(

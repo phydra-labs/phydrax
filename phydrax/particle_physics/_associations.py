@@ -4,11 +4,13 @@
 
 from __future__ import annotations
 
+from numbers import Integral
+
 import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 
@@ -59,6 +61,13 @@ class AssociationTable(StrictModule, NonTrainableState):
         )
         if active_.shape != source.shape:
             raise ValueError("active must align with association arrays.")
+        if (
+            isinstance(source_capacity, bool)
+            or not isinstance(source_capacity, Integral)
+            or isinstance(target_capacity, bool)
+            or not isinstance(target_capacity, Integral)
+        ):
+            raise TypeError("Collection capacities must be integers.")
         source_capacity_ = int(source_capacity)
         target_capacity_ = int(target_capacity)
         if source_capacity_ < 1 or target_capacity_ < 1:
@@ -93,6 +102,15 @@ class AssociationTable(StrictModule, NonTrainableState):
                 "source_capacity": source_capacity_,
                 "target_capacity": target_capacity_,
                 "association_capacity": self.association_capacity,
+                "content": array_tree_fingerprint(
+                    {
+                        "source_indices": source,
+                        "target_indices": target,
+                        "weights": self.weights,
+                        "active": active_,
+                        "valid": self.valid,
+                    }
+                ),
             }
         )
 

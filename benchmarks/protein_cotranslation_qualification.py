@@ -57,7 +57,7 @@ def _fit(model, campaign, source):
     code = _reference(f"{model}-prediction-code")
     evidence = QualificationEvidence(
         "scientific",
-        "passed",
+        "inconclusive",
         (
             campaign.campaign_id,
             model,
@@ -77,7 +77,7 @@ def _fit(model, campaign, source):
         reviewer_id="benchmark-reviewer",
         issued_at=1,
         expires_at=100,
-        reason="fit execution passed",
+        reason="synthetic fixed parameters; no fit execution occurred",
         campaign_start_record_ids=(),
         campaign_observation_record_ids=(),
     )
@@ -169,8 +169,12 @@ def run() -> dict[str, object]:
             "Frozen calibrated observable prediction only; no ribosome-density "
             "dwell time or folded-fraction claim."
         ),
+        "passed": assessment.status == "passed",
     }
 
 
 if __name__ == "__main__":
-    print(json.dumps(run(), indent=2))
+    result = run()
+    print(json.dumps(result, allow_nan=False, indent=2))
+    if not result["passed"]:
+        raise SystemExit(1)

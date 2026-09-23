@@ -30,7 +30,7 @@ from ._contracts import (
 )
 
 
-_SCHEMA_REVISION = "xgboost-saved-model-v3.1"
+_CONVERTER_IDENTITY = "phydrax.xgboost.saved-model"
 _MAX_CATEGORY = 16_777_216
 _INT32_MAX = 2_147_483_647
 _FLOAT32_MAX = float(np.finfo(np.float32).max)
@@ -1510,7 +1510,7 @@ def from_xgboost_artifact(source: Any, /) -> ConversionResult:
                 "finite integral float32 codes in [0,16777216); string/category recoding rejected"
             ),
             "categorical_routing": "selected categories route right; native children swapped",
-            "converter_schema": _SCHEMA_REVISION,
+            "converter_identity": _CONVERTER_IDENTITY,
             "converted_at": datetime.now(timezone.utc).isoformat(),
             "dart_weighted": dart_weighted,
             "dense_input_domain": "finite float32 values with NaN missing sentinels",

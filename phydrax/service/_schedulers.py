@@ -8,8 +8,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import secrets
 import shlex
+import signal
 import ssl
 import subprocess
 import threading
@@ -64,24 +67,93 @@ class CommandExecutor(Protocol):
 
 
 class SubprocessCommandExecutor:
-    """Explicit local executor. It never invokes a shell or interpolates arguments."""
+    """Bounded local executor that never invokes a shell or interpolates arguments."""
+
+    def __init__(
+        self,
+        *,
+        timeout_seconds: float = 30.0,
+        maximum_response_bytes: int = 8 * 1024 * 1024,
+    ):
+        if timeout_seconds <= 0:
+            raise ValueError("Command timeout must be positive.")
+        if type(maximum_response_bytes) is not int or maximum_response_bytes <= 0:
+            raise ValueError("Command response bound must be a positive integer.")
+        self._timeout = timeout_seconds
+        self._maximum_response_bytes = maximum_response_bytes
 
     def run(
         self, argv: tuple[str, ...], /, *, stdin: bytes | None = None
     ) -> CommandResult:
+        if not argv or any(type(value) is not str or not value for value in argv):
+            raise ValueError("Command argv must contain nonempty strings.")
         started = time.perf_counter()
-        completed = subprocess.run(
+        process = subprocess.Popen(
             argv,
-            input=stdin,
+            stdin=subprocess.PIPE if stdin is not None else subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             shell=False,
-            check=False,
-            capture_output=True,
-            text=False,
+            start_new_session=True,
         )
+        assert process.stdout is not None and process.stderr is not None
+        stdout: list[bytes] = []
+        stderr: list[bytes] = []
+        overflow = threading.Event()
+
+        def drain(stream, output: list[bytes]) -> None:
+            retained = 0
+            while True:
+                block = stream.read(64 * 1024)
+                if not block:
+                    return
+                available = self._maximum_response_bytes + 1 - retained
+                if available > 0:
+                    output.append(block[:available])
+                    retained += min(len(block), available)
+                if retained > self._maximum_response_bytes:
+                    overflow.set()
+
+        readers = (
+            threading.Thread(target=drain, args=(process.stdout, stdout), daemon=True),
+            threading.Thread(target=drain, args=(process.stderr, stderr), daemon=True),
+        )
+        for reader in readers:
+            reader.start()
+        writer = None
+        if stdin is not None:
+            assert process.stdin is not None
+
+            def write_input() -> None:
+                try:
+                    process.stdin.write(stdin)
+                    process.stdin.close()
+                except BrokenPipeError:
+                    pass
+
+            writer = threading.Thread(target=write_input, daemon=True)
+            writer.start()
+        try:
+            process.wait(timeout=self._timeout)
+        except subprocess.TimeoutExpired as error:
+            _terminate_process_group(process)
+            for reader in readers:
+                reader.join()
+            raise TimeoutError("Scheduler command exceeded its timeout.") from error
+        for reader in readers:
+            reader.join()
+        if writer is not None:
+            writer.join()
+        stdout_bytes = b"".join(stdout)
+        stderr_bytes = b"".join(stderr)
+        if overflow.is_set() or (
+            len(stdout_bytes) + len(stderr_bytes) > self._maximum_response_bytes
+        ):
+            raise IntegrityError("Scheduler command response exceeds its byte limit.")
         result = CommandResult(
-            completed.returncode,
-            completed.stdout.decode("utf-8", "strict"),
-            completed.stderr.decode("utf-8", "replace"),
+            process.returncode,
+            stdout_bytes.decode("utf-8", "strict"),
+            stderr_bytes.decode("utf-8", "replace"),
         )
         emit(
             "ERROR" if result.returncode else "DEBUG",
@@ -94,35 +166,102 @@ class SubprocessCommandExecutor:
             elapsed_seconds=time.perf_counter() - started,
             executable=Path(argv[0]).name,
             return_code=result.returncode,
-            stderr_bytes=len(completed.stderr),
+            stderr_bytes=len(stderr_bytes),
             stdin_bytes=0 if stdin is None else len(stdin),
-            stdout_bytes=len(completed.stdout),
+            stdout_bytes=len(stdout_bytes),
         )
         return result
 
 
+def _terminate_process_group(process: subprocess.Popen[bytes], /) -> None:
+    process_group = process.pid
+    try:
+        os.killpg(process_group, signal.SIGTERM)
+    except ProcessLookupError:
+        process.wait()
+        return
+    try:
+        process.wait(timeout=1.0)
+    except subprocess.TimeoutExpired:
+        pass
+    try:
+        os.killpg(process_group, 0)
+    except ProcessLookupError:
+        return
+    try:
+        os.killpg(process_group, signal.SIGKILL)
+    except ProcessLookupError:
+        return
+    try:
+        process.wait(timeout=1.0)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait()
+
+
+@dataclass(frozen=True, slots=True)
+class IdempotencyReservation:
+    owner: str
+    scheduler_job_id: str | None
+
+
 class IdempotencyLedger(Protocol):
-    def lookup(self, provider_id: str, key: str, /) -> str | None: ...
-    def record(self, provider_id: str, key: str, scheduler_job_id: str, /) -> str: ...
+    def reserve(
+        self, provider_id: str, key: str, request_digest: str, owner: str, /
+    ) -> IdempotencyReservation: ...
+
+    def complete(
+        self,
+        provider_id: str,
+        key: str,
+        request_digest: str,
+        owner: str,
+        scheduler_job_id: str,
+        /,
+    ) -> str: ...
 
 
 class LocalIdempotencyLedger:
     def __init__(self):
-        self._records: dict[tuple[str, str], str] = {}
+        self._records: dict[tuple[str, str], tuple[str, str, str | None]] = {}
         self._lock = threading.Lock()
 
-    def lookup(self, provider_id: str, key: str, /) -> str | None:
+    def reserve(
+        self, provider_id: str, key: str, request_digest: str, owner: str, /
+    ) -> IdempotencyReservation:
+        identity = (provider_id, key)
         with self._lock:
-            return self._records.get((provider_id, key))
-
-    def record(self, provider_id: str, key: str, scheduler_job_id: str, /) -> str:
-        with self._lock:
-            current = self._records.setdefault((provider_id, key), scheduler_job_id)
-        if current != scheduler_job_id:
+            current = self._records.get(identity)
+            if current is None:
+                self._records[identity] = (request_digest, owner, None)
+                return IdempotencyReservation(owner, None)
+            digest, reservation_owner, scheduler_job_id = current
+        if digest != request_digest:
             raise IntegrityError(
-                "Scheduler idempotency key resolved to conflicting jobs."
+                "Scheduler idempotency key was reused for a different request."
             )
-        return current
+        if scheduler_job_id is not None:
+            return IdempotencyReservation(reservation_owner, scheduler_job_id)
+        if reservation_owner != owner:
+            raise IntegrityError("Scheduler submission is already reserved.")
+        return IdempotencyReservation(owner, None)
+
+    def complete(
+        self,
+        provider_id: str,
+        key: str,
+        request_digest: str,
+        owner: str,
+        scheduler_job_id: str,
+        /,
+    ) -> str:
+        identity = (provider_id, key)
+        with self._lock:
+            current = self._records.get(identity)
+            if current != (request_digest, owner, None):
+                raise IntegrityError("Scheduler reservation ownership changed.")
+            self._records[identity] = (request_digest, owner, scheduler_job_id)
+        return scheduler_job_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,9 +359,6 @@ class SlurmScheduler:
             return self._submit(spec)
 
     def _submit(self, spec: SlurmJobSpec, /) -> str:
-        existing = self._ledger.lookup(self.provider_id, spec.idempotency_key)
-        if existing is not None:
-            return existing
         processes = spec.resources.process_count
         hosts = spec.resources.host_count
         if spec.resources.cpu_cores % processes:
@@ -272,6 +408,21 @@ class SlurmScheduler:
             ).encode("utf-8")
         else:
             argv.extend(("--", spec.script_path, *spec.arguments))
+        request_digest = _slurm_spec_digest(
+            spec,
+            support_tuple_id=self.support_tuple_id,
+            sbatch_path=self._sbatch,
+            srun_path=spec.srun_path,
+        )
+        reservation_owner = secrets.token_hex(16)
+        reservation = self._ledger.reserve(
+            self.provider_id,
+            spec.idempotency_key,
+            request_digest,
+            reservation_owner,
+        )
+        if reservation.scheduler_job_id is not None:
+            return reservation.scheduler_job_id
         completed = self._executor.run(tuple(argv), stdin=stdin)
         if completed.returncode:
             raise RuntimeError(
@@ -283,7 +434,13 @@ class SlurmScheduler:
             raise IntegrityError(
                 "Slurm returned an invalid machine-readable job identifier."
             )
-        return self._ledger.record(self.provider_id, spec.idempotency_key, value)
+        return self._ledger.complete(
+            self.provider_id,
+            spec.idempotency_key,
+            request_digest,
+            reservation_owner,
+            value,
+        )
 
     def status(self, scheduler_job_id: str, /) -> SchedulerStatus:
         _slurm_job_id(scheduler_job_id)
@@ -313,6 +470,33 @@ class SlurmScheduler:
             raise RuntimeError(
                 f"Slurm cancellation failed: {completed.stderr.strip() or 'unknown error'}"
             )
+
+
+def _slurm_spec_digest(
+    spec: SlurmJobSpec,
+    /,
+    *,
+    support_tuple_id: str,
+    sbatch_path: str,
+    srun_path: str,
+) -> str:
+    return hashlib.sha256(
+        _json_bytes(
+            {
+                "account": spec.account,
+                "arguments": list(spec.arguments),
+                "job_name": spec.job_name,
+                "partition": spec.partition,
+                "ranked": spec.ranked,
+                "resources": spec.resources.to_payload(),
+                "sbatch_path": sbatch_path,
+                "script_path": spec.script_path,
+                "srun_path": srun_path,
+                "support_tuple_id": support_tuple_id,
+                "time_limit": spec.time_limit,
+            }
+        )
+    ).hexdigest()
 
 
 def _slurm_job_id(value: str) -> str:
@@ -391,16 +575,26 @@ class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
 
 
 class UrllibHTTPTransport:
-    """Synchronous HTTPS transport; all network effects occur only on request()."""
+    """Synchronous HTTPS transport with bounded success and error bodies."""
 
-    def __init__(self, ssl_context: ssl.SSLContext, /, *, timeout_seconds: float = 30.0):
+    def __init__(
+        self,
+        ssl_context: ssl.SSLContext,
+        /,
+        *,
+        timeout_seconds: float = 30.0,
+        maximum_response_bytes: int = 8 * 1024 * 1024,
+    ):
         if timeout_seconds <= 0:
             raise ValueError("HTTPS timeout must be positive.")
+        if type(maximum_response_bytes) is not int or maximum_response_bytes <= 0:
+            raise ValueError("HTTPS response bound must be a positive integer.")
         self._opener = urllib.request.build_opener(
             urllib.request.HTTPSHandler(context=ssl_context),
             _NoRedirectHandler(),
         )
         self._timeout = timeout_seconds
+        self._maximum_response_bytes = maximum_response_bytes
 
     def request(
         self,
@@ -419,13 +613,17 @@ class UrllibHTTPTransport:
         )
         try:
             with self._opener.open(request, timeout=self._timeout) as response:
-                return HTTPResponse(
-                    response.status,
-                    dict(response.headers.items()),
-                    response.read(),
+                response_headers = dict(response.headers.items())
+                response_body = _read_bounded_http_body(
+                    response, response_headers, self._maximum_response_bytes
                 )
+                return HTTPResponse(response.status, response_headers, response_body)
         except urllib.error.HTTPError as error:
-            return HTTPResponse(error.code, dict(error.headers.items()), error.read())
+            response_headers = dict(error.headers.items())
+            response_body = _read_bounded_http_body(
+                error, response_headers, self._maximum_response_bytes
+            )
+            return HTTPResponse(error.code, response_headers, response_body)
 
 
 @dataclass(frozen=True, slots=True)
@@ -475,7 +673,10 @@ class KubernetesScheduler:
         *,
         provider_id: str = "kubernetes",
         support_tuple_id: str | None = None,
+        maximum_response_bytes: int = 8 * 1024 * 1024,
     ):
+        if type(maximum_response_bytes) is not int or maximum_response_bytes <= 0:
+            raise ValueError("Kubernetes response bound must be a positive integer.")
         parsed_server = urlsplit(api_server)
         if (
             parsed_server.scheme != "https"
@@ -502,6 +703,7 @@ class KubernetesScheduler:
         self._server = api_server
         self._token = bearer_token
         self._transport = transport
+        self._maximum_response_bytes = maximum_response_bytes
 
     def submit(self, spec: KubernetesJobSpec, /) -> str:
         name = _kubernetes_job_name(spec.idempotency_key)
@@ -703,7 +905,10 @@ class KubernetesScheduler:
         }
         if body is not None:
             headers["Content-Type"] = "application/json"
-        return self._transport.request(method, url, headers=headers, body=body)
+        response = self._transport.request(method, url, headers=headers, body=body)
+        if len(response.body) > self._maximum_response_bytes:
+            raise IntegrityError("Kubernetes response exceeds its byte limit.")
+        return response
 
     def _service_collection_url(self, namespace: str) -> str:
         return f"{self._server}/api/v1/namespaces/{quote(namespace, safe='')}/services"
@@ -892,6 +1097,29 @@ def _kubernetes_service_body(
             ],
         },
     }
+
+
+def _read_bounded_http_body(
+    stream: object,
+    headers: Mapping[str, str],
+    maximum_response_bytes: int,
+    /,
+) -> bytes:
+    content_length = next(
+        (value for name, value in headers.items() if name.casefold() == "content-length"),
+        None,
+    )
+    if content_length is not None:
+        try:
+            declared = int(content_length)
+        except ValueError as error:
+            raise IntegrityError("HTTP Content-Length is invalid.") from error
+        if declared < 0 or declared > maximum_response_bytes:
+            raise IntegrityError("HTTP response exceeds its byte limit.")
+    body = stream.read(maximum_response_bytes + 1)  # type: ignore[attr-defined]
+    if len(body) > maximum_response_bytes:
+        raise IntegrityError("HTTP response exceeds its byte limit.")
+    return body
 
 
 def _json_bytes(value: object) -> bytes:

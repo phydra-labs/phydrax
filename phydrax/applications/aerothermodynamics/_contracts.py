@@ -195,11 +195,12 @@ class AerothermodynamicCapabilityStatus(StrictModule, NonTrainableState):
         security: bool,
         released: bool = False,
     ):
+        gate_values = (scientific, performance, operational, security)
+        if any(type(value) is not bool for value in (*gate_values, released)):
+            raise TypeError("Capability gates and released must be booleans.")
         evidence = tuple(str(value) for value in evidence_ids)
-        gates = tuple(
-            bool(value) for value in (scientific, performance, operational, security)
-        )
-        released_ = bool(released)
+        gates = tuple(gate_values)
+        released_ = released
         if (
             not isinstance(support, AerothermodynamicSupportTuple)
             or any(not value for value in evidence)
@@ -250,6 +251,8 @@ class AerothermodynamicResourceCaps(StrictModule, NonTrainableState):
                 maximum_radiation_groups,
             )
         )
+        if any(type(value) is not int for value in values):
+            raise TypeError("Aerothermodynamic resource capacities must be integers.")
         if any(value < 0 for value in values):
             raise ValueError("Aerothermodynamic resource capacities must be nonnegative.")
         (

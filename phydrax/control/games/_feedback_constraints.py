@@ -1066,6 +1066,7 @@ def solve_feedback_quasi_nash_model(
         time_grid=model.time_grid,
         input_layout=suggestion.policy.input_layout,
         partition=partition,
+        dynamics_id=suggestion.policy.dynamics_id,
         case_shape=cases,
         policy_id=f"{problem.problem_id}:fixed-active-policy",
     )

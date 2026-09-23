@@ -178,6 +178,10 @@ def test_svgp_kl_and_step_schedules_have_direct_references():
     assert polynomial(2) < polynomial(1)
     with pytest.raises(ValueError, match="1/2"):
         phx.uq.SGMCMCStepSchedule.polynomial(0.2, 10.0, 0.5)
+    with pytest.raises(ValueError, match="diagonal"):
+        phx.uq.GradientNoiseCovarianceConfig("blocks")
+    with pytest.raises(ValueError, match="diagonal"):
+        phx.uq.GradientNoiseCovarianceConfig("diagonal_low_rank", rank=1)
 
 
 def test_structured_kinetic_actions_and_momentum_are_finite():

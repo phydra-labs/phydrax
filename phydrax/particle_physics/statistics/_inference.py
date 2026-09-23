@@ -11,7 +11,15 @@ from jaxtyping import Array, ArrayLike
 
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...linalg import DenseLinearOperator, DenseLU, LinearSolvePolicy, LinearSystem, solve
+from ...linalg import (
+    DenseLinearOperator,
+    DenseLU,
+    DensePropertyVerificationPolicy,
+    LinearSolvePolicy,
+    LinearSystem,
+    solve,
+    verify_dense_properties,
+)
 from ...optim import (
     Bounds,
     minimize,
@@ -77,8 +85,17 @@ def fit_binned_model(
         policy=LinearSolvePolicy(DenseLU()),
     )
     gradient = jax.grad(objective)(optimized.parameters, None)
-    covariance_valid = jnp.all(covariance_result.status == 0) & jnp.all(
-        jnp.isfinite(covariance_result.value)
+    covariance = covariance_result.value
+    property_policy = DensePropertyVerificationPolicy(
+        require_positive_semidefinite=True,
+        relative_tolerance=2048.0,
+    )
+    hessian_properties = verify_dense_properties(hessian, policy=property_policy)
+    covariance_properties = verify_dense_properties(covariance, policy=property_policy)
+    covariance_valid = (
+        jnp.all(covariance_result.status == 0)
+        & hessian_properties.successful
+        & covariance_properties.successful
     )
     valid = (
         (optimized.status == int(OptimizationStatus.SUCCESS))

@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 
 from phydrax.operators.quantum import OpenSystemPromotionPolicy
@@ -22,6 +23,82 @@ CAMPAIGN_IDS = (
     "causal-distillation",
     "enumerable-neural",
 )
+
+QUANTITY_THRESHOLDS = {
+    "gaussian-affine": {"analytic-covariance-error": 1.0e-6},
+    "dense-trajectories": {
+        "coupled-observable-difference": 0.15,
+        "dense-reference-difference": 0.15,
+    },
+    "mps-trajectories": {
+        "maximum-discarded-weight": 1.0e-6,
+        "event-time-reference-error": 1.0e-6,
+        "maximum-root-residual": 1.0e-8,
+    },
+    "lpdo-xxz": {
+        "time-refinement-error": 1.0e-3,
+        "maximum-trace-residual": 1.0e-6,
+        "maximum-bond-discarded-weight": 1.0e-6,
+        "maximum-kraus-discarded-weight": 1.0e-6,
+        "maximum-canonical-residual": 1.0e-6,
+    },
+    "heom-spin-boson": {
+        "depth-difference": 0.1,
+        "bath-difference": 0.1,
+        "adaptive-tolerance-difference": 1.0e-3,
+        "maximum-local-error-ratio": 1.0,
+        "maximum-top-tier-norm": 0.1,
+    },
+    "constructive-memory": {
+        "time-refinement-error": 1.0e-3,
+        "maximum-trace-preservation-residual": 1.0e-8,
+        "maximum-complete-positivity-violation": 1.0e-8,
+    },
+    "process-recovery": {
+        "held-out-probability-error": 1.0e-2,
+        "post-fit-to-pre-fit-error-ratio": 0.5,
+    },
+    "causal-distillation": {
+        "held-out-probability-error": 5.0e-2,
+        "post-fit-to-pre-fit-error-ratio": 0.75,
+    },
+    "enumerable-neural": {
+        "rate-standard-error": 1.0,
+        "initial-rate-reference-error": 0.25,
+        "jump-projection-residual": 1.0e-12,
+    },
+}
+
+
+def _validate_policy_evidence(campaign: VerifiedOpenSystemCampaign) -> None:
+    record = campaign.record
+    expected = QUANTITY_THRESHOLDS[record.campaign_id]
+    observed = {
+        quantity.name: float(quantity.threshold)
+        for quantity in record.approximation.quantities
+    }
+    if observed.keys() != expected.keys() or any(
+        not math.isclose(observed[name], threshold, rel_tol=0.0, abs_tol=0.0)
+        for name, threshold in expected.items()
+    ):
+        raise ValueError(
+            f"Campaign {record.campaign_id!r} thresholds do not match policy."
+        )
+    if record.approximation.precision_policy_ids != (record.precision.policy_id,):
+        raise ValueError(
+            f"Campaign {record.campaign_id!r} precision policy is not bound to evidence."
+        )
+    replay = record.replay
+    expected_replay = (1.0e-6, 0.05, 1.0e-5)
+    observed_replay = (
+        float(replay.event_time_tolerance),
+        float(replay.disagreement_tolerance),
+        float(replay.observable_tolerance),
+    )
+    if observed_replay != expected_replay:
+        raise ValueError(
+            f"Campaign {record.campaign_id!r} replay tolerances do not match policy."
+        )
 
 
 def _policy(campaign_id: str) -> OpenSystemPromotionPolicy:
@@ -123,6 +200,8 @@ def run_open_system_graduation(
         raise ValueError(
             "Graduation requires one ordered verified artifact per campaign ID."
         )
+    for campaign in campaigns_:
+        _validate_policy_evidence(campaign)
     policies = tuple(_policy(campaign_id) for campaign_id in CAMPAIGN_IDS)
     return OpenSystemGraduationResult(campaigns_, policies)
 

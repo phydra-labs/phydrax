@@ -195,6 +195,7 @@ class _RootSystem(NamedTuple):
 
 def _root_system(problem, state, args, policy):
     source = PyTreeSpace(state) if problem.state_space is None else problem.state_space
+    _, auxiliary = problem.evaluate(state, args)
     linearization = prepare_linearization(
         lambda candidate: problem.residual(candidate, args),
         state,
@@ -218,9 +219,15 @@ def _root_system(problem, state, args, policy):
         linearization.target.flatten(residual_tree),
         policy.precision,
     )
-    primal_finite = tree_allfinite(residual_tree) & jnp.isfinite(primal_residual_norm)
-    primal_valid = primal_finite & (
-        primal_residual_norm <= policy.primal_residual_tolerance
+    primal_finite = (
+        tree_allfinite(state)
+        & tree_allfinite(residual_tree)
+        & jnp.isfinite(primal_residual_norm)
+    )
+    primal_valid = (
+        primal_finite
+        & problem.valid(state, residual_tree, auxiliary, args)
+        & (primal_residual_norm <= policy.primal_residual_tolerance)
     )
     return _RootSystem(
         linearization,

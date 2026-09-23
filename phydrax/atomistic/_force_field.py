@@ -488,9 +488,14 @@ class PreparedGeneralForceFieldTerm(AbstractPreparedAtomisticEnergyTerm):
         self.name = plan.name
         self.force_group = plan.force_group
         self.term_id = plan.term_id
-        self.site_anchor = int(
-            np.flatnonzero(np.asarray(system.coordinate_map.plan.sites.active_mask))[0]
+        active_sites = np.flatnonzero(
+            np.asarray(system.coordinate_map.plan.sites.active_mask)
         )
+        if active_sites.size == 0:
+            raise ValueError(
+                "General force-field terms require at least one active interaction site."
+            )
+        self.site_anchor = int(active_sites[0])
         self.capabilities = plan.capabilities
         self.requirements = plan.requirements
         self.prepared_id = canonical_fingerprint(

@@ -11,6 +11,13 @@ import phydrax as phx
 import phydrax.axes as cx
 
 
+def test_discrepancy_thresholds_reject_nonfinite_improvements():
+    with pytest.raises(ValueError, match="finite"):
+        phx.uq.DiscrepancyIdentifiabilityThresholds(min_nll_improvement=jnp.nan)
+    with pytest.raises(ValueError, match="finite"):
+        phx.uq.DiscrepancyIdentifiabilityThresholds(min_crps_improvement=jnp.inf)
+
+
 def test_exact_gp_discrepancy_marginalizes_and_conditions_coherent_functions():
     observation_x = jnp.linspace(0.0, 1.0, 9)
     physical_mean = 2.0 * observation_x

@@ -343,3 +343,40 @@ def test_endpoint_inclusive_probability_product_requires_bounded_support(
 
     with pytest.raises(ValueError, match="bounded probability support"):
         phx.integration.materialize(target, plan)
+
+
+def test_retained_randomized_qmc_axes_do_not_create_reduction_replicates():
+    x = phx.domain.ScalarInterval(0.0, 1.0, label="x")
+    t = phx.domain.ScalarInterval(0.0, 1.0, label="t")
+    domain = phx.domain.ProductDomain(x, t)
+    target = phx.integration.over(domain.component(), axes="x")
+    plan = phx.integration.ProductIntegrationPlan(
+        {
+            "x": phx.integration.MonteCarloPlan(32),
+            "t": phx.integration.QuasiMonteCarloPlan(16, num_replicates=4),
+        }
+    )
+
+    realization = phx.integration.materialize(target, plan, key=jr.key(40))
+
+    assert len(realization.batch.batches) == 1
+    assert not realization.batch.randomized_qmc
+
+
+def test_retained_qmc_coordinates_are_stable_across_reduced_qmc_replicas():
+    x = phx.domain.ScalarInterval(0.0, 1.0, label="x")
+    t = phx.domain.ScalarInterval(0.0, 1.0, label="t")
+    domain = phx.domain.ProductDomain(x, t)
+    target = phx.integration.over(domain.component(), axes="x")
+    plan = phx.integration.ProductIntegrationPlan(
+        {
+            "x": phx.integration.QuasiMonteCarloPlan(16, num_replicates=4),
+            "t": phx.integration.QuasiMonteCarloPlan(16, num_replicates=8),
+        }
+    )
+
+    realization = phx.integration.materialize(target, plan, key=jr.key(41))
+    retained = tuple(batch.points["t"].data for batch in realization.batch.batches)
+
+    assert len(retained) == 4
+    assert all(jnp.array_equal(retained[0], points) for points in retained[1:])

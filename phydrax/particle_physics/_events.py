@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from enum import IntEnum
+from numbers import Integral
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -67,7 +68,13 @@ class ParticleEventPlan(StrictModule, NonTrainableState):
             raise ValueError("length_unit must have length dimension.")
         if not isinstance(time_unit, UnitDefinition) or time_unit.dimension != TIME:
             raise ValueError("time_unit must have time dimension.")
-        capacities = tuple(map(int, (event_capacity, particle_capacity, vertex_capacity)))
+        raw_capacities = (event_capacity, particle_capacity, vertex_capacity)
+        if any(
+            isinstance(value, bool) or not isinstance(value, Integral)
+            for value in raw_capacities
+        ):
+            raise TypeError("All event capacities must be integers.")
+        capacities = tuple(int(value) for value in raw_capacities)
         if any(value < 1 for value in capacities):
             raise ValueError("All event capacities must be positive.")
         namespace = str(provider_status_namespace).strip()
@@ -101,6 +108,7 @@ class ParticleEventBatch(StrictModule, NonTrainableState):
     event_ids: Array
     subevent_ids: Array
     event_active: Array
+    particle_ids: Array
     pdg_ids: Array
     roles: Array
     provider_status: Array
@@ -113,6 +121,7 @@ class ParticleEventBatch(StrictModule, NonTrainableState):
     color_flow: Array
     production_vertices: Array
     vertex_active: Array
+    vertex_ids: Array
     weights: EventWeightSet
     overflow: Array
     finite: Array
@@ -148,6 +157,7 @@ class PreparedParticleEvents(StrictModule, NonTrainableState):
         event_ids: ArrayLike,
         subevent_ids: ArrayLike,
         event_active: ArrayLike,
+        particle_ids: ArrayLike | None = None,
         pdg_ids: ArrayLike,
         roles: ArrayLike,
         provider_status: ArrayLike,
@@ -161,6 +171,7 @@ class PreparedParticleEvents(StrictModule, NonTrainableState):
         production_vertices: ArrayLike,
         vertex_active: ArrayLike,
         weights: EventWeightSet,
+        vertex_ids: ArrayLike | None = None,
         overflow: ArrayLike | None = None,
         source_id: str,
     ) -> ParticleEventBatch:
@@ -170,6 +181,14 @@ class PreparedParticleEvents(StrictModule, NonTrainableState):
         event_ids_ = jnp.asarray(event_ids)
         subevent_ids_ = jnp.asarray(subevent_ids)
         event_active_ = jnp.asarray(event_active, dtype=jnp.bool_)
+        particle_ids_ = (
+            jnp.broadcast_to(
+                jnp.arange(particle_capacity, dtype=jnp.int64),
+                (event_capacity, particle_capacity),
+            )
+            if particle_ids is None
+            else jnp.asarray(particle_ids)
+        )
         pdg_ids_ = jnp.asarray(pdg_ids, dtype=jnp.int32)
         roles_ = jnp.asarray(roles, dtype=jnp.int32)
         provider_status_ = jnp.asarray(provider_status, dtype=jnp.int32)
@@ -184,6 +203,14 @@ class PreparedParticleEvents(StrictModule, NonTrainableState):
         color_flow_ = jnp.asarray(color_flow, dtype=jnp.int32)
         vertices_ = jnp.asarray(production_vertices, dtype=momenta_.dtype)
         vertex_active_ = jnp.asarray(vertex_active, dtype=jnp.bool_)
+        vertex_ids_ = (
+            jnp.broadcast_to(
+                jnp.arange(vertex_capacity, dtype=jnp.int64),
+                (event_capacity, vertex_capacity),
+            )
+            if vertex_ids is None
+            else jnp.asarray(vertex_ids)
+        )
         expected_event = (event_capacity,)
         expected_particle = (event_capacity, particle_capacity)
         if (
@@ -198,12 +225,15 @@ class PreparedParticleEvents(StrictModule, NonTrainableState):
             raise TypeError("Event identities must contain integers.")
         if (
             pdg_ids_.shape != expected_particle
+            or particle_ids_.shape != expected_particle
             or roles_.shape != expected_particle
             or provider_status_.shape != expected_particle
         ):
             raise ValueError(
                 "Particle identity arrays must align with event and particle capacity."
             )
+        if not jnp.issubdtype(particle_ids_.dtype, jnp.integer):
+            raise TypeError("particle_ids must contain integers.")
         if (
             momenta_.shape != expected_particle + (4,)
             or rest_energies_.shape != expected_particle
@@ -217,14 +247,16 @@ class PreparedParticleEvents(StrictModule, NonTrainableState):
             or color_flow_.shape != expected_particle + (2,)
         ):
             raise ValueError("Particle relation arrays have incompatible shapes.")
-        if vertices_.shape != (
-            event_capacity,
-            vertex_capacity,
-            4,
-        ) or vertex_active_.shape != (event_capacity, vertex_capacity):
+        if (
+            vertices_.shape != (event_capacity, vertex_capacity, 4)
+            or vertex_ids_.shape != (event_capacity, vertex_capacity)
+            or vertex_active_.shape != (event_capacity, vertex_capacity)
+        ):
             raise ValueError(
                 "Production vertices must align with event and vertex capacity."
             )
+        if not jnp.issubdtype(vertex_ids_.dtype, jnp.integer):
+            raise TypeError("vertex_ids must contain integers.")
         if (
             not isinstance(weights, EventWeightSet)
             or weights.event_capacity != event_capacity
@@ -268,13 +300,63 @@ class PreparedParticleEvents(StrictModule, NonTrainableState):
             production_vertex_active
         )
         end_vertex_valid &= (end_vertex_indices_ == -1) | end_vertex_active
+        safe_mothers = jnp.clip(mother_indices_, 0, particle_capacity - 1)
+        event_axis = jnp.arange(event_capacity)[:, None, None]
+        referenced_mothers_active = particle_active_[event_axis, safe_mothers]
+        mother_present = mother_indices_ >= 0
+        particle_slots = jnp.arange(particle_capacity)[None, :, None]
+        mother_not_self = ~mother_present | (mother_indices_ != particle_slots)
+        mother_distinct = ~(
+            (mother_indices_[..., 0] >= 0)
+            & (mother_indices_[..., 0] == mother_indices_[..., 1])
+        )
+        mother_consistent = (
+            jnp.all(~mother_present | referenced_mothers_active, axis=-1)
+            & jnp.all(mother_not_self, axis=-1)
+            & mother_distinct
+        )
+        particle_id_pairs = particle_ids_[:, :, None] == particle_ids_[:, None, :]
+        particle_id_duplicates = jnp.any(
+            particle_id_pairs
+            & ~jnp.eye(particle_capacity, dtype=jnp.bool_)[None, :, :]
+            & particle_active_[:, None, :],
+            axis=-1,
+        )
+        vertex_id_pairs = vertex_ids_[:, :, None] == vertex_ids_[:, None, :]
+        vertex_id_duplicates = jnp.any(
+            vertex_id_pairs
+            & ~jnp.eye(vertex_capacity, dtype=jnp.bool_)[None, :, :]
+            & vertex_active_[:, None, :],
+            axis=-1,
+        )
+        identity_event_valid = jnp.all(
+            jnp.where(
+                particle_active_,
+                (particle_ids_ >= 0) & ~particle_id_duplicates,
+                True,
+            ),
+            axis=1,
+        ) & jnp.all(
+            jnp.where(
+                vertex_active_,
+                (vertex_ids_ >= 0) & ~vertex_id_duplicates,
+                True,
+            ),
+            axis=1,
+        )
         relation_valid = (
             jnp.all(
-                jnp.where(particle_active_[..., None], mother_valid, True),
+                jnp.where(
+                    particle_active_[..., None],
+                    mother_valid,
+                    True,
+                ),
                 axis=(1, 2),
             )
+            & jnp.all(jnp.where(particle_active_, mother_consistent, True), axis=1)
             & jnp.all(jnp.where(particle_active_, production_vertex_valid, True), axis=1)
             & jnp.all(jnp.where(particle_active_, end_vertex_valid, True), axis=1)
+            & identity_event_valid
         )
         role_event_valid = jnp.all(jnp.where(particle_active_, role_valid, True), axis=1)
         finite = (
@@ -339,6 +421,7 @@ class PreparedParticleEvents(StrictModule, NonTrainableState):
             event_ids_,
             subevent_ids_,
             event_active_,
+            particle_ids_,
             pdg_ids_,
             roles_,
             provider_status_,
@@ -351,6 +434,7 @@ class PreparedParticleEvents(StrictModule, NonTrainableState):
             color_flow_,
             vertices_,
             vertex_active_,
+            vertex_ids_,
             weights,
             overflow_,
             finite,

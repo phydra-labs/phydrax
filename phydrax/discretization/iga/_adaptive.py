@@ -207,7 +207,11 @@ class AdaptiveDesignEpoch(StrictModule, NonTrainableState):
             raise ValueError("Adaptive transition violates the frozen-epoch minimum.")
         if self.transition_count >= int(maximum_transitions):
             raise ValueError("Adaptive transition budget is exhausted.")
-        if not certificate.passed or target.hierarchy_id == self.hierarchy_id:
+        if (
+            not certificate.passed
+            or certificate.hierarchy_id != target.hierarchy_id
+            or target.hierarchy_id == self.hierarchy_id
+        ):
             raise ValueError(
                 "Adaptive transition requires a new certified THB hierarchy."
             )

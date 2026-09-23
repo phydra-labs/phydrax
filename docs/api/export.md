@@ -139,16 +139,21 @@ artifact = phx.export.save_iree(
     input_names=["x"],
     output_names=["prediction"],
 )
-deployed = phx.export.load_iree(artifact.path)
+deployed = phx.export.load_iree(
+    artifact.path,
+    trusted_module_sha256=artifact.manifest.module_sha256,
+)
 prediction = deployed(sample)
 ```
 
 The manifest binds exact positional input shapes and dtypes plus ordered output
 names, shapes, and dtypes, target backend, runtime driver, JAX
 calling-convention version, and the identical IREE compiler/runtime release.
-Loading rejects checksum, version, input, and output ABI mismatches. Runtime
-outputs are checked independently for shape, dtype, and finiteness; validation
-records per-output absolute and relative native-parity errors. No implicit
+Loading requires a caller-supplied module SHA-256 obtained from a trusted
+out-of-band source; the bundle's self-declared checksum is not execution
+authority. It also rejects checksum, version, input, and output ABI mismatches.
+Runtime outputs are checked independently for shape, dtype, and finiteness;
+validation records per-output absolute and relative native-parity errors. No implicit
 casting or output packing occurs, so boolean and integer status arrays retain
 their native dtypes.
 

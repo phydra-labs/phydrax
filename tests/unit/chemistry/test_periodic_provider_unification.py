@@ -68,6 +68,9 @@ def test_generic_provider_returns_complete_periodic_ground_state_payload():
             density_matrices=np.asarray([[[2.0]]]),
             polarization=np.asarray([0.1, 0.2, 0.3]),
             cell_vectors=cell_vectors,
+            convergence=phx.chemistry.ElectronicConvergenceEvidence(
+                True, energy_residual=0.0, density_residual=0.0
+            ),
         )
 
     provider = phx.chemistry.CallableElectronicProvider(
@@ -118,6 +121,9 @@ def test_generic_provider_returns_band_structure_payload():
         -1.0,
         band_energies=bands,
         cell_vectors=5.0 * np.eye(3),
+        convergence=phx.chemistry.ElectronicConvergenceEvidence(
+            True, energy_residual=0.0, density_residual=0.0
+        ),
     )
 
     assert isinstance(result, phx.chemistry.ElectronicPeriodicEvaluation)

@@ -9,6 +9,7 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax.continuation._core import _bordered_tangent
 
 
 def test_parameter_path_exposes_declared_pytree_curve_and_jvp():
@@ -328,3 +329,58 @@ def test_prepared_bordered_solve_is_filter_jittable_for_success_and_failure():
     assert int(failed.status) == int(phx.continuation.BorderedSolveStatus.SCHUR_SINGULAR)
     assert int(failed.diagnostics.principal_solve_count) == 0
     assert not bool(failed.diagnostics.cached_column_solve_reused)
+
+
+def test_bordered_tangent_drops_inherited_state_sized_preconditioner():
+    space = phx.linalg.ArraySpace((2,), dtype=jnp.float64)
+    problem = phx.continuation.ParameterContinuationProblem(
+        lambda state, coordinate, args: state - coordinate,
+        state_space=space,
+        residual_space=space,
+        problem_id="augmented-tangent-policy",
+    )
+    state = jnp.zeros(2, dtype=jnp.float64)
+    coordinate = jnp.asarray(0.0, dtype=jnp.float64)
+    geometry = phx.continuation.ContinuationGeometry.resolve(
+        state,
+        problem.residual(state, coordinate),
+        state_space=space,
+        residual_space=space,
+    )
+    corrector = phx.nonlinear.NewtonKrylov(
+        linear_policy=phx.linalg.LinearSolvePolicy(
+            phx.linalg.GMRES(),
+            preconditioning=phx.linalg.PreconditioningPolicy(
+                phx.linalg.IdentityPreconditioner(space)
+            ),
+        )
+    )
+    method = phx.continuation.PseudoArclengthContinuation(
+        corrector=corrector,
+        tangent_update="bordered",
+    )
+
+    (
+        state_tangent,
+        coordinate_tangent,
+        status,
+        usable,
+        residual_norm,
+        alignment,
+    ) = _bordered_tangent(
+        problem,
+        geometry,
+        state,
+        coordinate,
+        jnp.zeros_like(state),
+        jnp.asarray(1.0, dtype=jnp.float64),
+        method,
+        None,
+    )
+
+    assert int(status) == int(phx.linalg.LinearSolveStatus.SUCCESS)
+    assert usable
+    assert jnp.all(jnp.isfinite(state_tangent))
+    assert jnp.isfinite(coordinate_tangent)
+    assert float(residual_norm) <= 1e-10
+    assert float(alignment) > 0.0

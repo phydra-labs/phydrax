@@ -86,22 +86,6 @@ def _contracts(*, product_capacity=2, lifetime=1.0, prompt_cutoff=0.0):
         observer_id="observer",
         orientation_id="future-right-handed",
     )
-    runtime = DarkSectorEpochPlan(
-        packet_capacity=1,
-        event_capacity=1,
-        product_capacity=product_capacity,
-        radiation_capacity=1,
-        work_capacity=1,
-        frontier_capacity=1,
-        packet_width=1,
-        event_width=8,
-        product_width=4,
-        radiation_width=1,
-        work_width=8,
-        frontier_width=8,
-        species_revision_id="7" * 64,
-        topology_revision_id="8" * 64,
-    )
     catalog = ParticleCatalogReference(
         source_id="cascade-species",
         provider_release="test",
@@ -115,6 +99,22 @@ def _contracts(*, product_capacity=2, lifetime=1.0, prompt_cutoff=0.0):
         catalog=catalog,
         energy_unit=units.energy_unit,
         charge_unit=COULOMB,
+    )
+    runtime = DarkSectorEpochPlan(
+        packet_capacity=1,
+        event_capacity=1,
+        product_capacity=product_capacity,
+        radiation_capacity=1,
+        work_capacity=1,
+        frontier_capacity=1,
+        packet_width=1,
+        event_width=8,
+        product_width=4,
+        radiation_width=1,
+        work_width=8,
+        frontier_width=8,
+        species_revision_id=species.table_id,
+        topology_revision_id="8" * 64,
     )
     channel = DarkDecayChannel(
         TwoBodyDecayPlan(30, (30, 32), (5.0, 0.0), branching_fraction=1.0)
@@ -174,7 +174,11 @@ def test_finite_epoch_cascade_restarts_to_arbitrary_depth_with_stable_durable_wo
     previous_work_id = None
     for epoch in range(depth):
         evidence = evolve_decay_cascade_epoch(
-            plan, state, 1.0, jnp.zeros((plan.runtime_plan.work_capacity, 5))
+            plan,
+            state,
+            1.0,
+            jnp.zeros((plan.runtime_plan.work_capacity, 5)),
+            draw_id=f"cascade-draw-{epoch}",
         )
         assert bool(evidence.decayed[0])
         assert not bool(evidence.runtime_result.rolled_back)
@@ -218,6 +222,7 @@ def test_prompt_and_delayed_proper_time_paths_remain_distinct():
         _seed(prompt_plan),
         0.001,
         jnp.zeros((prompt_plan.runtime_plan.work_capacity, 5)),
+        draw_id="prompt-decay-draw",
     )
     assert bool(prompt.prompt[0])
     assert not bool(prompt.delayed[0])
@@ -228,6 +233,7 @@ def test_prompt_and_delayed_proper_time_paths_remain_distinct():
         _seed(delayed_plan),
         1.0,
         jnp.zeros((delayed_plan.runtime_plan.work_capacity, 5)),
+        draw_id="delayed-decay-draw",
     )
     assert not bool(delayed.prompt[0])
     assert bool(delayed.delayed[0])
@@ -237,7 +243,11 @@ def test_product_capacity_backpressure_is_atomic_and_retains_parent_frontier():
     plan = _contracts(product_capacity=1)
     state = _seed(plan)
     evidence = evolve_decay_cascade_epoch(
-        plan, state, 1.0, jnp.zeros((plan.runtime_plan.work_capacity, 5))
+        plan,
+        state,
+        1.0,
+        jnp.zeros((plan.runtime_plan.work_capacity, 5)),
+        draw_id="backpressure-decay-draw",
     )
     result = evidence.runtime_result
     assert bool(result.backpressured)

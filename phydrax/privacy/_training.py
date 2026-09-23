@@ -48,13 +48,17 @@ class DPSGDPlan:
         )
         clipping_norm = finite_real_scalar(self.clipping_norm, "clipping_norm")
         normalize_by = finite_real_scalar(self.normalize_by, "normalize_by")
-        iterations = int(self.iterations)
+        if type(self.iterations) is not int:
+            raise TypeError("iterations must be an integer.")
+        iterations = self.iterations
         if not 0.0 < probability <= 1.0:
             raise ValueError("sampling_probability must lie in (0, 1].")
         if iterations < 1:
             raise ValueError("iterations must be positive.")
         if clipping_norm <= 0.0 or normalize_by <= 0.0:
             raise ValueError("clipping_norm and normalize_by must be positive.")
+        if self.microbatch_size is not None and type(self.microbatch_size) is not int:
+            raise TypeError("microbatch_size must be an integer or None.")
         if self.microbatch_size not in (None, 1):
             raise ValueError(
                 "Variable Poisson batches currently support only microbatch_size=1."
@@ -72,7 +76,7 @@ class DPSGDPlan:
         object.__setattr__(self, "clipping_norm", clipping_norm)
         object.__setattr__(self, "normalize_by", normalize_by)
         if self.microbatch_size is not None:
-            object.__setattr__(self, "microbatch_size", int(self.microbatch_size))
+            object.__setattr__(self, "microbatch_size", self.microbatch_size)
         object.__setattr__(self, "provider_id", provider_id)
         object.__setattr__(self, "provider_version", provider_version)
         object.__setattr__(self, "plan_id", canonical_fingerprint(self._content_record()))
@@ -110,6 +114,15 @@ class PrivateTrainingPlan:
     def __post_init__(self) -> None:
         if not isinstance(self.mechanism, DPSGDPlan):
             raise TypeError("mechanism must be a DPSGDPlan.")
+        if any(
+            type(value) is not bool
+            for value in (
+                self.normalization_is_public,
+                self.validation_is_public,
+                self.release_private_metrics,
+            )
+        ):
+            raise TypeError("Private training policy flags must be booleans.")
         if not self.normalization_is_public:
             raise ValueError(
                 "Private normalization is unsupported until a preprocessing event "

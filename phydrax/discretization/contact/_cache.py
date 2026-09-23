@@ -29,6 +29,7 @@ class ContactSearchCacheState(StrictModule, NonTrainableState):
     rebuild_count: Array
     reuse_count: Array
     state_version: Array
+    scene_id: str = eqx.field(static=True)
     cache_id: str = eqx.field(static=True)
 
 
@@ -96,6 +97,7 @@ class CachedContactSearchPlan(StrictModule, NonTrainableState):
             jnp.asarray(1, dtype=jnp.int32),
             jnp.asarray(0, dtype=jnp.int32),
             jnp.asarray(0, dtype=jnp.int32),
+            scene.scene_id,
             self.plan_id,
         )
 
@@ -111,8 +113,11 @@ class CachedContactSearchPlan(StrictModule, NonTrainableState):
         if (
             not isinstance(state, ContactSearchCacheState)
             or state.cache_id != self.plan_id
+            or state.scene_id != scene.scene_id
         ):
-            raise ValueError("Contact search cache state belongs to another plan.")
+            raise ValueError(
+                "Contact search cache state belongs to another plan or scene."
+            )
         current = jnp.asarray(positions, dtype=state.reference_positions.dtype)
         if current.shape != state.reference_positions.shape:
             raise ValueError("Cached contact positions changed shape.")
@@ -133,7 +138,7 @@ class CachedContactSearchPlan(StrictModule, NonTrainableState):
             jnp.max(displacement, initial=0.0),
             jnp.max(swept_displacement, initial=0.0),
         )
-        threshold = self.rebuild_fraction * self.skin
+        threshold = min(self.rebuild_fraction * self.skin, 0.5 * self.skin)
         reusable = state.epoch.successful & (maximum <= threshold)
         if bool(reusable):
             candidate = ContactSearchCacheState(
@@ -142,6 +147,7 @@ class CachedContactSearchPlan(StrictModule, NonTrainableState):
                 state.rebuild_count,
                 state.reuse_count + 1,
                 state.state_version + 1,
+                state.scene_id,
                 self.plan_id,
             )
         else:
@@ -156,6 +162,7 @@ class CachedContactSearchPlan(StrictModule, NonTrainableState):
                 state.rebuild_count + 1,
                 state.reuse_count,
                 state.state_version + 1,
+                scene.scene_id,
                 self.plan_id,
             )
         margin = jnp.asarray(threshold, dtype=current.dtype) - maximum

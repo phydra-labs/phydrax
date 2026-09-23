@@ -35,7 +35,7 @@ def _extract_python_blocks(markdown: str) -> list[str]:
         stripped = line.strip()
 
         if not in_block:
-            if stripped.startswith("```python"):
+            if stripped == "```python executable":
                 in_block = True
                 cur = []
             continue
@@ -82,54 +82,13 @@ def _write_blocks_to_temp_script(md_path: Path, blocks: list[str], tmp_dir: Path
     safe_stem = re.sub(r"[^A-Za-z0-9_]+", "_", md_path.as_posix()).strip("_")
     script_path = tmp_dir / f"docs_example__{safe_stem}.py"
 
-    header = f"# Generated from {md_path}\n"
-    parts: list[str] = [header]
-    num_iter_cap = (
-        2 if md_path.relative_to(_DOCS_DIR).as_posix() == "cookbook/poisson.md" else 5
-    )
+    parts: list[str] = [f"# Generated from {md_path}\n"]
     for i, block in enumerate(blocks):
         parts.append(f"\n# --- {md_path.name} block {i} ---\n")
-        parts.append(_shrink_doc_iterations(block, num_iter_cap=num_iter_cap))
+        parts.append(block)
 
     script_path.write_text("".join(parts), encoding="utf-8")
     return script_path
-
-
-def _shrink_doc_iterations(code: str, *, num_iter_cap: int) -> str:
-    code = re.sub(
-        r"num_iter\s*=\s*(\d+)",
-        lambda match: f"num_iter={min(int(match.group(1)), num_iter_cap)}",
-        code,
-    )
-    code = re.sub(
-        r"num_points\s*=\s*(\d+)",
-        lambda match: f"num_points={min(int(match.group(1)), 16)}",
-        code,
-    )
-    code = re.sub(r"width_size\s*=\s*\d+", "width_size=8", code)
-    code = re.sub(r"depth\s*=\s*\d+", "depth=1", code)
-    code = re.sub(r"latent_size\s*=\s*\d+", "latent_size=4", code)
-    code = re.sub(r"memory\s*=\s*\d+", "memory=5", code)
-    code = re.sub(
-        r"boundary_weight_num_reference\s*=\s*\d+",
-        "boundary_weight_num_reference=64",
-        code,
-    )
-    code = re.sub(r"n_epochs\s*=\s*\d+", "n_epochs=2", code)
-    code = re.sub(r"num_iterations\s*=\s*\d+", "num_iterations=0", code)
-    code = re.sub(r"draws_per_iteration\s*=\s*\d+", "draws_per_iteration=2", code)
-    code = re.sub(r"steps_per_draw\s*=\s*\d+", "steps_per_draw=1", code)
-    code = re.sub(r"warmup_steps\s*=\s*\d+", "warmup_steps=0", code)
-    code = re.sub(
-        r"final_evaluation_draws\s*=\s*\d+",
-        "final_evaluation_draws=4",
-        code,
-    )
-    code = re.sub(r"hidden_features\s*=\s*\d+", "hidden_features=8", code)
-    code = re.sub(r"pair_features\s*=\s*\d+", "pair_features=4", code)
-    code = re.sub(r"layer_count\s*=\s*\d+", "layer_count=1", code)
-    code = re.sub(r"determinant_count\s*=\s*\d+", "determinant_count=2", code)
-    return code
 
 
 def _markdown_files_with_python_blocks() -> list[Path]:

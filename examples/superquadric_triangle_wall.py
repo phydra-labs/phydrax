@@ -51,7 +51,9 @@ state = dynamics.initialize_state(
 )
 result = dynamics.step(state, jnp.asarray(0.0), jnp.asarray(1.0e-5))
 wall_response = result.evaluation.walls[0]
-print(f"successful={bool(result.successful)}")
+if not bool(result.successful):
+    raise RuntimeError("Superquadric triangle-wall step failed")
+print("successful=True")
 print(f"gap={float(wall_response.geometry.geometry.gap[0]):.6e}")
 print(f"feature_kind={int(wall_response.geometry.feature_kind[0])}")
 print(f"witness_residual={float(wall_response.geometry.witness_residual[0]):.6e}")

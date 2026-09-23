@@ -34,7 +34,9 @@ state = jnp.stack(
 )
 for _ in range(50):
     result = dynamics.step(state, 1.0e-4)
+    if not bool(result.successful):
+        raise RuntimeError("Nematic relaxation step failed")
     state = result.compact_q
 
-print("successful:", bool(result.successful))
+print("successful:", True)
 print("free energy:", float(result.evaluation.total_free_energy))

@@ -78,6 +78,7 @@ def test_exact_affine_map_produces_constant_generalized_work():
         run_id="exact-affine-targeted-run",
         work_id="exact-affine-generalized-work",
         work_kind="targeted-map",
+        inverse_temperature=1.0,
         mapping_id=mapping.map_id,
         qualification_id="exact-targeted-equilibrium-sampling",
         sampling_exact=True,

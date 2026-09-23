@@ -128,6 +128,8 @@ class NudgedElasticBandPlan(StrictModule, NonTrainableState):
             raise TypeError("surface must be a prepared potential-energy surface.")
         if surface.system_id != system.system_id or not surface.capabilities.forces:
             raise ValueError("NEB requires a force-capable surface for the same system.")
+        if surface.units.unit_system_id != system.units.unit_system_id:
+            raise ValueError("NEB surface and system unit identities differ.")
         if not np.any(
             np.asarray(system.active_mask, dtype=np.bool_)
             & np.asarray(system.mobile_mask, dtype=np.bool_)
@@ -370,7 +372,20 @@ class ReactionPathQualificationResult(StrictModule, NonTrainableState):
         *,
         minimum_overlap: float = 0.5,
     ):
-        if vibration.stationary_point is not StationaryPointKind.FIRST_ORDER_SADDLE:
+        threshold = float(minimum_overlap)
+        mass = np.asarray(masses)
+        if not isfinite(threshold) or not 0.0 <= threshold <= 1.0:
+            raise ValueError("minimum_overlap must be finite and lie in [0, 1].")
+        if (
+            mass.shape != path.images.shape[1:2]
+            or np.any(~np.isfinite(mass))
+            or np.any(mass <= 0.0)
+        ):
+            raise ValueError("Reaction-path qualification masses are invalid.")
+        if (
+            vibration.stationary_point is not StationaryPointKind.FIRST_ORDER_SADDLE
+            or not np.any(np.asarray(vibration.imaginary_mask))
+        ):
             overlap = 0.0
             successful = False
         else:
@@ -378,7 +393,7 @@ class ReactionPathQualificationResult(StrictModule, NonTrainableState):
             tangent = np.asarray(path.images[index + 1] - path.images[index - 1])
             imaginary_index = int(np.flatnonzero(np.asarray(vibration.imaginary_mask))[0])
             mode = np.asarray(vibration.normal_modes)[..., imaginary_index]
-            root_mass = np.sqrt(np.asarray(masses))[:, None]
+            root_mass = np.sqrt(mass)[:, None]
             tangent_mass = root_mass * tangent
             mode_mass = root_mass * mode
             denominator = float(
@@ -394,7 +409,7 @@ class ReactionPathQualificationResult(StrictModule, NonTrainableState):
             successful = (
                 bool(path.successful)
                 and bool(vibration.successful)
-                and overlap >= float(minimum_overlap)
+                and overlap >= threshold
             )
         self.tangent_overlap = jnp.asarray(overlap)
         self.successful = jnp.asarray(successful, dtype=jnp.bool_)
@@ -487,6 +502,8 @@ class IntrinsicReactionCoordinatePlan(StrictModule, NonTrainableState):
     ):
         if surface.system_id != system.system_id or not surface.capabilities.forces:
             raise ValueError("IRC requires a force-capable surface for the same system.")
+        if surface.units.unit_system_id != system.units.unit_system_id:
+            raise ValueError("IRC surface and system unit identities differ.")
         step = float(step_size)
         tolerance = float(force_tolerance)
         steps = int(maximum_steps)

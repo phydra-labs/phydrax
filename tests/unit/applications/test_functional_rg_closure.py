@@ -102,9 +102,10 @@ def test_scheme_refinement_and_vertex_grid_evidence():
     ).prepare()
     vertex_state = frg.MomentumVertexState(1.0 + momentum**2, 0.5 + 0.02 * momentum**2)
     evaluation = jax.jit(vertex.evaluate)(vertex_state, jnp.asarray(0.0))
-    assert bool(evaluation.admissible)
+    assert not bool(evaluation.admissible)
+    assert evaluation.interpolation_support_fraction < 1.0
+    assert int(evaluation.status) == int(frg.FunctionalRGStatus.CAPACITY_EXCEEDED)
     assert evaluation.beta_four_point_vertex.shape == momentum.shape
-    assert jnp.ptp(evaluation.beta_four_point_vertex) > 0.0
 
 
 def test_fixed_resource_guards_fail_before_large_allocations():

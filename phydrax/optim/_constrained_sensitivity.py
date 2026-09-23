@@ -101,18 +101,21 @@ def _sensitivity_system(
         equality_multipliers = multipliers[:equality_count]
         active_multipliers = multipliers[equality_count:]
     else:
+        active_multipliers = barrier / jnp.maximum(
+            evaluation.inequality_slacks[active_mask], 1e-12
+        )
+        equality_right = (
+            -evaluation.gradient + jnp.conj(active_jacobian.T) @ active_multipliers
+        )
         equality_multipliers = (
             _least_squares(
                 jnp.conj(equality_jacobian.T),
-                -evaluation.gradient,
+                equality_right,
                 linear,
                 precision,
             ).value
             if equality_jacobian.shape[0]
             else jnp.empty((0,), dtype=evaluation.gradient.dtype)
-        )
-        active_multipliers = barrier / jnp.maximum(
-            evaluation.inequality_slacks[active_mask], 1e-12
         )
     initial = jnp.concatenate([coordinates, equality_multipliers, active_multipliers])
 
@@ -204,7 +207,13 @@ def constrained_solution_jvp(
     )
     direction = precision_.direction(linear_result.value)
     condition = precision_.decision(linear_result.diagnostics.condition_estimate)
-    regular = jnp.isfinite(condition) & (condition < 1e12)
+    regular = (
+        linear_result.successful
+        & linear_result.diagnostics.converged
+        & linear_result.diagnostics.finite
+        & jnp.isfinite(condition)
+        & (condition < 1e12)
+    )
     tangent = prepared.unflatten(direction[: prepared.template_coordinates.size])
     tangent = jax.tree.map(
         lambda value: jnp.where(regular, value, jnp.full_like(value, jnp.nan)),
@@ -259,7 +268,26 @@ def constrained_solution_vjp(
         linear,
         precision_,
     )
+    parameter_leaves = jax.tree.leaves(parameters)
+    cotangent_leaves = jax.tree.leaves(cotangent_parameters)
+    if (
+        jax.tree.structure(cotangent_parameters) != jax.tree.structure(parameters)
+        or len(cotangent_leaves) != len(parameter_leaves)
+        or any(
+            jnp.shape(cotangent) != jnp.shape(parameter)
+            for cotangent, parameter in zip(
+                cotangent_leaves,
+                parameter_leaves,
+                strict=True,
+            )
+        )
+    ):
+        raise ValueError(
+            "cotangent_parameters must match the parameter PyTree and leaf shapes."
+        )
     cotangent, _ = ravel_pytree(cotangent_parameters)
+    if cotangent.size != prepared.template_coordinates.size:
+        raise ValueError("cotangent_parameters has the wrong coordinate size.")
     right = jnp.concatenate(
         [
             cotangent,
@@ -274,7 +302,13 @@ def constrained_solution_vjp(
     )
     adjoint = jnp.asarray(linear_result.value, dtype=initial.dtype)
     condition = precision_.decision(linear_result.diagnostics.condition_estimate)
-    regular = jnp.isfinite(condition) & (condition < 1e12)
+    regular = (
+        linear_result.successful
+        & linear_result.diagnostics.converged
+        & linear_result.diagnostics.finite
+        & jnp.isfinite(condition)
+        & (condition < 1e12)
+    )
     _, pullback = jax.vjp(lambda current_args: residual(initial, current_args), args)
     argument_cotangent = jax.tree.map(jnp.negative, pullback(adjoint)[0])
     argument_cotangent = jax.tree.map(

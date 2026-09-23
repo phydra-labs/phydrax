@@ -3,6 +3,7 @@
 #
 
 import jax.numpy as jnp
+import pytest
 
 import phydrax as phx
 
@@ -129,3 +130,109 @@ def test_native_fd_compiler_handles_pointwise_reaction_with_runtime_parameter():
     )[..., 0]
 
     assert jnp.allclose(drift, 0.25 * 0.75)
+
+
+def test_native_fd_round_trip_folds_every_associative_operand():
+    problem = _heat_problem(periodic=True)
+    equation = problem.equations[0]
+    u = phx.equations.PDEExpression.field("u")
+    expanded = phx.equations.PDEProblemIR(
+        coordinates=problem.coordinates,
+        fields=problem.fields,
+        parameters=problem.parameters,
+        equations=(
+            phx.equations.PDEEquation(
+                equation.name,
+                equation.lhs,
+                equation.rhs + u + (2.0 * u) * 3.0,
+            ),
+        ),
+    )
+    round_tripped = phx.equations.pde_ir_from_json(phx.equations.pde_ir_to_json(expanded))
+    grid = phx.discretization.TensorGridPlan(
+        (phx.discretization.UniformCellAxisSpec(16, periodic=True),),
+        axis_names=("x",),
+    ).prepare(jnp.asarray([[0.0], [1.0]]))
+    compiled = phx.equations.compile_finite_difference_pde(round_tripped, grid)
+    values = jnp.full(grid.shape, 0.25)
+
+    drift = compiled.drift(
+        jnp.asarray(0.0),
+        compiled.layout.pack({"u": values}),
+        {"kappa": 0.0},
+    )[..., 0]
+
+    assert jnp.allclose(drift, 7.0 * values)
+
+
+def test_native_fd_rejects_component_valued_field_layouts():
+    x = phx.equations.PDECoordinate("x", "space", bounds=(0.0, 1.0), periodic=True)
+    t = phx.equations.PDECoordinate("t", "time", bounds=(0.0, 1.0))
+    field = phx.equations.PDEField(
+        "u",
+        representation="vector",
+        components=2,
+        coordinates=("x", "t"),
+    )
+    u = phx.equations.PDEExpression.field("u")
+    problem = phx.equations.PDEProblemIR(
+        coordinates=(x, t),
+        fields=(field,),
+        equations=(
+            phx.equations.PDEEquation(
+                "vector-heat",
+                u.derivative("t"),
+                u.laplacian("x"),
+            ),
+        ),
+    )
+    grid = phx.discretization.TensorGridPlan(
+        (phx.discretization.UniformCellAxisSpec(8, periodic=True),),
+        axis_names=("x",),
+    ).prepare(jnp.asarray([[0.0], [1.0]]))
+
+    with pytest.raises(ValueError, match="only scalar fields"):
+        phx.equations.compile_finite_difference_pde(problem, grid)
+
+
+def test_native_fd_validates_ir_before_lowering():
+    problem = _heat_problem(periodic=True)
+    equation = problem.equations[0]
+    malformed = phx.equations.PDEProblemIR(
+        coordinates=problem.coordinates,
+        fields=problem.fields,
+        parameters=problem.parameters,
+        equations=(
+            phx.equations.PDEEquation(
+                equation.name,
+                equation.lhs,
+                phx.equations.PDEExpression.field("missing").laplacian("x"),
+            ),
+        ),
+    )
+    grid = phx.discretization.TensorGridPlan(
+        (phx.discretization.UniformCellAxisSpec(8, periodic=True),),
+        axis_names=("x",),
+    ).prepare(jnp.asarray([[0.0], [1.0]]))
+
+    with pytest.raises(ValueError, match="malformed field reference"):
+        phx.equations.compile_finite_difference_pde(malformed, grid)
+
+
+def test_fixed_order_pde_operations_reject_derivative_order_metadata():
+    u = phx.equations.PDEExpression.field("u")
+
+    with pytest.raises(ValueError, match="does not accept derivative-order"):
+        phx.equations.PDEExpression(
+            "gradient",
+            (u,),
+            coordinate="x",
+            order=2,
+        )
+    with pytest.raises(TypeError, match="must be an integer"):
+        phx.equations.PDEExpression(
+            "derivative",
+            (u,),
+            coordinate="x",
+            order=1.5,
+        )

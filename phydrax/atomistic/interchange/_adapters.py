@@ -12,7 +12,6 @@ from typing import Any
 import numpy as np
 from jaxtyping import ArrayLike
 
-from ..._fingerprint import canonical_fingerprint
 from ...discretization import PeriodicCell
 from ...units import (
     ANGSTROM,
@@ -55,6 +54,7 @@ from ._core import (
     AtomisticInterchangeReport,
     canonical_source_digest,
     require_mapping_fields,
+    UnsupportedAtomisticContentError,
 )
 
 
@@ -505,15 +505,22 @@ def from_openff_interchange(
     atomic_numbers = np.asarray(
         [atom.atomic_number for atom in topology.atoms], dtype=np.int32
     )
+    openmm = _require_optional("openmm")
+    source_id = canonical_source_digest(
+        {
+            "openmm_system_xml": openmm.XmlSerializer.serialize(openmm_system),
+            "atomic_numbers": atomic_numbers,
+            "positions_angstrom": positions,
+            "cell_vectors_angstrom": cell_vectors,
+        }
+    )
     return from_openmm_system(
         openmm_system,
         units,
         atomic_numbers=atomic_numbers,
         positions=positions,
         cell_vectors=cell_vectors,
-        source_id=canonical_fingerprint(
-            {"kind": "openff-interchange", "repr": repr(interchange)}
-        ),
+        source_id=source_id,
     )
 
 
@@ -782,11 +789,14 @@ def to_openmm_system(bundle: AtomisticInterchangeBundle, /):
             )
         cutoff_nm = plan.nonbonded.cutoff * length_to_nm
         if system_plan.cell is None:
-            method = (
-                openmm.NonbondedForce.CutoffNonPeriodic
-                if plan.nonbonded.electrostatics == "reaction-field"
-                else openmm.NonbondedForce.NoCutoff
-            )
+            if electrostatic and plan.nonbonded.electrostatics == "direct":
+                if lennard_jones:
+                    raise UnsupportedAtomisticContentError(
+                        "OpenMM cannot represent finite-cutoff Lennard-Jones together with uncut nonperiodic direct electrostatics in one native nonbonded force."
+                    )
+                method = openmm.NonbondedForce.NoCutoff
+            else:
+                method = openmm.NonbondedForce.CutoffNonPeriodic
         else:
             method = {
                 "pme": openmm.NonbondedForce.PME,
@@ -1170,12 +1180,17 @@ def _finalize_parmed_bundle(
         electrostatics=electrostatics,
         charge_neutrality="uniform-background" if periodic else "require-neutral",
     )
-    source_digest = canonical_fingerprint(
+    source_digest = canonical_source_digest(
         {
-            "kind": "parmed-source",
             "title": str(structure.title or "structure"),
-            "atoms": len(atoms),
-            "residues": len(structure.residues),
+            "system_id": system.system_id,
+            "topology_plan_id": topology.plan_id,
+            "potential_terms": tuple(_potential_term_to_mapping(term) for term in terms),
+            "nonbonded": {
+                "cutoff": policy.cutoff,
+                "electrostatics": policy.electrostatics,
+                "charge_neutrality": policy.charge_neutrality,
+            },
         }
     )
     provenance = AtomisticForceFieldProvenance(

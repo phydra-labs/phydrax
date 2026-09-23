@@ -38,21 +38,51 @@ def _align_observation_arrays(
     if location_array.shape == target_array.shape:
         return location_array, target_array
     if (
-        location_array.ndim == 2
-        and target_array.ndim == 1
-        and location_array.shape[1] == 1
+        location_array.ndim == target_array.ndim + 1
+        and location_array.shape[-1] == 1
+        and location_array.shape[:-1] == target_array.shape
     ):
-        location_array = location_array[:, 0]
+        location_array = location_array[..., 0]
     elif (
-        target_array.ndim == 2 and location_array.ndim == 1 and target_array.shape[1] == 1
+        target_array.ndim == location_array.ndim + 1
+        and target_array.shape[-1] == 1
+        and target_array.shape[:-1] == location_array.shape
     ):
-        target_array = target_array[:, 0]
+        target_array = target_array[..., 0]
     if location_array.shape != target_array.shape:
         raise ValueError(
             "Likelihood prediction and target shapes are incompatible: "
             f"prediction={location_array.shape}, target={target_array.shape}."
         )
     return location_array, target_array
+
+
+def _elementwise_parameter(
+    value: ArrayLike,
+    observation_shape: tuple[int, ...],
+    /,
+    *,
+    name: str,
+) -> Array:
+    array = jnp.asarray(value)
+    if (
+        array.ndim == len(observation_shape) + 1
+        and array.shape[-1] == 1
+        and array.shape[:-1] == observation_shape
+    ):
+        array = array[..., 0]
+    try:
+        broadcast_shape = jnp.broadcast_shapes(array.shape, observation_shape)
+    except ValueError as error:
+        raise ValueError(
+            f"{name} is incompatible with observation shape {observation_shape}."
+        ) from error
+    if broadcast_shape != observation_shape:
+        raise ValueError(
+            f"{name} would introduce non-observation axes: "
+            f"parameter={array.shape}, observation={observation_shape}."
+        )
+    return jnp.broadcast_to(array, observation_shape)
 
 
 class AbstractLikelihood(StrictModule):
@@ -112,7 +142,8 @@ class ScalarNaturalExponentialFamilyLikelihood(_AbstractElementwiseLikelihood):
             raise TypeError(
                 f"ScalarNaturalExponentialFamilyLikelihood received unknown parameters {tuple(parameters)!r}."
             )
-        return self.family.log_prob(self._natural(location), target)
+        location_array, target_array = self.align_observations(location, target)
+        return self.family.log_prob(self._natural(location_array), target_array)
 
     def sample(self, key, location: ArrayLike, /, **parameters: Any) -> Array:
         if parameters:
@@ -430,9 +461,13 @@ class GaussianLikelihood(_AbstractElementwiseLikelihood):
             raise TypeError(
                 f"GaussianLikelihood received unknown parameters {tuple(parameters)!r}."
             )
-        location_array, target_array = _real_location_target(location, target)
-        standardized = (target_array - location_array) / self.scale
-        return -0.5 * standardized**2 - jnp.log(self.scale) - 0.5 * jnp.log(2.0 * jnp.pi)
+        aligned = self.align_observations(location, target)
+        location_array, target_array = _real_location_target(*aligned)
+        scale = _elementwise_parameter(
+            self.scale, target_array.shape, name="Gaussian scale"
+        )
+        standardized = (target_array - location_array) / scale
+        return -0.5 * standardized**2 - jnp.log(scale) - 0.5 * jnp.log(2.0 * jnp.pi)
 
     def sample(self, key, location: ArrayLike, /, **parameters: Any) -> Array:
         if parameters:
@@ -440,9 +475,11 @@ class GaussianLikelihood(_AbstractElementwiseLikelihood):
                 f"GaussianLikelihood received unknown parameters {tuple(parameters)!r}."
             )
         location_array = _real_location(location)
-        shape = jnp.broadcast_shapes(location_array.shape, self.scale.shape)
-        noise = jr.normal(key, shape=shape, dtype=location_array.dtype)
-        return location_array + self.scale * noise
+        scale = _elementwise_parameter(
+            self.scale, location_array.shape, name="Gaussian scale"
+        )
+        noise = jr.normal(key, shape=location_array.shape, dtype=location_array.dtype)
+        return location_array + scale * noise
 
 
 class GaussianLocationScaleLikelihood(_AbstractElementwiseLikelihood):
@@ -474,8 +511,13 @@ class GaussianLocationScaleLikelihood(_AbstractElementwiseLikelihood):
             )
         if raw_scale is None:
             raise ValueError("raw_scale is required.")
-        scale = self.scale_from_raw(raw_scale)
-        location_array, target_array = _real_location_target(location, target)
+        aligned = self.align_observations(location, target)
+        location_array, target_array = _real_location_target(*aligned)
+        scale = _elementwise_parameter(
+            self.scale_from_raw(raw_scale),
+            target_array.shape,
+            name="Gaussian raw scale",
+        )
         standardized = (target_array - location_array) / scale
         return -0.5 * standardized**2 - jnp.log(scale) - 0.5 * jnp.log(2.0 * jnp.pi)
 
@@ -495,10 +537,13 @@ class GaussianLocationScaleLikelihood(_AbstractElementwiseLikelihood):
         if raw_scale is None:
             raise ValueError("raw_scale is required.")
         location_array = _real_location(location)
-        scale = self.scale_from_raw(raw_scale)
-        shape = jnp.broadcast_shapes(location_array.shape, scale.shape)
+        scale = _elementwise_parameter(
+            self.scale_from_raw(raw_scale),
+            location_array.shape,
+            name="Gaussian raw scale",
+        )
         return location_array + scale * jr.normal(
-            key, shape=shape, dtype=location_array.dtype
+            key, shape=location_array.shape, dtype=location_array.dtype
         )
 
 
@@ -525,15 +570,22 @@ class StudentTLikelihood(_AbstractElementwiseLikelihood):
             raise TypeError(
                 f"StudentTLikelihood received unknown parameters {tuple(parameters)!r}."
             )
-        location_array, target_array = _real_location_target(location, target)
-        standardized = (target_array - location_array) / self.scale
-        normalizer = (
-            jsp.special.gammaln((self.df + 1.0) / 2.0)
-            - jsp.special.gammaln(self.df / 2.0)
-            - 0.5 * jnp.log(self.df * jnp.pi)
-            - jnp.log(self.scale)
+        aligned = self.align_observations(location, target)
+        location_array, target_array = _real_location_target(*aligned)
+        scale = _elementwise_parameter(
+            self.scale, target_array.shape, name="Student-t scale"
         )
-        return normalizer - 0.5 * (self.df + 1.0) * jnp.log1p(standardized**2 / self.df)
+        degrees = _elementwise_parameter(
+            self.df, target_array.shape, name="Student-t degrees of freedom"
+        )
+        standardized = (target_array - location_array) / scale
+        normalizer = (
+            jsp.special.gammaln((degrees + 1.0) / 2.0)
+            - jsp.special.gammaln(degrees / 2.0)
+            - 0.5 * jnp.log(degrees * jnp.pi)
+            - jnp.log(scale)
+        )
+        return normalizer - 0.5 * (degrees + 1.0) * jnp.log1p(standardized**2 / degrees)
 
     def sample(self, key, location: ArrayLike, /, **parameters: Any) -> Array:
         if parameters:
@@ -541,11 +593,14 @@ class StudentTLikelihood(_AbstractElementwiseLikelihood):
                 f"StudentTLikelihood received unknown parameters {tuple(parameters)!r}."
             )
         location_array = _real_location(location)
-        shape = jnp.broadcast_shapes(
-            location_array.shape, self.scale.shape, self.df.shape
+        scale = _elementwise_parameter(
+            self.scale, location_array.shape, name="Student-t scale"
         )
-        return location_array + self.scale * jr.t(
-            key, self.df, shape=shape, dtype=location_array.dtype
+        degrees = _elementwise_parameter(
+            self.df, location_array.shape, name="Student-t degrees of freedom"
+        )
+        return location_array + scale * jr.t(
+            key, degrees, shape=location_array.shape, dtype=location_array.dtype
         )
 
 
@@ -828,19 +883,33 @@ class ContaminatedGaussianLikelihood(_AbstractElementwiseLikelihood):
             raise TypeError(
                 f"ContaminatedGaussianLikelihood received unknown parameters {tuple(parameters)!r}."
             )
-        location_array, target_array = _real_location_target(location, target)
+        aligned = self.align_observations(location, target)
+        location_array, target_array = _real_location_target(*aligned)
+        scale = _elementwise_parameter(
+            self.scale, target_array.shape, name="Contaminated Gaussian scale"
+        )
+        outlier_scale = _elementwise_parameter(
+            self.outlier_scale,
+            target_array.shape,
+            name="Contaminated Gaussian outlier scale",
+        )
+        outlier_probability = _elementwise_parameter(
+            self.outlier_probability,
+            target_array.shape,
+            name="Contaminated Gaussian outlier probability",
+        )
         residual = target_array - location_array
         nominal = (
-            -0.5 * (residual / self.scale) ** 2
-            - jnp.log(self.scale)
+            -0.5 * (residual / scale) ** 2
+            - jnp.log(scale)
             - 0.5 * jnp.log(2.0 * jnp.pi)
-            + jnp.log1p(-self.outlier_probability)
+            + jnp.log1p(-outlier_probability)
         )
         outlier = (
-            -0.5 * (residual / self.outlier_scale) ** 2
-            - jnp.log(self.outlier_scale)
+            -0.5 * (residual / outlier_scale) ** 2
+            - jnp.log(outlier_scale)
             - 0.5 * jnp.log(2.0 * jnp.pi)
-            + jnp.log(self.outlier_probability)
+            + jnp.log(outlier_probability)
         )
         return jnp.logaddexp(nominal, outlier)
 
@@ -851,16 +920,23 @@ class ContaminatedGaussianLikelihood(_AbstractElementwiseLikelihood):
             )
         location_array = _real_location(location)
         mixture_key, noise_key = jr.split(key)
-        shape = jnp.broadcast_shapes(
-            location_array.shape,
-            self.scale.shape,
-            self.outlier_scale.shape,
-            self.outlier_probability.shape,
+        scale = _elementwise_parameter(
+            self.scale, location_array.shape, name="Contaminated Gaussian scale"
         )
-        outlier = jr.bernoulli(mixture_key, self.outlier_probability, shape=shape)
-        scale = jnp.where(outlier, self.outlier_scale, self.scale)
-        return location_array + scale * jr.normal(
-            noise_key, shape=shape, dtype=location_array.dtype
+        outlier_scale = _elementwise_parameter(
+            self.outlier_scale,
+            location_array.shape,
+            name="Contaminated Gaussian outlier scale",
+        )
+        probability = _elementwise_parameter(
+            self.outlier_probability,
+            location_array.shape,
+            name="Contaminated Gaussian outlier probability",
+        )
+        outlier = jr.bernoulli(mixture_key, probability, shape=location_array.shape)
+        selected_scale = jnp.where(outlier, outlier_scale, scale)
+        return location_array + selected_scale * jr.normal(
+            noise_key, shape=location_array.shape, dtype=location_array.dtype
         )
 
 
@@ -902,8 +978,11 @@ class CensoredGaussianLikelihood(_AbstractElementwiseLikelihood):
             )
         if censoring is None:
             raise ValueError("censoring codes are required.")
-        location_array, target_array = _real_location_target(location, target)
+        aligned = self.align_observations(location, target)
+        location_array, target_array = _real_location_target(*aligned)
         codes = jnp.asarray(censoring)
+        if codes.shape != target_array.shape:
+            raise ValueError("Censoring codes must match the aligned observation shape.")
         if not jnp.issubdtype(codes.dtype, jnp.integer):
             raise TypeError("Censoring codes must be integer -1, 0, or 1.")
         codes = eqx.error_if(
@@ -911,12 +990,19 @@ class CensoredGaussianLikelihood(_AbstractElementwiseLikelihood):
             jnp.any((codes < -1) | (codes > 1)),
             "Censoring codes must be -1, 0, or 1.",
         )
-        standardized = (target_array - location_array) / self.scale
-        density = (
-            -0.5 * standardized**2 - jnp.log(self.scale) - 0.5 * jnp.log(2.0 * jnp.pi)
+        scale = _elementwise_parameter(
+            self.scale, target_array.shape, name="Censored Gaussian scale"
         )
-        left = jsp.special.log_ndtr((self.lower - location_array) / self.scale)
-        right = jsp.special.log_ndtr((location_array - self.upper) / self.scale)
+        lower = _elementwise_parameter(
+            self.lower, target_array.shape, name="Censored Gaussian lower bound"
+        )
+        upper = _elementwise_parameter(
+            self.upper, target_array.shape, name="Censored Gaussian upper bound"
+        )
+        standardized = (target_array - location_array) / scale
+        density = -0.5 * standardized**2 - jnp.log(scale) - 0.5 * jnp.log(2.0 * jnp.pi)
+        left = jsp.special.log_ndtr((lower - location_array) / scale)
+        right = jsp.special.log_ndtr((location_array - upper) / scale)
         return jnp.where(codes < 0, left, jnp.where(codes > 0, right, density))
 
     def sample(self, key, location: ArrayLike, /, **parameters: Any) -> Array:
@@ -925,11 +1011,19 @@ class CensoredGaussianLikelihood(_AbstractElementwiseLikelihood):
                 f"CensoredGaussianLikelihood received unknown parameters {tuple(parameters)!r}."
             )
         location_array = _real_location(location)
-        shape = jnp.broadcast_shapes(location_array.shape, self.scale.shape)
-        raw = location_array + self.scale * jr.normal(
-            key, shape=shape, dtype=location_array.dtype
+        scale = _elementwise_parameter(
+            self.scale, location_array.shape, name="Censored Gaussian scale"
         )
-        return jnp.clip(raw, self.lower, self.upper)
+        lower = _elementwise_parameter(
+            self.lower, location_array.shape, name="Censored Gaussian lower bound"
+        )
+        upper = _elementwise_parameter(
+            self.upper, location_array.shape, name="Censored Gaussian upper bound"
+        )
+        raw = location_array + scale * jr.normal(
+            key, shape=location_array.shape, dtype=location_array.dtype
+        )
+        return jnp.clip(raw, lower, upper)
 
 
 class HuberObjective(StrictModule):

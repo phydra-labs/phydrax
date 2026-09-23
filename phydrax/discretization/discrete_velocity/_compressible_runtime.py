@@ -163,6 +163,8 @@ class CompressibleKineticRuntimePlan(StrictModule, NonTrainableState):
                     state.kinetic.frame_temperature_scale,
                 ),
                 state.kinetic.layout,
+                state.kinetic.model_id,
+                state.kinetic.rule_id,
             ),
             jnp.where(successful, candidate.time, state.time),
             jnp.where(successful, candidate.step_index, state.step_index),

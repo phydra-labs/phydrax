@@ -366,6 +366,21 @@ def fit_variational_kinetic_model(
     if source.shape[0] > policy_.maximum_transitions:
         raise ValueError("Training transitions exceed the exact full-batch capacity.")
     validation = data if validation_data is None else validation_data
+    if not isinstance(validation, TrajectoryData):
+        raise TypeError("validation_data must be a TrajectoryData or None.")
+    if validation.state_layout.layout_id != data.state_layout.layout_id:
+        raise ValueError("Validation and training state layouts must match exactly.")
+    training_input_id = None if data.input_layout is None else data.input_layout.layout_id
+    validation_input_id = (
+        None if validation.input_layout is None else validation.input_layout.layout_id
+    )
+    if (
+        validation_input_id != training_input_id
+        or validation.input_alignment != data.input_alignment
+    ):
+        raise ValueError(
+            "Validation and training input layouts/alignment must match exactly."
+        )
     validation_source, validation_target, validation_valid, validation_weights = (
         _training_arrays(validation, library, lag, weighting)
     )

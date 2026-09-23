@@ -4,9 +4,10 @@
 
 from __future__ import annotations
 
-from numbers import Real
 from typing import Any
 
+import equinox as eqx
+import jax.core as jax_core
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
@@ -20,8 +21,13 @@ def coerce_hbar(hbar: ArrayLike, /) -> Array:
         raise ValueError(f"hbar must be a scalar, got shape {value.shape}.")
     if jnp.iscomplexobj(value):
         raise TypeError("hbar must be real.")
-    if isinstance(hbar, Real) and (isinstance(hbar, bool) or hbar <= 0):
+    if value.dtype == jnp.dtype(jnp.bool_):
         raise ValueError("hbar must be positive.")
+    invalid = ~jnp.isfinite(value) | (value <= 0)
+    if isinstance(invalid, jax_core.Tracer):
+        return eqx.error_if(value, invalid, "hbar must be positive and finite.")
+    if bool(invalid):
+        raise ValueError("hbar must be positive and finite.")
     return value
 
 

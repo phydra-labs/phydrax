@@ -237,6 +237,14 @@ def _structural_cases(repeats: int) -> dict[str, Any]:
             ].cell_count,
         },
         "distributed_preparation": {
+            "valid": bool(
+                distributed.part_count == 2
+                and np.isfinite(
+                    float(np.asarray(distributed.partition.evidence.imbalance_ratio))
+                )
+                and float(np.asarray(distributed.partition.evidence.imbalance_ratio))
+                >= 1.0
+            ),
             "seconds": distributed_seconds,
             "parts": distributed.part_count,
             "imbalance_ratio": float(
@@ -259,6 +267,7 @@ def benchmark(*, quick: bool, repeats: int) -> dict[str, object]:
         and grand["successful"]
         and structural["active_storage"]["successful"]
         and structural["adaptation"]["successful"]
+        and structural["distributed_preparation"]["valid"]
     )
     return {
         "status": "pass" if passed else "fail",
@@ -284,10 +293,9 @@ def main() -> int:
     if arguments.repeats < 1:
         raise ValueError("repeats must be positive.")
     report = benchmark(quick=arguments.quick, repeats=arguments.repeats)
-    arguments.output.parent.mkdir(parents=True, exist_ok=True)
-    arguments.output.write_text(
-        json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
-    )
+    from benchmarks._io import write_json_atomic
+
+    write_json_atomic(arguments.output, report)
     print(arguments.output)
     return 0 if report["status"] == "pass" else 1
 

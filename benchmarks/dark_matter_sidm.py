@@ -116,15 +116,16 @@ def _case(particle_count: int, grid_count: int, repetitions: int):
     collision = eqx.filter_jit(sidm.collide)
 
     started = time.perf_counter()
-    first = collision(state, jr.key(0), 0, 0.25)
-    jax.block_until_ready(first.accepted_state.canonical_momenta)
+    root_key = jr.key(0)
+    first = collision(state, jr.fold_in(root_key, 0), 0, 0.25)
+    jax.block_until_ready(first)
     compile_and_first_ms = 1000.0 * (time.perf_counter() - started)
 
     started = time.perf_counter()
     result = first
     for epoch in range(repetitions):
-        result = collision(state, jr.key(epoch + 1), epoch + 1, 0.25)
-    jax.block_until_ready(result.accepted_state.canonical_momenta)
+        result = collision(state, jr.fold_in(root_key, epoch + 1), epoch + 1, 0.25)
+    jax.block_until_ready(result)
     execution_ms = 1000.0 * (time.perf_counter() - started) / repetitions
     expected_events = float(jnp.sum(result.diagnostics.pair_probability))
     return {
@@ -132,6 +133,7 @@ def _case(particle_count: int, grid_count: int, repetitions: int):
         "pair_capacity": pair_capacity,
         "grid_count_per_axis": grid_count,
         "compile_and_first_ms": compile_and_first_ms,
+        "rng": {"root_seed": 0, "stream": "fold_in(epoch)"},
         "execution_ms": execution_ms,
         "pairs_per_second": 1000.0 * pair_capacity / execution_ms,
         "expected_rare_events": expected_events,

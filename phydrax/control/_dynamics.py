@@ -17,7 +17,10 @@ from ..dynamics import ContinuousSystem, DiscreteStepContext, DiscreteSystem, Ti
 from ..dynamics._system import DiscreteTransitionEvidence
 from ..solver._differential import DifferentialProblem
 from ..solver._diffrax_backend import solve_diffrax
-from ._parameterization import AbstractControlParameterization
+from ._parameterization import (
+    _validate_parameterization_grid,
+    AbstractControlParameterization,
+)
 from ._problem import _identifier
 from ._trajectory import CONTROL_DYNAMICS_FAILED, CONTROL_SUCCESS, ControlTrajectory
 
@@ -144,6 +147,7 @@ class DiscreteControlDynamics(StrictModule):
             raise ValueError("parameterization control_shape does not match dynamics.")
         state, cases = _case_and_state(initial_state, self.state_shape)
         initial_valid = _event_finite(state, self.state_shape)
+        parameterization = _validate_parameterization_grid(parameterization, time_grid)
         safe_initial = _event_where(
             initial_valid,
             state,
@@ -405,6 +409,7 @@ class DifferentialControlDynamics(StrictModule):
         if parameterization.control_shape != self.control_shape:
             raise ValueError("parameterization control_shape does not match dynamics.")
         state, cases = _case_and_state(initial_state, self.state_shape)
+        parameterization = _validate_parameterization_grid(parameterization, time_grid)
         case_count = 1
         for size in cases:
             case_count *= size

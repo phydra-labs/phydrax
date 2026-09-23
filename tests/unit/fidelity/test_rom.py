@@ -4,6 +4,7 @@
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -75,7 +76,7 @@ def test_affine_rom_evaluator_propagates_reduced_state_and_validity():
         observable_id="state",
         model_id=model.model_id,
         approximation_id="affine-galerkin",
-        observable_contract_id="state-vector",
+        observable_contract_id=model.reduction.trial_state_contract_id,
     )
     evaluator = phx.rom.AffineLinearROMFidelityEvaluator(
         model,
@@ -112,7 +113,7 @@ def test_affine_rom_evaluator_exposes_prepared_observation_without_reconstructio
         observable_id="qoi",
         model_id=model.model_id,
         approximation_id="affine-galerkin",
-        observable_contract_id="scalar-qoi",
+        observable_contract_id=model.observations[0].observation_id,
     )
     evaluation = phx.rom.AffineLinearROMFidelityEvaluator(
         model,
@@ -128,3 +129,38 @@ def test_affine_rom_evaluator_exposes_prepared_observation_without_reconstructio
 
     np.testing.assert_allclose(evaluation.observable, np.asarray([1.25]))
     assert evaluation.result.reconstructed_state is None
+
+
+def test_affine_rom_evaluator_rejects_observable_and_contract_mismatches():
+    model = _prepared_affine_rom()
+    wrong_observable = phx.fidelity.FidelityLevelSpec(
+        "wrong-observable",
+        problem_id="linear-problem",
+        observable_id="qoi",
+        model_id=model.model_id,
+        approximation_id="affine-galerkin",
+        observable_contract_id=model.observations[0].observation_id,
+    )
+    with pytest.raises(ValueError, match="observable_id"):
+        phx.rom.AffineLinearROMFidelityEvaluator(
+            model,
+            wrong_observable,
+            cost=1.0,
+            observable="state",
+        )
+
+    wrong_contract = phx.fidelity.FidelityLevelSpec(
+        "wrong-contract",
+        problem_id="linear-problem",
+        observable_id="state",
+        model_id=model.model_id,
+        approximation_id="affine-galerkin",
+        observable_contract_id="another-state-contract",
+    )
+    with pytest.raises(ValueError, match="observable contract"):
+        phx.rom.AffineLinearROMFidelityEvaluator(
+            model,
+            wrong_contract,
+            cost=1.0,
+            observable="state",
+        )

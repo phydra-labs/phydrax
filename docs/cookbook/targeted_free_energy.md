@@ -8,6 +8,9 @@ exact zero free-energy difference:
 import jax.numpy as jnp
 import phydrax as phx
 
+# Exact reduced-unit convention used by both potential callbacks and their work.
+inverse_temperature = 1.0
+
 source = phx.uq.CallableReducedPotential(
     lambda value: 0.5 * jnp.sum(value**2),
     (1,),
@@ -62,6 +65,7 @@ dataset = phx.uq.ReducedWorkDataset(
     sampling_exact=True,
     sampling_bias_bound=0.0,
     work_kind="targeted-map",
+    inverse_temperature=inverse_temperature,
     mapping_id=mapping.map_id,
     unit_id="1",
 )
@@ -69,6 +73,11 @@ estimate = phx.uq.bennett_acceptance_ratio(dataset)
 if not bool(jnp.all(work.valid) & estimate.successful):
     raise RuntimeError("Targeted free-energy calculation did not qualify")
 ```
+
+The declared `inverse_temperature` is the exact reduced-unit convention used to
+define both potential callbacks and generalized work. It is authenticated as part of
+the `ReducedWorkDataset` identity; do not replace it with an unrelated estimator
+default.
 
 Use `CenterOfMassPreservingBijector` when a finite molecular problem should leave
 translation untouched. `ControlledHamiltonianReducedPotential` admits only one

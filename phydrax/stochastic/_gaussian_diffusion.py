@@ -13,7 +13,7 @@ import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike, Key
 
 from .._fingerprint import canonical_fingerprint
-from .._probability import AbstractProbabilityLaw, DiagonalNormalLaw
+from .._probability import _leading_shape, AbstractProbabilityLaw, DiagonalNormalLaw
 from .._strict import StrictModule
 from ._process import (
     AbstractMarginalTransitionLaw,
@@ -32,11 +32,11 @@ def _identifier(value: str, /, *, owner: str) -> str:
 
 def _inexact_state(value: ArrayLike, state_shape: tuple[int, ...], /) -> Array:
     state = jnp.asarray(value)
-    if (
-        state.ndim < len(state_shape)
-        or tuple(state.shape[-len(state_shape) :]) != state_shape
-    ):
-        raise ValueError(f"state must end in shape {state_shape}; got {state.shape}.")
+    _leading_shape(
+        state.shape,
+        state_shape,
+        owner="Gaussian diffusion state",
+    )
     if jnp.iscomplexobj(state):
         raise TypeError(
             "Gaussian score diffusion initially requires real state coordinates."

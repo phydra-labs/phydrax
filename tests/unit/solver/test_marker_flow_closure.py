@@ -597,6 +597,16 @@ def test_sharp_projection_and_variable_density_stage_inverse_preserve_zero_state
         stage_id="variable-density-stage",
     )
     applied = inverse.apply_inverse(one)
+    diagonal = phx.solver.MACDiagonalStageInverseMomentum(
+        operators,
+        boundaries,
+        stage,
+        one,
+    )
+    exact_diagnostics = diagonal.diagnostics(one, diagonal.apply_inverse(one))
+    wrong_diagnostics = diagonal.diagnostics(one, zero)
+    assert exact_diagnostics.converged
+    assert not wrong_diagnostics.converged
     pairing_id = canonical_fingerprint(
         {
             "pressure": operators.pressure_space.space_id,
@@ -722,6 +732,28 @@ def test_overdamped_fib_matches_free_diffusion_covariance():
 
     assert result.accepted
     assert jnp.abs(variance - 2.0 * step) / (2.0 * step) < 0.15
+
+
+def test_marker_trajectory_rejects_nonfinite_accepted_state():
+    trajectory = phx.solver.MarkerFlowTrajectoryAdapter(
+        lambda state, step, _event, _counter, _route: (
+            jnp.asarray(jnp.nan),
+            jnp.asarray(True),
+            jnp.asarray(0, dtype=jnp.int32),
+        ),
+        lambda time, state: jnp.asarray(0.0),
+        adapter_id="nonfinite-accepted-marker-state",
+    ).rollout(
+        jnp.asarray(0.0),
+        0.0,
+        jnp.asarray([0.1]),
+        jnp.zeros((1, 1)),
+        jnp.asarray([0]),
+        jnp.asarray([0]),
+    )
+
+    assert not trajectory.finite
+    assert not trajectory.successful
 
 
 def test_stochastic_replay_checkpoint_and_output_are_reproducible(tmp_path):

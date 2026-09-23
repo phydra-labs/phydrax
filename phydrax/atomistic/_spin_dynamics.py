@@ -312,6 +312,7 @@ class ClassicalSpinDynamicsState(StrictModule):
     directions: Array
     time: Array
     step_index: Array
+    successful: Array
     prepared_dynamics_id: str = eqx.field(static=True)
     wiener_realization_id: str | None = eqx.field(static=True)
 
@@ -320,6 +321,7 @@ class ClassicalSpinDynamicsState(StrictModule):
         directions: ArrayLike,
         time: ArrayLike,
         step_index: ArrayLike,
+        successful: ArrayLike,
         prepared_dynamics_id: str,
         /,
         *,
@@ -328,6 +330,7 @@ class ClassicalSpinDynamicsState(StrictModule):
         values = jnp.asarray(directions)
         time_ = jnp.asarray(time)
         step_ = jnp.asarray(step_index, dtype=jnp.int64)
+        successful_ = jnp.asarray(successful, dtype=jnp.bool_).reshape(())
         identifier = str(prepared_dynamics_id)
         if values.ndim != 2 or values.shape[-1] != 3:
             raise ValueError("Spin dynamics directions must have shape (site, 3).")
@@ -340,6 +343,7 @@ class ClassicalSpinDynamicsState(StrictModule):
         self.directions = values
         self.time = time_
         self.step_index = step_
+        self.successful = successful_
         self.prepared_dynamics_id = identifier
         self.wiener_realization_id = (
             None if wiener_realization_id is None else str(wiener_realization_id)
@@ -432,6 +436,7 @@ def initial_spin_dynamics_state(
         spin.directions,
         time_,
         step_,
+        True,
         prepared.prepared_id,
     )
 
@@ -526,6 +531,8 @@ def solve_llg_dynamics(
         raise TypeError("state must be ClassicalSpinDynamicsState.")
     if state.prepared_dynamics_id != prepared.prepared_id:
         raise ValueError("Spin dynamics state belongs to another prepared runtime.")
+    if not bool(np.asarray(state.successful)):
+        raise ValueError("Cannot continue an unsuccessful spin dynamics state.")
     times_host = np.asarray(save_times)
     if times_host.ndim != 1 or times_host.size == 0:
         raise ValueError("save_times must be a nonempty vector.")
@@ -629,10 +636,17 @@ def solve_llg_dynamics(
         realization_id,
         None if state_coordinates is None else state_coordinates.coordinate_id,
     )
+    trajectory_successful = (
+        state.successful
+        & jnp.asarray(solution.backend_successful)
+        & jnp.all(solution.valid)
+        & jnp.all(jnp.isfinite(directions))
+    )
     final_state = ClassicalSpinDynamicsState(
         directions[-1],
         solution.times[-1],
         state.step_index + rounded_steps,
+        trajectory_successful,
         prepared.prepared_id,
         wiener_realization_id=realization_id,
     )

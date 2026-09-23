@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from itertools import product
+from numbers import Integral
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -164,8 +165,15 @@ def graded_permute(tensor: GradedTensor, permutation: Sequence[int], /) -> Grade
     if not isinstance(tensor, GradedTensor):
         raise TypeError("tensor must be GradedTensor.")
     rank = len(tensor.legs)
-    order = tuple(int(axis) % rank for axis in permutation)
-    if len(order) != rank or len(set(order)) != rank:
+    raw_order = tuple(permutation)
+    if any(
+        not isinstance(axis, Integral) or isinstance(axis, bool) for axis in raw_order
+    ):
+        raise TypeError("Graded permutation axes must be integers.")
+    if len(raw_order) != rank or any(not -rank <= axis < rank for axis in raw_order):
+        raise ValueError("Graded permutation must contain in-range tensor axes.")
+    order = tuple(axis + rank if axis < 0 else axis for axis in raw_order)
+    if len(set(order)) != rank:
         raise ValueError("Graded permutation must contain every axis exactly once.")
     output_legs = tuple(tensor.legs[axis] for axis in order)
     layout = AbelianTensorLayout(

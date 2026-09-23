@@ -25,6 +25,7 @@ class MPMDistributedPlan(StrictModule, NonTrainableState):
     device_count: int = eqx.field(static=True)
     particle_capacity_per_device: int = eqx.field(static=True)
     halo_blocks: int = eqx.field(static=True)
+    periodic_axes: tuple[bool, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
     def __init__(
@@ -37,6 +38,7 @@ class MPMDistributedPlan(StrictModule, NonTrainableState):
         device_count: int,
         particle_capacity_per_device: int,
         halo_blocks: int = 1,
+        periodic_axes: Sequence[bool] | None = None,
     ):
         grid = tuple(logical_grid_shape)
         block = tuple(block_shape)
@@ -44,6 +46,11 @@ class MPMDistributedPlan(StrictModule, NonTrainableState):
         devices = int(device_count)
         capacity = int(particle_capacity_per_device)
         halo = int(halo_blocks)
+        periodic = (
+            (False,) * len(grid)
+            if periodic_axes is None
+            else tuple(bool(value) for value in periodic_axes)
+        )
         block_grid = tuple(g // b for g, b in zip(grid, block, strict=True))
         if (
             len(grid) != len(block)
@@ -56,6 +63,7 @@ class MPMDistributedPlan(StrictModule, NonTrainableState):
             or halo < 0
             or np.any(owners < 0)
             or np.any(owners >= devices)
+            or len(periodic) != len(grid)
         ):
             raise ValueError("Distributed MPM ownership plan is invalid.")
         self.logical_grid_shape = grid
@@ -64,6 +72,7 @@ class MPMDistributedPlan(StrictModule, NonTrainableState):
         self.device_count = devices
         self.particle_capacity_per_device = capacity
         self.halo_blocks = halo
+        self.periodic_axes = periodic
         self.plan_id = canonical_fingerprint(
             {
                 "kind": "distributed-mpm-plan",
@@ -73,6 +82,7 @@ class MPMDistributedPlan(StrictModule, NonTrainableState):
                 "device_count": devices,
                 "particle_capacity_per_device": capacity,
                 "halo_blocks": halo,
+                "periodic_axes": periodic,
             }
         )
 
@@ -83,6 +93,7 @@ class MPMParticleMigration(StrictModule):
     per_device_count: Array
     migrated: Array
     overflow: Array
+    in_domain: Array
     successful: Array
 
 
@@ -167,11 +178,19 @@ def migrate_particles(
     active: ArrayLike,
     /,
 ) -> MPMParticleMigration:
-    owner = particle_owners(plan, position, bounds)
+    position_ = jnp.asarray(position)
+    bounds_ = jnp.asarray(bounds, dtype=position_.dtype)
+    owner = particle_owners(plan, position_, bounds_)
     previous = jnp.asarray(previous_owner, dtype=jnp.int32)
     active_ = jnp.asarray(active, dtype=jnp.bool_)
     if owner.shape != previous.shape or owner.shape != active_.shape:
         raise ValueError("Distributed particle ownership arrays changed shape.")
+    bounds_valid = jnp.all(jnp.isfinite(bounds_)) & jnp.all(bounds_[1] > bounds_[0])
+    in_domain = (
+        jnp.all(jnp.isfinite(position_), axis=-1)
+        & jnp.all(position_ >= bounds_[0], axis=-1)
+        & jnp.all(position_ < bounds_[1], axis=-1)
+    )
     counts = jnp.bincount(
         jnp.where(active_, owner, 0),
         weights=active_.astype(jnp.int32),
@@ -179,13 +198,15 @@ def migrate_particles(
     ).astype(jnp.int32)
     overflow = counts > plan.particle_capacity_per_device
     migrated = active_ & (owner != previous)
+    successful = ~jnp.any(overflow) & bounds_valid & jnp.all((~active_) | in_domain)
     return MPMParticleMigration(
         owner,
         previous,
         counts,
         migrated,
         overflow,
-        ~jnp.any(overflow),
+        in_domain,
+        successful,
     )
 
 
@@ -199,9 +220,19 @@ def exchange_block_halo(
         raise ValueError("Distributed halo values must begin with block-grid shape.")
     accumulated = values
     for axis in range(len(plan.logical_grid_shape)):
+        axis_size = values.shape[axis]
         for shift in range(1, plan.halo_blocks + 1):
-            accumulated = accumulated + jnp.roll(values, shift, axis=axis)
-            accumulated = accumulated + jnp.roll(values, -shift, axis=axis)
+            positive = jnp.roll(values, shift, axis=axis)
+            negative = jnp.roll(values, -shift, axis=axis)
+            if not plan.periodic_axes[axis]:
+                indices = jnp.arange(axis_size)
+                positive_valid = indices >= shift
+                negative_valid = indices < axis_size - shift
+                mask_shape = [1] * values.ndim
+                mask_shape[axis] = axis_size
+                positive = jnp.where(positive_valid.reshape(mask_shape), positive, 0.0)
+                negative = jnp.where(negative_valid.reshape(mask_shape), negative, 0.0)
+            accumulated = accumulated + positive + negative
     checksum = jnp.asarray(
         int(hashlib.sha256(np.asarray(plan.block_owner).tobytes()).hexdigest()[:16], 16),
         dtype=jnp.uint64,

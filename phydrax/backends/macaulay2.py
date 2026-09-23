@@ -62,9 +62,10 @@ class Macaulay2IdentityError(ValueError):
 
 
 class Macaulay2Environment(StrictModule):
-    """Caller-pinned executable and independently inspectable installation inventory."""
+    """Caller-pinned executable and verified installation inventory."""
 
     executable: PinnedExecutable = eqx.field(static=True)
+    installation_root: str = eqx.field(static=True)
     installation_inventory: tuple[tuple[str, str], ...] = eqx.field(static=True)
     worker_sha256: str = eqx.field(static=True)
     environment_id: str = eqx.field(static=True)
@@ -74,6 +75,7 @@ class Macaulay2Environment(StrictModule):
         executable: PinnedExecutable,
         /,
         *,
+        installation_root: str | Path | None = None,
         installation_inventory: Sequence[tuple[str, str]] = (),
     ):
         if not isinstance(executable, PinnedExecutable):
@@ -86,8 +88,19 @@ class Macaulay2Environment(StrictModule):
             {path for path, _ in inventory}
         ):
             raise ValueError("Installation inventory paths must be unique and ordered.")
+        if inventory and installation_root is None:
+            raise ValueError(
+                "installation_root is required when installation_inventory is nonempty."
+            )
+        root = ""
+        if installation_root is not None:
+            resolved = Path(installation_root).expanduser().resolve(strict=True)
+            if not resolved.is_dir():
+                raise ValueError("installation_root must be an existing directory.")
+            root = str(resolved)
         worker_digest = hashlib.sha256(_WORKER_PATH.read_bytes()).hexdigest()
         self.executable = executable
+        self.installation_root = root
         self.installation_inventory = inventory
         self.worker_sha256 = worker_digest
         self.environment_id = canonical_fingerprint(
@@ -101,6 +114,23 @@ class Macaulay2Environment(StrictModule):
                 "installation_inventory": [list(item) for item in inventory],
             }
         )
+
+    def verify_inventory(self) -> None:
+        if not self.installation_inventory:
+            return
+        root = Path(self.installation_root)
+        for relative, expected in self.installation_inventory:
+            path = (root / relative).resolve(strict=True)
+            try:
+                path.relative_to(root)
+            except ValueError as error:
+                raise ValueError(
+                    f"Installation inventory path escaped its root: {relative!r}."
+                ) from error
+            if not path.is_file() or _digest_file(path) != expected:
+                raise ValueError(
+                    f"Installation inventory identity mismatch: {relative!r}."
+                )
 
 
 class Macaulay2Provider(AbstractExternalBackend):
@@ -151,7 +181,8 @@ def macaulay2_availability(
     try:
         observed = _digest_file(Path(executable.path))
         worker_observed = hashlib.sha256(_WORKER_PATH.read_bytes()).hexdigest()
-    except OSError as error:
+        environment.verify_inventory()
+    except (OSError, ValueError) as error:
         return BackendAvailability(
             capabilities=MACAULAY2_CAPABILITIES,
             available=False,
@@ -236,6 +267,13 @@ def macaulay2_request_record(prepared: PreparedExactSymbolic, /) -> dict[str, ob
         "installation_inventory": [
             list(item) for item in provider.environment.installation_inventory
         ],
+        "resource_limits": {
+            "maximum_variable_count": plan.maximum_variable_count,
+            "maximum_equation_count": plan.maximum_equation_count,
+            "maximum_term_count": plan.maximum_term_count,
+            "maximum_exponent_entries": plan.maximum_exponent_entries,
+            "maximum_storage_bytes": plan.maximum_storage_bytes,
+        },
     }
 
 
@@ -246,10 +284,36 @@ def macaulay2_request_payload(prepared: PreparedExactSymbolic, /) -> bytes:
 def execute_macaulay2_symbolic(prepared: PreparedExactSymbolic, /) -> ExactSymbolicResult:
     provider = _prepared_provider(prepared)
     plan = prepared.plan
-    provider.availability().require(f"algebraic.exact.{plan.operation.value}")
-    worker = _WORKER_PATH.read_bytes()
+    availability = provider.availability()
+    if not availability.available:
+        return ExactSymbolicResult(
+            ExactSymbolicStatus.PROVIDER_FAILED,
+            None,
+            None,
+            plan_id=plan.plan_id,
+            request_id=prepared.request_id,
+            diagnostic=availability.reason,
+        )
+    try:
+        worker = _WORKER_PATH.read_bytes()
+    except OSError as error:
+        return ExactSymbolicResult(
+            ExactSymbolicStatus.PROVIDER_FAILED,
+            None,
+            None,
+            plan_id=plan.plan_id,
+            request_id=prepared.request_id,
+            diagnostic=f"Packaged Macaulay2 worker could not be read: {error}",
+        )
     if hashlib.sha256(worker).hexdigest() != provider.environment.worker_sha256:
-        raise RuntimeError("Packaged Macaulay2 worker bytes no longer match their pin.")
+        return ExactSymbolicResult(
+            ExactSymbolicStatus.PROVIDER_FAILED,
+            None,
+            None,
+            plan_id=plan.plan_id,
+            request_id=prepared.request_id,
+            diagnostic="Packaged Macaulay2 worker bytes no longer match their pin.",
+        )
     payload = macaulay2_request_payload(prepared)
     if len(payload) > plan.maximum_input_bytes:
         raise ValueError("Exact symbolic request exceeds maximum_input_bytes.")
@@ -275,6 +339,19 @@ def execute_macaulay2_symbolic(prepared: PreparedExactSymbolic, /) -> ExactSymbo
                 str(error)
                 if not artifact_id
                 else f"{error}; run_artifact_id={artifact_id}"
+            ),
+        )
+    availability = provider.availability()
+    if not availability.available:
+        return ExactSymbolicResult(
+            ExactSymbolicStatus.IDENTITY_MISMATCH,
+            None,
+            None,
+            plan_id=plan.plan_id,
+            request_id=prepared.request_id,
+            diagnostic=(
+                "Pinned Macaulay2 identity changed during execution: "
+                f"{availability.reason}"
             ),
         )
     try:
@@ -438,6 +515,8 @@ def _parse_polynomials(
     equation_count = _integer(value["equation_count"], "equation_count")
     if equation_count < 1:
         raise ValueError("Macaulay2 output must contain at least one polynomial.")
+    if equation_count > plan.maximum_equation_count:
+        raise ValueError("Macaulay2 output equation count exceeds its resource bound.")
     equation_indices = _integer_list(value["equation_indices"], "equation_indices")
     raw_exponents = value["exponents"]
     raw_coefficients = value["coefficients"]
@@ -447,6 +526,25 @@ def _parse_polynomials(
         raw_coefficients
     ):
         raise ValueError("Macaulay2 sparse term arrays have inconsistent lengths.")
+    term_count = len(equation_indices)
+    exponent_entries = term_count * len(variable_indices)
+    estimated_storage = (
+        len(variable_indices) * 64
+        + equation_count * 64
+        + term_count * 40
+        + exponent_entries * 8
+        + sum(
+            len(coefficient.encode("ascii"))
+            for coefficient in raw_coefficients
+            if isinstance(coefficient, str)
+        )
+    )
+    if (
+        term_count > plan.maximum_term_count
+        or exponent_entries > plan.maximum_exponent_entries
+        or estimated_storage > plan.maximum_storage_bytes
+    ):
+        raise ValueError("Macaulay2 output exceeds its resource bounds.")
     exponents = tuple(
         _integer_list(row, f"exponents[{index}]")
         for index, row in enumerate(raw_exponents)

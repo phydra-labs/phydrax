@@ -1124,8 +1124,15 @@ def inherit_finite_element_hp_ownership(
 ) -> FiniteElementHPPartitionPlan:
     """Inherit child ownership and require coarsening siblings to share one owner."""
 
-    if lineage.source_topology_id != source.topology_id:
-        raise ValueError("hp ownership lineage does not start from the source topology.")
+    if (
+        lineage.source_topology_id != source.topology_id
+        or lineage.target_topology_id != target.topology.topology_id
+        or lineage.source_capacity != source.cell_owner_by_slot.shape[0]
+        or lineage.target_capacity != target.topology.capacity
+    ):
+        raise ValueError(
+            "hp ownership lineage does not match source and target topologies."
+        )
     owners = np.full((target.topology.capacity,), -1, dtype=np.int32)
     source_owners = np.asarray(source.cell_owner_by_slot)
     routes: dict[int, set[int]] = {}

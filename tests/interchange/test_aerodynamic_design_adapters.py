@@ -132,7 +132,10 @@ def test_generated_public_geometry_mesh_has_closed_positive_volume_cells():
     points = np.array(
         [[float(v) for v in row.strip("()").split()] for row in rows("points")]
     )
-    faces = [tuple(re.search(r"\((.*)\)", row)[1].split()) for row in rows("faces")]
+    faces = [
+        tuple(int(value) for value in re.search(r"\((.*)\)", row)[1].split())
+        for row in rows("faces")
+    ]
     owner = np.array([int(row) for row in rows("owner")])
     neighbor = np.array([int(row) for row in rows("neighbour")])
     cells = int(max(owner)) + 1

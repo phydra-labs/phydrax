@@ -205,6 +205,9 @@ class RandomPhaseApproximationPlan(StrictModule, NonTrainableState):
             tuple(clusters),
             self.energy_unit,
             self.transition_dipole_unit,
+            provider_id="native-rpa",
+            request_id=self.plan_id,
+            state_space_id=self.plan_id,
         )
 
 

@@ -9,6 +9,7 @@ import math
 import equinox as eqx
 import jax
 import jax.numpy as jnp
+import numpy as np
 from jaxtyping import Array, ArrayLike
 
 from .._fingerprint import canonical_fingerprint
@@ -69,6 +70,13 @@ class PreparedDistanceConstraints(StrictModule, NonTrainableState):
             raise TypeError("plan must be DistanceConstraintPlan.")
         if not isinstance(system, PreparedAtomisticSystem):
             raise TypeError("system must be PreparedAtomisticSystem.")
+        constraint_indices = np.asarray(system.topology.constraint_indices)
+        if constraint_indices.size:
+            constrained_mobile = np.asarray(system.mobile_mask)[constraint_indices]
+            if not np.all(constrained_mobile):
+                raise ValueError(
+                    "Distance constraints may reference only mobile particles."
+                )
         self.plan = plan
         self.system = system
         self.prepared_id = canonical_fingerprint(

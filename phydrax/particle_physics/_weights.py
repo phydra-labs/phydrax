@@ -199,7 +199,10 @@ def summarize_event_weights(
     cross_section_ = jnp.asarray(cross_section, dtype=weights.values.dtype)
     uncertainty = jnp.asarray(cross_section_uncertainty, dtype=weights.values.dtype)
     cross_section_valid = (jnp.isnan(cross_section_) & jnp.isnan(uncertainty)) | (
-        jnp.isfinite(cross_section_) & jnp.isfinite(uncertainty) & (uncertainty >= 0.0)
+        jnp.isfinite(cross_section_)
+        & (cross_section_ >= 0.0)
+        & jnp.isfinite(uncertainty)
+        & (uncertainty >= 0.0)
     )
     status = jnp.where(
         overflow_count > 0,

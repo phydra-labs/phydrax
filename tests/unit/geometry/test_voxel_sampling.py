@@ -3,6 +3,7 @@ from __future__ import annotations
 import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -26,7 +27,10 @@ def test_voxel_geometry_sampling_downgrades_field_certificate() -> None:
     ).compile()
     enclosure = phx.geometry.ExactSDFEnclosureCertificate(geometry.field_certificate)
     plan = phx.geometry.VoxelGeometrySamplingPlan(
-        _grid(), enclosure=enclosure, narrow_band_width=0.2
+        _grid(),
+        enclosure=enclosure,
+        enclosure_geometry=geometry,
+        narrow_band_width=0.2,
     )
     samples = plan.sample(geometry)
     assert bool(samples.evidence.successful)
@@ -62,3 +66,21 @@ def test_voxel_geometry_sampling_jits_and_tracks_parameters() -> None:
     assert bool(first.evidence.successful)
     assert bool(second.evidence.successful)
     assert not bool(jnp.allclose(first.field.values, second.field.values))
+
+
+def test_voxel_enclosure_rejects_an_unrelated_exact_sdf_geometry() -> None:
+    certified = phx.geometry.Sphere(
+        (0.0, 0.0, 0.0), 0.5, feature_id="certified-sphere"
+    ).compile()
+    unrelated = phx.geometry.Sphere(
+        (0.0, 0.0, 0.0), 0.5, feature_id="unrelated-sphere"
+    ).compile()
+    enclosure = phx.geometry.ExactSDFEnclosureCertificate(certified.field_certificate)
+    plan = phx.geometry.VoxelGeometrySamplingPlan(
+        _grid(),
+        enclosure=enclosure,
+        enclosure_geometry=certified,
+    )
+
+    with pytest.raises(RuntimeError, match="does not belong"):
+        plan.sample(unrelated)

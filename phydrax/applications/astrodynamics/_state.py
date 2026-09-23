@@ -60,6 +60,7 @@ class CartesianOrbitTrajectory(StrictModule, NonTrainableState):
     states: Array
     valid: Array
     status: Array
+    provider_status: Array | None
     context: AstrodynamicsContext
     trajectory_id: str = eqx.field(static=True)
 
@@ -73,6 +74,7 @@ class CartesianOrbitTrajectory(StrictModule, NonTrainableState):
         /,
         *,
         trajectory_id: str | None = None,
+        provider_status: ArrayLike | None = None,
     ):
         if not isinstance(context, AstrodynamicsContext):
             raise TypeError("context must be an AstrodynamicsContext.")
@@ -80,14 +82,22 @@ class CartesianOrbitTrajectory(StrictModule, NonTrainableState):
         states_ = jnp.asarray(states)
         valid_ = jnp.asarray(valid, dtype=jnp.bool_)
         status_ = jnp.asarray(status, dtype=jnp.int32)
+        provider_status_ = (
+            None
+            if provider_status is None
+            else jnp.asarray(provider_status, dtype=jnp.int32)
+        )
         if times_.ndim != 1 or states_.shape != (times_.shape[0], 6):
             raise ValueError("Trajectory states must have shape (num_times, 6).")
         if valid_.shape != times_.shape or status_.shape != times_.shape:
             raise ValueError("Trajectory validity and status must match the time axis.")
+        if provider_status_ is not None and provider_status_.shape != times_.shape:
+            raise ValueError("Trajectory provider status must match the time axis.")
         self.times = times_
         self.states = states_
         self.valid = valid_
         self.status = status_
+        self.provider_status = provider_status_
         self.context = context
         generated = canonical_fingerprint(
             {

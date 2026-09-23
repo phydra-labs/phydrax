@@ -13,6 +13,7 @@ from phydrax.discretization.fem._high_order import SimplexNodalFamily
 from phydrax.equations.fem._robustness import (
     ConservationCorrectionLadderPlan,
     ConservativeSubcellPlan,
+    RobustnessSensorPlan,
     RobustnessSensorState,
 )
 from phydrax.integration import GaussLegendreRule, ReferenceTriangleRule
@@ -35,6 +36,38 @@ def test_conservative_subcell_projection_preserves_contents_and_constants():
         atol=3.0e-12,
     )
     assert plan.evidence.positive_volumes
+    data = ReferenceTriangleRule(GaussLegendreRule(6)).materialize()
+    basis = np.asarray(element.tabulate(data.points)[0])
+    independent_defect = np.max(
+        np.abs(
+            np.sum(np.asarray(plan.dg_to_subcell), axis=0)
+            - np.asarray(data.weights) @ basis
+        )
+    )
+    np.testing.assert_allclose(
+        plan.evidence.conservation_defect,
+        independent_defect,
+        rtol=0.0,
+        atol=0.0,
+    )
+
+
+def test_sensor_hysteresis_keeps_correction_strength_until_release():
+    plan = RobustnessSensorPlan(
+        activation=0.2,
+        release=0.1,
+        hysteresis_steps=2,
+    )
+    initial = plan.initial_state(1)
+    activated = plan.evaluate(jnp.asarray([[[-1.0], [1.0]]]), initial)
+    retained = plan.evaluate(jnp.zeros((1, 2, 1)), activated)
+    released = plan.evaluate(jnp.zeros((1, 2, 1)), retained)
+
+    assert bool(activated.troubled[0])
+    assert bool(retained.troubled[0])
+    assert retained.strength[0] > 0.0
+    assert not bool(released.troubled[0])
+    np.testing.assert_allclose(released.strength, 0.0, atol=0.0)
 
 
 def _ledger(block, *, high=None, low=None):

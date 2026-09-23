@@ -354,14 +354,15 @@ def test_accepted_ledgers_are_contiguous_and_consumed_without_an_extra_dt():
         strict=True,
     ):
         assert ledger.end_time - ledger.start_time == register.accumulated_time
+        assert register.owner_id == runtime.conservation.plan_id
 
 
 def test_deepest_first_restriction_updates_only_covered_cells_and_conserves_composite():
     calls = []
 
-    def specialist(level, state, time, args):
-        del time, args
-        calls.append(level)
+    def specialist(level, state, time, step_size, args):
+        del args
+        calls.append((level, float(time), float(step_size)))
         return state
 
     prepared = _prepared(3)
@@ -381,7 +382,8 @@ def test_deepest_first_restriction_updates_only_covered_cells_and_conserves_comp
     result = runtime.advance(state, 0.1)
 
     assert bool(result.accepted)
-    assert calls == [1, 1, 0]
+    assert [level for level, _, _ in calls] == [1, 1, 0]
+    np.testing.assert_allclose([step for _, _, step in calls], (0.05, 0.05, 0.1))
     level_one = np.asarray(result.runtime_state.hierarchy_state.levels[1].values)
     level_one_covered = np.asarray(runtime.covered_cell_masks[1])
     np.testing.assert_allclose(level_one[level_one_covered], 9.0)
@@ -422,6 +424,7 @@ def test_late_finest_rejection_rolls_back_every_level_counter_and_journal_bitwis
     assert not bool(result.accepted)
     assert int(result.failed_level) == 2
     assert int(result.failed_phase) == int(BlockAMRAdvancePhase.ADMISSIBILITY)
+    assert int(result.runtime_state.last_status) == int(result.failed_phase)
     assert result.accepted_step_size == 0.0
     assert result.runtime_state.time == state.time
     np.testing.assert_array_equal(

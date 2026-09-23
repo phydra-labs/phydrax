@@ -612,7 +612,13 @@ class LevyProcessRealization(StrictModule):
         """Evaluate drift-plus-jump increments for one explicit cutoff."""
         start = jnp.asarray(starts, dtype=jnp.float64)
         end = jnp.asarray(ends, dtype=jnp.float64)
-        jumps = self.series(process).increments(start, end, cutoff=cutoff)
+        series = self.series(process)
+        jumps = series.increments(start, end, cutoff=cutoff)
+        jumps = eqx.error_if(
+            jumps,
+            ~jnp.all(series.complete_above(cutoff)),
+            "Lévy series capacity does not represent every jump above cutoff.",
+        )
         durations = end - start
         deterministic_rate = process.drift + process.truncation_drift(cutoff)
         drift_shape = (1,) * (len(self.sample_shape) + start.ndim) + (self.dimension,)

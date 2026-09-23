@@ -126,22 +126,31 @@ class MACDiagonalStageInverseMomentum(StrictModule, NonTrainableState):
         self, rhs: FaceVelocity, value: FaceVelocity, /
     ) -> MACStageInverseMomentumDiagnostics:
         rhs_ = self.operators.validate_velocity(rhs)
+        homogeneous_rhs = self.boundaries.homogeneous_rate(rhs_)
         value_ = self.operators.validate_velocity(value)
         reconstructed = tuple(
             item / inverse
             for item, inverse in zip(value_, self.inverse_diagonal, strict=True)
         )
         residual = tuple(
-            left - right for left, right in zip(reconstructed, rhs_, strict=True)
+            left - right
+            for left, right in zip(reconstructed, homogeneous_rhs, strict=True)
         )
         norm = jnp.sqrt(jnp.real(self.operators.velocity_space.inner(residual, residual)))
-        rhs_norm = jnp.sqrt(jnp.real(self.operators.velocity_space.inner(rhs_, rhs_)))
+        rhs_norm = jnp.sqrt(
+            jnp.real(
+                self.operators.velocity_space.inner(homogeneous_rhs, homogeneous_rhs)
+            )
+        )
+        relative = norm / jnp.maximum(rhs_norm, 1.0)
         finite = jnp.isfinite(norm) & jnp.isfinite(rhs_norm)
+        tolerance = jnp.sqrt(jnp.finfo(norm.dtype).eps)
+        converged = finite & (relative <= tolerance)
         return MACStageInverseMomentumDiagnostics(
             norm,
-            norm / jnp.maximum(rhs_norm, 1.0),
+            relative,
             finite,
-            finite,
+            converged,
             self.stage_id,
         )
 

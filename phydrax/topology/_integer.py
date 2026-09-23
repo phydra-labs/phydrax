@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import operator
 from collections.abc import Mapping, Sequence
 
 import equinox as eqx
@@ -49,7 +50,18 @@ class ExactIntegerCOO(StrictModule, NonTrainableState):
             raise ValueError("Exact integer matrix dimensions must be non-negative.")
         rows = np.asarray(row_indices)
         columns = np.asarray(column_indices)
-        values = tuple(coefficients)
+        raw_values = tuple(coefficients)
+        normalized_values = []
+        for value in raw_values:
+            if isinstance(value, (bool, np.bool_)):
+                raise TypeError("Exact integer matrix coefficients must be integers.")
+            try:
+                normalized_values.append(int(operator.index(value)))
+            except TypeError as error:
+                raise TypeError(
+                    "Exact integer matrix coefficients must be integers."
+                ) from error
+        values = tuple(normalized_values)
         if rows.ndim != 1 or columns.ndim != 1:
             raise ValueError("Exact integer matrix indices must be rank-1.")
         if rows.shape != columns.shape or rows.size != len(values):

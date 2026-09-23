@@ -84,6 +84,48 @@ def test_normalization_is_training_only_invertible_and_persisted(tmp_path):
     assert "format_version" not in policy.to_dict()
 
 
+def test_coordinate_normalization_rescales_explicit_tensor_grid_weights():
+    axes = (
+        phx.nn.operator.OperatorAxis("x", jnp.asarray([0.0, 2.0])),
+        phx.nn.operator.OperatorAxis("y", jnp.asarray([-3.0, 0.0, 3.0])),
+    )
+    weights = jnp.asarray([[0.5, 1.0, 0.5], [1.5, 2.0, 1.5]])
+    values = jnp.arange(6.0).reshape((2, 3))
+    source = phx.nn.operator.FunctionSamples(
+        values=values,
+        axes=axes,
+        quadrature_weights=weights,
+    )
+    query = phx.nn.operator.FunctionSamples(
+        values=None,
+        axes=axes,
+        quadrature_weights=weights,
+    )
+    batch = phx.nn.operator.OperatorBatch(
+        inputs={"state": source},
+        queries={"query": query},
+    )
+    targets = phx.nn.operator.OperatorTargetBatch.from_arrays(
+        {"solution": values},
+        batch,
+    )
+    policy = phx.nn.operator.training.fit_operator_normalization(
+        batch,
+        targets,
+        normalize_coordinates=True,
+    )
+    normalized = policy.normalize_batch(batch)
+    restored = policy.denormalize_batch(normalized)
+    jacobian = jnp.prod(policy.input_coordinates["state"].scale)
+
+    assert jnp.allclose(
+        normalized.input("state").quadrature_weights,
+        weights / jacobian,
+    )
+    assert jnp.allclose(restored.input("state").quadrature_weights, weights)
+    assert normalized.input("state").has_physical_quadrature
+
+
 def test_quadrature_normalization_is_invariant_to_sampling_density():
     def sampled_batch(values, weights):
         count = values.shape[0]

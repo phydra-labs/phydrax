@@ -427,3 +427,80 @@ def test_tensor_interior_facet_reads_multiple_fields_and_writes_one():
     assert jnp.linalg.norm(residual[0]) > 0.0
     assert jnp.allclose(jnp.sum(residual[0]), 0.0, atol=2.0e-12)
     assert jnp.array_equal(residual[1], jnp.zeros_like(residual[1]))
+
+
+def test_tensor_interior_facet_resolves_neighbor_across_mesh_blocks():
+    coordinates = jnp.asarray(
+        (
+            (0.0, 0.0),
+            (1.0, 0.0),
+            (2.0, 0.0),
+            (0.0, 1.0),
+            (1.0, 1.0),
+            (2.0, 1.0),
+        )
+    )
+    mesh = phx.discretization.CellMesh(
+        coordinates,
+        (
+            phx.discretization.CellBlock(
+                "left",
+                "quadrilateral",
+                jnp.asarray(((0, 1, 4, 3),), dtype=jnp.int32),
+            ),
+            phx.discretization.CellBlock(
+                "right",
+                "quadrilateral",
+                jnp.asarray(((1, 2, 5, 4),), dtype=jnp.int32),
+            ),
+        ),
+    )
+    element = phx.discretization.discontinuous_element("quadrilateral", 2)
+    discretization = phx.discretization.FiniteElementPlan(
+        mesh,
+        phx.discretization.FiniteElementFieldSpec("u", element),
+    ).prepare()
+
+    def flux(plus, minus, points, weights, normal, context):
+        del points, weights, normal, context
+        jump = plus[0] - minus[0]
+        return jump, -jump
+
+    action = InteriorFacetAction(
+        "u",
+        ("u",),
+        flux,
+        domain=discretization.interior_facet_domain,
+        action_id="cross-block-tensor-facet",
+    )
+    form = FiniteElementForm("cross-block-tensor-facet", "u", (action,))
+    program = compile_workset_program(
+        lower_finite_element_form(form, discretization),
+        form,
+        discretization,
+        realization="matrix_free",
+    )
+    workset = program.worksets[0]
+    compiled = phx.equations.compile_finite_element_problem(
+        form,
+        discretization,
+        execution_policy=phx.equations.FiniteElementExecutionPolicy(
+            realization="matrix_free",
+            local_kernel="auto",
+        ),
+    )
+    state = jnp.linspace(
+        -0.5,
+        1.0,
+        discretization.dof_maps[0].global_dof_count,
+    )
+    residual = compiled.residual(state)
+
+    assert workset.signature.block_name == "left"
+    assert workset.signature.neighbor_block_name == "right"
+    assert workset.neighbor_reference is not None
+    assert (
+        workset.neighbor_reference.prepared_id in workset.signature.reference_action_ids
+    )
+    assert jnp.linalg.norm(residual) > 0.0
+    assert jnp.allclose(jnp.sum(residual), 0.0, atol=2.0e-12)

@@ -54,6 +54,27 @@ def _settlement_time(value: ArrayLike, /) -> Array:
     )
 
 
+def _discount_curve(
+    curves: CurveSet,
+    curve_id: str,
+    valuation_date: FinanceDate,
+    currency: Currency,
+    /,
+):
+    curve = curves.curve(curve_id)
+    definition = curve.definition
+    if definition.valuation_date.ordinal != valuation_date.ordinal:
+        raise ValueError("Bond and discount-curve valuation dates must match.")
+    if definition.role != "discount":
+        raise ValueError("Bond valuation requires a discount curve.")
+    if (
+        definition.currency is None
+        or definition.currency.currency_id != currency.currency_id
+    ):
+        raise ValueError("Bond and discount-curve currencies must match exactly.")
+    return curve
+
+
 def _bond_resolved_id(contract_id: str, kind: str, leg_id: str, /) -> str:
     return canonical_fingerprint(
         {"kind": kind, "contract_id": contract_id, "leg_id": leg_id}
@@ -127,9 +148,9 @@ class ResolvedZeroCouponBond(AbstractResolvedContract):
         )
 
     def cashflow_replay(self, curves: CurveSet, /) -> DeterministicCashflowReplay:
-        curve = curves.curve(self.discount_curve_id)
-        if curve.definition.valuation_date.ordinal != self.valuation_date.ordinal:
-            raise ValueError("Bond and discount-curve valuation dates must match.")
+        curve = _discount_curve(
+            curves, self.discount_curve_id, self.valuation_date, self.currency
+        )
         valid = jnp.asarray((True,))
         times = jnp.asarray((self.maturity_time,))
         return DeterministicCashflowReplay(
@@ -153,7 +174,9 @@ class ResolvedZeroCouponBond(AbstractResolvedContract):
         self, curves: CurveSet, /, *, settlement_time: ArrayLike = 0.0
     ) -> Array:
         settlement = _settlement_time(settlement_time)
-        curve = curves.curve(self.discount_curve_id)
+        curve = _discount_curve(
+            curves, self.discount_curve_id, self.valuation_date, self.currency
+        )
         unsettled = (
             100.0
             * curve.discount_factor(self.maturity_time)

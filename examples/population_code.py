@@ -46,9 +46,11 @@ def main() -> None:
     )
     trajectory = jnp.broadcast_to(point, (spike_counts.shape[0], 1))
     temporal = pc.assess_population_spikes(code, trajectory, filtered, target)
+    if not bool(code.least_squares.valid):
+        raise RuntimeError("Population decoder fit is invalid")
     payload = {
         "neurons": population.neuron_count,
-        "valid_fit": bool(code.least_squares.valid),
+        "valid_fit": True,
         "rank": int(code.least_squares.rank),
         "silent_neurons": int(jnp.sum(code.silent_neurons)),
         "condition_number": float(code.least_squares.condition_number),

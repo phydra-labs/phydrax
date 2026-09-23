@@ -452,3 +452,58 @@ def test_discontinuous_l2_reconstructs_cell_polynomials_without_a_trace():
             phx.discretization.VirtualElementStabilizationPolicy(),
             projector="h1",
         )
+
+
+def test_component_replicated_virtual_element_fields_are_refused():
+    with pytest.raises(NotImplementedError, match="Component-replicated"):
+        phx.discretization.VirtualElementFieldSpec(
+            "u",
+            phx.discretization.conforming_h1_virtual_element(1),
+            component_shape=(2,),
+        )
+
+
+def test_vem_product_and_transfer_qualification_fail_closed():
+    fields = (
+        phx.discretization.VirtualElementFieldSpec(
+            "u",
+            phx.discretization.conforming_h1_virtual_element(1),
+        ),
+        phx.discretization.VirtualElementFieldSpec(
+            "p",
+            phx.discretization.discontinuous_l2_virtual_element(1),
+        ),
+    )
+    with pytest.raises(ValueError, match="positive sizes"):
+        phx.discretization.VirtualElementProductPlan(
+            fields,
+            (2, -1),
+            jnp.eye(1),
+            inf_sup_margin=1.0,
+            commuting_defect=0.0,
+        )
+    with pytest.raises(ValueError, match="outside its envelope"):
+        phx.discretization.VirtualElementProductPlan(
+            fields,
+            (1, 1),
+            jnp.asarray(((1.0, 0.0), (0.0, jnp.nan))),
+            inf_sup_margin=1.0,
+            commuting_defect=0.0,
+        )
+    with pytest.raises(ValueError, match="outside its envelope"):
+        phx.discretization.VirtualElementProductPlan(
+            fields,
+            (1, 1),
+            jnp.eye(2),
+            inf_sup_margin=np.nan,
+            commuting_defect=0.0,
+        )
+
+    epoch = phx.discretization.VirtualElementEpoch((3, 7), (1, 1))
+    with pytest.raises(ValueError, match="does not preserve constants"):
+        phx.discretization.adapt_virtual_element_p(
+            epoch,
+            (1.0, 0.5),
+            jnp.asarray(((1.0, 0.0), (0.0, 0.5))),
+            phx.discretization.VirtualElementAdaptivityPolicy(),
+        )

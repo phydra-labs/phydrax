@@ -1147,13 +1147,14 @@ def _general_eigensolve_native(
         initial=0,
     )
     pairing_ok = pairing_error <= policy.tolerance.biorthogonality
-    output_finite = (
-        jnp.all(jnp.isfinite(right_values))
-        & jnp.all(jnp.isfinite(right))
-        & jnp.all(jnp.isfinite(left))
-        & jnp.all(jnp.isfinite(right_residuals))
-        & jnp.all(jnp.isfinite(left_residuals))
+    finite_mask = (
+        jnp.isfinite(right_values)
+        & jnp.all(jnp.isfinite(right), axis=0)
+        & jnp.all(jnp.isfinite(left), axis=0)
+        & jnp.isfinite(right_residuals)
+        & jnp.isfinite(left_residuals)
     )
+    output_finite = jnp.all(finite_mask)
     backend_converged = right_valid & left_valid & (converged_count == count)
     residual_ok = jnp.all(right_ok & left_ok)
     status = jnp.asarray(int(GeneralEigenSolveStatus.SUCCESS), dtype=jnp.int32)
@@ -1209,7 +1210,7 @@ def _general_eigensolve_native(
         pairing_matrix=pairing_matrix,
         biorthogonality_error=pairing_error,
         eigenvalue_condition_estimates=conditions,
-        finite_mask=jnp.ones((count,), dtype=jnp.bool_),
+        finite_mask=finite_mask,
         infinite_mask=jnp.zeros((count,), dtype=jnp.bool_),
         indeterminate_mask=jnp.zeros((count,), dtype=jnp.bool_),
         input_finite=jnp.asarray(True),

@@ -7,11 +7,15 @@ from __future__ import annotations
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from phydrax.applications import electrophysiology as ep
 
 
-jax.config.update("jax_enable_x64", True)
+@pytest.fixture(autouse=True)
+def _double_precision():
+    with jax.enable_x64(True):
+        yield
 
 
 def test_branched_multicell_ion_channel_plasticity_workflow_is_jittable():

@@ -450,11 +450,13 @@ def test_certified_boundary_face_and_equal_subset_routes():
     )
     assert boundary.successful
     assert boundary.diagnostics.spectrum.forced_zero[1]
+    assert jnp.isfinite(boundary.diagnostics.maximum_log_weight_ratio)
 
     subset_problem = phx.weighting.MomentCalibrationProblem(
         jnp.asarray([[0.0], [1.0], [2.0]]),
         phx.weighting.ExactMoments(jnp.asarray([1.0])),
         subset=phx.weighting.EqualWeightSubset(1),
+        mask=jnp.asarray([True, True, False]),
     )
     subset = phx.weighting.calibrate_moments(
         subset_problem,
@@ -462,3 +464,4 @@ def test_certified_boundary_face_and_equal_subset_routes():
     )
     assert subset.successful
     assert jnp.sum(subset.weights > 0.0) == 1
+    assert jnp.isfinite(subset.diagnostics.maximum_log_weight_ratio)

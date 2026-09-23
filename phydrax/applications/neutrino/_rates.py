@@ -47,6 +47,7 @@ class NeutrinoFlux(StrictModule, NonTrainableState):
         if (
             edges.ndim != 1
             or edges.size < 2
+            or np.any(~np.isfinite(edges))
             or np.any(np.diff(edges) <= 0.0)
             or values_.shape != (edges.size - 1, 3)
             or covariance_.shape != (values_.size, values_.size)
@@ -175,11 +176,18 @@ def predict_neutrino_rates(
         oscillation, OscillationProbabilityResult
     ):
         raise TypeError("plan and oscillation must use neutrino types.")
-    if oscillation.probabilities.shape != (plan.flux.values.shape[0], 3, 3):
+    bin_centers = 0.5 * (plan.flux.energy_edges_gev[:-1] + plan.flux.energy_edges_gev[1:])
+    if (
+        oscillation.probabilities.shape != (plan.flux.values.shape[0], 3, 3)
+        or oscillation.energies_gev.shape != bin_centers.shape
+    ):
         raise ValueError("Oscillation energy support must align with flux bins.")
-    oscillated_flux = ein.contract(
-        "es,est->et", plan.flux.values, oscillation.probabilities
+    probabilities = eqx.error_if(
+        oscillation.probabilities,
+        jnp.any(oscillation.energies_gev != bin_centers),
+        "Oscillation energies do not match the flux-bin centers.",
     )
+    oscillated_flux = ein.contract("es,est->et", plan.flux.values, probabilities)
     rates = (
         oscillated_flux
         * plan.cross_sections

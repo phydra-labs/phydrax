@@ -36,7 +36,10 @@ def _comma_tuple(value: str) -> tuple[str, ...]:
 
 
 def _seed_tuple(value: str) -> tuple[int, ...]:
-    return tuple(_comma_tuple(value))
+    seeds = tuple(int(item) for item in _comma_tuple(value))
+    if not seeds or any(seed < 0 for seed in seeds) or len(seeds) != len(set(seeds)):
+        raise argparse.ArgumentTypeError("seeds must be distinct non-negative integers.")
+    return seeds
 
 
 def _float_tuple(value: str) -> tuple[float, ...]:
@@ -62,7 +65,6 @@ def main() -> None:
         choices=("smoke", "shortlist", "decision"),
         default="shortlist",
     )
-    parser.add_argument("--split", action="store_true")
     parser.add_argument("--split-seed", type=int, default=1729)
     parser.add_argument("--seeds", default="")
     parser.add_argument("--architectures", default="")
@@ -296,12 +298,10 @@ def main() -> None:
 
     if arguments.matrix:
         architectures = _comma_tuple(arguments.architectures)
-        scenarios = standard_operator_benchmarks(quick=arguments.quick)
-        if arguments.split:
-            scenarios = tuple(
-                split_operator_scenario(scenario, seed=arguments.split_seed)
-                for scenario in scenarios
-            )
+        scenarios = tuple(
+            split_operator_scenario(scenario, seed=arguments.split_seed)
+            for scenario in standard_operator_benchmarks(quick=arguments.quick)
+        )
         matrix = run_benchmark_matrix(
             scenarios,
             seeds=seeds,
@@ -325,6 +325,7 @@ def main() -> None:
         test_resolution=arguments.resolution + arguments.resolution // 2,
         num_cases=4,
     )
+    scenario = split_operator_scenario(scenario, seed=arguments.split_seed)
     model = phx.nn.operator.architectures.FNO(
         width=12,
         depth=2,

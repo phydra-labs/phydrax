@@ -13,6 +13,7 @@ from jax.typing import DTypeLike
 from jaxtyping import Array, ArrayLike
 
 from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from ..._model import register_artifact_value
 from ..._strict import StrictModule
 from ._operations import (
     LocalKrausChannelOperation,
@@ -242,6 +243,16 @@ def materialize_quantum_program(
 ) -> QuantumProgram:
     """Lower one angle vector to the canonical numeric quantum-program IR."""
     return _materialize_quantum_program(template, angles)
+
+
+register_artifact_value(
+    "phydrax.quantum:PauliRotationInstruction",
+    PauliRotationInstruction,
+)
+register_artifact_value(
+    "phydrax.quantum:QuantumProgramTemplate",
+    QuantumProgramTemplate,
+)
 
 
 __all__ = [

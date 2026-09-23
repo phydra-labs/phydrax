@@ -43,6 +43,28 @@ with tempfile.TemporaryDirectory(prefix="phydrax-interop-") as directory:
     with plan.open() as reader:
         frames = tuple(reader)
     read_seconds = time.perf_counter() - started
+    roundtrip = len(frames) == 100 and all(
+        bool(
+            jnp.asarray(observed.time) == index * 0.001
+            and jnp.asarray(observed.step) == index
+            and jnp.array_equal(observed.positions, frame.positions)
+            and jnp.array_equal(observed.stable_ids, frame.stable_ids)
+            and observed.velocities is None
+            and observed.momenta is None
+            and observed.forces is None
+            and observed.cell_vectors is None
+            and observed.image_counts is None
+            and observed.energy is None
+            and not observed.auxiliary
+            and bool(observed.valid)
+            and observed.coordinate_domain == frame.coordinate_domain
+            and observed.system_id == frame.system_id
+            and observed.topology_id == frame.topology_id
+            and observed.units.unit_system_id == frame.units.unit_system_id
+            and observed.source_id == f"benchmark-frame-{index}"
+        )
+        for index, observed in enumerate(frames)
+    )
     print(
         json.dumps(
             {
@@ -50,9 +72,11 @@ with tempfile.TemporaryDirectory(prefix="phydrax-interop-") as directory:
                 "bytes": path.stat().st_size,
                 "write_frames_per_second": len(frames) / write_seconds,
                 "read_frames_per_second": len(frames) / read_seconds,
-                "roundtrip": bool(jnp.array_equal(frames[-1].positions, frame.positions)),
+                "roundtrip": roundtrip,
             },
             indent=2,
             sort_keys=True,
         )
     )
+    if not roundtrip:
+        raise SystemExit(1)

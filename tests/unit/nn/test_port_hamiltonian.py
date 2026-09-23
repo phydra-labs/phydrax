@@ -4,7 +4,13 @@ import jax.numpy as jnp
 import jax.random as jr
 
 from phydrax._model import AbstractArrayModel
-from phydrax.nn.models import FeatureNormPotential, PortHamiltonianVectorField
+from phydrax._trainable import partition_trainable
+from phydrax.nn.models import (
+    FeatureNormPotential,
+    FixedSubspaceOnsagerModel,
+    MLP,
+    PortHamiltonianVectorField,
+)
 
 
 class _QuadraticEnergy(AbstractArrayModel):
@@ -202,3 +208,23 @@ def test_feature_norm_potential_has_positive_coercive_tail():
     assert potential.quadratic_coefficient() > 1e-4
     assert potential(10.0 * state) > potential(state)
     assert jnp.all(jnp.isfinite(jax.grad(potential)(state)))
+
+
+def test_fixed_onsager_subspace_is_excluded_from_trainable_parameters():
+    model = FixedSubspaceOnsagerModel(
+        jnp.zeros((2,)),
+        jnp.eye(2),
+        jnp.eye(2),
+        MLP(
+            in_size=2,
+            out_size=2,
+            width_size=4,
+            depth=1,
+            key=jr.key(20),
+        ),
+    )
+    trainable, _fixed = partition_trainable(model)
+
+    assert trainable.subspace is None
+    assert jax.tree.leaves(trainable.latent_dynamics)
+    assert jnp.all(jnp.isfinite(model(jnp.asarray([0.2, -0.3]))))

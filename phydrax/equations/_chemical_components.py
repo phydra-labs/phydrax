@@ -12,6 +12,7 @@ import numpy as np
 from jaxtyping import Array, Float, Int
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._model import register_artifact_value
 from .._strict import StrictModule
 from .._trainable import NonTrainableState
 
@@ -109,6 +110,12 @@ class ChemicalComponentCatalog(StrictModule, NonTrainableState):
                 }
             ),
         )
+
+
+register_artifact_value(
+    "phydrax.chemistry:ChemicalComponentCatalog",
+    ChemicalComponentCatalog,
+)
 
 
 __all__ = ["ChemicalComponentCatalog"]

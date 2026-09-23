@@ -92,9 +92,10 @@ class PeriodicLeadEmbeddingResult(StrictModule, NonTrainableState):
     iterations: Array
     causal: Array
     broadening_positive_semidefinite: Array
+    energy: Array
+    numerical_broadening: Array
     successful: Array
     plan_id: str = eqx.field(static=True)
-    result_id: str = eqx.field(static=True)
 
 
 def _dense_solve(matrix: Array, right: Array, /) -> Array:
@@ -184,14 +185,6 @@ def prepare_periodic_lead_embedding(
         & causal
         & broadening_evidence.successful
     )
-    result_id = canonical_fingerprint(
-        {
-            "kind": "periodic-lead-embedding-result",
-            "plan": plan.plan_id,
-            "energy": array_tree_fingerprint(np.asarray(energy_)),
-            "broadening": eta,
-        }
-    )
     return PeriodicLeadEmbeddingResult(
         surface_green,
         self_energy,
@@ -201,9 +194,10 @@ def prepare_periodic_lead_embedding(
         iterations,
         causal,
         broadening_evidence.positive_semidefinite,
+        energy_,
+        jnp.asarray(eta, dtype=energy_.dtype),
         successful,
         plan.plan_id,
-        result_id,
     )
 
 

@@ -67,9 +67,11 @@ def main() -> None:
     error_norm = jnp.sqrt(jnp.sum(jnp.abs(final.data - exact) ** 2))
     exact_norm = jnp.sqrt(jnp.sum(jnp.abs(exact) ** 2))
     relative_error = error_norm / exact_norm
+    if not bool(result.successful):
+        raise RuntimeError("Neural Galerkin solve failed")
     print(
         {
-            "successful": bool(result.successful),
+            "successful": True,
             "relative_l2_error": float(relative_error),
             "accepted_steps": int(result.parameter_solution.stats["num_accepted_steps"]),
             "max_projection_defect": float(

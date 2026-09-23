@@ -185,6 +185,71 @@ def test_explicit_equilibration_supports_a_matrix_free_base():
     assert jnp.allclose(result.value, jnp.linalg.solve(matrix, rhs), atol=1e-11)
 
 
+def test_explicit_equilibration_transforms_declared_nullspaces_and_certificate():
+    space = la.ArraySpace((2,), dtype=jnp.float64)
+    matrix = jnp.asarray([[1.0, -1.0], [-1.0, 1.0]])
+    operator = la.DenseLinearOperator(
+        matrix,
+        source=space,
+        target=space,
+        operator_id="resilient-singular-laplacian",
+    )
+    kernel = la.LinearSubspace(space, jnp.ones((2, 1)))
+    certificate = la.KernelCertificate(
+        operator,
+        kernel,
+        left=kernel,
+        complete=True,
+    )
+    problem = la.LinearSystem(
+        operator,
+        nullspace_policy=la.NullspacePolicy(
+            certificate=certificate,
+            compatibility="error",
+            gauge="project",
+        ),
+    )
+    left_scale = jnp.asarray([2.0, 0.5])
+    right_scale = jnp.asarray([0.25, 3.0])
+    policy = la.ResilientSolvePolicy(
+        la.LinearSolvePolicy(
+            la.FGMRES(restart=2),
+            tolerance=la.TolerancePolicy(
+                relative=1e-10,
+                absolute=1e-12,
+                max_steps=8,
+            ),
+            failure=la.FailurePolicy("status"),
+        ),
+        equilibration=la.EquilibrationPolicy(
+            "explicit",
+            left_scale=left_scale,
+            right_scale=right_scale,
+        ),
+        refinement=la.RefinementPolicy(max_steps=0),
+        failure=la.FailurePolicy("status"),
+    )
+    prepared = la.prepare_resilient_solve(problem, policy)
+    transformed_policy = prepared.base_prepared.problem.nullspace_policy
+    rhs = jnp.asarray([1.0, -1.0])
+
+    assert transformed_policy is not None
+    assert transformed_policy.certificate is not None
+    assert bool(transformed_policy.certificate.valid)
+    assert transformed_policy.certificate.matches(prepared.transformed_operator)
+    assert jnp.allclose(
+        transformed_policy.right.basis[:, 0],
+        kernel.basis[:, 0] / right_scale,
+    )
+    assert jnp.allclose(
+        transformed_policy.left.basis[:, 0],
+        kernel.basis[:, 0] / left_scale,
+    )
+    result = la.solve_resilient(prepared, rhs)
+    assert bool(result.successful)
+    assert jnp.allclose(matrix @ result.value, rhs, atol=1e-10)
+
+
 def test_resilient_one_shot_solve_has_the_dense_mathematical_derivative():
     rhs = jnp.asarray([1.0, -2.0])
     policy = la.ResilientSolvePolicy(

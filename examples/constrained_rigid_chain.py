@@ -90,7 +90,9 @@ def main():
         return jax.lax.scan(advance, state, jnp.arange(8))
 
     final, evidence = rollout(initial)
-    print("successful:", bool(jnp.all(evidence[:, 0])))
+    if not bool(jnp.all(evidence[:, 0])):
+        raise RuntimeError("Constrained rigid-chain rollout failed")
+    print("successful:", True)
     print("maximum position residual:", float(jnp.max(evidence[:, 1])))
     print("maximum velocity residual:", float(jnp.max(evidence[:, 2])))
     print("maximum quaternion defect:", float(jnp.max(evidence[:, 3])))

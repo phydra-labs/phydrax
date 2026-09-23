@@ -27,8 +27,14 @@ pytestmark = pytest.mark.macaulay2_live
 
 
 def _provider():
-    if os.environ.get("PHYDRAX_RUN_MACAULAY2_LIVE") != "1":
-        pytest.skip("Set PHYDRAX_RUN_MACAULAY2_LIVE=1 for the real provider test.")
+    required = (
+        "PHYDRAX_MACAULAY2_EXECUTABLE",
+        "PHYDRAX_MACAULAY2_SHA256",
+        "PHYDRAX_MACAULAY2_VERSION",
+    )
+    missing = tuple(name for name in required if not os.environ.get(name))
+    if missing:
+        pytest.skip("live Macaulay2 capability is absent: " + ", ".join(missing))
     path = Path(os.environ["PHYDRAX_MACAULAY2_EXECUTABLE"]).resolve(strict=True)
     digest = hashlib.sha256(path.read_bytes()).hexdigest()
     expected = os.environ["PHYDRAX_MACAULAY2_SHA256"]

@@ -298,6 +298,16 @@ class UnstructuredConservativeRemapPlan(StrictModule, NonTrainableState):
             self.target_volumes.size,
             "target_volumes",
         )
+        denominator = eqx.error_if(
+            denominator,
+            jnp.any(target_active & (~jnp.isfinite(denominator) | (denominator <= 0.0))),
+            "Active target remap volumes must be positive and finite.",
+        )
+        denominator = jnp.where(
+            target_active,
+            denominator,
+            jnp.ones_like(denominator),
+        )
         denominator = denominator.astype(value.dtype).reshape((-1,) + trailing)
         target = target / denominator
         return jnp.where(

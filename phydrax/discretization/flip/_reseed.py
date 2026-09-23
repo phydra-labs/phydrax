@@ -127,7 +127,7 @@ class FLIPReseedingPlan(StrictModule, NonTrainableState):
         receiver_valid = counts > 0
         safe_receivers = jnp.where(receiver_valid, receivers, 0)
 
-        merge_local = jnp.arange(1, self.maximum_per_cell + 1, dtype=jnp.int32)
+        merge_local = jnp.arange(1, particle_count, dtype=jnp.int32)
         merge_positions = jnp.minimum(
             offsets[:, None] + merge_local[None, :],
             particle_count - 1,

@@ -8,6 +8,7 @@ from collections.abc import Callable, Sequence
 
 import equinox as eqx
 import jax.numpy as jnp
+import numpy as np
 from jaxtyping import Array, Key
 
 from .._execution_plan import ExecutionPlan
@@ -64,6 +65,8 @@ class AtomisticLabelSet(StrictModule, NonTrainableState):
     system_id: str = eqx.field(static=True)
     topology_id: str = eqx.field(static=True)
     units: AtomisticUnitSystem
+    parent_label_set_id: str | None = eqx.field(static=True)
+    parent_revision_id: str | None = eqx.field(static=True)
     label_set_id: str = eqx.field(static=True)
 
     def __init__(
@@ -85,14 +88,34 @@ class AtomisticLabelSet(StrictModule, NonTrainableState):
             value.frame.system_id != first.system_id
             or value.frame.topology_id != first.topology_id
             or value.frame.units.unit_system_id != first.units.unit_system_id
+            or not np.array_equal(
+                np.asarray(value.frame.stable_ids), np.asarray(first.stable_ids)
+            )
             for value in values[1:]
         ):
-            raise ValueError("Label records must share system, topology, and units.")
+            raise ValueError(
+                "Label records must share system, topology, units, and stable-ID order."
+            )
         keys = tuple((value.configuration_id, value.provider_id) for value in values)
         if len(set(keys)) != len(keys):
             raise ValueError(
                 "Label records contain duplicate configuration/provider pairs."
             )
+        if parent is not None:
+            if not isinstance(parent, AtomisticLabelSet):
+                raise TypeError("parent must be an AtomisticLabelSet or None.")
+            parent_count = len(parent.records)
+            if (
+                parent.system_id != first.system_id
+                or parent.topology_id != first.topology_id
+                or parent.units.unit_system_id != first.units.unit_system_id
+                or len(values) <= parent_count
+                or tuple(value.label_id for value in values[:parent_count])
+                != tuple(value.label_id for value in parent.records)
+            ):
+                raise ValueError(
+                    "Label-set revisions must extend the exact current parent record."
+                )
         digest = canonical_fingerprint(
             {
                 "kind": "atomistic-label-content",
@@ -100,22 +123,42 @@ class AtomisticLabelSet(StrictModule, NonTrainableState):
             }
         )
         parent_digest = None if parent is None else parent.revision.content_digest
+        parent_label_set_id = None if parent is None else parent.label_set_id
+        parent_revision_id = None if parent is None else parent.revision.revision_id
         self.records = values
+        revision_metadata = {
+            "system_id": first.system_id,
+            "topology_id": first.topology_id,
+            "unit_system_id": first.units.unit_system_id,
+            "record_count": str(len(values)),
+        }
+        if parent is not None:
+            revision_metadata.update(
+                {
+                    "parent_label_set_id": parent_label_set_id,
+                    "parent_revision_id": parent_revision_id,
+                }
+            )
         self.revision = NumericRevision(
             digest,
             label=f"atomistic-labels-{len(values)}",
             parent_digest=parent_digest,
-            metadata={"system_id": first.system_id, "record_count": str(len(values))},
+            parent_revision_id=parent_revision_id,
+            metadata=revision_metadata,
         )
         self.system_id = first.system_id
         self.topology_id = first.topology_id
         self.units = first.units
+        self.parent_label_set_id = parent_label_set_id
+        self.parent_revision_id = parent_revision_id
         self.label_set_id = canonical_fingerprint(
             {
                 "kind": "atomistic-label-set",
                 "revision": self.revision.revision_id,
                 "system": first.system_id,
                 "topology": first.topology_id,
+                "parent_label_set": parent_label_set_id,
+                "parent_revision": parent_revision_id,
                 "units": first.units.unit_system_id,
             }
         )
@@ -134,6 +177,14 @@ class AtomisticLabelSet(StrictModule, NonTrainableState):
     ) -> AtomisticTrainingProblem:
         if system.prepared_id != self.system_id:
             raise ValueError("Label set belongs to another prepared atomistic system.")
+        expected_ids = np.asarray(system.plan.particle_ids)
+        if any(
+            not np.array_equal(np.asarray(value.frame.stable_ids), expected_ids)
+            for value in self.records
+        ):
+            raise ValueError(
+                "Label frame stable-ID order must match the prepared atomistic system."
+            )
         training = tuple(value for value in self.records if value.split == "train")
         validation = tuple(value for value in self.records if value.split == "validation")
         if not training:

@@ -38,6 +38,27 @@ def test_antiunitary_magnetic_symmetry_compiles_real_linear_invariants():
     assert jnp.allclose(plan.operations[1].magnetic_field_matrix, -jnp.eye(3))
     assert jnp.allclose(plan.operations[1].momentum_matrix, jnp.eye(3))
     assert jnp.allclose(plan.operations[1].dmi_matrix, jnp.eye(3))
+    assert float(certificate.composition_residual) == 0.0
+
+
+def test_symmetry_certificate_retains_admitted_composition_error():
+    algebra = CliffordAlgebraSpec((1, 1, 1))
+    group = FiniteMetricIsometryGroup(algebra, np.stack((np.eye(3), -np.eye(3))))
+    representations = np.asarray(([[1.0]], [[1.0 + 1.0e-4j]]))
+    plan = MagneticSymmetryRepresentationPlan(
+        group,
+        [False, True],
+        [[0], [0]],
+        [[0], [0]],
+        np.zeros((2, 1, 3), dtype=np.int64),
+        representations,
+        tolerance=1.0e-6,
+        rank_tolerance=1.0e-4,
+    )
+    certificate = compile_magnetic_symmetry_constraints(plan)
+
+    assert float(certificate.composition_residual) > 0.0
+    assert float(certificate.composition_residual) <= plan.tolerance
 
 
 def test_antiunitary_flags_must_form_group_homomorphism():

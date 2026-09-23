@@ -176,6 +176,9 @@ class BenchmarkAdapter:
     def prepare(self, compiled_state: Any, /) -> Any:
         return compiled_state
 
+    def mark_warmup(self, prepared_state: Any, count: int, /) -> None:
+        del prepared_state, count
+
     def solve(self, prepared_state: Any, /) -> SolveResult:
         raise NotImplementedError
 

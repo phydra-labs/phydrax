@@ -627,6 +627,7 @@ class ReducedPathPotential(StrictModule, NonTrainableState):
     ensemble: AbstractPathEnsemble
     action: NormalizedStochasticPathAction
     potential_id: str = eqx.field(static=True)
+    inverse_temperature: float = eqx.field(static=True)
 
     def __init__(
         self,
@@ -634,6 +635,7 @@ class ReducedPathPotential(StrictModule, NonTrainableState):
         action: NormalizedStochasticPathAction,
         /,
         *,
+        inverse_temperature: float,
         potential_id: str | None = None,
     ):
         if not isinstance(ensemble, AbstractPathEnsemble):
@@ -646,15 +648,20 @@ class ReducedPathPotential(StrictModule, NonTrainableState):
                 "Reduced path potentials require a normalized stochastic path action; "
                 "deterministic and surrogate actions are unsupported."
             )
+        beta = float(inverse_temperature)
+        if not isfinite(beta) or beta <= 0.0:
+            raise ValueError("inverse_temperature must be finite and positive.")
         identity = potential_id or canonical_fingerprint(
             {
                 "kind": "reduced-path-potential",
                 "ensemble": ensemble.ensemble_id,
                 "action": action.action_id,
+                "inverse_temperature": beta,
             }
         )
         self.ensemble = ensemble
         self.action = action
+        self.inverse_temperature = beta
         self.potential_id = _nonempty(identity, "potential_id")
 
     def evaluate(self, path: PathBuffer, /) -> Array:
@@ -764,7 +771,10 @@ def cross_evaluate_path_potentials(
         dependence_group_index,
         state_ids=states,
         potential_ids=potential_ids,
-        inverse_temperatures=jnp.ones((len(states),), dtype=matrix.dtype),
+        inverse_temperatures=jnp.asarray(
+            [value.inverse_temperature for value in potential_values],
+            dtype=matrix.dtype,
+        ),
         reduced_convention_id=reduced_convention,
         qualification_id=qualification_id,
         sampling_exact=True,
@@ -828,6 +838,7 @@ def path_fep_work(
         run_id=samples.run_id,
         work_id=work_id,
         work_kind="equilibrium-difference",
+        inverse_temperature=float(samples.inverse_temperatures[source_]),
         qualification_id=samples.qualification_id,
         sampling_exact=samples.sampling_exact,
         sampling_bias_bound=samples.sampling_bias_bound,

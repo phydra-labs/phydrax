@@ -8,13 +8,16 @@ import contextlib
 import io
 import json
 import runpy
+from pathlib import Path
 
 import jax.numpy as jnp
 
 
 output = io.StringIO()
 with contextlib.redirect_stdout(output):
-    namespace = runpy.run_path("examples/monolithic_reactive_cfd_dem.py")
+    namespace = runpy.run_path(
+        Path(__file__).resolve().parents[1] / "examples/monolithic_reactive_cfd_dem.py"
+    )
 result = namespace["result"]
 evaluation = result.evaluation
 print(

@@ -224,13 +224,21 @@ def _axis_sizes(factors: Sequence[AxisFactor], /) -> dict[str, int]:
 
 
 def _broadcast_factor(factor: AxisFactor, output_axes: tuple[str, ...], /) -> Array:
-    leading_shape = factor.tensor.shape[: len(factor.axes)]
-    axis_sizes = dict(zip(factor.axes, leading_shape, strict=True))
-    shape: list[int] = []
-    for axis in output_axes:
-        shape.append(int(axis_sizes[axis]) if axis in axis_sizes else 1)
-    shape.extend([factor.tensor.shape[-2], factor.tensor.shape[-1]])
-    return factor.tensor.reshape(tuple(shape))
+    present = tuple(axis for axis in output_axes if axis in factor.axes)
+    permutation = tuple(factor.axes.index(axis) for axis in present) + tuple(
+        range(len(factor.axes), factor.tensor.ndim)
+    )
+    data = (
+        factor.tensor
+        if permutation == tuple(range(factor.tensor.ndim))
+        else jnp.transpose(factor.tensor, permutation)
+    )
+    axis_sizes = dict(
+        zip(factor.axes, factor.tensor.shape[: len(factor.axes)], strict=True)
+    )
+    shape = [int(axis_sizes[axis]) if axis in axis_sizes else 1 for axis in output_axes]
+    shape.extend(data.shape[len(present) :])
+    return data.reshape(tuple(shape))
 
 
 def contract_axis_factors(
@@ -248,6 +256,12 @@ def contract_axis_factors(
         term_factors = tuple(prepared_by_name[name] for name in term.factor_names)
         all_term_axes.append(_merge_axes(tuple(f.axes for f in term_factors)))
     output_axes = plan.output_axes or _merge_axes(all_term_axes)
+    if plan.output_axes is not None:
+        required_axes = set(_merge_axes(all_term_axes))
+        if set(output_axes) != required_axes:
+            raise ValueError(
+                "AxisContractionPlan output_axes must identify every factor axis."
+            )
 
     terms_out: list[Array] = []
     for term in plan.terms:

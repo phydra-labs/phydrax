@@ -10,6 +10,7 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import IntEnum, StrEnum
+from numbers import Integral
 
 import equinox as eqx
 import jax
@@ -48,6 +49,16 @@ from ..solver._dark_sector_epoch_runtime import (
 from ._host_events import HostEventRecord
 from ._identity import ParticleRole
 from ._species import ParticleSpeciesTable
+
+
+def _pdg_id(value: object, name: str, /) -> int:
+    if isinstance(value, bool) or not isinstance(value, Integral):
+        raise TypeError(f"{name} must be an integer.")
+    result = int(value)
+    bounds = np.iinfo(np.int32)
+    if result < bounds.min or result > bounds.max:
+        raise OverflowError(f"{name} must fit signed int32.")
+    return result
 
 
 class DarkDecayTiming(StrEnum):
@@ -91,13 +102,14 @@ class DarkDecaySpeciesOwner(StrictModule, NonTrainableState):
         mean_proper_lifetime: float,
     ):
         channels_ = tuple(channels)
+        pdg_id_ = _pdg_id(pdg_id, "pdg_id")
         owner = str(owner_id).strip()
         lifetime = float(mean_proper_lifetime)
         if not channels_ or any(
             not isinstance(value, DarkDecayChannel) for value in channels_
         ):
             raise TypeError("channels must contain DarkDecayChannel values.")
-        if any(value.decay.parent_pdg_id != int(pdg_id) for value in channels_):
+        if any(value.decay.parent_pdg_id != pdg_id_ for value in channels_):
             raise ValueError(
                 "Every owned decay channel must have the owned parent species."
             )
@@ -109,7 +121,7 @@ class DarkDecaySpeciesOwner(StrictModule, NonTrainableState):
                 "Decay owner and mean proper lifetime must be explicit and valid."
             )
         self.channels = channels_
-        self.pdg_id = int(pdg_id)
+        self.pdg_id = pdg_id_
         self.owner_id = owner
         self.mean_proper_lifetime = lifetime
         self.owner_record_id = canonical_fingerprint(
@@ -164,6 +176,10 @@ class DarkDecayCascadePlan(StrictModule, NonTrainableState):
             raise TypeError("runtime_plan must be DarkSectorEpochPlan.")
         if not isinstance(species, ParticleSpeciesTable):
             raise TypeError("species must be ParticleSpeciesTable.")
+        if runtime_plan.species_revision_id != species.table_id:
+            raise ValueError(
+                "runtime_plan species revision must match the decay species table."
+            )
         if not isinstance(units, RelativisticUnitContract):
             raise TypeError("units must be RelativisticUnitContract.")
         if species.energy_unit.unit_id != units.energy_unit.unit_id:
@@ -311,10 +327,17 @@ class DarkDecayCascadeEpochEvidence(StrictModule, NonTrainableState):
     charge_residual: Array
     status: Array
     plan_id: str = eqx.field(static=True)
+    draw_id: str = eqx.field(static=True)
     evidence_id: str = eqx.field(static=True)
 
 
-def _particle_seed_id(event: HostEventRecord, particle_id: int, plan_id: str, /) -> str:
+def _particle_seed_id(
+    event: HostEventRecord,
+    particle_id: int,
+    plan_id: str,
+    draw_id: str,
+    /,
+) -> str:
     return canonical_fingerprint(
         {
             "kind": "dark-decay-frontier-seed",
@@ -322,6 +345,7 @@ def _particle_seed_id(event: HostEventRecord, particle_id: int, plan_id: str, /)
             "event": [event.event_id, event.subevent_id],
             "particle_id": int(particle_id),
             "plan": plan_id,
+            "draw": draw_id,
         }
     )
 
@@ -379,6 +403,15 @@ def seed_decay_frontier_from_host(
         raise ValueError(
             "clock_uniforms must provide one finite [0,1) value per seeded particle."
         )
+    draw_id = canonical_fingerprint(
+        {
+            "kind": "dark-decay-clock-draws",
+            "plan": plan.plan_id,
+            "event": [event.event_id, event.subevent_id],
+            "algorithm": "caller-supplied-uniforms",
+            "uniforms": clocks.tolist(),
+        }
+    )
     values = np.zeros(
         (len(particles), plan.runtime_plan.work_width),
         dtype=plan.runtime_plan.value_dtype,
@@ -392,7 +425,9 @@ def seed_decay_frontier_from_host(
             if owner.mean_proper_lifetime <= plan.prompt_lifetime_cutoff
             else -owner.mean_proper_lifetime * math.log1p(-float(uniform))
         )
-        content_ids.append(_particle_seed_id(event, particle.particle_id, plan.plan_id))
+        content_ids.append(
+            _particle_seed_id(event, particle.particle_id, plan.plan_id, draw_id)
+        )
         values[index, :4] = particle.momentum
         values[index, 4] = lifetime
         values[index, 5:8] = 0.0
@@ -408,7 +443,7 @@ def seed_decay_frontier_from_host(
         complete=True,
         backpressured=admission.backpressured,
         rolled_back=admission.refused,
-        evidence_ids=(plan.plan_id, *plan.production_evidence_ids),
+        evidence_ids=(plan.plan_id, draw_id, *plan.production_evidence_ids),
     )
 
 
@@ -489,7 +524,8 @@ def evolve_decay_cascade_epoch(
     state: DarkSectorEpochState,
     proper_time_step: ArrayLike,
     uniforms: ArrayLike,
-    /,
+    *,
+    draw_id: str,
 ) -> DarkDecayCascadeEpochEvidence:
     """Advance one finite DAG frontier and defer all excess work transactionally."""
 
@@ -513,6 +549,9 @@ def evolve_decay_cascade_epoch(
         jnp.any(~jnp.isfinite(random) | (random < 0.0) | (random >= 1.0)),
         "uniforms must lie in [0, 1).",
     )
+    draw = str(draw_id).strip()
+    if not draw:
+        raise ValueError("draw_id must be a non-empty RNG stream/draw identity.")
     (
         channel_parents,
         channel_daughters,
@@ -928,6 +967,8 @@ def evolve_decay_cascade_epoch(
             "plan": plan.plan_id,
             "runtime_plan": plan.runtime_plan.plan_id,
             "evidence": list(plan.production_evidence_ids),
+            "draw": draw,
+            "epoch_sequence": state.epoch_sequence,
         }
     )
     status = jnp.where(
@@ -951,6 +992,7 @@ def evolve_decay_cascade_epoch(
         charge_residual,
         status,
         plan.plan_id,
+        draw,
         evidence_id,
     )
 

@@ -368,12 +368,27 @@ def _condition_linear_state(
     mask: Array,
     context: StateSpaceStepContext,
     /,
+    *,
+    skip_transition: bool = False,
 ) -> tuple[Array, Array, Array, Array, Array, Array]:
     linear_size = prod(model.linear_state_shape) if model.linear_state_shape else 1
     observation_size = prod(model.observation_shape) if model.observation_shape else 1
-    transition, transition_offset, process_covariance = (
-        model.linear_transition_parameters(previous_nonlinear, nonlinear, t0, t1, context)
-    )
+    if skip_transition:
+        transition = jnp.eye(linear_size, dtype=previous_mean.dtype)
+        transition_offset = jnp.zeros((linear_size,), dtype=previous_mean.dtype)
+        process_covariance = jnp.zeros(
+            (linear_size, linear_size), dtype=previous_covariance.dtype
+        )
+    else:
+        transition, transition_offset, process_covariance = (
+            model.linear_transition_parameters(
+                previous_nonlinear,
+                nonlinear,
+                t0,
+                t1,
+                context,
+            )
+        )
     observation, observation_offset, observation_covariance = (
         model.observation_parameters(nonlinear, t1, context)
     )
@@ -591,6 +606,7 @@ def rao_blackwellized_particle_filter(
             value = flat_values[case_index, step]
             mask = flat_masks[case_index, step]
             context = problem.step_context(case_index, step)
+            zero_duration = bool(jnp.equal(start, end))
             proposed_modes = []
             forecast_means = []
             forecast_covariances = []
@@ -606,21 +622,25 @@ def rao_blackwellized_particle_filter(
                     step,
                     member=particle_index,
                 )
-                transition_sample = model.nonlinear_transition.sample(
-                    transition_key,
-                    nonlinear_particles[case_index, particle_index],
-                    start,
-                    end,
-                    context,
-                )
-                mode_valid = jnp.all(transition_sample.valid) & jnp.all(
-                    transition_sample.status == 0
-                )
-                mode = jnp.where(
-                    mode_valid,
-                    transition_sample.values,
-                    nonlinear_particles[case_index, particle_index],
-                )
+                if zero_duration:
+                    mode_valid = jnp.asarray(context.input_valid)
+                    mode = nonlinear_particles[case_index, particle_index]
+                else:
+                    transition_sample = model.nonlinear_transition.sample(
+                        transition_key,
+                        nonlinear_particles[case_index, particle_index],
+                        start,
+                        end,
+                        context,
+                    )
+                    mode_valid = jnp.all(transition_sample.valid) & jnp.all(
+                        transition_sample.status == 0
+                    )
+                    mode = jnp.where(
+                        mode_valid,
+                        transition_sample.values,
+                        nonlinear_particles[case_index, particle_index],
+                    )
                 conditioned = _condition_linear_state(
                     model,
                     nonlinear_particles[case_index, particle_index],
@@ -632,6 +652,7 @@ def rao_blackwellized_particle_filter(
                     value,
                     mask,
                     context,
+                    skip_transition=zero_duration,
                 )
                 forecast_mean, forecast_covariance = conditioned[:2]
                 filtered_mean, filtered_covariance, likelihood, linear_valid = (

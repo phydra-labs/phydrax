@@ -134,6 +134,8 @@ class IPISession:
         self.plan = plan
         self.status = IPITransportStatus.READY
         self.pending: IPIResponse | None = None
+        self.pending_request_id: str | None = None
+        self.pending_atom_count: int | None = None
 
     def _recv_exact(self, count: int) -> bytes:
         chunks = []
@@ -172,6 +174,8 @@ class IPISession:
             }
         )
         self.status = IPITransportStatus.HAVE_DATA
+        self.pending_request_id = request_id
+        self.pending_atom_count = atom_count
         return IPIRequest(
             jnp.asarray(cell), jnp.asarray(inverse), jnp.asarray(positions), request_id
         )
@@ -184,16 +188,19 @@ class IPISession:
         forces = np.asarray(response.forces, dtype="<f8")
         virial = np.asarray(response.virial, dtype="<f8")
         if (
-            forces.ndim != 2
-            or forces.shape[1] != 3
-            or forces.shape[0] > self.plan.maximum_atoms
+            self.pending_request_id is None
+            or self.pending_atom_count is None
+            or response.request_id != self.pending_request_id
+            or forces.shape != (self.pending_atom_count, 3)
             or virial.shape != (3, 3)
             or not bool(response.successful)
             or not np.isfinite(float(response.energy))
             or not np.all(np.isfinite(forces))
             or not np.all(np.isfinite(virial))
         ):
-            raise ValueError("i-PI force response is invalid or unsuccessful.")
+            raise ValueError(
+                "i-PI force response is invalid or does not match the pending request."
+            )
         extra = json.dumps(response.extra, sort_keys=True, separators=(",", ":")).encode()
         if len(extra) > self.plan.maximum_extra_bytes:
             raise ValueError("i-PI extra payload exceeds capacity.")
@@ -205,6 +212,8 @@ class IPISession:
         self.connection.sendall(struct.pack("<i", len(extra)))
         self.connection.sendall(extra)
         self.status = IPITransportStatus.READY
+        self.pending_request_id = None
+        self.pending_atom_count = None
 
     def close(self) -> None:
         self.status = IPITransportStatus.CLOSED
@@ -274,6 +283,15 @@ class TransportedExternalAtomisticProvider(AbstractExternalAtomisticProvider):
             or not np.all(np.isfinite(coordinate))
         ):
             raise ValueError("i-PI provider cell or positions are invalid.")
+        request_id = canonical_fingerprint(
+            {
+                "kind": "ipi-request",
+                "cell": cell.tolist(),
+                "positions": coordinate.tolist(),
+            }
+        )
+        session.pending_request_id = request_id
+        session.pending_atom_count = coordinate.shape[0]
         inverse = np.linalg.solve(cell, np.eye(3, dtype=cell.dtype))
         session.send_command("POSDATA")
         session.connection.sendall(np.asarray(cell, dtype="<f8").tobytes())
@@ -298,11 +316,17 @@ class TransportedExternalAtomisticProvider(AbstractExternalAtomisticProvider):
             raise ValueError("i-PI extra response size is invalid.")
         json.loads(session._recv_exact(extra_size) or b"{}")
         session.status = IPITransportStatus.READY
+        session.pending_request_id = None
+        session.pending_atom_count = None
         return ExternalAtomisticEvaluation(
             jnp.asarray(energy),
             jnp.asarray(forces),
             jnp.asarray(virial),
-            jnp.asarray(np.isfinite(energy) and np.isfinite(forces).all()),
+            jnp.asarray(
+                np.isfinite(energy)
+                and np.isfinite(forces).all()
+                and np.isfinite(virial).all()
+            ),
             self.provider_id,
         )
 

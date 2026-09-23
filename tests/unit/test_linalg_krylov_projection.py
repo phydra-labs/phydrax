@@ -140,6 +140,49 @@ def test_bound_projection_is_reused_without_operator_actions_and_under_jit():
     assert jnp.allclose(compiled.value, expected, rtol=1e-11, atol=1e-11)
 
 
+def test_unbatched_matrix_function_honors_differentiation_policy():
+    right_hand_side = jnp.asarray([1.0, -0.5])
+
+    def action(coefficient, vector, scale, mode):
+        matrix = jnp.asarray([[1.0, 0.2], [0.1, 2.0]]).at[0, 0].set(coefficient)
+        operator = la.DenseLinearOperator(
+            matrix,
+            operator_id="matrix-function-differentiation",
+        )
+        result = la.matrix_exponential_action(
+            operator,
+            vector,
+            scale,
+            policy=la.MatrixFunctionPolicy(
+                "arnoldi",
+                max_dimension=2,
+                differentiation=la.DifferentiationPolicy(mode),
+            ),
+        )
+        return jnp.sum(result.value)
+
+    operator_gradient = jax.grad(
+        lambda coefficient: action(
+            coefficient, right_hand_side, jnp.asarray(0.75), "rhs-only"
+        )
+    )(jnp.asarray(1.0))
+    rhs_gradient = jax.grad(
+        lambda vector: action(jnp.asarray(1.0), vector, jnp.asarray(0.75), "rhs-only")
+    )(right_hand_side)
+    none_rhs_gradient = jax.grad(
+        lambda vector: action(jnp.asarray(1.0), vector, jnp.asarray(0.75), "none")
+    )(right_hand_side)
+    none_scale_gradient = jax.grad(
+        lambda scale: action(jnp.asarray(1.0), right_hand_side, scale, "none")
+    )(jnp.asarray(0.75))
+
+    assert operator_gradient == 0.0
+    assert jnp.all(jnp.isfinite(rhs_gradient))
+    assert not jnp.all(rhs_gradient == 0.0)
+    assert jnp.array_equal(none_rhs_gradient, jnp.zeros_like(right_hand_side))
+    assert none_scale_gradient == 0.0
+
+
 def test_krylov_projection_reuse_rejects_wrong_operator_start_and_unbound_state():
     matrix = jnp.asarray([[2.0, 1.0], [0.0, 3.0]])
     operator = la.DenseLinearOperator(matrix, operator_id="projection-binding")

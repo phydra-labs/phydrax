@@ -419,14 +419,17 @@ class LinearFunctional(AbstractConditionOperator):
             raise TypeError("Every LinearFunctional term must certify linearity.")
         self.terms = values
         self.capabilities = OperatorCapabilities(is_linear=True)
-        term_ids = tuple(
-            (
-                term.action_id
-                if isinstance(term, (PointJetAction, LinearReductionAction))
-                else type(term).__qualname__
+
+        def term_id(term: AbstractConditionOperator, /) -> str:
+            if isinstance(term, (PointJetAction, LinearReductionAction)):
+                return term.action_id
+            if isinstance(term, (MatrixLinearFunctional, LinearFunctional)):
+                return term.operator_id
+            raise TypeError(
+                "Every LinearFunctional term must provide a stable action or operator identity."
             )
-            for term in values
-        )
+
+        term_ids = tuple(term_id(term) for term in values)
         self.operator_id = canonical_fingerprint(
             {"kind": "linear-functional", "terms": term_ids}
         )

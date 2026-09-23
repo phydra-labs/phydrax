@@ -1,5 +1,6 @@
 import jax.numpy as jnp
 import jax.random as jr
+import pytest
 
 import phydrax as phx
 
@@ -71,6 +72,18 @@ def test_conditional_smc_retains_reference_and_samples_complete_paths():
     assert sampled.shape == reference.shape
     assert jnp.all(jnp.isfinite(sampled))
     assert jnp.allclose(jnp.sum(jnp.exp(pgas.log_weights), axis=-1), 1.0)
+
+
+def test_conditional_smc_rejects_coupled_resampling_schemes():
+    reference = jnp.asarray([[0.0], [0.4], [0.9]])
+    with pytest.raises(ValueError, match="multinomial"):
+        phx.uq.conditional_particle_filter(
+            jr.key(5),
+            _problem(),
+            reference,
+            num_particles=8,
+            resampling_method="systematic",
+        )
 
 
 def test_particle_gibbs_returns_reproducible_pgas_path_chain():

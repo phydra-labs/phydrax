@@ -9,6 +9,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from enum import IntEnum, StrEnum
+from numbers import Integral
 
 import equinox as eqx
 import jax
@@ -32,6 +33,16 @@ from ..solver._dark_sector_epoch_runtime import (
 from ._events import ParticleEventBatch
 from ._identity import ParticleRole
 from ._species import ParticleSpeciesTable
+
+
+def _pdg_id(value: object, name: str, /) -> int:
+    if isinstance(value, bool) or not isinstance(value, Integral):
+        raise TypeError(f"{name} must be an integer.")
+    result = int(value)
+    bounds = np.iinfo(np.int32)
+    if result < bounds.min or result > bounds.max:
+        raise OverflowError(f"{name} must fit signed int32.")
+    return result
 
 
 class DarkShowerOrdering(StrEnum):
@@ -85,13 +96,15 @@ class DarkSplittingChannel(StrictModule, NonTrainableState):
         kernel_coefficient: float,
         envelope_coefficient: float,
     ):
-        daughters = tuple(daughter_pdg_ids)
+        daughters_raw = tuple(daughter_pdg_ids)
+        if len(daughters_raw) != 2:
+            raise ValueError("daughter_pdg_ids must contain exactly two species.")
+        parent = _pdg_id(parent_pdg_id, "parent_pdg_id")
+        daughters = tuple(_pdg_id(value, "daughter_pdg_id") for value in daughters_raw)
         kind = DarkSplittingKernelKind(kernel_kind)
         rule = DarkColorRule(color_rule)
         coefficient = float(kernel_coefficient)
         envelope = float(envelope_coefficient)
-        if len(daughters) != 2:
-            raise ValueError("daughter_pdg_ids must contain exactly two species.")
         minimum_envelope = (
             2.0 * coefficient
             if kind is DarkSplittingKernelKind.FERMION_VECTOR
@@ -108,7 +121,7 @@ class DarkSplittingChannel(StrictModule, NonTrainableState):
             raise ValueError(
                 "The veto envelope must be finite and no smaller than the analytic kernel bound."
             )
-        self.parent_pdg_id = int(parent_pdg_id)
+        self.parent_pdg_id = parent
         self.daughter_pdg_ids = daughters
         self.kernel_kind = kind
         self.color_rule = rule
@@ -181,6 +194,10 @@ class DarkShowerEpochPlan(StrictModule, NonTrainableState):
             raise TypeError("runtime_plan must be DarkSectorEpochPlan.")
         if not isinstance(species, ParticleSpeciesTable):
             raise TypeError("species must be ParticleSpeciesTable.")
+        if runtime_plan.species_revision_id != species.table_id:
+            raise ValueError(
+                "runtime_plan species revision must match the shower species table."
+            )
         if not isinstance(units, RelativisticUnitContract):
             raise TypeError("units must be RelativisticUnitContract.")
         if species.energy_unit.unit_id != units.energy_unit.unit_id:
@@ -250,11 +267,15 @@ class DarkShowerEpochPlan(StrictModule, NonTrainableState):
             or beta < 0.0
             or not 0.0 < cutoff < maximum
             or not 0.0 < z_minimum < z_maximum < 1.0
+        ):
+            raise ValueError("Dark shower scales, coupling, and support are invalid.")
+        if (
+            isinstance(proposal_capacity, bool)
+            or not isinstance(proposal_capacity, Integral)
             or int(proposal_capacity) < 1
         ):
-            raise ValueError(
-                "Dark shower scales, coupling, support, and capacity are invalid."
-            )
+            raise ValueError("proposal_capacity must be a positive integer.")
+        provider_status_ = _pdg_id(provider_status, "provider_status")
         landau_denominator = 1.0 + alpha * beta * math.log(cutoff / reference) / (
             2.0 * math.pi
         )
@@ -306,7 +327,7 @@ class DarkShowerEpochPlan(StrictModule, NonTrainableState):
         self.maximum_scale = maximum
         self.z_bounds = (z_minimum, z_maximum)
         self.proposal_capacity = int(proposal_capacity)
-        self.provider_status = int(provider_status)
+        self.provider_status = provider_status_
         self.support_scope = "declared-massless-dark-partons"
         self.refusal_modes = (
             "massive-parton-collinear-splitting",
@@ -357,6 +378,7 @@ class DarkShowerEpochResult(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
     runtime_plan_id: str = eqx.field(static=True)
     frame_realization_id: str = eqx.field(static=True)
+    draw_id: str = eqx.field(static=True)
 
 
 def running_dark_coupling(plan: DarkShowerEpochPlan, scale: ArrayLike, /) -> Array:
@@ -474,7 +496,8 @@ def evolve_dark_shower_epoch(
     plan: DarkShowerEpochPlan,
     events: ParticleEventBatch,
     proposal_uniforms: ArrayLike,
-    /,
+    *,
+    draw_id: str,
 ) -> DarkShowerEpochResult:
     """Apply one finite shower epoch without partial branch or vertex publication.
 
@@ -497,6 +520,9 @@ def evolve_dark_shower_epoch(
         jnp.any((uniforms < 0.0) | (uniforms >= 1.0) | ~jnp.isfinite(uniforms)),
         "proposal_uniforms must be finite and lie in [0, 1).",
     )
+    draw = str(draw_id).strip()
+    if not draw:
+        raise ValueError("draw_id must be a non-empty RNG stream/draw identity.")
     if events.momentum_unit_symbol != plan.units.energy_unit.symbol:
         raise ValueError("Event momentum units do not match the shower unit contract.")
 
@@ -586,16 +612,28 @@ def evolve_dark_shower_epoch(
         channel_index = jnp.argmax(cumulative > target[:, None], axis=1).astype(jnp.int32)
         has_channel = total_weight > 0.0
         upper = branch_scales_[event_indices, emitter]
-        candidate_scale = (
+        base_scale = (
             plan.infrared_cutoff * (upper / plan.infrared_cutoff) ** proposal[:, 1]
         )
         z = plan.z_bounds[0] + (plan.z_bounds[1] - plan.z_bounds[0]) * proposal[:, 2]
+        if plan.ordering is DarkShowerOrdering.TRANSVERSE_MOMENTUM:
+            ordering_factor = 2.0 * jnp.sqrt(z * (1.0 - z))
+        elif plan.ordering is DarkShowerOrdering.ANGLE:
+            ordering_factor = 2.0 * jnp.minimum(z, 1.0 - z)
+        else:
+            ordering_factor = jnp.ones_like(z)
+        candidate_scale = jnp.maximum(plan.infrared_cutoff, base_scale * ordering_factor)
         selected_kind = kinds[channel_index]
         selected_coefficient = coefficients[channel_index]
         selected_envelope_coefficient = envelopes[channel_index]
         kernel = _kernel_from_table(selected_kind, selected_coefficient, z)
         bound = selected_envelope_coefficient / (z * (1.0 - z))
-        veto_accept = proposal[:, 3] * bound <= kernel
+        coupling = running_dark_coupling(plan, candidate_scale)
+        maximum_coupling = running_dark_coupling(
+            plan, jnp.asarray(plan.infrared_cutoff, dtype=candidate_scale.dtype)
+        )
+        coupling_acceptance = coupling / maximum_coupling
+        veto_accept = proposal[:, 3] * bound <= kernel * coupling_acceptance
 
         empty_rank = jnp.cumsum((~occupied_).astype(jnp.int32), axis=1) - 1
         first_mask = (~occupied_) & (empty_rank == 0)
@@ -854,6 +892,7 @@ def evolve_dark_shower_epoch(
         plan.plan_id,
         plan.runtime_plan.plan_id,
         plan.frame_realization_id,
+        draw,
     )
 
 
@@ -873,6 +912,31 @@ def stage_dark_shower_continuation(
         raise TypeError("state must be DarkSectorEpochState.")
     if result.plan_id != plan.plan_id or state.plan.plan_id != plan.runtime_plan.plan_id:
         raise ValueError("Shower result, shower plan, and runtime state do not match.")
+    if result.draw_id != str(result.draw_id).strip() or not result.draw_id:
+        raise ValueError("Shower result draw identity is invalid.")
+    event_valid = np.asarray(result.events.valid | ~result.events.event_active)
+    result_finite = np.asarray(result.finite)
+    frontier_finite = np.all(
+        np.isfinite(np.asarray(result.events.momenta)),
+        axis=-1,
+    )
+    active_frontier = np.asarray(result.frontier)
+    if (
+        not np.all(event_valid)
+        or not np.all(result_finite)
+        or not np.all(~active_frontier | frontier_finite)
+    ):
+        return DarkSectorEpochResult(
+            state,
+            complete=False,
+            backpressured=False,
+            rolled_back=True,
+            evidence_ids=(
+                plan.plan_id,
+                result.draw_id,
+                *plan.production_evidence_ids,
+            ),
+        )
     continuation = np.asarray(
         result.frontier
         & (result.branch_scales > plan.infrared_cutoff)
@@ -917,6 +981,10 @@ def stage_dark_shower_continuation(
                         int(result.events.subevent_ids[event_index_]),
                     ],
                     "particle_slot": particle_index_,
+                    "draw": result.draw_id,
+                    "pdg_id": pdg_id,
+                    "momentum": values[work_index, :4].tolist(),
+                    "branch_scale": float(values[work_index, 4]),
                     "frame_realization": plan.frame_realization_id,
                 }
             )
@@ -932,7 +1000,11 @@ def stage_dark_shower_continuation(
         complete=True,
         backpressured=admission.backpressured,
         rolled_back=admission.refused,
-        evidence_ids=(plan.plan_id, *plan.production_evidence_ids),
+        evidence_ids=(
+            plan.plan_id,
+            result.draw_id,
+            *plan.production_evidence_ids,
+        ),
     )
 
 

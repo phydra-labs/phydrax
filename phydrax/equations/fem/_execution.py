@@ -475,6 +475,8 @@ class CollocatedTensorProductOperator(StrictModule, NonTrainableState):
             raise ValueError("Collocated metric/mass grids are incompatible.")
         if routes.shape != (metric.shape[0], int(jnp.prod(jnp.asarray(expected_grid)))):
             raise ValueError("Collocated gathers do not match tensor grid size.")
+        if size <= 0 or bool(jnp.any((routes < 0) | (routes >= size))):
+            raise ValueError("Collocated gathers or global size are invalid.")
         valid_ = (
             jnp.ones((routes.shape[0],), dtype=jnp.bool_)
             if valid is None

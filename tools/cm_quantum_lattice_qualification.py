@@ -140,16 +140,18 @@ def run_smoke() -> dict[str, object]:
     }
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path)
     arguments = parser.parse_args()
-    text = json.dumps(run_smoke(), indent=2, sort_keys=True)
+    report = run_smoke()
+    text = json.dumps(report, indent=2, sort_keys=True, allow_nan=False)
     if arguments.output is None:
         print(text)
     else:
         arguments.output.write_text(text + "\n", encoding="utf-8")
+    return 0 if report["successful"] else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

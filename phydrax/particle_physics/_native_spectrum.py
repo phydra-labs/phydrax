@@ -10,6 +10,7 @@ import math
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from enum import IntEnum
+from numbers import Integral
 from typing import Literal, TypeAlias
 
 import equinox as eqx
@@ -58,6 +59,7 @@ class NativeSpectrumStatus(IntEnum):
     NONPERTURBATIVE = 4
     VACUUM_WARNING = 5
     NO_ROOT = 6
+    INVALID_INPUT = 7
 
 
 class NativeSpectrumModelPlan(StrictModule):
@@ -164,13 +166,25 @@ class SpectrumThreshold:
         /,
     ):
         scale_ = float(scale)
-        matrix_ = np.asarray(matrix, dtype=np.float64)
-        offset_ = np.asarray(offset, dtype=np.float64)
+        matrix_ = np.array(matrix, dtype=np.float64, copy=True)
+        offset_ = np.array(offset, dtype=np.float64, copy=True)
         source = str(source_id).strip()
-        if scale_ <= 0.0 or matrix_.ndim != 2 or matrix_.shape[0] != matrix_.shape[1]:
+        if (
+            not math.isfinite(scale_)
+            or scale_ <= 0.0
+            or matrix_.ndim != 2
+            or matrix_.shape[0] != matrix_.shape[1]
+            or np.any(~np.isfinite(matrix_))
+        ):
             raise ValueError("Threshold scale and matching matrix are invalid.")
-        if offset_.shape != (matrix_.shape[0],) or not source:
+        if (
+            offset_.shape != (matrix_.shape[0],)
+            or np.any(~np.isfinite(offset_))
+            or not source
+        ):
             raise ValueError("Threshold offset or source identity is invalid.")
+        matrix_.setflags(write=False)
+        offset_.setflags(write=False)
         content = {
             "kind": "spectrum-threshold",
             "scale": scale_,
@@ -464,6 +478,8 @@ def integrate_native_rge(
         raise TypeError("thresholds must contain SpectrumThreshold values.")
     if any(value.matrix.shape != (values.size, values.size) for value in thresholds_):
         raise ValueError("Threshold maps do not match the model dimension.")
+    if len({value.scale for value in thresholds_}) != len(thresholds_):
+        raise ValueError("Spectrum threshold scales must be unique.")
     lower_scale, upper_scale = sorted((initial, final))
     if any(not lower_scale < value.scale < upper_scale for value in thresholds_):
         raise ValueError(
@@ -829,32 +845,67 @@ class NativeSpectrumBVPPlan(StrictModule):
     ):
         if not isinstance(model, NativeSpectrumModelPlan):
             raise TypeError("model must be NativeSpectrumModelPlan.")
-        unknown = tuple(unknown_indices)
-        target = tuple(target_indices)
+        unknown_raw = tuple(unknown_indices)
+        target_raw = tuple(target_indices)
+        if any(
+            isinstance(value, bool) or not isinstance(value, Integral)
+            for value in (*unknown_raw, *target_raw)
+        ):
+            raise TypeError("Native BVP indices must be integers.")
+        unknown = tuple(int(value) for value in unknown_raw)
+        target = tuple(int(value) for value in target_raw)
         target_values_ = np.asarray(target_values, dtype=np.float64)
         if (
             not unknown
             or len(unknown) != len(target)
+            or len(set(unknown)) != len(unknown)
+            or len(set(target)) != len(target)
             or target_values_.shape != (len(target),)
+            or np.any(~np.isfinite(target_values_))
         ):
-            raise ValueError("Native BVP must be a non-empty square boundary system.")
+            raise ValueError(
+                "Native BVP must be a finite nondegenerate square boundary system."
+            )
         if any(
             value < 0 or value >= len(model.parameter_labels)
             for value in (*unknown, *target)
         ):
             raise ValueError("Native BVP indices leave the model parameter roster.")
+        initial_scale_ = float(initial_scale)
+        final_scale_ = float(final_scale)
         tolerance = float(residual_tolerance)
+        if isinstance(maximum_iterations, bool) or not isinstance(
+            maximum_iterations, Integral
+        ):
+            raise TypeError("maximum_iterations must be an integer.")
         iterations = int(maximum_iterations)
         difference = float(finite_difference_step)
         radius = float(trust_radius)
-        if tolerance <= 0.0 or iterations < 1 or difference <= 0.0 or radius <= 0.0:
-            raise ValueError("Native BVP numerical controls are invalid.")
+        if (
+            not math.isfinite(initial_scale_)
+            or not math.isfinite(final_scale_)
+            or initial_scale_ <= 0.0
+            or final_scale_ <= 0.0
+            or initial_scale_ == final_scale_
+            or not math.isfinite(tolerance)
+            or tolerance <= 0.0
+            or iterations < 1
+            or not math.isfinite(difference)
+            or difference <= 0.0
+            or not math.isfinite(radius)
+            or radius <= 0.0
+        ):
+            raise ValueError("Native BVP scales and numerical controls are invalid.")
         thresholds_ = tuple(thresholds)
+        if any(not isinstance(value, SpectrumThreshold) for value in thresholds_):
+            raise TypeError("thresholds must contain SpectrumThreshold values.")
+        if len({value.scale for value in thresholds_}) != len(thresholds_):
+            raise ValueError("Native BVP threshold scales must be unique.")
         content = {
             "kind": "native-spectrum-bvp-plan",
             "model": model.plan_id,
-            "initial_scale": float(initial_scale),
-            "final_scale": float(final_scale),
+            "initial_scale": initial_scale_,
+            "final_scale": final_scale_,
             "unknown_indices": unknown,
             "target_indices": target,
             "target_values": array_tree_fingerprint(target_values_),
@@ -865,8 +916,8 @@ class NativeSpectrumBVPPlan(StrictModule):
             "trust_radius": radius,
         }
         self.model = model
-        self.initial_scale = float(initial_scale)
-        self.final_scale = float(final_scale)
+        self.initial_scale = initial_scale_
+        self.final_scale = final_scale_
         self.unknown_indices = unknown
         self.target_indices = target
         self.target_values = jnp.asarray(target_values_)
@@ -913,10 +964,15 @@ def solve_native_spectrum_bvp(
         raise TypeError("plan must be NativeSpectrumBVPPlan.")
     base = np.asarray(base_parameters, dtype=np.float64)
     seeds_ = np.asarray(seeds, dtype=np.float64)
-    if base.shape != (len(plan.model.parameter_labels),):
-        raise ValueError("Base parameters have the wrong model shape.")
-    if seeds_.ndim != 2 or seeds_.shape[1] != len(plan.unknown_indices):
-        raise ValueError("BVP seeds must have shape (seeds, unknowns).")
+    if base.shape != (len(plan.model.parameter_labels),) or np.any(~np.isfinite(base)):
+        raise ValueError("Base parameters must be finite with the model shape.")
+    if (
+        seeds_.ndim != 2
+        or seeds_.shape[0] == 0
+        or seeds_.shape[1] != len(plan.unknown_indices)
+        or np.any(~np.isfinite(seeds_))
+    ):
+        raise ValueError("BVP seeds must be a non-empty finite (seeds, unknowns) table.")
     roots: list[np.ndarray] = []
     finals: list[np.ndarray] = []
     norms: list[float] = []
@@ -1023,14 +1079,34 @@ def propagate_spectrum_uncertainty(
     covariance = np.asarray(input_covariance, dtype=np.float64)
     observables = np.asarray(observable_samples, dtype=np.float64)
     displacements = np.asarray(input_displacements, dtype=np.float64)
-    if covariance.shape != (inputs.size, inputs.size):
-        raise ValueError("input_covariance has the wrong shape.")
-    if observables.ndim != 2 or displacements.shape != (
-        observables.shape[0],
-        inputs.size,
+    if inputs.ndim != 1 or inputs.size == 0 or np.any(~np.isfinite(inputs)):
+        raise ValueError("central_inputs must be a non-empty finite vector.")
+    if (
+        covariance.shape != (inputs.size, inputs.size)
+        or np.any(~np.isfinite(covariance))
+        or not np.allclose(covariance, covariance.T)
     ):
-        raise ValueError("Observable finite-difference samples do not align with inputs.")
+        raise ValueError("input_covariance must be finite and symmetric.")
+    covariance_tolerance = (
+        512.0
+        * np.finfo(np.float64).eps
+        * max(1.0, float(np.linalg.norm(covariance, ord=2)))
+    )
+    if np.min(np.linalg.eigvalsh(covariance)) < -covariance_tolerance:
+        raise ValueError("input_covariance must be positive semidefinite.")
+    if (
+        observables.ndim != 2
+        or observables.shape[0] < inputs.size + 1
+        or displacements.shape != (observables.shape[0], inputs.size)
+        or np.any(~np.isfinite(observables))
+        or np.any(~np.isfinite(displacements))
+    ):
+        raise ValueError(
+            "Observable finite-difference samples must be finite and identify the input Jacobian."
+        )
     design = np.concatenate((np.ones((displacements.shape[0], 1)), displacements), axis=1)
+    if np.linalg.matrix_rank(design) != inputs.size + 1:
+        raise ValueError("Spectrum uncertainty design is rank deficient.")
     coefficients, _, _, _ = np.linalg.lstsq(design, observables, rcond=None)
     central = coefficients[0]
     jacobian = coefficients[1:].T
@@ -1038,10 +1114,17 @@ def propagate_spectrum_uncertainty(
 
     def variation_covariance(values: ArrayLike) -> np.ndarray:
         table = np.asarray(values, dtype=np.float64)
-        if table.ndim != 2 or table.shape[1] != central.size:
-            raise ValueError("Spectrum variation tables must share the observable axis.")
+        if (
+            table.ndim != 2
+            or table.shape[0] == 0
+            or table.shape[1] != central.size
+            or np.any(~np.isfinite(table))
+        ):
+            raise ValueError(
+                "Spectrum variation tables must be non-empty finite tables on the observable axis."
+            )
         centered = table - central
-        return centered.T @ centered / max(1, table.shape[0])
+        return centered.T @ centered / table.shape[0]
 
     scale = variation_covariance(scale_variations)
     order = variation_covariance(order_variations)
@@ -1170,6 +1253,7 @@ class SpectrumCrossQualificationEvidence(StrictModule):
     relative_residuals: Array
     maximum_relative_residual: Array
     accepted: Array
+    status: Array
     evidence_id: str = eqx.field(static=True)
 
 
@@ -1181,29 +1265,64 @@ def cross_qualify_spectra(
     *,
     relative_tolerance: float,
 ) -> SpectrumCrossQualificationEvidence:
-    labels_ = tuple(str(value) for value in labels)
+    labels_ = tuple(str(value).strip() for value in labels)
     native = np.asarray(native_values, dtype=np.float64)
-    providers = tuple(sorted(provider_values))
+    if not isinstance(provider_values, Mapping):
+        raise TypeError("provider_values must be a mapping.")
+    provider_items = tuple(
+        sorted(
+            (
+                (
+                    str(key).strip(),
+                    np.asarray(value, dtype=np.float64),
+                    str(key),
+                )
+                for key, value in provider_values.items()
+            ),
+            key=lambda item: item[0],
+        )
+    )
+    providers = tuple(item[0] for item in provider_items)
     if native.shape != (len(labels_),) or not providers:
         raise ValueError("Spectrum cross-qualification inputs are incomplete.")
-    table = np.stack(
-        [np.asarray(provider_values[value], dtype=np.float64) for value in providers]
-    )
+    table = np.stack([item[1] for item in provider_items])
     if table.shape != (len(providers), len(labels_)):
         raise ValueError("Provider spectra do not share the native observable roster.")
-    residuals = np.abs(table - native[None, :]) / np.maximum(1.0, np.abs(native[None, :]))
-    maximum = float(np.max(residuals))
-    accepted = maximum <= float(relative_tolerance)
+    tolerance = float(relative_tolerance)
+    input_valid = (
+        bool(labels_)
+        and all(labels_)
+        and len(set(labels_)) == len(labels_)
+        and all(providers)
+        and len(set(providers)) == len(providers)
+        and math.isfinite(tolerance)
+        and all(item[0] == item[2] for item in provider_items)
+        and tolerance >= 0.0
+        and np.all(np.isfinite(native))
+        and np.all(np.isfinite(table))
+    )
+    if input_valid:
+        residuals = np.abs(table - native[None, :]) / np.maximum(
+            1.0, np.abs(native[None, :])
+        )
+        maximum = float(np.max(residuals))
+        accepted = maximum <= tolerance
+        status = NativeSpectrumStatus.SUCCESS
+    else:
+        residuals = np.zeros_like(table)
+        maximum = math.inf
+        accepted = False
+        status = NativeSpectrumStatus.INVALID_INPUT
     evidence_id = canonical_fingerprint(
         {
             "kind": "spectrum-cross-qualification-evidence",
             "labels": labels_,
             "native": array_tree_fingerprint(native),
-            "providers": {
-                key: array_tree_fingerprint(np.asarray(provider_values[key]))
-                for key in providers
-            },
-            "relative_tolerance": float(relative_tolerance),
+            "providers": [
+                [name, original, array_tree_fingerprint(value)]
+                for name, value, original in provider_items
+            ],
+            "relative_tolerance": tolerance,
         }
     )
     return SpectrumCrossQualificationEvidence(
@@ -1212,6 +1331,7 @@ def cross_qualify_spectra(
         relative_residuals=jnp.asarray(residuals),
         maximum_relative_residual=jnp.asarray(maximum),
         accepted=jnp.asarray(accepted),
+        status=jnp.asarray(int(status), dtype=jnp.int32),
         evidence_id=evidence_id,
     )
 

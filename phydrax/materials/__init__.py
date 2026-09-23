@@ -9,6 +9,7 @@ from ._homogenization import (
     HomogenizationBound,
     homogenize_scalar,
     reuss_tensor,
+    TensorHomogenizationResult,
     voigt_tensor,
 )
 from ._icme import ICMEStepResult, SpatialICMEModel
@@ -47,6 +48,7 @@ __all__ = [
     "RepresentativeVolumeElement",
     "SpatialICMEModel",
     "SpatialMaterialField",
+    "TensorHomogenizationResult",
     "TabulatedProperty",
     "calibrate_linear_material",
     "conservative_transfer_error",

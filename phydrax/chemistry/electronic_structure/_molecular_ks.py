@@ -40,6 +40,7 @@ from ._mean_field import (
     ElectronicOccupationPlan,
     InitialGuessKind,
     InitialGuessPlan,
+    mean_field_owner_id,
     RestrictedMeanFieldState,
     SCFAccelerationKind,
     SCFAccelerationPlan,
@@ -275,6 +276,7 @@ class MolecularKohnShamPlan(StrictModule, NonTrainableState):
         orthogonalizer, _ = _orthogonalizer(overlap, self.linear_dependence_tolerance)
         if self.reference is ElectronicReferenceKind.RESTRICTED:
             return self._solve_restricted(
+                coordinate,
                 overlap,
                 core,
                 eri,
@@ -287,6 +289,7 @@ class MolecularKohnShamPlan(StrictModule, NonTrainableState):
                 guess_density,
             )
         return self._solve_unrestricted(
+            coordinate,
             overlap,
             core,
             eri,
@@ -301,6 +304,7 @@ class MolecularKohnShamPlan(StrictModule, NonTrainableState):
 
     def _solve_restricted(
         self,
+        coordinate,
         overlap,
         core,
         eri,
@@ -443,10 +447,12 @@ class MolecularKohnShamPlan(StrictModule, NonTrainableState):
             entropy,
             free,
             evidence,
+            mean_field_owner_id(self.plan_id, coordinate),
         )
 
     def _solve_unrestricted(
         self,
+        coordinate,
         overlap,
         core,
         eri,
@@ -662,12 +668,15 @@ class MolecularKohnShamPlan(StrictModule, NonTrainableState):
             entropy,
             free,
             evidence,
+            mean_field_owner_id(self.plan_id, coordinate),
         )
 
     def analytic_gradient_atomic_units(
         self, positions: ArrayLike, state, /
     ) -> MolecularGradientResult:
         coordinate = jnp.asarray(positions)
+        if state.owner_id != mean_field_owner_id(self.plan_id, coordinate):
+            raise ValueError("Gradient state belongs to another KS plan or geometry.")
         if isinstance(state, RestrictedMeanFieldState):
             alpha = beta = 0.5 * state.density
             energy_weighted = contract(

@@ -152,8 +152,7 @@ def reduce_scenarios(
         jnp.asarray(reduced_weights),
         scenarios.times,
         jnp.asarray(np.asarray(scenarios.valid)[selected]),
-        scenarios.law_id,
-        scenarios.factor_layout_id,
+        scenarios.law,
         scenarios.semantic_id,
         str(numeric_id),
     )
@@ -194,17 +193,24 @@ def reweight_scenarios(
     if not np.isfinite(total) or total <= 0.0:
         raise ValueError("Likelihood reweighting must retain positive finite mass.")
     weights = unnormalized / total
+    retained = np.flatnonzero(active & (weights > 0.0))
+    compact_values = np.zeros_like(np.asarray(scenarios.values))
+    compact_valid = np.zeros_like(np.asarray(scenarios.valid))
+    compact_weights = np.zeros_like(weights)
+    retained_count = retained.size
+    compact_values[:retained_count] = np.asarray(scenarios.values)[retained]
+    compact_valid[:retained_count] = np.asarray(scenarios.valid)[retained]
+    compact_weights[:retained_count] = weights[retained]
     reduced = FinancialScenarioSet(
-        scenarios.values,
-        jnp.asarray(weights),
+        jnp.asarray(compact_values),
+        jnp.asarray(compact_weights),
         scenarios.times,
-        scenarios.valid,
-        scenarios.law_id,
-        scenarios.factor_layout_id,
+        jnp.asarray(compact_valid),
+        scenarios.law,
         scenarios.semantic_id,
         str(numeric_id),
     )
-    effective = 1.0 / np.sum(weights[active] ** 2)
+    effective = 1.0 / np.sum(compact_weights[:retained_count] ** 2)
     return ScenarioReweightingResult(
         scenarios=reduced,
         likelihood_ratio=ratio,

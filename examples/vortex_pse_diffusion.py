@@ -45,8 +45,10 @@ state = compiled.initialize_state(position, circulation)
 evaluation = compiled.dynamics.evaluate(0.0, state)
 diffusion_evaluation = evaluation[6]
 backend = diffusion_evaluation.diagnostics.backend_diagnostics
+if not bool(diffusion_evaluation.successful):
+    raise RuntimeError("PSE diffusion evaluation failed")
 
 print("strength rate", diffusion_evaluation.rate)
 print("total rate", diffusion_evaluation.diagnostics.total_rate)
 print("stable step", backend.stable_step)
-print("successful", bool(diffusion_evaluation.successful))
+print("successful", True)

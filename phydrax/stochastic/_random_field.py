@@ -139,7 +139,12 @@ class GaussianCoefficientRealization(StrictModule):
         if any(size <= 0 for size in shape):
             raise ValueError("sample_shape dimensions must be positive.")
         resolved_coupling = (
-            _digest("gaussian-coefficient-coupling", identifiers, label)
+            _digest(
+                "gaussian-coefficient-coupling",
+                tuple(np.asarray(jr.key_data(key)).ravel()),
+                identifiers,
+                label,
+            )
             if coupling_id is None
             else coupling_id
         )

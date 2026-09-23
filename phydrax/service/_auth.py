@@ -9,7 +9,7 @@ import hashlib
 import hmac
 import json
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Mapping, Protocol
 
 from ._contracts import AuthenticationError, AuthorizationError, ValidatedPrincipal
@@ -74,7 +74,7 @@ class OIDCConfiguration:
 @dataclass(frozen=True, slots=True)
 class HMACSigningKey:
     key_id: str
-    secret: bytes
+    secret: bytes = field(repr=False)
 
     def __post_init__(self) -> None:
         if not self.key_id:

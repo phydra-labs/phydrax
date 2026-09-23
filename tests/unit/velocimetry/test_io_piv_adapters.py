@@ -9,6 +9,7 @@ import importlib.util
 import numpy as np
 import pytest
 
+import phydrax as phx
 from phydrax.interchange import AdapterError, AdapterStatus
 from phydrax.velocimetry.imaging import DenseDisplacementField2D
 from phydrax.velocimetry.io import (
@@ -64,8 +65,9 @@ def _physical_field() -> PhysicalPIVResult2D:
         valid,
         "pixel-field",
         "calibration",
-        "m",
-        "s",
+        phx.units.METER,
+        phx.units.SECOND,
+        "laboratory",
     )
 
 
@@ -108,8 +110,12 @@ def test_openpiv_physical_velocity_targets_right_handed_physical_result(tmp_path
     field, report = read_openpiv_text(
         path,
         value_kind="physical-velocity",
-        spatial_unit="m",
-        time_unit="s",
+        coordinate_contract=phx.SpatialCoordinateContract(
+            phx.units.METER,
+            coordinate_system="cartesian",
+            reference_frame="laboratory",
+        ),
+        time_unit=phx.units.SECOND,
         delta_t=0.25,
     )
 
@@ -165,7 +171,17 @@ def test_pivlab_physical_layout_returns_physical_result(tmp_path):
     path = tmp_path / "physical.mat"
     source = _physical_field()
     write_pivlab(path, source, y_axis="up")
-    fields, _ = read_pivlab(path, y_axis="up", delta_t=0.5)
+    fields, _ = read_pivlab(
+        path,
+        y_axis="up",
+        delta_t=0.5,
+        coordinate_contract=phx.SpatialCoordinateContract(
+            phx.units.METER,
+            coordinate_system="cartesian",
+            reference_frame="laboratory",
+        ),
+        time_unit=phx.units.SECOND,
+    )
 
     restored = fields[0]
     assert isinstance(restored, PhysicalPIVResult2D)

@@ -59,11 +59,12 @@ class MarineFrequencySystem:
         if (
             frequency.ndim != 1
             or frequency.size == 0
+            or np.any(~np.isfinite(frequency))
             or np.any(frequency <= 0)
             or np.any(np.diff(frequency) <= 0)
         ):
             raise ValueError(
-                "Marine frequencies must be positive and strictly increasing."
+                "Marine frequencies must be finite, positive, and strictly increasing."
             )
         if mass.ndim != 2 or mass.shape[0] != mass.shape[1]:
             raise ValueError("Marine rigid mass must be square.")

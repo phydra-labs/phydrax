@@ -153,9 +153,16 @@ class PreparedPatchKernel(StrictModule, NonTrainableState):
             )
             result = mapped(flattened)
         else:
-            indices = jnp.asarray(kernel_indices, dtype=jnp.int32)
+            indices = jnp.asarray(kernel_indices)
             if indices.shape != self.output_shape:
                 raise ValueError("kernel_indices must match patch output shape.")
+            if indices.dtype.kind not in "iu":
+                raise TypeError("kernel_indices must contain exact integers.")
+            indices = eqx.error_if(
+                indices,
+                jnp.any((indices < 0) | (indices >= len(self.plan.kernel_functions))),
+                "kernel_indices entries must select a registered patch kernel.",
+            ).astype(jnp.int32)
             flat_indices = indices.reshape((-1,))
             functions = tuple(
                 lambda patch, function=function: function(patch, args)

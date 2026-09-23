@@ -65,6 +65,7 @@ class KeldyshSCBAProblem(StrictModule, NonTrainableState):
             or np.any(~np.isfinite(bare))
             or np.any(~np.isfinite(lesser))
             or np.any(~np.isfinite(greater))
+            or coupling.ndim != 1
             or np.any(~np.isfinite(coupling))
             or bins < 1
             or bins >= energy.size
@@ -137,6 +138,7 @@ class KeldyshSCBAResult(StrictModule, NonTrainableState):
     greater_self_energy: Array
     fixed_point_residual: Array
     collision_balance: Array
+    linear_solve_successful: Array
     successful: Array
     problem_id: str = eqx.field(static=True)
     result_id: str = eqx.field(static=True)
@@ -163,13 +165,14 @@ def _causal_real(gamma: Array, spacing: float, /) -> Array:
     return jax.lax.map(row, jnp.arange(count))
 
 
-def _solve_matrix(matrix: Array, /) -> Array:
+def _solve_matrix(matrix: Array, /) -> tuple[Array, Array]:
     identity = jnp.eye(matrix.shape[-1], dtype=matrix.dtype)
-    return solve(
+    result = solve(
         LinearSystem(DenseLinearOperator(matrix)),
         identity,
         policy=LinearSolvePolicy(DenseLU()),
-    ).value
+    )
+    return result.value, result.successful
 
 
 def solve_keldysh_scba(
@@ -190,17 +193,17 @@ def solve_keldysh_scba(
         broadening = lesser_diagonal + greater_diagonal
         retarded_diagonal = _causal_real(broadening, problem.spacing) - 0.5j * broadening
         inverse = problem.bare_inverse_retarded - jax.vmap(jnp.diag)(retarded_diagonal)
-        green = jax.vmap(_solve_matrix)(inverse)
+        green, linear_success = jax.vmap(_solve_matrix)(inverse)
         lesser_source = problem.contact_lesser + jax.vmap(jnp.diag)(lesser_diagonal)
         greater_source = problem.contact_greater + jax.vmap(jnp.diag)(greater_diagonal)
         advanced = jnp.swapaxes(jnp.conj(green), -1, -2)
         lesser_green = green @ lesser_source @ advanced
         greater_green = green @ greater_source @ advanced
-        return retarded_diagonal, green, lesser_green, greater_green
+        return retarded_diagonal, green, lesser_green, greater_green, linear_success
 
     def mapping(state, args):
         del args
-        _, _, lesser_green, greater_green = evaluate(state)
+        _, _, lesser_green, greater_green, _ = evaluate(state)
         lesser_density = jnp.real(jnp.diagonal(lesser_green, axis1=-2, axis2=-1))
         greater_density = jnp.real(jnp.diagonal(greater_green, axis1=-2, axis2=-1))
         lesser = coupling_squared * (
@@ -224,7 +227,9 @@ def solve_keldysh_scba(
         ),
     )
     state_value = nonlinear.state
-    retarded_diagonal, green, lesser_green, greater_green = evaluate(state_value)
+    retarded_diagonal, green, lesser_green, greater_green, linear_success = evaluate(
+        state_value
+    )
     fixed_residual = jnp.max(jnp.abs(mapping(state_value, None) - state_value))
     collision = (
         jnp.sum(
@@ -246,7 +251,10 @@ def solve_keldysh_scba(
         particle_continuity_residual=jnp.abs(collision),
     )
     successful = (
-        nonlinear.successful & keldysh_state.valid & (fixed_residual <= policy.tolerance)
+        nonlinear.successful
+        & jnp.all(linear_success)
+        & keldysh_state.valid
+        & (fixed_residual <= policy.tolerance)
     )
     return KeldyshSCBAResult(
         keldysh_state,
@@ -255,6 +263,7 @@ def solve_keldysh_scba(
         jax.vmap(jnp.diag)(state_value[1]),
         fixed_residual,
         jnp.abs(collision),
+        linear_success,
         successful,
         problem.problem_id,
         canonical_fingerprint(

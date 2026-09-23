@@ -292,6 +292,16 @@ def jump_measure_change(
         axis=-1,
     )
     support = support & partition_valid
+    event_times_valid = jnp.all(
+        jnp.where(
+            events.valid,
+            jnp.isfinite(events.times)
+            & (events.times >= edges[..., :1])
+            & (events.times <= edges[..., -1:]),
+            True,
+        ),
+        axis=-1,
+    )
 
     interval_indices = jnp.sum(
         events.times[..., :, None] >= edges[..., None, 1:],
@@ -371,6 +381,7 @@ def jump_measure_change(
         & support
         & event_proposal_valid
         & event_channels_valid
+        & event_times_valid
         & mark_finite
         & jnp.isfinite(compensator)
     )

@@ -508,6 +508,12 @@ class PseudoWitnessSet(StrictModule, NonTrainableState):
             raise ValueError("image_dimension cannot exceed source_dimension.")
         source_slice = AffineSlice(source_slice_matrix, source_slice_offset)
         image_slice = AffineSlice(image_slice_matrix, image_slice_offset)
+        if source_dimension_ > source_slice.ambient_dimension:
+            raise ValueError(
+                "source_dimension cannot exceed the source ambient dimension."
+            )
+        if image_dimension_ > image_slice.ambient_dimension:
+            raise ValueError("image_dimension cannot exceed the image ambient dimension.")
         source_points_ = _finite_array(source_points, "source_points", 2)
         image_points_ = _finite_array(image_points, "image_points", 2)
         residuals = _real_nonnegative_vector(residual_norms, "residual_norms")

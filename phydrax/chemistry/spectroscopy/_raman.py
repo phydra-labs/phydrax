@@ -273,6 +273,12 @@ class RamanSpectrumPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "Raman spectroscopy requires successful vibrational analysis."
             )
+        if (
+            vibration.source_system_id != self.system.system_id
+            or vibration.source_geometry_id != structure.structure_id
+            or vibration.units.unit_system_id != self.system.units.unit_system_id
+        ):
+            raise ValueError("Raman vibration belongs to another system or geometry.")
         positions = np.asarray(structure.positions)
         masses = np.asarray(vibration.reduced_masses)
         modes = np.asarray(vibration.normal_modes)

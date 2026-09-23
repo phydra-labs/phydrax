@@ -30,6 +30,7 @@ from .._contracts import (
     MeshingExecutionMode,
     MeshingFailure,
     MeshingFailureCategory,
+    MeshingLimits,
     MeshingOperation,
     MeshingProviderInfo,
     MeshingSourceKind,
@@ -359,7 +360,7 @@ def _executable(options: TiogaOptions) -> str:
 
 def _info(executable: str, timeout: float) -> MeshingProviderInfo:
     version = _run([executable, "--version"], timeout).strip()
-    prefix = "phydrax-tioga/1 tioga/"
+    prefix = "phydrax-tioga/2 tioga/"
     if (
         not version.startswith(prefix)
         or not version[len(prefix) :]
@@ -407,17 +408,27 @@ def _write_input(
     walls: dict[str, np.ndarray],
     overset: dict[str, np.ndarray],
     options: TiogaOptions,
+    limits: MeshingLimits,
 ) -> None:
     with path.open("wb") as stream:
-        stream.write(b"PXTIOGA1")
+        stream.write(b"PXTIOGA2")
         stream.write(
             struct.pack(
-                "=iii",
+                "<iiiQQQQ",
                 len(assembly.parts),
                 options.fringe_layers,
                 options.exclusion_layers,
+                limits.maximum_vertices,
+                limits.maximum_cells,
+                limits.maximum_connectivity_entries,
+                limits.maximum_data_bytes,
             )
         )
+        part_node_counts = np.asarray(
+            [part.carrier.mesh.coordinates.shape[0] for part in assembly.parts],
+            dtype="<u8",
+        )
+        part_node_counts.tofile(stream)
         node_offset = 0
         for part in assembly.parts:
             assert isinstance(part.carrier, CellMeshingResult)
@@ -433,29 +444,37 @@ def _write_input(
                 [rows[int(value)] for value in overset.get(part.name, ())], dtype=np.int32
             )
             start = stream.tell()
-            stream.write(struct.pack("=Q", 0))
+            stream.write(struct.pack("<Q", 0))
             stream.write(
                 struct.pack(
-                    "=iiii",
+                    "<iiii",
                     vertices.size,
                     len(mesh.blocks),
                     wall_rows.size,
                     overset_rows.size,
                 )
             )
-            np.asarray(mesh.coordinates, dtype=np.float64).tofile(stream)
-            vertices.astype(np.uint64, copy=False).tofile(stream)
-            wall_rows.tofile(stream)
-            overset_rows.tofile(stream)
-            stream.write(struct.pack("=Q", node_offset))
+            np.asarray(mesh.coordinates, dtype="<f8").tofile(stream)
+            vertices.astype("<u8", copy=False).tofile(stream)
+            wall_rows.astype("<i4", copy=False).tofile(stream)
+            overset_rows.astype("<i4", copy=False).tofile(stream)
+            if node_offset > np.iinfo(np.uint64).max - vertices.size:
+                raise MeshingFailure(
+                    MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                    "TIOGA global node namespace exceeds uint64 capacity.",
+                )
+            stream.write(struct.pack("<Q", node_offset))
             node_offset += vertices.size
             for block in mesh.blocks:
-                stream.write(struct.pack("=ii", block.arity, block.cell_count))
-                (np.asarray(block.vertices, dtype=np.int32) + 1).tofile(stream)
-                np.asarray(block.global_ids, dtype=np.uint64).tofile(stream)
+                stream.write(struct.pack("<ii", block.arity, block.cell_count))
+                connectivity = (np.asarray(block.vertices, dtype=np.int64) + 1).astype(
+                    "<i4", copy=False
+                )
+                connectivity.tofile(stream)
+                np.asarray(block.global_ids, dtype="<u8").tofile(stream)
             end = stream.tell()
             stream.seek(start)
-            stream.write(struct.pack("=Q", end - start - 8))
+            stream.write(struct.pack("<Q", end - start - 8))
             stream.seek(end)
 
 
@@ -468,19 +487,28 @@ def _read_array(stream, dtype, count: int) -> np.ndarray:
     return values
 
 
-def _read_outputs(prefix: Path, assembly: MeshAssembly, ranks: int):
+def _read_outputs(
+    prefix: Path,
+    assembly: MeshAssembly,
+    ranks: int,
+    limits: MeshingLimits,
+):
     blanking = {}
     records: dict[tuple[int, int], list[tuple[int, int, np.ndarray, np.ndarray]]] = {}
+    total_bytes = sum(Path(f"{prefix}.{rank}").stat().st_size for rank in range(ranks))
+    if total_bytes > limits.maximum_data_bytes:
+        raise ValueError("TIOGA output exceeds maximum_data_bytes.")
+    total_donors = 0
     for rank in range(ranks):
         with Path(f"{prefix}.{rank}").open("rb") as stream:
-            if stream.read(8) != b"PXTIOGR1":
+            if stream.read(8) != b"PXTIOGR2":
                 raise ValueError("Invalid TIOGA output protocol.")
-            count = int(_read_array(stream, np.int32, 1)[0])
+            count = int(_read_array(stream, np.dtype("<i4"), 1)[0])
             if count != len(range(rank, len(assembly.parts), ranks)):
                 raise ValueError("TIOGA output rank ownership is incomplete.")
             for _ in range(count):
                 source, nodes, cells = (
-                    int(value) for value in _read_array(stream, np.int32, 3)
+                    int(value) for value in _read_array(stream, np.dtype("<i4"), 3)
                 )
                 if (
                     source not in range(rank, len(assembly.parts), ranks)
@@ -496,15 +524,21 @@ def _read_outputs(prefix: Path, assembly: MeshAssembly, ranks: int):
                     raise ValueError("TIOGA changed the input mesh cardinality.")
                 blanking[source] = TiogaPartBlanking(
                     part,
-                    _read_array(stream, np.int32, nodes),
-                    _read_array(stream, np.int32, cells),
+                    _read_array(stream, np.dtype("<i4"), nodes),
+                    _read_array(stream, np.dtype("<i4"), cells),
                 )
-                donor_count = int(_read_array(stream, np.int32, 1)[0])
+                donor_count = int(_read_array(stream, np.dtype("<i4"), 1)[0])
                 if donor_count < 0:
                     raise ValueError("Invalid TIOGA donor count.")
+                total_donors += donor_count
+                if (
+                    total_donors > limits.maximum_vertices
+                    or donor_count > limits.maximum_connectivity_entries
+                ):
+                    raise ValueError("TIOGA donor inventory exceeds resource limits.")
                 for _ in range(donor_count):
                     target, receptor, width = (
-                        int(value) for value in _read_array(stream, np.int32, 3)
+                        int(value) for value in _read_array(stream, np.dtype("<i4"), 3)
                     )
                     if (
                         target not in range(len(assembly.parts))
@@ -517,9 +551,13 @@ def _read_outputs(prefix: Path, assembly: MeshAssembly, ranks: int):
                     target_mesh = target_part.carrier.mesh
                     if not 0 <= receptor < target_mesh.coordinates.shape[0]:
                         raise ValueError("Unknown TIOGA receptor node.")
-                    cell = int(_read_array(stream, np.uint64, 1)[0])
+                    cell = int(_read_array(stream, np.dtype("<u8"), 1)[0])
+                    if cell > np.iinfo(np.int64).max:
+                        raise ValueError(
+                            "Native donor cell ID exceeds canonical int64 range."
+                        )
                     stencil = _read_array(
-                        stream, np.dtype([("id", "=u8"), ("weight", "=f8")]), width
+                        stream, np.dtype([("id", "<u8"), ("weight", "<f8")]), width
                     )
                     if np.any(stencil["id"] > np.iinfo(np.int64).max):
                         raise ValueError("Native donor ID exceeds canonical int64 range.")
@@ -636,6 +674,7 @@ class TiogaProvider:
         *,
         wall_scopes: tuple[MeshingScope, ...] = (),
         overset_scopes: tuple[MeshingScope, ...] = (),
+        limits: MeshingLimits | None = None,
     ) -> TiogaAssemblyResult:
         """Assemble 3D vertex-linear cell meshes without altering their identities.
 
@@ -647,6 +686,20 @@ class TiogaProvider:
         """
         if not isinstance(assembly, MeshAssembly):
             raise TypeError("assembly must be MeshAssembly.")
+        limits_ = MeshingLimits() if limits is None else limits
+        if not isinstance(limits_, MeshingLimits):
+            raise TypeError("limits must be MeshingLimits.")
+        if (
+            limits_.maximum_vertices > 10_000_000
+            or limits_.maximum_cells > 20_000_000
+            or limits_.maximum_connectivity_entries > 500_000_000
+            or limits_.maximum_data_bytes > 4_000_000_000
+        ):
+            raise ValueError("limits exceed the TIOGA bridge hard bounds.")
+        total_vertices = 0
+        total_cells = 0
+        total_connectivity = 0
+        estimated_input_bytes = 8 + 12 + 32 + 8 * len(assembly.parts)
         if len(assembly.parts) < 2 or self.options.ranks > len(assembly.parts):
             raise ValueError("TIOGA requires at least two parts and ranks <= part count.")
         if any(isinstance(link, OversetCoupling) for link in assembly.couplings):
@@ -662,6 +715,25 @@ class TiogaProvider:
                     "TIOGA requires certified 3D CellMesh parts, not implicit tessellation of other carriers.",
                 )
             mesh = part.carrier.mesh
+            vertices = mesh.coordinates.shape[0]
+            cells = sum(block.cell_count for block in mesh.blocks)
+            connectivity = sum(block.vertices.size for block in mesh.blocks)
+            total_vertices += vertices
+            total_cells += cells
+            total_connectivity += connectivity
+            estimated_input_bytes += (
+                8
+                + 16
+                + vertices * (3 * 8 + 8)
+                + 8
+                + len(mesh.blocks) * 8
+                + connectivity * 4
+                + cells * 8
+            )
+            if np.any(np.asarray(mesh.vertex_global_ids) < 0) or any(
+                np.any(np.asarray(block.global_ids) < 0) for block in mesh.blocks
+            ):
+                raise ValueError("TIOGA global node and cell IDs must be nonnegative.")
             if any(block.cell_kind not in _CELL_KINDS for block in mesh.blocks):
                 raise MeshingFailure(
                     MeshingFailureCategory.UNSUPPORTED_CAPABILITY,
@@ -690,10 +762,27 @@ class TiogaProvider:
                     MeshingFailureCategory.RESOURCE_EXHAUSTED,
                     "Mesh exceeds TIOGA int32 local indexing capacity.",
                 )
+        if (
+            total_vertices > limits_.maximum_vertices
+            or total_cells > limits_.maximum_cells
+            or total_connectivity > limits_.maximum_connectivity_entries
+        ):
+            raise MeshingFailure(
+                MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                "TIOGA input exceeds configured entity or connectivity limits.",
+            )
         walls, overset = (
             _boundaries(assembly, wall_scopes),
             _boundaries(assembly, overset_scopes),
         )
+        estimated_input_bytes += 4 * sum(
+            values.size for values in (*walls.values(), *overset.values())
+        )
+        if estimated_input_bytes > limits_.maximum_data_bytes:
+            raise MeshingFailure(
+                MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                "TIOGA input exceeds maximum_data_bytes.",
+            )
         for name in walls.keys() & overset.keys():
             if np.intersect1d(walls[name], overset[name]).size:
                 raise ValueError(
@@ -718,16 +807,23 @@ class TiogaProvider:
             ]
         with tempfile.TemporaryDirectory(prefix="phydrax-tioga-") as directory:
             path, prefix = Path(directory) / "input.bin", Path(directory) / "output.bin"
-            _write_input(path, assembly, walls, overset, self.options)
+            _write_input(path, assembly, walls, overset, self.options, limits_)
+            if path.stat().st_size > limits_.maximum_data_bytes:
+                raise MeshingFailure(
+                    MeshingFailureCategory.RESOURCE_EXHAUSTED,
+                    "Serialized TIOGA input exceeds maximum_data_bytes.",
+                )
             with path.open("rb") as stream:
                 input_digest = hashlib.file_digest(stream, "sha256").hexdigest()
             _run(
                 [*command, str(path), str(prefix)],
-                self.options.timeout_seconds,
+                min(self.options.timeout_seconds, limits_.maximum_wall_seconds),
                 cwd=directory,
             )
             try:
-                blanking, records = _read_outputs(prefix, assembly, self.options.ranks)
+                blanking, records = _read_outputs(
+                    prefix, assembly, self.options.ranks, limits_
+                )
                 links, evidence = _couplings(
                     assembly, blanking, records, self.options.tolerance
                 )
@@ -772,8 +868,20 @@ class TiogaProvider:
             provider.version,
             MeshingExecutionMode.SUBPROCESS,
             deterministic=False,
-            enforced_limits=("wall_seconds", "local_int32_indexing"),
-            unenforced_limits=("memory",),
+            enforced_limits=(
+                "wall_seconds",
+                "input_entities",
+                "input_connectivity_entries",
+                "input_bytes",
+                "bridge_donor_allocations",
+                "serialized_output_bytes",
+                "local_int32_indexing",
+                "global_uint64_node_namespace",
+            ),
+            unenforced_limits=(
+                "provider_internal_workspace",
+                "native_donor_generation_preallocation",
+            ),
         )
         return TiogaAssemblyResult(
             result_assembly, blanking, evidence, provider, runtime, provenance

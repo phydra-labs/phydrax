@@ -401,6 +401,7 @@ class ReducedWorkDataset(StrictModule, NonTrainableState):
     mapping_id: str | None = eqx.field(static=True)
     bias_ids: tuple[str | None, str | None] = eqx.field(static=True)
     unit_system_id: str | None = eqx.field(static=True)
+    inverse_temperature: float = eqx.field(static=True)
     qualification_id: str = eqx.field(static=True)
     sampling_exact: bool = eqx.field(static=True)
     sampling_bias_bound: float = eqx.field(static=True)
@@ -427,6 +428,7 @@ class ReducedWorkDataset(StrictModule, NonTrainableState):
         run_id: str,
         work_id: str,
         work_kind: WorkKind,
+        inverse_temperature: float,
         qualification_id: str,
         sampling_exact: bool,
         sampling_bias_bound: float,
@@ -502,6 +504,9 @@ class ReducedWorkDataset(StrictModule, NonTrainableState):
         producer = _identifier(producer_id, "producer_id")
         run = _identifier(run_id, "run_id")
         identity = _identifier(work_id, "work_id")
+        beta = float(inverse_temperature)
+        if not math.isfinite(beta) or beta <= 0.0:
+            raise ValueError("inverse_temperature must be finite and positive.")
         biases_ = _state_bias_ids(bias_ids, 2)
         biases = (biases_[0], biases_[1])
         unit_system = (
@@ -531,6 +536,7 @@ class ReducedWorkDataset(StrictModule, NonTrainableState):
             "run_id": run,
             "work_id": identity,
             "work_kind": work_kind,
+            "inverse_temperature": beta.hex(),
             "mapping_id": mapping,
             "bias_ids": biases,
             "unit_system_id": unit_system,
@@ -566,6 +572,7 @@ class ReducedWorkDataset(StrictModule, NonTrainableState):
         self.run_id = run
         self.work_id = identity
         self.work_kind = work_kind
+        self.inverse_temperature = beta
         self.mapping_id = mapping
         self.bias_ids = biases
         self.unit_system_id = unit_system
@@ -1864,6 +1871,8 @@ def bennett_acceptance_ratio(
         or float(np.asarray(overlap_value)) < evidence.plan.minimum_overlap
     ):
         statistical_status |= FreeEnergyStatus.POOR_OVERLAP
+    if not bool(np.asarray(jnp.all(connectivity))):
+        statistical_status |= FreeEnergyStatus.DISCONNECTED
     return FreeEnergyResult(
         jnp.asarray([0.0, estimate]),
         covariance,

@@ -8,11 +8,14 @@ import contextlib
 import io
 import json
 import runpy
+from pathlib import Path
 
 
 output = io.StringIO()
 with contextlib.redirect_stdout(output):
-    namespace = runpy.run_path("examples/growing_reactive_particle_pool.py")
+    namespace = runpy.run_path(
+        Path(__file__).resolve().parents[1] / "examples/growing_reactive_particle_pool.py"
+    )
 result = namespace["result"]
 passed = bool(
     result.successful

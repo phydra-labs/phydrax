@@ -255,11 +255,11 @@ class OptimistixAdapter(BenchmarkAdapter):
             input_bytes += prepared_state.target.nbytes
         return {
             "matrix_bytes": input_bytes,
-            "setup_bytes": 0,
+            "setup_bytes": None,
             "peak_estimate_bytes": None,
             "evidence": (
-                "exact retained device input bytes; Optimistix/Lineax/XLA transient "
-                "workspace peak is unavailable"
+                "exact retained device input bytes; Optimistix/Lineax/XLA compiled "
+                "storage and transient workspace peak are unavailable"
             ),
         }
 

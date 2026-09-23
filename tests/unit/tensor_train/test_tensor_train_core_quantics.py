@@ -1,5 +1,7 @@
+import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax.tensor_train as tt
 
@@ -63,7 +65,36 @@ def test_rounding_reports_rss_bound_including_every_discarded_mode():
     assert jnp.allclose(rounded.evidence.frobenius_error_bound, rss)
     assert measured <= rounded.evidence.frobenius_error_bound + 2e-5
     assert not rounded.evidence.tolerance_met
-    assert rounded.evidence.status == "rank_cap_reached_before_tolerance"
+    assert int(rounded.evidence.status) == int(
+        tt.TTRoundingStatus.RANK_CAP_REACHED_BEFORE_TOLERANCE
+    )
+
+
+def test_relative_tolerance_masks_negligible_singular_directions_at_static_capacity():
+    dense = jnp.diag(jnp.asarray([1.0, 1e-8], dtype=jnp.float32))
+    compressed = tt.tt_svd(
+        dense,
+        max_ranks=2,
+        relative_tolerance=1e-6,
+    )
+    assert compressed.tensor.ranks == (2,)
+    assert jnp.array_equal(compressed.evidence.selected_ranks, jnp.asarray([1]))
+    assert compressed.evidence.tolerance_met
+    assert jnp.allclose(
+        compressed.tensor.to_dense(max_entries=4),
+        jnp.diag(jnp.asarray([1.0, 0.0], dtype=jnp.float32)),
+        atol=1e-7,
+    )
+
+    exact = tt.tt_svd(dense, max_ranks=2, relative_tolerance=0.0).tensor
+    rounded = tt.round_tensor_train(
+        exact,
+        max_ranks=2,
+        relative_tolerance=1e-6,
+    )
+    assert rounded.tensor.ranks == (2,)
+    assert jnp.array_equal(rounded.evidence.selected_ranks, jnp.asarray([1]))
+    assert rounded.evidence.tolerance_met
 
 
 def test_qtt_ordering_round_trip_evaluation_and_analytic_linear_quadrature():
@@ -97,3 +128,39 @@ def test_qtt_ordering_round_trip_evaluation_and_analytic_linear_quadrature():
         name="linear-sum",
     )
     assert jnp.allclose(function.quadrature(max_evaluations=16), 1.0, atol=2e-6)
+
+
+def test_tensor_indices_reject_fractional_and_out_of_range_values():
+    train = tt.TensorTrain((jnp.ones((1, 4, 1), dtype=jnp.float32),))
+    with pytest.raises(TypeError, match="integer dtype"):
+        train.evaluate(jnp.asarray([[1.5]], dtype=jnp.float32))
+
+    grid = tt.TensorizedGrid.uniform(((0.0, 1.0),), (4,), rule="midpoint")
+    with pytest.raises(Exception, match="out-of-range"):
+        grid.coordinates(jnp.asarray([[4]], dtype=jnp.int32))
+
+    layout = tt.QuanticsLayout.binary((4,))
+    with pytest.raises(Exception, match="out-of-range"):
+        layout.digitize(jnp.asarray([[4]], dtype=jnp.int32))
+    with pytest.raises(Exception, match="out-of-range"):
+        layout.undigitize(jnp.asarray([[0, 2]], dtype=jnp.int32))
+
+
+def test_tt_svd_and_rounding_execute_under_jit_with_array_evidence():
+    dense = jnp.arange(24, dtype=jnp.float32).reshape((2, 3, 4))
+    compressed = jax.jit(
+        lambda value: tt.tt_svd(
+            value,
+            max_ranks=(2, 4),
+            relative_tolerance=0.0,
+        )
+    )(dense)
+    rounded = jax.jit(
+        lambda value: tt.round_tensor_train(
+            value,
+            max_ranks=(2, 4),
+            relative_tolerance=0.0,
+        )
+    )(compressed.tensor)
+    assert jnp.allclose(rounded.tensor.to_dense(max_entries=24), dense, atol=2e-5)
+    assert rounded.evidence.tolerance_met

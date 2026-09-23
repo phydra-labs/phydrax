@@ -234,7 +234,47 @@ class AmbientNoiseCorrelationPlan(StrictModule, NonTrainableState):
             raise TypeError("Ambient noise requires SampledSeries traces.")
         if first.values.ndim != 1 or second.values.shape != first.values.shape:
             raise ValueError("Ambient-noise inputs must be matching scalar traces.")
-        count = first.values.size
+        if (
+            first.alignment != "node"
+            or second.alignment != "node"
+            or first.support.coordinate_id != second.support.coordinate_id
+            or first.support.coordinate_kind != second.support.coordinate_kind
+            or first.support.coordinate_kind != "continuous"
+            or first.support.coordinate_name != second.support.coordinate_name
+        ):
+            raise ValueError("Ambient-noise traces must use the same node-aligned clock.")
+        coordinate_dtype = jnp.result_type(first.support.coordinates, 0.0)
+        first_coordinates = (
+            jnp.broadcast_to(first.support.coordinates, first.support.node_valid.shape)
+            .reshape((-1,))
+            .astype(coordinate_dtype)
+        )
+        second_coordinates = (
+            jnp.broadcast_to(second.support.coordinates, second.support.node_valid.shape)
+            .reshape((-1,))
+            .astype(coordinate_dtype)
+        )
+        intervals = jnp.diff(first_coordinates)
+        tolerance = (
+            64.0
+            * jnp.finfo(first_coordinates.dtype).eps
+            * jnp.maximum(jnp.max(jnp.abs(first_coordinates)), 1.0)
+        )
+        clock_invalid = (
+            ~jnp.array_equal(first_coordinates, second_coordinates)
+            | ~jnp.array_equal(first.support.node_valid, second.support.node_valid)
+            | ~jnp.array_equal(first.support.edge_valid, second.support.edge_valid)
+            | ~jnp.all(first.support.node_valid)
+            | ~jnp.all(first.support.edge_valid)
+            | jnp.any(jnp.abs(intervals - self.sample_interval_s) > tolerance)
+        )
+        first_values = eqx.error_if(
+            first.values,
+            clock_invalid,
+            "Ambient-noise traces must share one connected uniformly sampled clock.",
+        )
+        second_values = second.values
+        count = first_values.size
         starts = range(0, count - self.window_samples + 1, self.step_samples)
         taper = jnp.hanning(self.window_samples)
         rows = []
@@ -242,8 +282,8 @@ class AmbientNoiseCorrelationPlan(StrictModule, NonTrainableState):
             valid = jnp.all(
                 first.sample_valid[start : start + self.window_samples]
             ) & jnp.all(second.sample_valid[start : start + self.window_samples])
-            left = first.values[start : start + self.window_samples]
-            right = second.values[start : start + self.window_samples]
+            left = first_values[start : start + self.window_samples]
+            right = second_values[start : start + self.window_samples]
             left = left - jnp.mean(left)
             right = right - jnp.mean(right)
             if self.normalization == "one-bit":

@@ -45,6 +45,47 @@ def test_graph_network_jit_runs():
     assert out.globals.shape == (1, 1)
 
 
+def test_graph_network_masks_padding_before_updates_and_reductions():
+    unpadded = vx.GraphIR(
+        nodes=jnp.asarray([[1.0], [2.0]]),
+        edges=jnp.asarray([[0.5]]),
+        senders=jnp.asarray([0], dtype=jnp.int32),
+        receivers=jnp.asarray([1], dtype=jnp.int32),
+        globals=jnp.asarray([[3.0]]),
+        n_node=jnp.asarray([2], dtype=jnp.int32),
+        n_edge=jnp.asarray([1], dtype=jnp.int32),
+    )
+    padded = vx.GraphIR(
+        nodes=jnp.asarray([[1.0], [2.0], [jnp.nan]]),
+        edges=jnp.asarray([[0.5], [jnp.nan], [jnp.nan]]),
+        senders=jnp.asarray([0, 2, 2], dtype=jnp.int32),
+        receivers=jnp.asarray([1, 2, 2], dtype=jnp.int32),
+        globals=jnp.asarray([[3.0], [jnp.nan]]),
+        n_node=jnp.asarray([2, 1], dtype=jnp.int32),
+        n_edge=jnp.asarray([1, 2], dtype=jnp.int32),
+        node_mask=jnp.asarray([True, True, False]),
+        edge_mask=jnp.asarray([True, False, False]),
+        graph_mask=jnp.asarray([True, False]),
+    )
+    net = vx.GraphNetwork(
+        update_edge_fn=lambda edge, sent, recv, glob: edge + sent + recv + glob + 1.0,
+        update_node_fn=lambda node, sent, recv, glob: node + sent + recv + glob + 1.0,
+        update_global_fn=lambda node, edge, glob: node + edge + glob + 1.0,
+        attention_logit_fn=lambda edge, sent, recv, glob: edge + sent + recv + glob,
+        attention_reduce_fn=lambda edge, weight: edge * weight,
+    )
+
+    expected = net(unpadded)
+    actual = net(padded)
+
+    assert jnp.allclose(actual.nodes[:2], expected.nodes)
+    assert jnp.allclose(actual.edges[:1], expected.edges)
+    assert jnp.allclose(actual.globals[:1], expected.globals)
+    assert jnp.array_equal(actual.nodes[2:], jnp.zeros((1, 1)))
+    assert jnp.array_equal(actual.edges[1:], jnp.zeros((2, 1)))
+    assert jnp.array_equal(actual.globals[1:], jnp.zeros((1, 1)))
+
+
 def test_interaction_network_runs():
     graph = _make_graph()
     net = vx.InteractionNetwork(

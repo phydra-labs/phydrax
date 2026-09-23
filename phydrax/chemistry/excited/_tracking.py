@@ -126,10 +126,24 @@ def track_excited_states(
         current, ElectronicManifoldResult
     ):
         raise TypeError("State tracking requires two electronic manifolds.")
+    threshold = float(minimum_overlap)
+    if not np.isfinite(threshold) or not 0.0 <= threshold <= 1.0:
+        raise ValueError("minimum_overlap must be finite and lie in [0, 1].")
     if type(previous.representation) is not type(current.representation):
         raise ValueError("State tracking cannot mix excited-state representations.")
     if previous.spin_sector != current.spin_sector:
         raise ValueError("State tracking cannot mix spin sectors.")
+    if (
+        previous.method != current.method
+        or previous.symmetry_sector != current.symmetry_sector
+        or previous.energy_unit.unit_id != current.energy_unit.unit_id
+        or previous.electric_dipole_unit.unit_id != current.electric_dipole_unit.unit_id
+        or previous.provider_id != current.provider_id
+        or previous.state_space_id != current.state_space_id
+    ):
+        raise ValueError(
+            "State tracking requires one method, symmetry sector, unit convention, provider, and state space."
+        )
     left, _ = _left_right(previous.representation)
     _, right = _left_right(current.representation)
     if left.shape[0] != right.shape[0] or left.shape[1] != right.shape[1]:
@@ -156,7 +170,7 @@ def track_excited_states(
         bool(previous.successful)
         and bool(current.successful)
         and np.all(np.isfinite(overlap))
-        and np.min(assigned_overlaps, initial=np.inf) >= float(minimum_overlap)
+        and np.min(assigned_overlaps, initial=np.inf) >= threshold
     )
     return StateTrackingResult(
         overlap,

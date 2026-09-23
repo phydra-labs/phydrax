@@ -38,6 +38,9 @@ def _calculation_and_provider():
             coordinate,
             energy,
             forces=-coordinate,
+            convergence=phx.chemistry.ElectronicConvergenceEvidence(
+                True, energy_residual=0.0, density_residual=0.0
+            ),
         )
 
     capabilities = phx.chemistry.ElectronicProviderCapabilities.molecular_ground_state(

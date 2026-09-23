@@ -39,6 +39,29 @@ def test_affine_exponential_step_handles_zero_and_singular_operator():
     zero = phx.dynamics.affine_exponential_step(operator, state, forcing, 0.0)
     np.testing.assert_array_equal(zero.value, state)
 
+    prepared = phx.dynamics.PreparedAffineLinearEvolution(matrix, forcing)
+    prepared_zero = prepared.step(state, 0.0)
+    np.testing.assert_array_equal(prepared_zero.value, state)
+    assert bool(prepared_zero.successful)
+
+
+def test_prepared_affine_identity_includes_matrix_and_source_content():
+    first = phx.dynamics.PreparedAffineLinearEvolution(
+        jnp.asarray([[0.0]]),
+        jnp.asarray([1.0]),
+    )
+    changed_matrix = phx.dynamics.PreparedAffineLinearEvolution(
+        jnp.asarray([[2.0]]),
+        jnp.asarray([1.0]),
+    )
+    changed_source = phx.dynamics.PreparedAffineLinearEvolution(
+        jnp.asarray([[0.0]]),
+        jnp.asarray([3.0]),
+    )
+
+    assert first.prepared_id != changed_matrix.prepared_id
+    assert first.prepared_id != changed_source.prepared_id
+
 
 def test_affine_exponential_step_supports_batched_dense_operators():
     matrices = jnp.asarray(

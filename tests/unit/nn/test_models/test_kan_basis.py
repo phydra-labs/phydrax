@@ -107,7 +107,6 @@ def test_per_input_grid_specification_preserves_scan_execution():
     )
     inputs = jnp.asarray([0.12, -0.34, 0.56])
 
-    assert scanned._scan_enabled
     assert all(
         layer.edge_basis.grid.num_grids == layer.in_size for layer in scanned.layers
     )
@@ -141,7 +140,6 @@ def test_trainable_bspline_grid_participates_in_kan_gradients_and_scan():
     )(model)
     trainable, fixed = partition_trainable(model)
 
-    assert model._scan_enabled
     assert trainable.layers[0].edge_basis.grid.raw_span_logits is not None
     assert fixed.layers[0].edge_basis.grid.raw_span_logits is None
     assert all(
@@ -210,7 +208,6 @@ def test_rational_bspline_identity_scan_and_parameter_gradients():
         lambda candidate: jnp.sum(candidate(inputs) ** 2)
     )(model)
 
-    assert model._scan_enabled
     assert np.allclose(np.asarray(value), np.asarray(inputs), atol=2e-12)
     assert np.allclose(np.asarray(jacobian), np.eye(2), atol=2e-11)
     assert isinstance(model.layers[0].coeffs, RationalBSplineEdgeParameters)
@@ -445,7 +442,6 @@ def test_bspline_kan_scan_matches_loop_and_jacobian_is_finite():
     scanned_value = eqx.filter_jit(scanned)(inputs)
     jacobian = jax.jacrev(scanned)(inputs)
 
-    assert scanned._scan_enabled
     assert np.allclose(np.asarray(scanned_value), np.asarray(loop_value))
     assert jacobian.shape == (2, 3)
     assert np.all(np.isfinite(np.asarray(jacobian)))

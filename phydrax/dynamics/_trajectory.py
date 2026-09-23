@@ -11,7 +11,7 @@ import equinox as eqx
 import jax.numpy as jnp
 from jaxtyping import Array, ArrayLike
 
-from .._fingerprint import canonical_fingerprint
+from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from .._strict import StrictModule
 from ..series import CoordinateKind, SampledSeries, SeriesPairView, SeriesSupport
 from ._layout import InputLayout, StateLayout
@@ -243,6 +243,12 @@ class TrajectoryData(StrictModule):
         if input_alignment not in ("samples", "transitions"):
             raise ValueError("input_alignment must be 'samples' or 'transitions'.")
         if inputs is None:
+            if input_valid is not None:
+                raise ValueError("input_valid requires inputs.")
+            if input_alignment != "transitions":
+                raise ValueError(
+                    "input_alignment must remain 'transitions' when inputs are absent."
+                )
             input_values = None
             resolved_input_valid = None
             resolved_input_alignment = None
@@ -317,11 +323,28 @@ class TrajectoryData(StrictModule):
             {
                 "source": source_id,
                 "coordinate": coordinate_id,
+                "coordinate_kind": coordinate_kind,
                 "state_layout": state_layout.layout_id,
                 "input_layout": None if input_layout is None else input_layout.layout_id,
                 "input_alignment": resolved_input_alignment,
                 "case_shape": list(cases),
+                "case_axes": list(names),
+                "case_axis_roles": list(roles),
                 "capacity": capacity,
+                "content": array_tree_fingerprint(
+                    {
+                        "coordinates": coordinate_values,
+                        "states": state_values,
+                        "sample_valid": valid,
+                        "transition_valid": transitions,
+                        "reset_mask": resets,
+                        "weights": sample_weights,
+                        "inputs": input_values,
+                        "input_valid": resolved_input_valid,
+                        "derivatives": derivative_values,
+                        "derivative_valid": resolved_derivative_valid,
+                    }
+                ),
             },
             "trajectory-data",
         )

@@ -100,6 +100,38 @@ def test_exact_likelihood_and_contrastive_divergence_have_correct_values_and_gra
     expected_gradient = exact.factor_probabilities[0] - jnp.asarray([[1.0, 0.0]])
     assert jnp.allclose(gradient, expected_gradient, atol=1e-10)
 
+    stale_graph = eqx.tree_at(
+        lambda value: value.factor_groups[0].log_potentials,
+        graph,
+        factor.log_potentials + jnp.asarray([[1.0, 0.0]]),
+    )
+    with pytest.raises(
+        (ValueError, eqx.EquinoxRuntimeError),
+        match="numeric factors",
+    ):
+        phx.pgm.exact_factor_graph_negative_log_likelihood(
+            stale_graph,
+            jnp.asarray([[0]]),
+            exact,
+        )
+
+    other_variables = phx.pgm.DiscreteVariableGroup("y", shape=(1,), num_states=2)
+    other_graph = phx.pgm.DiscreteFactorGraph(
+        (other_variables,),
+        (
+            phx.pgm.DenseTableFactorGroup(
+                (phx.pgm.VariableSelection.all(other_variables),),
+                factor.log_potentials,
+            ),
+        ),
+    )
+    with pytest.raises(ValueError, match="another graph structure"):
+        phx.pgm.exact_factor_graph_negative_log_likelihood(
+            other_graph,
+            jnp.asarray([[0]]),
+            exact,
+        )
+
 
 def test_factor_graph_moments_return_empirical_configuration_probabilities():
     graph = phx.pgm.ising_factor_graph(
@@ -115,3 +147,9 @@ def test_factor_graph_moments_return_empirical_configuration_probabilities():
     assert moments[0].shape == (2, 2)
     assert moments[1].shape == (1, 2, 2)
     assert jnp.allclose(moments[1][0], jnp.asarray([[0.25, 0.5], [0.0, 0.25]]))
+
+    with pytest.raises(
+        (ValueError, eqx.EquinoxRuntimeError),
+        match="outside graph support",
+    ):
+        phx.pgm.factor_graph_moments(graph, jnp.asarray([[0, 2]]))

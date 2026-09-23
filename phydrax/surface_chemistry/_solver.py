@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -34,6 +35,7 @@ class SegmentedCatalyticReactor:
     conservation_matrix: Array
     volumetric_flow_m3_s: float
     heat_capacity_flow_w_k: float
+    tolerance: float
 
     @classmethod
     def create(
@@ -56,6 +58,20 @@ class SegmentedCatalyticReactor:
         constants = np.asarray(rate_constants_mol_m2_s, dtype=np.float64)
         enthalpy = np.asarray(reaction_enthalpy_j_mol, dtype=np.float64)
         conservation = np.asarray(conservation_matrix, dtype=np.float64)
+        if not np.isfinite(tolerance) or tolerance <= 0:
+            raise ValueError("Catalytic tolerance must be finite and positive.")
+        if not all(
+            np.all(np.isfinite(value))
+            for value in (
+                area,
+                stoichiometry_,
+                orders,
+                constants,
+                enthalpy,
+                conservation,
+            )
+        ):
+            raise ValueError("Catalytic operators and properties must be finite.")
         if area.ndim != 1 or area.size == 0 or np.any(area <= 0):
             raise ValueError("Catalyst segment areas must be a positive vector.")
         if stoichiometry_.ndim != 2 or stoichiometry_.shape[0] == 0:
@@ -79,8 +95,15 @@ class SegmentedCatalyticReactor:
             raise ValueError(
                 "Catalyst stoichiometry violates declared conservation laws."
             )
-        if volumetric_flow_m3_s <= 0 or heat_capacity_flow_w_k <= 0:
-            raise ValueError("Catalyst flow and heat-capacity rates must be positive.")
+        if (
+            not np.isfinite(volumetric_flow_m3_s)
+            or volumetric_flow_m3_s <= 0
+            or not np.isfinite(heat_capacity_flow_w_k)
+            or heat_capacity_flow_w_k <= 0
+        ):
+            raise ValueError(
+                "Catalyst flow and heat-capacity rates must be finite and positive."
+            )
         return cls(
             jnp.asarray(area),
             jnp.asarray(stoichiometry_),
@@ -90,6 +113,7 @@ class SegmentedCatalyticReactor:
             jnp.asarray(conservation),
             float(volumetric_flow_m3_s),
             float(heat_capacity_flow_w_k),
+            float(tolerance),
         )
 
     def solve(
@@ -97,12 +121,21 @@ class SegmentedCatalyticReactor:
     ) -> CatalyticReactorResult:
         flow = jnp.asarray(inlet_species_molar_flow_mol_s)
         species_count = self.stoichiometry.shape[1]
-        if flow.shape != (species_count,) or bool(jnp.any(flow < 0)):
+        if flow.shape != (species_count,):
             raise ValueError("Catalyst inlet species flows are invalid.")
-        if inlet_temperature_k <= 0:
-            raise ValueError("Catalyst inlet temperature must be positive.")
+        flow = eqx.error_if(
+            flow,
+            jnp.any(~jnp.isfinite(flow) | (flow < 0)),
+            "Catalyst inlet species flows must be finite and nonnegative.",
+        )
+        temperature = jnp.asarray(inlet_temperature_k, dtype=flow.dtype)
+        temperature = eqx.error_if(
+            temperature,
+            ~jnp.isfinite(temperature) | (temperature <= 0),
+            "Catalyst inlet temperature must be finite and positive.",
+        )
         initial = flow
-        temperature = jnp.asarray(inlet_temperature_k)
+        successful = jnp.asarray(True)
         flow_profile = [flow]
         temperature_profile = [temperature]
         extent_profile = []
@@ -129,9 +162,21 @@ class SegmentedCatalyticReactor:
             )
             scale = jnp.minimum(1.0, jnp.min(ratios))
             extent = scale * requested_extent
-            flow = flow + self.stoichiometry.T @ extent
+            candidate_flow = flow + self.stoichiometry.T @ extent
             heat_release = -contract("r,r->", self.reaction_enthalpy_j_mol, extent)
-            temperature = temperature + heat_release / self.heat_capacity_flow_w_k
+            candidate_temperature = (
+                temperature + heat_release / self.heat_capacity_flow_w_k
+            )
+            segment_valid = (
+                jnp.all(jnp.isfinite(candidate_flow))
+                & jnp.all(candidate_flow >= -self.tolerance)
+                & jnp.isfinite(candidate_temperature)
+                & (candidate_temperature > 0)
+            )
+            successful = successful & segment_valid
+            flow = jnp.where(segment_valid, candidate_flow, flow)
+            temperature = jnp.where(segment_valid, candidate_temperature, temperature)
+            extent = jnp.where(segment_valid, extent, jnp.zeros_like(extent))
             flow_profile.append(flow)
             temperature_profile.append(temperature)
             extent_profile.append(extent)
@@ -141,10 +186,13 @@ class SegmentedCatalyticReactor:
         conservation_residual = self.conservation_matrix @ (flow - initial)
         minimum = jnp.min(flows)
         successful = (
-            jnp.all(jnp.isfinite(flows))
+            successful
+            & jnp.all(jnp.isfinite(flows))
             & jnp.all(jnp.isfinite(temperatures))
-            & (minimum >= -1e-12)
+            & (minimum >= -self.tolerance)
             & jnp.all(temperatures > 0)
+            & jnp.all(jnp.isfinite(conservation_residual))
+            & (jnp.linalg.norm(conservation_residual) <= self.tolerance)
         )
         return CatalyticReactorResult(
             flows,

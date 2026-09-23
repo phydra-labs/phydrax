@@ -41,7 +41,7 @@ def hcurl_auxiliary_space_preconditioner(
 
     def action(residual):
         edge = edge_inverse.apply(residual)
-        scalar_residual = gradient.transpose_mv(residual)
+        scalar_residual = gradient.adjoint_mv(residual)
         scalar = scalar_inverse.apply(scalar_residual)
         return _sum(edge, gradient.mv(scalar))
 

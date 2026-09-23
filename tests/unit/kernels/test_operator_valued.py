@@ -5,6 +5,7 @@
 import jax
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 import phydrax as phx
 
@@ -94,3 +95,20 @@ def test_higher_form_covariance_is_positive_semidefinite_and_differentiable():
     assert jnp.allclose(covariance, covariance.T, atol=1e-10)
     assert np.min(np.linalg.eigvalsh(np.asarray(covariance))) >= -1e-9
     assert jnp.isfinite(jax.jit(jax.grad(objective))(jnp.asarray(0.7)))
+
+
+def test_kernel_functional_terms_require_exact_integer_derivative_orders():
+    with pytest.raises(TypeError, match="exact integers"):
+        phx.kernels.KernelFunctionalTerm(
+            "field",
+            jnp.asarray([[0.0]]),
+            ((0.5,),),
+            jnp.ones((1, 1, 1, 1)),
+        )
+    with pytest.raises(TypeError, match="exact integers"):
+        phx.kernels.KernelFunctionalTerm(
+            "field",
+            jnp.asarray([[0.0]]),
+            ((True,),),
+            jnp.ones((1, 1, 1, 1)),
+        )

@@ -100,12 +100,26 @@ def run(*, smoke=False):
         finite_element.default_runtime.coordinates,
         phx.discretization.SimplicialLocationPolicy(1, 8, 3),
     ).locate(jnp.asarray(((0.2, 0.2), (0.3, 0.1))))
+    values = jnp.asarray(
+        (
+            jnp.sum(population.mass) - jnp.sum(particles.masses),
+            collision.momentum_defect,
+            collision.energy_defect,
+            energy_defect,
+            diagnostics.electric_constraint_linf,
+        )
+    )
     successful = bool(
         collision.successful
         and diagnostics.successful
         and located.successful.all()
-        and collision.momentum_defect < 1.0e-10
-        and jnp.abs(collision.energy_defect) < 1.0e-10
+        and int(jnp.sum(located.inside)) == 2
+        and jnp.all(jnp.isfinite(values))
+        and jnp.abs(values[0]) < 1.0e-10
+        and jnp.abs(values[1]) < 1.0e-10
+        and jnp.abs(values[2]) < 1.0e-10
+        and jnp.abs(values[3]) < 1.0e-8
+        and jnp.abs(values[4]) < 1.0e-8
     )
     return AdvancedPICQualification(
         int(jnp.sum(population.active)),
@@ -127,7 +141,7 @@ def main():
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     report = run(smoke=args.smoke)
-    payload = json.dumps(asdict(report), indent=2)
+    payload = json.dumps(asdict(report), indent=2, allow_nan=False)
     print(payload)
     if args.output is not None:
         args.output.write_text(payload + "\n", encoding="utf-8")

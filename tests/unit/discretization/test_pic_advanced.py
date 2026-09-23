@@ -17,6 +17,184 @@ def _population(capacity=4, dimension=3):
     return particles, plan, plan.initialize()
 
 
+def _population_state(capacity, dimension, active, masses):
+    support = phx.discretization.ParticleSetPlan(
+        jnp.arange(capacity),
+        jnp.ones((capacity,)),
+        ambient_dimension=dimension,
+    ).prepare()
+    plan = phx.discretization.ParticlePopulationPlan(support)
+    return plan, plan.initialize(
+        active_mask=jnp.asarray(active), masses=jnp.asarray(masses)
+    )
+
+
+def test_boundary_and_ionization_failures_roll_back_every_accepted_state():
+    boundary_population_plan, boundary_population = _population_state(
+        2,
+        1,
+        (True, True),
+        (1.0, 1.0),
+    )
+    boundary_particles = phx.discretization.pic.PICParticleState(
+        jnp.asarray(((0.5,), (0.5,))),
+        jnp.asarray(((-1.0,), (0.0,))),
+    )
+    boundary = phx.discretization.pic.PICOpenBoundaryPlan(
+        jnp.asarray((0.0,)),
+        jnp.asarray((1.0,)),
+        kinds=(
+            phx.discretization.pic.PICBoundaryKind.ABSORB,
+            phx.discretization.pic.PICBoundaryKind.REFLECT,
+        ),
+    )
+    boundary_result = boundary.apply(
+        boundary_population_plan,
+        boundary_population,
+        boundary_particles,
+        jnp.asarray(((-0.1,), (jnp.nan,))),
+        jnp.ones((2,)),
+        boundary.initialize_surface(),
+    )
+    assert not bool(boundary_result.successful)
+    np.testing.assert_array_equal(
+        boundary_result.accepted_population.active,
+        boundary_population.active,
+    )
+
+    ion_population_plan, ion_population = _population_state(
+        2, 3, (True, True), (1.0, 1.0)
+    )
+    electron_population_plan, electron_population = _population_state(
+        4,
+        3,
+        (True, True, False, False),
+        (1.0, 1.0, 0.0, 0.0),
+    )
+    ion_model = phx.discretization.pic.PICChargeModelPlan(
+        1.0,
+        "ions",
+        minimum_charge_number=0,
+        maximum_charge_number=2,
+        initial_charge_number=0,
+    )
+    electron_model = phx.discretization.pic.PICChargeModelPlan(
+        1.0,
+        "electrons",
+        minimum_charge_number=-1,
+        maximum_charge_number=-1,
+        initial_charge_number=-1,
+    )
+    ion_charge = ion_model.initialize(ion_population)
+    electron_charge = electron_model.initialize(electron_population)
+    ion_particles = phx.discretization.pic.PICParticleState(
+        jnp.zeros((2, 3)),
+        jnp.zeros((2, 3)),
+    )
+    electron_particles = phx.discretization.pic.PICParticleState(
+        jnp.zeros((4, 3)),
+        jnp.asarray(
+            (
+                (1.0, 0.0, 0.0),
+                (-1.0, 0.0, 0.0),
+                (0.0, 0.0, 0.0),
+                (0.0, 0.0, 0.0),
+            )
+        ),
+    )
+    impact = phx.discretization.pic.ionization.ElectronImpactIonizationPlan(
+        jnp.asarray((0.0, 2.0)),
+        jnp.ones((2,)),
+        ionization_energy=0.01,
+        rate_scale=1.0e6,
+        maximum_probability=1.0,
+        maximum_events=2,
+    )
+    duplicate = impact.apply(
+        ion_model,
+        ion_population,
+        ion_charge,
+        ion_particles,
+        electron_model,
+        electron_population_plan,
+        electron_population,
+        electron_charge,
+        electron_particles,
+        jnp.asarray((0, 0)),
+        jnp.asarray((0, 1)),
+        jr.key(7),
+        1.0,
+        1,
+    )
+    assert not bool(duplicate.successful)
+    np.testing.assert_array_equal(
+        duplicate.electron_population.active,
+        electron_population.active,
+    )
+    np.testing.assert_array_equal(
+        duplicate.ion_charge.charge_number,
+        ion_charge.charge_number,
+    )
+
+    nonfinite_ions = phx.discretization.pic.PICParticleState(
+        ion_particles.position.at[0, 0].set(jnp.nan),
+        ion_particles.proper_velocity,
+    )
+    nonfinite = impact.apply(
+        ion_model,
+        ion_population,
+        ion_charge,
+        nonfinite_ions,
+        electron_model,
+        electron_population_plan,
+        electron_population,
+        electron_charge,
+        electron_particles,
+        jnp.asarray((0, -1)),
+        jnp.asarray((0, -1)),
+        jr.key(8),
+        1.0,
+        2,
+    )
+    assert not bool(nonfinite.successful)
+    np.testing.assert_array_equal(
+        nonfinite.electron_population.active,
+        electron_population.active,
+    )
+
+    field = phx.discretization.pic.ionization.FieldIonizationPlan(
+        1.0e6,
+        field_power=1.0,
+        ionization_energy=0.01,
+        maximum_probability=1.0,
+        maximum_events=1,
+    )
+    field_result = field.apply(
+        ion_model,
+        ion_population,
+        ion_charge,
+        nonfinite_ions,
+        jnp.full((2, 3), 1.0e6),
+        electron_model,
+        electron_population_plan,
+        electron_population,
+        electron_charge,
+        electron_particles,
+        jr.key(9),
+        1.0,
+        3,
+    )
+    assert not bool(field_result.successful)
+    np.testing.assert_array_equal(
+        field_result.electron_population.active,
+        electron_population.active,
+    )
+    np.testing.assert_array_equal(
+        field_result.ion_charge.charge_number,
+        ion_charge.charge_number,
+    )
+
+
 def test_dynamic_charge_requires_compensating_charge():
     _, _, population = _population()
     ion = phx.discretization.pic.PICChargeModelPlan(
@@ -194,9 +372,10 @@ def test_simplicial_locator_and_whitney_current_are_conservative():
         tetra_discretization.default_runtime.coordinates,
         phx.discretization.SimplicialLocationPolicy(1, 8, 4),
     )
-    current = phx.discretization.pic.UnstructuredWhitneyCurrentPlan(
+    current_plan = phx.discretization.pic.UnstructuredWhitneyCurrentPlan(
         tetra_locator, maximum_segments=2
-    ).deposit(
+    )
+    current = current_plan.deposit(
         jnp.asarray([[0.1, 0.1, 0.1]]),
         jnp.asarray([[0.2, 0.1, 0.1]]),
         jnp.asarray([1.0]),
@@ -205,6 +384,41 @@ def test_simplicial_locator_and_whitney_current_are_conservative():
     )
     assert current.successful
     assert current.maximum_continuity_defect < 1e-9
+    hodge = phx.solver.maxwell.tetrahedral_maxwell_hodge(
+        tetra_mesh.coordinates,
+        tetra_locator.cells,
+    )
+    maxwell = phx.solver.maxwell.UnstructuredMaxwellPlan(
+        hodge.cochain,
+        phx.solver.maxwell.DiagonalMaxwellConstitutivePlan(),
+        100.0,
+    ).prepare()
+    charge_model = phx.discretization.pic.PICChargeModelPlan(
+        1.0,
+        "ions",
+        minimum_charge_number=0,
+        maximum_charge_number=1,
+        initial_charge_number=1,
+    )
+    electromagnetic = phx.solver.UnstructuredElectromagneticPICPlan(
+        maxwell,
+        current_plan,
+        charge_model,
+    )
+    connectivity = phx.discretization.tetrahedral_connectivity(
+        tetra_locator.cells,
+        tetra_locator.coordinate_count,
+    )
+    np.testing.assert_array_equal(
+        np.asarray(connectivity.edges)[
+            np.asarray(electromagnetic.current_to_maxwell_edges)
+        ],
+        np.asarray(current_plan.edges),
+    )
+    assert not np.array_equal(
+        np.asarray(electromagnetic.current_to_maxwell_edges),
+        np.arange(current_plan.edges.shape[0]),
+    )
 
 
 def test_simplicial_locator_and_dependent_ids_track_deformed_coordinates():

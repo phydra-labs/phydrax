@@ -5,6 +5,7 @@
 from typing import Any
 
 import diffrax as dfx
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -111,6 +112,37 @@ def test_discrete_rollout_preserves_case_time_axes_and_gradients():
         )
     )(scalar_coefficients)
     assert np.allclose(np.asarray(gradient), np.asarray([[7.0], [8.0]]))
+
+
+def test_grid_bound_parameterization_rejects_same_size_different_physical_grid():
+    problem_grid = _grid()
+    other_grid = TimeGrid(
+        jnp.asarray([0.0, 0.25, 1.0]),
+        time_id=problem_grid.time_id,
+    )
+    dynamics = make_discrete_control_dynamics(
+        lambda context, state, control, args: state + control,
+        state_shape=(1,),
+        control_shape=(1,),
+        dynamics_id="grid-bound-integrator",
+    )
+    problem = ControlProblem(
+        dynamics,
+        problem_grid,
+        jnp.zeros((1,)),
+        problem_id="grid-bound-problem",
+    )
+    parameterization = PiecewiseConstantControlParameterization(
+        other_grid,
+        (1,),
+        parameterization_id="wrong-physical-grid",
+    )
+
+    with pytest.raises(
+        eqx.EquinoxRuntimeError,
+        match="exact problem time grid",
+    ):
+        problem.rollout(parameterization, jnp.zeros((2, 1)))
 
 
 def test_discrete_rollout_masks_failed_feedback_policy_cases():

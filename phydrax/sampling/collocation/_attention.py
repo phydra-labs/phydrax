@@ -333,7 +333,7 @@ class ResidualAttentionCollocation(AbstractCollocationPolicy):
         /,
     ) -> int:
         _, size = _single_axis_and_size(population.batch)
-        return size + self.candidate_count
+        return size + (self.candidate_count if self.replacement_count else 0)
 
     def refresh(
         self,

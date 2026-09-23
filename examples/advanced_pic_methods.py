@@ -81,12 +81,14 @@ locator = phx.discretization.PreparedSimplicialCellLocator(
     phx.discretization.SimplicialLocationPolicy(1, 8, 3),
 )
 located = locator.locate(jnp.asarray(((0.2, 0.2), (0.4, 0.1))))
+if not bool(collision.successful & step.successful):
+    raise RuntimeError("Advanced PIC collision or reduced step failed")
 
 print(
     {
-        "collision_successful": bool(collision.successful),
+        "collision_successful": True,
         "collision_momentum_defect": float(collision.momentum_defect),
-        "reduced_pic_successful": bool(step.successful),
+        "reduced_pic_successful": True,
         "reduced_continuity_defect": float(step.continuity_defect),
         "unstructured_points_located": int(jnp.sum(located.inside)),
         "total_macrocharge": float(jnp.sum(charge_model.macrocharge(population, charge))),

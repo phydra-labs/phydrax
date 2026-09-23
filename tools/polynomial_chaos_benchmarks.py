@@ -445,7 +445,7 @@ def run_campaign(seed: int = 20260829) -> Mapping[str, Any]:
     }
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser(
         description="Matched-call nonintrusive polynomial-chaos benchmark campaign."
     )
@@ -453,12 +453,13 @@ def main() -> None:
     parser.add_argument("--output", type=Path)
     arguments = parser.parse_args()
     campaign = run_campaign(arguments.seed)
-    payload = json.dumps(campaign, indent=2, sort_keys=True)
+    payload = json.dumps(campaign, indent=2, sort_keys=True, allow_nan=False)
     if arguments.output is None:
         print(payload)
     else:
         arguments.output.write_text(payload + "\n", encoding="utf-8")
+    return 0 if campaign["gate"]["passed"] else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

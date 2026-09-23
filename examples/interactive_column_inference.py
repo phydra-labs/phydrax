@@ -301,33 +301,40 @@ def run_twin(*, steps=12, maximum_steps=24, audit=True):
         if audit
         else None
     )
-    continuation_error = None
-    if bool(result.successful):
-        with TemporaryDirectory() as directory:
-            path = Path(directory) / "inference.npz"
-            save_column_inference(path, problem, result)
-            restored = load_column_inference(path, problem)
-            fitted = space.apply(plan, result.parameters)
-            native_state = control.predict(fitted).final_state
-            expected = fitted.step(native_state, control.dt, **control.forcing)
-            resumed = restored["plan"].step(
-                restored["state"], control.dt, **control.forcing
+    if not bool(result.successful):
+        raise RuntimeError(
+            f"Interactive-column inference failed with optimizer status "
+            f"{int(result.optimizer.status)}"
+        )
+    if not bool(result.information.derivative_valid):
+        raise RuntimeError("Interactive-column derivative evidence is invalid")
+    if not bool(
+        jnp.all((result.parameters >= space.lower) & (result.parameters <= space.upper))
+    ):
+        raise RuntimeError("Interactive-column parameters violate declared bounds")
+    with TemporaryDirectory() as directory:
+        path = Path(directory) / "inference.npz"
+        save_column_inference(path, problem, result)
+        restored = load_column_inference(path, problem)
+        fitted = space.apply(plan, result.parameters)
+        native_state = control.predict(fitted).final_state
+        expected = fitted.step(native_state, control.dt, **control.forcing)
+        resumed = restored["plan"].step(restored["state"], control.dt, **control.forcing)
+        continuation_error = max(
+            float(jnp.max(jnp.abs(a - b)))
+            for a, b in zip(
+                jax.tree.leaves(expected.state), jax.tree.leaves(resumed.state)
             )
-            continuation_error = max(
-                float(jnp.max(jnp.abs(a - b)))
-                for a, b in zip(
-                    jax.tree.leaves(expected.state), jax.tree.leaves(resumed.state)
-                )
-            )
-            if not bool(expected.successful & resumed.successful):
-                raise ValueError("Physical continuation was rejected.")
+        )
+        if not bool(expected.successful & resumed.successful):
+            raise RuntimeError("Physical continuation was rejected")
     serial = lambda x: np.asarray(x).tolist()
     summary = {
         "provenance": SYNTHETIC_PROVENANCE,
         "parameters": list(space.names),
         "truth": serial(truth),
         "estimate": serial(result.parameters),
-        "successful": bool(result.successful),
+        "successful": True,
         "optimizer_status": int(result.optimizer.status),
         "optimizer_objective": float(result.optimizer.objective),
         "optimizer_initial_optimality": float(
@@ -354,12 +361,8 @@ def run_twin(*, steps=12, maximum_steps=24, audit=True):
         "complementary_rank": int(result.information.rank),
         "singular_values": serial(result.information.singular_values),
         "identifiable_combinations": serial(result.information.combinations),
-        "bounds_respected": bool(
-            jnp.all(
-                (result.parameters >= space.lower) & (result.parameters <= space.upper)
-            )
-        ),
-        "derivative_valid": bool(result.information.derivative_valid),
+        "bounds_respected": True,
+        "derivative_valid": True,
         "approximation": result.information.approximation,
         "candidate_names": [
             e.intervention.label for e in (greenhouse, solar, capacity, targeted)

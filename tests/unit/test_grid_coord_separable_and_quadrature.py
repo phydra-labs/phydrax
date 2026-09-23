@@ -30,7 +30,10 @@ def test_coord_separable_fourier_axis_spec_interval_discretization_attached():
     disc = batch.axis_discretization_by_axis[axis]
     assert disc.basis == "fourier"
     assert bool(disc.periodic) is True
-    assert disc.quad_weights is not None
+    assert disc.quad_weights.shape == (8,)
+    assert jnp.all(jnp.isfinite(disc.quad_weights))
+    assert jnp.allclose(disc.quad_weights, jnp.full((8,), 1.0 / 8.0))
+    assert jnp.sum(disc.quad_weights) == pytest.approx(1.0, abs=1e-12)
     assert disc.nodes.shape == x_field.data.shape
     assert jnp.allclose(disc.nodes, jnp.asarray(x_field.data, dtype="float64"))
 
@@ -67,18 +70,13 @@ def test_legendre_axis_endpoint_rules_and_validation():
         LegendreAxisSpec(1, kind="lobatto")
 
 
-def test_sdf_domain_function_evaluates_on_coord_separable_batch():
+def test_sdf_domain_function_preserves_interval_sign_and_distance():
     geom = Interval1d(0.0, 1.0)
     component = geom.component()
-    batch = component.sample(phx.domain.GridSampling({"x": FourierAxisSpec(8)}))
-    (axis,) = batch.coord_axes_by_label["x"]
+    batch = component.points({"x": jnp.asarray([[-0.25], [0.0], [0.25], [1.0], [1.25]])})
 
-    phi = component.sdf(var="x")
-    out = phi(batch)
-    assert out.dims == (axis,)
-    values = jnp.asarray(out.data, dtype="float64")
-    assert jnp.all(values <= 0.0 + 1e-8)
-    assert jnp.any(values < 0.0)
+    values = jnp.asarray(component.sdf(var="x")(batch).data, dtype="float64")
+    assert jnp.allclose(values, jnp.asarray([0.25, 0.0, -0.25, 0.0, 0.25]))
 
 
 def test_coord_separable_scalar_time_axis_integral_constant():

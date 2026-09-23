@@ -774,13 +774,18 @@ def _solve_augmented_lagrangian(
         termination.absolute_optimality,
         min(1e-2, 1.0 / method.maximum_penalty),
     )
+    inner_evaluation_budget = (
+        None
+        if termination.maximum_evaluations is None
+        else max(1, termination.maximum_evaluations // maximum_outer_steps)
+    )
     inner_termination = OptimizationTermination(
         absolute_optimality=inner_tolerance,
         relative_optimality=0.0,
         absolute_step=termination.absolute_step,
         relative_step=termination.relative_step,
         maximum_steps=method.inner_maximum_steps,
-        maximum_evaluations=termination.maximum_evaluations,
+        maximum_evaluations=inner_evaluation_budget,
     )
 
     def augmented_objective(candidate, augmented_args):
@@ -852,11 +857,16 @@ def _solve_augmented_lagrangian(
         initial_optimality=jnp.asarray(jnp.nan, dtype=scalar_dtype),
     )
 
+    required_outer_evaluations = (
+        0 if inner_evaluation_budget is None else inner_evaluation_budget + 1
+    )
+
     def condition(state):
         within_evaluations = (
             jnp.asarray(True)
             if termination.maximum_evaluations is None
-            else state.objective_evaluations < termination.maximum_evaluations
+            else state.objective_evaluations + required_outer_evaluations
+            <= termination.maximum_evaluations
         )
         return (
             (state.status == int(OptimizationStatus.ITERATING))
@@ -1063,7 +1073,8 @@ def _solve_augmented_lagrangian(
         exhausted_status = int(OptimizationStatus.MAXIMUM_STEPS_REACHED)
     else:
         exhausted_status = jnp.where(
-            state.objective_evaluations >= termination.maximum_evaluations,
+            state.objective_evaluations + required_outer_evaluations
+            > termination.maximum_evaluations,
             int(OptimizationStatus.MAXIMUM_EVALUATIONS_REACHED),
             int(OptimizationStatus.MAXIMUM_STEPS_REACHED),
         )

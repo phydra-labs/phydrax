@@ -19,7 +19,7 @@ from jaxtyping import Array, ArrayLike
 
 import phydrax.ein as ein
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ...linalg import ArraySpace
 from ...nonlinear import (
@@ -367,11 +367,45 @@ def _bundle_id(noise: PreparedControlledNoise, role: str, /) -> str:
         "role": role,
         "realization_ids": noise.realization_ids,
         "coupling_id": noise.coupling_id,
+        "time_id": noise.time_grid.time_id,
+        "times": np.asarray(noise.time_grid.times).tolist(),
         "noise_shape": noise.noise_shape,
         "num_paths": noise.num_paths,
         "num_steps": noise.num_steps,
     }
     return f"{role}-controlled-noise:{canonical_fingerprint(payload)}"
+
+
+def _prepared_binding_id(
+    plan: StochasticPolicyGamePlan,
+    parameters: Array,
+    training_noise: PreparedControlledNoise,
+    holdout_noise: PreparedControlledNoise,
+    training_weights: Array,
+    holdout_weights: Array,
+    /,
+) -> str:
+    return "prepared-stochastic-policy-game:" + canonical_fingerprint(
+        {
+            "kind": "prepared-stochastic-policy-game",
+            "plan": plan.plan_id,
+            "training_bundle": _bundle_id(training_noise, "training"),
+            "holdout_bundle": _bundle_id(holdout_noise, "holdout"),
+            "numeric": array_tree_fingerprint(
+                {
+                    "parameters": parameters,
+                    "training_increments": training_noise.increments,
+                    "training_valid": training_noise.valid,
+                    "training_labels": training_noise.independence_labels,
+                    "holdout_increments": holdout_noise.increments,
+                    "holdout_valid": holdout_noise.valid,
+                    "holdout_labels": holdout_noise.independence_labels,
+                    "training_weights": training_weights,
+                    "holdout_weights": holdout_weights,
+                }
+            ),
+        }
+    )
 
 
 def _cluster_membership(noise: PreparedControlledNoise, dtype: jnp.dtype, /) -> Array:
@@ -403,6 +437,14 @@ def _validate_bundles(
         raise ValueError("Training and holdout noise_shape values must match.")
     if training_noise.num_steps != holdout_noise.num_steps:
         raise ValueError("Training and holdout bundles must have the same num_steps.")
+    if (
+        training_noise.time_grid.time_id != holdout_noise.time_grid.time_id
+        or not np.array_equal(
+            np.asarray(training_noise.time_grid.times),
+            np.asarray(holdout_noise.time_grid.times),
+        )
+    ):
+        raise ValueError("Training and holdout noise time grids must match exactly.")
     overlap = set(training_noise.realization_ids).intersection(
         holdout_noise.realization_ids
     )
@@ -432,6 +474,11 @@ def _same_noise_topology(
         or reference.increments.dtype != candidate.increments.dtype
     ):
         raise ValueError(f"{owner} changed the prepared noise topology.")
+    if reference.time_grid.time_id != candidate.time_grid.time_id or not np.array_equal(
+        np.asarray(reference.time_grid.times),
+        np.asarray(candidate.time_grid.times),
+    ):
+        raise ValueError(f"{owner} changed the prepared physical time grid.")
     old_clusters = len(set(np.asarray(reference.independence_labels).tolist()))
     new_clusters = len(set(np.asarray(candidate.independence_labels).tolist()))
     if old_clusters != new_clusters:
@@ -717,22 +764,6 @@ def prepare_stochastic_policy_game(
         method=plan.method,
         termination=plan.termination,
     )
-    prepared_payload = {
-        "plan_id": plan.plan_id,
-        "parameter_dtype": np.dtype(parameters.dtype).str,
-        "training_topology": (
-            training_noise.num_paths,
-            training_noise.num_steps,
-            training_noise.noise_shape,
-            len(set(np.asarray(training_noise.independence_labels).tolist())),
-        ),
-        "holdout_topology": (
-            holdout_noise.num_paths,
-            holdout_noise.num_steps,
-            holdout_noise.noise_shape,
-            holdout_membership.shape[-1],
-        ),
-    }
     return PreparedStochasticPolicyGame(
         plan,
         problem,
@@ -748,7 +779,14 @@ def prepare_stochastic_policy_game(
         jnp.asarray(0, dtype=jnp.int32),
         _bundle_id(training_noise, "training"),
         _bundle_id(holdout_noise, "holdout"),
-        f"prepared-stochastic-policy-game:{canonical_fingerprint(prepared_payload)}",
+        _prepared_binding_id(
+            plan,
+            parameters,
+            training_noise,
+            holdout_noise,
+            train_weights,
+            held_weights,
+        ),
     )
 
 
@@ -832,7 +870,14 @@ def refresh_stochastic_policy_game(
         prepared.numeric_version + jnp.asarray(1, dtype=jnp.int32),
         _bundle_id(train, "training"),
         _bundle_id(held, "holdout"),
-        prepared.prepared_id,
+        _prepared_binding_id(
+            prepared.plan,
+            parameters,
+            train,
+            held,
+            train_weights,
+            held_weights,
+        ),
     )
 
 

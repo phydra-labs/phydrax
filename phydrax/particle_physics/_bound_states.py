@@ -22,6 +22,7 @@ from ..applications.relativistic_scattering._unit_contract import (
     RelativisticUnitContract,
 )
 from ..solver._dark_sector_epoch_runtime import DarkSectorEpochPlan
+from ..units import AREA, UnitDefinition
 from ._species import ParticleSpeciesTable
 
 
@@ -142,6 +143,10 @@ class DarkBoundStateSpectrum(StrictModule, NonTrainableState):
             raise TypeError("runtime_plan must be DarkSectorEpochPlan.")
         if not isinstance(species, ParticleSpeciesTable):
             raise TypeError("species must be ParticleSpeciesTable.")
+        if runtime_plan.species_revision_id != species.table_id:
+            raise ValueError(
+                "runtime_plan species revision must match the bound-state species table."
+            )
         if not isinstance(units, RelativisticUnitContract):
             raise TypeError("units must be RelativisticUnitContract.")
         if species.energy_unit.unit_id != units.energy_unit.unit_id:
@@ -238,10 +243,11 @@ class RadiativeCapturePlan(StrictModule, NonTrainableState):
     spectrum: DarkBoundStateSpectrum
     bound_level: DarkBoundStateLevel
     capture_coefficient: float = eqx.field(static=True)
+    photo_dissociation_coefficient: float = eqx.field(static=True)
     emitted_radiation_degeneracy: int = eqx.field(static=True)
     constituent_degeneracies: tuple[int, int] = eqx.field(static=True)
     multipole_order: int = eqx.field(static=True)
-    cross_section_unit_id: str = eqx.field(static=True)
+    cross_section_unit: UnitDefinition = eqx.field(static=True)
     coefficient_source_id: str = eqx.field(static=True)
     differentiation_mode: str = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
@@ -253,10 +259,11 @@ class RadiativeCapturePlan(StrictModule, NonTrainableState):
         /,
         *,
         capture_coefficient: float,
+        photo_dissociation_coefficient: float,
         emitted_radiation_degeneracy: int,
         constituent_degeneracies: tuple[int, int],
         multipole_order: int,
-        cross_section_unit_id: str,
+        cross_section_unit: UnitDefinition,
         coefficient_source_id: str,
         differentiation_mode: str = "analytic",
     ):
@@ -264,27 +271,34 @@ class RadiativeCapturePlan(StrictModule, NonTrainableState):
             raise TypeError("spectrum must be DarkBoundStateSpectrum.")
         level = spectrum.level(bound_pdg_id)
         coefficient = float(capture_coefficient)
+        inverse_coefficient = float(photo_dissociation_coefficient)
         radiation_degeneracy = int(emitted_radiation_degeneracy)
         constituent_degeneracies_ = tuple(constituent_degeneracies)
         multipole = int(multipole_order)
         if (
             not math.isfinite(coefficient)
             or coefficient <= 0.0
+            or not math.isfinite(inverse_coefficient)
+            or inverse_coefficient <= 0.0
             or radiation_degeneracy < 1
             or len(constituent_degeneracies_) != 2
             or any(value < 1 for value in constituent_degeneracies_)
             or multipole < 1
         ):
             raise ValueError("Radiative capture parameters are invalid.")
+        if (
+            not isinstance(cross_section_unit, UnitDefinition)
+            or cross_section_unit.dimension != AREA
+        ):
+            raise ValueError("cross_section_unit must have physical area dimension.")
         self.spectrum = spectrum
         self.bound_level = level
         self.capture_coefficient = coefficient
+        self.photo_dissociation_coefficient = inverse_coefficient
         self.emitted_radiation_degeneracy = radiation_degeneracy
         self.constituent_degeneracies = constituent_degeneracies_
         self.multipole_order = multipole
-        self.cross_section_unit_id = _identifier(
-            cross_section_unit_id, "Cross-section unit ID"
-        )
+        self.cross_section_unit = cross_section_unit
         self.coefficient_source_id = _identifier(
             coefficient_source_id, "Coefficient source ID"
         )
@@ -297,10 +311,11 @@ class RadiativeCapturePlan(StrictModule, NonTrainableState):
                 "spectrum": spectrum.spectrum_id,
                 "level": level.level_id,
                 "capture_coefficient": coefficient,
+                "photo_dissociation_coefficient": inverse_coefficient,
                 "radiation_degeneracy": radiation_degeneracy,
                 "constituent_degeneracies": list(constituent_degeneracies_),
                 "multipole_order": multipole,
-                "cross_section_unit": self.cross_section_unit_id,
+                "cross_section_unit": self.cross_section_unit.unit_id,
                 "coefficient_source": self.coefficient_source_id,
                 "differentiation": self.differentiation_mode,
             }
@@ -373,7 +388,14 @@ def evaluate_radiative_capture_balance(
         * momentum
         / jnp.maximum(photon_energy * photon_energy, 1e-30)
     )
-    dissociation = balance_factor * capture
+    dissociation = (
+        plan.photo_dissociation_coefficient
+        * degeneracy_factor
+        * momentum
+        * momentum
+        * photon_energy ** (power - 2)
+        / jnp.maximum(relative_velocity, 1e-30)
+    )
     residual = dissociation - balance_factor * capture
     open_ = (momentum > 0.0) & (photon_energy > 0.0)
     finite = (
@@ -422,7 +444,10 @@ def evaluate_thermal_bound_state_balance(
     point = evaluate_radiative_capture_balance(plan, thermal_momentum)
     relative_velocity = thermal_momentum / mass_a + thermal_momentum / mass_b
     capture_rate = point.capture_cross_section * relative_velocity
-    reverse_rate = equilibrium_ratio * capture_rate
+    inverse_capture = point.photo_dissociation_cross_section / jnp.maximum(
+        point.detailed_balance_factor, 1.0e-30
+    )
+    reverse_rate = equilibrium_ratio * inverse_capture * relative_velocity
     residual = reverse_rate - equilibrium_ratio * capture_rate
     finite = (
         (temperature_ > 0.0)

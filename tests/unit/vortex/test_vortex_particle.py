@@ -19,6 +19,26 @@ def _particles(dimension, count):
     ).prepare()
 
 
+def test_population_initialization_rejects_invalid_active_stable_ids():
+    plan = phx.discretization.VortexPopulationPlan(2, 2)
+    with pytest.raises(RuntimeError, match="stable IDs"):
+        plan.initialize(
+            jnp.zeros((2, 2)),
+            jnp.ones((2,)),
+            jnp.ones((2,)),
+            jnp.ones((2,)),
+            stable_ids=jnp.asarray((5, 5)),
+        )
+    with pytest.raises(RuntimeError, match="stable IDs"):
+        plan.initialize(
+            jnp.zeros((2, 2)),
+            jnp.ones((2,)),
+            jnp.ones((2,)),
+            jnp.ones((2,)),
+            stable_ids=jnp.asarray((-1, 6)),
+        )
+
+
 def test_direct_2d_excludes_only_explicit_self_and_preserves_coincident_distinct_blob():
     request = phx.discretization.VortexFieldRequest(
         velocity=True,

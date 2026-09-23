@@ -732,6 +732,7 @@ class MACALEGeometryPlan(StrictModule, NonTrainableState):
         original,
         tentative,
         rate,
+        projection_coefficient,
         projected,
         increment,
         pressure_residual,
@@ -759,29 +760,18 @@ class MACALEGeometryPlan(StrictModule, NonTrainableState):
             _norm_squared(geometry.cell_volumes, pressure_residual)
         )
         expected = tuple(
-            value - scale * derivative
-            for value, scale, derivative in zip(
+            value - projection_coefficient * derivative
+            for value, derivative in zip(
                 tentative,
-                tuple(jnp.ones_like(value) for value in tentative),
                 geometry.gradient(increment),
                 strict=True,
             )
         )
-        coefficient = jnp.where(
-            jnp.max(
-                jnp.stack(
-                    tuple(
-                        jnp.max(jnp.abs(a - b))
-                        for a, b in zip(projected, expected, strict=True)
-                    )
-                )
+        transition_residual = jnp.sqrt(
+            sum(
+                jnp.sum(jnp.square(jnp.abs(actual - reference)))
+                for actual, reference in zip(projected, expected, strict=True)
             )
-            == 0.0,
-            1.0,
-            0.0,
-        )
-        transition_residual = (
-            jnp.asarray(0.0, dtype=geometry.cell_volumes.dtype) * coefficient
         )
         finite = (
             geometry.finite
@@ -789,6 +779,7 @@ class MACALEGeometryPlan(StrictModule, NonTrainableState):
             & jnp.all(jnp.isfinite(increment))
             & jnp.all(jnp.isfinite(pressure_residual))
             & jnp.isfinite(projected_energy)
+            & jnp.isfinite(transition_residual)
         )
         success = (
             geometry_valid
@@ -796,6 +787,7 @@ class MACALEGeometryPlan(StrictModule, NonTrainableState):
             & finite
             & (wall <= self.tolerance)
             & (energy_increase <= self.tolerance)
+            & (transition_residual <= self.tolerance)
         )
         accepted = tuple(
             jnp.where(success, candidate, value)
@@ -868,6 +860,7 @@ class MACALEGeometryPlan(StrictModule, NonTrainableState):
             & jnp.isfinite(density_)
             & (density_ > 0.0)
         )
+        projection_coefficient = jnp.where(valid, step / density_, 0.0)
         zeros = jnp.zeros_like(geometry.cell_volumes)
         solved = jax.lax.cond(
             valid,
@@ -890,6 +883,7 @@ class MACALEGeometryPlan(StrictModule, NonTrainableState):
             values,
             values,
             tuple(jnp.zeros_like(value) for value in values),
+            projection_coefficient,
             *solved,
             incoming,
             valid,
@@ -927,6 +921,7 @@ class MACALEGeometryPlan(StrictModule, NonTrainableState):
             & jnp.isfinite(density_)
             & (density_ > 0.0)
         )
+        projection_coefficient = jnp.where(valid, step / density_, 0.0)
         zero_velocity = tuple(jnp.zeros_like(value) for value in initial)
         zero_pressure = jnp.zeros_like(start.cell_volumes)
 
@@ -978,6 +973,7 @@ class MACALEGeometryPlan(StrictModule, NonTrainableState):
             initial,
             tentative,
             rate,
+            projection_coefficient,
             projected,
             increment,
             residual,

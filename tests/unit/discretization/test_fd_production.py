@@ -9,6 +9,11 @@ import numpy as np
 import pytest
 
 import phydrax as phx
+from phydrax._array_archive import (
+    ArrayArchiveCorruptionError,
+    read_array_archive,
+    write_array_archive,
+)
 
 
 def _cell_grid(shape):
@@ -61,6 +66,43 @@ def test_portable_fd_checkpoint_roundtrips_fields_auxiliary_and_identity(tmp_pat
     )
     with pytest.raises(ValueError, match="incompatible"):
         phx.discretization.read_fd_checkpoint(path, incompatible)
+
+
+def test_fd_checkpoint_refuses_nonfinite_or_nonscalar_runtime_state(tmp_path):
+    plan = phx.discretization.FDCheckpointPlan(("grid-id",), "ssprk3")
+    fields = {"state": jnp.ones((4,))}
+
+    with pytest.raises(Exception, match="finite real scalar"):
+        phx.discretization.write_fd_checkpoint(
+            tmp_path / "vector-time.phydrax",
+            plan,
+            jnp.asarray((0.0, 1.0)),
+            fields,
+        )
+    with pytest.raises(Exception, match="finite inexact"):
+        phx.discretization.write_fd_checkpoint(
+            tmp_path / "nonfinite-state.phydrax",
+            plan,
+            0.0,
+            {"state": jnp.asarray((0.0, jnp.nan, 1.0, 2.0))},
+        )
+
+    valid_path = phx.discretization.write_fd_checkpoint(
+        tmp_path / "valid.phydrax",
+        plan,
+        0.0,
+        fields,
+    )
+    manifest, arrays = read_array_archive(valid_path)
+    manifest.pop("arrays")
+    arrays["time"] = np.asarray(np.nan)
+    corrupt_path = write_array_archive(
+        tmp_path / "corrupt.phydrax",
+        manifest=manifest,
+        arrays=arrays,
+    )
+    with pytest.raises(ArrayArchiveCorruptionError, match="invalid runtime state"):
+        phx.discretization.read_fd_checkpoint(corrupt_path, plan)
 
 
 def test_boundary_halo_and_transfer_actions_have_exact_discrete_vjps():

@@ -236,10 +236,14 @@ def main() -> None:
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
     report = run_campaign(args.table, args.manifest, args.declaration)
-    text = json.dumps(report, indent=2, sort_keys=True)
+    text = json.dumps(report, allow_nan=False, indent=2, sort_keys=True)
     if args.output is not None:
-        args.output.write_text(text + "\n")
+        from benchmarks._io import write_json_atomic
+
+        write_json_atomic(args.output, report)
     print(text)
+    if report["qualification"]["outcome"] != "passed":
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

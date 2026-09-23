@@ -6,6 +6,7 @@ import contextlib
 import io
 import json
 import runpy
+from pathlib import Path
 
 import jax.numpy as jnp
 
@@ -13,7 +14,7 @@ import jax.numpy as jnp
 def _run(path):
     output = io.StringIO()
     with contextlib.redirect_stdout(output):
-        return runpy.run_path(path)
+        return runpy.run_path(Path(__file__).resolve().parents[1] / path)
 
 
 pair = _run("examples/vortex_particle_pair.py")

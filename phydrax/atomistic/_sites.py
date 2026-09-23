@@ -62,6 +62,8 @@ class VirtualSiteRule(StrictModule, NonTrainableState):
             raise TypeError("parent_ids must be an integer vector.")
         if len(set(int(value) for value in parents)) != parents.size:
             raise ValueError("Virtual-site parents must be unique.")
+        if np.any(parents < 0):
+            raise ValueError("Virtual-site parent IDs must be non-negative.")
         if kind is VirtualSiteKind.WEIGHTED:
             if parents.size < 1 or values.shape != (parents.size,):
                 raise ValueError("Weighted sites require one coefficient per parent.")
@@ -76,6 +78,8 @@ class VirtualSiteRule(StrictModule, NonTrainableState):
         identifier = int(site_id)
         if identifier in set(int(value) for value in parents):
             raise ValueError("A virtual site cannot be its own parent.")
+        if identifier < 0:
+            raise ValueError("Virtual-site IDs must be non-negative.")
         self.kind = kind
         self.site_id = identifier
         self.parent_ids = jnp.asarray(parents, dtype=jnp.int64)
@@ -133,6 +137,8 @@ class AtomisticInteractionSitePlan(StrictModule, NonTrainableState):
             raise TypeError("Interaction-site properties must align with site_ids.")
         if np.unique(ids).size != ids.size:
             raise ValueError("Interaction-site IDs must be unique.")
+        if np.any(ids < 0):
+            raise ValueError("Interaction-site IDs must be non-negative.")
         active = (
             np.ones(expected, dtype=np.bool_)
             if active_mask is None
@@ -233,6 +239,8 @@ class AtomisticCoordinateMapPlan(AbstractAtomisticCoordinateMapPlan):
         physical = np.asarray(physical_dof_indices)
         if dof_ids.ndim != 1 or not np.issubdtype(dof_ids.dtype, np.integer):
             raise TypeError("dof_particle_ids must be an integer vector.")
+        if np.any(dof_ids < 0) or np.unique(dof_ids).size != dof_ids.size:
+            raise ValueError("DOF particle IDs must be unique and non-negative.")
         if physical.shape != (sites.capacity,) or not np.issubdtype(
             physical.dtype, np.integer
         ):
@@ -240,19 +248,27 @@ class AtomisticCoordinateMapPlan(AbstractAtomisticCoordinateMapPlan):
         rules = tuple(virtual_rules)
         if any(not isinstance(rule, VirtualSiteRule) for rule in rules):
             raise TypeError("virtual_rules must contain VirtualSiteRule values.")
+        rule_ids = tuple(rule.site_id for rule in rules)
+        if len(set(rule_ids)) != len(rule_ids):
+            raise ValueError("Virtual-site rules must target unique site IDs.")
         virtual_by_id = {rule.site_id: rule for rule in rules}
         site_ids = np.asarray(sites.site_ids, dtype=np.int64)
+        active_mask = np.asarray(sites.active_mask, dtype=np.bool_)
         physical_mask = np.asarray(sites.physical_mask, dtype=np.bool_)
+        site_rank = {int(value): index for index, value in enumerate(site_ids)}
+        for identifier in virtual_by_id:
+            if identifier not in site_rank:
+                raise ValueError("Virtual-site rule references an unknown site ID.")
+            index = site_rank[identifier]
+            if not active_mask[index] or physical_mask[index]:
+                raise ValueError(
+                    "Virtual-site rules must target active nonphysical sites."
+                )
         if any(
             int(site_ids[index]) not in virtual_by_id
-            for index in np.flatnonzero(~physical_mask & np.asarray(sites.active_mask))
+            for index in np.flatnonzero(~physical_mask & active_mask)
         ):
             raise ValueError("Every active virtual site requires one virtual-site rule.")
-        if any(
-            identifier not in set(int(value) for value in site_ids)
-            for identifier in virtual_by_id
-        ):
-            raise ValueError("Virtual-site rule references an unknown site ID.")
         if np.any(physical_mask & ((physical < 0) | (physical >= dof_ids.size))):
             raise ValueError("Physical sites require valid DOF indices.")
         if np.any(~physical_mask & (physical != -1)):
@@ -330,6 +346,13 @@ class PreparedAtomisticCoordinateMap(StrictModule, NonTrainableState):
             np.asarray(plan.dof_particle_ids), np.asarray(particles.particle_ids)
         ):
             raise ValueError("Coordinate-map DOF identity does not match particles.")
+        particle_active = np.asarray(particles.active_mask, dtype=np.bool_)
+        physical_indices = np.asarray(plan.physical_dof_indices)
+        active_physical = np.asarray(plan.sites.active_mask) & np.asarray(
+            plan.sites.physical_mask
+        )
+        if np.any(~particle_active[physical_indices[active_physical]]):
+            raise ValueError("Active physical sites must map to active DOF particles.")
         site_particles = ParticleSetPlan(
             plan.sites.site_ids,
             np.ones(
@@ -360,6 +383,10 @@ class PreparedAtomisticCoordinateMap(StrictModule, NonTrainableState):
                         f"Virtual-site parent ID {key} is not a DOF particle."
                     )
                 resolved.append(dof_rank[key])
+                if not particle_active[dof_rank[key]]:
+                    raise ValueError(
+                        f"Virtual-site parent ID {key} is not an active DOF particle."
+                    )
             parent_indices.append(jnp.asarray(resolved, dtype=jnp.int32))
             virtual_indices.append(site_rank[rule.site_id])
         left, right = np.triu_indices(plan.sites.capacity, 1)

@@ -220,6 +220,34 @@ def test_chunked_nonuniform_fourier_defines_empty_point_results():
     assert jnp.array_equal(reconstructed, jnp.zeros_like(reconstructed))
 
 
+def test_nonuniform_fourier_preserves_complex_phase_for_real_inputs():
+    points = jnp.asarray([[0.25]])
+
+    type2 = PreparedNonuniformFourier(NonuniformFourierPlan((3,), 2))
+    evaluated = type2.type2(points, jnp.asarray([0.0, 1.0, 0.0]))
+
+    type1 = PreparedNonuniformFourier(NonuniformFourierPlan((3,), 1))
+    accumulated = type1.type1(points, jnp.asarray([1.0]))
+
+    assert jnp.issubdtype(evaluated.dtype, jnp.complexfloating)
+    assert jnp.allclose(evaluated, jnp.asarray([1.0j]))
+    assert jnp.issubdtype(accumulated.dtype, jnp.complexfloating)
+    assert jnp.allclose(accumulated, jnp.asarray([1.0, 1.0j, -1.0j]))
+
+
+@pytest.mark.parametrize(
+    "constructor",
+    (
+        lambda: NonuniformFourierPlan((3.5,), 2),
+        lambda: NonuniformFourierPlan((3,), 2, chunk_size=2.5),
+        lambda: NonuniformFourierPlan((3,), 1.5),
+    ),
+)
+def test_nonuniform_fourier_topology_requires_exact_integers(constructor):
+    with pytest.raises(TypeError, match="integer"):
+        constructor()
+
+
 def test_fourier_interpolation_rejects_nonuniform_periodic_nodes():
     with pytest.raises(eqx.EquinoxRuntimeError, match="uniformly spaced"):
         fourier_interpolate(

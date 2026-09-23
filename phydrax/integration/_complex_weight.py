@@ -337,7 +337,8 @@ def phase_quenched_reweight(
     count = prepared.measure.count
     if observable.ndim < 1 or observable.shape[0] != count:
         raise ValueError("observable_values must begin with the measure support axis.")
-    active = prepared.measure.mask.reshape((count,) + (1,) * (observable.ndim - 1))
+    positive_support = prepared.measure.mask & (prepared.normalized_magnitudes > 0.0)
+    active = positive_support.reshape((count,) + (1,) * (observable.ndim - 1))
     finite_observable = jnp.all(
         ~active
         | (jnp.isfinite(jnp.real(observable)) & jnp.isfinite(jnp.imag(observable)))

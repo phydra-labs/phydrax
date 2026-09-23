@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import math
@@ -20,6 +21,8 @@ import numpy as np
 from jax.flatten_util import ravel_pytree
 
 import phydrax as phx
+from benchmarks._io import write_json_atomic
+from benchmarks._runtime import capture_environment
 from benchmarks.advanced_solvers.nonlinear_peer_runners import (
     load_peer_specs,
     make_runner_request,
@@ -63,6 +66,8 @@ class CampaignObservation:
     certificate_tolerance: float | None
     certificate_components: dict[str, float | None]
     work: float | None
+    work_comparable: bool
+    work_incomparability_reason: str | None
     work_unit: str | None
     work_counts: dict[str, float]
     cold_seconds: float | None
@@ -977,7 +982,9 @@ def _least_squares_cases():
             None,
         ),
         "rank-deficient": (
-            lambda x, a: jnp.asarray([x[0] + x[1] - 1.0, 2.0 * x[0] + 2.0 * x[1] - 2.0]),
+            lambda x, a: jnp.asarray(
+                [x[0] + x[1] - 1.0, 2.0 * x[0] + 2.0 * x[1] - 2.0]
+            ),
             jnp.zeros(2),
             None,
             None,
@@ -994,6 +1001,81 @@ def _least_squares_cases():
             jnp.concatenate([jnp.ones(31), jnp.asarray([100.0])]),
             None,
         ),
+    }
+
+
+def _independent_least_squares_certificate(
+    case_id: str,
+    parameters: Any,
+    /,
+) -> dict[str, Any]:
+    value = np.asarray(parameters, dtype=np.float64)
+    if case_id == "exponential-fit":
+        axis = np.linspace(0.0, 1.0, 32, dtype=np.float64)
+        observations = 3.0 * np.exp(-2.0 * axis)
+        residual = value[0] * np.exp(-value[1] * axis) - observations
+        jacobian = np.stack(
+            (
+                np.exp(-value[1] * axis),
+                -value[0] * axis * np.exp(-value[1] * axis),
+            ),
+            axis=1,
+        )
+        lower = np.full_like(value, -np.inf)
+        upper = np.full_like(value, np.inf)
+        objective = 0.5 * float(residual @ residual)
+        gradient = jacobian.T @ residual
+    elif case_id == "rank-deficient":
+        residual = np.asarray(
+            [value[0] + value[1] - 1.0, 2.0 * value[0] + 2.0 * value[1] - 2.0]
+        )
+        jacobian = np.asarray([[1.0, 1.0], [2.0, 2.0]])
+        lower = np.full_like(value, -np.inf)
+        upper = np.full_like(value, np.inf)
+        objective = 0.5 * float(residual @ residual)
+        gradient = jacobian.T @ residual
+    elif case_id == "active-bounds":
+        residual = value - np.asarray([2.0, -0.5])
+        lower = np.zeros_like(value)
+        upper = np.ones_like(value)
+        objective = 0.5 * float(residual @ residual)
+        gradient = residual
+    elif case_id == "robust-outlier":
+        observations = np.concatenate(
+            (np.ones(31, dtype=np.float64), np.asarray([100.0]))
+        )
+        residual = value[0] - observations
+        absolute = np.abs(residual)
+        objective = float(
+            np.sum(np.where(absolute <= 1.0, 0.5 * residual**2, absolute - 0.5))
+        )
+        gradient = np.asarray([np.sum(np.clip(residual, -1.0, 1.0))])
+        lower = np.full_like(value, -np.inf)
+        upper = np.full_like(value, np.inf)
+    else:
+        raise ValueError(f"unknown least-squares case {case_id!r}")
+    stationarity = value - np.clip(value - gradient, lower, upper)
+    feasibility = float(
+        max(
+            np.max(np.maximum(lower - value, 0.0), initial=0.0),
+            np.max(np.maximum(value - upper, 0.0), initial=0.0),
+        )
+    )
+    certificate = float(np.linalg.norm(stationarity, ord=np.inf))
+    finite = bool(
+        np.all(np.isfinite(residual))
+        and np.isfinite(objective)
+        and np.isfinite(certificate)
+    )
+    return {
+        "certificate": certificate,
+        "objective": objective,
+        "feasibility": feasibility,
+        "certified": finite and certificate <= 1e-6 and feasibility <= 1e-6,
+        "components": {
+            "stationarity": certificate,
+            "feasibility": feasibility,
+        },
     }
 
 
@@ -1025,11 +1107,7 @@ def _run_least_squares(case_id, implementation):
             bounds=bounds,
             problem_id=case_id,
         )
-    if implementation in (
-        "nonlinearsolve-jl",
-        "ceres",
-        "theseus",
-    ):
+    if implementation in ("nonlinearsolve-jl", "ceres", "theseus"):
         return _unavailable("least-squares", case_id, implementation)
     if implementation == "scipy-least-squares":
         if case_id == "robust-outlier":
@@ -1052,7 +1130,7 @@ def _run_least_squares(case_id, implementation):
         scipy_result = scipy_optimize.least_squares(
             lambda value: np.asarray(
                 residual(jnp.asarray(value), args),
-                dtype="float64",
+                dtype=np.float64,
             ),
             np.asarray(initial),
             bounds=(np.asarray(lower), np.asarray(upper)),
@@ -1062,33 +1140,27 @@ def _run_least_squares(case_id, implementation):
             max_nfev=5000,
         )
         elapsed = time.perf_counter() - start
-        parameters = jnp.asarray(scipy_result.x)
-        residual_value = residual(parameters, args)
-        gradient = jnp.asarray(scipy_result.grad)
-        stationarity = (
-            gradient
-            if bounds is None
-            else bounds.projected_gradient(parameters, gradient)
-        )
-        certificate = float(jnp.linalg.norm(stationarity, ord=jnp.inf))
+        parameters = np.asarray(scipy_result.x, dtype=np.float64)
+        evidence = _independent_least_squares_certificate(case_id, parameters)
         return _RawObservation(
             "least-squares",
             case_id,
             implementation,
             True,
-            bool(jnp.all(jnp.isfinite(residual_value)) & (certificate <= 1e-6)),
+            evidence["certified"],
             str(scipy_result.status),
             float(scipy_result.nfev),
             elapsed,
-            certificate,
-            objective=float(0.5 * jnp.real(jnp.vdot(residual_value, residual_value))),
-            feasibility=float(0.0 if bounds is None else bounds.violation(parameters)),
+            evidence["certificate"],
+            objective=evidence["objective"],
+            feasibility=evidence["feasibility"],
             backend_claimed_success=bool(scipy_result.success),
             solution=parameters,
             work_counts={
                 "residual_evaluations": float(scipy_result.nfev),
                 "jacobian_evaluations": float(scipy_result.njev),
             },
+            certificate_components=evidence["components"],
         )
     methods = {
         "phydrax-lm": (
@@ -1120,43 +1192,19 @@ def _run_least_squares(case_id, implementation):
     )
     jax.block_until_ready(result.parameters)
     elapsed = time.perf_counter() - start
-    residual_value = problem.value(result.parameters, args)[0]
-    flat, _ = ravel_pytree(residual_value)
-    flat_parameters, unflatten = ravel_pytree(result.parameters)
-
-    def flat_residual(coordinates):
-        value = problem.value(unflatten(coordinates), args)[0]
-        return ravel_pytree(value)[0]
-
-    jacobian = jax.jacfwd(flat_residual)(flat_parameters)
-    gradient = jnp.conj(jacobian.T) @ flat
-    if bounds is not None:
-        gradient = ravel_pytree(
-            bounds.projected_gradient(
-                result.parameters,
-                unflatten(gradient),
-            )
-        )[0]
-    certificate = float(jnp.linalg.norm(gradient, ord=jnp.inf))
-    feasibility = float(0.0 if bounds is None else bounds.violation(result.parameters))
-    independently_certified = (
-        jnp.all(jnp.isfinite(flat))
-        & jnp.isfinite(certificate)
-        & (certificate <= termination.absolute_optimality)
-        & (feasibility <= termination.absolute_optimality)
-    )
+    evidence = _independent_least_squares_certificate(case_id, result.parameters)
     return _RawObservation(
         "least-squares",
         case_id,
         implementation,
         True,
-        bool(independently_certified),
+        evidence["certified"],
         str(int(result.status)),
         float(result.diagnostics.residual_evaluations),
         elapsed,
-        certificate,
-        objective=float(0.5 * jnp.vdot(flat, flat).real),
-        feasibility=feasibility,
+        evidence["certificate"],
+        objective=evidence["objective"],
+        feasibility=evidence["feasibility"],
         backend_claimed_success=bool(result.successful),
         solution=result.parameters,
         work_counts={
@@ -1165,6 +1213,7 @@ def _run_least_squares(case_id, implementation):
             "vjp_evaluations": float(result.diagnostics.vjp_evaluations),
             "linear_iterations": float(result.diagnostics.linear_iterations),
         },
+        certificate_components=evidence["components"],
     )
 
 
@@ -1198,6 +1247,84 @@ def _constrained_cases():
             constraints=(equality,),
             problem_id="bound-equality",
         ),
+    }
+
+
+def _independent_constrained_certificate(
+    case_id: str,
+    parameters: Any,
+    /,
+) -> dict[str, Any]:
+    value = np.asarray(parameters, dtype=np.float64)
+    target = (
+        np.asarray([0.0, 1.0])
+        if case_id == "circle"
+        else np.asarray([0.2, 0.8])
+    )
+    objective = float(np.sum((value - target) ** 2))
+    gradient = 2.0 * (value - target)
+    if case_id == "circle":
+        equality_residual = np.asarray([float(value @ value - 1.0)])
+        equality_jacobian = (2.0 * value)[None, :]
+    else:
+        equality_residual = np.asarray([float(np.sum(value) - 1.0)])
+        equality_jacobian = np.ones((1, value.size), dtype=np.float64)
+    active_lower = (
+        np.flatnonzero(value <= 1e-6)
+        if case_id == "bound-equality"
+        else np.empty(0, dtype=np.int64)
+    )
+    columns = [equality_jacobian.T]
+    if active_lower.size:
+        columns.append(-np.eye(value.size, dtype=np.float64)[:, active_lower])
+    multiplier_matrix = np.concatenate(columns, axis=1)
+    multipliers = np.linalg.lstsq(multiplier_matrix, -gradient, rcond=None)[0]
+    lower_multipliers = multipliers[1:]
+    stationarity = gradient + multiplier_matrix @ multipliers
+    primal_feasibility = float(np.max(np.abs(equality_residual), initial=0.0))
+    if case_id == "bound-equality":
+        primal_feasibility = max(
+            primal_feasibility,
+            float(np.max(np.maximum(-value, 0.0), initial=0.0)),
+        )
+    dual_feasibility = float(
+        np.max(np.maximum(-lower_multipliers, 0.0), initial=0.0)
+    )
+    complementarity = float(
+        np.max(
+            np.abs(lower_multipliers * value[active_lower]),
+            initial=0.0,
+        )
+    )
+    stationarity_norm = float(np.linalg.norm(stationarity, ord=np.inf))
+    certificate = max(
+        primal_feasibility,
+        stationarity_norm,
+        dual_feasibility,
+        complementarity,
+    )
+    finite = all(
+        np.isfinite(item)
+        for item in (
+            objective,
+            certificate,
+            primal_feasibility,
+            stationarity_norm,
+            dual_feasibility,
+            complementarity,
+        )
+    )
+    return {
+        "certificate": certificate,
+        "objective": objective,
+        "feasibility": primal_feasibility,
+        "certified": finite and certificate <= 1e-6,
+        "components": {
+            "primal_feasibility": primal_feasibility,
+            "stationarity": stationarity_norm,
+            "dual_feasibility": dual_feasibility,
+            "complementarity": complementarity,
+        },
     }
 
 
@@ -1238,55 +1365,19 @@ def _run_constrained(case_id, implementation):
     )
     jax.block_until_ready(result.parameters)
     elapsed = time.perf_counter() - start
-    prepared = phx.optim.prepare_constrained_model(
-        problem,
-        result.parameters,
-    )
-    evaluation = prepared.evaluate(result.parameters)
-    raw_jacobian = evaluation.constraint_jacobian
-    equality_jacobian = raw_jacobian[prepared.equality_indices]
-    inequality_jacobian = jnp.concatenate(
-        [
-            raw_jacobian[prepared.lower_indices],
-            -raw_jacobian[prepared.upper_indices],
-        ],
-        axis=0,
-    )
-    active = evaluation.inequality_slacks <= jnp.sqrt(termination.absolute_optimality)
-    active_jacobian = inequality_jacobian[active]
-    multiplier_matrix = jnp.concatenate(
-        [
-            jnp.conj(equality_jacobian.T),
-            -jnp.conj(active_jacobian.T),
-        ],
-        axis=1,
-    )
-    if multiplier_matrix.shape[1]:
-        multipliers = jnp.linalg.lstsq(
-            multiplier_matrix,
-            -evaluation.gradient,
-            rcond=None,
-        )[0]
-        stationarity = evaluation.gradient + multiplier_matrix @ multipliers
-    else:
-        stationarity = evaluation.gradient
-    dual = jnp.linalg.norm(stationarity, ord=jnp.inf)
-    certificate = float(jnp.maximum(evaluation.primal_feasibility, dual))
-    independently_certified = evaluation.finite & (
-        certificate <= termination.absolute_optimality
-    )
+    evidence = _independent_constrained_certificate(case_id, result.parameters)
     return _RawObservation(
         "constrained",
         case_id,
         implementation,
         True,
-        bool(independently_certified),
+        evidence["certified"],
         str(int(result.status)),
         float(result.diagnostics.objective_evaluations),
         elapsed,
-        certificate,
-        objective=float(result.objective),
-        feasibility=float(evaluation.primal_feasibility),
+        evidence["certificate"],
+        objective=evidence["objective"],
+        feasibility=evidence["feasibility"],
         backend_claimed_success=bool(result.successful),
         solution=result.parameters,
         work_counts={
@@ -1296,6 +1387,7 @@ def _run_constrained(case_id, implementation):
             "linear_solves": float(result.diagnostics.linear_solves),
             "linear_iterations": float(result.diagnostics.linear_iterations),
         },
+        certificate_components=evidence["components"],
     )
 
 
@@ -1684,89 +1776,41 @@ def _external_raw_observation(
             parameters,
         )
     elif family == "least-squares":
-        residual_function, _, args, bounds = _least_squares_cases()[case_id]
-
-        def physical_objective(value):
-            residual = residual_function(value, args)
-            if case_id == "robust-outlier":
-                absolute = jnp.abs(residual)
-                return jnp.sum(
-                    jnp.where(
-                        absolute <= 1.0,
-                        0.5 * residual * residual,
-                        absolute - 0.5,
-                    )
-                )
-            return 0.5 * jnp.real(jnp.vdot(residual, residual))
-
-        objective_array, gradient = jax.value_and_grad(physical_objective)(parameters)
-        projected = (
-            gradient
-            if bounds is None
-            else bounds.projected_gradient(parameters, gradient)
-        )
-        certificate = float(jnp.linalg.norm(projected, ord=jnp.inf))
-        feasibility = float(0.0 if bounds is None else bounds.violation(parameters))
-        objective_value = float(objective_array)
-        certified = bool(
-            jnp.isfinite(objective_array)
-            & jnp.all(jnp.isfinite(gradient))
-            & (certificate <= 1e-6)
-            & (feasibility <= 1e-6)
-        )
-        components = {
-            "projected_stationarity": certificate,
-            "feasibility": feasibility,
-        }
+        evidence = _independent_least_squares_certificate(case_id, parameters)
+        certificate = evidence["certificate"]
+        feasibility = evidence["feasibility"]
+        objective_value = evidence["objective"]
+        certified = evidence["certified"]
+        components = evidence["components"]
     elif family == "constrained":
-        problem = _constrained_cases()[case_id]
-        prepared = phx.optim.prepare_constrained_model(problem, parameters)
-        evaluation = prepared.evaluate(parameters)
-        raw_jacobian = evaluation.constraint_jacobian
-        equality_jacobian = raw_jacobian[prepared.equality_indices]
-        inequality_jacobian = jnp.concatenate(
-            [
-                raw_jacobian[prepared.lower_indices],
-                -raw_jacobian[prepared.upper_indices],
-            ],
-            axis=0,
-        )
-        active = evaluation.inequality_slacks <= 1e-3
-        active_jacobian = inequality_jacobian[active]
-        multiplier_matrix = jnp.concatenate(
-            [
-                jnp.conj(equality_jacobian.T),
-                -jnp.conj(active_jacobian.T),
-            ],
-            axis=1,
-        )
-        if multiplier_matrix.shape[1]:
-            multipliers = jnp.linalg.lstsq(
-                multiplier_matrix,
-                -evaluation.gradient,
-                rcond=None,
-            )[0]
-            stationarity = evaluation.gradient + multiplier_matrix @ multipliers
-        else:
-            stationarity = evaluation.gradient
-        dual = float(jnp.linalg.norm(stationarity, ord=jnp.inf))
-        feasibility = float(evaluation.primal_feasibility)
-        certificate = max(feasibility, dual)
-        objective_value = float(evaluation.objective)
-        certified = bool(evaluation.finite & (certificate <= 1e-6))
-        components = {
-            "stationarity": dual,
-            "feasibility": feasibility,
-        }
+        evidence = _independent_constrained_certificate(case_id, parameters)
+        certificate = evidence["certificate"]
+        feasibility = evidence["feasibility"]
+        objective_value = evidence["objective"]
+        certified = evidence["certified"]
+        components = evidence["components"]
     elif family == "global":
-        objective = _global_cases()[case_id]
-        objective_value = float(objective(parameters))
-        gradient = jax.grad(objective)(parameters)
+        value = np.asarray(parameters, dtype=np.float64)
+        if case_id == "rastrigin":
+            objective_value = float(
+                10.0 * value.size
+                + np.sum(value * value - 10.0 * np.cos(2.0 * np.pi * value))
+            )
+        elif case_id == "double-well":
+            objective_value = float(np.sum((value * value - 1.0) ** 2))
+        elif case_id == "rosenbrock":
+            objective_value = float(
+                np.sum(
+                    100.0 * (value[1:] - value[:-1] ** 2) ** 2
+                    + (1.0 - value[:-1]) ** 2
+                )
+            )
+        else:
+            raise ValueError(f"unknown global case {case_id!r}")
         certificate = abs(objective_value)
-        certified = bool(jnp.isfinite(objective_value) & (certificate <= 1e-5))
+        certified = bool(np.isfinite(objective_value) and certificate <= 1e-5)
         components = {
             "objective_gap": certificate,
-            "projected_stationarity": float(jnp.linalg.norm(gradient, ord=jnp.inf)),
             "feasibility": 0.0,
         }
     else:
@@ -1823,7 +1867,16 @@ def _execute_raw_once(
     payload = _runner_payload(family, case_id)
     fingerprint = payload["initial_fingerprint"]
     if spec is None:
-        raw = runner(case_id, implementation)
+        try:
+            raw = runner(case_id, implementation)
+        except (ImportError, OSError, RuntimeError, TypeError, ValueError) as error:
+            return _unavailable(
+                family,
+                case_id,
+                implementation,
+                reason="runner-error",
+                detail=f"{type(error).__name__}: {error}",
+            )
         if raw is None:
             return _unavailable(
                 family,
@@ -1832,11 +1885,12 @@ def _execute_raw_once(
                 reason="unsupported-case",
                 detail="Implementation does not support this canonical case.",
             )
+        revision = hashlib.sha256(Path(__file__).read_bytes()).hexdigest()
         return replace(
             raw,
             expected_identity="phydrax-native",
             observed_identity="phydrax-native",
-            source_revision="working-tree",
+            source_revision=revision,
         )
     request = make_runner_request(
         spec,
@@ -1858,13 +1912,22 @@ def _execute_raw_once(
                 reason=invocation.reason or "runner-error",
                 detail=invocation.detail,
             )
-        return _external_raw_observation(
-            family,
-            case_id,
-            implementation,
-            invocation.response,
-            elapsed,
-        )
+        try:
+            return _external_raw_observation(
+                family,
+                case_id,
+                implementation,
+                invocation.response,
+                elapsed,
+            )
+        except (KeyError, TypeError, ValueError, RuntimeError) as error:
+            return _unavailable(
+                family,
+                case_id,
+                implementation,
+                reason="runner-error",
+                detail=f"malformed external result: {type(error).__name__}: {error}",
+            )
     holder: list[_RawObservation | None] = []
 
     def callback():
@@ -1997,6 +2060,8 @@ def _to_observation(
             certificate_components={},
             work=None,
             work_unit=None,
+            work_comparable=False,
+            work_incomparability_reason="implementation was unavailable",
             work_counts={},
             cold_seconds=None,
             warmup_seconds=(),
@@ -2019,6 +2084,8 @@ def _to_observation(
         for key, value in (raw.work_counts or {}).items()
         if math.isfinite(float(value))
     }
+    external_process = spec is not None and spec.runner_kind == "external-process"
+    work_comparable = primary_key in counts
     return CampaignObservation(
         family=raw.family,
         case_id=raw.case_id,
@@ -2043,11 +2110,17 @@ def _to_observation(
         certificate_tolerance=tolerance,
         certificate_components=components,
         work=counts.get(primary_key),
-        work_unit=primary_unit,
+        work_unit=primary_unit if work_comparable else None,
+        work_comparable=work_comparable,
+        work_incomparability_reason=(
+            None
+            if work_comparable
+            else f"runner did not report required {primary_key!r} work"
+        ),
         work_counts=counts,
-        cold_seconds=cold_seconds,
-        warmup_seconds=warmup_seconds,
-        steady_seconds=steady_seconds,
+        cold_seconds=None if external_process else cold_seconds,
+        warmup_seconds=() if external_process else warmup_seconds,
+        steady_seconds=() if external_process else steady_seconds,
         objective=_finite_or_none(raw.objective),
         feasibility=_finite_or_none(raw.feasibility),
         derivative_error=_finite_or_none(raw.derivative_error),
@@ -2220,7 +2293,9 @@ def performance_profile(
             comparable = [
                 row
                 for row in family_rows
-                if row.available and (metric == "steady-solve" or row.work_unit == unit)
+                if row.available
+                and row.backend_success is True
+                and (metric == "steady-solve" or row.work_unit == unit)
             ]
             implementations = sorted({row.implementation for row in comparable})
             ratios: dict[tuple[str, str], float] = {}
@@ -2233,18 +2308,24 @@ def performance_profile(
                     )
                     for row in rows
                 }
-                certified_values = [
+                eligible_values = [
                     float(values[row.implementation])
                     for row in rows
-                    if row.certified is True and values[row.implementation] is not None
+                    if row.backend_success is True
+                    and row.certified is True
+                    and values[row.implementation] is not None
                 ]
-                if len(rows) < 2 or not certified_values:
+                if len(rows) < 2 or not eligible_values:
                     continue
                 eligible_cases.append(case_id)
-                best = min(certified_values)
+                best = min(eligible_values)
                 for row in rows:
                     value = values[row.implementation]
-                    if row.certified is True and value is not None:
+                    if (
+                        row.backend_success is True
+                        and row.certified is True
+                        and value is not None
+                    ):
                         ratios[(case_id, row.implementation)] = float(value) / max(
                             best, 1e-30
                         )
@@ -2288,6 +2369,7 @@ def superiority_audit(
             if row.family == family
             and row.implementation.startswith("phydrax-")
             and row.certified is True
+            and row.backend_success is True
             and (family != "global" or row.certificate_scope == "global")
         }
         portfolio_coverage[family] = {
@@ -2308,7 +2390,6 @@ def superiority_audit(
         for row in observations
         if row.available
         and row.backend_success is True
-        and row.backend_scope == row.certificate_scope
         and row.certified is False
     ]
     backend_false_negatives = [
@@ -2322,7 +2403,6 @@ def superiority_audit(
         for row in observations
         if row.available
         and row.backend_success is False
-        and row.backend_scope == row.certificate_scope
         and row.certified is True
     ]
     peer_ids = sorted(
@@ -2335,17 +2415,34 @@ def superiority_audit(
     unavailable_peers = [
         {
             "implementation": implementation,
-            "reasons": sorted(
+            "cases": [
                 {
-                    row.availability_reason
-                    for row in observations
-                    if row.implementation == implementation and not row.available
+                    "family": row.family,
+                    "case_id": row.case_id,
+                    "reason": (
+                        row.availability_reason
+                        if not row.available
+                        else "backend-or-certificate-failed"
+                    ),
                 }
-            ),
+                for row in observations
+                if row.implementation == implementation
+                and (
+                    not row.available
+                    or row.backend_success is not True
+                    or row.certified is not True
+                )
+            ],
         }
         for implementation in peer_ids
-        if not any(
-            row.implementation == implementation and row.available for row in observations
+        if any(
+            row.implementation == implementation
+            and (
+                not row.available
+                or row.backend_success is not True
+                or row.certified is not True
+            )
+            for row in observations
         )
     ]
     coverage_complete = all(value["complete"] for value in portfolio_coverage.values())
@@ -2404,6 +2501,7 @@ def main(argv: list[str] | None = None) -> int:
         *performance_profile(observations, metric="steady-solve"),
     ]
     manifest = json.loads(_PEER_MANIFEST_PATH.read_text())
+    audit = superiority_audit(observations)
     payload = {
         "campaign": {
             "families": list(families),
@@ -2411,20 +2509,21 @@ def main(argv: list[str] | None = None) -> int:
             "repeats": arguments.repeats,
             "certificate_source": "independent-physical",
             "timing_policy": "cold-then-warmup-then-steady",
+            "external_timing_policy": "excluded-process-boundary",
         },
+        "environment": capture_environment().to_dict(),
+        "source_fingerprint": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
         "observations": [asdict(value) for value in observations],
         "performance_profiles": [asdict(value) for value in profiles],
-        "superiority_audit": superiority_audit(observations),
+        "superiority_audit": audit,
+        "passed": audit["claim_ready"],
         "peer_manifest": {
             "path": str(_PEER_MANIFEST_PATH),
             "fingerprint": stable_fingerprint(manifest),
         },
     }
-    arguments.output.parent.mkdir(parents=True, exist_ok=True)
-    arguments.output.write_text(
-        json.dumps(payload, allow_nan=False, indent=2, sort_keys=True) + "\n"
-    )
-    return 0
+    write_json_atomic(arguments.output, payload)
+    return 0 if payload["passed"] else 1
 
 
 if __name__ == "__main__":

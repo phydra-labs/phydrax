@@ -55,7 +55,7 @@ class SpaceWeatherTable(StrictModule, NonTrainableState):
         self.product_id = canonical_fingerprint(
             {
                 "kind": "space-weather-table",
-                "nodes": values[0].tolist(),
+                "values": values,
                 "provenance": provenance.provenance_id,
             }
         )
@@ -118,6 +118,7 @@ class AtmosphericDrag(AbstractAstrodynamicsForce):
     area_to_mass: Array
     angular_velocity: Array
     force_id: str = eqx.field(static=True)
+    source_parameters_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -129,22 +130,53 @@ class AtmosphericDrag(AbstractAstrodynamicsForce):
         area_to_mass,
         angular_velocity=(0.0, 0.0, 7.292115146706979e-5),
     ):
+        if not isinstance(atmosphere, ExponentialAtmosphere):
+            raise TypeError("atmosphere must be an ExponentialAtmosphere.")
+        if not isinstance(context, AstrodynamicsContext):
+            raise TypeError("context must be an AstrodynamicsContext.")
+        coefficient = np.asarray(drag_coefficient, dtype=np.float64)
+        area = np.asarray(area_to_mass, dtype=np.float64)
+        angular = np.asarray(angular_velocity, dtype=np.float64)
+        if coefficient.shape != () or area.shape != () or angular.shape != (3,):
+            raise ValueError(
+                "Drag coefficients must be scalars and angular_velocity a three-vector."
+            )
+        if (
+            not np.isfinite(coefficient)
+            or coefficient < 0.0
+            or not np.isfinite(area)
+            or area < 0.0
+            or np.any(~np.isfinite(angular))
+        ):
+            raise ValueError(
+                "Atmospheric drag parameters must be finite and nonnegative."
+            )
         self.atmosphere = atmosphere
         self.context = context
-        self.drag_coefficient = jnp.asarray(drag_coefficient).reshape(())
-        self.area_to_mass = jnp.asarray(area_to_mass).reshape(())
-        self.angular_velocity = jnp.asarray(angular_velocity)
+        self.drag_coefficient = jnp.asarray(coefficient)
+        self.area_to_mass = jnp.asarray(area)
+        self.angular_velocity = jnp.asarray(angular)
+        self.source_parameters_id = canonical_fingerprint(
+            {
+                "drag_coefficient": coefficient,
+                "area_to_mass": area,
+                "angular_velocity": angular,
+            }
+        )
         self.force_id = canonical_fingerprint(
             {
                 "kind": "atmospheric-drag",
                 "atmosphere": atmosphere.atmosphere_id,
                 "context": context.context_id,
+                "parameters": self.source_parameters_id,
             }
         )
 
     def evaluate(self, time, state, args: Any = None, /):
         del time, args
         packed = jnp.asarray(state)
+        if packed.shape != (6,):
+            raise ValueError("Atmospheric drag state must have shape (6,).")
         position, velocity = packed[:3], packed[3:]
         density = self.atmosphere.density(position)
         relative = velocity - jnp.cross(self.angular_velocity, position)
@@ -152,16 +184,23 @@ class AtmosphericDrag(AbstractAstrodynamicsForce):
         acceleration = (
             -0.5 * density * self.drag_coefficient * self.area_to_mass * speed * relative
         )
-        valid = (
+        finite = (
             jnp.all(jnp.isfinite(packed))
-            & (self.drag_coefficient >= 0.0)
-            & (self.area_to_mass >= 0.0)
+            & jnp.all(jnp.isfinite(self.angular_velocity))
+            & jnp.isfinite(self.drag_coefficient)
+            & jnp.isfinite(self.area_to_mass)
             & jnp.isfinite(density)
+            & jnp.all(jnp.isfinite(acceleration))
         )
+        valid = finite & (self.drag_coefficient >= 0.0) & (self.area_to_mass >= 0.0)
         status = jnp.where(
-            valid,
-            int(AstrodynamicsStatus.SUCCESS),
-            int(AstrodynamicsStatus.INVALID_DOMAIN),
+            ~finite,
+            int(AstrodynamicsStatus.NONFINITE_INPUT),
+            jnp.where(
+                valid,
+                int(AstrodynamicsStatus.SUCCESS),
+                int(AstrodynamicsStatus.INVALID_DOMAIN),
+            ),
         ).astype(jnp.int32)
         return AstrodynamicsForceEvaluation(
             jnp.where(valid, acceleration, 0.0),
@@ -218,6 +257,8 @@ class SolarRadiationPressure(AbstractAstrodynamicsForce):
     reflectivity: Array
     area_to_mass: Array
     force_id: str = eqx.field(static=True)
+    source_provider_id: str = eqx.field(static=True)
+    occulting_provider_id: str = eqx.field(static=True)
 
     def __init__(
         self,
@@ -232,23 +273,67 @@ class SolarRadiationPressure(AbstractAstrodynamicsForce):
         reflectivity=1.0,
         area_to_mass=0.01,
         force_id="solar-radiation-pressure",
+        source_provider_id,
+        occulting_provider_id,
     ):
         if not callable(source_position) or not callable(occulting_position):
             raise TypeError("Radiation ephemeris providers must be callable.")
+        if not isinstance(eclipse, EclipseGeometry):
+            raise TypeError("eclipse must be an EclipseGeometry.")
+        if not isinstance(context, AstrodynamicsContext):
+            raise TypeError("context must be an AstrodynamicsContext.")
+        source_id = str(source_provider_id).strip()
+        occulting_id = str(occulting_provider_id).strip()
+        declared_id = str(force_id).strip()
+        values = np.asarray(
+            (reference_pressure, reference_distance, reflectivity, area_to_mass),
+            dtype=np.float64,
+        )
+        radii = np.asarray(
+            (eclipse.occulting_radius, eclipse.source_radius), dtype=np.float64
+        )
+        if not source_id or not occulting_id or not declared_id:
+            raise ValueError("Radiation force and provider identities must be non-empty.")
+        if (
+            np.any(~np.isfinite(values))
+            or values[0] <= 0.0
+            or values[1] <= 0.0
+            or values[2] < 0.0
+            or values[3] < 0.0
+            or np.any(~np.isfinite(radii))
+            or np.any(radii <= 0.0)
+        ):
+            raise ValueError("Solar-radiation parameters must be finite and physical.")
         self.source_position = source_position
         self.occulting_position = occulting_position
         self.eclipse = eclipse
         self.context = context
-        self.reference_pressure = jnp.asarray(reference_pressure).reshape(())
-        self.reference_distance = jnp.asarray(reference_distance).reshape(())
-        self.reflectivity = jnp.asarray(reflectivity).reshape(())
-        self.area_to_mass = jnp.asarray(area_to_mass).reshape(())
-        self.force_id = str(force_id)
+        self.reference_pressure = jnp.asarray(values[0])
+        self.reference_distance = jnp.asarray(values[1])
+        self.reflectivity = jnp.asarray(values[2])
+        self.area_to_mass = jnp.asarray(values[3])
+        self.source_provider_id = source_id
+        self.occulting_provider_id = occulting_id
+        self.force_id = canonical_fingerprint(
+            {
+                "kind": "solar-radiation-pressure",
+                "declared_id": declared_id,
+                "context": context.context_id,
+                "source_provider": source_id,
+                "occulting_provider": occulting_id,
+                "eclipse_radii": radii,
+                "parameters": values,
+            }
+        )
 
     def evaluate(self, time, state, args=None, /):
         packed = jnp.asarray(state)
         source = jnp.asarray(self.source_position(time, args))
         occulter = jnp.asarray(self.occulting_position(time, args))
+        if packed.shape != (6,) or source.shape != (3,) or occulter.shape != (3,):
+            raise ValueError(
+                "Radiation state and ephemeris positions have invalid shapes."
+            )
         relative = packed[:3] - source
         distance = _norm(relative)
         illumination = self.eclipse.illumination(packed[:3], source, occulter)
@@ -261,15 +346,21 @@ class SolarRadiationPressure(AbstractAstrodynamicsForce):
             * relative
             / distance
         )
-        valid = (
-            jnp.all(jnp.isfinite(acceleration))
-            & (distance > 0.0)
-            & (self.area_to_mass >= 0.0)
+        finite = (
+            jnp.all(jnp.isfinite(packed))
+            & jnp.all(jnp.isfinite(source))
+            & jnp.all(jnp.isfinite(occulter))
+            & jnp.all(jnp.isfinite(acceleration))
         )
+        valid = finite & (distance > 0.0)
         status = jnp.where(
-            valid,
-            int(AstrodynamicsStatus.SUCCESS),
-            int(AstrodynamicsStatus.INVALID_DOMAIN),
+            ~finite,
+            int(AstrodynamicsStatus.NONFINITE_INPUT),
+            jnp.where(
+                valid,
+                int(AstrodynamicsStatus.SUCCESS),
+                int(AstrodynamicsStatus.INVALID_DOMAIN),
+            ),
         ).astype(jnp.int32)
         return AstrodynamicsForceEvaluation(
             jnp.where(valid, acceleration, 0.0),

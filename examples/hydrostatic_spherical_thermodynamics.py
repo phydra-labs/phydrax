@@ -34,9 +34,11 @@ def run():
         },
     )
     view = ocean.view(state)
+    if not bool(jnp.all(jnp.isfinite(view.density))):
+        raise RuntimeError("Spherical hydrostatic density is nonfinite")
     return {
         "geometry": geometry.horizontal_coordinate,
-        "finite_density": bool(jnp.all(jnp.isfinite(view.density))),
+        "finite_density": True,
         "minimum_area": float(jnp.min(geometry.cell_area)),
         "coriolis_range": (
             float(jnp.min(geometry.coriolis)),

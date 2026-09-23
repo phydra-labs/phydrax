@@ -584,10 +584,16 @@ def prepare_deflation(
     )
     if values.shape != field_shape:
         raise ValueError(f"candidates must have shape {field_shape}.")
+    if plan.mode_capacity > operator.source.size:
+        raise ValueError("Deflation mode_capacity cannot exceed the operator dimension.")
     coordinates = values.reshape((operator.source.size, plan.mode_capacity))
-    required_bytes = 3 * coordinates.size * coordinates.dtype.itemsize
+    coordinate_bytes = coordinates.size * coordinates.dtype.itemsize
+    coarse_matrix_bytes = (
+        plan.mode_capacity * plan.mode_capacity * coordinates.dtype.itemsize
+    )
+    required_bytes = 3 * coordinate_bytes + 6 * coarse_matrix_bytes
     if required_bytes > plan.maximum_basis_bytes:
-        raise ValueError("Deflation basis exceeds maximum_basis_bytes.")
+        raise ValueError("Deflation basis and coarse factors exceed maximum_basis_bytes.")
     inner = lambda left, right: jnp.vdot(left, right)
     basis, _, rank = _orthonormalize_block(
         coordinates,

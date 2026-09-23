@@ -24,6 +24,7 @@ from ...units import (
     ANGSTROM,
     conversion_factor,
     DALTON,
+    derived_unit,
     ELECTRONVOLT,
     ELEMENTARY_CHARGE,
 )
@@ -182,6 +183,10 @@ class PreparedASECalculator(AbstractPreparedElectronicCalculation):
         expected = (system.particle_ids.shape[0], 3)
         if coordinate.shape != expected:
             raise ValueError(f"positions must have shape {expected}.")
+        if system.cell is None and cell_vectors is not None:
+            raise ValueError(
+                "Finite ASE electronic calculations do not accept cell_vectors."
+            )
         active = np.asarray(system.active_mask, dtype=np.bool_)
         length_to_angstrom = float(
             conversion_factor(system.units.scale.length_unit, ANGSTROM)
@@ -270,7 +275,10 @@ class PreparedASECalculator(AbstractPreparedElectronicCalculation):
             dipole=dipole,
             cell_vectors=cell_vectors,
             convergence=ElectronicConvergenceEvidence(
-                True, message="ase-calculator-complete"
+                True,
+                energy_residual=0.0,
+                density_residual=0.0,
+                message="ase-calculator-complete",
             ),
             work=ElectronicWorkEvidence(
                 energy_evaluations=1,
@@ -280,7 +288,27 @@ class PreparedASECalculator(AbstractPreparedElectronicCalculation):
             source_unit_ids=(
                 ("charge", ELEMENTARY_CHARGE.unit_id),
                 ("energy", ELECTRONVOLT.unit_id),
+                (
+                    "forces",
+                    derived_unit(
+                        "electronvolt/angstrom",
+                        ((ELECTRONVOLT, 1), (ANGSTROM, -1)),
+                    ).unit_id,
+                ),
                 ("length", ANGSTROM.unit_id),
+                *(
+                    ()
+                    if dipole is None
+                    else (
+                        (
+                            "dipole",
+                            derived_unit(
+                                "elementary-charge*angstrom",
+                                ((ELEMENTARY_CHARGE, 1), (ANGSTROM, 1)),
+                            ).unit_id,
+                        ),
+                    )
+                ),
             ),
             artifact_ids=(calculator_id,),
         )

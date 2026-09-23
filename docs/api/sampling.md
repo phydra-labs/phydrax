@@ -56,8 +56,11 @@ production chunk freezes its normalized proposal; final model evaluation
 disables adaptation. `ProposalMove` carries complete forward/reverse density,
 validity, and an optional fixed-shape local payload.
 
-`FullMarkovTarget` and `IncrementalMarkovTarget` are the only explicit root target
-contracts. Incremental cache selection follows the same acceptance mask, and a
+`FullMarkovTarget` and `IncrementalMarkovTarget` are the only root target
+contracts. Raw callables are rejected because they cannot prove stable target
+identity. Every target declares a nonempty `target_id`, and `MarkovState` retains
+that exact identity so stepping and same-target refresh cannot silently substitute a
+different law. Incremental cache selection follows the same acceptance mask, and a
 scheduled exact refresh fails closed on mismatch. Rebinding an incremental target
 always runs its initializer; it never consumes a cache produced by different numeric
 target parameters or silently falls back to full-target evaluation.

@@ -130,6 +130,7 @@ class CompactGroupHamiltonianChainState(StrictModule):
     gradient: Array
     step_index: Array
     valid: Array
+    kernel_id: str = eqx.field(static=True)
 
 
 class CompactGroupHamiltonianIterationMetrics(StrictModule):
@@ -331,6 +332,7 @@ def initialize_compact_group_hamiltonian_state(
         gradient=gradients,
         step_index=jnp.asarray(0, dtype=jnp.uint32),
         valid=valid,
+        kernel_id=kernel.kernel_id,
     )
 
 
@@ -493,6 +495,8 @@ def sample_compact_group_hamiltonian(
         raise TypeError("kernel must be PreparedCompactGroupHamiltonianKernel.")
     if not isinstance(state, CompactGroupHamiltonianChainState):
         raise TypeError("state must be CompactGroupHamiltonianChainState.")
+    if state.kernel_id != kernel.kernel_id:
+        raise ValueError("Compact-group HMC state belongs to another prepared kernel.")
     if iteration is not None and not isinstance(iteration, IterationPlan):
         raise TypeError("iteration must be IterationPlan or None.")
     draws = int(num_draws)
@@ -549,6 +553,7 @@ def sample_compact_group_hamiltonian(
         & jnp.isfinite(values)
         & jnp.all(jnp.isfinite(positions).reshape((positions.shape[0], -1)), axis=1)
         & jnp.all(jnp.isfinite(gradients).reshape((gradients.shape[0], -1)), axis=1),
+        kernel_id=kernel.kernel_id,
     )
 
     iteration_evidence = None
@@ -654,6 +659,58 @@ def _scale_policy(plan: HamiltonianAdaptationPlan, /) -> RobbinsMonroScalePolicy
     )
 
 
+@eqx.filter_jit
+def _adapt_compact_group_warmup(
+    kernel: PreparedCompactGroupHamiltonianKernel,
+    state: CompactGroupHamiltonianChainState,
+    scale_policy: RobbinsMonroScalePolicy,
+    key: Key[Array, ""],
+    /,
+):
+    adaptive = initialize_proposal_adaptation(scale_policy, kernel.step_size)
+    current = state
+    sizes = []
+    acceptances = []
+    for _ in range(scale_policy.warmup_chunks):
+        warmup_kernel = eqx.tree_at(
+            lambda value: value.step_size,
+            kernel,
+            adaptive.scale,
+        )
+        draw = sample_compact_group_hamiltonian(
+            warmup_kernel,
+            current,
+            key=key,
+            num_draws=1,
+        )
+        acceptance = jnp.mean(draw.acceptance_probability)
+        sizes.append(adaptive.scale)
+        acceptances.append(acceptance)
+        adaptive = adapt_proposal_scale(scale_policy, adaptive, acceptance)
+        current = draw.final_state
+    return (
+        current,
+        adaptive,
+        jnp.stack(sizes),
+        jnp.stack(acceptances),
+    )
+
+
+def _rebind_adapted_state(
+    state: CompactGroupHamiltonianChainState,
+    kernel: PreparedCompactGroupHamiltonianKernel,
+    /,
+) -> CompactGroupHamiltonianChainState:
+    return CompactGroupHamiltonianChainState(
+        position=state.position,
+        log_target=state.log_target,
+        gradient=state.gradient,
+        step_index=state.step_index,
+        valid=state.valid,
+        kernel_id=kernel.kernel_id,
+    )
+
+
 def adapt_compact_group_hamiltonian(
     kernel: PreparedCompactGroupHamiltonianKernel,
     state: CompactGroupHamiltonianChainState,
@@ -670,41 +727,20 @@ def adapt_compact_group_hamiltonian(
     if not isinstance(plan, HamiltonianAdaptationPlan):
         raise TypeError("plan must be HamiltonianAdaptationPlan.")
     scale_policy = _scale_policy(plan)
-    adaptive = initialize_proposal_adaptation(scale_policy, kernel.step_size)
-    current = state
-    adapted = kernel
-    sizes = []
-    acceptances = []
-    for _ in range(plan.warmup_steps):
-        adapted = eqx.tree_at(
-            lambda value: value.step_size,
-            adapted,
-            adaptive.scale,
-        )
-        draw = sample_compact_group_hamiltonian(
-            adapted,
-            current,
-            key=key,
-            num_draws=1,
-        )
-        acceptance = jnp.mean(draw.acceptance_probability)
-        sizes.append(adaptive.scale)
-        acceptances.append(acceptance)
-        adaptive = adapt_proposal_scale(scale_policy, adaptive, acceptance)
-        current = draw.final_state
-    adapted = eqx.tree_at(
-        lambda value: value.step_size,
-        adapted,
-        adaptive.scale,
+    current, adaptive, size_history, acceptance_history = _adapt_compact_group_warmup(
+        kernel,
+        state,
+        scale_policy,
+        key,
     )
-    size_history = (
-        jnp.stack(sizes) if sizes else jnp.empty((0,), dtype=kernel.step_size.dtype)
+    final_step_size = float(jax.device_get(adaptive.scale))
+    adapted = prepare_compact_group_hamiltonian_kernel(
+        kernel.target,
+        step_size=final_step_size,
+        leapfrog_steps=kernel.leapfrog_steps,
+        divergence_threshold=kernel.divergence_threshold,
     )
-    acceptance_history = (
-        jnp.stack(acceptances)
-        if acceptances
-        else jnp.empty((0,), dtype=kernel.step_size.dtype)
-    )
+    current = _rebind_adapted_state(current, adapted)
     return CompactGroupHamiltonianAdaptationResult(
         kernel=adapted,
         final_state=current,

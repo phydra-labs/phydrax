@@ -53,9 +53,11 @@ compiled = phx.equations.compile_vortex_particle_flow(
 state = compiled.initialize_state(position, circulation)
 evaluation = compiled.dynamics.evaluate(0.0, state)[5]
 backend = evaluation.diagnostics.backend_diagnostics
+if not bool(evaluation.successful):
+    raise RuntimeError("Periodic VIC evaluation failed")
 
 print("velocity", evaluation.velocity)
 print("circulation residual", backend.compatibility_residual)
 print("deposit balance", backend.balance_defect)
 print("divergence norm", backend.divergence_norm)
-print("successful", bool(evaluation.successful))
+print("successful", True)

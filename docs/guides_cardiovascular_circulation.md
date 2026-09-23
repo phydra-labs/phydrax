@@ -119,4 +119,5 @@ Use the ledgers at retained time samples:
 
 All ledgers retain arrays and tolerances, expose explicit finite/success booleans, and fail closed on malformed axes or nonfinite input. Numerical tolerances are relative to documented ledger scales; they are not author assertions of conservation.
 
-Run the qualification campaign from the repository root with `python tools/cardiovascular_circulation_qualification.py`. The benchmark `benchmarks/cardiovascular_circulation.py` records closed-loop construction and structural-analysis time, consistent initialization, and compiled batched smooth-valve throughput.
+Run the qualification campaign from the repository root with
+`python tools/cardiovascular_circulation_qualification.py`.

@@ -77,6 +77,7 @@ class DLDWorkflowPlan(StrictModule, NonTrainableState):
             or transport.wall.plan_id != geometry.plan_id
             or transport.properties.capacity != geometry.topology.particle_capacity
             or outlets.outlet_count != geometry.topology.outlet_count
+            or outlets.outlet_x != geometry.design.outlet_x
             or metrics.outlet_count != outlets.outlet_count
             or classes.shape != (geometry.topology.particle_capacity,)
             or np.any((classes < 0) | (classes >= metrics.class_count))

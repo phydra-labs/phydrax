@@ -97,8 +97,10 @@ result = cpl.advance_coupling_window(
     1.0,
     jnp.asarray(1.0, dtype=jnp.float64),
 )
-print("successful:", bool(result.successful))
-print("converged:", bool(result.converged))
+if not bool(result.successful & result.converged):
+    raise RuntimeError("Partitioned coupling window failed or did not converge")
+print("successful:", True)
+print("converged:", True)
 print("interface residuals:", result.diagnostics.exchange_residual_norms)
 print("oscillator A:", value)
 print("d oscillator A / d forcing:", derivative)

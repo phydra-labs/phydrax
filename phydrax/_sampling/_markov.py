@@ -45,16 +45,13 @@ _ACCEPTANCE_ADDRESS = SampleAddress(
     role="transition",
 )
 
-_RAW_TARGET_ID = "raw-callable"
-
 
 def _resolve_target(target, /):
     if isinstance(target, (FullMarkovTarget, IncrementalMarkovTarget)):
         return target
-    if callable(target):
-        return FullMarkovTarget(target, target_id=_RAW_TARGET_ID)
     raise TypeError(
-        "target must be callable, FullMarkovTarget, or IncrementalMarkovTarget."
+        "target must be FullMarkovTarget or IncrementalMarkovTarget; "
+        "wrap raw callables with an explicit target_id."
     )
 
 
@@ -130,7 +127,7 @@ class MarkovState(StrictModule):
         cache: PyTree[Any] = (),
         valid: Array | None = None,
         step_index: Array | int = 0,
-        target_id: str = _RAW_TARGET_ID,
+        target_id: str,
     ):
         count = _chain_count(position)
         positions = jax.tree_util.tree_map(jnp.asarray, position)
@@ -346,10 +343,7 @@ class MarkovSampleResult(AbstractChainSampleResult):
 
     @property
     def chain_provenance(self) -> str:
-        provenance = f"markov:{self.kernel_id}:{self.proposal_id}"
-        if self.target_id == _RAW_TARGET_ID:
-            return provenance
-        return f"{provenance}:{self.target_id}"
+        return f"markov:{self.kernel_id}:{self.proposal_id}:{self.target_id}"
 
     @property
     def acceptance_rate(self) -> Array:

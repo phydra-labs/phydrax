@@ -44,8 +44,10 @@ def run():
         None,
     )
     epoch = geometry.metric_epoch(result.accepted_state.state.eta)
+    if not bool(result.successful):
+        raise RuntimeError("Hydrostatic wet/dry freshwater step failed")
     return {
-        "successful": bool(result.successful),
+        "successful": True,
         "minimum_depth": float(jnp.min(epoch.total_depth)),
         "freshwater_volume": float(result.accepted_state.ledger.freshwater_volume),
         "limiter_correction": float(result.accepted_state.ledger.limiter_correction),

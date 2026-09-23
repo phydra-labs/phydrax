@@ -206,9 +206,13 @@ class CADRevision:
     def children(
         self, parent: CADSelector, /, *, kind: str | None = None
     ) -> tuple[CADSelector, ...]:
+        if not isinstance(parent, CADSelector):
+            raise TypeError("parent must be a CADSelector.")
         if parent.revision_id != self.revision_id:
             raise ValueError("Cannot enumerate children from another CAD revision.")
-        self.occurrence(parent.occurrence_id)
+        stored_parent = self.occurrence(parent.occurrence_id)
+        if CADSelector.from_occurrence(stored_parent) != parent:
+            raise ValueError("Parent selector does not match the revision inventory.")
         expected = None if kind is None else str(kind)
         return tuple(
             CADSelector.from_occurrence(value)

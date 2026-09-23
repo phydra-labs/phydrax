@@ -14,6 +14,7 @@ import phydrax.ein as ein
 from ..._fingerprint import canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
+from ...linalg import DenseLinearOperator, DenseLU, LinearSolvePolicy, LinearSystem, solve
 from ._compressible_contracts import CompressibleKineticPopulationState
 from ._compressible_frame import KineticFrameRemapResult, remap_kinetic_frame
 from ._compressible_rules import CompressibleVelocityRule
@@ -88,11 +89,12 @@ class PredictiveKineticRefinementPlan(StrictModule, NonTrainableState):
         if validity.shape != values.shape:
             raise ValueError("active mask must match indicator shape.")
         predicted = jnp.where(validity, values, -jnp.inf)
+        seed = jnp.where(validity & jnp.isfinite(values), values, -jnp.inf)
         velocities = np.asarray(self.rule.velocities, dtype=np.int32)
         for step in range(1, self.prediction_steps + 1):
             advected = tuple(
                 jnp.roll(
-                    values,
+                    seed,
                     shift=tuple(int(step * component) for component in velocity),
                     axis=tuple(range(self.rule.dimension)),
                 )
@@ -123,6 +125,38 @@ class KineticAMRTransferEvidence(StrictModule):
     successful: Array
 
 
+class KineticAMRTransferResult(StrictModule):
+    state: CompressibleKineticPopulationState
+    evidence: KineticAMRTransferEvidence
+
+
+def _amr_transfer_result(
+    source: CompressibleKineticPopulationState,
+    target: CompressibleKineticPopulationState,
+    /,
+) -> KineticAMRTransferResult:
+    source_mass = jnp.mean(jnp.sum(source.population("particle"), axis=-1))
+    target_mass = jnp.mean(jnp.sum(target.population("particle"), axis=-1))
+    mass_defect = target_mass - source_mass
+    positive_minima = tuple(
+        jnp.min(value)
+        for value, field in zip(target.populations, target.layout.fields, strict=True)
+        if field.positive
+    )
+    minimum = jnp.min(jnp.stack(positive_minima))
+    finite = jnp.all(
+        jnp.stack(tuple(jnp.all(jnp.isfinite(value)) for value in target.populations))
+    )
+    tolerance = (
+        512.0 * jnp.finfo(target_mass.dtype).eps * jnp.maximum(jnp.abs(source_mass), 1.0)
+    )
+    successful = finite & (minimum >= 0.0) & (jnp.abs(mass_defect) <= tolerance)
+    return KineticAMRTransferResult(
+        target,
+        KineticAMRTransferEvidence(mass_defect, minimum, successful),
+    )
+
+
 class KineticAMRTransferPlan(StrictModule, NonTrainableState):
     dimension: int = eqx.field(static=True)
     refinement_ratio: int = eqx.field(static=True)
@@ -141,7 +175,7 @@ class KineticAMRTransferPlan(StrictModule, NonTrainableState):
 
     def prolong(
         self, state: CompressibleKineticPopulationState, /
-    ) -> CompressibleKineticPopulationState:
+    ) -> KineticAMRTransferResult:
         if len(state.spatial_shape) != self.dimension:
             raise ValueError("State dimension does not match the AMR plan.")
 
@@ -151,18 +185,21 @@ class KineticAMRTransferPlan(StrictModule, NonTrainableState):
                 result = jnp.repeat(result, self.refinement_ratio, axis=axis)
             return result
 
-        return CompressibleKineticPopulationState(
+        candidate = CompressibleKineticPopulationState(
             tuple(repeat(value) for value in state.populations),
             repeat(state.equilibrium_dual),
             repeat(state.stabilizer[..., None])[..., 0],
             repeat(state.frame_velocity),
             repeat(state.frame_temperature_scale[..., None])[..., 0],
             state.layout,
+            state.model_id,
+            state.rule_id,
         )
+        return _amr_transfer_result(state, candidate)
 
     def restrict(
         self, state: CompressibleKineticPopulationState, /
-    ) -> CompressibleKineticPopulationState:
+    ) -> KineticAMRTransferResult:
         if len(state.spatial_shape) != self.dimension:
             raise ValueError("State dimension does not match the AMR plan.")
         ratio = self.refinement_ratio
@@ -178,14 +215,17 @@ class KineticAMRTransferPlan(StrictModule, NonTrainableState):
                 ).mean(axis=axis + 1)
             return result
 
-        return CompressibleKineticPopulationState(
+        candidate = CompressibleKineticPopulationState(
             tuple(average(value) for value in state.populations),
             average(state.equilibrium_dual),
             average(state.stabilizer[..., None])[..., 0],
             average(state.frame_velocity),
             average(state.frame_temperature_scale[..., None])[..., 0],
             state.layout,
+            state.model_id,
+            state.rule_id,
         )
+        return _amr_transfer_result(state, candidate)
 
 
 class MappedKineticGridPlan(StrictModule, NonTrainableState):
@@ -205,9 +245,14 @@ class MappedKineticGridPlan(StrictModule, NonTrainableState):
         determinant = np.linalg.det(matrix)
         if np.any(determinant <= 0.0):
             raise ValueError("Mapped kinetic Jacobian must preserve orientation.")
-        inverse = np.linalg.solve(
-            matrix, np.broadcast_to(np.eye(dimension), matrix.shape)
+        inverse_result = solve(
+            LinearSystem(DenseLinearOperator(matrix)),
+            np.broadcast_to(np.eye(dimension), matrix.shape),
+            policy=LinearSolvePolicy(DenseLU()),
         )
+        if not bool(jnp.all(inverse_result.successful)):
+            raise ValueError("Mapped kinetic Jacobian factorization failed.")
+        inverse = np.asarray(inverse_result.value)
         self.jacobian = jnp.asarray(matrix)
         self.inverse_jacobian = jnp.asarray(inverse)
         self.determinant = jnp.asarray(determinant)
@@ -234,6 +279,12 @@ class MovingKineticGeometryEvidence(StrictModule):
     successful: Array
 
 
+class MovingKineticGeometryResult(StrictModule):
+    candidate: CompressibleKineticPopulationState
+    previous: CompressibleKineticPopulationState
+    evidence: MovingKineticGeometryEvidence
+
+
 class MovingKineticGeometryPlan(StrictModule, NonTrainableState):
     active_shape: tuple[int, ...] = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
@@ -254,7 +305,7 @@ class MovingKineticGeometryPlan(StrictModule, NonTrainableState):
         new_active: ArrayLike,
         uncovered_state: CompressibleKineticPopulationState,
         /,
-    ) -> tuple[CompressibleKineticPopulationState, MovingKineticGeometryEvidence]:
+    ) -> MovingKineticGeometryResult:
         old_mask = jnp.asarray(old_active, dtype=jnp.bool_)
         new_mask = jnp.asarray(new_active, dtype=jnp.bool_)
         if old_mask.shape != self.active_shape or new_mask.shape != self.active_shape:
@@ -264,6 +315,14 @@ class MovingKineticGeometryPlan(StrictModule, NonTrainableState):
             or uncovered_state.spatial_shape != self.active_shape
         ):
             raise ValueError("Geometry states must match active_shape.")
+        if (
+            state.layout.layout_id != uncovered_state.layout.layout_id
+            or state.model_id != uncovered_state.model_id
+            or state.rule_id != uncovered_state.rule_id
+        ):
+            raise ValueError(
+                "Moving-geometry states have different scientific identities."
+            )
         uncovered = ~old_mask & new_mask
         covered = old_mask & ~new_mask
         updated_fields = tuple(
@@ -293,6 +352,8 @@ class MovingKineticGeometryPlan(StrictModule, NonTrainableState):
                 state.frame_temperature_scale,
             ),
             state.layout,
+            state.model_id,
+            state.rule_id,
         )
         covered_mass = jnp.sum(
             jnp.where(covered[..., None], state.population("particle"), 0.0)
@@ -300,12 +361,24 @@ class MovingKineticGeometryPlan(StrictModule, NonTrainableState):
         finite = jnp.all(
             jnp.stack(tuple(jnp.all(jnp.isfinite(value)) for value in updated_fields))
         )
-        return updated, MovingKineticGeometryEvidence(
+        positive = jnp.all(
+            jnp.stack(
+                tuple(
+                    jnp.all(value >= 0.0)
+                    for value, field in zip(
+                        updated_fields, state.layout.fields, strict=True
+                    )
+                    if field.positive
+                )
+            )
+        )
+        evidence = MovingKineticGeometryEvidence(
             covered_mass=covered_mass,
             uncovered_cells=jnp.sum(uncovered),
             covered_cells=jnp.sum(covered),
-            successful=finite,
+            successful=finite & positive,
         )
+        return MovingKineticGeometryResult(updated, state, evidence)
 
 
 class KineticMultiblockInterfacePlan(StrictModule, NonTrainableState):
@@ -341,10 +414,12 @@ class KineticMultiblockInterfacePlan(StrictModule, NonTrainableState):
 
 __all__ = [
     "KineticAMRTransferEvidence",
+    "KineticAMRTransferResult",
     "KineticAMRTransferPlan",
     "KineticMultiblockInterfacePlan",
     "MappedKineticGridPlan",
     "MovingKineticGeometryEvidence",
+    "MovingKineticGeometryResult",
     "MovingKineticGeometryPlan",
     "PredictiveKineticRefinementPlan",
     "PredictiveRefinementEvidence",

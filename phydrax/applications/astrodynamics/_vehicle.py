@@ -13,10 +13,15 @@ import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
-from ...linalg import inverse_small_linear, SmallLinearSolvePlan
+from ...linalg import (
+    DensePropertyVerificationPolicy,
+    inverse_small_linear,
+    SmallLinearSolvePlan,
+    verify_dense_properties,
+)
 from ._context import AstrodynamicsContext
 from ._status import AstrodynamicsStatus
 
@@ -27,6 +32,11 @@ def _cross_matrix(value: Array, /) -> Array:
 
 
 _INERTIA_SOLVE = SmallLinearSolvePlan(3)
+
+_INERTIA_POLICY = DensePropertyVerificationPolicy(
+    require_hermitian=True,
+    require_positive_definite=True,
+)
 
 
 def _quaternion_derivative(quaternion: Array, omega: Array, /) -> Array:
@@ -61,6 +71,9 @@ class VehicleConfiguration(StrictModule, NonTrainableState):
         context,
         /,
     ):
+        if not isinstance(context, AstrodynamicsContext):
+            raise TypeError("context must be an AstrodynamicsContext.")
+        mass = np.asarray(dry_mass, dtype=np.float64)
         inertia = np.asarray(dry_inertia, dtype=np.float64)
         tanks = np.asarray(tank_locations, dtype=np.float64)
         capacities = np.asarray(tank_capacities, dtype=np.float64)
@@ -77,14 +90,27 @@ class VehicleConfiguration(StrictModule, NonTrainableState):
         ):
             raise ValueError("Vehicle configuration arrays are inconsistent.")
         norms = np.sqrt(np.sum(axes * axes, axis=1)) if axes.size else np.empty((0,))
+        inertia_evidence = verify_dense_properties(
+            jnp.asarray(inertia), policy=_INERTIA_POLICY
+        )
         if (
-            dry_mass <= 0.0
+            mass.shape != ()
+            or not np.isfinite(mass)
+            or mass <= 0.0
+            or np.any(~np.isfinite(inertia))
+            or not bool(np.asarray(inertia_evidence.successful))
+            or np.any(~np.isfinite(tanks))
+            or np.any(~np.isfinite(capacities))
+            or np.any(~np.isfinite(axes))
+            or np.any(~np.isfinite(wheel_values))
             or np.any(capacities < 0.0)
             or np.any(wheel_values <= 0.0)
             or np.any(norms <= 0.0)
         ):
-            raise ValueError("Vehicle masses and inertias must be physical.")
-        self.dry_mass = jnp.asarray(dry_mass).reshape(())
+            raise ValueError(
+                "Vehicle masses, inertias, and geometry must be finite and physical."
+            )
+        self.dry_mass = jnp.asarray(mass)
         self.dry_inertia = jnp.asarray(inertia)
         self.tank_locations = jnp.asarray(tanks)
         self.tank_capacities = jnp.asarray(capacities)
@@ -97,8 +123,9 @@ class VehicleConfiguration(StrictModule, NonTrainableState):
             {
                 "kind": "vehicle-configuration",
                 "context": context.context_id,
-                "tanks": tanks.shape[0],
-                "wheels": axes.shape[0],
+                "values": array_tree_fingerprint(
+                    (mass, inertia, tanks, capacities, axes, wheel_values)
+                ),
             }
         )
 
@@ -136,16 +163,26 @@ class CoupledVehiclePlan(StrictModule, NonTrainableState):
     plan_id: str = eqx.field(static=True)
 
     def __init__(self, configuration, effectors, times, /, *, effector_ids):
+        if not isinstance(configuration, VehicleConfiguration):
+            raise TypeError("configuration must be a VehicleConfiguration.")
         items = tuple(effectors)
-        if len(items) != len(effector_ids) or any(not callable(value) for value in items):
+        identifiers = tuple(str(value).strip() for value in effector_ids)
+        if (
+            not items
+            or len(items) != len(identifiers)
+            or any(not callable(value) for value in items)
+            or any(not value for value in identifiers)
+            or len(set(identifiers)) != len(identifiers)
+        ):
             raise ValueError("Vehicle effectors and IDs are inconsistent.")
         times_host = np.asarray(times, dtype=np.float64)
         if (
             times_host.ndim != 1
             or times_host.size < 2
+            or np.any(~np.isfinite(times_host))
             or np.any(np.diff(times_host) <= 0.0)
         ):
-            raise ValueError("Vehicle times must be strictly increasing.")
+            raise ValueError("Vehicle times must be finite and strictly increasing.")
         self.configuration = configuration
         self.effectors = items
         self.times = jnp.asarray(times_host)
@@ -153,8 +190,8 @@ class CoupledVehiclePlan(StrictModule, NonTrainableState):
             {
                 "kind": "coupled-vehicle-plan",
                 "configuration": configuration.configuration_id,
-                "effectors": list(effector_ids),
-                "steps": times_host.size,
+                "effectors": list(identifiers),
+                "times": array_tree_fingerprint(times_host),
             }
         )
 
@@ -220,11 +257,28 @@ class CoupledVehiclePlan(StrictModule, NonTrainableState):
     def rollout(
         self, initial: VehicleState, command_schedule: Callable, /
     ) -> VehicleResult:
+        if not isinstance(initial, VehicleState):
+            raise TypeError("initial must be a VehicleState.")
         if (
-            initial.tank_masses.shape != self.configuration.tank_capacities.shape
+            initial.position.shape != (3,)
+            or initial.velocity.shape != (3,)
+            or initial.quaternion.shape != (4,)
+            or initial.angular_velocity.shape != (3,)
+            or initial.tank_masses.shape != self.configuration.tank_capacities.shape
             or initial.wheel_momentum.shape != self.configuration.wheel_inertias.shape
         ):
-            raise ValueError("Vehicle state capacities do not match configuration.")
+            raise ValueError("Vehicle state shapes do not match configuration.")
+        initial_valid = (
+            jnp.all(jnp.isfinite(initial.position))
+            & jnp.all(jnp.isfinite(initial.velocity))
+            & jnp.all(jnp.isfinite(initial.quaternion))
+            & (jnp.sum(initial.quaternion**2) > 0.0)
+            & jnp.all(jnp.isfinite(initial.angular_velocity))
+            & jnp.all(jnp.isfinite(initial.tank_masses))
+            & jnp.all(initial.tank_masses >= 0.0)
+            & jnp.all(initial.tank_masses <= self.configuration.tank_capacities)
+            & jnp.all(jnp.isfinite(initial.wheel_momentum))
+        )
 
         def add(state, derivative, factor):
             return jax.tree.map(
@@ -258,13 +312,23 @@ class CoupledVehiclePlan(StrictModule, NonTrainableState):
             next_state = eqx.tree_at(
                 lambda value: value.quaternion, next_state, quaternion
             )
+            finite = jnp.all(
+                jnp.stack(
+                    tuple(
+                        jnp.all(jnp.isfinite(value))
+                        for value in jax.tree.leaves(next_state)
+                    )
+                )
+            )
             valid = (
                 active
                 & valid1
                 & valid2
                 & valid3
                 & valid4
+                & finite
                 & jnp.all(next_state.tank_masses >= 0.0)
+                & jnp.all(next_state.tank_masses <= self.configuration.tank_capacities)
             )
             accepted = jax.tree.map(
                 lambda new, old: jnp.where(valid, new, old), next_state, state
@@ -272,15 +336,13 @@ class CoupledVehiclePlan(StrictModule, NonTrainableState):
             return (accepted, valid), (accepted, valid)
 
         intervals = jnp.stack((self.times[:-1], self.times[1:]), axis=-1)
-        (_, completed), outputs = jax.lax.scan(
-            step, (initial, jnp.asarray(True)), intervals
-        )
+        (_, completed), outputs = jax.lax.scan(step, (initial, initial_valid), intervals)
         states = jax.tree.map(
             lambda value, tail: jnp.concatenate((value[None], tail), axis=0),
             initial,
             outputs[0],
         )
-        valid = jnp.concatenate((jnp.asarray(True)[None], outputs[1]))
+        valid = jnp.concatenate((initial_valid[None], outputs[1]))
         status = jnp.where(
             valid,
             int(AstrodynamicsStatus.SUCCESS),

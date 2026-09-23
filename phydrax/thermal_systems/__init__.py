@@ -12,6 +12,7 @@ from ._boiling import (
 )
 from ._core import (
     enclosure_radiosity,
+    EnclosureRadiosityResult,
     heat_pipe_capillary_margin,
     STEFAN_BOLTZMANN_W_M2_K4,
     stefan_front_position,
@@ -32,6 +33,7 @@ __all__ = [
     "CryogenicTankState",
     "CryogenicTankStep",
     "DiffuseGrayEnclosure",
+    "EnclosureRadiosityResult",
     "EnclosureRadiationResult",
     "PoolBoilingCurve",
     "STEFAN_BOLTZMANN_W_M2_K4",

@@ -818,7 +818,15 @@ def test_stage_rate_positivity_blends_high_and_fallback_against_target_volumes()
         topology_epoch_id="positivity-epoch",
     )
     high = phx.discretization.ConservationStageLedger(
-        (high_block,), jnp.zeros_like(content), jnp.ones(2, dtype="bool"), **kwargs
+        (high_block,),
+        jnp.zeros_like(content),
+        jnp.ones(2, dtype="bool"),
+        entropy_production=jnp.asarray((0.25, 0.5)),
+        troubled_cell_mask=jnp.asarray((True, False)),
+        correction_level=jnp.asarray((2, 0), dtype=jnp.int32),
+        accepted=False,
+        differentiability_policy_id="positivity-test-policy",
+        **kwargs,
     )
     fallback = phx.discretization.ConservationStageLedger(
         (fallback_block,), jnp.zeros_like(content), jnp.ones(2, dtype="bool"), **kwargs
@@ -843,6 +851,32 @@ def test_stage_rate_positivity_blends_high_and_fallback_against_target_volumes()
         jnp.sum(content, axis=0),
     )
     assert limited.ledger.units == "content/time"
+    np.testing.assert_array_equal(
+        limited.ledger.high_order_blocks[0].flux_rate,
+        high_block.flux_rate,
+    )
+    np.testing.assert_array_equal(
+        limited.ledger.low_order_blocks[0].flux_rate,
+        fallback_block.flux_rate,
+    )
+    np.testing.assert_array_equal(
+        limited.ledger.blend_factors[0],
+        limited.face_blend_factors[0],
+    )
+    np.testing.assert_array_equal(
+        limited.ledger.entropy_production,
+        high.entropy_production,
+    )
+    np.testing.assert_array_equal(
+        limited.ledger.troubled_cell_mask,
+        high.troubled_cell_mask,
+    )
+    np.testing.assert_array_equal(
+        limited.ledger.correction_level,
+        high.correction_level,
+    )
+    assert not bool(limited.ledger.accepted)
+    assert limited.ledger.differentiability_policy_id == high.differentiability_policy_id
 
 
 def test_mixed_polygon_geometry_closure_is_exact_under_jit():

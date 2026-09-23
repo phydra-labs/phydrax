@@ -59,11 +59,23 @@ class AtomisticReporterPlan(StrictModule, NonTrainableState):
     def frame(
         self, dynamics: PreparedAtomisticDynamics, state: AtomisticDynamicsState, /
     ) -> AtomisticFrame:
+        if not isinstance(dynamics, PreparedAtomisticDynamics):
+            raise TypeError("dynamics must be PreparedAtomisticDynamics.")
+        if not isinstance(state, AtomisticDynamicsState):
+            raise TypeError("state must be AtomisticDynamicsState.")
+        if state.prepared_dynamics_id != dynamics.prepared_id:
+            raise ValueError("Reporter state belongs to another dynamics runtime.")
+        if state.force.program_id != dynamics.potential.prepared_id:
+            raise ValueError("Reporter force cache belongs to another potential program.")
+        force_current = state.force.successful & (
+            state.force.position_epoch == state.step_index
+        )
         if self.coordinate_domain is AtomisticSiteDomain.INTERACTION_SITES:
             site_state = dynamics.interaction_sites(state)
             positions = site_state.positions
             ids = dynamics.system.coordinate_map.plan.sites.site_ids
             velocity = momentum = force = images = None
+            domain_valid = site_state.successful
         else:
             positions = state.kinematics.positions
             ids = dynamics.system.plan.particle_ids
@@ -85,6 +97,7 @@ class AtomisticReporterPlan(StrictModule, NonTrainableState):
                 if self.fields & AtomisticFrameFields.IMAGES
                 else None
             )
+            domain_valid = jnp.asarray(True)
         return AtomisticFrame(
             state.time,
             state.step_index,
@@ -106,7 +119,7 @@ class AtomisticReporterPlan(StrictModule, NonTrainableState):
             )
             if self.fields & AtomisticFrameFields.ENERGY
             else None,
-            valid=state.last_status == 0,
+            valid=(state.last_status == 0) & force_current & domain_valid,
             coordinate_domain=self.coordinate_domain,
             system_id=dynamics.system.prepared_id,
             topology_id=dynamics.system.topology.topology_id,

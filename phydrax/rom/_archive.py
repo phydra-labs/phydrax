@@ -109,6 +109,10 @@ def _read_strict_model(
     /,
     *,
     model_id: str,
+    numeric_revision_id: str,
+    analysis_plan_id: str,
+    unit_contract_id: str | None,
+    association_ids: tuple[str, ...],
     model_kind: str,
 ):
     manifest, arrays = read_array_archive(path)
@@ -120,9 +124,16 @@ def _read_strict_model(
     ):
         raise ValueError("Archive is not the requested native ROM model kind.")
     lifecycle = _model_manifest(manifest["model_manifest"])
-    if lifecycle.model_id != model_id:
+    expected_lifecycle = (
+        lifecycle.model_id == model_id
+        and lifecycle.numeric_revision_id == numeric_revision_id
+        and lifecycle.analysis_plan_id == analysis_plan_id
+        and lifecycle.unit_contract_id == unit_contract_id
+        and lifecycle.association_ids == association_ids
+    )
+    if not expected_lifecycle:
         raise ValueError(
-            "ROM archive model identity does not match the runtime template."
+            "ROM archive lifecycle identity does not match the runtime template."
         )
     digest = array_collection_digest(arrays)
     if lifecycle.payloads != (("model-arrays", digest),):
@@ -157,6 +168,8 @@ def read_reduced_basis_artifact(
     path: str | os.PathLike[str],
     template: ReducedBasisArtifact,
     /,
+    *,
+    analysis_plan_id: str,
 ) -> ReducedBasisArtifact:
     if not isinstance(template, ReducedBasisArtifact):
         raise TypeError("template must be a ReducedBasisArtifact.")
@@ -165,6 +178,10 @@ def read_reduced_basis_artifact(
         template,
         model_id=template.artifact_id,
         model_kind="reduced-basis",
+        numeric_revision_id=template.numeric_revision.revision_id,
+        analysis_plan_id=analysis_plan_id,
+        unit_contract_id=None,
+        association_ids=template.source_artifact_ids,
     )
     if restored.artifact_id != template.artifact_id:
         raise ValueError("Restored basis artifact identity mismatch.")
@@ -200,6 +217,8 @@ def read_affine_linear_rom(
     path: str | os.PathLike[str],
     template: PreparedAffineLinearROM,
     /,
+    *,
+    analysis_plan_id: str,
 ) -> PreparedAffineLinearROM:
     if not isinstance(template, PreparedAffineLinearROM):
         raise TypeError("template must be a PreparedAffineLinearROM.")
@@ -208,6 +227,14 @@ def read_affine_linear_rom(
         template,
         model_id=template.model_id,
         model_kind="affine-linear",
+        numeric_revision_id=template.numeric_revision.revision_id,
+        analysis_plan_id=analysis_plan_id,
+        unit_contract_id=template.coefficient_map.unit_contract_id,
+        association_ids=(
+            template.family_id,
+            template.reduction.reduction_id,
+            template.coefficient_map.coefficient_map_id,
+        ),
     )
     if (
         restored.model_id != template.model_id

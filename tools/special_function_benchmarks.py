@@ -190,7 +190,7 @@ def _benchmark(
         "execution_mean_ms": execution_ms,
         "output_bytes": logical_array_bytes(result),
         "checksum": _checksum(result),
-        "retained_bytes": (
+        "generated_code_bytes": (
             None if memory is None else int(memory.generated_code_size_in_bytes)
         ),
         "workspace_bytes": None if memory is None else int(memory.temp_size_in_bytes),

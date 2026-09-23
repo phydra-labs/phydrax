@@ -14,6 +14,7 @@ from jaxtyping import Array, ArrayLike
 from phydrax.ein import contract
 
 from .._fingerprint import array_tree_fingerprint, canonical_fingerprint
+from .._model import register_artifact_value
 from .._strict import StrictModule
 from ._chemical_rates import (
     AbstractChemicalRatePlan,
@@ -455,6 +456,21 @@ def _validate_rate_species_axis(rate, species_count, reaction_name):
         raise ValueError(
             f"Reaction {reaction_name!r} third-body efficiencies must match species."
         )
+
+
+for _artifact_value in (
+    ChemicalReactionSpec,
+    ChemicalMechanismIR,
+    ChemicalMechanismEvidence,
+    ChemicalRateEvaluation,
+    PreparedChemicalMechanism,
+):
+    register_artifact_value(
+        f"phydrax.chemistry.mechanism:{_artifact_value.__name__}",
+        _artifact_value,
+    )
+
+del _artifact_value
 
 
 __all__ = [

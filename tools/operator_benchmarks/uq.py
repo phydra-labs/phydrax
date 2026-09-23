@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass
@@ -24,7 +25,7 @@ from benchmarks._runtime import (
 )
 from phydrax.nn.operator import AbstractOperatorModel
 
-from .matrix import benchmark_metadata, BenchmarkRunMetadata
+from .matrix import _batch_schema, benchmark_metadata, BenchmarkRunMetadata
 from .models import compatible_architectures, OperatorArchitecture
 from .runner import _loss, _with_source_values, parameter_count, train_operator
 from .scenarios import OperatorBenchmarkEvaluation, OperatorBenchmarkScenario
@@ -136,6 +137,22 @@ def run_operator_uq_benchmark(
         raise ValueError("repeats must be positive.")
     if int(posterior_samples) <= 0:
         raise ValueError("posterior_samples must be positive.")
+    if len(set(seeds)) != len(seeds) or any(
+        isinstance(seed, bool) or not isinstance(seed, int) for seed in seeds
+    ):
+        raise ValueError("Operator UQ seeds must be unique integers.")
+    if (
+        int(steps) <= 0
+        or not math.isfinite(float(learning_rate))
+        or float(learning_rate) <= 0.0
+        or int(validation_interval) <= 0
+        or not math.isfinite(float(minimum_delta))
+        or float(minimum_delta) < 0.0
+        or not math.isfinite(float(alpha))
+        or not 0.0 < float(alpha) < 1.0
+        or (patience is not None and int(patience) <= 0)
+    ):
+        raise ValueError("Operator UQ training and calibration parameters are invalid.")
     selected = _select_architecture(scenario, architecture, quick=quick)
     if not selected.trainable:
         raise ValueError("Operator UQ benchmark architectures must be trainable.")
@@ -172,6 +189,7 @@ def run_operator_uq_benchmark(
             validation_interval=validation_interval,
             patience=patience,
             minimum_delta=minimum_delta,
+            checkpoint_key=jr.key(seed),
         )
         trained_members.append(trained)
         training_steps.append(len(losses))
@@ -353,6 +371,16 @@ def calibration_case_checksum(scenario: OperatorBenchmarkScenario, /) -> str:
     if scenario.validation is None:
         raise ValueError("Calibration checksum requires a validation split.")
     digest = hashlib.sha256(f"{scenario.name}:calibration".encode("utf-8"))
+    digest.update(
+        json.dumps(
+            {
+                "case_ids": scenario.validation.case_ids,
+                "batch_schema": _batch_schema(scenario.validation.batch),
+            },
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    )
     for leaf in jax.tree_util.tree_leaves(scenario.validation.batch):
         if isinstance(leaf, jax.Array):
             _checksum_array(digest, leaf)

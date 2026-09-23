@@ -151,6 +151,7 @@ class SparseDerivativePlan(StrictModule):
     target: AbstractVectorSpace
     coloring: SparseColoring
     properties: OperatorProperties
+    hessian_contract: SparseHessianContract | None
     precision: SparseDerivativePrecisionPolicy = eqx.field(static=True)
     coefficient_scale: Array
     argument_structure: Any = eqx.field(static=True)
@@ -170,6 +171,7 @@ class SparseDerivativePlan(StrictModule):
         /,
         *,
         derivative_kind: SparseDerivativeKind,
+        hessian_contract: SparseHessianContract | None,
         chunk_size: int | None,
         precision: SparseDerivativePrecisionPolicy,
         coefficient_scale: Array | None,
@@ -189,6 +191,11 @@ class SparseDerivativePlan(StrictModule):
             raise TypeError("precision must be a SparseDerivativePrecisionPolicy.")
         if derivative_kind not in ("jacobian", "hessian"):
             raise ValueError(f"Unknown sparse derivative kind {derivative_kind!r}.")
+        if derivative_kind == "hessian":
+            if not isinstance(hessian_contract, SparseHessianContract):
+                raise TypeError("Hessian plans require a SparseHessianContract.")
+        elif hessian_contract is not None:
+            raise ValueError("Jacobian plans cannot carry a Hessian contract.")
         chunk = None if chunk_size is None else int(chunk_size)
         if chunk is not None and chunk < 1:
             raise ValueError("chunk_size must be positive or None.")
@@ -211,6 +218,7 @@ class SparseDerivativePlan(StrictModule):
         self.source = source
         self.target = target
         self.coloring = coloring
+        self.hessian_contract = hessian_contract
         self.properties = properties
         self.argument_structure = argument_structure
         self.argument_specs = argument_specs
@@ -326,9 +334,14 @@ def prepare_sparse_linearization(
             coordinates,
             arguments,
         )
+        coordinate_covector = plan.target.unflatten(primal_coordinates)
+        if plan.hessian_contract is not None and plan.hessian_contract.kind == "riesz":
+            primal = plan.target.validate(plan.source.inverse_riesz(coordinate_covector))
+        else:
+            primal = coordinate_covector
     else:
         primal_coordinates = jnp.asarray(plan.function(coordinates, arguments))
-    primal = plan.target.unflatten(primal_coordinates)
+        primal = plan.target.unflatten(primal_coordinates)
     operator = plan.operator(point_, arguments)
     identifier = canonical_fingerprint(
         {
@@ -473,6 +486,7 @@ def compile_sparse_jacobian(
         properties=properties,
         precision=precision,
         coefficient_scale=None,
+        hessian_contract=None,
         coordinate_identity=(
             None if source_coordinates is None else source_coordinates.coordinate_id,
             None if target_coordinates is None else target_coordinates.coordinate_id,
@@ -570,6 +584,7 @@ def compile_sparse_hessian(
         properties=properties,
         precision=precision,
         coefficient_scale=coefficient_scale,
+        hessian_contract=contract_,
         coordinate_identity=(
             None if source_coordinates is None else source_coordinates.coordinate_id,
             contract_.contract_id,
@@ -737,6 +752,7 @@ def _compile_sparse_derivative(
     chunk_size: int | None,
     properties: OperatorProperties | None,
     precision: SparseDerivativePrecisionPolicy | None,
+    hessian_contract: SparseHessianContract | None,
     coefficient_scale: Array | None,
     coordinate_identity: Any,
     plan_id: str | None,
@@ -827,6 +843,7 @@ def _compile_sparse_derivative(
         derivative_kind=derivative_kind,
         chunk_size=chunk,
         precision=precision_,
+        hessian_contract=hessian_contract,
         coefficient_scale=coefficient_scale,
         plan_id=identifier,
     )

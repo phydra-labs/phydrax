@@ -31,8 +31,8 @@ from ..stochastic._wiener import WienerRealization
 
 def _shape(value: Sequence[int], /, *, owner: str) -> tuple[int, ...]:
     shape = tuple(value)
-    if any(size <= 0 for size in shape):
-        raise ValueError(f"{owner} dimensions must be positive.")
+    if not shape or any(size <= 0 for size in shape):
+        raise ValueError(f"{owner} must contain positive dimensions.")
     return shape
 
 

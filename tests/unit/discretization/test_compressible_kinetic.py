@@ -4,9 +4,11 @@
 
 import jax.numpy as jnp
 import numpy as np
+import pytest
 
 from phydrax.discretization.discrete_velocity import (
     AdaptiveGaugePlan,
+    CompressibleKineticPopulationState,
     CompressibleKineticPrecisionPolicy,
     d3q33_filtered_rule,
     d3q39_guided_rule,
@@ -127,27 +129,32 @@ def test_periodic_transport_amr_precision_and_moving_geometry_preserve_contracts
     )
     streamed, transport_evidence = transport.stream(state)
     transfer = KineticAMRTransferPlan(3)
-    coarse = transfer.restrict(transfer.prolong(state))
+    fine = transfer.prolong(state)
+    coarse = transfer.restrict(fine.state)
     precision = CompressibleKineticPrecisionPolicy(
         storage_dtype="float16", compute_dtype="float32", accumulation_dtype="float64"
     )
     encoded = precision.encode(state.population("particle"))
     decoded = precision.decode(encoded, state.population("particle").shape)
     moving = MovingKineticGeometryPlan(state.spatial_shape)
-    moved, moving_evidence = moving.update(
+    moving_result = moving.update(
         state,
         jnp.ones(state.spatial_shape, dtype=jnp.bool_),
         jnp.ones(state.spatial_shape, dtype=jnp.bool_),
         state,
     )
+    moved = moving_result.candidate
+    moving_evidence = moving_result.evidence
 
     assert bool(transport_evidence.successful)
+    assert bool(fine.evidence.successful)
+    assert bool(coarse.evidence.successful)
     assert bool(moving_evidence.successful)
     np.testing.assert_allclose(
         streamed.population("particle"), state.population("particle")
     )
     np.testing.assert_allclose(
-        coarse.population("particle"), state.population("particle")
+        coarse.state.population("particle"), state.population("particle")
     )
     np.testing.assert_allclose(
         decoded, state.population("particle"), rtol=8e-4, atol=1e-7
@@ -196,3 +203,63 @@ def test_predictive_refinement_species_transport_radiation_and_spectrum_are_audi
     assert bool(spectrum.finite)
     np.testing.assert_allclose(jnp.sum(transported, axis=-1), 1.0, atol=2e-12)
     np.testing.assert_array_equal(updated.species_densities, species)
+
+
+def test_population_state_rejects_foreign_model_identity():
+    source = guided_d3q39_plan(gamma=1.4)
+    foreign = guided_d3q39_plan(gamma=1.5)
+    state = source.initialize(
+        jnp.ones((1,)),
+        jnp.zeros((1, 3)),
+        jnp.ones((1,)),
+    )
+
+    with pytest.raises(ValueError, match="identity"):
+        foreign.moments(state)
+
+
+def test_predictive_refinement_ignores_inactive_source_cells():
+    model = guided_d3q39_plan()
+    indicator = jnp.zeros((5, 5, 5))
+    indicator = indicator.at[2, 2, 2].set(10.0)
+    active = jnp.ones(indicator.shape, dtype=jnp.bool_)
+    active = active.at[2, 2, 2].set(False)
+    evidence = PredictiveKineticRefinementPlan(
+        model.rule,
+        refine_threshold=0.5,
+        coarsen_threshold=0.1,
+        prediction_steps=1,
+    ).evaluate(indicator, active=active)
+
+    assert not bool(jnp.any(evidence.refine))
+    assert bool(evidence.successful)
+
+
+def test_moving_geometry_reports_negative_uncovered_candidate_without_commit():
+    model = guided_d3q39_plan()
+    state = _uniform(model, shape=(2, 2, 2))
+    negative = CompressibleKineticPopulationState(
+        tuple(-jnp.ones_like(value) for value in state.populations),
+        state.equilibrium_dual,
+        state.stabilizer,
+        state.frame_velocity,
+        state.frame_temperature_scale,
+        state.layout,
+        state.model_id,
+        state.rule_id,
+    )
+    old_active = jnp.zeros(state.spatial_shape, dtype=jnp.bool_)
+    new_active = jnp.ones(state.spatial_shape, dtype=jnp.bool_)
+
+    result = MovingKineticGeometryPlan(state.spatial_shape).update(
+        state,
+        old_active,
+        new_active,
+        negative,
+    )
+
+    assert not bool(result.evidence.successful)
+    np.testing.assert_array_equal(
+        result.previous.population("particle"),
+        state.population("particle"),
+    )

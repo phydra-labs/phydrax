@@ -8,7 +8,7 @@ import jax.numpy as jnp
 import pytest
 
 import phydrax as phx
-from phydrax._model import AbstractArrayModel, FrozenModel
+from phydrax._model import AbstractArrayModel, FrozenModel, ModelBinding
 
 
 class _ScaleModel(AbstractArrayModel):
@@ -24,6 +24,30 @@ class _ScaleModel(AbstractArrayModel):
     def __call__(self, x, /, *, key=None):
         del key
         return self.scale * x
+
+
+class _BlockClassifier(AbstractArrayModel):
+    in_size: int = eqx.field(static=True)
+    out_size: int = eqx.field(static=True)
+    _input_binding = ModelBinding.blockwise()
+
+    def __init__(self):
+        self.in_size = 1
+        self.out_size = 2
+
+    def __call__(self, x, /, *, key=None):
+        del key
+        return self.decision_function(x)
+
+    def decision_function(self, x):
+        value = jnp.asarray(x)
+        return jnp.concatenate((-value, value), axis=-1)
+
+    def predict_proba(self, x):
+        return jax.nn.softmax(self.decision_function(x), axis=-1)
+
+    def predict(self, x):
+        return jnp.argmax(self.decision_function(x), axis=-1)
 
 
 class _ScaleRecipe(phx.ml.AbstractRecipe):
@@ -106,6 +130,21 @@ def test_fit_is_pure_frozen_and_remains_differentiable_when_called():
     gradient = jax.grad(lambda value: jnp.sum(result.model(value)))(jnp.array([2.0]))
     assert jnp.allclose(gradient, jnp.array([1.5]))
     assert result.gradient_contract.fit_mode == "direct"
+
+
+def test_frozen_model_preserves_binding_and_prediction_capabilities():
+    frozen = FrozenModel(_BlockClassifier())
+    values = jnp.asarray(((1.0,), (-2.0,)))
+
+    assert frozen.input_binding() == ModelBinding.blockwise()
+    assert jnp.array_equal(frozen.predict(values), jnp.asarray((1, 0)))
+    assert jnp.allclose(
+        frozen.predict_proba(values),
+        jax.nn.softmax(frozen.decision_function(values), axis=-1),
+    )
+
+    with pytest.raises(AttributeError):
+        FrozenModel(_ScaleModel(1.0)).predict(values)
 
 
 def test_existing_batch_rejects_duplicate_metadata():

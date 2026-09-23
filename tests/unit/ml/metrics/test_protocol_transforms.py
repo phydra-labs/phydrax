@@ -68,7 +68,7 @@ def test_function_scorer_has_explicit_direction_and_prediction_first_order():
 
     assert scorer.name == "negative_mse"
     assert scorer.greater_is_better is False
-    assert scorer.requires_probabilities is False
+    assert scorer.response_method == "call"
     assert isinstance(result, metrics.MetricResult)
     assert jnp.allclose(result.value, 0.5)
     with pytest.raises(AttributeError):
@@ -80,14 +80,14 @@ def test_function_scorer_preserves_arbitrary_structured_metric_output():
         metrics.expected_calibration_error,
         name="ece",
         greater_is_better=False,
-        requires_probabilities=True,
+        response_method="predict_proba",
         metric_kwargs={"num_bins": 2},
     )
     probability = jnp.array([0.1, 0.2, 0.8, 0.9])
     target = jnp.array([0, 0, 1, 1])
     result = scorer(probability, target)
 
-    assert scorer.requires_probabilities is True
+    assert scorer.response_method == "predict_proba"
     assert isinstance(result, metrics.CalibrationResult)
     assert jnp.allclose(result.value, 0.15)
     assert jnp.allclose(result.bin_weight, jnp.array([2.0, 2.0]))
@@ -212,6 +212,12 @@ def test_function_scorer_validates_and_freezes_metric_configuration():
             metrics.mean_squared_error,
             greater_is_better=False,
             metric_kwargs={"configuration": [1, 2]},
+        )
+    with pytest.raises(ValueError, match="response_method"):
+        metrics.FunctionScorer(
+            metrics.mean_squared_error,
+            greater_is_better=False,
+            response_method="unknown",
         )
     with pytest.raises(AttributeError):
         scorer.metric_kwargs = ()

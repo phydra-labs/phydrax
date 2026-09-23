@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -46,14 +47,27 @@ class DiffuseGrayEnclosure:
         areas = np.asarray(surface_areas_m2, dtype=np.float64)
         emissivity_ = np.asarray(emissivity, dtype=np.float64)
         factors = np.asarray(view_factors, dtype=np.float64)
-        if areas.ndim != 1 or areas.size < 2 or np.any(areas <= 0):
-            raise ValueError("Radiation enclosure areas must be a positive vector.")
-        if emissivity_.shape != areas.shape or np.any(
-            (emissivity_ <= 0) | (emissivity_ > 1)
+        if (
+            areas.ndim != 1
+            or areas.size < 2
+            or not np.all(np.isfinite(areas))
+            or np.any(areas <= 0)
         ):
-            raise ValueError("Radiation emissivities must lie in (0, 1].")
-        if factors.shape != (areas.size, areas.size) or np.any(factors < 0):
-            raise ValueError("Radiation view factors have incompatible shape or signs.")
+            raise ValueError(
+                "Radiation enclosure areas must be a finite positive vector."
+            )
+        if (
+            emissivity_.shape != areas.shape
+            or not np.all(np.isfinite(emissivity_))
+            or np.any((emissivity_ <= 0) | (emissivity_ > 1))
+        ):
+            raise ValueError("Radiation emissivities must be finite and lie in (0, 1].")
+        if (
+            factors.shape != (areas.size, areas.size)
+            or not np.all(np.isfinite(factors))
+            or np.any(factors < 0)
+        ):
+            raise ValueError("Radiation view factors have incompatible shape or values.")
         if not np.allclose(factors.sum(axis=1), 1, atol=tolerance, rtol=0):
             raise ValueError("Closed-enclosure view-factor rows must sum to one.")
         reciprocity = areas[:, None] * factors - areas[None, :] * factors.T
@@ -63,12 +77,13 @@ class DiffuseGrayEnclosure:
 
     def solve(self, temperature_k: ArrayLike, /) -> EnclosureRadiationResult:
         temperature = jnp.asarray(temperature_k)
-        if temperature.shape != self.surface_areas_m2.shape or bool(
-            jnp.any(temperature <= 0)
-        ):
-            raise ValueError(
-                "Radiation temperatures must be positive and surface aligned."
-            )
+        if temperature.shape != self.surface_areas_m2.shape:
+            raise ValueError("Radiation temperatures must be surface aligned.")
+        temperature = eqx.error_if(
+            temperature,
+            jnp.any(~jnp.isfinite(temperature) | (temperature <= 0)),
+            "Radiation temperatures must be finite and positive.",
+        )
         matrix = (
             jnp.eye(temperature.size, dtype=temperature.dtype)
             - (1 - self.emissivity)[:, None] * self.view_factors

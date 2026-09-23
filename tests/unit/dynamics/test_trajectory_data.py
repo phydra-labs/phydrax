@@ -185,3 +185,44 @@ def test_fixed_step_adapter_requires_declared_projection_and_retained_trajectory
             projection_id="first-column",
             state_layout=layout,
         )
+
+
+def test_autonomous_trajectory_rejects_orphan_input_metadata():
+    layout = phx.dynamics.StateLayout((1,))
+    coordinates = jnp.asarray([0.0, 1.0])
+    states = jnp.asarray([[0.0], [1.0]])
+
+    with pytest.raises(ValueError, match="input_valid requires inputs"):
+        phx.dynamics.TrajectoryData(
+            coordinates,
+            states,
+            state_layout=layout,
+            input_valid=jnp.asarray([True]),
+            source_id="orphan-input-validity",
+        )
+    with pytest.raises(ValueError, match="must remain 'transitions'"):
+        phx.dynamics.TrajectoryData(
+            coordinates,
+            states,
+            state_layout=layout,
+            input_alignment="samples",
+            source_id="orphan-input-alignment",
+        )
+
+
+def test_default_dataset_identity_includes_numeric_content_and_axis_semantics():
+    layout = phx.dynamics.StateLayout((1,))
+    first = phx.dynamics.TrajectoryData(
+        jnp.asarray([0.0, 1.0]),
+        jnp.asarray([[0.0], [1.0]]),
+        state_layout=layout,
+        source_id="reused-source",
+    )
+    changed = phx.dynamics.TrajectoryData(
+        jnp.asarray([0.0, 1.0]),
+        jnp.asarray([[0.0], [2.0]]),
+        state_layout=layout,
+        source_id="reused-source",
+    )
+
+    assert first.dataset_id != changed.dataset_id

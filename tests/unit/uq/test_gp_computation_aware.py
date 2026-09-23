@@ -254,6 +254,10 @@ def test_rank_deficient_actions_retain_failure_evidence_and_fail_on_use():
     assert not factor.diagnostics.valid
     with pytest.raises(Exception, match="numerically invalid"):
         factor.elbo(observations - mean)
+    with pytest.raises(Exception, match="numerically invalid"):
+        factor.latent_moments(observations - mean, points)
+    with pytest.raises(Exception, match="numerically invalid"):
+        factor.conditioner(points)
 
 
 def test_kernel_noise_mean_and_action_gradients_are_finite():

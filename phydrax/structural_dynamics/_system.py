@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 
 import jax.numpy as jnp
 import numpy as np
@@ -49,6 +50,7 @@ class StructuralDynamicState:
 @dataclass(frozen=True, slots=True)
 class StructuralDynamicStep:
     state: StructuralDynamicState
+    candidate_state: StructuralDynamicState
     equilibrium_residual_norm: Array
     mechanical_energy_j: Array
     successful: Array
@@ -73,6 +75,10 @@ class LinearStructuralSystem:
         matrices = tuple(
             np.asarray(value, dtype=np.float64) for value in (mass, damping, stiffness)
         )
+        if not isfinite(symmetry_tolerance) or symmetry_tolerance <= 0:
+            raise ValueError("Structural symmetry tolerance must be finite and positive.")
+        if not all(np.all(np.isfinite(value)) for value in matrices):
+            raise ValueError("Structural operators must be finite.")
         if matrices[0].ndim != 2 or matrices[0].shape[0] != matrices[0].shape[1]:
             raise ValueError("Structural matrices must be square.")
         if any(value.shape != matrices[0].shape for value in matrices[1:]):
@@ -82,8 +88,13 @@ class LinearStructuralSystem:
             for value in matrices
         ):
             raise ValueError("Structural mass, damping, and stiffness must be symmetric.")
-        if np.min(np.linalg.eigvalsh(matrices[0])) <= 0:
+        eigenvalues = tuple(np.linalg.eigvalsh(value) for value in matrices)
+        if np.min(eigenvalues[0]) <= symmetry_tolerance:
             raise ValueError("Structural mass must be positive definite.")
+        if np.min(eigenvalues[1]) < -symmetry_tolerance:
+            raise ValueError("Structural damping must be positive semidefinite.")
+        if np.min(eigenvalues[2]) < -symmetry_tolerance:
+            raise ValueError("Structural stiffness must be positive semidefinite.")
         return cls(*(jnp.asarray(value) for value in matrices))
 
     @property
@@ -161,8 +172,19 @@ class LinearStructuralSystem:
         gamma: float = 0.5,
         relative_tolerance: float = 1e-9,
     ) -> StructuralDynamicStep:
-        if step_size_s <= 0 or beta <= 0 or gamma <= 0:
-            raise ValueError("Newmark integration controls must be positive.")
+        if (
+            not isfinite(step_size_s)
+            or step_size_s <= 0
+            or not isfinite(beta)
+            or not isfinite(gamma)
+            or gamma < 0.5
+            or beta < 0.25 * (gamma + 0.5) ** 2
+            or not isfinite(relative_tolerance)
+            or relative_tolerance <= 0
+        ):
+            raise ValueError(
+                "Newmark integration controls violate the stable parameter region."
+            )
         displacement = jnp.asarray(state.displacement)
         velocity = jnp.asarray(state.velocity)
         acceleration = jnp.asarray(state.acceleration)
@@ -172,6 +194,11 @@ class LinearStructuralSystem:
             for value in (displacement, velocity, acceleration, load)
         ):
             raise ValueError("Structural state and load must match the coordinate basis.")
+        if not all(
+            bool(jnp.all(jnp.isfinite(value)))
+            for value in (displacement, velocity, acceleration, load)
+        ):
+            raise ValueError("Structural state and load must be finite.")
         dt = float(step_size_s)
         predicted_displacement = (
             displacement + dt * velocity + dt**2 * (0.5 - beta) * acceleration
@@ -204,13 +231,23 @@ class LinearStructuralSystem:
             contract("i,ij,j->", velocity_new, self.mass, velocity_new)
             + contract("i,ij,j->", displacement_new, self.stiffness, displacement_new)
         )
-        successful = acceleration_new.successful & (
-            residual_norm <= float(relative_tolerance) * jnp.maximum(load_norm, 1.0)
+        successful = (
+            acceleration_new.successful
+            & jnp.isfinite(residual_norm)
+            & jnp.isfinite(energy)
+            & (residual_norm <= float(relative_tolerance) * jnp.maximum(load_norm, 1.0))
+        )
+        candidate = StructuralDynamicState(
+            displacement_new, velocity_new, acceleration_new.value
+        )
+        accepted = StructuralDynamicState(
+            jnp.where(successful, displacement_new, displacement),
+            jnp.where(successful, velocity_new, velocity),
+            jnp.where(successful, acceleration_new.value, acceleration),
         )
         return StructuralDynamicStep(
-            StructuralDynamicState(
-                displacement_new, velocity_new, acceleration_new.value
-            ),
+            accepted,
+            candidate,
             residual_norm,
             energy,
             successful,

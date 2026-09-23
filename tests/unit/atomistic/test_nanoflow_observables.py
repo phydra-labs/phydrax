@@ -119,12 +119,6 @@ def test_exact_linear_msd_recovers_diffusion_tensor_and_immutable_artifact():
         header,
         "correlation-observer",
     )
-    fit = phx.atomistic.DiffusionTensorFitPlan(
-        0, 6, minimum_origins=4, stationarity_tolerance=1.0e-8
-    ).evaluate(correlation)
-
-    assert bool(fit.header.globally_eligible)
-    np.testing.assert_allclose(fit.diffusion_tensor, diffusion, atol=1.0e-14)
     support = phx.atomistic.NanoflowClosureSupport(
         temperature_interval=(295.0, 305.0),
         confinement_interval=(3.9, 4.1),
@@ -133,6 +127,18 @@ def test_exact_linear_msd_recovers_diffusion_tensor_and_immutable_artifact():
         lower_wall_id="lower",
         upper_wall_id="upper",
     )
+    fit = phx.atomistic.DiffusionTensorFitPlan(
+        0, 6, minimum_origins=4, stationarity_tolerance=1.0e-8
+    ).evaluate(
+        correlation,
+        support_id=support.support_id,
+        system_id="system",
+        force_field_id="force-field",
+        rollout_id="rollout",
+    )
+
+    assert bool(fit.header.globally_eligible)
+    np.testing.assert_allclose(fit.diffusion_tensor, diffusion, atol=1.0e-14)
     artifact = phx.atomistic.diffusion_closure_artifact(
         fit,
         support,
@@ -182,6 +188,10 @@ def test_driven_profile_fit_recovers_two_wall_slip_lengths():
         jnp.asarray(0.0),
         jnp.asarray(10.0),
         jnp.asarray(4.0),
+        support_id="slip-support",
+        system_id="system",
+        force_field_id="force-field",
+        rollout_id="rollout",
     )
 
     assert bool(fit.header.globally_eligible)
@@ -199,6 +209,10 @@ def test_exact_wall_force_contract_produces_friction_with_uncertainty():
         lag_count=4,
         minimum_pairs=90,
         force_source_id="exact-wall-force-group",
+        support_id="friction-support",
+        system_id="system",
+        force_field_id="force-field",
+        rollout_id="rollout",
     ).evaluate(force)
 
     assert bool(result.header.globally_eligible)

@@ -101,8 +101,8 @@ class GlobalSurfacePhysics(StrictModule):
                 "slab": slab.plan_id,
                 "surface_exchange": surface_exchange.plan_id,
                 "radiation": radiation.plan_id,
-                # Numeric component leaves are bound by the native global checkpoint
-                # at save/load, not hashed here (constructors may receive tracers).
+                # Trainable numeric leaves are bound by the prepared global runtime
+                # and checkpoint content identities, not this semantic component ID.
                 "solar_distribution": "diffuse-annual-mean-one-plus-P2",
                 "parameters": values,
                 "boundary_air": "bottom-cell-gas-only",

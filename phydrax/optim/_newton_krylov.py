@@ -296,6 +296,11 @@ class NewtonKrylov(AbstractScalarIterativeMethod):
                 step=_tree_add_scaled,
                 contains=_tree_allfinite,
                 policy=self.line_search,
+                maximum_evaluations=(
+                    None
+                    if termination is None or termination.maximum_evaluations is None
+                    else termination.maximum_evaluations - state.objective_evaluations - 1
+                ),
             )
             accepted = search.accepted
             step_norm = search.rate * _tree_norm(direction)

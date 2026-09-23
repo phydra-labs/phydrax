@@ -1156,10 +1156,11 @@ class EventGraphRepository:
                     break
                 reachable_epochs.add(current)
                 epoch = self.load_epoch(current).manifest
-                reachable_entities.update(epoch.entity_ids)
-                reachable_events.update(epoch.event_ids)
-                reachable_edges.update(epoch.edge_ids)
-                reachable_work.update(epoch.work_ids)
+                closure = self._manifest_reachability(epoch)
+                reachable_entities.update(closure[0])
+                reachable_events.update(closure[1])
+                reachable_edges.update(closure[2])
+                reachable_work.update(closure[3])
                 current = epoch.parent_manifest_id
                 if len(reachable_epochs) > self.maximum_lineage_records:
                     raise RepositoryCorruptionError(
@@ -1211,52 +1212,99 @@ class EventGraphRepository:
                     )
                     tombstoned.append(artifact_id)
         return EventGraphGarbageCollectionReport(
-            roots, tuple(reachable_epochs), tombstoned
+            roots, tuple(sorted(reachable_epochs)), tombstoned
         )
 
-    def _validate_manifest_graph(self, manifest: EventGraphEpochManifest, /) -> None:
-        for identity in manifest.entity_ids:
-            self.get_entity(identity)
-        events = {identity: self.get_event(identity) for identity in manifest.event_ids}
-        for identity in manifest.edge_ids:
-            edge = self.get_edge(identity)
-            if edge.source_event_id not in events:
-                self.get_event(edge.source_event_id)
-            if edge.target_event_id not in events:
-                self.get_event(edge.target_event_id)
-        for identity in manifest.work_ids:
-            self.get_work(identity)
-        self._validate_event_lineage(tuple(events))
-        if any(
-            event.epoch_sequence > manifest.epoch_sequence for event in events.values()
-        ):
-            raise ValueError("Epoch manifest cannot contain events from a future epoch.")
+    def _manifest_reachability(
+        self, manifest: EventGraphEpochManifest, /
+    ) -> tuple[set[str], set[str], set[str], set[str]]:
+        """Iteratively close one epoch over every authoritative causal reference."""
 
-    def _validate_event_lineage(self, event_ids: Sequence[str], /) -> None:
-        visiting: set[str] = set()
-        visited: set[str] = set()
-        count = 0
+        entities: set[str] = set()
+        events: set[str] = set()
+        edges: set[str] = set()
+        work_items: set[str] = set()
+        record_count = 0
 
-        def visit(event_id: str) -> None:
-            nonlocal count
-            if event_id in visited:
-                return
-            if event_id in visiting:
-                raise ValueError("Event lineage must be acyclic.")
-            count += 1
-            if count > self.maximum_lineage_records:
+        def admit(identity: str, known: set[str]) -> bool:
+            nonlocal record_count
+            if identity in known:
+                return False
+            known.add(identity)
+            record_count += 1
+            if record_count > self.maximum_lineage_records:
                 raise RepositoryCorruptionError(
-                    "Event lineage exceeds maximum_lineage_records."
+                    "Event graph closure exceeds maximum_lineage_records."
                 )
-            visiting.add(event_id)
-            event = self.get_event(event_id)
-            for parent_id in event.parent_event_ids:
-                visit(parent_id)
-            visiting.remove(event_id)
-            visited.add(event_id)
+            return True
 
-        for event_id in event_ids:
-            visit(event_id)
+        def visit_entity(identity: str) -> None:
+            if admit(identity, entities):
+                self.get_entity(identity)
+
+        event_roots = list(manifest.event_ids)
+        for identity in manifest.entity_ids:
+            visit_entity(identity)
+        for identity in manifest.edge_ids:
+            if not admit(identity, edges):
+                continue
+            edge = self.get_edge(identity)
+            visit_entity(edge.entity_id)
+            event_roots.extend((edge.source_event_id, edge.target_event_id))
+
+        visiting_events: set[str] = set()
+        visited_events: set[str] = set()
+        event_stack = [(identity, False) for identity in reversed(event_roots)]
+        while event_stack:
+            identity, exiting = event_stack.pop()
+            if exiting:
+                visiting_events.remove(identity)
+                visited_events.add(identity)
+                continue
+            if identity in visited_events:
+                continue
+            if identity in visiting_events:
+                raise ValueError("Event lineage must be acyclic.")
+            visiting_events.add(identity)
+            event = self.get_event(identity)
+            admit(identity, events)
+            if event.epoch_sequence > manifest.epoch_sequence:
+                raise ValueError(
+                    "Epoch manifest cannot reference events from a future epoch."
+                )
+            for entity_id in (*event.input_entity_ids, *event.output_entity_ids):
+                visit_entity(entity_id)
+            event_stack.append((identity, True))
+            event_stack.extend(
+                (parent_id, False) for parent_id in reversed(event.parent_event_ids)
+            )
+
+        visiting_work: set[str] = set()
+        visited_work: set[str] = set()
+        work_stack = [(identity, False) for identity in reversed(manifest.work_ids)]
+        while work_stack:
+            identity, exiting = work_stack.pop()
+            if exiting:
+                visiting_work.remove(identity)
+                visited_work.add(identity)
+                continue
+            if identity in visited_work:
+                continue
+            if identity in visiting_work:
+                raise ValueError("Work lineage must be acyclic.")
+            visiting_work.add(identity)
+            work = self.get_work(identity)
+            admit(identity, work_items)
+            for entity_id in work.input_entity_ids:
+                visit_entity(entity_id)
+            work_stack.append((identity, True))
+            if work.parent_work_id is not None:
+                work_stack.append((work.parent_work_id, False))
+
+        return entities, events, edges, work_items
+
+    def _validate_manifest_graph(self, manifest: EventGraphEpochManifest, /) -> None:
+        self._manifest_reachability(manifest)
 
     def _put_record(
         self,

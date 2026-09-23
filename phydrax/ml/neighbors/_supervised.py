@@ -218,7 +218,7 @@ class ExactNeighborClassifierModel(AbstractArrayModel):
 
     _input_binding: ClassVar[ModelBinding] = ModelBinding.blockwise(input_mode="flat")
 
-    def probabilities(self, x: ArrayLike, /) -> Array:
+    def predict_proba(self, x: ArrayLike, /) -> Array:
         distances, query_shape = case_distances(
             jnp.asarray(x), self.support, self.case_shape, self.metric
         )
@@ -239,10 +239,10 @@ class ExactNeighborClassifierModel(AbstractArrayModel):
 
     def __call__(self, x: ArrayLike, /, *, key: Any = None) -> Array:
         del key
-        return self.probabilities(x)
+        return self.predict_proba(x)
 
     def predict(self, x: ArrayLike, /) -> Array:
-        probability = self.probabilities(x)
+        probability = self.predict_proba(x)
         valid = jnp.sum(probability, axis=-1) > 0
         return jnp.where(valid, jnp.argmax(probability, axis=-1), -1).astype(jnp.int32)
 
@@ -392,7 +392,7 @@ class KernelNeighborClassifierModel(AbstractArrayModel):
 
     _input_binding: ClassVar[ModelBinding] = ModelBinding.blockwise(input_mode="flat")
 
-    def probabilities(self, x: ArrayLike, /) -> Array:
+    def predict_proba(self, x: ArrayLike, /) -> Array:
         distances, query_shape = case_distances(
             jnp.asarray(x), self.support, self.case_shape, self.metric
         )
@@ -412,10 +412,10 @@ class KernelNeighborClassifierModel(AbstractArrayModel):
 
     def __call__(self, x: ArrayLike, /, *, key: Any = None) -> Array:
         del key
-        return self.probabilities(x)
+        return self.predict_proba(x)
 
     def predict(self, x: ArrayLike, /) -> Array:
-        probability = self.probabilities(x)
+        probability = self.predict_proba(x)
         valid = jnp.sum(probability, axis=-1) > 0
         return jnp.where(valid, jnp.argmax(probability, axis=-1), -1).astype(jnp.int32)
 
@@ -560,7 +560,7 @@ class RadiusNeighborClassifierModel(AbstractArrayModel):
 
     _input_binding: ClassVar[ModelBinding] = ModelBinding.blockwise(input_mode="flat")
 
-    def probabilities(self, x: ArrayLike, /) -> Array:
+    def predict_proba(self, x: ArrayLike, /) -> Array:
         distances, query_shape = case_distances(
             jnp.asarray(x), self.support, self.case_shape, self.metric
         )
@@ -580,10 +580,10 @@ class RadiusNeighborClassifierModel(AbstractArrayModel):
 
     def __call__(self, x: ArrayLike, /, *, key: Any = None) -> Array:
         del key
-        return self.probabilities(x)
+        return self.predict_proba(x)
 
     def predict(self, x: ArrayLike, /) -> Array:
-        probability = self.probabilities(x)
+        probability = self.predict_proba(x)
         valid = jnp.sum(probability, axis=-1) > 0
         return jnp.where(valid, jnp.argmax(probability, axis=-1), -1).astype(jnp.int32)
 
@@ -639,7 +639,7 @@ class NearestCentroidModel(AbstractArrayModel):
 
     _input_binding: ClassVar[ModelBinding] = ModelBinding.blockwise(input_mode="flat")
 
-    def probabilities(self, x: ArrayLike, /) -> Array:
+    def predict_proba(self, x: ArrayLike, /) -> Array:
         distances, query_shape = case_distances(
             jnp.asarray(x), self.centroids, self.case_shape, self.metric
         )
@@ -648,10 +648,10 @@ class NearestCentroidModel(AbstractArrayModel):
 
     def __call__(self, x: ArrayLike, /, *, key: Any = None) -> Array:
         del key
-        return self.probabilities(x)
+        return self.predict_proba(x)
 
     def predict(self, x: ArrayLike, /) -> Array:
-        probability = self.probabilities(x)
+        probability = self.predict_proba(x)
         valid = jnp.sum(probability, axis=-1) > 0
         return jnp.where(valid, jnp.argmax(probability, axis=-1), -1).astype(jnp.int32)
 

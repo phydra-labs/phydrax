@@ -6,7 +6,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -19,7 +21,9 @@ from ._core import AdsorptionKinetics
 @dataclass(frozen=True, slots=True)
 class BulkSurfaceTransportStep:
     bulk_concentration_mol_m3: Array
+    candidate_bulk_concentration_mol_m3: Array
     surface_concentration_mol_m2: Array
+    candidate_surface_concentration_mol_m2: Array
     transferred_to_surface_mol: Array
     total_mole_balance_residual: Array
     minimum_concentration: Array
@@ -35,6 +39,7 @@ class CoupledBulkSurfaceTransport:
     surface_transport_generator_s_inv: Array
     bulk_from_surface: Array
     kinetics: AdsorptionKinetics
+    tolerance: float
 
     @classmethod
     def create(
@@ -52,6 +57,19 @@ class CoupledBulkSurfaceTransport:
         areas = np.asarray(surface_areas_m2, dtype=np.float64)
         generator = np.asarray(surface_transport_generator_s_inv, dtype=np.float64)
         coupling = np.asarray(bulk_from_surface, dtype=np.float64)
+        if not isinstance(kinetics, AdsorptionKinetics):
+            raise TypeError("Bulk-surface transport kinetics must be AdsorptionKinetics.")
+        if (
+            not isfinite(tolerance)
+            or tolerance <= 0
+            or not all(
+                np.all(np.isfinite(value))
+                for value in (volumes, areas, generator, coupling)
+            )
+        ):
+            raise ValueError(
+                "Bulk-surface transport data/tolerance must be finite and physical."
+            )
         if volumes.ndim != 1 or volumes.size == 0 or np.any(volumes <= 0):
             raise ValueError("Bulk control volumes must be a positive vector.")
         if areas.ndim != 1 or areas.size == 0 or np.any(areas <= 0):
@@ -61,6 +79,11 @@ class CoupledBulkSurfaceTransport:
         if not np.allclose(areas @ generator, 0, atol=tolerance, rtol=tolerance):
             raise ValueError(
                 "Surface transport generator must conserve area-weighted content."
+            )
+        off_diagonal = generator - np.diag(np.diag(generator))
+        if np.any(off_diagonal < -tolerance):
+            raise ValueError(
+                "Surface transport generator must preserve nonnegative concentrations."
             )
         if coupling.shape != (volumes.size, areas.size) or np.any(coupling < 0):
             raise ValueError("Bulk–surface coupling has incompatible shape or signs.")
@@ -72,6 +95,7 @@ class CoupledBulkSurfaceTransport:
             jnp.asarray(generator),
             jnp.asarray(coupling),
             kinetics,
+            float(tolerance),
         )
 
     def advance(
@@ -87,8 +111,19 @@ class CoupledBulkSurfaceTransport:
             raise ValueError("Bulk concentration does not match transport topology.")
         if surface.shape != self.surface_areas_m2.shape:
             raise ValueError("Surface concentration does not match transport topology.")
-        if step_size_s <= 0 or bool(jnp.any(bulk < 0) | jnp.any(surface < 0)):
-            raise ValueError("Transport state and step size must be non-negative.")
+        if not isfinite(step_size_s) or step_size_s <= 0:
+            raise ValueError("Transport step size must be finite and positive.")
+        bulk = eqx.error_if(
+            bulk,
+            jnp.any(
+                ~jnp.isfinite(bulk)
+                | ~jnp.isfinite(surface)
+                | (bulk < 0)
+                | (surface < 0)
+                | (surface > self.kinetics.maximum_surface_concentration_mol_m2)
+            ),
+            "Bulk/surface concentrations must be finite and within physical bounds.",
+        )
 
         initial_total = contract("b,b->", self.bulk_volumes_m3, bulk) + contract(
             "s,s->", self.surface_areas_m2, surface
@@ -101,9 +136,16 @@ class CoupledBulkSurfaceTransport:
             surface,
             policy=LinearSolvePolicy(DenseLU()),
         )
-        if bool(jnp.any(transported.value < -1e-12)):
-            raise ValueError("Surface transport operator violated positivity.")
-        transported_surface = jnp.maximum(transported.value, 0)
+        transport_valid = (
+            transported.successful
+            & jnp.all(jnp.isfinite(transported.value))
+            & jnp.all(transported.value >= -self.tolerance)
+        )
+        transported_surface = jnp.where(
+            transport_valid,
+            transported.value,
+            surface,
+        )
 
         local_bulk = self.bulk_from_surface.T @ bulk
         requested = (
@@ -138,17 +180,31 @@ class CoupledBulkSurfaceTransport:
         next_surface = surface_moles / self.surface_areas_m2
         final_total = jnp.sum(bulk_moles) + jnp.sum(surface_moles)
         minimum = jnp.minimum(jnp.min(next_bulk), jnp.min(next_surface))
+        balance_residual = final_total - initial_total
         successful = (
-            transported.successful
+            transport_valid
             & jnp.all(jnp.isfinite(next_bulk))
             & jnp.all(jnp.isfinite(next_surface))
-            & (minimum >= 0)
+            & (minimum >= -self.tolerance)
+            & jnp.all(
+                next_surface
+                <= self.kinetics.maximum_surface_concentration_mol_m2 + self.tolerance
+            )
+            & jnp.isfinite(balance_residual)
+            & (jnp.abs(balance_residual) <= self.tolerance)
+        )
+        accepted_bulk = jnp.where(successful, next_bulk, bulk)
+        accepted_surface = jnp.where(successful, next_surface, surface)
+        accepted_transfer = jnp.where(
+            successful, transferred, jnp.zeros_like(transferred)
         )
         return BulkSurfaceTransportStep(
+            accepted_bulk,
             next_bulk,
+            accepted_surface,
             next_surface,
-            transferred,
-            final_total - initial_total,
+            accepted_transfer,
+            balance_residual,
             minimum,
             successful,
         )

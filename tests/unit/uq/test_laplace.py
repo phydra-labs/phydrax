@@ -117,6 +117,13 @@ def test_laplace_rejects_nonstationary_centers_and_implicit_regularization():
 
     with pytest.raises(phx.uq.LaplaceCurvatureError, match="not stationary"):
         phx.uq.fit_laplace(problem, jnp.ones(6))
+    for tolerance in (jnp.nan, jnp.inf):
+        with pytest.raises(ValueError, match="finite"):
+            phx.uq.fit_laplace(
+                problem,
+                jnp.zeros(6),
+                stationarity_tolerance=tolerance,
+            )
     whitened = phx.uq.fit_laplace(problem, curvature="diagonal")
     assert isinstance(whitened, phx.uq.StructuredLaplaceResult)
     assert whitened.whitening is not None

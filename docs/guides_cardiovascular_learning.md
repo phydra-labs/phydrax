@@ -162,7 +162,7 @@ mismatch, unsuccessful native domain evidence, topology or quantity mismatch, an
 non-finite output. `FullNativeReanalysisResult.accepted_fields` is `None` on every
 failure and never references the learned initial guess.
 
-## Qualification and performance
+## Qualification
 
 Run the focused scientific qualification campaign from the repository root:
 
@@ -175,11 +175,3 @@ mass, covariance and replay, geometry qualification, and calibrated OOD refusal.
 It executes a phenomenological EP reaction, passive hyperelastic response,
 circulation DAE initialization, and fixed-wall LBM candidate; only their exact
 successful result receipts permit full native reanalysis acceptance.
-
-The benchmark reports KL preparation, random-field sampling throughput, cohort
-preparation, geometry qualification, OOD assessment, and native acceptance-gate
-overhead:
-
-```text
-python benchmarks/cardiovascular_learning.py --point-counts 16 64 --sample-count 2048
-```

@@ -755,14 +755,16 @@ def _nuts_reference_transition(prepared, state, key):
             right_q = jnp.where(extend & (direction > 0), next_q, right_q)
             right_p = jnp.where(extend & (direction > 0), next_p, right_p)
             right_f = jnp.where(extend & (direction > 0), next_f, right_f)
-            turn = transported_group_u_turn(
+            turn_evidence = transported_group_u_turn(
                 prepared, left_q, right_q, left_p, right_p
-            ).turning
+            )
+            turn = turn_evidence.turning
+            turn_nonfinite = extend & ~turn_evidence.finite
             turning = turning | (extend & turn)
-            divergent = divergent | (active & leaf_divergent)
+            divergent = divergent | (active & (leaf_divergent | turn_nonfinite))
             used = used + active.astype(jnp.int32)
             evaluations = evaluations + jnp.where(active, calls, 0)
-            active = extend & ~turn
+            active = extend & turn_evidence.finite & ~turn
     accepted = state.valid & (valid_count > 1) & ~divergent
     position = jnp.where(accepted, candidate_q, state.position)
     next_momentum = jnp.where(accepted, -candidate_p, -momentum)

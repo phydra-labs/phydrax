@@ -248,6 +248,9 @@ def test_no_resampling_paths_keep_identity_genealogy():
         jnp.broadcast_to(result.log_weights[-1], smoother.log_weights.shape),
     )
     paths = phx.uq.sample_particle_ancestry_paths(jr.key(3), result, sample_shape=(8,))
+    predictive = phx.uq.particle_filter_predictive(jr.key(30), result)
+    assert paths.dtype == result.particles.dtype
+    assert predictive.samples.data.dtype == result.predicted_particles.dtype
     for path in paths:
         candidate = jnp.all(result.particles == path[:, None, :], axis=(0, 2))
         assert jnp.any(candidate)

@@ -2,6 +2,7 @@
 # Copyright © 2026 PHYDRA, Inc. All rights reserved.
 #
 
+import equinox as eqx
 import jax
 import jax.numpy as jnp
 import pytest
@@ -11,6 +12,10 @@ from phydrax.linalg._causal_linear import (
     associative_transpose_solve,
     causal_linearized_residual,
     solve_causal_least_squares,
+)
+from phydrax.linalg._gaussian_chain import (
+    combine_gaussian_filter_elements,
+    GaussianFilterElement,
 )
 
 
@@ -105,3 +110,24 @@ def test_causal_linear_contract_rejects_invalid_shapes_and_damping():
         associative_affine_solve(transitions, residuals[:, :1])
     with pytest.raises(Exception, match="nonnegative"):
         solve_causal_least_squares(transitions, residuals, jnp.asarray(-1.0))
+
+
+def test_gaussian_scan_combination_fails_closed_on_singular_system():
+    left = GaussianFilterElement(
+        jnp.asarray([[1.0]]),
+        jnp.asarray([0.0]),
+        jnp.asarray([[1.0]]),
+        jnp.asarray([0.0]),
+        jnp.asarray([[0.0]]),
+    )
+    right = GaussianFilterElement(
+        jnp.asarray([[1.0]]),
+        jnp.asarray([0.0]),
+        jnp.asarray([[0.0]]),
+        jnp.asarray([0.0]),
+        jnp.asarray([[-1.0]]),
+    )
+
+    with pytest.raises(eqx.EquinoxRuntimeError, match="Linear solve failed"):
+        combined = combine_gaussian_filter_elements(left, right)
+        jax.block_until_ready(combined.transition)

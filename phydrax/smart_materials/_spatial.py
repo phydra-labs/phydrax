@@ -14,7 +14,15 @@ def piezoelectric_block_matrix(
     k = jnp.asarray(mechanical_stiffness)
     e = jnp.asarray(piezoelectric_coupling)
     d = jnp.asarray(dielectric_stiffness)
-    return jnp.block([[k, -jnp.swapaxes(e, -1, -2)], [e, d]])
+    if (
+        k.ndim != 2
+        or k.shape[0] != k.shape[1]
+        or d.ndim != 2
+        or d.shape[0] != d.shape[1]
+        or e.shape != (k.shape[0], d.shape[0])
+    ):
+        raise ValueError("Piezoelectric block operators have incompatible shapes.")
+    return jnp.block([[k, -e], [-jnp.swapaxes(e, -1, -2), -d]])
 
 
 __all__ = ["piezoelectric_block_matrix"]

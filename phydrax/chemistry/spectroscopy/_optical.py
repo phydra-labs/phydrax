@@ -17,7 +17,14 @@ from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ...ein import contract
-from ...units import UnitDefinition
+from ...units import (
+    ANGLE,
+    CONDUCTANCE,
+    LENGTH,
+    SI_REFERENCE_SYSTEM_ID,
+    TIME,
+    UnitDefinition,
+)
 from ..periodic._kubo import FiniteFrequencyKuboResponse
 from ._response import (
     SpectralResponseEvidence,
@@ -31,7 +38,6 @@ _VACUUM_PERMITTIVITY_SI = 8.8541878128e-12
 
 class OpticalDielectricEvidence(StrictModule, NonTrainableState):
     passivity_residual: Array
-    constitutive_residual: Array
     f_sum_relative_residual: Array
     successful: Array
 
@@ -86,7 +92,6 @@ class OpticalDielectricPlan(StrictModule, NonTrainableState):
     polarizations: Array
     channel_labels: tuple[str, ...] = eqx.field(static=True)
     passivity_tolerance: float = eqx.field(static=True)
-    constitutive_tolerance: float = eqx.field(static=True)
     f_sum_tolerance: float = eqx.field(static=True)
     plan_id: str = eqx.field(static=True)
 
@@ -97,13 +102,11 @@ class OpticalDielectricPlan(StrictModule, NonTrainableState):
         /,
         *,
         passivity_tolerance: float = 1.0e-10,
-        constitutive_tolerance: float = 1.0e-12,
         f_sum_tolerance: float = 1.0e-8,
     ):
         vectors = jnp.asarray(polarizations)
         labels = tuple(str(label).strip() for label in channel_labels)
         passivity = float(passivity_tolerance)
-        constitutive = float(constitutive_tolerance)
         f_sum = float(f_sum_tolerance)
         if (
             vectors.shape != (len(labels), 3)
@@ -112,16 +115,12 @@ class OpticalDielectricPlan(StrictModule, NonTrainableState):
             or any(not label for label in labels)
             or bool(jnp.any(~jnp.isfinite(vectors)))
             or bool(jnp.any(jnp.abs(jnp.linalg.norm(vectors, axis=1) - 1.0) > 1.0e-10))
-            or any(
-                not isfinite(value) or value <= 0.0
-                for value in (passivity, constitutive, f_sum)
-            )
+            or any(not isfinite(value) or value <= 0.0 for value in (passivity, f_sum))
         ):
             raise ValueError("Optical polarization channels or tolerances are invalid.")
         self.polarizations = vectors
         self.channel_labels = labels
         self.passivity_tolerance = passivity
-        self.constitutive_tolerance = constitutive
         self.f_sum_tolerance = f_sum
         self.plan_id = canonical_fingerprint(
             {
@@ -130,7 +129,6 @@ class OpticalDielectricPlan(StrictModule, NonTrainableState):
                 "polarizations": array_tree_fingerprint(np.asarray(vectors)),
                 "labels": list(labels),
                 "passivity_tolerance": passivity,
-                "constitutive_tolerance": constitutive,
                 "f_sum_tolerance": f_sum,
             }
         )
@@ -152,20 +150,20 @@ class OpticalDielectricPlan(StrictModule, NonTrainableState):
             raise ValueError(
                 "The interband optical profile excludes broadened Drude weight and inferred relaxation time."
             )
+        if (
+            angular_frequency_unit.dimension != ANGLE / TIME
+            or conductivity_unit.dimension != CONDUCTANCE / LENGTH
+            or angular_frequency_unit.reference_system_id != SI_REFERENCE_SYSTEM_ID
+            or conductivity_unit.reference_system_id != SI_REFERENCE_SYSTEM_ID
+        ):
+            raise ValueError(
+                "Optical Kubo arrays require SI angular-frequency and conductivity units."
+            )
         omega = kubo.angular_frequencies_rad_per_s
         conductivity = kubo.regular_conductivity_siemens_per_m
         identity = jnp.eye(3, dtype=conductivity.dtype)
         dielectric = identity[None, :, :] + 1j * conductivity / (
             _VACUUM_PERMITTIVITY_SI * omega[:, None, None]
-        )
-        reconstructed = identity[None, :, :] + 1j * conductivity / (
-            _VACUUM_PERMITTIVITY_SI * omega[:, None, None]
-        )
-        epsilon_scale = jnp.maximum(
-            jnp.max(jnp.abs(dielectric)), jnp.finfo(omega.dtype).tiny
-        )
-        constitutive_residual = (
-            jnp.max(jnp.abs(dielectric - reconstructed)) / epsilon_scale
         )
         projected = jnp.real(
             contract(
@@ -177,14 +175,11 @@ class OpticalDielectricPlan(StrictModule, NonTrainableState):
         )
         passivity_residual = jnp.maximum(-jnp.min(projected), 0.0)
         f_sum_residual = kubo.evidence.f_sum_relative_residual
-        successful = (
-            bool(passivity_residual <= self.passivity_tolerance)
-            and bool(constitutive_residual <= self.constitutive_tolerance)
-            and bool(f_sum_residual <= self.f_sum_tolerance)
+        successful = bool(passivity_residual <= self.passivity_tolerance) and bool(
+            f_sum_residual <= self.f_sum_tolerance
         )
         evidence = OpticalDielectricEvidence(
             passivity_residual,
-            constitutive_residual,
             f_sum_residual,
             jnp.asarray(successful),
         )

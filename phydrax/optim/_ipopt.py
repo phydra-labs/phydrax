@@ -685,6 +685,7 @@ class IpoptMinimize(AbstractStructuredNonlinearMethod):
             ),
             numeric_version=prepared.numeric_version,
             structure_id=prepared.structure_id,
+            numeric_binding_id=prepared.numeric_binding_id,
             method_id=self.method_id,
         )
 

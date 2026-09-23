@@ -107,6 +107,13 @@ def _pairwise_matrix(
     )(left_points)
 
 
+def _as_real_array(value: ArrayLike, /, *, name: str) -> Array:
+    array = jnp.asarray(value)
+    if jnp.issubdtype(array.dtype, jnp.complexfloating):
+        raise TypeError(f"{name} must use real coordinates.")
+    return array.astype(jnp.float64)
+
+
 def _as_input(
     value: ArrayLike,
     /,
@@ -117,7 +124,7 @@ def _as_input(
     rank = int(input_ndim)
     if rank <= 0:
         raise ValueError("input_ndim must be positive.")
-    sample = jnp.asarray(value, dtype=jnp.float64)
+    sample = _as_real_array(value, name=name)
     if rank == 1 and sample.ndim == 0:
         sample = sample.reshape((1,))
     if sample.ndim != rank or any(size <= 0 for size in sample.shape):
@@ -141,7 +148,7 @@ def _as_inputs(
     rank = int(input_ndim)
     if rank <= 0:
         raise ValueError("input_ndim must be positive.")
-    samples = jnp.asarray(value, dtype=jnp.float64)
+    samples = _as_real_array(value, name=name)
     if rank == 1 and samples.ndim == 1:
         samples = samples[:, None]
     if samples.ndim != rank + 1 or any(size <= 0 for size in samples.shape):

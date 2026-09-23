@@ -83,9 +83,11 @@ def run():
 
 if __name__ == "__main__":
     solution = run()
+    if not bool(jnp.all(solution.accepted)):
+        raise RuntimeError("Scheduled MPM rollout rejected a step")
     print(
         {
-            "successful": bool(jnp.all(solution.accepted)),
+            "successful": True,
             "steps": solution.accepted.shape[0],
             "maximum_mass_defect": float(jnp.max(solution.relative_mass_defects)),
             "minimum_jacobian": float(jnp.min(solution.minimum_jacobians)),

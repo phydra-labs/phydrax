@@ -16,6 +16,10 @@ from phydrax.applications.nucleic_acid_biophysics import (
     NucleotideKey,
     prepare_nucleotide_binding,
 )
+from phydrax.applications.nucleic_acid_biophysics.observations import (
+    MutationProfileBatch,
+    MutationProfileCase,
+)
 from phydrax.applications.nucleic_acid_biophysics.structure import (
     base_frames,
     ERMSDCollectiveVariableProgram,
@@ -63,6 +67,71 @@ def rights():
         uncertainty=None,
         lineage_ids=("synthetic-geometry",),
     )
+
+
+def _mutation_profile_arguments():
+    source = rights()
+    case = MutationProfileCase(
+        construct_id="construct",
+        condition_id="condition",
+        preparation_id="preparation",
+        batch_id="batch",
+        replicate_id="replicate",
+        reagent_id="reagent",
+        protocol_id="protocol",
+        source_manifest_ids=(source.manifest_id,),
+    )
+    return {
+        "nucleotide_ids": ("A1",),
+        "preparation_index": np.asarray((0,)),
+        "batch_index": np.asarray((0,)),
+        "reagent_index": np.asarray((0,)),
+        "protocol_index": np.asarray((0,)),
+        "source_index": np.asarray((0,)),
+        "case_index": np.asarray((0,)),
+        "source_row_index": np.asarray((1,)),
+        "mapping_category_index": np.asarray((0,)),
+        "mapping_included": np.asarray((True,)),
+        "construct_ids": ("construct",),
+        "condition_ids": ("condition",),
+        "replicate_ids": ("replicate",),
+        "preparation_ids": ("preparation",),
+        "batch_ids": ("batch",),
+        "reagent_ids": ("reagent",),
+        "protocol_ids": ("protocol",),
+        "mapping_category_ids": ("included",),
+        "cases": (case,),
+        "sources": (source,),
+    }
+
+
+def test_mutation_profile_rejects_wrapping_binary_and_row_indices():
+    arguments = _mutation_profile_arguments()
+    with pytest.raises(ValueError, match="must be binary"):
+        MutationProfileBatch(
+            np.asarray(((256,),), dtype=np.int64),
+            np.asarray(((1,),), dtype=np.int64),
+            np.asarray(((1,),), dtype=np.int64),
+            np.asarray((0,)),
+            np.asarray((0,)),
+            np.asarray((0,)),
+            (arguments["sources"][0].manifest_id,),
+            **arguments,
+        )
+    arguments["source_row_index"] = np.asarray(
+        (np.iinfo(np.int32).max + 1,), dtype=np.int64
+    )
+    with pytest.raises(ValueError, match="Source rows"):
+        MutationProfileBatch(
+            np.asarray(((0,),), dtype=np.int64),
+            np.asarray(((1,),), dtype=np.int64),
+            np.asarray(((1,),), dtype=np.int64),
+            np.asarray((0,)),
+            np.asarray((0,)),
+            np.asarray((0,)),
+            (arguments["sources"][0].manifest_id,),
+            **arguments,
+        )
 
 
 def test_construct_connectivity_chemistry_and_full_graph_refusal():

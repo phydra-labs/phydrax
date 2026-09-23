@@ -64,7 +64,9 @@ result = phx.discretization.adapt_particle_internal_mesh(
     state,
     jnp.asarray([[2.0, 0.0]]),
 )
-print(f"successful={bool(result.successful)}")
+if not bool(result.successful):
+    raise RuntimeError("Adaptive catalyst-pellet transition failed")
+print("successful=True")
 print(f"refined_cells={int(jnp.sum(result.accepted_state.coarse_refined))}")
 print(f"active_fine_cells={int(jnp.sum(result.accepted_state.fine_active))}")
 print(f"energy_residual={float(jnp.max(jnp.abs(result.evidence.energy_residual))):.6e}")

@@ -19,7 +19,7 @@ import phydrax.ein as ein
 from .._strict import StrictModule
 from ._dense_inverse import dense_inverse
 from ._operators import DenseLinearOperator
-from ._policies import DenseLU, LinearSolvePolicy
+from ._policies import DenseLU, FailurePolicy, LinearSolvePolicy
 from ._problems import LinearSystem
 from ._runtime import solve
 from ._spaces import RHSLayout
@@ -65,7 +65,7 @@ def _solve(matrix: Array, right: Array, /) -> Array:
     result = solve(
         LinearSystem(DenseLinearOperator(matrix)),
         right,
-        policy=LinearSolvePolicy(DenseLU()),
+        policy=LinearSolvePolicy(DenseLU(), failure=FailurePolicy("error")),
         rhs_layout=(RHSLayout((right.shape[-1],)) if right.ndim == matrix.ndim else None),
     )
     return result.value

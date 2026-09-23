@@ -15,6 +15,7 @@ from ..integration import (
     AdaptiveIntegration,
     CallerIntegration,
     ComponentTarget,
+    DensityTarget,
     FixedIntegration,
     IntegrationSource,
     PerStepIntegration,
@@ -37,6 +38,12 @@ def _source_target(source: IntegrationSource, /):
     raise TypeError(
         "Functional bindings support fixed, per-step, caller, or typed adaptive integration sources."
     )
+
+
+def _base_target(target, /):
+    while isinstance(target, DensityTarget):
+        target = target.base
+    return target
 
 
 def _stop_parameter_gradient(function: DomainFunction, /) -> DomainFunction:
@@ -89,7 +96,7 @@ def _term_integrand(
     operands.append(coordinate)
 
     normal_index = None
-    target = _source_target(source)
+    target = _base_target(_source_target(source))
     if term.normal:
         if not isinstance(target, ComponentTarget) or not isinstance(
             target.component.spec.selection_for(geometry_variable),

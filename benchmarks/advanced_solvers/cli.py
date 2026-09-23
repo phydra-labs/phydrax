@@ -16,7 +16,7 @@ from benchmarks._comparison import PerformancePolicy
 from benchmarks._io import write_json_atomic
 
 from .adapters import adapter_names, load_adapter, load_adapters
-from .campaign import AVAILABLE_CASES, build_cases, CampaignConfig, PRESETS
+from .campaign import AVAILABLE_CASES, CampaignConfig, PRESETS
 from .compare import compare_reports
 from .harness import run_campaign
 
@@ -113,6 +113,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         }
         destination = arguments.output
     _emit_json(output, destination)
+    if arguments.command in {"run", "control", "compare"} and not output["passed"]:
+        raise SystemExit(1)
 
 
 def _run(arguments: argparse.Namespace) -> dict[str, Any]:
@@ -141,16 +143,7 @@ def _run(arguments: argparse.Namespace) -> dict[str, Any]:
         ),
     )
     adapters = load_adapters(config.adapters)
-    cases = build_cases(config)
-    return run_campaign(
-        adapters,
-        cases,
-        selected_adapters=config.adapters,
-        selected_cases=config.cases,
-        seed=config.seed,
-        warmup=config.warmup,
-        repeats=config.repeats,
-    )
+    return run_campaign(adapters, config)
 
 
 def _read_json(path: Path, /) -> Mapping[str, Any]:

@@ -249,9 +249,16 @@ class PDEExpression:
                 "value",
                 _literal(self.value, "PDE expression value"),
             )
-        if int(self.order) <= 0:
+        if isinstance(self.order, bool) or not isinstance(self.order, Integral):
+            raise TypeError("PDE derivative order must be an integer.")
+        order = int(self.order)
+        if order <= 0:
             raise ValueError("PDE derivative order must be positive.")
-        object.__setattr__(self, "order", int(self.order))
+        if self.op != "derivative" and order != 1:
+            raise ValueError(
+                f"PDE operation {self.op!r} does not accept derivative-order metadata."
+            )
+        object.__setattr__(self, "order", order)
         if self.axis is not None:
             object.__setattr__(self, "axis", int(self.axis))
 

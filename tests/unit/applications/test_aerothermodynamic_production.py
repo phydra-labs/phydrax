@@ -39,6 +39,23 @@ def test_support_release_requires_all_independent_gates():
         released=True,
     )
     assert status.released
+    with pytest.raises(TypeError, match="booleans"):
+        phx.applications.aerothermodynamics.AerothermodynamicCapabilityStatus(
+            support,
+            ("scientific",),
+            scientific=1,
+            performance=True,
+            operational=True,
+            security=True,
+        )
+    with pytest.raises(TypeError, match="integers"):
+        phx.applications.aerothermodynamics.AerothermodynamicResourceCaps(
+            maximum_particles=True,
+            maximum_collision_events=0,
+            maximum_surface_events=0,
+            maximum_topology_events=0,
+            maximum_radiation_groups=0,
+        )
 
 
 def test_validation_campaign_uses_reference_uncertainty_and_exact_order():

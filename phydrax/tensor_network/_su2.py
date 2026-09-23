@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
+from numbers import Integral
 
 import equinox as eqx
 import jax.numpy as jnp
@@ -20,6 +21,8 @@ from .._strict import StrictModule
 
 
 def _spin(value: int) -> int:
+    if not isinstance(value, Integral) or isinstance(value, bool):
+        raise TypeError("Doubled SU2 spins must be integers.")
     result = int(value)
     if result < 0:
         raise ValueError("Doubled SU2 spins must be nonnegative integers.")
@@ -425,13 +428,14 @@ class SU2ReducedTensor(StrictModule):
             blocks_,
             target,
         )
+        arrays = {f"block/{index:06d}": block for index, block in enumerate(blocks_)}
         self.tensor_id = canonical_fingerprint(
             {
                 "kind": "su2-reduced-tensor",
                 "legs": tuple(leg.allocation_id for leg in legs_),
                 "sectors": sectors_,
                 "total": target,
-                "dtypes": tuple(str(block.dtype) for block in blocks_),
+                "values": array_collection_digest(arrays),
             }
         )
 
@@ -443,7 +447,22 @@ def contract_su2_reduced(
 
     if not isinstance(left, SU2ReducedTensor) or not isinstance(right, SU2ReducedTensor):
         raise TypeError("left and right must be SU2ReducedTensor values.")
-    la, ra = int(left_axis) % len(left.legs), int(right_axis) % len(right.legs)
+    left_rank = len(left.legs)
+    right_rank = len(right.legs)
+    if (
+        not isinstance(left_axis, Integral)
+        or isinstance(left_axis, bool)
+        or not isinstance(right_axis, Integral)
+        or isinstance(right_axis, bool)
+    ):
+        raise TypeError("SU2 contraction axes must be integers.")
+    if (
+        not -left_rank <= left_axis < left_rank
+        or not -right_rank <= right_axis < right_rank
+    ):
+        raise ValueError("SU2 contraction axis is outside its tensor rank.")
+    la = left_axis + left_rank if left_axis < 0 else left_axis
+    ra = right_axis + right_rank if right_axis < 0 else right_axis
     if left.legs[la].allocation_id != right.legs[ra].dual().allocation_id:
         raise ValueError("Contracted SU2 legs must be dual compatible.")
     left_free = tuple(index for index in range(len(left.legs)) if index != la)
@@ -588,8 +607,7 @@ class SU2SectorState(StrictModule):
             {
                 "kind": "su2-sector-state",
                 "spin": spin,
-                "capacity": values.shape[0],
-                "dtype": str(values.dtype),
+                "values": array_collection_digest({"amplitudes": values}),
             }
         )
 

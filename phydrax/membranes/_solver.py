@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import equinox as eqx
 import jax.numpy as jnp
 import numpy as np
 from jaxtyping import Array, ArrayLike
@@ -42,6 +43,13 @@ class CrossflowMembraneModule:
         permeance = np.asarray(species_permeance_mol_m2_s_pa, dtype=np.float64)
         feed_pressure = np.asarray(feed_pressure_pa, dtype=np.float64)
         permeate_pressure = np.asarray(permeate_pressure_pa, dtype=np.float64)
+        if not all(
+            np.all(np.isfinite(value))
+            for value in (area, permeance, feed_pressure, permeate_pressure)
+        ):
+            raise ValueError(
+                "Membrane geometry, permeance, and pressures must be finite."
+            )
         if area.ndim != 1 or area.size == 0 or np.any(area <= 0):
             raise ValueError("Membrane segment areas must be a positive vector.")
         if permeance.ndim == 1:
@@ -76,8 +84,16 @@ class CrossflowMembraneModule:
         species = self.species_permeance_mol_m2_s_pa.shape[1]
         if feed.shape != (species,) or permeate.shape != (species,):
             raise ValueError("Membrane inlet species flows do not match permeance data.")
-        if bool(jnp.any(feed < 0) | jnp.any(permeate < 0)):
-            raise ValueError("Membrane inlet species flows must be non-negative.")
+        feed = eqx.error_if(
+            feed,
+            jnp.any(
+                ~jnp.isfinite(feed)
+                | ~jnp.isfinite(permeate)
+                | (feed < 0)
+                | (permeate < 0)
+            ),
+            "Membrane inlet species flows must be finite and non-negative.",
+        )
         initial = feed + permeate
         feed_profile = [feed]
         permeate_profile = [permeate]
@@ -116,15 +132,21 @@ class CrossflowMembraneModule:
         flux_values = jnp.stack(flux_profile)
         balance = feed + permeate - initial
         transferred_total = jnp.sum(permeate - permeate_profile[0])
-        stage_cut = transferred_total / jnp.maximum(
-            jnp.sum(feed_inlet_molar_flow_mol_s),
-            jnp.finfo(feed.dtype).tiny,
-        )
+        inlet_feed_total = jnp.sum(jnp.asarray(feed_inlet_molar_flow_mol_s))
+        safe_feed_total = jnp.where(inlet_feed_total > 0, inlet_feed_total, 1.0)
+        stage_cut = transferred_total / safe_feed_total
         successful = (
-            jnp.all(jnp.isfinite(feed_values))
+            (inlet_feed_total > 0)
+            & jnp.all(jnp.isfinite(feed_values))
             & jnp.all(jnp.isfinite(permeate_values))
+            & jnp.all(jnp.isfinite(flux_values))
             & jnp.all(feed_values >= -1e-12)
             & jnp.all(permeate_values >= -1e-12)
+            & jnp.all(jnp.isfinite(balance))
+            & (jnp.linalg.norm(balance) <= 1e-10)
+            & jnp.isfinite(stage_cut)
+            & (stage_cut >= 0)
+            & (stage_cut <= 1)
         )
         return MembraneModuleResult(
             feed_values,

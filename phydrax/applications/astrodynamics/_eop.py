@@ -11,7 +11,7 @@ from jaxtyping import Array, ArrayLike
 
 from phydrax._interpolation import linear_interpolate
 
-from ..._fingerprint import canonical_fingerprint
+from ..._fingerprint import array_tree_fingerprint, canonical_fingerprint
 from ..._strict import StrictModule
 from ..._trainable import NonTrainableState
 from ._data import AstrodynamicsDataProvenance
@@ -116,7 +116,7 @@ class EarthOrientationRecordSet(StrictModule, NonTrainableState):
         self.product_id = canonical_fingerprint(
             {
                 "kind": "earth-orientation-record-set",
-                "nodes": times.tolist(),
+                "values": array_tree_fingerprint((*values, predicted_host)),
                 "provenance": provenance.provenance_id,
             }
         )
