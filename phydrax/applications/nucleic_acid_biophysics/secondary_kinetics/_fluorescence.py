@@ -847,7 +847,7 @@ class MechanisticDisplacementRateModel(StrictModule, NonTrainableState):
             action = la.matrix_exponential_action(generator.T, initial, time)
             probabilities = eqx.error_if(
                 jnp.asarray(action.value),
-                ~action.converged,
+                ~action.successful,
                 "Secondary-kinetics occupancy propagation did not converge.",
             )
             return probabilities @ self.product_mask.astype(probabilities.dtype)
@@ -1484,7 +1484,7 @@ class PreparedMechanisticDisplacementInference(StrictModule, NonTrainableState):
             action = la.matrix_exponential_action(generator.T, initial, value)
             probabilities = eqx.error_if(
                 jnp.asarray(action.value),
-                ~action.converged,
+                ~action.successful,
                 "Secondary-kinetics occupancy propagation did not converge.",
             )
             return probabilities @ self.product_mask.astype(probabilities.dtype)

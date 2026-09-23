@@ -107,6 +107,43 @@ def test_semilinear_solver_propagates_linear_heat_mode_exactly():
     assert jnp.allclose(solution.states[-1], expected, rtol=1e-10, atol=1e-10)
 
 
+def test_semilinear_solver_accepts_taylor_augmented_action_policy():
+    discretization = _periodic_discretization(4)
+    duration = 0.05
+    diffusivity = 0.02
+    initial = jnp.sin(2.0 * jnp.pi * discretization.grid.axes[0].nodes)
+    spde = phx.solver.semidiscretize_reaction_diffusion(
+        initial,
+        discretization,
+        t0=0.0,
+        t1=duration,
+        kappa=diffusivity,
+    )
+    policy = phx.linalg.TaylorExponentialPolicy(
+        error_tolerance=1e-8,
+        resources=phx.linalg.TaylorExponentialResourcePolicy(
+            max_power=2,
+            block_size=1,
+            estimator_iterations=2,
+            estimator_retries=1,
+        ),
+    )
+    solution = phx.solver.solve_semilinear_spde(
+        spde,
+        save_times=jnp.asarray([0.0, duration]),
+        dt=duration,
+        matrix_function_policy=policy,
+    )
+    expected = (
+        jsp_linalg.expm(duration * diffusivity * discretization.laplacian_matrix())
+        @ initial
+    )
+
+    assert solution.stats["matrix_function_method"] == "taylor"
+    assert jnp.all(solution.valid)
+    assert jnp.allclose(solution.states[-1], expected, rtol=2e-6, atol=2e-7)
+
+
 def test_spde_callable_drift_identities_are_explicit_and_transitive():
     discretization = _periodic_discretization(4)
     initial = jnp.zeros(discretization.state_shape)

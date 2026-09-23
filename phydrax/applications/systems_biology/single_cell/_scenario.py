@@ -554,7 +554,7 @@ def transient_transcript_mean(
         duration,
         policy=MatrixFunctionPolicy("arnoldi", max_dimension=4),
     )
-    return jnp.where(result.converged, result.value[:3], jnp.nan)
+    return jnp.where(result.successful, result.value[:3], jnp.nan)
 
 
 def scheduled_transcript_mean(

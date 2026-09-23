@@ -125,8 +125,8 @@ class MultilayerEnergyBalance(StrictModule):
         outgoing = self.feedback * integral
         residual = self.heat_content(updated - temperature) - input_energy + outgoing
         successful = (
-            jnp.all(homogeneous.converged)
-            & jnp.all(driven.converged)
+            jnp.all(homogeneous.successful)
+            & jnp.all(driven.successful)
             & jnp.all(jnp.isfinite(evolved))
             & (duration >= 0.0)
             & jnp.isfinite(duration)

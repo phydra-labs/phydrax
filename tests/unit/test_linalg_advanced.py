@@ -522,7 +522,8 @@ def test_spectral_matrix_functions_and_stochastic_estimators_are_replayable():
         max_dimension=3,
     )
 
-    assert logarithm.provenance == "explicit spectral representation"
+    assert logarithm.provenance.method == "spectral"
+    assert logarithm.provenance.operator_id == operator.operator_id
     assert jnp.allclose(logarithm.value, jnp.log(eigenvalues) * vector)
     assert jnp.array_equal(first_trace.samples, replay_trace.samples)
     assert jnp.allclose(first_trace.estimate, jnp.trace(matrix), rtol=1e-10, atol=1e-10)
@@ -791,11 +792,11 @@ def test_matrix_function_and_stochastic_evidence_rejects_false_success():
     expected_logarithm = (
         jnp.log(2.0) * jnp.eye(2) + jnp.asarray([[0.0, 0.5], [0.0, 0.0]])
     ) @ vector
-    assert bool(zero_scale.converged)
+    assert bool(zero_scale.successful)
     assert jnp.array_equal(zero_scale.value, vector)
-    assert zero_scale.error_estimate == 0.0
-    assert zero_scale.residual_estimate == 0.0
-    assert bool(logarithm.converged)
+    assert zero_scale.diagnostics.error_estimate == 0.0
+    assert zero_scale.diagnostics.residual_estimate == 0.0
+    assert bool(logarithm.successful)
     assert jnp.allclose(logarithm.value, expected_logarithm)
 
     properties = _positive_definite_properties()
@@ -810,8 +811,8 @@ def test_matrix_function_and_stochastic_evidence_rejects_false_success():
         policy=la.MatrixFunctionPolicy("chebyshev", max_dimension=8),
         spectral_bounds=(1.0, 3.0),
     )
-    assert not bool(chebyshev.converged)
-    assert jnp.isnan(chebyshev.error_estimate)
+    assert not bool(chebyshev.successful)
+    assert jnp.isnan(chebyshev.diagnostics.error_estimate)
 
     spectral = la.TransformDiagonalRepresentation(
         diagonal,

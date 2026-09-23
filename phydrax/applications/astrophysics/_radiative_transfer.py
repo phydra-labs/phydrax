@@ -189,7 +189,7 @@ class PolarizedRadiativeTransferPlan(StrictModule, NonTrainableState):
                 ds,
             )
             result = jnp.asarray(action.value)[:4]
-            return (result, prior_converged & action.converged), result
+            return (result, prior_converged & action.successful), result
 
         (emergent, exponential_converged), history = jax.lax.scan(
             step,

@@ -706,7 +706,7 @@ class PolarizedInvariantTransferPlan(StrictModule, NonTrainableState):
             )
             action = la.matrix_exponential_action(dense_operator, homogeneous, length)
             updated = jnp.asarray(action.value)[:4] * intensity_scale
-            return (updated, prior_converged & action.converged), updated
+            return (updated, prior_converged & action.successful), updated
 
         (emergent, converged), segment_history = jax.lax.scan(
             step,

@@ -139,7 +139,7 @@ class EvolvingFlowCellPlan(StrictModule, NonTrainableState):
 
         def evolve(column):
             result = matrix_exponential_action(operator, column, step)
-            return result.value, result.converged
+            return result.value, result.successful
 
         evolved_vectors, vector_converged = jax.vmap(evolve, in_axes=1, out_axes=(1, 0))(
             state.vectors.T
@@ -422,7 +422,7 @@ class GeneralizedKraynikReineltPlan(StrictModule, NonTrainableState):
             )
             for column in range(3)
         )
-        if not all(bool(np.asarray(action.converged)) for action in actions):
+        if not all(bool(np.asarray(action.successful)) for action in actions):
             raise ValueError("Native KR recurrence exponential did not converge.")
         evolved = np.asarray(
             jnp.stack(tuple(action.value for action in actions), axis=1).T
